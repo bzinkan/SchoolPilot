@@ -568,7 +568,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   assert.match(
     finalHeartbeat,
-    /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*getClasspilotStudentControlDeliveryContext\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
+    /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*getClasspilotStudentControlDeliveryContext\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared, inbox\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
   );
   assert.match(finalHeartbeat, /controlRevision: prepared\.classroomState\?\.revision \?\? prepared\.focusCleanup\?\.exactBinding\.controlRevision \?\? 0/);
   assert.doesNotMatch(finalHeartbeat, /getActiveSessionsForStudents/);

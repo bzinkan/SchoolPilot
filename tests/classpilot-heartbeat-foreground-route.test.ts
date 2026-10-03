@@ -16,6 +16,8 @@ const executable = ts.transpileModule(`async function heartbeat() {
   let finishForegroundTelemetry = () => {};
   try { ${source.slice(foregroundStart, foregroundEnd)}
     const pendingMessages = [];
+    const shouldCheckPendingMessages = false;
+    const commitPendingInbox = () => {};
     ${source.slice(deliveryStart, deliveryEnd)}
   } finally { finishForegroundTelemetry(); }
 }\nheartbeat;`, {

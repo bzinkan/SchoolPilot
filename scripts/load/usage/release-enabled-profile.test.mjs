@@ -97,7 +97,7 @@ function accepted() {
     pendingAcquisitions: 0, activeQueries: 0, pools: { owned: { waiting: 0, held: 0 } } });
   const child = () => ({ database: database(), http: { activeResponses: 0, abortedResponses: 0 }, tenantReleases: { pending: 0 },
     operations: { schemaVersion: 2, operations: Object.fromEntries(RELEASE_DRAIN_OPERATIONS.map(name =>
-      [name, { activeOperations: 0, pendingCheckouts: 0, activeCheckouts: 0, counters: { heartbeatOptionalTelemetryFailures: 0, heartbeatHandlerFailures: 0 } }])) } });
+      [name, { activeOperations: 0, pendingCheckouts: 0, activeCheckouts: 0, counters: { heartbeatOptionalTelemetryFailures: 0, heartbeatOptionalInboxFailures: 0, heartbeatHandlerFailures: 0 } }])) } });
   return { sourceClean: true, sourceUnchangedAtFinish: true, processes: { api: 1, worker: 2, generator: 3 }, enabledCapabilitiesVerified: true,
     staffAuthenticationVerified: true, pools: { api: 16, session: 2, worker: 5 }, correctness: { passed: true, currentDayWorkers: [{ durationMs: 48_000, correct: true }, { durationMs: 5, correct: true }] },
     phases: [{ name: 'combined', insertedObservations: 6000, api: child(), worker: child(), serverDrain: { api: { complete: true }, worker: { complete: true } },
@@ -148,6 +148,14 @@ test('a cleared minute summary cannot hide an earlier optional telemetry failure
   assert.equal(capacityAcceptance(result).noOptionalTelemetryFailures, false);
   delete result.phases[0].api.operations.operations.heartbeat_background.counters.heartbeatOptionalTelemetryFailures;
   assert.equal(capacityAcceptance(result).noOptionalTelemetryFailures, false);
+});
+test('successful heartbeat responses cannot hide failed or unmeasured inbox recovery', () => {
+  const result = accepted();
+  assert.equal(capacityAcceptance(result).noOptionalInboxFailures, true);
+  result.phases[0].api.operations.operations.heartbeat_final_delivery.counters.heartbeatOptionalInboxFailures = 1;
+  assert.equal(capacityAcceptance(result).noOptionalInboxFailures, false);
+  delete result.phases[0].api.operations.operations.heartbeat_final_delivery.counters.heartbeatOptionalInboxFailures;
+  assert.equal(capacityAcceptance(result).noOptionalInboxFailures, false);
 });
 test('new profile preserves old workload and explicit fixed pool budgets', () => {
   assert.equal(RELEASE_ENABLED_PROFILE.httpOffering.requestsPerSecond, 100);

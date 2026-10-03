@@ -27,6 +27,7 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
   const rows = options.messages ? [{ message: { id: "message-a", content: "Synthetic private reply", supervisionContextId: "context-a" } }] : [];
   const context = {
     schoolId: "school-a", studentId: "student-a", studentSessionId: "session-a", deviceId: "device-a",
+    shouldCheckPendingMessages: false, commitPendingInbox() {},
     deferredForeground: undefined, now: 1_000_000, pendingMessageRecoveryHeartbeat: options.recover !== false,
     teacherReplyLastCheck: new Map([["session-a:device-a", 1_000_000]]), MAX_TEACHER_REPLY_CHECKS: 100,
     setBoundedMap(map: Map<string, number>, key: string, value: number) { map.set(key, value); },

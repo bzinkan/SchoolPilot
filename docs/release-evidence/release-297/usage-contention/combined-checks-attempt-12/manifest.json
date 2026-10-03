@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T07:52:30.511Z",
+  "status": "type_cast_full_unit_repeat_passed",
+  "scope": "Root type/cast/full unit repeat after exactly two test-only changes; all application and infrastructure input bytes unchanged.",
+  "source": {
+    "head": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+    "state": "Uncommitted changes included and hashed; clean checkpoint and capacity are separate.",
+    "files": 1170,
+    "beforeAfterDeepEqual": true,
+    "runnerReportedUnchanged": true,
+    "changesDuringRun": [],
+    "finalSourceMatchesAttempt12": true
+  },
+  "runner": {
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-12.ps1",
+    "startedAt": "2026-10-03T07:40:16.1629524Z",
+    "finishedAt": "2026-10-03T07:43:08.7659719Z",
+    "outerResult": "passed",
+    "checks": [
+      {
+        "command": "npm run check:tests",
+        "startedAt": "2026-10-03T07:40:16.1677501Z",
+        "finishedAt": "2026-10-03T07:41:32.6828461Z",
+        "exitCode": 0,
+        "log": "check-tests.log"
+      },
+      {
+        "command": "npm run check:test-casts",
+        "startedAt": "2026-10-03T07:41:32.6916265Z",
+        "finishedAt": "2026-10-03T07:41:33.4573993Z",
+        "exitCode": 0,
+        "log": "check-test-casts.log"
+      },
+      {
+        "command": "npm run test:unit",
+        "startedAt": "2026-10-03T07:41:33.4595823Z",
+        "finishedAt": "2026-10-03T07:43:08.4221424Z",
+        "exitCode": 0,
+        "log": "test-unit.log"
+      }
+    ],
+    "configuration": "DATABASE_URL absent, matching ordinary unit CI; individual unit fixtures configure their own imports"
+  },
+  "unit": {
+    "tests": 1827,
+    "pass": 1823,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 4,
+    "todo": 0
+  },
+  "conditionalSkips": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ],
+  "conditionalSkipDetails": [
+    {
+      "suite": "PIN retries through the production route, compatibility rewrite and real middleware",
+      "test": "ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected",
+      "file": "tests/classpilot-student-signin-route-diagnostics.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    },
+    {
+      "suite": "GoPilot Redis relay",
+      "test": "delivers a duplicate message ID exactly once across two relay instances",
+      "file": "tests/gopilot-redis-relay.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    },
+    {
+      "suite": "student-device teacher-tile index contract",
+      "test": "parses inspected index key columns as a text array",
+      "file": "tests/student-device-index-contract.test.ts",
+      "condition": "!process.env.DATABASE_URL"
+    },
+    {
+      "suite": "ordered WebSocket Redis publication",
+      "test": "retains the newest attempted revision across a subscriber reconnect",
+      "file": "tests/ws-redis-ordered-publish.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    }
+  ],
+  "failedTapEntries": [],
+  "sourceComparison": {
+    "receipt": "release297-checks-11-to-12-source-comparison.json.gz",
+    "allRecordedNonTestInputsUnchanged": true,
+    "infrastructureSelectedInputsUnchanged": true,
+    "infrastructureSelectedFiles": 60,
+    "changes": [
+      {
+        "path": "tests/classpilot-heartbeat-inbox-authority.integration.test.ts",
+        "beforeSha256": "85d3a73acf44a91fb7a92bd1d544b549bd148e06b26a20c9c0b09324d3a24b5a",
+        "afterSha256": "623e924c5d237eea9eb39fcbd0c3601b807e3565f2e57e11e0b675b78a775655"
+      },
+      {
+        "path": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+        "beforeSha256": "cfb5122a4629ebbcd86175035a0aef00741ef35ca74d57ab0c11a5ba65929bdf",
+        "afterSha256": "b4c11a7ab3fc5126422f534f92a3776cbbaa5facd41be78abc681de9585d7411"
+      }
+    ],
+    "explanation": "Recovery-delivery VM adds only the omitted inbox context values. New native inbox fixture adds durable claim rollback and required-preparation sentinel proofs. Neither file belongs to infrastructure lane; selector, src, scripts and all selected infrastructure tests unchanged."
+  },
+  "testTypeReceipt": [
+    "> schoolpilot-api@1.0.0 check:tests",
+    "> node scripts/check-test-types.mjs",
+    "",
+    "Test TypeScript no-emit ratchet OK: 438/534 existing test-only diagnostics; syntax and application source remain zero-error."
+  ],
+  "testCastReceipt": [
+    "> schoolpilot-api@1.0.0 check:test-casts",
+    "> node scripts/check-test-cast-ratchet.mjs",
+    "",
+    "Unsafe test cast ratchet OK: {\"asAny\":689,\"asUnknownAs\":7,\"tsIgnore\":0,\"tsExpectError\":0}"
+  ],
+  "relatedEvidence": {
+    "ownedInbox": "../heartbeat-owned-inbox/manifest.json",
+    "native": "Owner19/restricted19, no skips. Native actual claim rollback and current-clock recovery are distinct from the four conditional skipped unit cases."
+  },
+  "limits": [
+    "Four conditional unit cases are skipped, never relabeled passed. Native and Redis integration evidence are separate.",
+    "No throughput/capacity, remote CI, live deployment or activation claim.",
+    "Only recorded source footprints are compared; no claim that unrecorded host/environment state is identical."
+  ],
+  "sanitization": "User-home paths, connection URLs, JWT-shaped values and synthetic UUIDs redacted. Originals unchanged; original/sanitized/archive SHA256 and gzip round trips verified.",
+  "files": [
+    {
+      "file": "check-test-casts.log.gz",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f",
+      "sourceBytes": 181,
+      "archiveBytes": 166,
+      "gzipVerified": true
+    },
+    {
+      "file": "check-tests.log.gz",
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350",
+      "sourceBytes": 204,
+      "archiveBytes": 180,
+      "gzipVerified": true
+    },
+    {
+      "file": "checks.json.gz",
+      "originalSha256": "acb80f25298f5432a29122215bd750ed4dd6e9906214badd0c8ffda24017980f",
+      "sanitizedSha256": "acb80f25298f5432a29122215bd750ed4dd6e9906214badd0c8ffda24017980f",
+      "archiveSha256": "ed1057835c9ae0a6e77b79ac9f0c9b3d406fc208e529cd9f7b4a278384aab350",
+      "sourceBytes": 614,
+      "archiveBytes": 222,
+      "gzipVerified": true
+    },
+    {
+      "file": "result.json.gz",
+      "originalSha256": "f91b1af83032712797ab710a03e41ad1cbe2f58c86925090ccf7ac80bafd934a",
+      "sanitizedSha256": "e87744b9522786f33f458df2c9a64178b2b0f3ef0660977b448f1255727efe1a",
+      "archiveSha256": "6859307fa9b692c10edb8698d3463e9ba3d26176d24da037db25e7a724073559",
+      "sourceBytes": 1343,
+      "archiveBytes": 606,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "3c10f596f02ca22894b68017947d29ca14c89d48cff835466813e7b53a9e7214",
+      "sanitizedSha256": "3c10f596f02ca22894b68017947d29ca14c89d48cff835466813e7b53a9e7214",
+      "archiveSha256": "cc4443c1f6b33e8fd71d0a9d58b00bc41e60fc4acdcee36680c682c42b36bb63",
+      "sourceBytes": 176716,
+      "archiveBytes": 56012,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "3c10f596f02ca22894b68017947d29ca14c89d48cff835466813e7b53a9e7214",
+      "sanitizedSha256": "3c10f596f02ca22894b68017947d29ca14c89d48cff835466813e7b53a9e7214",
+      "archiveSha256": "cc4443c1f6b33e8fd71d0a9d58b00bc41e60fc4acdcee36680c682c42b36bb63",
+      "sourceBytes": 176716,
+      "archiveBytes": 56012,
+      "gzipVerified": true
+    },
+    {
+      "file": "test-unit.log.gz",
+      "originalSha256": "bef56a0594961c7d51b6d1a4ea142b7ad901f45e330f74bb070055d17651844e",
+      "sanitizedSha256": "fc483434ce220bb270f1a54936996f4588d0b80502e9c25ec4e4e0e029682def",
+      "archiveSha256": "340e2c6b150754cb2f86962b9e384d774a7315d53665fd2339f9c882fed06929",
+      "sourceBytes": 481713,
+      "archiveBytes": 81390,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-final-checks-12.ps1.gz",
+      "originalSha256": "ef105334b3a2088f50e77abdcfd41331ad45dcb083be6bb47b34834ece3ed993",
+      "sanitizedSha256": "fd3a858fc971718a8265010bd53a575fd719a7938429d0f7f672d59786cf27c6",
+      "archiveSha256": "6d8aaf0de77acfd32afca22f924267aa244e34bf4f65144a02949073428831fb",
+      "sourceBytes": 2622,
+      "archiveBytes": 1235,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-final-checks-12.runner.log.gz",
+      "originalSha256": "f91b1af83032712797ab710a03e41ad1cbe2f58c86925090ccf7ac80bafd934a",
+      "sanitizedSha256": "e87744b9522786f33f458df2c9a64178b2b0f3ef0660977b448f1255727efe1a",
+      "archiveSha256": "6859307fa9b692c10edb8698d3463e9ba3d26176d24da037db25e7a724073559",
+      "sourceBytes": 1343,
+      "archiveBytes": 606,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-checks-11-to-12-source-comparison.json.gz",
+      "originalSha256": "005b7090d693c9e6c78fc86049d1151e23ff2e2a53e1f7f663488c56b076e7f4",
+      "sanitizedSha256": "005b7090d693c9e6c78fc86049d1151e23ff2e2a53e1f7f663488c56b076e7f4",
+      "archiveSha256": "1747b303f8b5f2f1985ccc8194531589ef8d778c099118d0d6c217acf101f690",
+      "sourceBytes": 11309,
+      "archiveBytes": 3818,
+      "gzipVerified": true
+    }
+  ],
+  "priorCheckBinding": {
+    "manifest": "../combined-checks-attempt-11/manifest.json",
+    "manifestSha256": "c488bb2b93f26f0018f1e2c32edf5b62aa7db334b91a9c96e035b837c23a32a4",
+    "applicationBuild": "Passing build from11 applies: all recorded non-test bytes unchanged.",
+    "infrastructure": {
+      "tests": 699,
+      "pass": 699,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "note": "No rerun of unchanged build or infrastructure; preserves11 failed unit outcome and declared source drift."
+  }
+}

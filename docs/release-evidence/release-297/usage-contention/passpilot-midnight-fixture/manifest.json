@@ -1,0 +1,504 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T07:23:58.523Z",
+  "sourceBase": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+  "sourceStatus": "Uncommitted test-only fixture repair amid independently owned ClassPilot edits; focused incremental DB proof, not final combined release acceptance",
+  "diagnosis": {
+    "ciRequestUtc": "2026-10-03T07:00:15Z",
+    "schoolTimezone": "America/Los_Angeles",
+    "schoolLocalTime": "2026-10-03 00:00:15 PDT",
+    "oldSeedUtc": "2026-10-03T06:59:15Z",
+    "schoolDayStartUtc": "2026-10-03T07:00:00Z",
+    "rootCause": "Four intended same-day active pass fixtures used now minus60seconds and therefore seeded yesterday during the first school-local minute. Rules correctly excluded them from current-day capacity/encounter checks; export consequently recorded the later daily-limit denial.",
+    "productUnchanged": "No Rules/app behavior changed; current-day inclusive start and genuine prior-day exclusion preserved. Scheduler explicitly disabled. Before/after cleanup is not responsible; replay at the original midnight clock now passes."
+  },
+  "correction": {
+    "file": "tests/passpilot-rules.integration.test.ts",
+    "workingBytesSha256": "d272d4033b9e10f6c798ae9752a98a5d4d32eeebc5bcdb0f2b47095a83b6ed3a",
+    "priorGitBlobSha256": "f87921870a9530a88d0c0c7a05c9fd17032a222fd46c5daed50e71438a19d08b",
+    "changes": "Shared fixture-only timestamp helper clamps recent intended same-day passes to school-local dayStart; only four relevant seeds changed. New deterministic test covers original failure, exact midnight, both DST transition dates and normal daytime. Actual previous-day/cancelled/expiry fixtures remain unchanged."
+  },
+  "verification": {
+    "finalCompleteSuite": {
+      "tests": 19,
+      "pass": 19,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "finalOriginalClockReplay": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "role": "Database-owner ordinary DB lane, exactly as this test declares; not a new restricted-role RLS proof",
+    "sourceBoundFiles": [
+      {
+        "file": "tests/passpilot-rules.integration.test.ts",
+        "sha256": "d272d4033b9e10f6c798ae9752a98a5d4d32eeebc5bcdb0f2b47095a83b6ed3a"
+      },
+      {
+        "file": "src/services/passpilotRules.ts",
+        "sha256": "f7930e53278833b799d4e344e19503801ac2b36d5e579329318de05ff5881689"
+      },
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "68f09287b1342c4df8dabd4b7ec0c228ab798f6498844d4ca8911fa08dc34b0f"
+      },
+      {
+        "file": "src/routes/passpilot/passes.ts",
+        "sha256": "0f87973ff7f161ff538e8439211a35e4839dbc5d3031928d8c89723061f60ddf"
+      },
+      {
+        "file": "src/app.ts",
+        "sha256": "4658469aa075ebe9a6ed73c01e5a4e93a0c70c96634054996cec993a3e71899f"
+      }
+    ],
+    "sourceHashesStable": true,
+    "ownedCleanupComplete": true,
+    "castRatchet": "pass; no baseline relaxed"
+  },
+  "commands": {
+    "shell": "PowerShell",
+    "cwd": "C:/Users/zinka/.codex/worktrees/release-stabilization-297/SchoolPilot",
+    "attempt01": "pwsh -NoProfile -File $env:TEMP/release297-passpilot-midnight-native-runner.ps1",
+    "attempt02": "pwsh -NoProfile -File $env:TEMP/release297-passpilot-midnight-native-runner-02.ps1",
+    "attempt03": "pwsh -NoProfile -File $env:TEMP/release297-passpilot-midnight-native-runner-02.ps1",
+    "fullSuite": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/passpilot-rules.integration.test.ts",
+    "clockReplay": "Same command with an external Date-only node:test mock import fixed at2026-10-03T07:00:15.000Z and pattern 'keeps intended current-day|denies PASSPILOT_RULE_DESTINATION_CAPACITY|denies PASSPILOT_RULE_ENCOUNTER|lets only administrators override|exports one student'",
+    "schemaRecipe": "Empty owned loopback-only PG container; node ./node_modules/drizzle-kit/bin.cjs push --force; node --import tsx tests/setup-passpilot-appointments-ci.ts. No shared database writes, disabled triggers, production access or build."
+  },
+  "runs": [
+    {
+      "id": "01",
+      "directory": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b",
+      "status": "Fixture setup failed before assertions: fully migrated donor carried the staff-identity contract. Owned cleanup complete.",
+      "schema": {
+        "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\schema.sql",
+        "sha256": "771790ba62cc3ef2e1d9fc9c8b07ed4fe8fc769f865bfe0305b8409d7e41af84",
+        "archived": false,
+        "reason": "Schema-only external file retained; CI-equivalent construction commands and setup logs are archived."
+      },
+      "results": {
+        "full": {
+          "tests": 19,
+          "pass": 0,
+          "fail": 0,
+          "cancelled": 19,
+          "skipped": 0
+        },
+        "midnight": {
+          "tests": 19,
+          "pass": 0,
+          "fail": 0,
+          "cancelled": 19,
+          "skipped": 0
+        }
+      }
+    },
+    {
+      "id": "02",
+      "directory": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500",
+      "status": "CI-equivalent schema;19/19 complete and5/5 midnight pass. storage.ts changed during full suite due concurrent ClassPilot work; retained as incremental, not final source-bound proof.",
+      "schema": {
+        "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\schema.sql",
+        "sha256": "d363cb128cca29e1d0a5cace09931ed6bbd6cfcc193c89ffc5e65c5168e3a090",
+        "archived": false,
+        "reason": "Schema-only external file retained; CI-equivalent construction commands and setup logs are archived."
+      },
+      "results": {
+        "full": {
+          "tests": 19,
+          "pass": 19,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        "midnight": {
+          "tests": 5,
+          "pass": 5,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      }
+    },
+    {
+      "id": "03",
+      "directory": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40",
+      "status": "CI-equivalent schema;19/19 complete and5/5 midnight pass; recorded source hashes stable for both tests; owned cleanup complete.",
+      "schema": {
+        "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\schema.sql",
+        "sha256": "66e054901a4c06f7dd0a3722709912222047870908f5b2d77cd0c1bf63999b89",
+        "archived": false,
+        "reason": "Schema-only external file retained; CI-equivalent construction commands and setup logs are archived."
+      },
+      "results": {
+        "full": {
+          "tests": 19,
+          "pass": 19,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        "midnight": {
+          "tests": 5,
+          "pass": 5,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      }
+    }
+  ],
+  "sanitization": "Credential-bearing URL userinfo, access keys, bearer tokens and named secret assignments redacted when present. Original external files preserved and raw hashes recorded.",
+  "limitations": [
+    "Application source is undergoing separately owned ClassPilot changes. Stable hashes refer to the recorded relevant files during final focused runs.",
+    "No merge/deploy/activation/Store publication occurred.",
+    "Full final-source CI remains required."
+  ],
+  "records": [
+    {
+      "file": "ci-bcb2-cross-tenant-failure.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-bcb2b33c-cross-tenant-job.log",
+      "rawSha256": "a94341d805f32d6d208ab3e3fa7d4b24a668c04f58b8de7ab3de50e664e4f8c2",
+      "sanitizedSha256": "a94341d805f32d6d208ab3e3fa7d4b24a668c04f58b8de7ab3de50e664e4f8c2",
+      "archiveSha256": "d0e54c0de4faefff656a6ea83590049684c163bf0d41f19d4ca3bc47db013244",
+      "rawBytes": 2580799,
+      "sanitizedBytes": 2580799,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-cleanup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\cleanup.log",
+      "rawSha256": "05a5cf257dc056b7e74f76ab0c7b03070cae94b277f039c24ddb4e930869bc14",
+      "sanitizedSha256": "05a5cf257dc056b7e74f76ab0c7b03070cae94b277f039c24ddb4e930869bc14",
+      "archiveSha256": "1ae340e395eb29d36201d4f7da4065086549ce9635b360b552e8dc912cf5dbc1",
+      "rawBytes": 42,
+      "sanitizedBytes": 42,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-container-create.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\container-create.log",
+      "rawSha256": "1ee180c69a64a2f82bc3fa68159e28285579f1d9cc3e6e20361988be8ceec79c",
+      "sanitizedSha256": "1ee180c69a64a2f82bc3fa68159e28285579f1d9cc3e6e20361988be8ceec79c",
+      "archiveSha256": "d4f2f65234bd3a5b8c1f0bb3ddacb8d614131e57b989b610948535a29e6dea6f",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-execution.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\execution.json",
+      "rawSha256": "9a93d096a48426cccbfb8e0a7acdc660240985f768c26d542796550dbd2ec861",
+      "sanitizedSha256": "9a93d096a48426cccbfb8e0a7acdc660240985f768c26d542796550dbd2ec861",
+      "archiveSha256": "b0bb82411dd2cc50ebc3279a1cbe1c8e873e103325b698da8dc7c8b8bb0bbc9d",
+      "rawBytes": 4911,
+      "sanitizedBytes": 4911,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-full-real-clock.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\full-real-clock.log",
+      "rawSha256": "73dcb2faccbcb6cf2591a9894d1fc108f3ea153fa9109d88817cb9bddd9757e7",
+      "sanitizedSha256": "73dcb2faccbcb6cf2591a9894d1fc108f3ea153fa9109d88817cb9bddd9757e7",
+      "archiveSha256": "bcff87c1ea8f4b90dd01b0e4162421e5cdd47968388469241963d98b5d11d599",
+      "rawBytes": 11433,
+      "sanitizedBytes": 11433,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-midnight-clock.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\midnight-clock.mjs",
+      "rawSha256": "40be150bd1e206e111194e2bf135b0cde3c378c65f6840fb1b0c91e0764c6ada",
+      "sanitizedSha256": "40be150bd1e206e111194e2bf135b0cde3c378c65f6840fb1b0c91e0764c6ada",
+      "archiveSha256": "6d0eb0e5df4829ddbbb7f5bfed406d1c215c622e615c4b81684cf4774fccbb11",
+      "rawBytes": 117,
+      "sanitizedBytes": 117,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-original-midnight-selection.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\original-midnight-selection.log",
+      "rawSha256": "70bc8139ffa56e6a503ac1f634927cd8a907b0e13f59dd6a9e99da26535f1129",
+      "sanitizedSha256": "70bc8139ffa56e6a503ac1f634927cd8a907b0e13f59dd6a9e99da26535f1129",
+      "archiveSha256": "9259ad4fe3da3b0f608ac82e6f9c794e37dd382b37c90c8168ce2a7ec8e2a900",
+      "rawBytes": 11618,
+      "sanitizedBytes": 11618,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-owner-role.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\owner-role.log",
+      "rawSha256": "ea446201cfa13ef9ba1ce37069da36ec12684a21ea150a28a56da5f389d730ca",
+      "sanitizedSha256": "ea446201cfa13ef9ba1ce37069da36ec12684a21ea150a28a56da5f389d730ca",
+      "archiveSha256": "a2edd2bb793d75fb25099edf1d17ba7ba846f5e16bceff651ae80fddd5aa4f6c",
+      "rawBytes": 26,
+      "sanitizedBytes": 26,
+      "sanitized": false
+    },
+    {
+      "file": "attempt01-restore.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-605f004abb1b\\restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-ci-appointment-contract.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\ci-appointment-contract.log",
+      "rawSha256": "14662109d6f74a866038597b07783972ad188942f041593495f2110f473a1ec0",
+      "sanitizedSha256": "14662109d6f74a866038597b07783972ad188942f041593495f2110f473a1ec0",
+      "archiveSha256": "eda2bc91d1813f5148a04fb8a0c4abaa96b42d543297c9717a9aa54ebd06a8c0",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-ci-schema-push.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\ci-schema-push.log",
+      "rawSha256": "a0fc2af1dea9174cfc18de4f383a92399d20822e58a340853ba1e5667c125cf4",
+      "sanitizedSha256": "a0fc2af1dea9174cfc18de4f383a92399d20822e58a340853ba1e5667c125cf4",
+      "archiveSha256": "d2893d98d0ca80ca4fc6e22a499821190f31c84549b5779bdc89bcb2308ec639",
+      "rawBytes": 315,
+      "sanitizedBytes": 315,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-cleanup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\cleanup.log",
+      "rawSha256": "e3adef74d95b608cf8baa46f5c1e467218240268e008356280f4306eb41a9576",
+      "sanitizedSha256": "e3adef74d95b608cf8baa46f5c1e467218240268e008356280f4306eb41a9576",
+      "archiveSha256": "2924bc0bf3ebec49db253d0c3d782d5660ae9f29207c33d3ef438452831e4819",
+      "rawBytes": 42,
+      "sanitizedBytes": 42,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-container-create.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\container-create.log",
+      "rawSha256": "9b22ae0414fbf5b9c9cc2aa0c6e4e5629268a115ef7217a53a5484c53dcbfeff",
+      "sanitizedSha256": "9b22ae0414fbf5b9c9cc2aa0c6e4e5629268a115ef7217a53a5484c53dcbfeff",
+      "archiveSha256": "ebd94b685ac8ec457e0bcda9287c6f9ce556105f475c20063c06b9d8c0a819c7",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-execution.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\execution.json",
+      "rawSha256": "ef0a47fcc2a6c084c32d09a1e1dda64c969e4c3c8a984074694620cd3125d119",
+      "sanitizedSha256": "ef0a47fcc2a6c084c32d09a1e1dda64c969e4c3c8a984074694620cd3125d119",
+      "archiveSha256": "c7dc31d83c4e7a762de95d0650781b4e0b47b3dfeb469ae55de40acc282da449",
+      "rawBytes": 8705,
+      "sanitizedBytes": 8705,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-full-real-clock.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\full-real-clock.log",
+      "rawSha256": "72c3a87d5b4c7d2ade0dee6b6f437bcc71bb8eb508fa9ae89a648c8e5f7ddf14",
+      "sanitizedSha256": "72c3a87d5b4c7d2ade0dee6b6f437bcc71bb8eb508fa9ae89a648c8e5f7ddf14",
+      "archiveSha256": "ad62d5e0c5b6162d19d57701415c9055fd0236eb53b7c9c4627a23fa4012b91a",
+      "rawBytes": 5662,
+      "sanitizedBytes": 5662,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-midnight-clock.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\midnight-clock.mjs",
+      "rawSha256": "40be150bd1e206e111194e2bf135b0cde3c378c65f6840fb1b0c91e0764c6ada",
+      "sanitizedSha256": "40be150bd1e206e111194e2bf135b0cde3c378c65f6840fb1b0c91e0764c6ada",
+      "archiveSha256": "6d0eb0e5df4829ddbbb7f5bfed406d1c215c622e615c4b81684cf4774fccbb11",
+      "rawBytes": 117,
+      "sanitizedBytes": 117,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-original-midnight-selection.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\original-midnight-selection.log",
+      "rawSha256": "b1cf1fd55efe3fb6e82c9aa712003c6fbef66b230990e8fbdc7435f1b485933b",
+      "sanitizedSha256": "b1cf1fd55efe3fb6e82c9aa712003c6fbef66b230990e8fbdc7435f1b485933b",
+      "archiveSha256": "f12fcd21eb3c1b8550ab87703cc9deaff0c180fbcdf17a47dd4807f0386756fc",
+      "rawBytes": 2204,
+      "sanitizedBytes": 2204,
+      "sanitized": false
+    },
+    {
+      "file": "attempt02-owner-role.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-8a13d466f500\\owner-role.log",
+      "rawSha256": "a1aee16ebcb0d865f138c4e0950b2e01c870260345c59701b9e081706b45b378",
+      "sanitizedSha256": "a1aee16ebcb0d865f138c4e0950b2e01c870260345c59701b9e081706b45b378",
+      "archiveSha256": "1d0d0bdb998469fd5a9d1d2d85dd43b341b2f1c8866abbdb8de290e5fc3bc148",
+      "rawBytes": 26,
+      "sanitizedBytes": 26,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-ci-appointment-contract.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\ci-appointment-contract.log",
+      "rawSha256": "14662109d6f74a866038597b07783972ad188942f041593495f2110f473a1ec0",
+      "sanitizedSha256": "14662109d6f74a866038597b07783972ad188942f041593495f2110f473a1ec0",
+      "archiveSha256": "eda2bc91d1813f5148a04fb8a0c4abaa96b42d543297c9717a9aa54ebd06a8c0",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-ci-schema-push.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\ci-schema-push.log",
+      "rawSha256": "a0fc2af1dea9174cfc18de4f383a92399d20822e58a340853ba1e5667c125cf4",
+      "sanitizedSha256": "a0fc2af1dea9174cfc18de4f383a92399d20822e58a340853ba1e5667c125cf4",
+      "archiveSha256": "d2893d98d0ca80ca4fc6e22a499821190f31c84549b5779bdc89bcb2308ec639",
+      "rawBytes": 315,
+      "sanitizedBytes": 315,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-cleanup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\cleanup.log",
+      "rawSha256": "e9616d869ef8c2096aca76cec1e23839717f3f9ee91b79a10b92b8f569c15e44",
+      "sanitizedSha256": "e9616d869ef8c2096aca76cec1e23839717f3f9ee91b79a10b92b8f569c15e44",
+      "archiveSha256": "aa7a19469595e088c9cf624bf1610b50f84caea75b544b209d7ee1952ac7191c",
+      "rawBytes": 42,
+      "sanitizedBytes": 42,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-container-create.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\container-create.log",
+      "rawSha256": "6b232c9c7ed33e5cafc37c25e1d2e1bf7cc57ae2df1e271d7dabf48fc2b456f5",
+      "sanitizedSha256": "6b232c9c7ed33e5cafc37c25e1d2e1bf7cc57ae2df1e271d7dabf48fc2b456f5",
+      "archiveSha256": "fd353d7226231b819ba8ebe69318e6be2e3cc835458b651b8c9cde1838211200",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-execution.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\execution.json",
+      "rawSha256": "f89963fb858bfeccfb8ebe60bbe3c6a02fd40a55dda975f533c2a92d2354273f",
+      "sanitizedSha256": "f89963fb858bfeccfb8ebe60bbe3c6a02fd40a55dda975f533c2a92d2354273f",
+      "archiveSha256": "1736ded13d3ee3ad301c883028562fd550ac12e3342e3b40be891f06bbec45d1",
+      "rawBytes": 8705,
+      "sanitizedBytes": 8705,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-full-real-clock.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\full-real-clock.log",
+      "rawSha256": "f10da3dd657a61ba919a7c7c1da3d4d51536abb3983dfb0c9f9cf1ae02a1f351",
+      "sanitizedSha256": "f10da3dd657a61ba919a7c7c1da3d4d51536abb3983dfb0c9f9cf1ae02a1f351",
+      "archiveSha256": "c3057e1dfb9a0d927ef30a40835accebbf95f214270e721e7a917a5f69eb5d20",
+      "rawBytes": 5661,
+      "sanitizedBytes": 5661,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-midnight-clock.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\midnight-clock.mjs",
+      "rawSha256": "40be150bd1e206e111194e2bf135b0cde3c378c65f6840fb1b0c91e0764c6ada",
+      "sanitizedSha256": "40be150bd1e206e111194e2bf135b0cde3c378c65f6840fb1b0c91e0764c6ada",
+      "archiveSha256": "6d0eb0e5df4829ddbbb7f5bfed406d1c215c622e615c4b81684cf4774fccbb11",
+      "rawBytes": 117,
+      "sanitizedBytes": 117,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-original-midnight-selection.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\original-midnight-selection.log",
+      "rawSha256": "51d9e2afa226fc32ffd65be26cdc580436bfcf70e88aea01b2b93f9360ee2b4b",
+      "sanitizedSha256": "51d9e2afa226fc32ffd65be26cdc580436bfcf70e88aea01b2b93f9360ee2b4b",
+      "archiveSha256": "ffb6acf8f456086bfbcd7b0e994fb5f0eb69843b506abe791a5713386a124e37",
+      "rawBytes": 2201,
+      "sanitizedBytes": 2201,
+      "sanitized": false
+    },
+    {
+      "file": "attempt03-owner-role.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-fe53df83aa40\\owner-role.log",
+      "rawSha256": "545f035f84d60cb8f4b430f3d96617689fc9cbf3f0a48f2c8ac4ee35317077eb",
+      "sanitizedSha256": "545f035f84d60cb8f4b430f3d96617689fc9cbf3f0a48f2c8ac4ee35317077eb",
+      "archiveSha256": "b9dfc408fe3b0938b01c34058eea0522b83b654cd1152439ed2eb0a7e5116cc3",
+      "rawBytes": 26,
+      "sanitizedBytes": 26,
+      "sanitized": false
+    },
+    {
+      "file": "release297-passpilot-midnight-native-runner.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-runner.ps1",
+      "rawSha256": "bffaecb221f05e23a6bf5f9355d3f63b57baa7f13e7b04f45b617ccc4c416d89",
+      "sanitizedSha256": "a33a7307d4b7eb16d3056a4fa49a9394a1c98f19ca465649f209c98f294df16d",
+      "archiveSha256": "6ec01941cc47016fbf0b3887b3eb6eb1d7f55f5f158beaaad2b93a432c8aa94c",
+      "rawBytes": 6925,
+      "sanitizedBytes": 6763,
+      "sanitized": true
+    },
+    {
+      "file": "release297-passpilot-midnight-native-runner-02.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-runner-02.ps1",
+      "rawSha256": "df8e29b92735277156dfb2c5930559efc21cfe4164b6cd44ab1a19e42c49023e",
+      "sanitizedSha256": "d6b2cd14dd855929fcf1cc4ecb8e9cef24a640f60f1a0029251397db2e4edb86",
+      "archiveSha256": "a19a0e1fddbb92192f88c8dd21222b9bebb4fb7416c7d39f8ef112e4da25a6f5",
+      "rawBytes": 7123,
+      "sanitizedBytes": 6961,
+      "sanitized": true
+    },
+    {
+      "file": "release297-passpilot-midnight-native-runner-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-runner-01.log",
+      "rawSha256": "826f0854613a40cdff7f1324cd6bfd5188fe8f691688ae539a785402c7c4dfef",
+      "sanitizedSha256": "826f0854613a40cdff7f1324cd6bfd5188fe8f691688ae539a785402c7c4dfef",
+      "archiveSha256": "17f85c3b67109e730af43b0b6089ff910e6785d83a181bad022df2d4debc3742",
+      "rawBytes": 238,
+      "sanitizedBytes": 238,
+      "sanitized": false
+    },
+    {
+      "file": "release297-passpilot-midnight-native-runner-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-runner-02.log",
+      "rawSha256": "1b0ec1c56004ead6ed7cacb249dec0e376ba6cdb1a1a3c5c11fd1bebbe90813e",
+      "sanitizedSha256": "1b0ec1c56004ead6ed7cacb249dec0e376ba6cdb1a1a3c5c11fd1bebbe90813e",
+      "archiveSha256": "0b7e0e44b473a35420231ffc815cb9570b1b0e073922703cb8fad47adf35eeaf",
+      "rawBytes": 325,
+      "sanitizedBytes": 325,
+      "sanitized": false
+    },
+    {
+      "file": "release297-passpilot-midnight-native-runner-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-native-runner-03.log",
+      "rawSha256": "f66f6df6f8e4b3fc4d35c64056097b1539d122838b27f6676d7cc168bc1866dc",
+      "sanitizedSha256": "f66f6df6f8e4b3fc4d35c64056097b1539d122838b27f6676d7cc168bc1866dc",
+      "archiveSha256": "0c751ccccc0f047d889291c285aac780f6ea866b55e74994cb39ec14f3897898",
+      "rawBytes": 325,
+      "sanitizedBytes": 325,
+      "sanitized": false
+    },
+    {
+      "file": "release297-passpilot-midnight-cast-check.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-passpilot-midnight-cast-check.log",
+      "rawSha256": "10b2c5fbb2b063582a4281c1f355089c2d515ad6325804e5bea911ee67cf60b8",
+      "sanitizedSha256": "10b2c5fbb2b063582a4281c1f355089c2d515ad6325804e5bea911ee67cf60b8",
+      "archiveSha256": "82fe20e35a8b4570297f431925fdcf44634b5bb58381535127c29bf14dfa2ebc",
+      "rawBytes": 91,
+      "sanitizedBytes": 91,
+      "sanitized": false
+    },
+    {
+      "file": "fixture-correction.patch.gz",
+      "originalPath": "git diff -- tests/passpilot-rules.integration.test.ts",
+      "rawSha256": "83e3b41afba755005a662a0e75f384b08be437864dcf68776e4dcd86b80980d0",
+      "sanitizedSha256": "83e3b41afba755005a662a0e75f384b08be437864dcf68776e4dcd86b80980d0",
+      "archiveSha256": "ee65c59ca6d4d25dd28b5e067305fc3c9a101b62e7ca73b2874b78c20ebd6718",
+      "rawBytes": 5301,
+      "sanitizedBytes": 5301,
+      "sanitized": false
+    }
+  ]
+}

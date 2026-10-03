@@ -4,6 +4,17 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
+The latest stabilization work remains in #603. [CI at `bcb2b33c`](release-evidence/release-297/usage-contention/ci-bcb2b33c.json)
+records 15 passing jobs and two failed jobs; both failures have retained local
+repairs. [Combined attempt08](release-evidence/release-297/usage-contention/load-combined-08/manifest.json)
+and the [subsequent ingestion diagnostic](release-evidence/release-297/usage-contention/ingest-cpu-bcb2b33c-01/manifest.json)
+remain failed capacity evidence. The latest [owned inbox correction](release-evidence/release-297/usage-contention/heartbeat-owned-inbox/manifest.json)
+has focused and owner/restricted-role regression evidence; combined capacity and
+new-head CI remain required. The exact compatible fallback is now
+`5c01944ed1afb4241e270469c6477121bf48cd84`, with its own
+[local image and scan evidence](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json).
+Neither candidate nor fallback has been deployed by this preparation work.
+
 The [October 2, 22:59 UTC review-container observation](release-evidence/release-297/usage-contention/pr-review-checkpoint.json)
 records SchoolPilot #603 open/draft at `08802d020a3c51beea504140f923126ab518aac6`
 with 20 successful reported checks. That source predates the current Usage

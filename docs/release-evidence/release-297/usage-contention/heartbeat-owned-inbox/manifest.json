@@ -1,0 +1,843 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T07:40:54.926Z",
+  "scope": "Heartbeat-only durable inbox recovery within the existing final authority transaction. No production changes or capacity acceptance claim.",
+  "baselineCommit": "bcb2b33c",
+  "worktreeDirty": true,
+  "topology": "Pinned local Docker named-pipe endpoint, exact-owned loopback PostgreSQL fixtures restored from Combined07 schema-only dump. Native source executed with tsx; no shared dist rebuild. First runner failed before container creation; subsequent four containers removed with exact ownership checks. Raw originals retained outside repository.",
+  "sourceBinding": {
+    "finalNativeBefore": [
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "033c3788121445882ed3b62ada1dde7425c722aa95be6f8dfae4222d48eae217"
+      },
+      {
+        "file": "src/routes/classpilot/devices.ts",
+        "sha256": "f44cb63d7f1482c4d4cf04f3661fc7d4c32c549b04c6c74930368daa34ae0365"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-authority.integration.test.ts",
+        "sha256": "623e924c5d237eea9eb39fcbd0c3601b807e3565f2e57e11e0b675b78a775655"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-authority.test.ts",
+        "sha256": "880324d0413444940c7bd48196a74f8f44bc454d07945c278da7e2562384896f"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+        "sha256": "b4c11a7ab3fc5126422f534f92a3776cbbaa5facd41be78abc681de9585d7411"
+      },
+      {
+        "file": "scripts/run-test-lane.mjs",
+        "sha256": "b4692eb82b2203d6bfa83d63f64bfcf8697dafefdc1b5a44baecc90b955c05c3"
+      }
+    ],
+    "finalNativeAfter": [
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "033c3788121445882ed3b62ada1dde7425c722aa95be6f8dfae4222d48eae217"
+      },
+      {
+        "file": "src/routes/classpilot/devices.ts",
+        "sha256": "f44cb63d7f1482c4d4cf04f3661fc7d4c32c549b04c6c74930368daa34ae0365"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-authority.integration.test.ts",
+        "sha256": "623e924c5d237eea9eb39fcbd0c3601b807e3565f2e57e11e0b675b78a775655"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-authority.test.ts",
+        "sha256": "880324d0413444940c7bd48196a74f8f44bc454d07945c278da7e2562384896f"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+        "sha256": "b4c11a7ab3fc5126422f534f92a3776cbbaa5facd41be78abc681de9585d7411"
+      },
+      {
+        "file": "scripts/run-test-lane.mjs",
+        "sha256": "b4692eb82b2203d6bfa83d63f64bfcf8697dafefdc1b5a44baecc90b955c05c3"
+      }
+    ],
+    "unchanged": true,
+    "finalReviewedSources": [
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "033c3788121445882ed3b62ada1dde7425c722aa95be6f8dfae4222d48eae217"
+      },
+      {
+        "file": "src/routes/classpilot/devices.ts",
+        "sha256": "f44cb63d7f1482c4d4cf04f3661fc7d4c32c549b04c6c74930368daa34ae0365"
+      },
+      {
+        "file": "src/services/usageCapacityDiagnostics.ts",
+        "sha256": "02e233240845a03eba42ce4fc546439df0de655627e0566253d411065463a84e"
+      },
+      {
+        "file": "scripts/run-test-lane.mjs",
+        "sha256": "b4692eb82b2203d6bfa83d63f64bfcf8697dafefdc1b5a44baecc90b955c05c3"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-authority.test.ts",
+        "sha256": "880324d0413444940c7bd48196a74f8f44bc454d07945c278da7e2562384896f"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-authority.integration.test.ts",
+        "sha256": "623e924c5d237eea9eb39fcbd0c3601b807e3565f2e57e11e0b675b78a775655"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-inbox-route.test.ts",
+        "sha256": "56b8a570e5656a4ccf29f7d63bc9f186030270de7d733bfff9611ec971c90cb9"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-foreground-route.test.ts",
+        "sha256": "5b4603553d1821ee825a1581009d56261a492e718da6e7b072b762ec6e6743e3"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+        "sha256": "b4c11a7ab3fc5126422f534f92a3776cbbaa5facd41be78abc681de9585d7411"
+      },
+      {
+        "file": "tests/classpilot-command-hot-path.test.ts",
+        "sha256": "00af8c9e17e06289a9cdcec10e514083d4945b10ab4ee153471d4b7a3dbd08fd"
+      },
+      {
+        "file": "tests/classpilot-late-signin-contract.test.ts",
+        "sha256": "e53cb444a73b31c9363885f7a7d58b46a6c4ae341176a20f27520c8d0982e74f"
+      },
+      {
+        "file": "tests/usage-capacity-diagnostics.test.ts",
+        "sha256": "47da0317e31a3de5e01b37482d7d2e955a899913ec31eb9ae816139b2dbf0425"
+      },
+      {
+        "file": "scripts/load/usage/release-enabled-profile.mjs",
+        "sha256": "2ea7b62396a63d6729eb20da39c5be72c2e0ae32ead2e6b321f12ab567d3062e"
+      },
+      {
+        "file": "scripts/load/usage/release-enabled-profile.test.mjs",
+        "sha256": "870d56e24cae4a22020291e133b3ab221da0ba899ab00cedf9ee5e30a64e56dd"
+      }
+    ],
+    "note": "Two source-contract selectors and frontend-ordering fixture were adapted to the new callback/owned inbox after application code froze. Parent combined-check11 retained passing build/types/casts; final unit12 follows the narrowly corrected recovery-route VM context and additional native test cases. Full infrastructure proof belongs to parent check11."
+  },
+  "nativeAttempts": [
+    {
+      "attempt": 1,
+      "executed": false,
+      "reason": "Runner snapshot referenced a focused test not yet created; failed before any fixture was created."
+    },
+    {
+      "attempt": 2,
+      "owner": {
+        "pass": 2,
+        "fail": 11
+      },
+      "restricted": {
+        "pass": 2,
+        "fail": 11
+      },
+      "reason": "The private-chat sticky latch correctly rejected the fixture resetting private_chat_lifecycle_required=false after adoption. Product behavior was preserved; latch test moved last. TAP counts include failed enclosing parent."
+    },
+    {
+      "attempt": 3,
+      "owner": {
+        "pass": 13,
+        "fail": 0,
+        "skip": 0
+      },
+      "restricted": {
+        "pass": 13,
+        "fail": 0,
+        "skip": 0
+      }
+    },
+    {
+      "attempt": 4,
+      "owner": {
+        "pass": 16,
+        "fail": 0,
+        "skip": 0
+      },
+      "restricted": {
+        "pass": 16,
+        "fail": 0,
+        "skip": 0
+      },
+      "restrictedPosture": "Asserted current role is non-super/non-BYPASSRLS and all ten exercised tenant relations have enabled forced RLS."
+    },
+    {
+      "attempt": 5,
+      "owner": {
+        "pass": 19,
+        "fail": 0,
+        "skip": 0
+      },
+      "restricted": {
+        "pass": 19,
+        "fail": 0,
+        "skip": 0
+      },
+      "note": "Adds actual command-claim rollback on final mandatory fence and COMMIT failures, and durable required-preparation preservation through optional post-claim SQL rollback."
+    }
+  ],
+  "focused": [
+    {
+      "log": "release297-inbox-route-01.log",
+      "pass": 12,
+      "fail": 0
+    },
+    {
+      "log": "release297-inbox-route-02.log",
+      "pass": 22,
+      "fail": 0,
+      "note": "Includes original foreground9 plus inbox13."
+    },
+    {
+      "log": "release297-inbox-authority-01.log",
+      "pass": 7,
+      "fail": 0
+    },
+    {
+      "log": "release297-inbox-focused-01.log",
+      "pass": 44,
+      "fail": 0,
+      "skip": 0
+    },
+    {
+      "log": "release297-inbox-focused-02.log",
+      "pass": 48,
+      "fail": 0,
+      "skip": 0
+    },
+    {
+      "log": "release297-inbox-contracts-01.log",
+      "pass": 50,
+      "fail": 2,
+      "note": "Two source-selector expectations referenced separate inbox recovery or old two-argument callback; product behavior tests passed."
+    },
+    {
+      "log": "release297-inbox-contracts-02.log",
+      "pass": 52,
+      "fail": 0,
+      "skip": 0
+    },
+    {
+      "log": "release297-inbox-capacity-gate-01.log",
+      "pass": 20,
+      "fail": 0
+    }
+  ],
+  "types": {
+    "productionNoEmit": "pass",
+    "testTypes": "failed against stale dist",
+    "reason": "Exactly two TS2322 diagnostics compared new source callback arity to old dist declarations in unrelated native fixtures. Raw expanded diagnostics retained; no casts/baseline changes. Parent fresh build resolved these stale declarations in check11; final types and full unit repeat12 remain separately recorded."
+  },
+  "measuredOperation": {
+    "oldStatements": 33,
+    "newStatements": 27,
+    "oldPhysicalCheckouts": 2,
+    "newPhysicalCheckouts": 1,
+    "lanes": [
+      "owner",
+      "restricted"
+    ],
+    "capacityAccepted": false,
+    "note": "Same durable announcement inbox result and exact final heartbeat checks. Includes physical tenant setup/cleanup. No throughput extrapolation."
+  },
+  "coverage": [
+    "Generic public inbox helper keeps its transaction, entitlement/student/binding checks and transaction-clock semantics; heartbeat reuses only its already-owned authority core.",
+    "Optional savepoint after foreground awaits uses fresh clock for active supervision, legacy five-minute expiry and command expiry; mandatory exact binding/entitlement fence remains immediately before synchronous HTTP.",
+    "Native tests cover later message insertion, competing ACK blocked until owned recovery, failed/completed ACK behavior, unavailable-only claim,50-row/newest-first and500-exclusion bounds, school/student/session/device isolation and immutable private hard-off legacy suppression while announcements remain available.",
+    "Optional SQL failure is counted, rolls back only optional work and never reports checked=true. Savepoint rollback/release and COMMIT failures propagate. Actual claimed unavailable command rows roll back on final-fence/COMMIT errors; a required-preparation sentinel remains committed while optional claim failure rolls back only its savepoint. Phase acceptance requires zero unexpected optional inbox failures.",
+    "Process-local delivery cache advances only after tenant COMMIT/RESET/release. Finish and close are buffered, early abort state is inspected, later student/session and newer cache checks are protected. Command IDs are never legacy exclusions."
+  ],
+  "limitations": [
+    "Native transport callbacks are controlled synthetic operations, not live Chromium/Redis acceptance. Existing foreground ordering9 and ownership13 focused cases remain passing.",
+    "Final required full6000-heartbeat/64-report cold combined runs remain outstanding. Earlier capacity failures remain failures.",
+    "Windows outer archive/runner shell can return0 after printing inner nonzero results; ownerExit/restrictedExit and TAP counts are authoritative."
+  ],
+  "artifacts": [
+    {
+      "name": "native-1-runner.log.gz",
+      "rawName": "native-1-runner.log",
+      "rawSha256": "dd9bb195cb561983b277c0ea7abaf45c16fa18bc3d0439de94e6d029d8e01d79",
+      "rawBytes": 627,
+      "sanitizedSha256": "dd9bb195cb561983b277c0ea7abaf45c16fa18bc3d0439de94e6d029d8e01d79",
+      "sanitizedBytes": 627,
+      "gzipSha256": "e55a8d15aa9be75286d0b8a9e6209e78819f0399f2ef26f30ae632677490dfa3",
+      "gzipBytes": 359,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-cleanup.log.gz",
+      "rawName": "native-2-cleanup.log",
+      "rawSha256": "ada86f84346660eac28614063257d7c4062646c7dabb4868f00f4f8c2b50f5fb",
+      "rawBytes": 80,
+      "sanitizedSha256": "95500d501039c85f139f90b56f872cc3e6d58fb58bdf36052925c3c09da8d4f1",
+      "sanitizedBytes": 84,
+      "gzipSha256": "221d011079f4b2b7796c32bbaaae7445b09ba853bc47eed53bd1361681bf14eb",
+      "gzipBytes": 83,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-container-create.log.gz",
+      "rawName": "native-2-container-create.log",
+      "rawSha256": "d9616be751ea2c26c8d7de3cb685822ff33efe8d1e70cbc1f7df0537699cecde",
+      "rawBytes": 134,
+      "sanitizedSha256": "3399411c8c637fe7997c1aee2fb725c534941406bfa4ff9806785e6f15b6b707",
+      "sanitizedBytes": 138,
+      "gzipSha256": "5aa7f3d738bf3a76528d8b2c98cc19bd17f9d201e2bbb53afea15997eac520a5",
+      "gzipBytes": 103,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-execution.json.gz",
+      "rawName": "native-2-execution.json",
+      "rawSha256": "bae4e0eeab87242ec4c02c3cd1d88503611ad1b1413882cc72d5c36bf956743f",
+      "rawBytes": 520,
+      "sanitizedSha256": "bae4e0eeab87242ec4c02c3cd1d88503611ad1b1413882cc72d5c36bf956743f",
+      "sanitizedBytes": 520,
+      "gzipSha256": "8eb229ec232ae4d9ab700daabf253865c78553f0f79f33a35ef8d65d95214147",
+      "gzipBytes": 338,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-owner.log.gz",
+      "rawName": "native-2-owner.log",
+      "rawSha256": "26fc9e5916110f9105457d4320a44cb3087133147bd719d9b3034ca3b4c627e4",
+      "rawBytes": 41966,
+      "sanitizedSha256": "065d75f2fefe23e4f8d13478f1af03f53b7a708b4b90ebc72b7675ed6e46522f",
+      "sanitizedBytes": 41970,
+      "gzipSha256": "469461d399baa4e57ef40e6f63a4e16f737e6c51f00dca2a7aa188cc332ad4ff",
+      "gzipBytes": 2281,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-restore.log.gz",
+      "rawName": "native-2-restore.log",
+      "rawSha256": "5dbfdbfc54f7fc33e1e0a2d5295ee9c8e5bd763c8e1e1c8c15efe7c25d8c5dc8",
+      "rawBytes": 41826,
+      "sanitizedSha256": "65c1384602f3f1c6f9f72dcffcbe3a277cd609414958fdde6ca0a17281b001a9",
+      "sanitizedBytes": 41830,
+      "gzipSha256": "824cef85f4114d47920959fac244fd391e9ff3b0f3490c7ddc6bf3ee3835880c",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-restricted-role.log.gz",
+      "rawName": "native-2-restricted-role.log",
+      "rawSha256": "c66966415e7c69b8cf553f2b3410397f12033750f209b039c060f142b0540369",
+      "rawBytes": 70,
+      "sanitizedSha256": "db5821cfe8d67d0e1ba883ba6d5ccb724274bdbac4fb9ed0f4195c5baf0ab25c",
+      "sanitizedBytes": 74,
+      "gzipSha256": "a5b0eeb8feee13a152a7c66d8febed9b2a530b4f4dc0abf993f205144665c13c",
+      "gzipBytes": 63,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-restricted.log.gz",
+      "rawName": "native-2-restricted.log",
+      "rawSha256": "3446379657651191191c0e62f79894f1b327f6071baa1686d47819fcc5e71db6",
+      "rawBytes": 41942,
+      "sanitizedSha256": "fb688ea9fcb79a1db6b0e14f434ee122592f71b4fc68081fd9118b21d2b2e002",
+      "sanitizedBytes": 41946,
+      "gzipSha256": "2bdd5e7bb8635587dd30d182a1e52f7382affc529f2d815b8587236d80418edf",
+      "gzipBytes": 2266,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-source-after.json.gz",
+      "rawName": "native-2-source-after.json",
+      "rawSha256": "efd9cc42ec18ef49fce9707e549042fc23484cb775e71636cb5bcb6579ff24d9",
+      "rawBytes": 996,
+      "sanitizedSha256": "efd9cc42ec18ef49fce9707e549042fc23484cb775e71636cb5bcb6579ff24d9",
+      "sanitizedBytes": 996,
+      "gzipSha256": "34af41d9eea2fd597b0b0613bedbbb2286b4a72ef08df079b8c8e2a48293114a",
+      "gzipBytes": 448,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-source-before.json.gz",
+      "rawName": "native-2-source-before.json",
+      "rawSha256": "efd9cc42ec18ef49fce9707e549042fc23484cb775e71636cb5bcb6579ff24d9",
+      "rawBytes": 996,
+      "sanitizedSha256": "efd9cc42ec18ef49fce9707e549042fc23484cb775e71636cb5bcb6579ff24d9",
+      "sanitizedBytes": 996,
+      "gzipSha256": "34af41d9eea2fd597b0b0613bedbbb2286b4a72ef08df079b8c8e2a48293114a",
+      "gzipBytes": 448,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-2-runner.log.gz",
+      "rawName": "native-2-runner.log",
+      "rawSha256": "c307428e5997041d14590652364e6c5523e7b9d53e6acfbf6135bc77d9ecdd55",
+      "rawBytes": 133,
+      "sanitizedSha256": "990cc697ffff0564a19d0b8899d5c75ad6b446440a8dbe3e6e00c38cde6b383c",
+      "sanitizedBytes": 101,
+      "gzipSha256": "a8f02d458efbdab334118a2dc5e31a7a173bad0e1c054f21f8ee1415f30becac",
+      "gzipBytes": 116,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-cleanup.log.gz",
+      "rawName": "native-3-cleanup.log",
+      "rawSha256": "58c00cff834381269aa48a8003c5906bbf45704c5c7696c65e8527885abf2a33",
+      "rawBytes": 80,
+      "sanitizedSha256": "7203855d29e4312a39d42dc3890eefe65d1a7f4c219df3bb60257c4761fbd472",
+      "sanitizedBytes": 84,
+      "gzipSha256": "141608bcb27ee1c3f3a398c359748797e702036c7977f9159bbdbabd0f265855",
+      "gzipBytes": 86,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-container-create.log.gz",
+      "rawName": "native-3-container-create.log",
+      "rawSha256": "e13a6e66a27370c55cf977370506872053afa78b1a0799942e9cca0396c68b03",
+      "rawBytes": 134,
+      "sanitizedSha256": "b15d6ddb404ce35013ffee45289fb61db4aa837a0604e133f7e6a9d981bf7f37",
+      "sanitizedBytes": 138,
+      "gzipSha256": "4bba313968ac9258084205159d34fa2169051bb6f9ed3a15cb02248d4ddbaf1c",
+      "gzipBytes": 103,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-execution.json.gz",
+      "rawName": "native-3-execution.json",
+      "rawSha256": "73efaf3b33f405f9975c9e2b6306302179e9452bfd2dc91a30f93a2e382ee71d",
+      "rawBytes": 520,
+      "sanitizedSha256": "73efaf3b33f405f9975c9e2b6306302179e9452bfd2dc91a30f93a2e382ee71d",
+      "sanitizedBytes": 520,
+      "gzipSha256": "f5bcd91f0f89c09bac79a2fb136be23706555196371c8294fdae5cde3f83d441",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-owner.log.gz",
+      "rawName": "native-3-owner.log",
+      "rawSha256": "09533c5157271dbddf3ec34611e42616738871dd3021bfa5ce6eaf705aed0394",
+      "rawBytes": 7514,
+      "sanitizedSha256": "ce89fdbce667a5b15b251ec99b3ed46fa2582b6fdfde49626c84396dbd372821",
+      "sanitizedBytes": 7518,
+      "gzipSha256": "f1110890e4f18d83081eaa7075c2d9077a5ca97a5cbabfb5926a85cedc7936c6",
+      "gzipBytes": 1212,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-restore.log.gz",
+      "rawName": "native-3-restore.log",
+      "rawSha256": "5dbfdbfc54f7fc33e1e0a2d5295ee9c8e5bd763c8e1e1c8c15efe7c25d8c5dc8",
+      "rawBytes": 41826,
+      "sanitizedSha256": "65c1384602f3f1c6f9f72dcffcbe3a277cd609414958fdde6ca0a17281b001a9",
+      "sanitizedBytes": 41830,
+      "gzipSha256": "824cef85f4114d47920959fac244fd391e9ff3b0f3490c7ddc6bf3ee3835880c",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-restricted-role.log.gz",
+      "rawName": "native-3-restricted-role.log",
+      "rawSha256": "c66966415e7c69b8cf553f2b3410397f12033750f209b039c060f142b0540369",
+      "rawBytes": 70,
+      "sanitizedSha256": "db5821cfe8d67d0e1ba883ba6d5ccb724274bdbac4fb9ed0f4195c5baf0ab25c",
+      "sanitizedBytes": 74,
+      "gzipSha256": "a5b0eeb8feee13a152a7c66d8febed9b2a530b4f4dc0abf993f205144665c13c",
+      "gzipBytes": 63,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-restricted.log.gz",
+      "rawName": "native-3-restricted.log",
+      "rawSha256": "353b34aff836e6abcd6b9cc59a9e1b4c921c91acfeac9664705b68ba7e57b5c1",
+      "rawBytes": 7480,
+      "sanitizedSha256": "53c137bff2debc18a8aa4a35735d3ffdd9e77870c7aa513e4c458a12b745c627",
+      "sanitizedBytes": 7484,
+      "gzipSha256": "acb32a9c0ad696ce38058abbfc501642f9f294f489106b019231668721aacdab",
+      "gzipBytes": 1198,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-source-after.json.gz",
+      "rawName": "native-3-source-after.json",
+      "rawSha256": "163894a9d38e93717ce693a5cc1e3069d61bd7f6421ab2d179b6ee7df86abd78",
+      "rawBytes": 996,
+      "sanitizedSha256": "163894a9d38e93717ce693a5cc1e3069d61bd7f6421ab2d179b6ee7df86abd78",
+      "sanitizedBytes": 996,
+      "gzipSha256": "5b502bd0a4365dcaee0a4aab9a88e2be46f52c9aa8f5440a8923f518166353c7",
+      "gzipBytes": 450,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-source-before.json.gz",
+      "rawName": "native-3-source-before.json",
+      "rawSha256": "163894a9d38e93717ce693a5cc1e3069d61bd7f6421ab2d179b6ee7df86abd78",
+      "rawBytes": 996,
+      "sanitizedSha256": "163894a9d38e93717ce693a5cc1e3069d61bd7f6421ab2d179b6ee7df86abd78",
+      "sanitizedBytes": 996,
+      "gzipSha256": "5b502bd0a4365dcaee0a4aab9a88e2be46f52c9aa8f5440a8923f518166353c7",
+      "gzipBytes": 450,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-3-runner.log.gz",
+      "rawName": "native-3-runner.log",
+      "rawSha256": "9c58ccef5abeae874bbfc8726ce07eb5f9d9d55357c48b0615e4be5d78f11866",
+      "rawBytes": 133,
+      "sanitizedSha256": "65772ed07dc3e49568a26b1a91e12c3f80e54bfd2877477d56676b8cbaebbe92",
+      "sanitizedBytes": 101,
+      "gzipSha256": "6daa4ddd28f1fdc6a545209674ea8ebd8b49b288b6fef506ec3ea4c2b2896884",
+      "gzipBytes": 116,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-cleanup.log.gz",
+      "rawName": "native-4-cleanup.log",
+      "rawSha256": "0b7917ecf44562c2262a00e38befc176b139d6b1157ea84e7fab6c8d12b350d7",
+      "rawBytes": 80,
+      "sanitizedSha256": "38932511318b1c8a449c7630bcc81e3ac65ca970c9dc122d41781f9f8a88ca1a",
+      "sanitizedBytes": 84,
+      "gzipSha256": "6b9dd7845e1f220971ce1d60c40ffad183e42f9befbcdf28f00e0cebb947ff85",
+      "gzipBytes": 84,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-container-create.log.gz",
+      "rawName": "native-4-container-create.log",
+      "rawSha256": "75589be29cbfb7ba7d93a3f8b39160c8c5227d629dcaf6a3fe9566af249b85f3",
+      "rawBytes": 134,
+      "sanitizedSha256": "0b3a23aff7be93bb8e85334030c6d961c636681d4fd96ec08c8bb770fa1b6c10",
+      "sanitizedBytes": 138,
+      "gzipSha256": "51297faf6b76e4f924f49ded8e07da62565d910532324c13921f5d622f975bfa",
+      "gzipBytes": 103,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-execution.json.gz",
+      "rawName": "native-4-execution.json",
+      "rawSha256": "8bd22fea3981c6d6916bfe1f2faf0d95a542a1300f96c18de837b0b4f922c415",
+      "rawBytes": 520,
+      "sanitizedSha256": "8bd22fea3981c6d6916bfe1f2faf0d95a542a1300f96c18de837b0b4f922c415",
+      "sanitizedBytes": 520,
+      "gzipSha256": "811f435b248a8cc6e5066e146c193aef93d16e85b00c8a65be4e7e10647a3f59",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-owner.log.gz",
+      "rawName": "native-4-owner.log",
+      "rawSha256": "4e3d2e302764328ba0605c4018568d87eec1047392e703866563e7bedf632f5e",
+      "rawBytes": 24596,
+      "sanitizedSha256": "57f01d156665d3dc432d268897246916581f20f253f575f1e709ef4fd2e709bb",
+      "sanitizedBytes": 24600,
+      "gzipSha256": "9af66f04deddedf8fda05137170200eee3b3ed101e793bbb5eba8bfd89003712",
+      "gzipBytes": 3307,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-restore.log.gz",
+      "rawName": "native-4-restore.log",
+      "rawSha256": "5dbfdbfc54f7fc33e1e0a2d5295ee9c8e5bd763c8e1e1c8c15efe7c25d8c5dc8",
+      "rawBytes": 41826,
+      "sanitizedSha256": "65c1384602f3f1c6f9f72dcffcbe3a277cd609414958fdde6ca0a17281b001a9",
+      "sanitizedBytes": 41830,
+      "gzipSha256": "824cef85f4114d47920959fac244fd391e9ff3b0f3490c7ddc6bf3ee3835880c",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-restricted-role.log.gz",
+      "rawName": "native-4-restricted-role.log",
+      "rawSha256": "c66966415e7c69b8cf553f2b3410397f12033750f209b039c060f142b0540369",
+      "rawBytes": 70,
+      "sanitizedSha256": "db5821cfe8d67d0e1ba883ba6d5ccb724274bdbac4fb9ed0f4195c5baf0ab25c",
+      "sanitizedBytes": 74,
+      "gzipSha256": "a5b0eeb8feee13a152a7c66d8febed9b2a530b4f4dc0abf993f205144665c13c",
+      "gzipBytes": 63,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-restricted.log.gz",
+      "rawName": "native-4-restricted.log",
+      "rawSha256": "1e1a027003421555c8111d7570971f0f1e20201121235e130060559e76c70ee3",
+      "rawBytes": 9054,
+      "sanitizedSha256": "11cfeee4bf31ae13e0c2caab88d54f07ea9480b42cb65fce304d5695bbefd7c9",
+      "sanitizedBytes": 9058,
+      "gzipSha256": "b136022f0a1e926591e61b930dae87ebc707fa1a2d4c91beba49312dd2467c1c",
+      "gzipBytes": 1397,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-source-after.json.gz",
+      "rawName": "native-4-source-after.json",
+      "rawSha256": "27bd2eb60d78030e4027b3fed0c6759916af67c18acf8f51c2bd7eb802a0fa54",
+      "rawBytes": 996,
+      "sanitizedSha256": "27bd2eb60d78030e4027b3fed0c6759916af67c18acf8f51c2bd7eb802a0fa54",
+      "sanitizedBytes": 996,
+      "gzipSha256": "266537de2dddea65a01cd6e9eb36e80e94601cd391bce3764fba3538d3bab374",
+      "gzipBytes": 446,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-source-before.json.gz",
+      "rawName": "native-4-source-before.json",
+      "rawSha256": "27bd2eb60d78030e4027b3fed0c6759916af67c18acf8f51c2bd7eb802a0fa54",
+      "rawBytes": 996,
+      "sanitizedSha256": "27bd2eb60d78030e4027b3fed0c6759916af67c18acf8f51c2bd7eb802a0fa54",
+      "sanitizedBytes": 996,
+      "gzipSha256": "266537de2dddea65a01cd6e9eb36e80e94601cd391bce3764fba3538d3bab374",
+      "gzipBytes": 446,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-4-runner.log.gz",
+      "rawName": "native-4-runner.log",
+      "rawSha256": "bcc9c949dacce72ae37e6fd0e10f72a440d407ba8b9c1dd6162ed827a344e62d",
+      "rawBytes": 133,
+      "sanitizedSha256": "7be5cae065e38ec321f27e1a6c4b4bd8b5d59f82fcc36667226c303b5359cae5",
+      "sanitizedBytes": 101,
+      "gzipSha256": "4a92b7099cb75a5ee1a98c2fbb92db3926c7bd05442b84da2370abd47a678a28",
+      "gzipBytes": 116,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-cleanup.log.gz",
+      "rawName": "native-5-cleanup.log",
+      "rawSha256": "5386e21c387910d8c8b3d2d1fadec0f222a276474228991c8ee584cc086dd213",
+      "rawBytes": 80,
+      "sanitizedSha256": "ced5b12959a9247634f79d644769fe1ece1895635cd4c196cae06e6a70bca7b1",
+      "sanitizedBytes": 84,
+      "gzipSha256": "04f7bd68b2683955af30d6cfb54baa2e1b4613ca7b4c250b1a9a083834d8e7e0",
+      "gzipBytes": 86,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-container-create.log.gz",
+      "rawName": "native-5-container-create.log",
+      "rawSha256": "8922bb053532bca02d4ccab01bde8f7a87866575ca3439892ecc6a1227679c52",
+      "rawBytes": 134,
+      "sanitizedSha256": "a3412bf5ffe676ddb54d62619ad5d6a8ee010b41e5169c6ff966163022b10cfa",
+      "sanitizedBytes": 138,
+      "gzipSha256": "2f0eac92cc5a170bb13950ccf42c1e495d0c27d9050578176092c7e642f4d1e9",
+      "gzipBytes": 103,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-execution.json.gz",
+      "rawName": "native-5-execution.json",
+      "rawSha256": "4cf7adca6e1ee06db531773f0fce30ce544cb47c5d60bfa0bd330a1868997fd9",
+      "rawBytes": 520,
+      "sanitizedSha256": "4cf7adca6e1ee06db531773f0fce30ce544cb47c5d60bfa0bd330a1868997fd9",
+      "sanitizedBytes": 520,
+      "gzipSha256": "01be1990718a32fa1c0b26c296c1a400609c3c7e0ceaba828138a7ba5acaf233",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-owner.log.gz",
+      "rawName": "native-5-owner.log",
+      "rawSha256": "f5ac0ae3834f910e59f589ec766f1488e4c064b300b5528b4b04e39ea459d3f6",
+      "rawBytes": 10536,
+      "sanitizedSha256": "14d618854ff8eee3b752d807336375386f7dadcca0a15b863ab260f3a897a127",
+      "sanitizedBytes": 10540,
+      "gzipSha256": "1a06e21c74f16b8fe01c15ef3879ae45f594d07f35b7bacc9866e85ec5739d10",
+      "gzipBytes": 1545,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-restore.log.gz",
+      "rawName": "native-5-restore.log",
+      "rawSha256": "5dbfdbfc54f7fc33e1e0a2d5295ee9c8e5bd763c8e1e1c8c15efe7c25d8c5dc8",
+      "rawBytes": 41826,
+      "sanitizedSha256": "65c1384602f3f1c6f9f72dcffcbe3a277cd609414958fdde6ca0a17281b001a9",
+      "sanitizedBytes": 41830,
+      "gzipSha256": "824cef85f4114d47920959fac244fd391e9ff3b0f3490c7ddc6bf3ee3835880c",
+      "gzipBytes": 336,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-restricted-role.log.gz",
+      "rawName": "native-5-restricted-role.log",
+      "rawSha256": "c66966415e7c69b8cf553f2b3410397f12033750f209b039c060f142b0540369",
+      "rawBytes": 70,
+      "sanitizedSha256": "db5821cfe8d67d0e1ba883ba6d5ccb724274bdbac4fb9ed0f4195c5baf0ab25c",
+      "sanitizedBytes": 74,
+      "gzipSha256": "a5b0eeb8feee13a152a7c66d8febed9b2a530b4f4dc0abf993f205144665c13c",
+      "gzipBytes": 63,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-restricted.log.gz",
+      "rawName": "native-5-restricted.log",
+      "rawSha256": "d989d76b3afaa884574deadd8492d9183e88d7bb69a213cf52aa9726d5a822c1",
+      "rawBytes": 10506,
+      "sanitizedSha256": "d3f1e24ec8ac9d88920ca615b64bd12e57778cd9f69d8ceb11d5c2f063cb63aa",
+      "sanitizedBytes": 10510,
+      "gzipSha256": "c57323de0b045675b25bd788038ee03b60b9bf043a3819537ccc8a555914ab3b",
+      "gzipBytes": 1527,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-source-after.json.gz",
+      "rawName": "native-5-source-after.json",
+      "rawSha256": "064b9b250b83ff00c736ecfc54d80749e82bcb0e1576f06e175a7926bf5b6bfe",
+      "rawBytes": 996,
+      "sanitizedSha256": "064b9b250b83ff00c736ecfc54d80749e82bcb0e1576f06e175a7926bf5b6bfe",
+      "sanitizedBytes": 996,
+      "gzipSha256": "b48a8f15ce55e26ecda44e38628ecc561bf120d074fa1b8869df0d0fc9073e5b",
+      "gzipBytes": 449,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-source-before.json.gz",
+      "rawName": "native-5-source-before.json",
+      "rawSha256": "064b9b250b83ff00c736ecfc54d80749e82bcb0e1576f06e175a7926bf5b6bfe",
+      "rawBytes": 996,
+      "sanitizedSha256": "064b9b250b83ff00c736ecfc54d80749e82bcb0e1576f06e175a7926bf5b6bfe",
+      "sanitizedBytes": 996,
+      "gzipSha256": "b48a8f15ce55e26ecda44e38628ecc561bf120d074fa1b8869df0d0fc9073e5b",
+      "gzipBytes": 449,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-5-runner.log.gz",
+      "rawName": "native-5-runner.log",
+      "rawSha256": "491e56ca9a59fad953c5bfc71c8b6d8574bf0f8b8eb96637fae80ce873e52f73",
+      "rawBytes": 133,
+      "sanitizedSha256": "666869e1ea280264662ffe0faddfa027454f47c2bf7fc7a1e4f354f0c588d132",
+      "sanitizedBytes": 101,
+      "gzipSha256": "8533f2b4699d10905df83b359d79fe59565dd947182170c78823adf0bb6f3c2e",
+      "gzipBytes": 116,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-fusion-native-01.ps1.gz",
+      "rawName": "release297-inbox-fusion-native-01.ps1",
+      "rawSha256": "6c6ade15b17d91cc03c527d1beb2869767c17545a41da60c6ab4013c6f3c74ce",
+      "rawBytes": 5588,
+      "sanitizedSha256": "3d6e10ab7e44745f98efb8f632aa6b2802fb3e24109569ec913753d20674fbdb",
+      "sanitizedBytes": 5434,
+      "gzipSha256": "f8bf293368eeef303ec55dbad9a13dae9069613ee454bfac7757f4440ffe3f78",
+      "gzipBytes": 2104,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-route-01.log.gz",
+      "rawName": "release297-inbox-route-01.log",
+      "rawSha256": "7030ac97bc15efaec5f6f9ef16bb48598f1e2b22e1c4d7f808681f0f63e647b8",
+      "rawBytes": 2564,
+      "sanitizedSha256": "7030ac97bc15efaec5f6f9ef16bb48598f1e2b22e1c4d7f808681f0f63e647b8",
+      "sanitizedBytes": 2564,
+      "gzipSha256": "0650f564b2d50d9a4922354da627c8a4f7434a2ef9af60c39edc085bf7f75321",
+      "gzipBytes": 575,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-route-02.log.gz",
+      "rawName": "release297-inbox-route-02.log",
+      "rawSha256": "4edbbd262a4eb5c949f93ad4491a2f8c7746bd1f653f3b2774451cb31ff461d5",
+      "rawBytes": 4788,
+      "sanitizedSha256": "4edbbd262a4eb5c949f93ad4491a2f8c7746bd1f653f3b2774451cb31ff461d5",
+      "sanitizedBytes": 4788,
+      "gzipSha256": "f717a7896e57cab37489c1d75c47caeabdec9227a3b97afc7504567395f0a04e",
+      "gzipBytes": 967,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-authority-01.log.gz",
+      "rawName": "release297-inbox-authority-01.log",
+      "rawSha256": "69a136eec8139fffecbc3633e8f28c78b42248540d429b57544c8283fd94d3da",
+      "rawBytes": 1636,
+      "sanitizedSha256": "69a136eec8139fffecbc3633e8f28c78b42248540d429b57544c8283fd94d3da",
+      "sanitizedBytes": 1636,
+      "gzipSha256": "b66f923a9e84ce383dfa7597298443772fa989fdaf756423c96a4aad09d5d409",
+      "gzipBytes": 484,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-focused-01.log.gz",
+      "rawName": "release297-inbox-focused-01.log",
+      "rawSha256": "bf476e65ccf5d249ef859327cb4dd992fe8f9862f303c9dcade8bc91b7e52288",
+      "rawBytes": 9848,
+      "sanitizedSha256": "bf476e65ccf5d249ef859327cb4dd992fe8f9862f303c9dcade8bc91b7e52288",
+      "sanitizedBytes": 9848,
+      "gzipSha256": "df6e362333ef9f56f3c23ab0380493bf1512b38afaea2620fec5fbef0b7e0524",
+      "gzipBytes": 1810,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-focused-02.log.gz",
+      "rawName": "release297-inbox-focused-02.log",
+      "rawSha256": "8a96c40c70359a901183345003d068840dd79d93c7e0efce5d79716341ff65d8",
+      "rawBytes": 11008,
+      "sanitizedSha256": "8a96c40c70359a901183345003d068840dd79d93c7e0efce5d79716341ff65d8",
+      "sanitizedBytes": 11008,
+      "gzipSha256": "1d09b4b632f5aa40efa3cf3108afe8a233b9156a25d9a87fa90621cd71461770",
+      "gzipBytes": 2031,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-contracts-01.log.gz",
+      "rawName": "release297-inbox-contracts-01.log",
+      "rawSha256": "aa5543cc5ccb15bdba9739616032b91525a7287ccfe4664f8ebe575078751260",
+      "rawBytes": 113313,
+      "sanitizedSha256": "37d8b99f2307243de2a91cbfbd9a5b38a235af04b1f14039c97308c1eb5303cd",
+      "sanitizedBytes": 113000,
+      "gzipSha256": "b59936090110dbca146c9a95380a7b184da949bb15d020de7f2fece37c6818f1",
+      "gzipBytes": 18986,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-contracts-02.log.gz",
+      "rawName": "release297-inbox-contracts-02.log",
+      "rawSha256": "5b1cfd785f37cfd1994605b788a308ed5c2a2e0144efb7e78aada7cabc32e104",
+      "rawBytes": 13581,
+      "sanitizedSha256": "5b1cfd785f37cfd1994605b788a308ed5c2a2e0144efb7e78aada7cabc32e104",
+      "sanitizedBytes": 13581,
+      "gzipSha256": "7b9924e0efa8794e0f09406b9a36c7b18bba288757b245fcb9312bf27eab9f1e",
+      "gzipBytes": 3000,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-types-01.log.gz",
+      "rawName": "release297-inbox-types-01.log",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "gzipBytes": 20,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-testtypes-01.log.gz",
+      "rawName": "release297-inbox-testtypes-01.log",
+      "rawSha256": "54050d3e630d3a383498fc95d0eecdd846bdd9e937d8a95f17adf2ae379fc178",
+      "rawBytes": 147,
+      "sanitizedSha256": "54050d3e630d3a383498fc95d0eecdd846bdd9e937d8a95f17adf2ae379fc178",
+      "sanitizedBytes": 147,
+      "gzipSha256": "d0e49c01d8fbc074e4cdba48694aa3fd536b4dca65f580e2864cf15a88132858",
+      "gzipBytes": 126,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-typed-fixture-errors.log.gz",
+      "rawName": "release297-inbox-typed-fixture-errors.log",
+      "rawSha256": "b964a2f1cd561d82a37b758a70e736e7f7a99afbf19142b98344c2eb0707b2ee",
+      "rawBytes": 2667,
+      "sanitizedSha256": "97d645b3d6cc2b750d289495382885e6a61618494074c31251ff96419e5d8923",
+      "sanitizedBytes": 2195,
+      "gzipSha256": "fc3e27d6cbbd69306b8d613632f271922e9dba07cecd60240fcc3d307a66e278",
+      "gzipBytes": 486,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-inbox-capacity-gate-01.log.gz",
+      "rawName": "release297-inbox-capacity-gate-01.log",
+      "rawSha256": "680e90cf5c6fe0ae6559ffb2e1bdd149df95530321633307d9c209569506f465",
+      "rawBytes": 5135,
+      "sanitizedSha256": "680e90cf5c6fe0ae6559ffb2e1bdd149df95530321633307d9c209569506f465",
+      "sanitizedBytes": 5135,
+      "gzipSha256": "c64b06bbb73c971b24f7953804064a688515f1ff4d629eb61c3e32f025dcc7f7",
+      "gzipBytes": 1330,
+      "roundTripVerified": true
+    }
+  ]
+}

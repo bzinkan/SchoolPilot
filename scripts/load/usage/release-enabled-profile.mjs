@@ -77,6 +77,7 @@ export function capacityAcceptance(result) {
     // This is reset only at phase start, unlike the minute-summary hotpath
     // counters. The API snapshot is taken after all offers and producer drain.
     noOptionalTelemetryFailures: combined?.api?.operations?.operations?.heartbeat_background?.counters?.heartbeatOptionalTelemetryFailures === 0,
+    noOptionalInboxFailures: combined?.api?.operations?.operations?.heartbeat_final_delivery?.counters?.heartbeatOptionalInboxFailures === 0,
     noPoolFailures: combined?.api?.database?.acquisitions?.failures === 0 && combined?.worker?.database?.acquisitions?.failures === 0
       && combined.worker.database.acquisitions.count >= 2,
     acquisitionDeadlines: combined?.api?.database?.acquisitions?.maxMs <= 5000 && combined?.worker?.database?.acquisitions?.maxMs <= 10000,

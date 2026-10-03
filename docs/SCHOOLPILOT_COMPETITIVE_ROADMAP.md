@@ -30,10 +30,26 @@ precise restrictions, Focus and private-chat lifecycle active. Implementation
 alone does not satisfy the required three consecutive final-source capacity
 runs. See the [contention and acceptance record](RELEASE_297_USAGE_AND_RUNTIME_EVIDENCE.md).
 
-SchoolPilot #603's [CI at `7cf86cf1`](release-evidence/release-297/usage-contention/ci-7cf86cf1.json)
-has 14 successful jobs and three failures in test detectors affected by source
-layout changes. Security workflows passed. Local detector repairs and the new
-heartbeat optimizations require fresh combined-source checks and capacity runs.
+The later [ingestion-only diagnostic at bcb2b33c](release-evidence/release-297/usage-contention/ingest-cpu-bcb2b33c-01/manifest.json)
+also fails, with 5,148 of 6,000 offers successful and 232 acquisition failures,
+despite clean server drain. Its API uses 82.062 CPU seconds during the 67.879-second
+phase; the recorded CPU profile guides further correction, not a readiness claim.
+
+The subsequent [owned inbox correction](release-evidence/release-297/usage-contention/heartbeat-owned-inbox/manifest.json)
+removes the separate inbox connection while retaining exact authority and fresh
+expiry checks. Forty-eight focused cases and 19 native cases per database role
+pass; failed claims roll back and required preparation survives an optional inbox
+failure. Suppression caches update only after transaction cleanup. The equivalent
+recovery path uses 27 rather than 33 statements and one rather than two leases.
+New combined capacity acceptance is still required; optional inbox failures now
+also fail that gate.
+
+SchoolPilot #603's [CI at `bcb2b33c`](release-evidence/release-297/usage-contention/ci-bcb2b33c.json)
+has 15 successful jobs and two failures: a deployment command detector and four
+PassPilot fixtures whose intended same-day passes crossed midnight. Security
+workflows passed. Both failures have passing local corrections with retained
+evidence; the new heartbeat work still requires fresh combined-source checks
+and capacity runs.
 The heartbeat correction now reuses its already locked final-delivery authority
 for eligible foreground updates, and checks school/license/session expiry again
 before the HTTP response. Its [native proof](release-evidence/release-297/usage-contention/heartbeat-foreground-fusion/manifest.json)

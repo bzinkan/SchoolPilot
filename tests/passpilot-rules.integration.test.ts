@@ -59,6 +59,13 @@ function sqlTimestamp(date: Date): string {
   return date.toISOString().replace("T", " ").replace("Z", "");
 }
 
+function recentSameSchoolDayPassTime(now = new Date()): Date {
+  // These active-pass fixtures must count today, including the first local
+  // minute. Previous-day fixtures below deliberately keep their own times.
+  const { dayStart } = rules.resolvePasspilotRuleDay(now, TIME_ZONE);
+  return new Date(Math.max(dayStart.getTime(), now.getTime() - 60_000));
+}
+
 async function createSchool(options: { name: string; source: "legacy_grades" | "classpilot_groups"; pinHash: string; timezone?: string }) {
   const schoolId = randomUUID();
   schoolIds.push(schoolId);
@@ -340,6 +347,27 @@ after(async () => {
 });
 
 describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
+  it("keeps intended current-day active-pass fixtures in the school day at midnight and DST boundaries", () => {
+    const cases = [
+      ["2026-10-03T07:00:15.000Z", "2026-10-03T07:00:00.000Z"],
+      ["2026-03-08T08:00:15.000Z", "2026-03-08T08:00:00.000Z"],
+      ["2026-11-01T07:00:15.000Z", "2026-11-01T07:00:00.000Z"],
+      ["2026-10-03T07:00:00.000Z", "2026-10-03T07:00:00.000Z"],
+      ["2026-10-03T19:00:15.000Z", "2026-10-03T18:59:15.000Z"],
+    ] as const;
+    for (const [timestamp, expected] of cases) {
+      const now = new Date(timestamp);
+      const actual = recentSameSchoolDayPassTime(now);
+      const day = rules.resolvePasspilotRuleDay(now, TIME_ZONE);
+      assert.equal(actual.toISOString(), expected);
+      assert.ok(actual >= day.dayStart && actual < day.dayEnd && actual <= now);
+    }
+    const ciMidnight = new Date("2026-10-03T07:00:15.000Z");
+    assert.ok(new Date(ciMidnight.getTime() - 60_000)
+      < rules.resolvePasspilotRuleDay(ciMidnight, TIME_ZONE).dayStart,
+    "the former one-minute subtraction reproduced the CI failure by seeding yesterday");
+  });
+
   it("keeps the schema, migration and session time zone in parity", async () => {
     for (const [table, definition] of [
       ["passpilot_destination_policies", schema.passpilotDestinationPolicies],
@@ -597,10 +625,10 @@ describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
         await admin("PUT", `/limits/students/${target}`, { dailyLimit: null, periodLimit: 0, enabled: true });
       } else if (code === "PASSPILOT_RULE_DESTINATION_CAPACITY") {
         await admin("PUT", "/destinations/bathroom", { maxConcurrent: 1, enabled: true });
-        await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: new Date(Date.now() - 60_000), status: "active" });
+        await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: recentSameSchoolDayPassTime(), status: "active" });
       } else {
         await admin("POST", "/encounters", { studentIdA: target, studentIdB: other });
-        await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, destination: "office", issuedAt: new Date(Date.now() - 60_000), status: "active" });
+        await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, destination: "office", issuedAt: recentSameSchoolDayPassTime(), status: "active" });
       }
       const encounter = code === "PASSPILOT_RULE_ENCOUNTER";
       const capacity = code === "PASSPILOT_RULE_DESTINATION_CAPACITY";
@@ -647,7 +675,7 @@ describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
 
     // Capacity is evaluated before the daily limit and is not the overridden code.
     await admin("PUT", "/destinations/bathroom", { maxConcurrent: 1, enabled: true });
-    await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: new Date(Date.now() - 60_000), status: "active" });
+    await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: recentSameSchoolDayPassTime(), status: "active" });
     const stillDenied = await issue(L.admin, target, "bathroom", { overrideRuleCode: "PASSPILOT_RULE_DAILY_LIMIT" });
     assert.equal(stillDenied.status, 409);
     assert.equal(stillDenied.body.code, "PASSPILOT_RULE_DESTINATION_CAPACITY", "the remaining rules are still evaluated");
@@ -859,7 +887,7 @@ describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
     const [target, other] = [L.students[6]!, L.students[7]!];
     await admin("PUT", `/limits/students/${target}`, { dailyLimit: 0, periodLimit: null, enabled: true });
     await admin("POST", "/encounters", { studentIdA: target, studentIdB: other });
-    await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: new Date(Date.now() - 60_000), status: "active" });
+    await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: recentSameSchoolDayPassTime(), status: "active" });
     assert.equal((await issue(L.teacher, target)).status, 409);
     const records = await admin("GET", `/students/${target}/records`);
     assert.equal(records.status, 200);

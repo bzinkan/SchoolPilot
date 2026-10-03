@@ -3,6 +3,15 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The latest [combined checks, attempt11](combined-checks-attempt-11/manifest.json),
+pass the application build, type/cast checks and all 699 infrastructure tests.
+Its four unit VM-context failures remain recorded. The [test-only follow-up,
+attempt12](combined-checks-attempt-12/manifest.json), passes 1,823 unit tests and
+types/casts, with four named conditional skips. The source comparison proves
+exactly two test-only changes, unchanged application inputs and all 60 selected
+infrastructure tests plus their selector, and attempt12's final source matches
+attempt11's final source. Neither run is capacity acceptance.
+
 [Combined08](load-combined-08/manifest.json) on clean `ff6b4c96` also failed:
 2,692/6,000 heartbeat successes, 26/64 reports, 3,008 acquisition failures, no
 late offers and no optional telemetry failures. Workers returned correct totals
@@ -10,9 +19,53 @@ in 17.881/41.721 seconds. Eleven aborted responses prevented drain certification
 despite zero remaining physical owners; forced child termination and the absent
 current-day/CSV checks are retained. All owned containers/processes are absent.
 The lease-sharing correction reduced SQL/secondary checkouts but has not met
-capacity acceptance. A full 6,000-offer ingestion-only CPU diagnostic will
-separate remaining heartbeat cost from concurrent worker/report interference.
-It cannot replace the three required passing combined runs.
+capacity acceptance.
+
+The subsequent [ingestion-only CPU diagnostic](ingest-cpu-bcb2b33c-01/manifest.json)
+on clean `bcb2b33c` also fails: 5,148/6,000 offers succeeded, 232 started
+requests failed and 620 offers were refused; none were late. There were 232
+database acquisition failures and 5,254 persisted observations. Both children
+drained cleanly, with zero aborted responses and no remaining owners. The API
+used 82.062 CPU seconds during the 67.879-second phase, with event-loop
+utilization 0.999640. The phase-clipped profile attributes 15.547 seconds to
+Drizzle, 6.341 seconds to the PostgreSQL driver and 2.833 seconds to garbage
+collection. These mutually exclusive sample categories identify work to reduce;
+they do not prove a connection leak or forecast capacity after a change. This
+diagnostic cannot replace the three required passing combined runs.
+
+The [owned-inbox correction](heartbeat-owned-inbox/manifest.json) moves the full
+inbox query and claim into the heartbeat's existing locked transaction, after
+foreground transport and before its mandatory final fence. A private current-clock
+path preserves expiry/supervision checks; the generic inbox API retains its
+original transaction semantics. The route publishes its recovery cache only
+after commit and tenant release, including early finish/close and student changes.
+An optional failure rolls back only its savepoint and increments a cumulative
+counter; any nonzero or missing counter fails capacity acceptance. Forty-eight
+focused checks, 19 native cases under each role and 20 diagnostics/acceptance
+checks pass. A native command-path comparison reduces 33 statements/two physical
+leases to 27 statements/one lease. This is not a capacity result. Failed fixture,
+selector and stale-build declaration checks remain in the archive.
+
+The [Docker command-selector follow-up](deploy-docker-selector-followup/manifest.json)
+preserves the failed CI assertion and 147 passing local tests. Its two test-only
+changes recognize host-pinned Docker mutations while continuing to check every
+publication step's preflight ordering. New CI remains required.
+
+At the [completed bcb2b33c CI checkpoint](ci-bcb2b33c.json), 15 jobs pass,
+including all frontend shards/build, restricted-role isolation and AWS rollout
+safety. The backend infrastructure selector and four ordinary-database PassPilot
+cases fail. The [PassPilot fixture correction](passpilot-midnight-fixture/manifest.json)
+preserves the original failures at 00:00:15 America/Los_Angeles: subtracting one
+minute seeded yesterday's pass instead of the intended same-day active pass.
+The corrected full 19-case suite and five-case exact-midnight replay pass on a
+stable source snapshot. Actual previous-day behavior remains covered.
+
+The [fixed-query prototype](fixed-query-prototype-deferred/manifest.json) is
+deferred and absent from application source. Its guarded implementation saved
+only about 0.8 seconds arithmetically across 6,000 offers in isolated compilation
+benchmarks; that did not justify adding a new compiler/encoder contract. All
+experimental source, passing and failed checks, and CPU follow-up analyses are
+retained. No native or capacity result is attributed to that experiment.
 
 The [latest fallback image](rollback-artifact-5c01944e/index.json) is built from
 clean `5c01944e`, including the final heartbeat expiry fence. Its uncached build,

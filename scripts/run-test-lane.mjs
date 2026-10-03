@@ -10,6 +10,7 @@ const testsRoot = join(root, "tests");
 const RLS_SERIAL = new Set([
   "classpilot-final-delivery-context.integration.test.ts",
   "classpilot-heartbeat-foreground-authority.integration.test.ts",
+  "classpilot-heartbeat-inbox-authority.integration.test.ts",
   "classpilot-telemetry-owner-projection.integration.test.ts",
   "classpilot-heartbeat-persistence-context.integration.test.ts",
   "tenant-context-reuse.integration.test.ts",

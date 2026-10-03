@@ -68,7 +68,7 @@ import {
   getAdminEmailsBySchool,
   addCentralEmailRecipientForSchool,
   upsertSettings,
-  getPendingMessagesForStudent,
+  type ClasspilotHeartbeatInboxOutcome,
   getStudentByEmail,
   createEvidenceArtifact,
   createStudentTimelineEvent,
@@ -4727,84 +4727,64 @@ router.post("/device/heartbeat",
       || pendingMessageRecoveryHeartbeat
       || deliveryState.hasUnacknowledgedCommandMessages
       || now - deliveryState.lastInboxCheckAt >= PENDING_MESSAGE_PERIODIC_CHECK_MS;
-    if (shouldCheckPendingMessages) {
-      try {
-        const recent = await runWithTenantContext(
-          { schoolId, operation: "heartbeat_final_delivery" },
-          () => getPendingMessagesForStudent({
-            schoolId,
-            studentId,
-            studentSessionId,
-            deviceId,
-            excludeMessageIds: deliveryState ? [...deliveryState.messageIds] : [],
-          })
-        );
-        const checkedState = deliveryState || {
-          studentId,
-          messageIds: new Set<string>(),
-          hasUnacknowledgedCommandMessages: false,
-          lastHeartbeatAt: now,
-          lastInboxCheckAt: now,
-        };
-        checkedState.lastHeartbeatAt = now;
-        checkedState.lastInboxCheckAt = now;
-        checkedState.hasUnacknowledgedCommandMessages = recent.some(
-          (message) => !!message.commandId
-        );
-        setBoundedMap(
-          deliveredMessages,
-          deviceId,
-          checkedState,
-          MAX_DELIVERED_MESSAGE_DEVICES
-        );
-        pendingMessages = recent.map((message) => ({
-          id: message.id,
-          message: message.message,
-          commandId: message.commandId,
-          ...(message.commandId ? {messageKind:"announcement"} : {}),
-          studentId,
-          studentSessionId,
+    // A successful SQL read is not a committed handoff. Buffer HTTP events and
+    // apply this process-local optimization only after COMMIT/RESET/release.
+    let commitPendingInbox = () => {};
+    const stagePendingInbox = (inbox: ClasspilotHeartbeatInboxOutcome) => {
+      if (!inbox.checked) return;
+      const recent = inbox.messages;
+      pendingMessages = recent.map((message) => ({
+        id: message.id, message: message.message, commandId: message.commandId,
+        ...(message.commandId ? { messageKind: "announcement" } : {}),
+        studentId, studentSessionId,
+        teachingSessionId: message.teachingSessionId,
+        supervisionContextId: message.supervisionContextId,
+        authority: message.commandId ? {
           teachingSessionId: message.teachingSessionId,
           supervisionContextId: message.supervisionContextId,
-          authority: message.commandId ? {
-            teachingSessionId: message.teachingSessionId,
-            supervisionContextId: message.supervisionContextId,
-          } : null,
-        }));
-        if (pendingMessages.length > 0) {
-          // Legacy rows have no durable ACK relation, so response `finish`
-          // remains their bounded process-local handoff marker. Command-linked
-          // rows are deliberately never put in this cache: the next heartbeat
-          // queries/retries them until their exact target ACK is completed.
-          const legacyDeliveredIds = pendingMessages
-            .filter((message) => !message.commandId)
-            .map((message) => message.id);
-          let responseFinished = false;
-          // Do not suppress even a legacy retry merely because the response
-          // was assembled. `finish` is only the legacy row handoff marker;
-          // command-linked rows remain ACK-driven regardless of this event.
-          res.once("finish", () => {
-            responseFinished = true;
-            const current = deliveredMessages.get(deviceId);
-            if (!current || current.studentId !== studentId) return;
-            for (const messageId of legacyDeliveredIds) current.messageIds.add(messageId);
-            while (current.messageIds.size > DELIVERED_MESSAGE_CACHE_MAX_IDS) {
-              const oldest = current.messageIds.values().next().value as string | undefined;
-              if (!oldest) break;
-              current.messageIds.delete(oldest);
-            }
-          });
-          res.once("close", () => {
-            if (responseFinished) return;
-            const current = deliveredMessages.get(deviceId);
-            if (!current || current.studentId !== studentId) return;
-            // The response closed before `finish`; leave ids unmarked and make
-            // the next authenticated heartbeat retry the inbox immediately.
-            current.lastInboxCheckAt = 0;
-          });
+        } : null,
+      }));
+      const legacyDeliveredIds = recent.filter(message => !message.commandId).map(message => message.id);
+      let released = false, responseFinished = res.writableFinished;
+      let responseClosed = res.destroyed && !responseFinished;
+      let appliedState: DeliveredMessageState | undefined;
+      const apply = () => {
+        if (!released) return;
+        const accepted = deviceLastHeartbeat.get(deviceId);
+        if (accepted?.studentId !== studentId || accepted.studentSessionId !== studentSessionId) return;
+        let current = deliveredMessages.get(deviceId);
+        if (current && current.studentId !== studentId) return;
+        if (!appliedState) {
+          // A later request may already have completed a newer inbox read.
+          if (current && current.lastInboxCheckAt > now) return;
+          current = current || { studentId, messageIds: new Set<string>(),
+            hasUnacknowledgedCommandMessages: false, lastHeartbeatAt: now, lastInboxCheckAt: now };
+          current.lastHeartbeatAt = Math.max(current.lastHeartbeatAt, now);
+          current.lastInboxCheckAt = now;
+          current.hasUnacknowledgedCommandMessages = recent.some(message => !!message.commandId);
+          setBoundedMap(deliveredMessages, deviceId, current, MAX_DELIVERED_MESSAGE_DEVICES);
+          appliedState = current;
         }
-      } catch { /* non-blocking */ }
-    }
+        if (current !== appliedState) return;
+        if (responseClosed && !responseFinished) {
+          current.lastInboxCheckAt = 0;
+          return;
+        }
+        if (!responseFinished) return;
+        // Command rows are ACK-driven and never enter the legacy exclusions.
+        for (const messageId of legacyDeliveredIds) current.messageIds.add(messageId);
+        while (current.messageIds.size > DELIVERED_MESSAGE_CACHE_MAX_IDS) {
+          const oldest = current.messageIds.values().next().value as string | undefined;
+          if (!oldest) break;
+          current.messageIds.delete(oldest);
+        }
+      };
+      if (pendingMessages.length > 0) {
+        res.once("finish", () => { if (!responseClosed) responseFinished = true; apply(); });
+        res.once("close", () => { if (!responseFinished) responseClosed = true; apply(); });
+      }
+      commitPendingInbox = () => { released = true; apply(); };
+    };
 
     const teacherReplyCheckKey = `${studentSessionId}:${deviceId}`;
     const shouldCheckTeacherReplies = pendingMessageRecoveryHeartbeat
@@ -4884,7 +4864,8 @@ router.post("/device/heartbeat",
             withheldReason: serialized.withheldReason,
           };
         },
-        (_claimed, prepared) => {
+        (_claimed, prepared, inbox) => {
+          if (inbox?.checked) stagePendingInbox(inbox);
           if (fabSyncPending && prepared.deliveredFab) {
             recordRuntimePerformanceCounter("fabSyncPendingServed");
           }
@@ -4939,8 +4920,10 @@ router.post("/device/heartbeat",
           }
         } : undefined,
         deferredForeground,
+        shouldCheckPendingMessages ? { excludeMessageIds: deliveryState ? [...deliveryState.messageIds] : [] } : undefined,
       )
     );
+    if (finalDelivery.authorized) commitPendingInbox();
     // The old publisher acquires its own tenant connection. Invoke it only once
     // this scope has completed COMMIT/RESET/release, and only for unsupported
     // proof; a temporal denial or partial transport attempt is terminal.

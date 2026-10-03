@@ -1,3 +1,4 @@
+import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
 import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
 import { focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
@@ -20522,6 +20523,10 @@ export async function withClasspilotStudentControlDeliveryAuthority<
   return withClasspilotStudentControlDeliveryAuthorityCore(options, prepareAuthorized, onAuthorized, recoverTeacherReplies);
 }
 
+export type ClasspilotHeartbeatInboxOutcome =
+  | { checked: false }
+  | { checked: true; messages: MessageRecord[] };
+
 export type ClasspilotHeartbeatForegroundOutcome =
   | { status: "fallback" }
   | { status: "suppressed" }
@@ -20536,7 +20541,7 @@ export async function withClasspilotHeartbeatDeliveryAuthority<
 >(
   options: ClasspilotTeacherChatBinding,
   prepareAuthorized: (transactionDb: typeof db, readScreenshotAuthority: () => Promise<ClasspilotScreenshotAuthorityProjection | undefined>) => Prepared | Promise<Prepared>,
-  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => T,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared, inbox: ClasspilotHeartbeatInboxOutcome) => T,
   recoverTeacherReplies?: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => ClasspilotSynchronousAuthorityResult,
   foreground?: {
     teachingSessionId: string;
@@ -20544,9 +20549,13 @@ export async function withClasspilotHeartbeatDeliveryAuthority<
     publish: () => Promise<void>;
     onFailure: () => void;
   },
+  inboxRequest?: { excludeMessageIds?: string[] },
 ): Promise<({ authorized: true; value: T } | { authorized: false }) & { foreground: ClasspilotHeartbeatForegroundOutcome }> {
   options = { ...options };
   foreground = foreground ? { ...foreground } : undefined;
+  const inboxExclusions = inboxRequest
+    ? normalizeClasspilotPendingMessageExclusions(inboxRequest.excludeMessageIds) : undefined;
+  let inbox: ClasspilotHeartbeatInboxOutcome = { checked: false };
   let projection: ClasspilotScreenshotAuthorityProjection | undefined;
   let outcome: ClasspilotHeartbeatForegroundOutcome = { status: "fallback" };
   const result = await withClasspilotStudentControlDeliveryAuthorityCore(options,
@@ -20574,61 +20583,83 @@ export async function withClasspilotHeartbeatDeliveryAuthority<
         // cannot grant publication or outlive this transaction's cleanup.
         await Promise.allSettled(pendingReads);
       }
-    }, onAuthorized, recoverTeacherReplies, async transactionDb => {
-      if (!foreground || !Number.isSafeInteger(foreground.controlRevision)
-        || projection?.authority.kind !== "teaching_session"
-        || projection.authority.teachingSessionId !== foreground.teachingSessionId
-        || projection.authority.controlRevision !== foreground.controlRevision) return false;
+    }, (claimed, prepared) => onAuthorized(claimed, prepared, inbox), recoverTeacherReplies, async transactionDb => {
+      const publishForeground = async (): Promise<boolean> => {
+        if (!foreground || !Number.isSafeInteger(foreground.controlRevision)
+          || projection?.authority.kind !== "teaching_session"
+          || projection.authority.teachingSessionId !== foreground.teachingSessionId
+          || projection.authority.controlRevision !== foreground.controlRevision) return false;
 
-      // Required Focus preparation and private recovery are already complete.
-      // An optional SQL failure must restore its subtransaction before the core
-      // performs the mandatory final binding check; cleanup failures propagate.
-      outcome = { status: "settled", succeeded: false };
-      await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_foreground`);
-      try {
-        const current = await transactionDb.execute(sql`
-          SELECT 1 AS allowed
-          FROM ${classpilotStudentControlStates} control
-          INNER JOIN ${teachingSessions} teaching ON teaching.id=control.teaching_session_id
-            AND teaching.school_id=${options.schoolId}
-          WHERE control.school_id=${options.schoolId} AND control.student_id=${options.studentId}
-            AND control.teaching_session_id=${foreground.teachingSessionId}
-            AND control.revision=${foreground.controlRevision} AND control.supervision_context_id IS NULL
-            AND control.hard_expires_at>clock_timestamp()
-            AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>clock_timestamp())
-            AND teaching.session_mode='live' AND teaching.end_time IS NULL
-            AND teaching.roster_snapshot_completed_at IS NOT NULL
-            AND (teaching.scheduled_end_at IS NULL OR teaching.scheduled_end_at>clock_timestamp())
-            AND ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)}
-            AND EXISTS (
-              SELECT 1 FROM ${studentSessions}
-              WHERE ${studentSessions.id}=${options.studentSessionId}
-                AND ${studentSessions.studentId}=${options.studentId}
-                AND ${studentSessions.deviceId}=${options.deviceId}
-                AND ${currentStudentSessionAuthorityPredicate()}
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM ${classpilotSupervisionStudents} assigned
-              INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assigned.context_id
-                AND context.school_id=${options.schoolId} AND context.status='active'
-                AND context.starts_at<=clock_timestamp() AND context.ends_at>clock_timestamp()
-              WHERE assigned.school_id=${options.schoolId} AND assigned.student_id=${options.studentId}
-                AND assigned.released_at IS NULL
-            ) LIMIT 1
-        `);
-        if (current.rows.length !== 1) outcome = { status: "suppressed" };
-        else {
-          // Redis and local delivery keep their existing bounded ordered path.
-          // A partial send is terminal: no later fallback can duplicate it.
-          await foreground.publish();
-          outcome = { status: "settled", succeeded: true };
+        // Required Focus preparation and private recovery are already complete.
+        // An optional SQL failure must restore its subtransaction before the core
+        // performs the mandatory final binding check; cleanup failures propagate.
+        outcome = { status: "settled", succeeded: false };
+        await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_foreground`);
+        try {
+          const current = await transactionDb.execute(sql`
+            SELECT 1 AS allowed
+            FROM ${classpilotStudentControlStates} control
+            INNER JOIN ${teachingSessions} teaching ON teaching.id=control.teaching_session_id
+              AND teaching.school_id=${options.schoolId}
+            WHERE control.school_id=${options.schoolId} AND control.student_id=${options.studentId}
+              AND control.teaching_session_id=${foreground.teachingSessionId}
+              AND control.revision=${foreground.controlRevision} AND control.supervision_context_id IS NULL
+              AND control.hard_expires_at>clock_timestamp()
+              AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>clock_timestamp())
+              AND teaching.session_mode='live' AND teaching.end_time IS NULL
+              AND teaching.roster_snapshot_completed_at IS NOT NULL
+              AND (teaching.scheduled_end_at IS NULL OR teaching.scheduled_end_at>clock_timestamp())
+              AND ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)}
+              AND EXISTS (
+                SELECT 1 FROM ${studentSessions}
+                WHERE ${studentSessions.id}=${options.studentSessionId}
+                  AND ${studentSessions.studentId}=${options.studentId}
+                  AND ${studentSessions.deviceId}=${options.deviceId}
+                  AND ${currentStudentSessionAuthorityPredicate()}
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM ${classpilotSupervisionStudents} assigned
+                INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assigned.context_id
+                  AND context.school_id=${options.schoolId} AND context.status='active'
+                  AND context.starts_at<=clock_timestamp() AND context.ends_at>clock_timestamp()
+                WHERE assigned.school_id=${options.schoolId} AND assigned.student_id=${options.studentId}
+                  AND assigned.released_at IS NULL
+              ) LIMIT 1
+          `);
+          if (current.rows.length !== 1) outcome = { status: "suppressed" };
+          else {
+            // Redis and local delivery keep their existing bounded ordered path.
+            // A partial send is terminal: no later fallback can duplicate it.
+            await foreground.publish();
+            outcome = { status: "settled", succeeded: true };
+          }
+        } catch {
+          await transactionDb.execute(sql`ROLLBACK TO SAVEPOINT classpilot_heartbeat_foreground`);
+          foreground.onFailure();
         }
-      } catch {
-        await transactionDb.execute(sql`ROLLBACK TO SAVEPOINT classpilot_heartbeat_foreground`);
-        foreground.onFailure();
+        await transactionDb.execute(sql`RELEASE SAVEPOINT classpilot_heartbeat_foreground`);
+        return true;
+      };
+      const attemptedForeground = await publishForeground();
+      // Inbox eligibility is read after all awaited foreground transport. The
+      // heartbeat-only clock sees supervision/expiry changes since BEGIN.
+      if (inboxExclusions !== undefined) {
+        await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_inbox`);
+        try {
+          const messages = await getPendingMessagesForStudentWithAuthorityLocked(
+            { ...options, excludeMessageIds: inboxExclusions }, transactionDb, "current",
+          );
+          inbox = { checked: true, messages };
+        } catch {
+          recordUsageCapacityCounter("heartbeatOptionalInboxFailures", "heartbeat_final_delivery");
+          await transactionDb.execute(sql`ROLLBACK TO SAVEPOINT classpilot_heartbeat_inbox`);
+          inbox = { checked: false };
+        }
+        await transactionDb.execute(sql`RELEASE SAVEPOINT classpilot_heartbeat_inbox`);
       }
-      await transactionDb.execute(sql`RELEASE SAVEPOINT classpilot_heartbeat_foreground`);
-      return true;
+      // The private core now performs its mandatory school/license and exact
+      // binding clock fence before synchronously delivering the HTTP payload.
+      return attemptedForeground;
     });
   return { ...result, foreground: result.authorized ? outcome : { status: "suppressed" } };
 }
@@ -22744,6 +22775,16 @@ export async function hasCurrentClasspilotStudentControlAuthority(options: {
   supervisionContextId?: string | null;
   ownershipRevision?: number;
 }, dbInstance: typeof db = db): Promise<boolean> {
+  return hasCurrentClasspilotStudentControlAuthorityAtClock(options, dbInstance, "transaction");
+}
+
+async function hasCurrentClasspilotStudentControlAuthorityAtClock(options: {
+  schoolId: string;
+  studentId: string;
+  teachingSessionId?: string | null;
+  supervisionContextId?: string | null;
+  ownershipRevision?: number;
+}, dbInstance: typeof db, clock: ClasspilotAuthorityClock): Promise<boolean> {
   const hasTeachingAuthority = !!options.teachingSessionId;
   const hasSupervisionAuthority = !!options.supervisionContextId;
   if (hasTeachingAuthority === hasSupervisionAuthority) return false;
@@ -22770,10 +22811,11 @@ export async function hasCurrentClasspilotStudentControlAuthority(options: {
       controlState.teachingSessionId !== options.teachingSessionId
       || controlState.supervisionContextId !== null
     ) return false;
-    const supervision = await getActiveSupervisionForStudents(
+    const supervision = await getActiveSupervisionForStudentsAtClock(
       options.schoolId,
       [options.studentId],
-      dbInstance
+      dbInstance,
+      clock
     );
     if (supervision.length > 0) return false;
     const owner = await getActiveClassOwnerForStudent(
@@ -22787,10 +22829,11 @@ export async function hasCurrentClasspilotStudentControlAuthority(options: {
     controlState.supervisionContextId !== options.supervisionContextId
     || controlState.teachingSessionId !== null
   ) return false;
-  const supervision = await getActiveSupervisionForStudents(
+  const supervision = await getActiveSupervisionForStudentsAtClock(
     options.schoolId,
     [options.studentId],
-    dbInstance
+    dbInstance,
+    clock
   );
   return supervision.some((entry) => entry.context.id === options.supervisionContextId);
 }
@@ -24401,14 +24444,20 @@ export type CoverageScopeGroupWithMembers = ClasspilotCoverageScopeGroup & {
   members: (ClasspilotCoverageScopeGroupMember & { student: Student })[];
 };
 
-function activeSupervisionCondition(schoolId: string) {
+type ClasspilotAuthorityClock = "transaction" | "current";
+
+function classpilotAuthorityClockSql(clock: ClasspilotAuthorityClock): SQL {
+  return clock === "current" ? sql`clock_timestamp()` : sql`now()`;
+}
+
+function activeSupervisionCondition(schoolId: string, clock: ClasspilotAuthorityClock = "transaction") {
   return and(
     eq(classpilotSupervisionStudents.schoolId, schoolId),
     isNull(classpilotSupervisionStudents.releasedAt),
     eq(classpilotSupervisionContexts.schoolId, schoolId),
     eq(classpilotSupervisionContexts.status, "active"),
-    sql`${classpilotSupervisionContexts.startsAt} <= now()`,
-    sql`${classpilotSupervisionContexts.endsAt} > now()`
+    sql`${classpilotSupervisionContexts.startsAt} <= ${classpilotAuthorityClockSql(clock)}`,
+    sql`${classpilotSupervisionContexts.endsAt} > ${classpilotAuthorityClockSql(clock)}`
   );
 }
 
@@ -24932,6 +24981,15 @@ export async function getActiveSupervisionForStudents(
   studentIds: string[],
   dbInstance: typeof db = db
 ): Promise<ActiveStudentSupervision[]> {
+  return getActiveSupervisionForStudentsAtClock(schoolId, studentIds, dbInstance, "transaction");
+}
+
+async function getActiveSupervisionForStudentsAtClock(
+  schoolId: string,
+  studentIds: string[],
+  dbInstance: typeof db,
+  clock: ClasspilotAuthorityClock
+): Promise<ActiveStudentSupervision[]> {
   if (studentIds.length === 0) return [];
   const rows = await dbInstance
     .select({
@@ -24953,7 +25011,7 @@ export async function getActiveSupervisionForStudents(
     )
     .where(
       and(
-        activeSupervisionCondition(schoolId),
+        activeSupervisionCondition(schoolId, clock),
         inArray(classpilotSupervisionStudents.studentId, studentIds)
       )
     );
@@ -27215,123 +27273,132 @@ export async function getPendingMessagesForStudent(options: {
     );
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return [];
 
-    const [controlState] = await tx
-      .select({
-        teachingSessionId: classpilotStudentControlStates.teachingSessionId,
-        supervisionContextId: classpilotStudentControlStates.supervisionContextId,
-        revision: classpilotStudentControlStates.revision,
-      })
-      .from(classpilotStudentControlStates)
-      .where(and(
-        eq(classpilotStudentControlStates.schoolId, options.schoolId),
-        eq(classpilotStudentControlStates.studentId, options.studentId)
-      ))
-      .limit(1)
-      .for("share");
-    const currentTeachingSessionId = controlState?.teachingSessionId
-      && await hasCurrentClasspilotStudentControlAuthority({
-        schoolId: options.schoolId,
-        studentId: options.studentId,
-        teachingSessionId: controlState.teachingSessionId,
-      }, transactionDb)
-      ? controlState.teachingSessionId
-      : null;
-    const currentSupervisionContextId = controlState?.supervisionContextId
-      && await hasCurrentClasspilotStudentControlAuthority({
-        schoolId: options.schoolId,
-        studentId: options.studentId,
-        supervisionContextId: controlState.supervisionContextId,
-      }, transactionDb)
-      ? controlState.supervisionContextId
-      : null;
-
-    const since = new Date(
-      Date.now() - CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000
-    );
-    const excludedIds = [...new Set(
-      (options.excludeMessageIds || [])
-        .map((id) => String(id || "").trim())
-        .filter(Boolean)
-    )].slice(0, CLASSPILOT_PENDING_MESSAGE_EXCLUSION_LIMIT);
-    const conditions: SQL[] = [
-      eq(messages.schoolId, options.schoolId),
-      eq(messages.toStudentId, options.studentId),
-      sql`${messages.timestamp} >= ${since}`,
-      // Legacy rows retain the compatibility inbox. Command-linked rows are
-      // due only while their immutable authority is the student's current
-      // control scope and the exact target has not reached a terminal state.
-      sql`(
-        (${messages.commandId} IS NULL
-          AND NOT EXISTS (SELECT 1 FROM settings legacy_guard WHERE legacy_guard.school_id=${options.schoolId} AND legacy_guard.private_chat_lifecycle_required)
-          AND ${messages.timestamp} >= now() - interval '5 minutes')
-        OR EXISTS (
-          SELECT 1
-          FROM ${classpilotCommandTargets} AS inbox_target
-          JOIN ${classpilotCommands} AS inbox_command
-            ON inbox_command.id = inbox_target.command_id
-           AND inbox_command.school_id = inbox_target.school_id
-          WHERE inbox_target.school_id = ${options.schoolId}
-            AND inbox_target.command_id = ${messages.commandId}
-            AND inbox_target.student_id = ${options.studentId}
-            AND inbox_target.status IN ('unavailable', 'requested', 'sent', 'received')
-            AND inbox_command.command_type = 'teacher-message'
-            AND (inbox_command.expires_at IS NULL OR inbox_command.expires_at > now())
-            AND (
-              (inbox_target.student_session_id = ${options.studentSessionId}
-                AND inbox_target.device_id = ${options.deviceId})
-              OR (inbox_target.status = 'unavailable'
-                AND inbox_target.student_session_id IS NULL
-                AND inbox_target.device_id IS NULL)
-            )
-            AND (inbox_target.result ->> 'durableAuthorityRevision')::integer
-              = ${controlState?.revision ?? -1}
-            AND inbox_command.teaching_session_id IS NOT DISTINCT FROM ${messages.teachingSessionId}
-            AND inbox_command.supervision_context_id IS NOT DISTINCT FROM ${messages.supervisionContextId}
-            AND (
-              (${messages.teachingSessionId} IS NOT NULL
-                AND ${messages.teachingSessionId} = ${currentTeachingSessionId})
-              OR (${messages.supervisionContextId} IS NOT NULL
-                AND ${messages.supervisionContextId} = ${currentSupervisionContextId})
-            )
-        )
-      )`,
-    ];
-    if (excludedIds.length > 0) {
-      conditions.push(notInArray(messages.id, excludedIds));
-    }
-    const pending = await tx
-      .select()
-      .from(messages)
-      .where(and(...conditions))
-      .orderBy(desc(messages.timestamp))
-      .limit(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT);
-
-    const commandIds = [...new Set(
-      pending.map((message) => message.commandId).filter((id): id is string => !!id)
-    )];
-    if (commandIds.length > 0) {
-      const claimedAt = new Date();
-      await tx
-        .update(classpilotCommandTargets)
-        .set({
-          studentSessionId: options.studentSessionId,
-          deviceId: options.deviceId,
-          status: "sent",
-          sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${claimedAt})`,
-          errorMessage: null,
-          updatedAt: claimedAt,
-        })
-        .where(and(
-          eq(classpilotCommandTargets.schoolId, options.schoolId),
-          eq(classpilotCommandTargets.studentId, options.studentId),
-          inArray(classpilotCommandTargets.commandId, commandIds),
-          eq(classpilotCommandTargets.status, "unavailable"),
-          isNull(classpilotCommandTargets.studentSessionId),
-          isNull(classpilotCommandTargets.deviceId)
-        ));
-    }
-    return pending;
+    return getPendingMessagesForStudentWithAuthorityLocked(options, transactionDb, "transaction");
   });
+}
+
+function normalizeClasspilotPendingMessageExclusions(ids: string[] | undefined): string[] {
+  return [...new Set((ids || []).map(id => String(id || "").trim()).filter(Boolean))]
+    .slice(0, CLASSPILOT_PENDING_MESSAGE_EXCLUSION_LIMIT);
+}
+
+async function getPendingMessagesForStudentWithAuthorityLocked(
+  options: Parameters<typeof getPendingMessagesForStudent>[0],
+  transactionDb: typeof db,
+  clock: ClasspilotAuthorityClock,
+): Promise<MessageRecord[]> {
+  const [controlState] = await transactionDb
+    .select({
+      teachingSessionId: classpilotStudentControlStates.teachingSessionId,
+      supervisionContextId: classpilotStudentControlStates.supervisionContextId,
+      revision: classpilotStudentControlStates.revision,
+    })
+    .from(classpilotStudentControlStates)
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, options.schoolId),
+      eq(classpilotStudentControlStates.studentId, options.studentId)
+    ))
+    .limit(1)
+    .for("share");
+  const currentTeachingSessionId = controlState?.teachingSessionId
+    && await hasCurrentClasspilotStudentControlAuthorityAtClock({
+      schoolId: options.schoolId,
+      studentId: options.studentId,
+      teachingSessionId: controlState.teachingSessionId,
+    }, transactionDb, clock)
+    ? controlState.teachingSessionId
+    : null;
+  const currentSupervisionContextId = controlState?.supervisionContextId
+    && await hasCurrentClasspilotStudentControlAuthorityAtClock({
+      schoolId: options.schoolId,
+      studentId: options.studentId,
+      supervisionContextId: controlState.supervisionContextId,
+    }, transactionDb, clock)
+    ? controlState.supervisionContextId
+    : null;
+
+  const since = new Date(
+    Date.now() - CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  );
+  const excludedIds = normalizeClasspilotPendingMessageExclusions(options.excludeMessageIds);
+  const conditions: SQL[] = [
+    eq(messages.schoolId, options.schoolId),
+    eq(messages.toStudentId, options.studentId),
+    sql`${messages.timestamp} >= ${since}`,
+    // Legacy rows retain the compatibility inbox. Command-linked rows are
+    // due only while their immutable authority is the student's current
+    // control scope and the exact target has not reached a terminal state.
+    sql`(
+      (${messages.commandId} IS NULL
+        AND NOT EXISTS (SELECT 1 FROM settings legacy_guard WHERE legacy_guard.school_id=${options.schoolId} AND legacy_guard.private_chat_lifecycle_required)
+        AND ${messages.timestamp} >= ${classpilotAuthorityClockSql(clock)} - interval '5 minutes')
+      OR EXISTS (
+        SELECT 1
+        FROM ${classpilotCommandTargets} AS inbox_target
+        JOIN ${classpilotCommands} AS inbox_command
+          ON inbox_command.id = inbox_target.command_id
+         AND inbox_command.school_id = inbox_target.school_id
+        WHERE inbox_target.school_id = ${options.schoolId}
+          AND inbox_target.command_id = ${messages.commandId}
+          AND inbox_target.student_id = ${options.studentId}
+          AND inbox_target.status IN ('unavailable', 'requested', 'sent', 'received')
+          AND inbox_command.command_type = 'teacher-message'
+          AND (inbox_command.expires_at IS NULL OR inbox_command.expires_at > ${classpilotAuthorityClockSql(clock)})
+          AND (
+            (inbox_target.student_session_id = ${options.studentSessionId}
+              AND inbox_target.device_id = ${options.deviceId})
+            OR (inbox_target.status = 'unavailable'
+              AND inbox_target.student_session_id IS NULL
+              AND inbox_target.device_id IS NULL)
+          )
+          AND (inbox_target.result ->> 'durableAuthorityRevision')::integer
+            = ${controlState?.revision ?? -1}
+          AND inbox_command.teaching_session_id IS NOT DISTINCT FROM ${messages.teachingSessionId}
+          AND inbox_command.supervision_context_id IS NOT DISTINCT FROM ${messages.supervisionContextId}
+          AND (
+            (${messages.teachingSessionId} IS NOT NULL
+              AND ${messages.teachingSessionId} = ${currentTeachingSessionId})
+            OR (${messages.supervisionContextId} IS NOT NULL
+              AND ${messages.supervisionContextId} = ${currentSupervisionContextId})
+          )
+      )
+    )`,
+  ];
+  if (excludedIds.length > 0) {
+    conditions.push(notInArray(messages.id, excludedIds));
+  }
+  const pending = await transactionDb
+    .select()
+    .from(messages)
+    .where(and(...conditions))
+    .orderBy(desc(messages.timestamp))
+    .limit(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT);
+
+  const commandIds = [...new Set(
+    pending.map((message) => message.commandId).filter((id): id is string => !!id)
+  )];
+  if (commandIds.length > 0) {
+    const claimedAt = new Date();
+    await transactionDb
+      .update(classpilotCommandTargets)
+      .set({
+        studentSessionId: options.studentSessionId,
+        deviceId: options.deviceId,
+        status: "sent",
+        sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${claimedAt})`,
+        errorMessage: null,
+        updatedAt: claimedAt,
+      })
+      .where(and(
+        eq(classpilotCommandTargets.schoolId, options.schoolId),
+        eq(classpilotCommandTargets.studentId, options.studentId),
+        inArray(classpilotCommandTargets.commandId, commandIds),
+        eq(classpilotCommandTargets.status, "unavailable"),
+        isNull(classpilotCommandTargets.studentSessionId),
+        isNull(classpilotCommandTargets.deviceId)
+      ));
+  }
+  return pending;
 }
 
 // ============================================================================

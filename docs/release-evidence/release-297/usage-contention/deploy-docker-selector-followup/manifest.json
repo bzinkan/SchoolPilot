@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T07:05:32.735Z",
+  "sourceBase": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+  "sourceStatus": "Uncommitted test-only selector correction; application/deployment source unchanged from bcb2; not capacity or deployment acceptance",
+  "ciFailure": {
+    "jobId": "111149974582",
+    "test": "runs the initial preflight before every Docker, ECR, migration, and ECS mutation",
+    "reason": "Literal docker login/tag/push selectors cannot find commands with the reviewed global --host option. Actual preflight ordering is intact."
+  },
+  "changes": [
+    "Capacity guard detects plain and host-qualified commands, requires every mutation category to exist and compares all matching occurrences to all original preflight checks.",
+    "Same-image branch prohibition also detects host-qualified build/login/tag/push. Added positive and negative detector regressions.",
+    "No application, helper, deployment script, timing, pool, authority, or capacity acceptance changes."
+  ],
+  "results": {
+    "localFailureReproduced": {
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "targetedGreen": {
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "completeFocused": {
+      "tests": 144,
+      "pass": 144,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "additionalStaticOrdering": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "totalDistinctPassingTests": 147
+  },
+  "commands": [
+    {
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-name-pattern 'runs the initial preflight before every Docker' tests/deploy-capacity-preflight.test.ts",
+      "exitCode": 1
+    },
+    {
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-name-pattern 'finds every plain|runs the initial preflight before every Docker|rejects image mutations|has a backend-only branch' tests/deploy-capacity-preflight.test.ts tests/deploy-same-image-networking.test.ts",
+      "exitCode": 0
+    },
+    {
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/deploy-capacity-preflight.test.ts tests/deploy-same-image-networking.test.ts tests/deploy-legacy-image-gate.test.mjs tests/aws-immutable-release-image.test.ts tests/private-chat-release-floor.test.ts tests/deploy-microsoft-sign-in.test.ts tests/deploy-runtime-secret-preflight.test.ts",
+      "exitCode": 0
+    },
+    {
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 --test-name-pattern 'defers the scarce rehearsal attempt|keeps ordinary deploys unchanged|reuses the exact serving main image' tests/deploy-classpilot-tile-auth-plan-gate.test.ts tests/deploy-rls-table-enablement.test.ts tests/deploy-staff-identity-contract-rollout.test.ts",
+      "exitCode": 0
+    }
+  ],
+  "commandContext": {
+    "cwd": "C:/Users/zinka/.codex/worktrees/release-stabilization-297/SchoolPilot",
+    "shell": "PowerShell",
+    "database": "No database fixture or queries; mocked deployment tests only",
+    "cloud": "No actual AWS mutations; test shell fixtures use mock commands"
+  },
+  "selectionAudit": {
+    "scope": "All tests/**/*.ts and tests/**/*.mjs",
+    "search": "rg -n -i \"docker.{0,100}(build|login|tag|push)|(build|login|tag|push).{0,100}docker\" tests -g \"*.ts\" -g \"*.mjs\"",
+    "findings": "Only capacity positive verb selectors and same-image negative mutation selectors need repair. Other build locators tolerate build-option ordering or target unchanged info lines/workflow code. All identified ordering assertions were executed.",
+    "notRun": "Full infrastructure lane not repeated; complete affected/adjacent suites plus the three remaining identified static-order assertions were run."
+  },
+  "unchangedScope": {
+    "gitDiffQuietHeadExitCode": 0,
+    "paths": [
+      "src",
+      "shared",
+      "migrations",
+      "schoolpilot-app/src",
+      "scripts/deploy.sh",
+      "scripts/verify-legacy-deploy-image.mjs",
+      "Dockerfile",
+      "package.json",
+      "package-lock.json"
+    ]
+  },
+  "fileBindings": [
+    {
+      "file": "tests/deploy-capacity-preflight.test.ts",
+      "workingBytesSha256": "9d457ed2ca0784465b1df6f3925aef912fb48edf80aa83e60dc2f25594e4a8a6",
+      "workingNormalizedLfSha256": "9d457ed2ca0784465b1df6f3925aef912fb48edf80aa83e60dc2f25594e4a8a6",
+      "headBlobSha256": "f6b30bd3ce7627bc6d5f94dae7e8b47db8751b974bc26be1e0b48dff193b5272",
+      "headNormalizedLfSha256": "f6b30bd3ce7627bc6d5f94dae7e8b47db8751b974bc26be1e0b48dff193b5272",
+      "matchesHeadIgnoringLineEndings": false
+    },
+    {
+      "file": "tests/deploy-same-image-networking.test.ts",
+      "workingBytesSha256": "b9d52b6cbab10148cf578d7d034379212857050fa46b196493f38728557a131c",
+      "workingNormalizedLfSha256": "b9d52b6cbab10148cf578d7d034379212857050fa46b196493f38728557a131c",
+      "headBlobSha256": "30dd5801912a4537d817f1f5e0c608776f146c77715206da915e90e53aa44181",
+      "headNormalizedLfSha256": "30dd5801912a4537d817f1f5e0c608776f146c77715206da915e90e53aa44181",
+      "matchesHeadIgnoringLineEndings": false
+    },
+    {
+      "file": "scripts/deploy.sh",
+      "workingBytesSha256": "01f3b57f8b5d1981335fb66f3e028d7875e8aca9ec859596d002884deb7059e2",
+      "workingNormalizedLfSha256": "ec4888e381bf1a31682535529c1b11dc806de570342283c738168887c4eee9b2",
+      "headBlobSha256": "ec4888e381bf1a31682535529c1b11dc806de570342283c738168887c4eee9b2",
+      "headNormalizedLfSha256": "ec4888e381bf1a31682535529c1b11dc806de570342283c738168887c4eee9b2",
+      "matchesHeadIgnoringLineEndings": true
+    },
+    {
+      "file": "scripts/verify-legacy-deploy-image.mjs",
+      "workingBytesSha256": "8746f73e61d28510fbf2b333f14d7376d88c8a762c06dc001f1e3eaed6370c5a",
+      "workingNormalizedLfSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "headBlobSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "headNormalizedLfSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "matchesHeadIgnoringLineEndings": true
+    }
+  ],
+  "sanitization": "Credential-bearing URL userinfo, AWS access keys, bearer tokens and named secret values redacted when found; original external files unchanged and raw hashes preserved.",
+  "limitations": [
+    "Combined08 capacity remains failed. These checks establish selector/guard correctness only.",
+    "New final-source CI must rerun after checkpoint."
+  ],
+  "records": [
+    {
+      "name": "ci-bcb2-backend-job.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-bcb2b33c-backend-job.log",
+      "rawSha256": "cf595d381b1e8a20e3260edc22aa1656ca0a68472dfa9d7fdc8fe6b8b1738c10",
+      "sanitizedSha256": "cf595d381b1e8a20e3260edc22aa1656ca0a68472dfa9d7fdc8fe6b8b1738c10",
+      "archiveSha256": "a71ed765c451624fb9114a84dc863393cf3ca4638045a33017557d51d966fe93",
+      "rawBytes": 1199428,
+      "sanitizedBytes": 1199428,
+      "sanitized": false
+    },
+    {
+      "name": "capacity-selector-red-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-capacity-docker-selector-red-01.log",
+      "rawSha256": "e1752c7555460e99f2b0d6ce6fb70d0478d8439d7bf10d721d98d9b9a7e1eede",
+      "sanitizedSha256": "e1752c7555460e99f2b0d6ce6fb70d0478d8439d7bf10d721d98d9b9a7e1eede",
+      "archiveSha256": "8d09dd5e360925179490a2e4672f5f7ea84e5b37efd0e1f1dd7cfeb32624be77",
+      "rawBytes": 1889,
+      "sanitizedBytes": 1889,
+      "sanitized": false
+    },
+    {
+      "name": "selectors-green-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-capacity-docker-selector-green-01.log",
+      "rawSha256": "f440caf0492e09b435d870a7e1147abe1eaf6742ef295bd8cc020671403467b1",
+      "sanitizedSha256": "f440caf0492e09b435d870a7e1147abe1eaf6742ef295bd8cc020671403467b1",
+      "archiveSha256": "db9f020a5a986d2df052d17a22727f5f71317737ed737b4cbfa021419867b70c",
+      "rawBytes": 1469,
+      "sanitizedBytes": 1469,
+      "sanitized": false
+    },
+    {
+      "name": "focused-144-pass.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-docker-selector-focused-01.log",
+      "rawSha256": "563d5d986b3e114ab4c81f146318aa0ada0f37b3722d24f18e556400207de4fd",
+      "sanitizedSha256": "563d5d986b3e114ab4c81f146318aa0ada0f37b3722d24f18e556400207de4fd",
+      "archiveSha256": "520e6cc4d7167d0be76645ee37f2feb0bed71c7a8e2eb6586cca3fb607e9457a",
+      "rawBytes": 36050,
+      "sanitizedBytes": 36050,
+      "sanitized": false
+    },
+    {
+      "name": "additional-ordering-3-pass.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-docker-selector-additional-ordering-01.log",
+      "rawSha256": "6b37b9da6e07f4d1ab19796e0573b547a2d9023268e11cf2724b32bea22b550a",
+      "sanitizedSha256": "6b37b9da6e07f4d1ab19796e0573b547a2d9023268e11cf2724b32bea22b550a",
+      "archiveSha256": "3a43b5a9f9e3059cf5e68f6e390002911a3563ea05d083ebd159abea78fd2232",
+      "rawBytes": 1421,
+      "sanitizedBytes": 1421,
+      "sanitized": false
+    },
+    {
+      "name": "all-tests-docker-selector-search.txt.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-docker-selector-audit-02.txt",
+      "rawSha256": "392eafcbd9733599d5dff6b1b1f6afbcc6f019f4dbc77c1d06c07df57b254e13",
+      "sanitizedSha256": "392eafcbd9733599d5dff6b1b1f6afbcc6f019f4dbc77c1d06c07df57b254e13",
+      "archiveSha256": "c7a0a2852f16151c52d34e8bc33e374686d866334721e2d775ea68a22dcdab24",
+      "rawBytes": 2649,
+      "sanitizedBytes": 2649,
+      "sanitized": false
+    },
+    {
+      "name": "test-selector.patch.gz",
+      "originalPath": "git diff -- affected tests",
+      "rawSha256": "f23ab1559820809591724a77b0067063a0a91440f51e9264e25f91c7668d482c",
+      "sanitizedSha256": "f23ab1559820809591724a77b0067063a0a91440f51e9264e25f91c7668d482c",
+      "archiveSha256": "4441da4b854d41bd658dac134d9da99842f0a9480f2aa06001d8c8ca55fb7f15",
+      "rawBytes": 5820,
+      "sanitizedBytes": 5820,
+      "sanitized": false
+    }
+  ]
+}
