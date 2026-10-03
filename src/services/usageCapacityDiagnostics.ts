@@ -10,10 +10,10 @@ export const USAGE_CAPACITY_OPERATIONS = [
 export type UsageCapacityOperation = typeof USAGE_CAPACITY_OPERATIONS[number];
 export type UsageCapacityTiming = "operationMs" | "checkoutMs" | "holdMs" | "sqlMs";
 export type UsageCapacityCounter = "checkoutAttempts" | "checkoutSuccess" | "checkoutFailure" | "sqlFailure"
-  | "admissionAdmitted" | "admissionDenied" | "admissionCancelled" | "heartbeatOptionalTelemetryFailures" | "heartbeatHandlerFailures" | "heartbeatOptionalInboxFailures";
+  | "admissionAdmitted" | "admissionDenied" | "admissionCancelled" | "heartbeatOptionalTelemetryFailures" | "heartbeatHandlerFailures" | "heartbeatOptionalInboxFailures" | "heartbeatInboxChecks";
 const timingNames: readonly UsageCapacityTiming[] = ["operationMs", "checkoutMs", "holdMs", "sqlMs"];
 const counterNames: readonly UsageCapacityCounter[] = ["checkoutAttempts", "checkoutSuccess", "checkoutFailure", "sqlFailure",
-  "admissionAdmitted", "admissionDenied", "admissionCancelled", "heartbeatOptionalTelemetryFailures", "heartbeatHandlerFailures", "heartbeatOptionalInboxFailures"];
+  "admissionAdmitted", "admissionDenied", "admissionCancelled", "heartbeatOptionalTelemetryFailures", "heartbeatHandlerFailures", "heartbeatOptionalInboxFailures", "heartbeatInboxChecks"];
 const durationBoundsMs = [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 5_000, 15_000] as const;
 type Timing = { count: number; totalMs: number; maxMs: number; buckets: number[] };
 type OperationMetrics = {
@@ -32,7 +32,7 @@ const fixedOperation = (value: UsageCapacityOperation): UsageCapacityOperation =
 const newTiming = (): Timing => ({ count: 0, totalMs: 0, maxMs: 0, buckets: Array(durationBoundsMs.length + 1).fill(0) });
 const newMetrics = (active = 0, pending = 0, operations = 0): OperationMetrics => ({
   counters: { checkoutAttempts: 0, checkoutSuccess: 0, checkoutFailure: 0, sqlFailure: 0,
-    admissionAdmitted: 0, admissionDenied: 0, admissionCancelled: 0, heartbeatOptionalTelemetryFailures: 0, heartbeatHandlerFailures: 0, heartbeatOptionalInboxFailures: 0 },
+    admissionAdmitted: 0, admissionDenied: 0, admissionCancelled: 0, heartbeatOptionalTelemetryFailures: 0, heartbeatHandlerFailures: 0, heartbeatOptionalInboxFailures: 0, heartbeatInboxChecks: 0 },
   timings: { operationMs: newTiming(), checkoutMs: newTiming(), holdMs: newTiming(), sqlMs: newTiming() },
   activeCheckouts: active, peakActiveCheckouts: active,
   pendingCheckouts: pending, peakPendingCheckouts: pending,

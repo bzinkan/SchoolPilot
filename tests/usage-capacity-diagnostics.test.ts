@@ -10,6 +10,18 @@ import { recordHeartbeatHotPathCounter, snapshotHeartbeatHotPathMetrics } from "
 describe("bounded content-free capacity diagnostics", () => {
   beforeEach(resetUsageCapacityDiagnostics);
 
+  it("counts requested heartbeat inbox checks independently of failures until phase reset", () => {
+    recordUsageCapacityCounter("heartbeatInboxChecks", "heartbeat_final_delivery");
+    recordUsageCapacityCounter("heartbeatInboxChecks", "heartbeat_final_delivery");
+    recordUsageCapacityCounter("heartbeatOptionalInboxFailures", "heartbeat_final_delivery");
+    snapshotHeartbeatHotPathMetrics({ reset: true });
+    const counters = getUsageCapacityDiagnostics().operations.heartbeat_final_delivery!.counters;
+    assert.equal(counters.heartbeatInboxChecks, 2);
+    assert.equal(counters.heartbeatOptionalInboxFailures, 1);
+    resetUsageCapacityDiagnostics();
+    assert.equal(getUsageCapacityDiagnostics().operations.heartbeat_final_delivery!.counters.heartbeatInboxChecks, 0);
+  });
+
   it("retains inbox failures until explicit phase reset without message content", () => {
     recordUsageCapacityCounter("heartbeatOptionalInboxFailures", "heartbeat_final_delivery");
     snapshotHeartbeatHotPathMetrics({ reset: true });

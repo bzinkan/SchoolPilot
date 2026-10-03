@@ -16230,6 +16230,15 @@ export async function getClasspilotTelemetryOwnerProjection(
   studentId: string,
   dbInstance: Pick<typeof db, "execute"> = db,
 ): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
+  return getClasspilotTelemetryOwnerProjectionAtClock(schoolId, studentId, dbInstance, "transaction");
+}
+
+async function getClasspilotTelemetryOwnerProjectionAtClock(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute">,
+  clock: ClasspilotAuthorityClock,
+): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
   const result = await dbInstance.execute<{
     hasActiveSupervision: boolean;
     id: string | null;
@@ -16262,7 +16271,8 @@ export async function getClasspilotTelemetryOwnerProjection(
         AND student.school_id=${schoolId} AND student.status='active'
       WHERE assignment.school_id=${schoolId} AND assignment.student_id=${studentId}
         AND assignment.released_at IS NULL AND context.school_id=${schoolId}
-        AND context.status='active' AND context.starts_at<=now() AND context.ends_at>now()
+        AND context.status='active' AND context.starts_at<=${classpilotAuthorityClockSql(clock)}
+        AND context.ends_at>${classpilotAuthorityClockSql(clock)}
     ) AS "hasActiveSupervision", owner.id, owner.control_updated_at AS "controlUpdatedAt",
       owner.start_time AS "startTime", owner.created_at AS "createdAt"
     FROM (SELECT 1) anchor LEFT JOIN owner_candidates owner ON true
@@ -20644,6 +20654,7 @@ export async function withClasspilotHeartbeatDeliveryAuthority<
       // Inbox eligibility is read after all awaited foreground transport. The
       // heartbeat-only clock sees supervision/expiry changes since BEGIN.
       if (inboxExclusions !== undefined) {
+        recordUsageCapacityCounter("heartbeatInboxChecks", "heartbeat_final_delivery");
         await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_inbox`);
         try {
           const messages = await getPendingMessagesForStudentWithAuthorityLocked(
@@ -27300,12 +27311,22 @@ async function getPendingMessagesForStudentWithAuthorityLocked(
     ))
     .limit(1)
     .for("share");
+  // The heartbeat already holds the student's advisory lock. Keep this fresh
+  // control row lock after foreground transport, then discover current owner
+  // and supervision together. Never reuse an earlier screenshot grant across
+  // the awaited work or accept a caller-supplied authority projection.
+  const currentTeachingOwner = clock === "current" && controlState?.teachingSessionId
+    && controlState.supervisionContextId === null
+    ? await getClasspilotTelemetryOwnerProjectionAtClock(options.schoolId, options.studentId, transactionDb, clock)
+    : undefined;
   const currentTeachingSessionId = controlState?.teachingSessionId
-    && await hasCurrentClasspilotStudentControlAuthorityAtClock({
+    && (currentTeachingOwner
+      ? !currentTeachingOwner.hasActiveSupervision && currentTeachingOwner.teachingSessionId === controlState.teachingSessionId
+      : await hasCurrentClasspilotStudentControlAuthorityAtClock({
       schoolId: options.schoolId,
       studentId: options.studentId,
       teachingSessionId: controlState.teachingSessionId,
-    }, transactionDb, clock)
+    }, transactionDb, clock))
     ? controlState.teachingSessionId
     : null;
   const currentSupervisionContextId = controlState?.supervisionContextId

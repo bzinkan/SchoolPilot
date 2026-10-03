@@ -41,12 +41,13 @@ function fixture(fault?: string) {
 }
 test('optional inbox is inside the owned transaction before mandatory final fence and sync HTTP', async () => {
   const f = fixture(); assert.equal((await f.run()).authorized, true);
+  assert.deepEqual(f.counters, ['heartbeatInboxChecks']);
   assert.deepEqual(f.order, ['begin', 'prepare', 'SAVEPOINT classpilot_heartbeat_inbox', 'inbox', 'RELEASE SAVEPOINT classpilot_heartbeat_inbox', 'final-fence', 'http', 'release']);
   assert.deepEqual(JSON.parse(JSON.stringify(f.snapshot().outcome)), { checked: true, messages: [{ id: 'message' }] });
 });
-test('no requested recovery performs no inbox SQL', async () => { const f = fixture(); await f.run(false); assert.equal(f.snapshot().reads, 0); });
+test('no requested recovery performs no inbox SQL', async () => { const f = fixture(); await f.run(false); assert.equal(f.snapshot().reads, 0); assert.deepEqual(f.counters, []); });
 test('optional body error is visible, restores its savepoint, and never claims a checked inbox', async () => {
-  const f = fixture('query'); await f.run(); assert.deepEqual(f.counters, ['heartbeatOptionalInboxFailures']);
+  const f = fixture('query'); await f.run(); assert.deepEqual(f.counters, ['heartbeatInboxChecks', 'heartbeatOptionalInboxFailures']);
   assert.deepEqual(JSON.parse(JSON.stringify(f.snapshot().outcome)), { checked: false });
   assert.ok(f.order.indexOf('ROLLBACK TO SAVEPOINT classpilot_heartbeat_inbox') < f.order.indexOf('final-fence'));
 });

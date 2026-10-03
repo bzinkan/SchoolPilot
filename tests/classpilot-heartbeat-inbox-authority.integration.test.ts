@@ -105,6 +105,68 @@ test("heartbeat inbox shares final ownership while preserving durable command re
       { excludeMessageIds: options.excludes }));
     };
     const rows = (): Inbox => { assert.equal(inbox.checked, true); return inbox.checked ? inbox.messages : []; };
+    await t.test('teaching inbox keeps its fresh row lock and replaces five authority reads with two', async () => {
+      await reset(); const item = await command();
+      const original = pg.Client.prototype.query, queries: string[] = [];
+      const spy = t.mock.method(pg.Client.prototype, 'query', function(this: pg.Client, ...args: unknown[]) {
+        const query = args[0];
+        queries.push(typeof query === 'string' ? query : query && typeof query === 'object' && 'text' in query ? String(query.text) : '');
+        return Reflect.apply(original, this, args);
+      });
+      try {
+        const expected = await scoped(a.school.id, () => storage.getPendingMessagesForStudent(binding));
+        const referenceStart = queries.findIndex(query => query.includes('from "classpilot_student_control_states"'));
+        const referenceEnd = queries.findIndex(query => query.includes('from "messages"'));
+        assert.ok(referenceStart >= 0 && referenceEnd > referenceStart);
+        const reference = queries.slice(referenceStart, referenceEnd);
+        assert.equal(reference.length, 5); assert.match(reference[0]!, /for share/i);
+        queries.length = 0;
+        const diagnostics = await import('../src/services/usageCapacityDiagnostics.js');
+        diagnostics.resetUsageCapacityDiagnostics(); await invoke({ noReader: true });
+        const start = queries.indexOf('SAVEPOINT classpilot_heartbeat_inbox') + 1;
+        const end = queries.findIndex((query, index) => index >= start && query.includes('from "messages"'));
+        assert.ok(start > 0 && end > start);
+        const optimized = queries.slice(start, end);
+        assert.equal(optimized.length, 2); assert.match(optimized[0]!, /for share/i);
+        assert.match(optimized[1]!, /WITH owner_candidates/);
+        assert.match(optimized[1]!, /context\.starts_at<=clock_timestamp\(\)/);
+        assert.match(optimized[1]!, /context\.ends_at>clock_timestamp\(\)/);
+        assert.deepEqual(rows().map(row => row.id), expected.map(row => row.id));
+        assert.equal(rows()[0]?.commandId, item.id);
+        assert.equal(diagnostics.getUsageCapacityDiagnostics().operations.heartbeat_final_delivery!.counters.heartbeatInboxChecks, 1);
+        t.diagnostic(JSON.stringify({ authorityReadsBefore: reference.length, authorityReadsAfter: optimized.length,
+          initialRowLockRetained: true, clock: 'current', measuredCapacity: false }));
+      } finally { spy.mock.restore(); }
+    });
+    await t.test('fresh teaching inbox projection matches canonical frozen and legacy owner ranking and absent scope', async () => {
+      await reset(); await command(); const rival = randomUUID();
+      await scoped(a.school.id, () => db.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,created_at)
+        VALUES(${rival},${a.school.id},${a.session.groupId},${a.teacher.id},'2026-11-01 01:30:00.123456','2026-03-08 02:30:00.654321')`));
+      try {
+        for (const change of [
+          sql`UPDATE teaching_sessions SET control_updated_at=NULL,start_time='2026-11-01 01:30:00.123456',created_at='2026-03-08 02:30:00.654321' WHERE id=${a.session.id}`,
+          sql`UPDATE teaching_sessions SET control_updated_at='2026-12-01 00:00:00.000001' WHERE id=${rival}`,
+          sql`UPDATE teaching_sessions SET control_updated_at='2026-12-01 00:00:00.000999' WHERE id=${a.session.id}`,
+          sql`UPDATE teaching_sessions SET created_at='2026-03-09 00:00:00' WHERE id=${a.session.id}`,
+          sql`UPDATE teaching_sessions SET start_time='2026-11-02 00:00:00' WHERE id=${a.session.id}`,
+          sql`UPDATE teaching_sessions SET end_time=now() WHERE id=${a.session.id}`,
+          sql`UPDATE teaching_sessions SET session_mode='scheduled_report' WHERE id=${rival}`,
+          sql`UPDATE classpilot_student_control_states SET teaching_session_id=NULL,hard_expires_at=NULL,scheduled_end_at=NULL WHERE school_id=${a.school.id} AND student_id=${a.student.id}`,
+        ]) {
+          await scoped(a.school.id, () => db.execute(change));
+          const expected = await scoped(a.school.id, () => storage.getPendingMessagesForStudent(binding));
+          await invoke({ noReader: true });
+          assert.deepEqual(rows().map(row => row.id), expected.map(row => row.id));
+        }
+      } finally {
+        await scoped(a.school.id, async () => {
+          await db.execute(sql`DELETE FROM teaching_sessions WHERE id=${rival}`);
+          await db.execute(sql`UPDATE teaching_sessions SET start_time=${a.session.startTime},created_at=${a.session.createdAt},
+            control_updated_at=${a.session.controlUpdatedAt} WHERE id=${a.session.id}`);
+        });
+        await reset();
+      }
+    });
     await t.test('fused inbox equals public recovery with one physical checkout and fewer statements', async () => {
       await reset(); const item = await command(); const old = await scoped(a.school.id, () => storage.getPendingMessagesForStudent(binding));
       await scoped(a.school.id, () => db.execute(sql`UPDATE classpilot_command_targets SET status='unavailable',student_session_id=NULL,device_id=NULL WHERE command_id=${item.id}`));

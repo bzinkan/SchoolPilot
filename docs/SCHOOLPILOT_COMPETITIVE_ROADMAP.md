@@ -14,6 +14,22 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
+The subsequent [inbox owner projection](release-evidence/release-297/usage-contention/inbox-projection/manifest.json)
+preserves fresh authority and all delivery fences while reducing repeated reads.
+Build/type/cast checks, 1,824 unit cases and both 21-case native role suites pass;
+four unit skips remain documented. Its query-count reduction is not capacity
+acceptance. New-source CI and full measured acceptance remain required.
+
+The [92307780 checkpoint](release-evidence/release-297/usage-contention/ci-92307780.json)
+passes all required CI workflows for the `d6492333` application. The subsequent
+[Linux diagnostic](release-evidence/release-297/usage-contention/load-linux-combined-01/manifest.json)
+does not establish capacity: 5,652/6,000 heartbeat offers and 38/64 reports
+succeeded, with 348 refused and five late offers. Both workers finished below
+48 seconds and acquisition failures were zero, but 23 aborted responses prevent
+drain certification. Separate Linux processes shared one unrestricted container;
+this is a diagnostic topology, not a production capacity claim. Later application
+changes require new source-bound acceptance.
+
 The latest [combined attempt09 at d6492333](release-evidence/release-297/usage-contention/load-combined-09/manifest.json)
 also fails: 3,677 of 6,000 heartbeat offers and 30 of 64 reports succeeded,
 with 1,957 acquisition failures. Workers returned correct historical totals in

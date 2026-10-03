@@ -4,6 +4,20 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
+The subsequent [inbox owner projection](release-evidence/release-297/usage-contention/inbox-projection/manifest.json)
+reduces repeated authority reads while preserving locks and delivery fences.
+Build/type/cast checks, 1,824 unit cases, 27 focused cases and 21 native cases
+under each database role pass; four conditional unit skips remain explicit.
+This application change needs its own CI and measured capacity acceptance.
+
+[CI at `92307780`](release-evidence/release-297/usage-contention/ci-92307780.json)
+passes all four workflows and all 17 CI jobs, covering the `d6492333`
+application. The [Linux combined diagnostic](release-evidence/release-297/usage-contention/load-linux-combined-01/manifest.json)
+still fails capacity: 5,652/6,000 offers succeeded, 348 were refused, five were
+late, and 38/64 reports succeeded. Zero acquisition failures and workers below
+48 seconds do not override those failures or the 23 aborted responses. Later
+application changes need fresh acceptance; Usage remains off.
+
 The latest stabilization work remains in #603. [CI at `bcb2b33c`](release-evidence/release-297/usage-contention/ci-bcb2b33c.json)
 records 15 passing jobs and two failed jobs; both failures have retained local
 repairs. [Combined attempt08](release-evidence/release-297/usage-contention/load-combined-08/manifest.json)

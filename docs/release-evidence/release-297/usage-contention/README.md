@@ -3,6 +3,36 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The [inbox owner projection](inbox-projection/manifest.json) reduces the teaching
+inbox authority reads from five to two while retaining the fresh control-row
+lock, current database clock, canonical roster ranking and every delivery fence.
+It adds a content-free inbox-attempt counter. Twenty-seven focused cases and
+21 native cases under each role pass. The subsequent full build, type/cast
+checks and 1,824 unit cases pass on 1,170 unchanged source files; four conditional
+skips remain named. The equivalent full recovery now uses 24 SQL statements and
+one lease, versus the original 33 statements/two leases and preceding fused
+27 statements/one lease. This is query-count evidence, not measured capacity.
+
+The [92307780 CI checkpoint](ci-92307780.json) passes all four workflows and all
+17 CI jobs. Its application/build inputs match `d6492333`; later application
+changes require their own checks. Conditional skips remain skips.
+
+The [Linux combined diagnostic](load-linux-combined-01/manifest.json), on the
+same `d6492333` application, completed all 5,652 started heartbeats but refused
+348 of the 6,000 offers and recorded five late offers. Only 38 of 64 reports
+succeeded. Both historical workers returned correct totals in 15.582/36.344
+seconds, with zero database acquisition failures. Twenty-three aborted responses
+prevented drain certification despite zero physical owners; current-day and CSV
+checks did not run. Owned-resource cleanup passed separately. API CPU use was
+82.221 seconds over 69.510 seconds elapsed. This is failed diagnostic evidence,
+not capacity acceptance: API/worker/generator were separate Linux processes in
+one unrestricted container, with the existing pools, heaps and database limits.
+Network/runtime topology and completed work differ from Windows, so this does
+not isolate a causal performance improvement. The [helper preparation record](linux-diagnostic-preparation/manifest.json)
+retains exact runtime/source bindings, failed preparation attempts and cleanup
+proof. Its external-only fields describe creation before this verified archive
+copy; no helper image was published.
+
 [Combined09](load-combined-09/manifest.json), on clean `d6492333`, remains failed:
 3,677 of 6,000 offers succeeded, 1,911 started requests failed and 412 offers were
 refused, with zero late offers. Thirty of 64 reports succeeded; six returned 500
@@ -27,8 +57,8 @@ retains the ordinary isolation job's 1,478 passes, one failure and eight skips.
 The failure asserted the old literal clock and callback formatting. Its narrow
 test-only correction verifies both transaction/current entry points and their
 clock mapping; the full 27-case suite passes. All 904 captured application/build
-inputs remain unchanged. A fresh CI run is required; the failed job is not
-relabeled as passing.
+inputs remain unchanged. The subsequent `92307780` checkpoint passes; the
+original failed job is not relabeled as passing.
 
 The latest [combined checks, attempt11](combined-checks-attempt-11/manifest.json),
 pass the application build, type/cast checks and all 699 infrastructure tests.
