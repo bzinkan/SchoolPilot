@@ -14,13 +14,14 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
-The October 2 corrected-source capacity retry is a retained failure: each full
-worker finished below 48 seconds, but concurrent reports and authenticated
-heartbeat arrivals exhausted the API connection pool. Usage remains off; neither
-three passing cold runs nor a supported 100-request/second envelope is established.
-The [Run 02 evidence](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json)
-preserves the unchanged limits, exact schema/source, failures and successful
-post-run correctness checks. The correction now adds bounded fair report
+The October 3 [combined attempt07](release-evidence/release-297/usage-contention/load-combined-07/manifest.json)
+remains failed capacity evidence: 3,268 of 6,000 heartbeat offers and 32 of 64
+reports succeeded, with 1,679 API connection-acquisition failures. Both historical
+workers finished below 48 seconds. Physical ownership counters reached zero,
+but 66 aborted responses prevented drain certification; current-day and audited
+CSV checks did not run. Usage remains off; neither three passing cold runs nor a
+supported 100-request/second envelope is established. Earlier failures retain
+their own source, measurements and correctness results. The correction adds bounded fair report
 admission, narrowly scoped tenant connections, complete request deadlines,
 content-free ownership diagnostics and removal of a redundant modern heartbeat
 authority calculation. A separate release-enabled harness uses isolated API,
@@ -29,12 +30,25 @@ precise restrictions, Focus and private-chat lifecycle active. Implementation
 alone does not satisfy the required three consecutive final-source capacity
 runs. See the [contention and acceptance record](RELEASE_297_USAGE_AND_RUNTIME_EVIDENCE.md).
 
-The [latest review-container snapshot](release-evidence/release-297/usage-contention/pr-review-checkpoint.json)
-is separate from the pending Usage source freeze: SchoolPilot #603's green
-`08802d02` head does not cover these later changes. Local compatible rollback
-preparation is [recorded separately](release-evidence/release-297/usage-contention/rollback-artifact/index.json),
-with both Usage modes required off; it is not registry publication, deployment
-or final candidate acceptance.
+SchoolPilot #603's [CI at `7cf86cf1`](release-evidence/release-297/usage-contention/ci-7cf86cf1.json)
+has 14 successful jobs and three failures in test detectors affected by source
+layout changes. Security workflows passed. Local detector repairs and the new
+heartbeat optimizations require fresh combined-source checks and capacity runs.
+The heartbeat correction now reuses its already locked final-delivery authority
+for eligible foreground updates, and checks school/license/session expiry again
+before the HTTP response. Its [native proof](release-evidence/release-297/usage-contention/heartbeat-foreground-fusion/manifest.json)
+passes 23 owner and 23 restricted-role cases; this is not capacity acceptance.
+The compatible fallback advances to `5c01944e` with the same final expiry fence
+and both Usage modes required off. Its predecessor `ed5599de` has a retained
+[scanned local image](release-evidence/release-297/usage-contention/rollback-artifact-ed5599de/index.json);
+the new fallback image, final candidate artifacts and migration
+re-entry remain pending; local preparation does not establish registry publication
+or deployment.
+
+St. Francis DeSales Cincinnati (`desalescincy.org`) is the only live school,
+as confirmed by the owner. Both schools in capacity and tenant-isolation tests
+are synthetic. Resolve the actual DeSales UUID and current eligibility through
+authorized production reads before preparing a live pilot.
 
 This document turns the product owner's eight-phase master plan into a sequence of safe, independently deployable pull requests. It records the product model, the engineering rules every PR follows, the PR order and its hard constraints, the capabilities and flags each PR adds, and the Phase 0/0A status. The retired Live View and parked TURN inventory, with its A–E classification and deletion order, is in `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`.
 

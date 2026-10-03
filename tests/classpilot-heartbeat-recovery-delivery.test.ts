@@ -27,7 +27,7 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
   const rows = options.messages ? [{ message: { id: "message-a", content: "Synthetic private reply", supervisionContextId: "context-a" } }] : [];
   const context = {
     schoolId: "school-a", studentId: "student-a", studentSessionId: "session-a", deviceId: "device-a",
-    now: 1_000_000, pendingMessageRecoveryHeartbeat: options.recover !== false,
+    deferredForeground: undefined, now: 1_000_000, pendingMessageRecoveryHeartbeat: options.recover !== false,
     teacherReplyLastCheck: new Map([["session-a:device-a", 1_000_000]]), MAX_TEACHER_REPLY_CHECKS: 100,
     setBoundedMap(map: Map<string, number>, key: string, value: number) { map.set(key, value); },
     async runWithTenantContext(scope: Frame, action: () => Promise<unknown>) {
@@ -36,17 +36,19 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
       try { return await action(); }
       finally { held = false; order.push("released"); released.resolve(); }
     },
-    async withClasspilotStudentControlDeliveryAuthority(binding: Frame, prepare: (db: object) => Promise<Frame>,
+    async withClasspilotHeartbeatDeliveryAuthority(binding: Frame, prepare: (db: object) => Promise<Frame>,
       deliver: (claimed: typeof rows, prepared: Frame) => unknown,
       recover: ((claimed: typeof rows, prepared: Frame) => unknown) | undefined) {
       authorities++;
       assert.equal(binding.freezeSsoPolicy, true);
       const prepared = await prepare({}); order.push("prepared");
       if (recover && rows.length) recover(rows, prepared);
-      return { authorized: true, value: deliver(rows, prepared) };
+      return { authorized: true, value: deliver(rows, prepared), foreground: { status: "fallback" } };
     },
-    async getClasspilotStudentControlState() { return { revision: 47, desiredState: {} }; },
-    async getClasspilotSsoPolicyForSchool() { return { revision: 6, policy: {} }; },
+    async getClasspilotStudentControlDeliveryContext() {
+      assert.equal(held, true);
+      return { controlState: { revision: 47, desiredState: {} }, ssoPolicy: { revision: 6, policy: {} } };
+    },
     isClasspilotCapabilityActive() { return true; },
     serializeClasspilotStudentControlStateForDelivery() { return { classroomState: null, withheld: true }; },
     async prepareClasspilotFocusCleanupFrame() { return { exactBinding: { controlRevision: 99 } }; },

@@ -127,7 +127,7 @@ test("late failed checkout remains visible after response and reset without chan
 test("actual heartbeat owner uses finally outside all post-response work and middleware coverage stays narrow", () => {
   const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", import.meta.url), "utf8");
   const route = source.slice(source.indexOf('router.post("/device/heartbeat"'), source.indexOf('router.post("/device/screenshot"'));
-  assert.match(route, /startUsageCapacityOperation\("heartbeat_handler"\);\s*try \{/);
+  assert.match(route, /startUsageCapacityOperation\("heartbeat_handler"\);\s*let finishForegroundTelemetry: \(\) => void = \(\) => \{\};\s*try \{/);
   assert.match(route, /await Promise\.all\(teacherReplyPublications\);[\s\S]*return finalDelivery\.value;[\s\S]*finally \{[\s\S]*endHeartbeatHandler\(\);/);
   assert.match(route, /catch \(err\) \{\s*recordUsageCapacityCounter\("heartbeatHandlerFailures", "heartbeat_handler"\);\s*next\(err\);/);
   for (const middleware of ["requireCryptographicDeviceAuth", "requireClasspilotEntitlement", "deviceHeartbeatLimiter"]) {

@@ -78,10 +78,12 @@ import {
   getReclaimableStudentSessionByRecoveryTokenHash,
   getBatchTileAccessForStaff,
   getClasspilotStudentControlState,
+  getClasspilotStudentControlDeliveryContext,
   getClasspilotSsoPolicyForSchool,
   lockClasspilotSsoPolicyDeliveryAuthority,
   getClasspilotScreenshotAuthorityProjection,
   withClasspilotStudentControlDeliveryAuthority,
+  withClasspilotHeartbeatDeliveryAuthority,
   withClasspilotScreenshotUploadAuthority,
   acknowledgeClasspilotStudentControlState,
   getHeartbeatTileHistoryBatch,
@@ -1138,6 +1140,35 @@ async function publishLockedSupervisionScreenshotAvailable(
   } finally { clearTimeout(timeout); }
 }
 
+async function publishOrderedRealtimeAudience(
+  message: Record<string, unknown>, revision: string, options: {
+    target: WsRedisTarget;
+    scopedOrderedKey: string;
+    deliverLocal: () => void;
+  }
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 300);
+  timeout.unref?.();
+  let outcome: Awaited<ReturnType<typeof publishOrderedWS>>;
+  try {
+    outcome = await publishOrderedWS(
+      options.target,
+      message,
+      { orderedKey: options.scopedOrderedKey, revision, signal: controller.signal }
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (
+    (outcome.status === "accepted" || outcome.status === "failed")
+    && recordLocalOrderedDelivery(options.scopedOrderedKey, revision)
+  ) {
+    options.deliverLocal();
+  }
+}
+
 async function publishRevisionedRealtimeUpdate(
   snapshot: ClasspilotRealtimeStatus,
   message: Record<string, unknown>,
@@ -1156,32 +1187,6 @@ async function publishRevisionedRealtimeUpdate(
     ? `${realtimeOrderingKey}:${options.orderingNamespace}`
     : realtimeOrderingKey;
   const revision = options.orderingRevision ?? String(snapshot.revision);
-  const publishToAudience = async (options: {
-    target: WsRedisTarget;
-    scopedOrderedKey: string;
-    deliverLocal: () => void;
-  }) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300);
-    timeout.unref?.();
-    let outcome: Awaited<ReturnType<typeof publishOrderedWS>>;
-    try {
-      outcome = await publishOrderedWS(
-        options.target,
-        message,
-        { orderedKey: options.scopedOrderedKey, revision, signal: controller.signal }
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (
-      (outcome.status === "accepted" || outcome.status === "failed")
-      && recordLocalOrderedDelivery(options.scopedOrderedKey, revision)
-    ) {
-      options.deliverLocal();
-    }
-  };
 
   if (authority?.teachingSessionId) {
     await runWithTenantContext({ schoolId: snapshot.schoolId }, () =>
@@ -1196,7 +1201,7 @@ async function publishRevisionedRealtimeUpdate(
         allowReportingObservation: true,
       }, async (target) => {
         const scopedOrderedKey = `${orderedKey}:session:${target.teachingSessionId}`;
-        await publishToAudience({
+        await publishOrderedRealtimeAudience(message, revision, {
           target: {
             kind: "staff-session",
             schoolId: snapshot.schoolId,
@@ -1229,7 +1234,7 @@ async function publishRevisionedRealtimeUpdate(
     }, async (target) => {
       const scopedOrderedKey = `${orderedKey}:supervision:${target.supervisionContextId}`;
       message = { ...message, supervisionContextId: target.supervisionContextId, contextAuthorityRevision: target.contextAuthorityRevision };
-      await publishToAudience({
+      await publishOrderedRealtimeAudience(message, revision, {
         target: {
           kind: "staff-context",
           schoolId: snapshot.schoolId,
@@ -3767,6 +3772,7 @@ router.post("/device/heartbeat",
   trackUsageCapacityMiddleware("heartbeat_middleware", requireClasspilotEntitlement),
   trackUsageCapacityMiddleware("heartbeat_middleware", deviceHeartbeatLimiter), async (req, res, next) => {
   const endHeartbeatHandler = startUsageCapacityOperation("heartbeat_handler");
+  let finishForegroundTelemetry: () => void = () => {};
   try {
     const {
       activeTabUrl: reportedActiveTabUrl,
@@ -4340,10 +4346,16 @@ router.post("/device/heartbeat",
       heartbeatTileCacheWritten
     );
     const realtimeSnapshot = realtimeStatusMutation.snapshot;
-    let finishForegroundTelemetry!: () => void;
     let foregroundTelemetrySucceeded = false;
     const foregroundTelemetrySettled = new Promise<void>(resolve => { finishForegroundTelemetry = resolve; });
-    try {
+    let deferredForeground: {
+      teachingSessionId: string;
+      controlRevision: number;
+      publish: () => Promise<void>;
+      fallback: () => Promise<void>;
+      onFailure: () => void;
+    } | undefined;
+    {
       const telemetryAuthority = realtimeControlAuthority(controlState);
       // Historical classification belongs to the already persisted heartbeat.
       // Register it before a stale snapshot return or optional staff publication
@@ -4663,19 +4675,30 @@ router.post("/device/heartbeat",
         }
       }
 
-      // Optional teacher telemetry must not fail an accepted heartbeat or prevent
-      // its registered historical/safety work. Actual delivery still uses the
-      // unchanged locked authority gate; failed checkouts remain in pool metrics.
-      await publishRevisionedRealtimeUpdate(realtimeSnapshot, update, telemetryAuthority)
-        .then(() => { foregroundTelemetrySucceeded = true; },
-          () => {
-            recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures");
-            recordUsageCapacityCounter("heartbeatOptionalTelemetryFailures", "heartbeat_background");
-          });
-    } finally {
-      // Release current-effect producers on stale returns, delivery failure or
-      // any earlier synchronous error. Historical persistence never waits here.
-      finishForegroundTelemetry();
+      const onForegroundFailure = () => {
+        recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures");
+        recordUsageCapacityCounter("heartbeatOptionalTelemetryFailures", "heartbeat_background");
+      };
+      const publishOriginalForeground = () => publishRevisionedRealtimeUpdate(realtimeSnapshot, update, telemetryAuthority);
+      if (trackingWindowScreenshotLeaseNegotiated && telemetryAuthority?.teachingSessionId
+        && Number.isSafeInteger(telemetryAuthority.revision)) {
+        const teachingSessionId = telemetryAuthority.teachingSessionId;
+        deferredForeground = {
+          teachingSessionId,
+          controlRevision: telemetryAuthority.revision,
+          publish: () => publishOrderedRealtimeAudience(update, String(realtimeSnapshot.revision), {
+            target: { kind: "staff-session", schoolId, sessionId: teachingSessionId },
+            scopedOrderedKey: `${classpilotRealtimeOrderingKey(schoolId, deviceId)}:session:${teachingSessionId}`,
+            deliverLocal: () => broadcastToStaffSessionLocal(schoolId, teachingSessionId, update),
+          }),
+          fallback: publishOriginalForeground,
+          onFailure: onForegroundFailure,
+        };
+      } else {
+        // Legacy, supervision and non-negotiated paths keep the original gate.
+        await publishOriginalForeground().then(() => { foregroundTelemetrySucceeded = true; }, onForegroundFailure);
+        finishForegroundTelemetry();
+      }
     }
 
     // --- Deliver any missed messages (item #3b) ---
@@ -4798,17 +4821,11 @@ router.post("/device/heartbeat",
     // which a retired binding could otherwise receive the old student's state.
     const finalDelivery = await runWithTenantContext(
       { schoolId, operation: "heartbeat_final_delivery" },
-      () => withClasspilotStudentControlDeliveryAuthority(
+      () => withClasspilotHeartbeatDeliveryAuthority(
         { schoolId, studentId, studentSessionId, deviceId, freezeSsoPolicy: true },
-        async (transactionDb) => {
-          const [finalControlState, finalSsoPolicy] = await Promise.all([
-            getClasspilotStudentControlState(
-              schoolId,
-              studentId,
-              transactionDb
-            ),
-            getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
-          ]);
+        async (transactionDb, readScreenshotAuthority) => {
+          const { controlState: finalControlState, ssoPolicy: finalSsoPolicy } =
+            await getClasspilotStudentControlDeliveryContext(schoolId, studentId, transactionDb);
           const serialized = finalControlState
             ? serializeClasspilotStudentControlStateForDelivery({
                 state: finalControlState,
@@ -4839,12 +4856,7 @@ router.post("/device/heartbeat",
                 acceptedCapabilities: protocol.acceptedCapabilities,
                 trackingSettings,
                 trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
-                  projection: await getClasspilotScreenshotAuthorityProjection({
-                    schoolId,
-                    studentId,
-                    studentSessionId,
-                    deviceId,
-                  }, transactionDb),
+                  projection: await readScreenshotAuthority(),
                   deliveredControlRevision: finalClassroomState?.revision ?? 0,
                 }),
                 observationStatus: heartbeatObservationStatus,
@@ -4926,8 +4938,20 @@ router.post("/device/heartbeat",
             teacherReplyPublications.push(publishWS(exactTarget, replyPayload).catch(() => false));
           }
         } : undefined,
+        deferredForeground,
       )
     );
+    // The old publisher acquires its own tenant connection. Invoke it only once
+    // this scope has completed COMMIT/RESET/release, and only for unsupported
+    // proof; a temporal denial or partial transport attempt is terminal.
+    if (finalDelivery.authorized && deferredForeground) {
+      if (finalDelivery.foreground.status === "fallback") {
+        await deferredForeground.fallback().then(() => { foregroundTelemetrySucceeded = true; }, deferredForeground.onFailure);
+      } else if (finalDelivery.foreground.status === "settled") {
+        foregroundTelemetrySucceeded = finalDelivery.foreground.succeeded;
+      }
+      finishForegroundTelemetry();
+    }
     await Promise.all(teacherReplyPublications);
     if (!finalDelivery.authorized) {
       return res.status(409).json({
@@ -4941,6 +4965,9 @@ router.post("/device/heartbeat",
     recordUsageCapacityCounter("heartbeatHandlerFailures", "heartbeat_handler");
     next(err);
   } finally {
+    // This also releases current safety work on stale, denied and failed paths.
+    // Historical classification persistence never waits for this barrier.
+    finishForegroundTelemetry();
     // res.json may precede COMMIT, RESET and Redis settlement. HTTP finish or
     // disconnect must never report this handler as drained before its work ends.
     endHeartbeatHandler();

@@ -163,8 +163,8 @@ test("manual student sessions use database-time leases and exact recovery capabi
     "late-sign-in persistence must revalidate the manual-session lease against database time under lock"
   );
   const deliveryAuthority = storage.slice(
-    storage.indexOf("export async function withClasspilotStudentControlDeliveryAuthority"),
-    storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
+    storage.indexOf("async function withClasspilotStudentControlDeliveryAuthorityCore"),
+    storage.indexOf("async function assertClasspilotHeartbeatDeliveryCurrent")
   );
   assert.ok(
     deliveryAuthority.indexOf("assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true })")

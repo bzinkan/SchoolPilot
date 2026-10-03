@@ -1,0 +1,201 @@
+{
+  "recordedAtUtc": "2026-10-03T05:32:23.2907877Z",
+  "repository": "bzinkan/SchoolPilot",
+  "source": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+  "workflows": [
+    {
+      "conclusion": "success",
+      "databaseId": 37098470056,
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470056",
+      "workflowName": "Trivy Container Scan"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 37098470069,
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470069",
+      "workflowName": "CodeQL"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 37098470063,
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470063",
+      "workflowName": "Gitleaks"
+    },
+    {
+      "conclusion": "failure",
+      "databaseId": 37098470054,
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054",
+      "workflowName": "CI"
+    }
+  ],
+  "ci": {
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054",
+    "status": "completed",
+    "conclusion": "failure",
+    "jobs": [
+      {
+        "name": "Detect changed paths",
+        "databaseId": 111133120070,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:01:43Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120070"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 3)",
+        "databaseId": 111133120153,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:06:07Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120153"
+      },
+      {
+        "name": "Cross-tenant isolation tests",
+        "databaseId": 111133120162,
+        "status": "completed",
+        "conclusion": "failure",
+        "startedAt": "2026-10-03T05:01:34Z",
+        "completedAt": "2026-10-03T05:15:04Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120162"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 4)",
+        "databaseId": 111133120164,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:10:11Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120164"
+      },
+      {
+        "name": "RLS-enabled cross-tenant tests",
+        "databaseId": 111133120173,
+        "status": "completed",
+        "conclusion": "failure",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:07:14Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120173"
+      },
+      {
+        "name": "Backend (TypeScript + Build)",
+        "databaseId": 111133120176,
+        "status": "completed",
+        "conclusion": "failure",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:08:25Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120176"
+      },
+      {
+        "name": "Frontend (Vite Build)",
+        "databaseId": 111133120198,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:09:07Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120198"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 2)",
+        "databaseId": 111133120221,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:34Z",
+        "completedAt": "2026-10-03T05:11:31Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120221"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 1)",
+        "databaseId": 111133120228,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:33Z",
+        "completedAt": "2026-10-03T05:08:33Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133120228"
+      },
+      {
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "databaseId": 111133155326,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:01:45Z",
+        "completedAt": "2026-10-03T05:31:42Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111133155326"
+      },
+      {
+        "name": "SOC 2 privileged access evidence",
+        "databaseId": 111134228979,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:08:29Z",
+        "completedAt": "2026-10-03T05:08:38Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111134228979"
+      },
+      {
+        "name": "SOC 2 monitoring evidence",
+        "databaseId": 111134724714,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:11:34Z",
+        "completedAt": "2026-10-03T05:11:41Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111134724714"
+      },
+      {
+        "name": "SOC 2 AI/privacy evidence",
+        "databaseId": 111134724778,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:11:34Z",
+        "completedAt": "2026-10-03T05:12:00Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111134724778"
+      },
+      {
+        "name": "SOC 2 deployment evidence",
+        "databaseId": 111135287224,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:15:07Z",
+        "completedAt": "2026-10-03T05:15:15Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111135287224"
+      },
+      {
+        "name": "SOC 2 incident evidence",
+        "databaseId": 111135287243,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:15:07Z",
+        "completedAt": "2026-10-03T05:15:16Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111135287243"
+      },
+      {
+        "name": "SOC 2 tenant isolation evidence",
+        "databaseId": 111135287272,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:15:08Z",
+        "completedAt": "2026-10-03T05:15:16Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111135287272"
+      },
+      {
+        "name": "SOC 2 approval queue",
+        "databaseId": 111135319953,
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-03T05:15:19Z",
+        "completedAt": "2026-10-03T05:15:34Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37098470054/job/111135319953"
+      }
+    ]
+  },
+  "result": "Failed CI retained:14successful jobs,3failed jobs. Backend source-layout assertion and native query detectors repaired with separately recorded local proof; next source must pass required CI independently.",
+  "relatedEvidence": [
+    "ci-query-detectors/manifest.json",
+    "ci-query-detectors/cross-tenant-header-followup/manifest.json",
+    "load-combined-07/manifest.json"
+  ]
+}

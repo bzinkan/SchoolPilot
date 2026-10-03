@@ -9,7 +9,7 @@ const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", impor
 const start = source.indexOf("    const completedHeartbeatTileCacheWrite = Promise.resolve(");
 const end = source.indexOf("    // --- Deliver any missed messages", start);
 assert.ok(start >= 0 && end > start);
-const executable = ts.transpileModule(`async function heartbeatAfterPersistence() { ${source.slice(start, end)}\n return { continued: true }; }\nheartbeatAfterPersistence;`, {
+const executable = ts.transpileModule(`async function heartbeatAfterPersistence() { let finishForegroundTelemetry = () => {}; try { ${source.slice(start, end)}\n return { continued: true }; } finally { finishForegroundTelemetry(); } }\nheartbeatAfterPersistence;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 type Fields = Record<string, unknown>;
@@ -26,7 +26,7 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
     allOpenTabs: [], classroomState: { teachingSessionId: "class" } };
   const classification = { category: "educational", contentCategory: "education", safetyAlert: options.safety ? "violence" : null, domain: "www.ixl.com" };
   const context = {
-    Promise, Date, schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", studentEmail: "synthetic@example.invalid",
+    Promise, Date, trackingWindowScreenshotLeaseNegotiated: false, schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", studentEmail: "synthetic@example.invalid",
     school: { domain: "example.invalid", planStatus: "active" }, heartbeat: { id: "heartbeat" }, controlState: { revision: 3 },
     persistedImmediateClassification: options.persistedImmediate ? classification : null, heartbeatTileCacheWritten: true, fabSyncPending: true, protocol: { acceptedCapabilities: [] },
     realtimeStatusMutation: options.staleAtWrite ? { status: "stale", snapshot: null } : { status: "updated", snapshot },

@@ -50,8 +50,8 @@ test("policy PATCH does not invert SSO and student-control lock order", () => {
 
 test("SSO-bearing bootstrap freezes policy before private chat settings without adding a fence to other deliveries", () => {
   const storage = source("../src/services/storage.ts");
-  const delivery = section(storage, "export async function withClasspilotStudentControlDeliveryAuthority",
-    "export async function withClasspilotStudentWebSocketBootstrapAuthority");
+  const delivery = section(storage, "async function withClasspilotStudentControlDeliveryAuthorityCore",
+    "async function assertClasspilotHeartbeatDeliveryCurrent");
   assert.ok(delivery.indexOf("latchPrivateChatLifecycle") < delivery.indexOf("db.transaction"));
   assert.match(delivery, /hasExactClasspilotTelemetryBinding[\s\S]*if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority/);
   assert.ok(delivery.indexOf("lockClasspilotSsoPolicyDeliveryAuthority") < delivery.indexOf("claimTeacherChatDeliveriesWithAuthorityLocked"));

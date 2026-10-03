@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { once } from "node:events";
 import { after, before, beforeEach, test } from "node:test";
 import { setTimeout as pause } from "node:timers/promises";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
@@ -12,6 +12,7 @@ import { getTenantStore, tenantALS } from "../src/db/tenantContext.js";
 import * as schema from "../src/schema/index.js";
 import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "../src/db/classpilotPrivateChatLifecycleMigration.js";
 import type { PrivateChatLifecycle, PrivateChatScope } from "../src/services/classpilotPrivateChatLifecycle.js";
+import { currentStudentSessionAuthorityPredicate } from "../src/services/classpilotStudentSessionAuthority.js";
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
@@ -72,6 +73,27 @@ const close = async (expectedPrivateChatLifecycle: PrivateChatLifecycle, index =
 };
 const binding = (index = 0) => ({ schoolId: ids.school, studentId: ids.students[index]!,
   studentSessionId: bindings[index]!, deviceId: ids.devices[index]! });
+const normalizeSql = (text: string) => text.toLowerCase().replace(/\s+/g, " ")
+  .replace(/\s*([(),])\s*/g, "$1").trim();
+// Match the whole original live-binding statement, not its formatting. Native
+// holds/faults must still target the exact tuple, current-clock lease predicate,
+// both tenant joins and the unqualified FOR SHARE that locks all three rows.
+const expectedLiveBindingQuery = () => drizzle.mock().select({ id: schema.studentSessions.id })
+  .from(schema.studentSessions)
+  .innerJoin(schema.students, and(eq(schema.students.id, schema.studentSessions.studentId),
+    eq(schema.students.schoolId, ids.school), eq(schema.students.status, "active")))
+  .innerJoin(schema.devices, and(eq(schema.devices.deviceId, schema.studentSessions.deviceId),
+    eq(schema.devices.schoolId, ids.school)))
+  .where(and(eq(schema.studentSessions.id, bindings[0]!), eq(schema.studentSessions.studentId, ids.students[0]!),
+    eq(schema.studentSessions.deviceId, ids.devices[0]!), currentStudentSessionAuthorityPredicate()))
+  .limit(1).for("share").toSQL();
+const isLiveBindingQuery = (text: string) => normalizeSql(text) === normalizeSql(expectedLiveBindingQuery().sql);
+const nativeQueryValues = (args: unknown[]): unknown[] => {
+  if (Array.isArray(args[1])) return args[1];
+  const request = args[0];
+  return request && typeof request === "object" && "values" in request && Array.isArray(request.values)
+    ? request.values : [];
+};
 const claim = (index = 0) => inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(
   { ...binding(index), claimTeacherChatDeliveries: true }, async () => undefined,
   rows => ({ messages: rows.map(row => row.message.id) })));
@@ -85,14 +107,14 @@ const freshRecovery = async () => {
   await admin.query("UPDATE classpilot_chat_deliveries SET state='expired' WHERE school_id=$1", [ids.school]);
   await token();
 };
-function faultNativeQuery(t: import("node:test").TestContext, select: (text: string) => boolean, replacement = "SELECT 1/0 AS injected_failure") {
+function faultNativeQuery(t: import("node:test").TestContext, select: (text: string, values: unknown[]) => boolean, replacement = "SELECT 1/0 AS injected_failure") {
   const original = pg.Client.prototype.query;
   let injected = 0;
   const mocked = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
     const request = args[0];
     const text = typeof request === "string" ? request
       : request && typeof request === "object" && "text" in request ? String(request.text) : "";
-    if (select(text)) { injected++; return Reflect.apply(original, this, [replacement]); }
+    if (select(text, nativeQueryValues(args))) { injected++; return Reflect.apply(original, this, [replacement]); }
     return Reflect.apply(original, this, args);
   });
   return { count: () => injected, restore: () => mocked.mock.restore() };
@@ -328,7 +350,10 @@ test("an empty exact-student private outbox skips claim discovery while retainin
   const queries: string[] = [];
   const result = await inSchool(async () => {
     const store = getTenantStore(); assert.ok(store);
-    const traced = drizzle(store.client, { schema, logger: { logQuery: query => { queries.push(query); } } });
+    const traced = drizzle(store.client, { schema, logger: { logQuery: (query, parameters) => {
+      if (isLiveBindingQuery(query)) assert.deepEqual(parameters, expectedLiveBindingQuery().params);
+      queries.push(query);
+    } } });
     return tenantALS.run({ ...store, db: traced }, () => storage.withClasspilotStudentControlDeliveryAuthority(
       { ...binding(), claimTeacherChatDeliveries: true }, async () => "prepared-empty-response",
       (rows, prepared) => ({ messages: rows.map(row => row.message.id), prepared })));
@@ -337,7 +362,7 @@ test("an empty exact-student private outbox skips claim discovery while retainin
   assert.equal(queries.filter(query => /from "classpilot_chat_deliveries"/.test(query)).length, 1);
   assert.ok(queries.some(query => /pg_advisory_xact_lock/.test(query)), "The exact-student lock still precedes the empty check");
   assert.ok(!queries.some(query => query.includes("classpilot-sso-policy")), "Ordinary heartbeat reply recovery does not add an SSO query");
-  assert.equal(queries.filter(query => /from "student_sessions"/.test(query)).length, 2, "Both exact-binding checks remain");
+  assert.equal(queries.filter(isLiveBindingQuery).length, 2, "Both exact-binding checks remain");
   assert.ok(!queries.some(query => /"teaching_sessions"|"classpilot_supervision_students"|"session_settings"/.test(query)),
     "Empty outboxes need no owner, supervision or channel discovery");
 });
@@ -927,9 +952,11 @@ test("Redis private relay rechecks the real expiry after a held final exact-bind
     const request = args[0];
     const statement = typeof request === "string" ? request
       : request && typeof request === "object" && "text" in request ? String(request.text) : "";
-    if (/select "student_sessions"\."id" from "student_sessions" inner join "students"/.test(statement)
-      && /inner join "devices"/.test(statement) && /for share/i.test(statement) && ++bindingReads === 2) {
-      announceHeld(); return held.then(() => Reflect.apply(query, this, args));
+    if (isLiveBindingQuery(statement)) {
+      assert.deepEqual(nativeQueryValues(args), expectedLiveBindingQuery().params);
+      if (++bindingReads === 2) {
+        announceHeld(); return held.then(() => Reflect.apply(query, this, args));
+      }
     }
     return Reflect.apply(query, this, args);
   });
@@ -962,7 +989,10 @@ test("heartbeat recovery uses one lease and one transaction for an empty outbox 
   let prepared = 0, delivered = 0, optional = 0;
   const result = await inSchool(async () => {
     const store = getTenantStore(); assert.ok(store);
-    const traced = drizzle(store.client, { schema, logger: { logQuery: query => { queries.push(query); } } });
+    const traced = drizzle(store.client, { schema, logger: { logQuery: (query, parameters) => {
+      if (isLiveBindingQuery(query)) assert.deepEqual(parameters, expectedLiveBindingQuery().params);
+      queries.push(query);
+    } } });
     return tenantALS.run({ ...store, db: traced }, () => storage.withClasspilotStudentControlDeliveryAuthority(
       { ...binding(), claimTeacherChatDeliveries: true }, async () => { prepared++; return "fresh-control"; },
       (_rows, value) => { delivered++; return value; }, () => { optional++; }));
@@ -972,7 +1002,7 @@ test("heartbeat recovery uses one lease and one transaction for an empty outbox 
   assert.equal(queries.filter(query => /^begin(?:\s|$)/i.test(query)).length, 1);
   assert.equal(queries.filter(query => /^commit$/i.test(query)).length, 1);
   assert.equal(queries.filter(query => /from "classpilot_chat_deliveries"/.test(query)).length, 1);
-  assert.equal(queries.filter(query => /from "student_sessions"/.test(query)).length, 2);
+  assert.equal(queries.filter(isLiveBindingQuery).length, 2);
   assert.ok(queries.some(query => /from "schools".*for share/i.test(query)));
   assert.ok(queries.some(query => /from "product_licenses".*for share/i.test(query)));
   assert.ok(queries.some(query => query.includes("classpilot-sso-policy")));
@@ -1097,8 +1127,11 @@ test("heartbeat recovery never swallows required preparation or exact-binding SQ
   }, () => assert.fail("required preparation must fail closed"), () => assert.fail("no optional emit"))), hasCode("22012"));
   const pending = await reply("Required fence fault");
   let bindingsRead = 0;
-  const injected = faultNativeQuery(t, text => text.includes('from "student_sessions"')
-    && text.includes('inner join "students"') && text.trim().endsWith("for share") && ++bindingsRead === 2);
+  const injected = faultNativeQuery(t, (text, parameters) => {
+    if (!isLiveBindingQuery(text)) return false;
+    assert.deepEqual(parameters, expectedLiveBindingQuery().params);
+    return ++bindingsRead === 2;
+  });
   try {
     await assert.rejects(inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => "prepared",
       () => assert.fail("required fence cannot emit HTTP200"), () => assert.fail("required fence cannot emit private content"))), hasCode("22012"));

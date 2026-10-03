@@ -3,6 +3,53 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The [foreground/final-delivery correction](heartbeat-foreground-fusion/manifest.json)
+reuses the owned authority proof for eligible teaching-session updates and adds
+a mandatory final school/license/session clock check. Forty focused tests and
+23 native cases under each database role pass. The native ordinary-path probe
+reduces 25 SQL statements/two checkouts to 19 statements/one checkout; this
+small probe is not a capacity result. [Combined09](combined-checks-attempt-09/manifest.json)
+passes the build and 672 infrastructure tests while retaining failed stale test
+selectors and two diagnostic typing errors. [Combined10](combined-checks-attempt-10/manifest.json)
+passes type/cast checks and 1,801 unit cases, with four named conditional skips,
+after test-only repairs. Application bytes are unchanged between those checks.
+
+[Combined attempt07](load-combined-07/manifest.json) on clean `7cf86cf1` failed:
+3,268/6,000 heartbeat offers succeeded, 1,155 started requests failed, 1,577 were
+refused and none were late. Reports passed 32/64; API acquisition failures total
+1,679. Both historical workers returned correct totals in 16.363/39.855 seconds.
+All physical ownership gauges reached zero, but 66 aborted responses caused
+`DRAIN_UNVERIFIABLE_ABORT`, correctly refusing completion certification. The
+harness then terminated the API child; its unsuccessful graceful-cleanup record
+is retained even though subsequent inspection found no owned processes or
+containers. Current-day correctness and CSV checks did not run. A separate
+[post-run source observation](load-combined-07/post-run-source-manifest.json)
+records the clean unchanged commit without fabricating the missing normal finish
+receipt. Final-delivery leases accounted for 554.4 aggregate seconds, foreground
+telemetry 312.9 and reports 11.1; saturation remains unresolved.
+
+The [CI query-detector repair](ci-query-detectors/manifest.json) preserves the
+failed backend and RLS job logs at `7cf86cf1`. Query case/whitespace and multiline
+middleware wrappers invalidated older test matchers. The corrected detectors
+still assert the complete query shape and parameters, both binding reads, and
+actual controlled expiry/fault races. All 68 private-chat cases pass under each
+database role with explicit restricted-role posture verification. The first
+marker-omission attempt remains separately recorded. The school-arrival
+middleware contract also fails before and passes after its assertion update.
+The [completed CI checkpoint](ci-7cf86cf1.json) records 14 successful and three
+failed jobs, with Gitleaks, Trivy and CodeQL successful. The separate
+[cross-tenant/header follow-up](ci-query-detectors/cross-tenant-header-followup/manifest.json)
+preserves its failed job, two local import-configuration failures, and the
+corrected 27-case contract suite. Local repairs do not retroactively pass CI.
+
+The [final control/SSO projection](final-control-sso-projection/manifest.json)
+replaces two fresh reads with one parameterized statement while preserving all
+17 control fields, timestamp decoding and independent missing-row defaults.
+Thirteen focused checks and nine native cases under each database role pass.
+The initial test-spy ownership failure and a stale-dist type-check failure are
+retained. Combined09's successful build covers this application change;
+these focused checks do not establish a capacity improvement.
+
 The [live-binding query correction](live-binding-query/manifest.json) preserves
 the exact parameterized predicates, database-clock lease checks and shared locks
 on all three joined tables. It removes query-builder compilation from the hot
@@ -11,7 +58,7 @@ SQL equivalence checks pass 2/2, with 15 native owner and 15 restricted-role
 cases passing, including actual competing writers and expiry after preparation.
 The isolated compilation benchmark is not a capacity result.
 
-The [exact compatible fallback image](rollback-artifact-ed5599de/index.json)
+The [preceding compatible fallback image](rollback-artifact-ed5599de/index.json)
 is built from clean `ed5599de0191b4b9961ed907586e1fc153ebd63b`. The uncached
 build and pinned Trivy scan pass with zero findings at every severity. Embedded
 129-table admission, lifecycle writer/bridge/relay, SSO, monitoring lease,
@@ -19,6 +66,11 @@ Stop Focus and classification-ordering checks pass. Both Usage modes remain
 off. The first external inspector's regex failure and its repair are retained;
 this local artifact does not establish production compatibility or replace
 the final candidate → fallback → candidate migration rehearsal.
+The [final-clock correctness backport](rollback-heartbeat-fence/manifest.json)
+advances fallback source to `5c01944ed1afb4241e270469c6477121bf48cd84`;
+its new image must be verified independently. Generic and WebSocket delivery
+behavior remains unchanged, with 75 focused and 12 native cases under each
+database role passing, along with build/type/cast checks.
 
 The [complete-server-drain correction](complete-server-drain/manifest.json)
 retains a baseline false-pass regression. Full heartbeat handlers and known

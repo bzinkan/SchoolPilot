@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T05:13:47.928Z",
+  "status": "supplemental_clean_source_observation",
+  "source": {
+    "observedAtUtc": "2026-10-03T05:12:13.6428371Z",
+    "sourceHead": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+    "status": [],
+    "note": "Read-only post-run observation before next source changes; original run metrics remain unchanged."
+  },
+  "scope": "Separate root-captured read-only git observation after run exit and before the next source edits. The aborted original usage-scale.json finish fields remain absent; no original metric or existing archive manifest was changed.",
+  "primaryManifest": "manifest.json",
+  "primaryManifestSha256": "3cf12ea377080adb876a387bbe341309dbe9b765be750687b3f02d3634f5cd37",
+  "file": {
+    "file": "post-run-source.json.gz",
+    "rawSha256": "1423261e983c3d853341696abd7c36640f0af69c1fd5775c1221e8878aff2145",
+    "sanitizedSha256": "5aebe67bde9faf815537447b1a4727250c641f4cc105c8175e6e98db8dff4a65",
+    "gzipSha256": "5247a2481ced6526abde8ec5a25e557a49d352a3d21c0d73163b440a1d16995f",
+    "rawBytes": 247
+  },
+  "sanitization": "UTF8/LF normalization; no secrets or paths in this content-free receipt."
+}

@@ -779,8 +779,14 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     }
     const devices = await source("src/routes/classpilot/devices.ts");
     for (const route of ["command-acks", "heartbeat", "screenshot", "event", "runtime-error"]) {
-      const line = devices.split("\n").find((entry) => entry.includes(`/${route}`) && entry.includes("router."));
-      assert.match(line || "", /requireClasspilotEntitlement/);
+      // Inspect the middleware header up to the handler arrow, including
+      // multiline lifetime wrappers. An entitlement call in the body cannot
+      // substitute for installing the canonical middleware before the handler.
+      const header = devices.match(new RegExp(
+        `router\\.post\\("(?:/device|/extension)/${route}",([\\s\\S]*?)=>`
+      ));
+      assert.ok(header, `${route} route header must exist`);
+      assert.match(header[1]!, /requireClasspilotEntitlement/);
     }
     const monitoringEvents = await source("src/routes/classpilot/monitoringEvents.ts");
     assert.match(

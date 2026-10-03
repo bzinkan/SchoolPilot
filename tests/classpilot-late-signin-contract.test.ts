@@ -318,7 +318,7 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   const safetyEffects = section(
     devices,
     "const safetyAction = resolveCurrentClasspilotSafetyAction({",
-    "// --- Deliver any missed messages",
+    "const onForegroundFailure = () => {",
   );
   assert.match(safetyEffects, /realtimeMutation: realtimeClassification,[\s\S]*?schoolId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?deviceId,[\s\S]*?heartbeatId: heartbeat\.id/);
   assert.match(safetyEffects, /if \(safetyAction\)[\s\S]*?recordBrowserSafetyTimeline\(\{[\s\S]*?actionTaken: "alert-only"/);
@@ -446,20 +446,20 @@ test("student login keeps legacy SSO omission and only stages portal authority f
   );
   assert.match(
     finalHeartbeat,
-    /withClasspilotStudentControlDeliveryAuthority\(\s*\{ schoolId, studentId, studentSessionId, deviceId, freezeSsoPolicy: true \},/,
+    /withClasspilotHeartbeatDeliveryAuthority\(\s*\{ schoolId, studentId, studentSessionId, deviceId, freezeSsoPolicy: true \},/,
     "heartbeat must opt into the shared SSO delivery lock before its policy read",
   );
   const heartbeatAuthority = section(
     source("../src/services/storage.ts"),
-    "export async function withClasspilotStudentControlDeliveryAuthority",
-    "export async function withClasspilotStudentWebSocketBootstrapAuthority",
+    "async function withClasspilotStudentControlDeliveryAuthorityCore",
+    "async function assertClasspilotHeartbeatDeliveryCurrent",
   );
   assert.match(heartbeatAuthority,
     /if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority\(options\.schoolId, transactionDb\);/);
   assert.ok(heartbeatAuthority.indexOf("lockClasspilotSsoPolicyDeliveryAuthority")
     < heartbeatAuthority.indexOf("prepareAuthorized(transactionDb)"),
   "the shared helper must acquire the SSO lock before invoking heartbeat preparation");
-  assert.match(finalHeartbeat, /getClasspilotSsoPolicyForSchool\(schoolId, transactionDb\)/);
+  assert.match(finalHeartbeat, /ssoPolicy: finalSsoPolicy[\s\S]*getClasspilotStudentControlDeliveryContext\(schoolId, studentId, transactionDb\)/);
   assert.equal(
     devices.match(/authPassThrough: \{/g)?.length,
     2,
@@ -512,8 +512,8 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   const bootstrapFence = section(
     storage,
-    "export async function withClasspilotStudentControlDeliveryAuthority",
-    "export async function withClasspilotStudentWebSocketBootstrapAuthority",
+    "async function withClasspilotStudentControlDeliveryAuthorityCore",
+    "async function assertClasspilotHeartbeatDeliveryCurrent",
   );
   const optionalRecovery = section(bootstrapFence, "      if (recoverTeacherReplies) {", "      } else {");
   const defaultFence = bootstrapFence.replace(optionalRecovery, "");
@@ -568,7 +568,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   assert.match(
     finalHeartbeat,
-    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
+    /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*getClasspilotStudentControlDeliveryContext\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
   );
   assert.match(finalHeartbeat, /controlRevision: prepared\.classroomState\?\.revision \?\? prepared\.focusCleanup\?\.exactBinding\.controlRevision \?\? 0/);
   assert.doesNotMatch(finalHeartbeat, /getActiveSessionsForStudents/);
@@ -580,7 +580,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   assert.match(
     teacherReplyRecovery,
-    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*shouldCheckTeacherReplies \? \(teacherReplies, prepared\) => \{[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)\.catch\(\(\) => false\)/,
+    /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*shouldCheckTeacherReplies \? \(teacherReplies, prepared\) => \{[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)\.catch\(\(\) => false\)/,
     "optional recovery stays inside final authority and handles each Redis rejection immediately",
   );
   assert.equal(teacherReplyRecovery.match(/runWithTenantContext\(/g)?.length, 1,

@@ -49,7 +49,7 @@ import {
   isClasspilotReportAuthorizedStaff,
 } from "./classpilotReportAuthorization.js";
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
-import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import { assertClasspilotEntitled, classpilotEntitledSchoolPredicate } from "./classpilotEntitlement.js";
 import {
   assertClasspilotSynchronousAuthorityResult,
   type ClasspilotSynchronousAuthorityResult,
@@ -20362,7 +20362,7 @@ async function claimTeacherChatDeliveriesWithAuthorityLocked(
  * materialization and deterministic concurrency tests; delivery is type-bound
  * to remain synchronous while this transaction remains authoritative.
  */
-export async function withClasspilotStudentControlDeliveryAuthority<
+async function withClasspilotStudentControlDeliveryAuthorityCore<
   Prepared,
   T extends ClasspilotSynchronousAuthorityResult,
 >(
@@ -20379,6 +20379,7 @@ export async function withClasspilotStudentControlDeliveryAuthority<
   recoverTeacherReplies?: (
     claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared,
   ) => ClasspilotSynchronousAuthorityResult,
+  beforeDelivery?: (transactionDb: typeof db, prepared: Prepared) => Promise<boolean>,
 ): Promise<{ authorized: true; value: T } | { authorized: false }> {
   let claimReplies = options.claimTeacherChatDeliveries === true || !!recoverTeacherReplies;
   if (claimReplies) {
@@ -20450,6 +20451,13 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         throw new ClasspilotTeacherChatBindingLostError();
       }
+      // Only the heartbeat wrapper supplies this hook. A publication awaits
+      // transport while these same locks remain held; passage of time still
+      // requires another exact database-clock binding fence before HTTP.
+      if (beforeDelivery) {
+        await beforeDelivery(transactionDb, prepared);
+        await assertClasspilotHeartbeatDeliveryCurrent(options, transactionDb);
+      }
       const value = onAuthorized(claimed, prepared);
       assertClasspilotSynchronousAuthorityResult(value);
       return {
@@ -20463,6 +20471,166 @@ export async function withClasspilotStudentControlDeliveryAuthority<
     }
     throw error;
   }
+}
+
+/** Final heartbeat-only clock fence. Locks already linearize row mutations,
+ * but school/license and manual-session expiry can cross during preparation or
+ * transport. Keep this mandatory check outside every optional savepoint. */
+async function assertClasspilotHeartbeatDeliveryCurrent(
+  options: ClasspilotTeacherChatBinding, transactionDb: typeof db,
+): Promise<void> {
+  const result = await transactionDb.execute<{
+    entitled: boolean; bound: boolean;
+    denialReason: "school_missing" | "school_inactive" | "license_inactive";
+  }>(sql`
+    SELECT ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)} AS entitled,
+      EXISTS (SELECT 1 FROM ${studentSessions}
+        INNER JOIN ${students} ON ${students.id}=${studentSessions.studentId}
+          AND ${students.schoolId}=${options.schoolId} AND ${students.status}='active'
+        INNER JOIN ${devices} ON ${devices.deviceId}=${studentSessions.deviceId}
+          AND ${devices.schoolId}=${options.schoolId}
+        WHERE ${studentSessions.id}=${options.studentSessionId}
+          AND ${studentSessions.studentId}=${options.studentId}
+          AND ${studentSessions.deviceId}=${options.deviceId}
+          AND ${currentStudentSessionAuthorityPredicate()}
+        LIMIT 1 FOR SHARE) AS bound,
+      CASE WHEN NOT EXISTS (SELECT 1 FROM ${schools} WHERE ${schools.id}=${options.schoolId}) THEN 'school_missing'
+        WHEN EXISTS (SELECT 1 FROM ${schools} WHERE ${schools.id}=${options.schoolId}
+          AND ${schools.status}='active' AND ${schools.isActive}=true
+          AND ${schools.disabledAt} IS NULL AND ${schools.deletedAt} IS NULL
+          AND ${schools.planStatus}<>'canceled'
+          AND (${schools.activeUntil} IS NULL OR ${schools.activeUntil}>clock_timestamp())) THEN 'license_inactive'
+        ELSE 'school_inactive' END AS "denialReason"
+  `);
+  const current = result.rows[0];
+  if (!current || current.entitled !== true) {
+    throw Object.assign(new Error("School is not entitled to ClassPilot"), {
+      status: 403, code: "CLASSPILOT_NOT_ENTITLED", reason: current?.denialReason ?? "school_missing",
+    });
+  }
+  if (current.bound !== true) throw new ClasspilotTeacherChatBindingLostError();
+}
+
+export async function withClasspilotStudentControlDeliveryAuthority<
+  Prepared, T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db) => Prepared | Promise<Prepared>,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => T,
+  recoverTeacherReplies?: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => ClasspilotSynchronousAuthorityResult,
+): Promise<{ authorized: true; value: T } | { authorized: false }> {
+  return withClasspilotStudentControlDeliveryAuthorityCore(options, prepareAuthorized, onAuthorized, recoverTeacherReplies);
+}
+
+export type ClasspilotHeartbeatForegroundOutcome =
+  | { status: "fallback" }
+  | { status: "suppressed" }
+  | { status: "settled"; succeeded: boolean };
+
+/** Heartbeat-only reuse of a raw authority proof read by this transaction.
+ * No caller-supplied projection or public serialized state can grant access.
+ * The route may use the supplied reader for its required screenshot policy;
+ * unsupported/legacy proofs retain the old publisher after the lease ends. */
+export async function withClasspilotHeartbeatDeliveryAuthority<
+  Prepared, T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db, readScreenshotAuthority: () => Promise<ClasspilotScreenshotAuthorityProjection | undefined>) => Prepared | Promise<Prepared>,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => T,
+  recoverTeacherReplies?: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => ClasspilotSynchronousAuthorityResult,
+  foreground?: {
+    teachingSessionId: string;
+    controlRevision: number;
+    publish: () => Promise<void>;
+    onFailure: () => void;
+  },
+): Promise<({ authorized: true; value: T } | { authorized: false }) & { foreground: ClasspilotHeartbeatForegroundOutcome }> {
+  options = { ...options };
+  foreground = foreground ? { ...foreground } : undefined;
+  let projection: ClasspilotScreenshotAuthorityProjection | undefined;
+  let outcome: ClasspilotHeartbeatForegroundOutcome = { status: "fallback" };
+  const result = await withClasspilotStudentControlDeliveryAuthorityCore(options,
+    async transactionDb => {
+      let preparing = true;
+      const pendingReads = new Set<Promise<ClasspilotScreenshotAuthorityProjection | undefined>>();
+      try {
+        return await prepareAuthorized(transactionDb, () => {
+          const read = (async () => {
+            if (!preparing) throw new Error("Heartbeat authority reader used after preparation");
+            const current = await getClasspilotScreenshotAuthorityProjection(options, transactionDb);
+            if (!preparing) throw new Error("Heartbeat authority read outlived preparation");
+            // Copy just the internal grant. The caller receives the original projection
+            // for policy materialization and cannot mutate the retained grant.
+            projection = current ? { ...current, authority: { ...current.authority } } : undefined;
+            return current;
+          })();
+          pendingReads.add(read);
+          void read.then(() => pendingReads.delete(read), () => pendingReads.delete(read));
+          return read;
+        });
+      } finally {
+        preparing = false;
+        // Own even a mistakenly unawaited reader through all of its SQL. It
+        // cannot grant publication or outlive this transaction's cleanup.
+        await Promise.allSettled(pendingReads);
+      }
+    }, onAuthorized, recoverTeacherReplies, async transactionDb => {
+      if (!foreground || !Number.isSafeInteger(foreground.controlRevision)
+        || projection?.authority.kind !== "teaching_session"
+        || projection.authority.teachingSessionId !== foreground.teachingSessionId
+        || projection.authority.controlRevision !== foreground.controlRevision) return false;
+
+      // Required Focus preparation and private recovery are already complete.
+      // An optional SQL failure must restore its subtransaction before the core
+      // performs the mandatory final binding check; cleanup failures propagate.
+      outcome = { status: "settled", succeeded: false };
+      await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_foreground`);
+      try {
+        const current = await transactionDb.execute(sql`
+          SELECT 1 AS allowed
+          FROM ${classpilotStudentControlStates} control
+          INNER JOIN ${teachingSessions} teaching ON teaching.id=control.teaching_session_id
+            AND teaching.school_id=${options.schoolId}
+          WHERE control.school_id=${options.schoolId} AND control.student_id=${options.studentId}
+            AND control.teaching_session_id=${foreground.teachingSessionId}
+            AND control.revision=${foreground.controlRevision} AND control.supervision_context_id IS NULL
+            AND control.hard_expires_at>clock_timestamp()
+            AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>clock_timestamp())
+            AND teaching.session_mode='live' AND teaching.end_time IS NULL
+            AND teaching.roster_snapshot_completed_at IS NOT NULL
+            AND (teaching.scheduled_end_at IS NULL OR teaching.scheduled_end_at>clock_timestamp())
+            AND ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)}
+            AND EXISTS (
+              SELECT 1 FROM ${studentSessions}
+              WHERE ${studentSessions.id}=${options.studentSessionId}
+                AND ${studentSessions.studentId}=${options.studentId}
+                AND ${studentSessions.deviceId}=${options.deviceId}
+                AND ${currentStudentSessionAuthorityPredicate()}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM ${classpilotSupervisionStudents} assigned
+              INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assigned.context_id
+                AND context.school_id=${options.schoolId} AND context.status='active'
+                AND context.starts_at<=clock_timestamp() AND context.ends_at>clock_timestamp()
+              WHERE assigned.school_id=${options.schoolId} AND assigned.student_id=${options.studentId}
+                AND assigned.released_at IS NULL
+            ) LIMIT 1
+        `);
+        if (current.rows.length !== 1) outcome = { status: "suppressed" };
+        else {
+          // Redis and local delivery keep their existing bounded ordered path.
+          // A partial send is terminal: no later fallback can duplicate it.
+          await foreground.publish();
+          outcome = { status: "settled", succeeded: true };
+        }
+      } catch {
+        await transactionDb.execute(sql`ROLLBACK TO SAVEPOINT classpilot_heartbeat_foreground`);
+        foreground.onFailure();
+      }
+      await transactionDb.execute(sql`RELEASE SAVEPOINT classpilot_heartbeat_foreground`);
+      return true;
+    });
+  return { ...result, foreground: result.authorized ? outcome : { status: "suppressed" } };
 }
 
 export async function withClasspilotStudentWebSocketBootstrapAuthority<
@@ -23571,6 +23739,57 @@ export async function getClasspilotStudentControlState(
     ))
     .limit(1);
   return state;
+}
+
+
+/**
+ * Fresh final-delivery read after the caller has acquired student-control and
+ * SSO authority locks. Those earlier lock statements must remain separate so
+ * this projection sees changes committed while acquisition was waiting.
+ * Missing control/settings rows retain their independent existing defaults.
+ */
+export async function getClasspilotStudentControlDeliveryContext(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute"> = db,
+): Promise<{
+  controlState: ClasspilotStudentControlState | undefined;
+  ssoPolicy: ClasspilotSsoPolicyRecord;
+}> {
+  const result = await dbInstance.execute<Omit<HeartbeatPersistenceContextRow,
+    "heartbeatSchoolStatus" | "heartbeatSchoolPlanStatus" | "heartbeatSchoolDomain">>(sql`
+    SELECT control.id, control.school_id AS "schoolId", control.student_id AS "studentId",
+      control.teaching_session_id AS "teachingSessionId",
+      control.supervision_context_id AS "supervisionContextId", control.revision,
+      control.desired_state AS "desiredState", control.source_command_id AS "sourceCommandId",
+      control.scheduled_end_at AS "scheduledEndAt", control.hard_expires_at AS "hardExpiresAt",
+      control.enforcement_health AS "enforcementHealth", control.applied_revision AS "appliedRevision",
+      control.last_outcome AS "lastOutcome", control.last_error AS "lastError",
+      control.last_acknowledged_at AS "lastAcknowledgedAt",
+      control.created_at AS "createdAt", control.updated_at AS "updatedAt",
+      policy.classpilot_sso_policy AS "classpilotSsoPolicy",
+      policy.classpilot_sso_policy_revision AS "classpilotSsoPolicyRevision"
+    FROM (SELECT 1) anchor
+    LEFT JOIN classpilot_student_control_states AS control
+      ON control.school_id = ${schoolId} AND control.student_id = ${studentId}
+    LEFT JOIN settings AS policy ON policy.school_id = ${schoolId}
+    LIMIT 1
+  `);
+  const row = result.rows[0];
+  const control = classpilotStudentControlStates;
+  const controlState = row && row.id !== null ? {
+    id: row.id, schoolId: row.schoolId, studentId: row.studentId,
+    teachingSessionId: row.teachingSessionId, supervisionContextId: row.supervisionContextId,
+    revision: row.revision, desiredState: row.desiredState, sourceCommandId: row.sourceCommandId,
+    scheduledEndAt: row.scheduledEndAt === null ? null : decodeHeartbeatControlTimestamp(control.scheduledEndAt, row.scheduledEndAt),
+    hardExpiresAt: row.hardExpiresAt === null ? null : decodeHeartbeatControlTimestamp(control.hardExpiresAt, row.hardExpiresAt),
+    enforcementHealth: row.enforcementHealth, appliedRevision: row.appliedRevision,
+    lastOutcome: row.lastOutcome, lastError: row.lastError,
+    lastAcknowledgedAt: row.lastAcknowledgedAt === null ? null : decodeHeartbeatControlTimestamp(control.lastAcknowledgedAt, row.lastAcknowledgedAt),
+    createdAt: decodeHeartbeatControlTimestamp(control.createdAt, row.createdAt),
+    updatedAt: decodeHeartbeatControlTimestamp(control.updatedAt, row.updatedAt),
+  } : undefined;
+  return { controlState, ssoPolicy: classpilotSsoPolicyFromSettings(row) };
 }
 
 export async function getClasspilotStudentControlStates(
