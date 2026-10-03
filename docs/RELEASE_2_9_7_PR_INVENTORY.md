@@ -4,6 +4,15 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
+Current October 3 preparation: [CI on `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
+is fully green, but its [resource-bounded Usage diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)
+fails capacity (2,704/6,000 heartbeats, 34/64 reports, second complete worker
+57.768 seconds including queue wait). The subsequent `5d543f40` instrumentation
+correction has focused/native/full-unit evidence and a scanned local image.
+Identity scheduling and final-source acceptance remain in progress. No release
+execution is approved. The source-PR inclusion table is unchanged; the older
+development checkpoints below are historical and do not establish current readiness.
+
 Current preparation remains in #603. The new [API connection scheduler](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 has passed focused, native-driver and restricted-role regression checks; its
 combined capacity acceptance is pending. It applies only when Usage reporting

@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T12:17:22.532911+00:00",
+  "source": "5d543f4081ac19b3396695b74354e31d3687560a",
+  "sourceUnchanged": true,
+  "sourceFileCount": 1175,
+  "sourceState": "Committed5d543f40; focused correction to public connect invocation accounting only; no capacity acceptance",
+  "problem": "Promise connect previously called the observed public callback overload again, making generic wrappers record one logical acquisition twice. Private enqueue is now shared directly. The harness is unchanged.",
+  "semantics": "Fair queues, pool limits, deadlines, client leases, release, authority and errors unchanged. Native pg also adapts Promise/callback without re-entering the public boundary.",
+  "regression": {
+    "red": {
+      "source": "9630c00928aa391efb964eee0847965a967d33eb",
+      "pass": 0,
+      "fail": 1,
+      "assertion": "2 public observations !== 1 logical acquisition"
+    },
+    "green": {
+      "pass": 54,
+      "fail": 0,
+      "skip": 0
+    },
+    "native": {
+      "driverCasesPass": 8,
+      "actualMainPoolOwnerPass": 1,
+      "actualMainPoolRestrictedPass": 1,
+      "skip": 0,
+      "ownedCleanupPassed": true,
+      "moduleSha256": "ff933d49eaf2a43f70da42040f6906d6016a4f3691e3e55f0ca076b30a13ba71"
+    },
+    "fullUnit": {
+      "pass": 1864,
+      "fail": 0,
+      "skip": 4
+    }
+  },
+  "checks": [
+    {
+      "command": "npm run build",
+      "startedAt": "2026-10-03T12:12:41.9650170Z",
+      "finishedAt": "2026-10-03T12:13:34.9272894Z",
+      "exitCode": 0,
+      "log": "build.log"
+    },
+    {
+      "command": "npm run check:tests",
+      "startedAt": "2026-10-03T12:13:34.9318986Z",
+      "finishedAt": "2026-10-03T12:14:41.0413408Z",
+      "exitCode": 0,
+      "log": "check-tests.log"
+    },
+    {
+      "command": "npm run check:test-casts",
+      "startedAt": "2026-10-03T12:14:41.0430189Z",
+      "finishedAt": "2026-10-03T12:14:41.5659613Z",
+      "exitCode": 0,
+      "log": "check-test-casts.log"
+    },
+    {
+      "command": "npm run test:unit",
+      "startedAt": "2026-10-03T12:14:41.5675895Z",
+      "finishedAt": "2026-10-03T12:16:10.2788015Z",
+      "exitCode": 0,
+      "log": "test-unit.log"
+    }
+  ],
+  "commands": {
+    "red": "node --import tsx --test --test-name-pattern \"public connection wrappers\" tests/fair-main-pool.test.mjs",
+    "green": "node --import tsx --test tests/fair-main-pool.test.mjs tests/fair-main-pool-config.test.mjs scripts/load/usage/release-enabled-profile.test.mjs",
+    "native": "node run-native-postgres.mjs in external release297-fair-main-pool-integrated-01; retained exact script executes typed proof plus actual-main-pool owner/restricted"
+  },
+  "limitations": [
+    "Raw9630 capacity attempt stays failed and immutable; HTTP/report/worker failures are independent of duplicated counters.",
+    "Raw4070 acquisition failures must not be interpreted as4070distinct physical leases. No exact posthoc corrected global count inferred.",
+    "Infrastructure699/699 on9630 is retained separately, not rerun or claimed as exact5d acceptance.",
+    "No synthetic load, production action or release activation is part of these focused checks."
+  ],
+  "files": [
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-followup-01\\fair-main-pool.red.test.mjs",
+      "archive": "analysis/fair-main-pool.red.test.mjs.gz",
+      "rawSha256": "d761df80d1fe27ab25bdc89fbc6ee86100f5d445cd87c5190cb84509449818d3",
+      "sanitizedSha256": "d761df80d1fe27ab25bdc89fbc6ee86100f5d445cd87c5190cb84509449818d3",
+      "gzipSha256": "32ee4275262ac19b56c02c0e6add5b32e25d74248e0a3804fdbf4b9acd3c5fea",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-followup-01\\fairMainPool.red.ts",
+      "archive": "analysis/fairMainPool.red.ts.gz",
+      "rawSha256": "7e5e5ef2a076fb4a047f5064f30e17140cfe68776533d6cae416bbbee2f332b1",
+      "sanitizedSha256": "7e5e5ef2a076fb4a047f5064f30e17140cfe68776533d6cae416bbbee2f332b1",
+      "gzipSha256": "ce48836adbd9c29e34d409ae5a3f629110136815b4055ffc6bb1d5832eabf342",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-followup-01\\measurement-finding.json",
+      "archive": "analysis/measurement-finding.json.gz",
+      "rawSha256": "c9873999e46e9b97e9cf58cc171f7e3221c694db92c258b4e502b7b7fcc31624",
+      "sanitizedSha256": "c9873999e46e9b97e9cf58cc171f7e3221c694db92c258b4e502b7b7fcc31624",
+      "gzipSha256": "a5e21426465fbcaefb0056e9eb1e71dc19bf1bb7d4461167262498fa1702e6f7",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\build.log",
+      "archive": "checks/build.log.gz",
+      "rawSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "gzipSha256": "7b815632ad782744ee751da4c60767569d39d630acfbba7ee98736c198aabf58",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\check-test-casts.log",
+      "archive": "checks/check-test-casts.log.gz",
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "gzipSha256": "cd2f39cded365e2bac395668e0a1ddc1a823ada3063791ebed1c0595dbd2aea8",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\check-tests.log",
+      "archive": "checks/check-tests.log.gz",
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "823696517fe7a689aa90bca7d820bf1aeac6bb0184e3ef39a52b1bc003725f93",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\checks.json",
+      "archive": "checks/checks.json.gz",
+      "rawSha256": "64b3ebe16f561104da854e280d6521f8fcbbff5c771aee3999973d211d8bb2e2",
+      "sanitizedSha256": "64b3ebe16f561104da854e280d6521f8fcbbff5c771aee3999973d211d8bb2e2",
+      "gzipSha256": "c06c91d3975247e67d6c4b45e77db20a1a874474feea88014488e3e57abbda78",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\result.json",
+      "archive": "checks/result.json.gz",
+      "rawSha256": "b6b477018fa36a430e051024b68535f2652519cdce760474f173d258371579a4",
+      "sanitizedSha256": "b6b477018fa36a430e051024b68535f2652519cdce760474f173d258371579a4",
+      "gzipSha256": "3638cb27264f673010757c8f1a135a3cd5ee0d957fa7b345d8f843e3fed95bc9",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\source-after.json",
+      "archive": "checks/source-after.json.gz",
+      "rawSha256": "c2891d1b020926ebdc1edcc5afcfb28e69d36182377fad9375eeae554ab3ddc0",
+      "sanitizedSha256": "c2891d1b020926ebdc1edcc5afcfb28e69d36182377fad9375eeae554ab3ddc0",
+      "gzipSha256": "dec64f12653058c4ab30bc2856f83d1970719c1734ec7fd65c53654735fad780",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\source-before.json",
+      "archive": "checks/source-before.json.gz",
+      "rawSha256": "c2891d1b020926ebdc1edcc5afcfb28e69d36182377fad9375eeae554ab3ddc0",
+      "sanitizedSha256": "c2891d1b020926ebdc1edcc5afcfb28e69d36182377fad9375eeae554ab3ddc0",
+      "gzipSha256": "dec64f12653058c4ab30bc2856f83d1970719c1734ec7fd65c53654735fad780",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01\\test-unit.log",
+      "archive": "checks/test-unit.log.gz",
+      "rawSha256": "af9761e20ccc48e5f1cf55990f91914c005317319dfde19fc5f656f0b160cbf2",
+      "sanitizedSha256": "af9761e20ccc48e5f1cf55990f91914c005317319dfde19fc5f656f0b160cbf2",
+      "gzipSha256": "5a5c2619bc1a2d60ffcd202fe5f288a2156ff2dbce3f5f9592bc347954cd9892",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-23154855da26\\fair_app-integration.log",
+      "archive": "native/fair_app-integration.log.gz",
+      "rawSha256": "4276fe90764d878d540e148381ca9309115fe98f2b7779391af320b380a46614",
+      "sanitizedSha256": "4276fe90764d878d540e148381ca9309115fe98f2b7779391af320b380a46614",
+      "gzipSha256": "2fecb56ebf26803bb291bd1b68017294ce0930f297878ee419c68b36b6ebc54f",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-23154855da26\\fair_owner-integration.log",
+      "archive": "native/fair_owner-integration.log.gz",
+      "rawSha256": "0c4cba9d8412ac68f00aab26166edea8689ae8af18148b89371ec461e3a44fc4",
+      "sanitizedSha256": "0c4cba9d8412ac68f00aab26166edea8689ae8af18148b89371ec461e3a44fc4",
+      "gzipSha256": "497c3068cecb2057f151c146014e92ffeb35d40b8a422108cc1f86ce5a4a89e7",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-23154855da26\\native.log",
+      "archive": "native/native.log.gz",
+      "rawSha256": "9e312bcc5c355370064ceffe37898594279dea848923beb7e4e73b85f5d9f6c5",
+      "sanitizedSha256": "9e312bcc5c355370064ceffe37898594279dea848923beb7e4e73b85f5d9f6c5",
+      "gzipSha256": "dcd64c3499be426855465cdc42d6bc36e3c40fa72442c150c4cea78f0ff4454f",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-23154855da26\\proof.json",
+      "archive": "native/proof.json.gz",
+      "rawSha256": "cc197d1b4f1d72d95231347f085ffa580d3df6dd98bba647d58171eb89a87db5",
+      "sanitizedSha256": "cc197d1b4f1d72d95231347f085ffa580d3df6dd98bba647d58171eb89a87db5",
+      "gzipSha256": "23c4b20547f388faf76b4ab09a1533c73742cf230388295c88129432346bcedf",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-23154855da26\\runner-receipt.json",
+      "archive": "native/runner-receipt.json.gz",
+      "rawSha256": "98c11b4ba3801a70f0f4d31223a7bc36fd1e8771e5ddc11ee59be7e94d5d543b",
+      "sanitizedSha256": "98c11b4ba3801a70f0f4d31223a7bc36fd1e8771e5ddc11ee59be7e94d5d543b",
+      "gzipSha256": "8b4147fa6cc99b2c232f440b5407a9339c363e5ef3bffe49c55d151c2af115cb",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-red-01.log",
+      "archive": "execution/release297-fair-public-connect-red-01.log.gz",
+      "rawSha256": "e777614143c6e6f5487c3a63e75d5c96a8e034ff62f5249d71779dd65881ca2f",
+      "sanitizedSha256": "e777614143c6e6f5487c3a63e75d5c96a8e034ff62f5249d71779dd65881ca2f",
+      "gzipSha256": "760e653711ec93676e9eced3330fc5153a52148cf92f4aea62d2a6168d4e4aa4",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-green-01.log",
+      "archive": "execution/release297-fair-public-connect-green-01.log.gz",
+      "rawSha256": "6b35bef107c543f98c3277691c74430fea65afaf3f27616b90fd0a8c069e5bca",
+      "sanitizedSha256": "6b35bef107c543f98c3277691c74430fea65afaf3f27616b90fd0a8c069e5bca",
+      "gzipSha256": "344357c88a38d0d7515793d6340df8b030ba35db7efadd4dbd0c1ced5be8e798",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01.ps1",
+      "archive": "execution/release297-fair-public-connect-checks-01.ps1.gz",
+      "rawSha256": "ae4515c181bce60dde9aa3c8a8b446405ef83c13eae815d8e9b3a3f2ea6271ff",
+      "sanitizedSha256": "ae4515c181bce60dde9aa3c8a8b446405ef83c13eae815d8e9b3a3f2ea6271ff",
+      "gzipSha256": "dccb802c897f691be78bae76bf258d61dcbb279cd9ba761891e646243251427f",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-public-connect-checks-01-runner.log",
+      "archive": "execution/release297-fair-public-connect-checks-01-runner.log.gz",
+      "rawSha256": "b6b477018fa36a430e051024b68535f2652519cdce760474f173d258371579a4",
+      "sanitizedSha256": "b6b477018fa36a430e051024b68535f2652519cdce760474f173d258371579a4",
+      "gzipSha256": "3638cb27264f673010757c8f1a135a3cd5ee0d957fa7b345d8f843e3fed95bc9",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-integrated-01\\run-native-postgres.mjs",
+      "archive": "native-runner/run-native-postgres.mjs.gz",
+      "rawSha256": "b2d607b54f496eb1dd331928d02a9d7bcd41be33b6b6d405759cc463ca79f63b",
+      "sanitizedSha256": "b2d607b54f496eb1dd331928d02a9d7bcd41be33b6b6d405759cc463ca79f63b",
+      "gzipSha256": "113d283e06e7b742392e6432f1d178d5f5c51286327f36702df53c8decd448bf",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-integrated-01\\native-postgres-proof.mjs",
+      "archive": "native-runner/native-postgres-proof.mjs.gz",
+      "rawSha256": "acd0b90415c50693023bcc1412a5152744ac96e067410403d7468b73888a2e04",
+      "sanitizedSha256": "acd0b90415c50693023bcc1412a5152744ac96e067410403d7468b73888a2e04",
+      "gzipSha256": "346f3c3036d65a0afaf745af895fff7a4edfe79775783c364c91352df1e59f41",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-integrated-01\\native-runner-02.log",
+      "archive": "native-runner/native-runner-02.log.gz",
+      "rawSha256": "2cd7e4541f94c6b3679e88206fb2642cef55cd7fa5088bec46084634fe365b5d",
+      "sanitizedSha256": "2cd7e4541f94c6b3679e88206fb2642cef55cd7fa5088bec46084634fe365b5d",
+      "gzipSha256": "51bda3bd3872f3367fd7fac19c871b81b4980f697c2bf5438c532471a5653e73",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\src\\db\\fairMainPool.ts",
+      "archive": "source/fairMainPool.ts.gz",
+      "rawSha256": "ff933d49eaf2a43f70da42040f6906d6016a4f3691e3e55f0ca076b30a13ba71",
+      "sanitizedSha256": "ff933d49eaf2a43f70da42040f6906d6016a4f3691e3e55f0ca076b30a13ba71",
+      "gzipSha256": "53afec638776b179d3ee66e19302f84b24178f4dc0154cd861fcdf67378c22bf",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\fair-main-pool.test.mjs",
+      "archive": "source/fair-main-pool.test.mjs.gz",
+      "rawSha256": "d761df80d1fe27ab25bdc89fbc6ee86100f5d445cd87c5190cb84509449818d3",
+      "sanitizedSha256": "d761df80d1fe27ab25bdc89fbc6ee86100f5d445cd87c5190cb84509449818d3",
+      "gzipSha256": "32ee4275262ac19b56c02c0e6add5b32e25d74248e0a3804fdbf4b9acd3c5fea",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\fair-main-pool.integration.test.mjs",
+      "archive": "source/fair-main-pool.integration.test.mjs.gz",
+      "rawSha256": "e2ecdd583e14d7b726fb2c6fc7b78c877990bc216f3e9c63214f025937906b8a",
+      "sanitizedSha256": "e2ecdd583e14d7b726fb2c6fc7b78c877990bc216f3e9c63214f025937906b8a",
+      "gzipSha256": "5ffc269bd601207842548de733d684048a7cc58cce874398e0c160d30c708434",
+      "redactions": 0
+    }
+  ]
+}

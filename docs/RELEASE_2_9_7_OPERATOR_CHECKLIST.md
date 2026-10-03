@@ -17,6 +17,36 @@ have separate [incremental evidence](release-evidence/release-297/usage-contenti
 and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
+Current October 3 checkpoint: **Usage capacity has no accepted passing run**.
+The [resource-bounded combined diagnostic at `9630c009`](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)
+completed 2,704/6,000 heartbeats and 34/64 reports; the second complete historical
+rollup took 57.768 seconds including admission wait, above the 48-second gate.
+Historical and current-day totals, coverage and eight audited CSV checks passed.
+All owned containers were removed, but a coordinator exit-receipt race left its
+exit status unavailable; that run does not prove clean coordinator shutdown.
+API CPU throttling, database write waits and pre-admission authentication failures
+require further correction. They do not establish a connection leak. Its raw
+pool counters also double-observe Promise checkout calls; the HTTP failures are
+independent and remain failures.
+
+[CI at `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
+passes all 17 jobs and three security workflows. The subsequent
+[single-checkout instrumentation correction](release-evidence/release-297/usage-contention/fair-main-pool-public-connect-followup-01/manifest.json)
+at `5d543f40` passes 54 focused cases, eight native cases, the application test
+under both database roles and 1,864 unit cases (four conditional skips).
+Its [local image](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json)
+passes the full pinned scan with zero findings and embedded compatibility checks.
+Linux/amd64 manifest:
+`sha256:b163e683f50d2303b1b8aff8d96dbbce6e5d20c3dab715357da67af7a5528d38`;
+archive SHA-256:
+`9adb8d976bae3c513ebaced258b9b4dc68f1cc338a6ecd73682666c81766efae`.
+The permanent packet is
+`C:/Users/zinka/.codex/artifacts/release297-candidate-5d543f40-01`.
+These local artifacts are not pushed or deployed. New identity-queue work,
+calibrated traffic generation, final-source acceptance and recovery rehearsal
+remain pending. The following development checkpoints retain their original
+source-specific results; they do not supersede this current status.
+
 The [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 adds alternating FIFO admission for report and other main-pool requests when
 Usage reporting is enabled. Default-off API, worker and session pools keep
@@ -28,7 +58,26 @@ pool limits are preserved; closing sockets are tracked through shutdown without
 claiming a stricter physical-socket ceiling. Combined capacity and final-source
 checks remain pending, and the older image below does not contain this change.
 
-The latest [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
+The [new local `9630c009` candidate](release-evidence/release-297/usage-contention/candidate-artifact-9630c009/manifest.json) has passed the pinned full image scan with
+zero findings and the embedded 129-table/lifecycle/default-off checks. Its
+Linux/amd64 manifest is
+`sha256:c3759c8b69acb47feb5dc1dc5416b77f9d5e1a2eccb76bbf1646c96d966a67c5`;
+archive SHA-256 is
+`0c87d73aae62c026bb7a7fb05259fec5325d3865b682e14d0241c3a2884c53f3`.
+The local artifact packet is
+`C:/Users/zinka/.codex/artifacts/release297-candidate-9630c009-01`, with manifest
+`1afd8c43cb29934e9cd4bc05925e3e466f8c3cf56b981b2525fa81339e79299e`.
+It has not been pushed to a registry or deployed. The separately archived
+[per-role harness startup](release-evidence/release-297/usage-contention/linux-role-startup-01/manifest.json)
+proves resource limits, pool readiness and clean shutdown on earlier source
+`204ae93d` with zero traffic. It does not establish capacity for either source.
+
+The [final `9fc4b0e` CI record](release-evidence/release-297/usage-contention/ci-9fc4b0e-final-01/manifest.json)
+contains 16 successful jobs and one cancelled rollout-safety job, plus three
+successful security workflows. The new source push superseded that run; it is
+not a fully green checkpoint. The later `9630c009` CI result is recorded above.
+
+The earlier [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
 fails acceptance: 4,840/6,000 heartbeats and 51/64 reports succeeded; 974
 heartbeats failed, 186 offers were refused and 140 were late. Both historical
 workers produced correct totals in 19.107/42.142 seconds, but 978 acquisition

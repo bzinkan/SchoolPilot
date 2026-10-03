@@ -14,6 +14,15 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
+Current October 3 checkpoint: [full CI at `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
+passes, while its [resource-bounded Usage diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)
+fails at 2,704/6,000 heartbeats and 34/64 reports, with the second complete
+rollup taking 57.768 seconds including admission wait. Independent correctness
+checks pass, but the capacity gate does not. The subsequent `5d543f40` checkout
+instrumentation correction passes regression/full-unit checks and local image
+scanning. Identity scheduling, final-source capacity and release preparation
+remain in progress. Earlier checkpoint statements below are historical.
+
 The subsequent [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 separates waiting report requests from other main-pool requests with alternating
 FIFO service, using the same pool and deadlines. It is active only for admitted
@@ -22,7 +31,7 @@ the actual application regression under owner and restricted roles pass.
 Combined capacity remains unproven; this implementation does not change the
 release or activation status.
 
-The latest [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
+The earlier [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
 remains failed: 4,840/6,000 heartbeats, 51/64 reports and 978 acquisition failures.
 Workers return correct historical totals below 48 seconds; aborted responses and
 unreached current-day/CSV checks prevent acceptance. Its exact local candidate

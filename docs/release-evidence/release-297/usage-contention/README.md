@@ -3,6 +3,31 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+Current October 3 checkpoint: the [resource-bounded `9630c009` diagnostic](linux-role-combined-9630-01/manifest.json)
+fails capacity: 2,704/6,000 heartbeats and 34/64 reports succeeded; complete
+historical rollups took 39.326/57.768 seconds including admission wait.
+Historical/current-day totals, coverage and eight audited CSV checks passed.
+Pool instrumentation double-observes Promise acquisition calls in that source;
+raw counter totals must not be described as unique acquisitions. HTTP failures
+remain independently measured. CPU throttling and database write pressure are
+observed, with no demonstrated ownership leak or deadlock. All owned containers
+were removed; coordinator exit status was lost through a harness race and is
+unavailable. Application source was unchanged at completion. This is diagnostic
+evidence, not an accepted capacity run.
+
+[Exact `9630c009` CI](ci-9630c009-final-01/manifest.json) passes all 17 jobs and
+three security workflows. [Local full backend checks](fair-main-pool-final-backend-01/manifest.json)
+pass 1,863 unit cases (four conditional skips) and 699 infrastructure cases.
+The [subsequent public-connect correction](fair-main-pool-public-connect-followup-01/manifest.json)
+at `5d543f40` removes duplicate instrumentation without changing lease ownership.
+It passes 54 focused cases, eight native cases, both application database roles,
+build/type/cast checks and 1,864 unit cases with four conditional skips.
+Its [exact local image](candidate-artifact-5d543f40/manifest.json) passes the full
+pinned scan and embedded compatibility checks. Neither that image nor earlier
+artifacts establish accepted capacity, registry publication or deployment.
+
+Earlier checkpoints below preserve their source-specific results and failures.
+
 The [fair main-pool scheduler](fair-main-pool-scheduler-01/manifest.json) preserves
 the complete prototype failure history and final typed integration proof.
 Report and other acquisitions use alternating FIFO queues in the existing API
@@ -16,7 +41,23 @@ native pg behavior and are tracked until actual end; no stricter socket ceiling
 or performance improvement is claimed. Full combined checks and capacity on
 this new application source are pending.
 
-The latest [Linux combined diagnostic at `204ae93d`](linux-combined-204-01/manifest.json)
+The [per-role startup archive](linux-role-startup-01/manifest.json) preserves
+154 verified records, including three failed build preparations and the
+successful resource-bounded startup on `204ae93d`. API main/session pools warmed
+to 16/2 and worker to five; all four role containers exited cleanly and all six
+owned containers were removed. It sent no workload requests or rollups.
+Capacity remains unproven. The [final `9fc4b0e` CI record](ci-9fc4b0e-final-01/manifest.json)
+records 16 successful jobs, one superseded/cancelled rollout job and three
+successful security workflows; cancellation is not a passed full CI run.
+
+The [exact `9630c009` local candidate](candidate-artifact-9630c009/manifest.json)
+passes the pinned full security scan with zero findings and embedded
+compatibility/default-off checks. Its verified image archive is preserved in
+the permanent local artifact directory; the Git record retains hashed build,
+scan and compatibility receipts. It is not a registry or deployment artifact,
+and build/scan success does not establish capacity.
+
+The earlier [Linux combined diagnostic at `204ae93d`](linux-combined-204-01/manifest.json)
 fails: 4,840/6,000 heartbeats succeed, with 974 failed requests, 186 refused and
 140 late offers; 51/64 reports succeed. Both historical workers return correct
 totals in 19.107/42.142 seconds. There are 978 acquisition failures and 10 aborted
