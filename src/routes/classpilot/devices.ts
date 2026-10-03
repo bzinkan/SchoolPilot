@@ -81,7 +81,6 @@ import {
   lockClasspilotSsoPolicyDeliveryAuthority,
   getClasspilotScreenshotAuthorityProjection,
   withClasspilotStudentControlDeliveryAuthority,
-  withClasspilotStudentWebSocketBootstrapAuthority,
   withClasspilotScreenshotUploadAuthority,
   acknowledgeClasspilotStudentControlState,
   getHeartbeatTileHistoryBatch,
@@ -4724,50 +4723,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     const shouldCheckTeacherReplies = pendingMessageRecoveryHeartbeat
       || now - (teacherReplyLastCheck.get(teacherReplyCheckKey) || 0) >= 30_000;
     if (shouldCheckTeacherReplies) {
-      setBoundedMap(
-        teacherReplyLastCheck,
-        teacherReplyCheckKey,
-        now,
-        MAX_TEACHER_REPLY_CHECKS
-      );
-      try {
-        const teacherReplyDelivery = await runWithTenantContext(
-          { schoolId, operation: "heartbeat_final_delivery" },
-          () => withClasspilotStudentWebSocketBootstrapAuthority(
-            { schoolId, studentId, studentSessionId, deviceId },
-            (transactionDb) => getClasspilotStudentControlState(schoolId,studentId,transactionDb),
-            (teacherReplies,control) => teacherReplies.map(({ message }) => {
-              const replyPayload = {
-                type: "teacher-message",
-                _msgId: message.id,
-                chatMessageId: message.id,
-                messageKind:"private", privateChatLifecycle:privateChatMessageLifecycle(message),
-                messageId: message.id,
-                ...(message.supervisionContextId ? {...classpilotCommandAuthorityEnvelope({supervisionContextId:message.supervisionContextId}),studentControlRevision:control?.revision} : {sessionId:message.sessionId,teachingSessionId:message.sessionId}),
-                studentId,
-                studentSessionId,
-                message: message.content,
-                fromName: "Teacher",
-              };
-              const exactTarget = {
-                kind: "student-binding" as const,
-                schoolId,
-                studentId,
-                studentSessionId,
-                deviceId,
-              };
-              sendToStudentBindingLocal(exactTarget, replyPayload);
-              return publishWS(exactTarget, replyPayload);
-            })
-          )
-        );
-        if (teacherReplyDelivery.authorized) {
-          await Promise.all(teacherReplyDelivery.value);
-        }
-      } catch {
-        // The outbox remains due; a later heartbeat retries the stable id.
-      }
+      setBoundedMap(teacherReplyLastCheck, teacherReplyCheckKey, now, MAX_TEACHER_REPLY_CHECKS);
     }
+    const teacherReplyPublications: Promise<boolean>[] = [];
 
     // All work after the initial heartbeat transaction can race a correct-PIN
     // transfer. Re-materialize the public classroom snapshot under the same
@@ -4777,9 +4735,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     const finalDelivery = await runWithTenantContext(
       { schoolId, operation: "heartbeat_final_delivery" },
       () => withClasspilotStudentControlDeliveryAuthority(
-        { schoolId, studentId, studentSessionId, deviceId },
+        { schoolId, studentId, studentSessionId, deviceId, freezeSsoPolicy: true },
         async (transactionDb) => {
-          await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
           const [finalControlState, finalSsoPolicy] = await Promise.all([
             getClasspilotStudentControlState(
               schoolId,
@@ -4837,6 +4794,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               })
             : undefined;
           return {
+            privateReplyControlRevision: finalControlState?.revision,
             classroomState: finalClassroomState,
             focusCleanup,
             screenshotPolicy: finalScreenshotPolicy,
@@ -4881,9 +4839,32 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             ...(prepared.deliveredFab ? { fab: prepared.deliveredFab } : {}),
             ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
           });
-        }
+        },
+        shouldCheckTeacherReplies ? (teacherReplies, prepared) => {
+          for (const { message } of teacherReplies) {
+            const replyPayload = {
+              type: "teacher-message",
+              _msgId: message.id,
+              chatMessageId: message.id,
+              messageKind: "private", privateChatLifecycle: privateChatMessageLifecycle(message),
+              messageId: message.id,
+              ...(message.supervisionContextId
+                ? { ...classpilotCommandAuthorityEnvelope({ supervisionContextId: message.supervisionContextId }),
+                  studentControlRevision: prepared.privateReplyControlRevision }
+                : { sessionId: message.sessionId, teachingSessionId: message.sessionId }),
+              studentId, studentSessionId, message: message.content, fromName: "Teacher",
+            };
+            const exactTarget = { kind: "student-binding" as const, schoolId, studentId, studentSessionId, deviceId };
+            sendToStudentBindingLocal(exactTarget, replyPayload);
+            // Handle rejection immediately, even if a later local send throws
+            // and rolls back the optional claim. Network settlement happens
+            // only after the final authority transaction/tenant lease ends.
+            teacherReplyPublications.push(publishWS(exactTarget, replyPayload).catch(() => false));
+          }
+        } : undefined,
       )
     );
+    await Promise.all(teacherReplyPublications);
     if (!finalDelivery.authorized) {
       return res.status(409).json({
         error: "Student session is no longer active",

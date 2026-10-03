@@ -833,6 +833,49 @@ describe("computation coverage ledger (DB lane)", { concurrency: false }, () => 
     assert.deepEqual(await coverage(), finalCoverage, "a stale queue cannot regress the final cutoff");
   });
 
+  it("preserves a stricter inherited SQL timeout and rolls back the day before admitting later work", async () => {
+    const schoolId = await createSchool("Timeout atomic", "720");
+    const studentId = await createStudent(schoolId, "Timeout atomic");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://timeout.example.edu", category: "educational" });
+    const firstCutoff = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    const beforeRows = await rows(schoolId);
+    const coverage = async () => (await system.query("SELECT processed_through, computed_at, is_final FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows;
+    const beforeCoverage = await coverage();
+    const shortPool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1,
+      options: "-c app.is_super=on -c statement_timeout=500" });
+    let injectDelay = true, observedLimit = 0;
+    const delayedPool: Parameters<typeof rollup.rollupClasspilotUsageDay>[0] = {
+      query: (text, values) => shortPool.query(text, values),
+      async connect() {
+        const client = await shortPool.connect();
+        return { async query(text, values) {
+          if (injectDelay && text === rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL) {
+            observedLimit = Number((await client.query("SELECT setting FROM pg_settings WHERE name='statement_timeout'")).rows[0].setting);
+            // A real PostgreSQL statement timeout after the transactional day
+            // DELETE must restore both aggregates and the invalidated ledger.
+            await client.query("SELECT pg_sleep(1)");
+          }
+          return client.query(text, values);
+        }, release(error) { client.release(error); } };
+      },
+    };
+    try {
+      await assert.rejects(rollup.rollupClasspilotUsageDay(delayedPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] }),
+        error => error instanceof Error && "code" in error && error.code === "57014");
+      assert.ok(observedLimit > 0 && observedLimit <= 500);
+      assert.deepEqual(await rows(schoolId), beforeRows);
+      assert.deepEqual(await coverage(), beforeCoverage);
+      assert.equal(Number((await shortPool.query("SELECT setting FROM pg_settings WHERE name='statement_timeout'")).rows[0].setting), 500,
+        "transaction-local reductions must not leak to the next borrower");
+      injectDelay = false;
+      await rollup.rollupClasspilotUsageDay(delayedPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+      assert.equal((await coverage())[0].is_final, true);
+      assert.equal(shortPool.totalCount, shortPool.idleCount);
+    } finally { await shortPool.end(); }
+  });
+
   it("invalidates only the affected school/day when an incompatible writer changes aggregates", async () => {
     const schoolId = await createSchool("Invalidation", "720");
     const studentId = await createStudent(schoolId, "Invalidation");

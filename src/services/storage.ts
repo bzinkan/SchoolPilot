@@ -20027,6 +20027,131 @@ export async function classpilotStudentRelayMessageAllowed(
 
 class ClasspilotTeacherChatBindingLostError extends Error {}
 
+async function claimTeacherChatDeliveriesWithAuthorityLocked(
+  options: ClasspilotTeacherChatBinding,
+  transactionDb: typeof db,
+): Promise<ClasspilotClaimedTeacherChatDelivery[]> {
+  const limit = Math.max(1, Math.min(20, options.limit ?? 10));
+  // Canonical reply enqueue takes this same student-control lock. While it
+  // is held, an empty exact-student outbox cannot gain a racing reply.
+  // Include every pending state regardless of due time or expiry so the
+  // existing path still performs expiration and retry handling.
+  const [pendingPrivateDelivery] = await transactionDb.select({ id: classpilotChatDeliveries.id })
+      .from(classpilotChatDeliveries)
+      .where(and(
+        eq(classpilotChatDeliveries.schoolId, options.schoolId),
+        eq(classpilotChatDeliveries.studentId, options.studentId),
+        inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"])
+      ))
+      .limit(1);
+  const owner = pendingPrivateDelivery
+    ? await getActiveClassOwnerForStudent(
+        options.schoolId,
+        options.studentId,
+        transactionDb
+      )
+    : undefined;
+  const supervision = pendingPrivateDelivery
+    ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
+  const classroomContext = scheduledContextHasClassroomTools(supervision?.context) && await scheduledClassroomBindingCapable(options)
+    ? supervision.context : undefined;
+  const authority = classroomContext ? { supervisionContextId: classroomContext.id }
+    : owner ? { teachingSessionId: owner.session.id } : undefined;
+  const parentCondition = classroomContext
+    ? eq(classpilotChatDeliveries.supervisionContextId, classroomContext.id)
+    : owner ? eq(classpilotChatDeliveries.teachingSessionId, owner.session.id) : sql`false`;
+  const claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
+  if (
+    authority
+    && await hasCurrentClasspilotStudentControlAuthority({
+      schoolId: options.schoolId,
+      studentId: options.studentId,
+      ...authority,
+    }, transactionDb)
+  ) {
+    const channel = await lockPrivateChatChannel({...options,...authority},transactionDb);
+    const lifecycleRequired = channel.required;
+    const [stamped] = await transactionDb.select({id:chatMessages.id}).from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.studentId,options.studentId),authority.teachingSessionId ? eq(chatMessages.sessionId,authority.teachingSessionId) : eq(chatMessages.supervisionContextId,authority.supervisionContextId!),isNotNull(chatMessages.privateChatThreadId))).limit(1);
+    const lifecycle = lifecycleRequired || stamped ? await lockPrivateChatLifecycle({...options,...authority},transactionDb) : null;
+    const capable = channel.enabled && (!lifecycle?.required || await privateChatBindingSupported(options,transactionDb));
+    const now = new Date();
+    await transactionDb
+      .update(classpilotChatDeliveries)
+      .set({ state: "expired", updatedAt: now, lastError: "Class session or delivery window ended" })
+      .where(and(
+        eq(classpilotChatDeliveries.schoolId, options.schoolId),
+        eq(classpilotChatDeliveries.studentId, options.studentId),
+        parentCondition,
+        inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
+        sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
+      ));
+    const due = await transactionDb
+      .select({ delivery: classpilotChatDeliveries, message: chatMessages })
+      .from(classpilotChatDeliveries)
+      .innerJoin(chatMessages, and(
+        eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
+        eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
+        eq(chatMessages.studentId, classpilotChatDeliveries.studentId),
+        sql`${chatMessages.sessionId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.teachingSessionId}`,
+        sql`${chatMessages.supervisionContextId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.supervisionContextId}`
+      ))
+      .where(and(
+        eq(classpilotChatDeliveries.schoolId, options.schoolId),
+        eq(classpilotChatDeliveries.studentId, options.studentId),
+        parentCondition,
+        inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
+        sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
+        gt(classpilotChatDeliveries.expiresAt, now)
+      ))
+      .orderBy(classpilotChatDeliveries.createdAt)
+      .limit(limit)
+      .for("update", { skipLocked: true });
+    for (const row of due) {
+      const messageToken = privateChatMessageLifecycle(row.message);
+      const current = !(await isPrivateChatMessageExpired(row.message.id,options.schoolId,transactionDb)) && (!lifecycle || lifecycle.enabled && (messageToken ? samePrivateChatLifecycle(messageToken,lifecycle.token) : !lifecycle.required && lifecycle.token.threadGeneration === 1 && lifecycle.token.schoolEpoch === 1 && lifecycle.token.activityEpoch === 1));
+      if (!current) {
+        await transactionDb.update(classpilotChatDeliveries).set({state:"expired",updatedAt:now,lastError:"Private chat ended or messaging was switched off"}).where(eq(classpilotChatDeliveries.id,row.delivery.id));
+        continue;
+      }
+      if (!capable) continue;
+      const [delivery] = await transactionDb
+        .update(classpilotChatDeliveries)
+        .set({
+          state: "attempted",
+          attemptCount: sql<number>`${classpilotChatDeliveries.attemptCount} + 1`,
+          lastAttemptAt: now,
+          lastAttemptStudentSessionId: options.studentSessionId,
+          lastAttemptDeviceId: options.deviceId,
+          nextAttemptAt: new Date(now.getTime() + Math.min(5 * 60_000, 30_000 * Math.max(1, row.delivery.attemptCount + 1))),
+          updatedAt: now,
+        })
+        .where(eq(classpilotChatDeliveries.id, row.delivery.id))
+        .returning();
+      await transactionDb.update(chatMessages).set({
+        deviceId: options.deviceId,
+        recipientId: options.deviceId,
+        deliveryStatus: "sent",
+        errorMessage: null,
+      }).where(and(
+        eq(chatMessages.id, row.message.id),
+        ne(chatMessages.deliveryStatus, "delivered")
+      ));
+      if (delivery) {
+        claimed.push({
+          message: {
+            ...row.message,
+            deviceId: options.deviceId,
+            recipientId: options.deviceId,
+          },
+          delivery,
+        });
+      }
+    }
+  }
+
+  return claimed;
+}
+
 /**
  * Linearize an exact-bound student response against student-session transfer.
  * The transfer path takes the same student-control transaction lock, so the
@@ -20044,10 +20169,22 @@ export async function withClasspilotStudentControlDeliveryAuthority<
   onAuthorized: (
     claimed: ClasspilotClaimedTeacherChatDelivery[],
     prepared: Prepared
-  ) => T
+  ) => T,
+  // Heartbeat-only recovery: failures in optional claim/local delivery must not
+  // fail a valid HTTP response. Presence of this callback requests a best-effort
+  // claim, including when claimTeacherChatDeliveries is also true. Default/WS
+  // callers without it retain their original mandatory claim path.
+  recoverTeacherReplies?: (
+    claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared,
+  ) => ClasspilotSynchronousAuthorityResult,
 ): Promise<{ authorized: true; value: T } | { authorized: false }> {
-  if (options.claimTeacherChatDeliveries) await latchPrivateChatLifecycle(options.schoolId);
-  const limit = Math.max(1, Math.min(20, options.limit ?? 10));
+  let claimReplies = options.claimTeacherChatDeliveries === true || !!recoverTeacherReplies;
+  if (claimReplies) {
+    if (recoverTeacherReplies) {
+      try { await latchPrivateChatLifecycle(options.schoolId); }
+      catch { claimReplies = false; }
+    } else await latchPrivateChatLifecycle(options.schoolId);
+  }
   try {
     return await db.transaction(async (tx) => {
       const transactionDb = tx as unknown as typeof db;
@@ -20064,126 +20201,43 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       // UPDATE. Bootstrap must take the matching shared lock before private
       // chat takes settings FOR SHARE, or the two transactions can deadlock.
       // Opt in only on surfaces that already freeze SSO policy for delivery.
-      if (options.freezeSsoPolicy) {
+      if (options.freezeSsoPolicy || recoverTeacherReplies) {
         await lockClasspilotSsoPolicyDeliveryAuthority(options.schoolId, transactionDb);
       }
-      // Canonical reply enqueue takes this same student-control lock. While it
-      // is held, an empty exact-student outbox cannot gain a racing reply.
-      // Include every pending state regardless of due time or expiry so the
-      // existing path still performs expiration and retry handling.
-      const [pendingPrivateDelivery] = options.claimTeacherChatDeliveries
-        ? await tx.select({ id: classpilotChatDeliveries.id })
-          .from(classpilotChatDeliveries)
-          .where(and(
-            eq(classpilotChatDeliveries.schoolId, options.schoolId),
-            eq(classpilotChatDeliveries.studentId, options.studentId),
-            inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"])
-          ))
-          .limit(1)
-        : [];
-      const owner = pendingPrivateDelivery
-        ? await getActiveClassOwnerForStudent(
-            options.schoolId,
-            options.studentId,
-            transactionDb
-          )
-        : undefined;
-      const supervision = pendingPrivateDelivery
-        ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
-      const classroomContext = scheduledContextHasClassroomTools(supervision?.context) && await scheduledClassroomBindingCapable(options)
-        ? supervision.context : undefined;
-      const authority = classroomContext ? { supervisionContextId: classroomContext.id }
-        : owner ? { teachingSessionId: owner.session.id } : undefined;
-      const parentCondition = classroomContext
-        ? eq(classpilotChatDeliveries.supervisionContextId, classroomContext.id)
-        : owner ? eq(classpilotChatDeliveries.teachingSessionId, owner.session.id) : sql`false`;
-      const claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
-      if (
-        authority
-        && await hasCurrentClasspilotStudentControlAuthority({
-          schoolId: options.schoolId,
-          studentId: options.studentId,
-          ...authority,
-        }, transactionDb)
-      ) {
-        const channel = await lockPrivateChatChannel({...options,...authority},transactionDb);
-        const lifecycleRequired = channel.required;
-        const [stamped] = await tx.select({id:chatMessages.id}).from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.studentId,options.studentId),authority.teachingSessionId ? eq(chatMessages.sessionId,authority.teachingSessionId) : eq(chatMessages.supervisionContextId,authority.supervisionContextId!),isNotNull(chatMessages.privateChatThreadId))).limit(1);
-        const lifecycle = lifecycleRequired || stamped ? await lockPrivateChatLifecycle({...options,...authority},transactionDb) : null;
-        const capable = channel.enabled && (!lifecycle?.required || await privateChatBindingSupported(options,transactionDb));
-        const now = new Date();
-        await tx
-          .update(classpilotChatDeliveries)
-          .set({ state: "expired", updatedAt: now, lastError: "Class session or delivery window ended" })
-          .where(and(
-            eq(classpilotChatDeliveries.schoolId, options.schoolId),
-            eq(classpilotChatDeliveries.studentId, options.studentId),
-            parentCondition,
-            inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
-            sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
-          ));
-        const due = await tx
-          .select({ delivery: classpilotChatDeliveries, message: chatMessages })
-          .from(classpilotChatDeliveries)
-          .innerJoin(chatMessages, and(
-            eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
-            eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
-            eq(chatMessages.studentId, classpilotChatDeliveries.studentId),
-            sql`${chatMessages.sessionId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.teachingSessionId}`,
-            sql`${chatMessages.supervisionContextId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.supervisionContextId}`
-          ))
-          .where(and(
-            eq(classpilotChatDeliveries.schoolId, options.schoolId),
-            eq(classpilotChatDeliveries.studentId, options.studentId),
-            parentCondition,
-            inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
-            sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
-            gt(classpilotChatDeliveries.expiresAt, now)
-          ))
-          .orderBy(classpilotChatDeliveries.createdAt)
-          .limit(limit)
-          .for("update", { skipLocked: true });
-        for (const row of due) {
-          const messageToken = privateChatMessageLifecycle(row.message);
-          const current = !(await isPrivateChatMessageExpired(row.message.id,options.schoolId,transactionDb)) && (!lifecycle || lifecycle.enabled && (messageToken ? samePrivateChatLifecycle(messageToken,lifecycle.token) : !lifecycle.required && lifecycle.token.threadGeneration === 1 && lifecycle.token.schoolEpoch === 1 && lifecycle.token.activityEpoch === 1));
-          if (!current) {
-            await tx.update(classpilotChatDeliveries).set({state:"expired",updatedAt:now,lastError:"Private chat ended or messaging was switched off"}).where(eq(classpilotChatDeliveries.id,row.delivery.id));
-            continue;
+      let claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
+      let prepared: Prepared;
+      if (recoverTeacherReplies) {
+        // Required preparation may perform Focus cleanup. Keep it outside the
+        // optional savepoint so a chat SQL/socket failure cannot undo it.
+        prepared = await prepareAuthorized(transactionDb);
+        if (claimReplies) {
+          await tx.execute(sql`SAVEPOINT classpilot_optional_chat_recovery`);
+          let requiredFenceFailed = false;
+          try {
+            claimed = await claimTeacherChatDeliveriesWithAuthorityLocked(options, transactionDb);
+            if (claimed.length > 0) {
+              try {
+                if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
+                  throw new ClasspilotTeacherChatBindingLostError();
+                }
+              } catch (error) {
+                requiredFenceFailed = true;
+                throw error;
+              }
+              assertClasspilotSynchronousAuthorityResult(recoverTeacherReplies(claimed, prepared));
+            }
+          } catch (error) {
+            if (requiredFenceFailed) throw error;
+            // PostgreSQL errors abort their subtransaction. Restore it before
+            // any mandatory query; a failed rollback/release must propagate.
+            await tx.execute(sql`ROLLBACK TO SAVEPOINT classpilot_optional_chat_recovery`);
+            claimed = [];
           }
-          if (!capable) continue;
-          const [delivery] = await tx
-            .update(classpilotChatDeliveries)
-            .set({
-              state: "attempted",
-              attemptCount: sql<number>`${classpilotChatDeliveries.attemptCount} + 1`,
-              lastAttemptAt: now,
-              lastAttemptStudentSessionId: options.studentSessionId,
-              lastAttemptDeviceId: options.deviceId,
-              nextAttemptAt: new Date(now.getTime() + Math.min(5 * 60_000, 30_000 * Math.max(1, row.delivery.attemptCount + 1))),
-              updatedAt: now,
-            })
-            .where(eq(classpilotChatDeliveries.id, row.delivery.id))
-            .returning();
-          await tx.update(chatMessages).set({
-            deviceId: options.deviceId,
-            recipientId: options.deviceId,
-            deliveryStatus: "sent",
-            errorMessage: null,
-          }).where(and(
-            eq(chatMessages.id, row.message.id),
-            ne(chatMessages.deliveryStatus, "delivered")
-          ));
-          if (delivery) {
-            claimed.push({
-              message: {
-                ...row.message,
-                deviceId: options.deviceId,
-                recipientId: options.deviceId,
-              },
-              delivery,
-            });
-          }
+          await tx.execute(sql`RELEASE SAVEPOINT classpilot_optional_chat_recovery`);
         }
+      } else {
+        if (claimReplies) claimed = await claimTeacherChatDeliveriesWithAuthorityLocked(options, transactionDb);
+        prepared = await prepareAuthorized(transactionDb);
       }
 
       // The xact-scoped student-control lock prevents a transfer from
@@ -20191,7 +20245,6 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       // bootstrap callback. If the manual lease expired while chat was being
       // claimed, roll the claim back instead of committing it for a stale
       // binding.
-      const prepared = await prepareAuthorized(transactionDb);
       if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         throw new ClasspilotTeacherChatBindingLostError();
       }

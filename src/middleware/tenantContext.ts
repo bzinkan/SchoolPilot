@@ -25,6 +25,14 @@ const checkoutDiagnostics = new WeakMap<PoolClient, () => void>();
 // Every lease still installs fresh GUCs and its own ALS store below. In
 // particular, request-scoped guarded clients must never enter this cache.
 const tenantClientDatabases = new WeakMap<PoolClient, TenantStore["db"]>();
+// A captured ALS context can outlive its lease or survive physical-client
+// reuse. Identity of the fresh store, not merely the client, proves ownership.
+const ownedTenantStores = new WeakMap<PoolClient, TenantStore>();
+
+export function getOwnedTenantStore(): TenantStore | undefined {
+  const store = tenantALS.getStore();
+  return store && ownedTenantStores.get(store.client) === store ? store : undefined;
+}
 
 function databaseForTenantClient(client: PoolClient): TenantStore["db"] {
   let database = tenantClientDatabases.get(client);
@@ -54,6 +62,8 @@ function trackTenantRelease(release: Promise<void>): Promise<void> {
 }
 
 async function resetAndReleaseTenantClient(client: PoolClient): Promise<void> {
+  // Stop nested reuse before RESET starts, including while RESET is awaiting IO.
+  ownedTenantStores.delete(client);
   let resetError: Error | undefined;
   try {
     await client.query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)");
@@ -187,6 +197,7 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
     schoolId,
     isSuper,
   };
+  ownedTenantStores.set(client, store);
   tenantALS.run(store, () => next());
 };
 
@@ -218,6 +229,7 @@ export async function runWithTenantContext<T>(
         schoolId: opts.schoolId,
         isSuper: opts.isSuper,
       };
+      ownedTenantStores.set(client, store);
       return await tenantALS.run(store, fn);
     } finally {
       await releaseTenantClient(client);

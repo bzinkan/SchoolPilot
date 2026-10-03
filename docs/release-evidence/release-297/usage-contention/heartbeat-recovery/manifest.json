@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T01:40:56.207Z",
+  "scope": "Heartbeat-only best-effort teacher private reply recovery within the final mandatory authority transaction.",
+  "source": {
+    "baseCommit": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "archiveTimeHead": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "state": "incremental uncommitted shared worktree; final application/test files",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "src/services/storage.ts": "f99fcb4b02c0cfc97295931c97744a9c47c62cfd5ba90fa1e03db8b664875c79",
+      "src/routes/classpilot/devices.ts": "9fc888cef5b076f86f9dfcd1774c9082d4cd400c452014b3c919514c9074897c",
+      "tests/classpilot-private-chat-lifecycle.integration.test.ts": "03f85e62da0cedbfd7610f210e9680c7dc9d4db1f04c3b45b3b24488ce5bbf4f",
+      "tests/classpilot-sso-policy-delivery-contract.test.ts": "2f258f6bd9aace4108222fb46a68205ef4d8517e2ad67f0b14b957b0fbb28c18",
+      "tests/classpilot-heartbeat-recovery-delivery.test.ts": "5413b89c75de6bc106004df01d15a9c0b81493a0d7a49892b93a499f66f953dc"
+    },
+    "note": "Archive-time hashes describe final files; early runs predate additional assertions/type-only corrections. Combined clean-source CI and capacity acceptance remain separate."
+  },
+  "behavior": {
+    "before": "Recovery-due heartbeats acquired an extra tenant lease and full authority transaction before performing final HTTP authority checks.",
+    "after": "One final lease/transaction performs mandatory SSO/Focus/control preparation, then optional recovery in a savepoint with mandatory exact-binding fences. Redis promises have immediate rejection handlers and settle after lease release. Default and WebSocket callers retain their mandatory claim behavior.",
+    "failureSemantics": "Optional lifecycle-latch, claim SQL or synchronous socket failure does not fail an otherwise valid heartbeat. Required authorization, preparation, binding-query failures and failed savepoint rollback/release still fail closed."
+  },
+  "commands": {
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-heartbeat-recovery-delivery.test.ts tests/classpilot-sso-policy-delivery-contract.test.ts tests/classpilot-control-lock-order-contract.test.ts tests/classpilot-student-session-recovery-contract.test.ts tests/classpilot-websocket-auth-diagnostics.test.ts",
+    "native": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-private-chat-lifecycle.integration.test.ts",
+    "types": "npm run check:tests",
+    "casts": "npm run check:test-casts"
+  },
+  "nativeFixture": {
+    "isolation": "Each attempt created a fresh uniquely labeled local Docker PostgreSQL container with loopback-only random port and removed it after both runs. Read-only schema export from local synthetic donor; no production mutations.",
+    "ordinary": "Application queries use fixture owner; this does not prove RLS.",
+    "restricted": "Application queries use separate NOSUPERUSER NOBYPASSRLS NOINHERIT role with RLS_GUC_ENABLED and lifecycle admission inventory; separate owner URL used only for fixture setup, writer races, assertions and cleanup.",
+    "resources": "2 CPUs,2GiB local fixture; test correctness only, no capacity claim."
+  },
+  "coverage": [
+    "Empty outbox uses one checkout/BEGIN/COMMIT and retains fresh entitlement, exact binding and SSO fences",
+    "Required preparation survives optional SQL or local socket rollback",
+    "Second actual WebSocket.send failure rolls back both claims; retry keeps stable message IDs; delayed first publication is rejected after End",
+    "Optional lifecycle latch failure preserves valid HTTP but never stale binding authority",
+    "Savepoint rollback/release failure propagates",
+    "Required preparation and exact-binding SQL faults propagate; manual lease expiry prevents both emissions",
+    "Binding transfer rejects old optional recovery and allows current exact binding",
+    "Competing SSO writer exercised against bootstrap and consolidated heartbeat",
+    "Existing lifecycle close/send/ACK/hard-off/reconnect and Redis integrity tests retained",
+    "Actual route slice checks raw control revision, exact frames, immediate Redis rejection handling and lease release before network settlement"
+  ],
+  "limitations": [
+    "Focused route tests execute the actual source slice with bounded fakes; native storage/relay/WebSocket tests exercise PostgreSQL and actual sockets, not the complete HTTP server.",
+    "No full-load success or deployment readiness claim. Source-run native tests avoid shared dist rebuild while parallel owners were editing.",
+    "A best-effort partial local send can precede a rolled-back optional claim; stable IDs and mandatory relay lifecycle/binding checks remain the existing retry/deduplication boundary."
+  ],
+  "sanitation": "Database URLs, JWT-shaped values and user-home paths are redacted. Raw schema/runner environment secrets are not included. Original hashes and all failed attempts retained.",
+  "files": [
+    {
+      "file": "focused-01.log.gz",
+      "status": "failed_test_contract",
+      "note": "34 pass/1 fail: static SSO contract still expected its prior source spelling after optional recovery was added; changed assertion retains SSO-before-private lock order.",
+      "sourceBytes": 20887,
+      "archivedBytes": 4057,
+      "originalSha256": "1329d2de7adf06c96e27ceb1c4663731fc35c8631f7e1f0edc041e9b2aafa66c",
+      "sanitizedSha256": "15ef16444f8a38be52b1fee4ac97c0a0c4febfbf4530016d9e676051d625971c",
+      "archiveSha256": "0550a13a8712b76be803bb1dafb8bff7e3877560ca75c5992d20e62666477204",
+      "tap": {
+        "tests": 35,
+        "suites": 1,
+        "pass": 34,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "focused-02.log.gz",
+      "status": "passed",
+      "note": "39 focused route/SSO/lock/session-recovery/WebSocket contract tests.",
+      "sourceBytes": 9900,
+      "archivedBytes": 2003,
+      "originalSha256": "6af9c832cd1d8c8c9bad94dcaaf25857edc0795a6efd2b4c8ab3cdfdba052832",
+      "sanitizedSha256": "6af9c832cd1d8c8c9bad94dcaaf25857edc0795a6efd2b4c8ab3cdfdba052832",
+      "archiveSha256": "db2cf91aaeecdd9ec59326b3cf0c957ae462bffe250740da364eccbe0a434b02",
+      "tap": {
+        "tests": 39,
+        "suites": 1,
+        "pass": 39,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "focused-03.log.gz",
+      "status": "passed",
+      "note": "39 focused route/SSO/lock/session-recovery/WebSocket contract tests.",
+      "sourceBytes": 9897,
+      "archivedBytes": 1999,
+      "originalSha256": "91aefc46c731e1ce2913f3630a2b2c4c5cdc7e71c62db098f8ab6d8ea1c80dbc",
+      "sanitizedSha256": "91aefc46c731e1ce2913f3630a2b2c4c5cdc7e71c62db098f8ab6d8ea1c80dbc",
+      "archiveSha256": "28ec6cf1b2dd83483e006298f94b128a32a3097fd300c6ad19704a22f29ef78e",
+      "tap": {
+        "tests": 39,
+        "suites": 1,
+        "pass": 39,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "test-types-01.log.gz",
+      "status": "failed_test_types",
+      "note": "Shared type ratchet found two new callback-parameter self-references and an unchecked optional diagnostic lookup in these tests; corrected without adding casts or suppressions.",
+      "sourceBytes": 178,
+      "archivedBytes": 146,
+      "originalSha256": "8b3d6c8b4380884f33504cac0a9b32673a40d21d05c4131649ae12e5b64d4765",
+      "sanitizedSha256": "8b3d6c8b4380884f33504cac0a9b32673a40d21d05c4131649ae12e5b64d4765",
+      "archiveSha256": "117e441a838087bc33f0fc9a8cdae4660aaf218aea5a76de842f50864803029a"
+    },
+    {
+      "file": "test-types-02.log.gz",
+      "status": "passed",
+      "note": "438/534 pre-existing test-only diagnostics; application source and syntax zero-error.",
+      "sourceBytes": 204,
+      "archivedBytes": 180,
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350"
+    },
+    {
+      "file": "casts-01.log.gz",
+      "status": "passed",
+      "note": "Unsafe cast counts unchanged at689 asAny and7 asUnknownAs; no suppressions.",
+      "sourceBytes": 181,
+      "archivedBytes": 166,
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f"
+    },
+    {
+      "file": "native-01-ordinary.log.gz",
+      "status": "passed",
+      "note": "67/67 each role; initial consolidation native suite before adding actual second-send/transfer assertions.",
+      "sourceBytes": 19246,
+      "archivedBytes": 3663,
+      "originalSha256": "51f11d08437f5fb73f686541cfbfc52753596661e0c61568721e9239a7de8960",
+      "sanitizedSha256": "51f11d08437f5fb73f686541cfbfc52753596661e0c61568721e9239a7de8960",
+      "archiveSha256": "e3dacd2b1473982c114a56bd73ae31fb5b0cf331a3511d957255dae342866ffd",
+      "tap": {
+        "tests": 67,
+        "suites": 0,
+        "pass": 67,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-01-restricted.log.gz",
+      "status": "passed",
+      "note": "67/67 each role; initial consolidation native suite before adding actual second-send/transfer assertions.",
+      "sourceBytes": 19233,
+      "archivedBytes": 3671,
+      "originalSha256": "a706923ee519637f63a158dbe74b9e53d473531f31f7ae68bffcb96ca608fc06",
+      "sanitizedSha256": "a706923ee519637f63a158dbe74b9e53d473531f31f7ae68bffcb96ca608fc06",
+      "archiveSha256": "e5a322d2f974fb06a85bfe271d1f863a416d34d2983d25fc56c1c184a7cccd82",
+      "tap": {
+        "tests": 67,
+        "suites": 0,
+        "pass": 67,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-01-execution.json.gz",
+      "status": "passed",
+      "note": "67/67 each role; initial consolidation native suite before adding actual second-send/transfer assertions.",
+      "sourceBytes": 333,
+      "archivedBytes": 238,
+      "originalSha256": "4b0dc2d0dabfe11a9219b3e23a23534f6d00a41da1f2fb927a12140837faa34e",
+      "sanitizedSha256": "4b0dc2d0dabfe11a9219b3e23a23534f6d00a41da1f2fb927a12140837faa34e",
+      "archiveSha256": "8f1a347222d9bb3b13510e00ceb31fe9e8753619cf29759b3a0b11b36f15ca35"
+    },
+    {
+      "file": "native-01-cleanup.log.gz",
+      "status": "passed",
+      "note": "67/67 each role; initial consolidation native suite before adding actual second-send/transfer assertions.",
+      "sourceBytes": 40,
+      "archivedBytes": 60,
+      "originalSha256": "7d84dc2773fbf91735c7ad760695cc2fa18844ceaa64c5da85e54d930a48d9d5",
+      "sanitizedSha256": "7d84dc2773fbf91735c7ad760695cc2fa18844ceaa64c5da85e54d930a48d9d5",
+      "archiveSha256": "fec4403c7ba372b996d9e926bdbf01a2fdaa5dd72be3c6f870d07fa7cdf02a3d"
+    },
+    {
+      "file": "native-02-ordinary.log.gz",
+      "status": "failed_fixture",
+      "note": "67 pass/1 fail each role: second-send assertion query incorrectly cast varchar delivery IDs to uuid[]; product behavior and other native tests passed.",
+      "sourceBytes": 41576,
+      "archivedBytes": 4891,
+      "originalSha256": "7f990f7461b8c6fa719f049202631fa921e299d9d7211d45eae00fab464ffa87",
+      "sanitizedSha256": "372a6de6d025d291bf07fb9e726a85b47f1a73bd048533662ea955bde89c4e78",
+      "archiveSha256": "4ee4f956b4ac1f6a4b0b80d9794fa7dd48709d339a40e2094ca15b68b9d0df1d"
+    },
+    {
+      "file": "native-02-restricted.log.gz",
+      "status": "failed_fixture",
+      "note": "67 pass/1 fail each role: second-send assertion query incorrectly cast varchar delivery IDs to uuid[]; product behavior and other native tests passed.",
+      "sourceBytes": 56324,
+      "archivedBytes": 6612,
+      "originalSha256": "86e447975cc2b4e401ec3e227e0a2c704a2cf5749745d21cd60e2447511fbea9",
+      "sanitizedSha256": "8c7c4b92e8a56d290afa690045de07f57a67958d5da4228e567f702a19cdd747",
+      "archiveSha256": "63f703f04f351fd2521780e628a2b84e693d41cc9bcccc2752426060e705b9f1"
+    },
+    {
+      "file": "native-02-execution.json.gz",
+      "status": "failed_fixture",
+      "note": "67 pass/1 fail each role: second-send assertion query incorrectly cast varchar delivery IDs to uuid[]; product behavior and other native tests passed.",
+      "sourceBytes": 357,
+      "archivedBytes": 238,
+      "originalSha256": "9443d6aa2bf3145c7d06e86c75fcabdbcbe7474b1e9c56c88484682316854e05",
+      "sanitizedSha256": "9443d6aa2bf3145c7d06e86c75fcabdbcbe7474b1e9c56c88484682316854e05",
+      "archiveSha256": "1091456027550346a7d5a2e2c2755b1a7ced13aec9d52643bb550183777a8f2e"
+    },
+    {
+      "file": "native-02-cleanup.log.gz",
+      "status": "failed_fixture",
+      "note": "67 pass/1 fail each role: second-send assertion query incorrectly cast varchar delivery IDs to uuid[]; product behavior and other native tests passed.",
+      "sourceBytes": 82,
+      "archivedBytes": 85,
+      "originalSha256": "22890d917e5dc1842a3100aef6307aece7c4b330fb81cd91c3d1ba420f30b3a8",
+      "sanitizedSha256": "dc0c6103248fb5af7eeaf12c7cdf62404dbc47c312e7b52ec6145ed42950c87c",
+      "archiveSha256": "e0bcfe77ad06a8ae0614e7cd624d9e8e970715c1449d58fdb3e427b9d8532a78"
+    },
+    {
+      "file": "native-03-ordinary.log.gz",
+      "status": "passed",
+      "note": "68/68 each role after correcting only fixture array cast to varchar[]. Actual WebSocket second-send fault, stable-ID retry, delayed relay lifecycle check and optional binding-transfer checks included.",
+      "sourceBytes": 39258,
+      "archivedBytes": 4469,
+      "originalSha256": "02402f668756a2a8b7ff50c9759ab3855ebd77f1f9e2904551b0339786992a79",
+      "sanitizedSha256": "9f0b306f7f184ad4d11b063be7808ec23ab287adc000b79147853d03b90f6fc4",
+      "archiveSha256": "e829e2bcd890d6fe743fbcfc9612d3071566e75cbb2f66e498d2973d515c3768"
+    },
+    {
+      "file": "native-03-restricted.log.gz",
+      "status": "passed",
+      "note": "68/68 each role after correcting only fixture array cast to varchar[]. Actual WebSocket second-send fault, stable-ID retry, delayed relay lifecycle check and optional binding-transfer checks included.",
+      "sourceBytes": 54734,
+      "archivedBytes": 6356,
+      "originalSha256": "de9f850e0d315b68b63cd46d6abd1b76379b93e18950fd6c551cbe1dfecfaf27",
+      "sanitizedSha256": "590a5387a09f6bc2e808692b57320a61ed774360237f2b6b213235480ad8d805",
+      "archiveSha256": "3072e08a587d1129721a79bab48450d58ab50ec50f92d8480984556c1655ba11"
+    },
+    {
+      "file": "native-03-execution.json.gz",
+      "status": "passed",
+      "note": "68/68 each role after correcting only fixture array cast to varchar[]. Actual WebSocket second-send fault, stable-ID retry, delayed relay lifecycle check and optional binding-transfer checks included.",
+      "sourceBytes": 357,
+      "archivedBytes": 238,
+      "originalSha256": "f0f5dd7d12f81a5f760403dfddb167ac02fd22cfcfc8aa05864b4db4ddc461ec",
+      "sanitizedSha256": "f0f5dd7d12f81a5f760403dfddb167ac02fd22cfcfc8aa05864b4db4ddc461ec",
+      "archiveSha256": "981cf8b32794bdf60e947d6fdc3dab2a639ac2cdce6894e3e93ef59ba73e3d95"
+    },
+    {
+      "file": "native-03-cleanup.log.gz",
+      "status": "passed",
+      "note": "68/68 each role after correcting only fixture array cast to varchar[]. Actual WebSocket second-send fault, stable-ID retry, delayed relay lifecycle check and optional binding-transfer checks included.",
+      "sourceBytes": 82,
+      "archivedBytes": 88,
+      "originalSha256": "1fb2ea4688ed065ef8d8bd782b664599a1cdde10e9e9c0e494a6e6f0ea89f0df",
+      "sanitizedSha256": "0e901760be14f5133bc05e8ce411345fa8a9808b4af66db5b53c01d799fe13c0",
+      "archiveSha256": "3dc5a640bcd493961e4fa9c1bc9d22fbf39a26de634ad67840a72c67a07d5139"
+    }
+  ]
+}

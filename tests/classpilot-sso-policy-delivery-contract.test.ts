@@ -53,8 +53,10 @@ test("SSO-bearing bootstrap freezes policy before private chat settings without 
   const delivery = section(storage, "export async function withClasspilotStudentControlDeliveryAuthority",
     "export async function withClasspilotStudentWebSocketBootstrapAuthority");
   assert.ok(delivery.indexOf("latchPrivateChatLifecycle") < delivery.indexOf("db.transaction"));
-  assert.match(delivery, /hasExactClasspilotTelemetryBinding[\s\S]*if \(options\.freezeSsoPolicy\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority/);
-  assert.ok(delivery.indexOf("lockClasspilotSsoPolicyDeliveryAuthority") < delivery.indexOf("lockPrivateChatChannel"));
+  assert.match(delivery, /hasExactClasspilotTelemetryBinding[\s\S]*if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority/);
+  assert.ok(delivery.indexOf("lockClasspilotSsoPolicyDeliveryAuthority") < delivery.indexOf("claimTeacherChatDeliveriesWithAuthorityLocked"));
+  const claim = section(storage, "async function claimTeacherChatDeliveriesWithAuthorityLocked", "/**\n * Linearize".replace("\n", storage.includes("\r\n") ? "\r\n" : "\n"));
+  assert.match(claim, /lockPrivateChatChannel/);
   const websocket = source("../src/realtime/websocket.ts");
   const bootstrap = section(websocket, "const authority = await withClasspilotStudentWebSocketBootstrapAuthority", "const fab = await buildStudentFabState");
   assert.match(bootstrap, /freezeSsoPolicy: true/);

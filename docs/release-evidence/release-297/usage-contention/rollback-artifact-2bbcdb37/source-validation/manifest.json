@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T01:29:38.9470432+00:00",
+  "baseSha": "faf5275ccf422dda602b2238c247a306c28ba508",
+  "sourceState": "uncommitted isolated rollback backport",
+  "sourceFiles": {
+    "src/middleware/tenantContext.ts": "c1261f93caa62e56fee2dae4c5f0679b5a158b5301a7a1d0c676264edec79597",
+    "src/services/classpilotMonitoringPolicy.ts": "7d8c770c546b3ea2125eea56b6bf6b79565677d4bd5edd96fa9c46b0bc56a66c",
+    "tests/classpilot-monitoring-tenant-context.test.ts": "8962ec9d967d9570f38849f37f14bd198b6e1b26642f6a65dd5440b6d4a2bebd"
+  },
+  "scope": "Active exact-store tenant lease reuse for fresh same-school non-super monitoring reads; no metadata cache or Usage changes.",
+  "red": {
+    "pass": 5,
+    "fail": 1,
+    "skip": 0
+  },
+  "green": {
+    "pass": 28,
+    "fail": 0,
+    "skip": 0
+  },
+  "sourceTypecheck": 0,
+  "testTypecheck": 0,
+  "testCastRatchet": 0,
+  "commands": {
+    "red": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-monitoring-tenant-context.test.ts",
+    "green": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-monitoring-tenant-context.test.ts tests/classpilot-monitoring-policy.test.ts tests/tenant-context-cleanup.test.ts",
+    "testTypes": "npm run check:tests",
+    "casts": "npm run check:test-casts",
+    "sourceTypes": "npm run check"
+  },
+  "limits": [
+    "Pool/query fakes exercise real pg.Client, Drizzle, storage, policy and middleware. No new native database or capacity test.",
+    "No build/image/scan performed for this changed rollback source. Prior faf image remains historical.",
+    "Both Usage modes must remain off."
+  ],
+  "files": [
+    {
+      "archiveSha256": "16c197fd6331a0278a8da15e0f464efaab3d79a3a16b5e418027c4affdf682b0",
+      "file": "casts.log.gz",
+      "sanitizedSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce",
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104"
+    },
+    {
+      "archiveSha256": "9191955c04e0f49980237e47edc6f0c0a961e8f3b15d1e8bcaad110a9b423f26",
+      "file": "green-focused.log.gz",
+      "sanitizedSha256": "0c3bfb72021e0c9ec74a3e72dda52a20400a74fde4b60f6d1957c04829a2a5cd",
+      "rawSha256": "41c094a13c850f7bba9074c1a18e353fee13f36905a974694d83cf776ba0a9fe"
+    },
+    {
+      "archiveSha256": "fc6e228b1fe95a0ec619fe9804791738f08955c71c06e8a968bff0b6ed787db0",
+      "file": "red-before-backport.log.gz",
+      "sanitizedSha256": "e7c7439a9ed1628e4181c36620408cb16d5f1989f998f3d86f08d3f5beaf3c0e",
+      "rawSha256": "01f9512c5a08bf0140ff73b71f274e797259635ee9f84ee3aec7984a82a0f0a1"
+    },
+    {
+      "archiveSha256": "d4e63ffb40fae7ab1bb8688ebe8db54ed18d352d7a13029ffeb7e74a6a399a75",
+      "file": "source-types.log.gz",
+      "sanitizedSha256": "12652975a3b03117abbcc6550586f75df88990995b7237999814218ccc3e0c19",
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58"
+    },
+    {
+      "archiveSha256": "aef3f71be75edeb586ddcb8bcbfa9cc41f4774445bbdc784a39ddcbdd8111d81",
+      "file": "test-types.log.gz",
+      "sanitizedSha256": "718d56591c1784c9fd403388377ce8a2a1b8c73676d415ee615ba6bb5c5a6fc1",
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import {
   type ClasspilotTrackingStateEvent,
 } from "./classpilotHeartbeatCoverage.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
+import { withClasspilotUsageRollupOperation } from "./classpilotUsageRollupAdmission.js";
 import {
   addLocalDays,
   localDateInTimeZone,
@@ -58,8 +59,8 @@ const RECOMPUTE_LOOKBACK_MS = 5 * 60 * 1000;
 /**
  * runHeavyJobsSerially purges retention only once an hour's UTC minute reaches
  * 30. The rollup stops taking new work at :25 so it can never push the purge
- * past its hour; one in-flight school is bounded by the pool's statement
- * timeout.
+ * past its hour. Each complete admitted rewrite has a 60s operation budget,
+ * including its bounded wait; the scheduler pool also has a 60s SQL limit.
  */
 export const CLASSPILOT_USAGE_ROLLUP_BUDGET_END_MINUTE = 25;
 const DEFAULT_CONCURRENCY = 2;
@@ -437,24 +438,25 @@ export async function rollupClasspilotUsageDay(
     day: ClasspilotUsageRollupDay;
     windowEndUtc: Date;
     exclusions: readonly ClasspilotUsageExclusion[];
+    signal?: AbortSignal;
   }
 ): Promise<ClasspilotUsageDayResult> {
-  const client = await pool.connect();
-  let broken = false;
-  try {
-    await client.query("BEGIN");
+  return withClasspilotUsageRollupOperation(pool, async (client, budget, markBroken) => {
+    try { await client.query("BEGIN"); }
+    catch (error) { markBroken(); throw error; }
+    const query = (text: string, values?: unknown[]) => budget.query(client, text, values);
     try {
-      await client.query(CLASSPILOT_USAGE_ROLLUP_LOCK_SQL, [options.schoolId]);
+      await query(CLASSPILOT_USAGE_ROLLUP_LOCK_SQL, [options.schoolId]);
       // Recheck under the same lock as the rewrite: stale queued work cannot
       // regress a newer snapshot or turn a finalized day back into a live day.
-      const prior = await client.query(CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL, [options.schoolId, options.day.date]);
+      const prior = await query(CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL, [options.schoolId, options.day.date]);
       const processedThrough = asDate(prior.rows[0]?.processed_through);
       if (processedThrough && processedThrough >= options.windowEndUtc) {
-        await client.query("COMMIT");
+        await query("COMMIT");
         return { rowCount: 0, seconds: 0, heartbeatCount: 0 };
       }
-      await client.query(CLASSPILOT_USAGE_ROLLUP_DELETE_SQL, [options.schoolId, options.day.date]);
-      const result = await client.query(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, [
+      await query(CLASSPILOT_USAGE_ROLLUP_DELETE_SQL, [options.schoolId, options.day.date]);
+      const result = await query(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, [
         options.schoolId,
         utcTimestampForSql(options.day.dayStartUtc),
         utcTimestampForSql(options.windowEndUtc),
@@ -463,12 +465,12 @@ export async function rollupClasspilotUsageDay(
       ]);
       // Aggregate-change triggers invalidate prior coverage. Restore it only
       // after a successful insert, including the successful empty-day case.
-      await client.query(CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [
+      await query(CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [
         options.schoolId, options.day.date, options.day.dayStartUtc.toISOString(),
         options.day.dayEndUtc.toISOString(), options.windowEndUtc.toISOString(),
         options.windowEndUtc >= options.day.dayEndUtc,
       ]);
-      await client.query("COMMIT");
+      await query("COMMIT");
       const row = result.rows[0] ?? {};
       return {
         rowCount: Number(row.row_count ?? 0),
@@ -476,12 +478,12 @@ export async function rollupClasspilotUsageDay(
         heartbeatCount: Number(row.heartbeat_count ?? 0),
       };
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => { broken = true; });
+      // Cleanup always runs, even after expiration. Keep the permit until the
+      // actual rollback and release finish; an overrun remains a failure.
+      await client.query("ROLLBACK").catch(markBroken);
       throw error;
     }
-  } finally {
-    client.release(broken);
-  }
+  }, { signal: options.signal });
 }
 
 async function loadTrackingEvents(

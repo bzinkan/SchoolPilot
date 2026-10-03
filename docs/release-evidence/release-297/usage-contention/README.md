@@ -70,7 +70,7 @@ source binding and do not turn a failed launch into measured capacity.
 - [Review-container observation](pr-review-checkpoint.json) records exact remote
   #603/#123 heads and all reported check entries. The earlier green SchoolPilot
   head does not certify the uncommitted contention corrections; ClassPilot's
-  successful run and cancelled sibling-run entries remain separately visible.
+  successful run and cancelled sibling-run entries remain separately visible in that historical record. The [October 3 reconciliation](extension-ci-reconciled-20261003.json) records the same ClassPilot head with all 10 checks passing and GitHub `CLEAN` after sibling run `37048477885` passed on rerun.
 - [Historical rollback artifact](rollback-artifact/index.json) binds the preserved
   external image archive, source, scan and synthetic compatibility proof. Both
   Usage modes must remain off on that pre-correction source. No registry upload
@@ -81,8 +81,21 @@ source binding and do not turn a failed launch into measured capacity.
   source `faf5275ccf422dda602b2238c247a306c28ba508`, its local image, scan and
   17 focused plus 9 owner and 9 restricted-role native test results. It retains
   writer/bridge/relay version 1 and all 129 admission entries. Both Usage modes
-  stay off. Final candidate-schema re-entry and deployable bindings remain
-  separate gates; historical images are retained unchanged.
+  stay off. The [0431 checkpoint rehearsal](rehearsal-0431-faf5275c/index.json) passed baseline expansion and patched rollback/candidate re-entry, with identical migration ledger and relation/RLS snapshots across re-entry. Actual production catalog, later candidate reconciliation and deployable bindings remain separate gates; historical images are retained unchanged.
+- [Monitoring-corrected rollback](rollback-artifact-2bbcdb37/index.json) supersedes
+  the designated `faf5275c` fallback with exact source
+  `2bbcdb370eeeb182553097a2bd049e32bec93f9b`. Only the additional active-lease
+  monitoring correction is included; both Usage modes stay off. Its regression
+  fails before the backport and all 28 focused checks pass afterward. The clean
+  image build, scan, export, embedded protections and synthetic admission checks
+  pass. Final candidate-schema re-entry and deployable registry/task bindings
+  remain pending; all previous artifacts are retained.
+- [Bounded production metadata inspector](production-metadata-inspector/index.json)
+  preserves the external source/wrapper, 32 local mock/native cases, exact
+  serving-image offline checks and a concrete read-only AWS Plan. No inspector
+  task, database query or cloud mutation was performed. Exact-plan execution
+  remains separately authorized. Its hashed catalog, full ledger and fixed-domain
+  pilot identity projection cannot replace a restorable schema-only export.
 - [Status/configuration hot-path checks](hot-path-root/manifest.json) record 24
   passing checks for exact status expiration/capacity and immediate configuration
   revocation. The configuration optimization caches only parsing of identical
@@ -130,6 +143,64 @@ sanitized output; transcript-only attempts are explicitly identified where no
 separate raw log was saved. No production database contents or credentials are
 included. The earlier cold-load failures remain in their original records one
 directory above and are not replaced by these focused tests.
+
+- [Combined attempt at `0431f043`](load-combined-03/manifest.json) preserves
+  the failed full workload: 3,602 of 6,000 offered heartbeats succeeded and
+  34 of 64 reports passed. Both heavy workers and later correctness checks
+  passed, but the classroom lifecycle failed. Sampled WAL flush waits occupied
+  nearly the full API pool during the strongest contention; they do not show
+  an authority-lock deadlock or establish the underlying host I/O cause.
+- [Isolated ingestion at the same source](load-ingest-0431-01/manifest.json)
+  preserves all 6,000 offers: 5,803 completed and persisted, with 197 refused at
+  the unchanged in-flight cap. No pool acquisitions or SQL statements failed,
+  but the API event loop remained 99.885% utilized. The retained comparison
+  shows far fewer WAL wait samples without the concurrent workers and reports.
+  This diagnostic failed acceptance and does not certify those omitted paths.
+- [PostgreSQL pressure instrumentation](postgres-pressure-instrumentation/manifest.json)
+  records 13 passing focused checks and actual read-only local PostgreSQL
+  validation of fixed API/worker connection labels and aggregate statistics.
+  The next run can distinguish role-specific waits and WAL/checkpoint counter
+  changes. Disabled I/O timing is recorded as unavailable; no database settings,
+  pool limits or acceptance limits were changed.
+- [Worker admission trial](worker-admission/manifest.json) retains a failing
+  before-source entrypoint probe, 42 passing focused checks and 20 passing
+  isolated owner-database checks. The production rollup entrypoint now permits
+  one writer plus one waiter per pool and counts queueing and cleanup in its
+  60-second success budget. A real PostgreSQL timeout after the day DELETE
+  preserved prior aggregates and coverage, preserved an inherited stricter
+  timeout and allowed subsequent work. Cleanup remains owned until finished;
+  an overrun is a failure. The unchanged 48-second full-operation capacity gate
+  still needs combined-load evidence. The first probe setup failure and shared
+  test-type debt from concurrently edited files remain explicitly recorded.
+
+- [Owned monitoring context](monitoring-owned-context/manifest.json) records
+  35 passing focused checks, including the one-client starvation regression.
+  Fresh monitoring policy reads reuse only the currently owned, same-school
+  tenant lease. Stale, releasing, differently scoped and super contexts cannot
+  reuse it.
+- [Heartbeat reply recovery](heartbeat-recovery/manifest.json) records 39
+  passing focused checks and 68 native cases in each of the owner and restricted
+  database roles, with no skips. Optional private-reply recovery now shares the
+  mandatory final heartbeat authority transaction, retaining its exact binding,
+  lifecycle, SSO and final-delivery checks. Savepoint recovery covers claim and
+  socket failures without undoing required preparation; failed cleanup remains
+  fail-closed. Earlier failing attempts are retained. These checks do not prove
+  the combined capacity target.
+
+- [Combined checks, first attempt](combined-checks-attempt-01/manifest.json)
+  retains the complete failed unit run: 1,742 passed, two static contract
+  assertions failed, and four conditional cases skipped. Build, test types and
+  cast checks passed; all 1,147 source-file hashes matched before and after.
+  The two assertion updates require a new full unit run. This attempt remains
+  failed evidence regardless of the later result.
+- [Combined checks, second attempt](combined-checks-attempt-02/manifest.json)
+  records 1,744 passing unit cases, no failures and four conditional skips, with
+  all 1,147 source files unchanged during the run. Only the static late-signin
+  contract test changed since the passing build, type and cast checks above.
+  The outer PowerShell command still exited 1 during later receipt formatting;
+  its error is preserved, and the reconstructed receipt explicitly distinguishes
+  that failure from the completed passing test suite. This does not establish
+  load capacity or final-head CI.
 
 Release acceptance additionally requires three consecutive successful combined
 release-enabled capacity runs on unchanged application source/schema, the

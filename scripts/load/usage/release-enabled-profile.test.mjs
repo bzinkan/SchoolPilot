@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { RELEASE_ENABLED_PROFILE, enabledReleaseEnvironment, capacityAcceptance, assertEnabledReleaseRuntime, releaseRangeFixture, releaseTrafficOptions } from './release-enabled-profile.mjs';
 import { measureMethod } from './release-enabled-instrumentation.mjs';
+import { RELEASE_PG_APPLICATION_NAMES, POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS, POSTGRES_PRESSURE_MAX_SAMPLES, POSTGRES_PRESSURE_SQL, POSTGRES_ROLE_WAITS_SQL, postgresPressureSnapshot, readPostgresPressure, postgresPressureDelta } from './release-enabled-postgres-pressure.mjs';
 import { canonicalSchemaFingerprint } from './release-schema-fingerprint.mjs';
 import { commandTransportAcknowledgement, assertPrivateLifecycleAdvanced } from './release-enabled-protocol.mjs';
 
@@ -136,3 +137,49 @@ test('runtime proof rejects inactive capability or nonlocal shared Redis', () =>
   assert.throws(() => assertEnabledReleaseRuntime({ ...protocol, isClasspilotCapabilityActive: () => false }, env));
   for (const REDIS_URL of ['redis://127.0.0.1:6380', 'redis://shared.example:6387']) assert.throws(() => assertEnabledReleaseRuntime(protocol, { ...env, REDIS_URL }));
 });
+
+test('PostgreSQL pressure counters preserve precision and do not invent disabled I/O timings', () => {
+  const row = pressureRow();
+  const before = postgresPressureSnapshot(row), afterRow = structuredClone(row);
+  afterRow.wal.wal_bytes = '9007199254741999';
+  const after = postgresPressureSnapshot(afterRow), delta = postgresPressureDelta(before, after);
+  assert.equal(delta.valid, true); assert.equal(delta.groups.wal.counters.wal_bytes, '1000');
+  assert.equal(before.wal.timingAvailable, false); assert.equal(before.wal.timingsMs, null);
+  assert.equal(delta.groups.wal.timingsMs, null); assert.equal(delta.groups.database.timingsMs, null);
+  assert.equal(delta.groups.bgwriter.timingAvailable, true);
+  const enabled = pressureRow(); enabled.settings.track_wal_io_timing = 'on'; enabled.wal.wal_write_time = '7.5';
+  const enabledNext = structuredClone(enabled); enabledNext.wal.wal_write_time = '9.75';
+  assert.equal(postgresPressureDelta(postgresPressureSnapshot(enabled), postgresPressureSnapshot(enabledNext)).groups.wal.timingsMs.wal_write_time, 2.25);
+});
+
+test('PostgreSQL pressure deltas reject resets, counter regression and settings changes anywhere in the window', () => {
+  const baseline = postgresPressureSnapshot(pressureRow());
+  for (const mutate of [row => row.wal.stats_reset = '2026-10-03 01:01:00+00', row => row.wal.wal_bytes = '1',
+    row => row.bgwriter.checkpoints_req = '0', row => row.settings.fsync = 'off']) {
+    const changed = pressureRow(); mutate(changed);
+    const delta = postgresPressureDelta(baseline, baseline, [postgresPressureSnapshot(changed)]);
+    assert.equal(delta.valid, false); assert.equal(delta.groups.wal.valid && delta.groups.bgwriter.valid && delta.groups.database.valid, false);
+  }
+});
+
+test('pressure instrumentation reads fixed aggregate views using the existing observer and fixed role labels', async () => {
+  const queries = [];
+  await readPostgresPressure({ query: async text => { queries.push(text); return { rows: [pressureRow()] }; } });
+  assert.deepEqual(queries, [POSTGRES_PRESSURE_SQL]);
+  assert.doesNotMatch(POSTGRES_PRESSURE_SQL, /\b(?:ALTER|SET|RESET|CHECKPOINT|pg_stat_reset|pg_stat_clear_snapshot)\b/i);
+  assert.doesNotMatch(POSTGRES_ROLE_WAITS_SQL, /\b(?:query|usename|client_addr|pid)\s*(?:,|AS)/i);
+  assert.equal(POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS, 1000); assert.equal(POSTGRES_PRESSURE_MAX_SAMPLES, 180);
+  assert.deepEqual(Object.keys(RELEASE_PG_APPLICATION_NAMES), ['api', 'worker', 'observer']);
+  const coordinator = readFileSync(new URL('./release-enabled-scale.mjs', import.meta.url), 'utf8');
+  assert.match(coordinator, /max: 2, statement_timeout: 15_000, application_name: RELEASE_PG_APPLICATION_NAMES\.observer/);
+  assert.match(coordinator, /PGAPPNAME: RELEASE_PG_APPLICATION_NAMES\[name\]/);
+  assert.match(coordinator, /postgresPressureDelta\(phase\.postgresPressure\.baseline, phase\.postgresPressure\.final,/);
+});
+
+function pressureRow() {
+  const integer = keys => Object.fromEntries(keys.map(key => [key, '1']));
+  return { observed_at: '2026-10-03 01:00:00+00', settings: { fsync: 'on', track_wal_io_timing: 'off', track_io_timing: 'off' },
+    wal: { stats_reset: '2026-10-03 00:00:00+00', ...integer(['wal_records', 'wal_fpi', 'wal_buffers_full', 'wal_write', 'wal_sync']), wal_bytes: '9007199254740999', wal_write_time: '0', wal_sync_time: '0' },
+    bgwriter: { stats_reset: null, ...integer(['checkpoints_timed', 'checkpoints_req', 'buffers_checkpoint', 'buffers_clean', 'maxwritten_clean', 'buffers_backend', 'buffers_backend_fsync', 'buffers_alloc']), checkpoint_write_time: '1.5', checkpoint_sync_time: '0.5' },
+    database: { stats_reset: null, ...integer(['xact_commit', 'xact_rollback', 'blks_read', 'blks_hit', 'tup_returned', 'tup_fetched', 'tup_inserted', 'tup_updated', 'tup_deleted', 'temp_files', 'temp_bytes', 'deadlocks']), blk_read_time: '0', blk_write_time: '0' } };
+}

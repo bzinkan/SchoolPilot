@@ -9,12 +9,19 @@ records SchoolPilot #603 open/draft at `08802d020a3c51beea504140f923126ab518aac6
 with 20 successful reported checks. That source predates the current Usage
 contention correction; final frozen-source checks and capacity acceptance remain
 pending. ClassPilot #123 remains open/draft at
-`8069a9c9bd50352e187847158b356a69edc4e45d`: all five jobs in run `37048485018`
-passed, while five cancelled sibling-run entries remain visible and GitHub reports
-`UNSTABLE`. Check required-check status before merge. Neither container is merged.
+`8069a9c9bd50352e187847158b356a69edc4e45d`: the [October 3 reconciliation](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. Sibling run `37048477885` passed on rerun; historical cancelled entries remain in the earlier checkpoint. Neither container is merged.
 The 60 source PR records below retain their historical reviewed heads and inclusion
 proofs; this observation does not independently refresh every source PR's state.
 
+Subsequent stabilization remains inside #603. The [0431f043 CI checkpoint](release-evidence/release-297/usage-contention/ci-0431f043.json) passed all four required workflows. Later corrections reuse only currently owned monitoring leases, consolidate optional heartbeat reply recovery under final authority, and admit one bulk Usage writer per worker pool. [Current combined local checks](release-evidence/release-297/usage-contention/combined-checks-attempt-02/manifest.json) passed 1,744 unit cases with four explicit conditional skips; the preceding build/type/cast checks passed. Failed load runs and the failed static-assertion run remain preserved. Final combined capacity and new-head CI are still pending.
+
+The separately prepared local fallback source is `2bbcdb370eeeb182553097a2bd049e32bec93f9b`
+on `codex/release297-compatible-rollback-sso`: the reviewed `08802d02` floor plus
+only the private-chat/SSO lock-order correction and monitoring lease-reuse fix.
+[Its source/image evidence](release-evidence/release-297/usage-contention/rollback-artifact-2bbcdb37/index.json)
+records both Usage modes off. This fallback is not another merged source PR;
+registry publication, final-schema re-entry and production task bindings remain
+separate. Historical fallback artifacts are retained.
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|
 | [SchoolPilot #547](https://github.com/bzinkan/SchoolPilot/pull/547) | already merged | `45dd3333ffb043c797ac095387c0c87e5d31a238` | main | Keep the AI assistant's Flight Path list to the teacher's own paths |

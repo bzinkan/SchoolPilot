@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T01:51:07.994Z",
+  "scope": "Static late-signin contract follow-up; no application edits.",
+  "source": {
+    "baseCommit": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "state": "incremental uncommitted worktree; final static assertions",
+    "files": {
+      "tests/classpilot-late-signin-contract.test.ts": "aea04d921d80cdc66e5ec8240c1717de9a0800304377d0afb51f5086cf989fe4"
+    }
+  },
+  "commands": {
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-late-signin-contract.test.ts tests/classpilot-heartbeat-recovery-delivery.test.ts tests/classpilot-sso-policy-delivery-contract.test.ts"
+  },
+  "coverage": [
+    "Actual heartbeat opts into shared SSO lock and helper acquires it before preparation",
+    "Default/WebSocket retain initial and final exact-binding fences around preparation",
+    "Optional recovery adds its own mandatory fence before local emission",
+    "Optional fence failure cannot be swallowed",
+    "Private recovery shares one final tenant lease, keeps raw revision and catches Redis rejection immediately"
+  ],
+  "limitations": [
+    "These are static contract assertions plus existing executable route-slice tests. Native runtime proofs are recorded in the original manifest.",
+    "Parent runs combined unit again on the updated assertions; this archive does not claim final combined success."
+  ],
+  "files": [
+    {
+      "file": "contract-followup-full-unit-01.log.gz",
+      "status": "failed_static_contract",
+      "note": "1742 passed,2 failed,4 skipped; final-source capture remained unchanged. Old assertions required a literal SSO lock inside heartbeat callback and exactly2 shared exact-binding occurrences.",
+      "originalSha256": "a66a8ba8783662f15533c51e116f1601eb5fa7ad86637e3e04bc88dde77c8275",
+      "sanitizedSha256": "52b7b3ffcefd7abf2ae97aea355f245b1794491e78039b6e2631f6f5ef217ff7",
+      "archiveSha256": "99a32682b5a4a6fa8b816eced73ed00e67b14dd45a393d6f64bae8a3d65e9a0f"
+    },
+    {
+      "file": "contract-followup-focused-01.log.gz",
+      "status": "failed_static_contract",
+      "note": "21 passed,1 failed: fixing the earlier assertions exposed a later old assertion expecting a separate WebSocket bootstrap recovery call.",
+      "originalSha256": "ada185fb4281c570ebee8fa8b856e5b5e23b3a0547d8329e626cf1feec6f8cda",
+      "sanitizedSha256": "48496cab200eaaabab10a07e9aaeffa8c295a69d85a3aaf3e7042461113e570c",
+      "archiveSha256": "1e723b355c796b48b06a239a8cfd35b5219b4ea53bb8c2808dd187095aabf163"
+    },
+    {
+      "file": "contract-followup-focused-02.log.gz",
+      "status": "passed",
+      "note": "22/22 targeted late-signin, heartbeat recovery and SSO contracts passed.",
+      "originalSha256": "e57bc67a75570adbcb82a47c3dac3b4785b3e8ec488741fc76d7eeac9a694782",
+      "sanitizedSha256": "e57bc67a75570adbcb82a47c3dac3b4785b3e8ec488741fc76d7eeac9a694782",
+      "archiveSha256": "fd0b3efd51f74cc267a390321f6a9cf381eb472d3ff1f7f865090822ed284746"
+    }
+  ]
+}

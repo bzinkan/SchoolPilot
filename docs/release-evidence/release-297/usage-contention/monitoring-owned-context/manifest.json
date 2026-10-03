@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T01:18:32.959Z",
+  "scope": "Eliminate the proven nested monitoring-policy checkout on an already bound classroom request, without weakening fresh school authority.",
+  "source": {
+    "baseCommit": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "archiveTimeHead": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "state": "incremental shared worktree; source/test slice final",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "src/middleware/tenantContext.ts": "50b101725c0c20b028c6c548a7733ca02bf14c2bbab694ceb8486ded77f9da5f",
+      "src/services/classpilotMonitoringPolicy.ts": "7d8c770c546b3ea2125eea56b6bf6b79565677d4bd5edd96fa9c46b0bc56a66c",
+      "tests/classpilot-monitoring-tenant-context.test.ts": "8962ec9d967d9570f38849f37f14bd198b6e1b26642f6a65dd5440b6d4a2bebd"
+    },
+    "note": "Archive-time hashes describe final files; red test predates product correction. Combined clean-source checks and workload acceptance remain separate."
+  },
+  "finding": {
+    "before": "commands.ts binds a response-lifetime tenant connection, then requireClasspilotFullMonitoring acquired another. The combined03 first lock-screen request held its outer lease for5020ms and failed while the pool was saturated.",
+    "after": "A private WeakMap identifies the exact fresh ALS store that still owns a physical client. Ownership is removed before RESET begins, and matching non-super school context may perform the same bypassCache authority read on its own lease. Different school, super, unbound, released, releasing and stale reborrowed contexts take a fresh non-super lease."
+  },
+  "commands": {
+    "red": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-monitoring-tenant-context.test.ts",
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-monitoring-tenant-context.test.ts tests/classpilot-monitoring-policy.test.ts tests/tenant-context-cleanup.test.ts tests/classpilot-usage-execution.test.ts",
+    "types": "npm run check:tests",
+    "casts": "npm run check:test-casts"
+  },
+  "coverage": [
+    "One-client pool refuses nested checkout",
+    "Warm heartbeat settings cache cannot hide a changed monitoring policy",
+    "Different-school isolation and restored outer context",
+    "Same-school super context downscopes on a separate lease",
+    "Unbound short lease cleanup",
+    "No reuse during held RESET",
+    "No stale ALS reuse after same physical client is acquired by a fresh context",
+    "Existing tenant disconnect/reset/discard and report cancellation regressions"
+  ],
+  "limitations": [
+    "Pool/queries are instrumented in-process fakes using actual pg.Client, Drizzle, storage, middleware and policy logic; this slice adds no native database run.",
+    "No result or authority cache; no generic tenant helper reuse and no guarded Usage report ownership registration.",
+    "Does not establish100requests/sec acceptance or repair separate worker/WAL/CPU pressure.",
+    "No optional private-chat transaction consolidation was implemented."
+  ],
+  "sanitation": "Home paths, database URLs and JWT-shaped values are redacted. All synthetic failure logs retained.",
+  "files": [
+    {
+      "file": "red-01.log.gz",
+      "status": "failed_expected_old_source",
+      "note": "One-client regression fails because the bound monitoring policy requests a second connection. Other five isolation/ownership cases pass.",
+      "sourceBytes": 3210,
+      "archivedBytes": 998,
+      "originalSha256": "10e1c3a0eb510606fc87193c90e87817fbac357da27b643405c4977c6de3e265",
+      "sanitizedSha256": "a53fe7e61fcb8ba194e971e3393360c4ad53b7efed0bc872ae1984d65dbe87a2",
+      "archiveSha256": "47dc886e2f176cf57e7ed8a4a34b45c1c695d7d3596f62cf6d3a2efcd63b160b",
+      "tap": {
+        "tests": 6,
+        "suites": 0,
+        "pass": 5,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "green-01.log.gz",
+      "status": "passed",
+      "note": "All35 focused monitoring, cleanup and Usage execution tests pass.",
+      "sourceBytes": 9366,
+      "archivedBytes": 2219,
+      "originalSha256": "1d3750b6ade061417cbcb78dd0357b1040e486ba1bd443c118bdd817f4ab103d",
+      "sanitizedSha256": "1d3750b6ade061417cbcb78dd0357b1040e486ba1bd443c118bdd817f4ab103d",
+      "archiveSha256": "e4cc12483f32f4fa6a0fc3d0e97300810d0ecc1c301bc920c92fa9a84ec1e4fa",
+      "tap": {
+        "tests": 35,
+        "suites": 2,
+        "pass": 35,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "test-types-01.log.gz",
+      "status": "passed",
+      "note": "Application source and test TypeScript ratchet pass438/534; no new diagnostic debt.",
+      "sourceBytes": 204,
+      "archivedBytes": 180,
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveSha256": "0bf64296e5751c143f80893a2f454a42ec269e1202d49738f89ae97a654ceca4"
+    },
+    {
+      "file": "casts-01.log.gz",
+      "status": "passed",
+      "note": "Unsafe cast ratchet unchanged689asAny/7asUnknownAs; no suppression directives.",
+      "sourceBytes": 181,
+      "archivedBytes": 166,
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "96234f629f0c609c1748143d79c04eb74c92a5a1252b4e0f00b64a2f3fac0df0"
+    }
+  ]
+}

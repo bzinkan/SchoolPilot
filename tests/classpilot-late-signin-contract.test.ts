@@ -446,8 +446,19 @@ test("student login keeps legacy SSO omission and only stages portal authority f
   );
   assert.match(
     finalHeartbeat,
-    /await lockClasspilotSsoPolicyDeliveryAuthority\(schoolId, transactionDb\)/,
+    /withClasspilotStudentControlDeliveryAuthority\(\s*\{ schoolId, studentId, studentSessionId, deviceId, freezeSsoPolicy: true \},/,
+    "heartbeat must opt into the shared SSO delivery lock before its policy read",
   );
+  const heartbeatAuthority = section(
+    source("../src/services/storage.ts"),
+    "export async function withClasspilotStudentControlDeliveryAuthority",
+    "export async function withClasspilotStudentWebSocketBootstrapAuthority",
+  );
+  assert.match(heartbeatAuthority,
+    /if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority\(options\.schoolId, transactionDb\);/);
+  assert.ok(heartbeatAuthority.indexOf("lockClasspilotSsoPolicyDeliveryAuthority")
+    < heartbeatAuthority.indexOf("prepareAuthorized(transactionDb)"),
+  "the shared helper must acquire the SSO lock before invoking heartbeat preparation");
   assert.match(finalHeartbeat, /getClasspilotSsoPolicyForSchool\(schoolId, transactionDb\)/);
   assert.equal(
     devices.match(/authPassThrough: \{/g)?.length,
@@ -504,20 +515,34 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
     "export async function withClasspilotStudentControlDeliveryAuthority",
     "export async function withClasspilotStudentWebSocketBootstrapAuthority",
   );
+  const optionalRecovery = section(bootstrapFence, "      if (recoverTeacherReplies) {", "      } else {");
+  const defaultFence = bootstrapFence.replace(optionalRecovery, "");
   assert.equal(
-    bootstrapFence.match(/hasExactClasspilotTelemetryBinding\(options, transactionDb\)/g)?.length,
+    defaultFence.match(/hasExactClasspilotTelemetryBinding\(options, transactionDb\)/g)?.length,
     2,
-    "bootstrap authority must validate the exact binding before work and again before delivery",
+    "default and WebSocket authority must validate the exact binding before work and again before delivery",
   );
+  assert.equal(optionalRecovery.match(/hasExactClasspilotTelemetryBinding\(options, transactionDb\)/g)?.length, 1,
+    "optional private recovery adds its own exact-binding fence before any local emission");
+  assert.ok(defaultFence.indexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)")
+    < defaultFence.indexOf("prepareAuthorized(transactionDb)"),
+  "the initial shared fence must precede default and WebSocket preparation");
+  assert.ok(optionalRecovery.indexOf("claimTeacherChatDeliveriesWithAuthorityLocked")
+    < optionalRecovery.indexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)"));
+  assert.ok(optionalRecovery.indexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)")
+    < optionalRecovery.indexOf("recoverTeacherReplies(claimed, prepared)"),
+  "optional private emission must follow its fresh binding check");
+  assert.match(optionalRecovery, /requiredFenceFailed = true;\s*throw error;[\s\S]*if \(requiredFenceFailed\) throw error;/,
+    "optional recovery must not swallow a failed mandatory binding fence");
   assert.ok(
     bootstrapFence.indexOf("lockClasspilotStudentControlAuthorities")
       < bootstrapFence.indexOf("prepareAuthorized(transactionDb)"),
     "state preparation must occur under the shared transfer/control lock",
   );
   assert.ok(
-    bootstrapFence.indexOf("prepareAuthorized(transactionDb)")
-      < bootstrapFence.lastIndexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)"),
-    "database-clock binding authority must be rechecked after preparation",
+    defaultFence.indexOf("prepareAuthorized(transactionDb)")
+      < defaultFence.lastIndexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)"),
+    "database-clock binding authority must be rechecked after default and WebSocket preparation",
   );
   assert.ok(
     bootstrapFence.lastIndexOf("hasExactClasspilotTelemetryBinding(options, transactionDb)")
@@ -551,14 +576,19 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   const teacherReplyRecovery = section(
     devices,
     "const teacherReplyCheckKey",
-    "// All work after the initial heartbeat transaction",
+    "return finalDelivery.value;",
   );
   assert.match(
     teacherReplyRecovery,
-    /withClasspilotStudentWebSocketBootstrapAuthority\([\s\S]*\(teacherReplies,control\) => teacherReplies\.map[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)/,
+    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*shouldCheckTeacherReplies \? \(teacherReplies, prepared\) => \{[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)\.catch\(\(\) => false\)/,
+    "optional recovery stays inside final authority and handles each Redis rejection immediately",
   );
+  assert.equal(teacherReplyRecovery.match(/runWithTenantContext\(/g)?.length, 1,
+    "recovery must share the mandatory final tenant lease");
+  assert.match(teacherReplyRecovery, /privateReplyControlRevision: finalControlState\?\.revision/);
+  assert.match(teacherReplyRecovery, /studentControlRevision: prepared\.privateReplyControlRevision/);
   assert.match(teacherReplyRecovery, /kind: "student-binding" as const/);
-  assert.doesNotMatch(teacherReplyRecovery, /claimDueTeacherChatDeliveriesForBinding/);
+  assert.doesNotMatch(teacherReplyRecovery, /claimDueTeacherChatDeliveriesForBinding|withClasspilotStudentWebSocketBootstrapAuthority/);
   assert.match(
     websocketRedis,
     /kind: "student-binding";[\s\S]*studentId: string;[\s\S]*studentSessionId: string;[\s\S]*deviceId: string;[\s\S]*requiredCapability\?:[\s\S]*"lateSignInRestrictionSsoV1"[\s\S]*"restrictionAuthPassThroughV1"[\s\S]*"screenshotActiveObservationCadenceV1";[\s\S]*requiredCapabilities\?: Array</,

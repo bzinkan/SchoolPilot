@@ -27,6 +27,7 @@ import {
   runClasspilotUsageRollup,
   type ClasspilotUsageRollupPool,
 } from "../src/services/classpilotUsageRollup.ts";
+import { CLASSPILOT_USAGE_ROLLUP_TIMEOUT_SQL } from "../src/services/classpilotUsageRollupAdmission.ts";
 import {
   CLASSPILOT_USAGE_ROLLUP_RLS_TABLES,
   parseClasspilotUsageModes,
@@ -375,7 +376,8 @@ describe("one-day rewrite transaction", () => {
         exclusions: [{ studentId: null, start: new Date("2026-09-14T04:00:00Z"), end: new Date("2026-09-14T12:00:00Z") }],
       });
       assert.deepEqual(result, { rowCount: 3, seconds: 40, heartbeatCount: 4 });
-      assert.deepEqual(calls.map((call) => call.text), [
+      const workCalls = calls.filter(call => call.text !== CLASSPILOT_USAGE_ROLLUP_TIMEOUT_SQL);
+      assert.deepEqual(workCalls.map((call) => call.text), [
         "BEGIN",
         CLASSPILOT_USAGE_ROLLUP_LOCK_SQL,
         CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL,
@@ -384,9 +386,10 @@ describe("one-day rewrite transaction", () => {
         CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL,
         "COMMIT",
       ]);
-      assert.deepEqual(calls[1]!.values, ["school-1"]);
-      assert.deepEqual(calls[3]!.values, ["school-1", "2026-09-14"]);
-      assert.deepEqual(calls[4]!.values, [
+      assert.equal(calls.filter(call => call.text === CLASSPILOT_USAGE_ROLLUP_TIMEOUT_SQL).length, 6);
+      assert.deepEqual(workCalls[1]!.values, ["school-1"]);
+      assert.deepEqual(workCalls[3]!.values, ["school-1", "2026-09-14"]);
+      assert.deepEqual(workCalls[4]!.values, [
         "school-1",
         "2026-09-14 04:00:00",
         "2026-09-15 04:00:00",

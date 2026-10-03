@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { finished } from 'node:stream/promises';
 import pg from 'pg';
+import { RELEASE_PG_APPLICATION_NAMES, POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS, POSTGRES_PRESSURE_MAX_SAMPLES, POSTGRES_ROLE_WAITS_SQL, readPostgresPressure, postgresPressureDelta } from './release-enabled-postgres-pressure.mjs';
 import { hash } from 'bcryptjs';
 import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff } from './local-usage-scale.mjs';
 import { schoolDayOracle } from './school-day-profile.mjs';
@@ -35,11 +36,11 @@ const metrics = { schemaVersion: 1, profile: RELEASE_ENABLED_PROFILE, sourceRevi
     'The scheduler fleet and all other hourly jobs are outside this bounded two-school operation test.'],
 };
 const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2) + '\n');
-const children = [], observer = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 15_000 });
+const children = [], observer = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 15_000, application_name: RELEASE_PG_APPLICATION_NAMES.observer });
 let sequence = 0, sampling, samplePending = false;
 async function child(name, file, extraEnv) {
   const stdout = createWriteStream(resolve(directory, `${name}.log`), { flags: 'wx' });
-  const processChild = fork(resolve(root, `scripts/load/usage/${file}`), [], { cwd: root, env: { ...env, ...extraEnv },
+  const processChild = fork(resolve(root, `scripts/load/usage/${file}`), [], { cwd: root, env: { ...env, ...extraEnv, ...(RELEASE_PG_APPLICATION_NAMES[name] ? { PGAPPNAME: RELEASE_PG_APPLICATION_NAMES[name] } : {}) },
     execArgv: ['--max-old-space-size=512', ...(collectCpuProfile && name === 'api' ? ['--cpu-prof', `--cpu-prof-dir=${directory}`, '--cpu-prof-name=api.cpuprofile', '--cpu-prof-interval=1000'] : [])], stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true });
   processChild.stdout.pipe(stdout, { end: false }); processChild.stderr.pipe(stdout, { end: false });
   const closed = new Promise(resolve => processChild.once('close', (code, signal) => { stdout.end(); resolve({ code, signal }); }));
@@ -98,6 +99,7 @@ try {
   const [apiReady, workerReady, generatorReady] = await Promise.all([api.ready, worker.ready, generator.ready]);
   metrics.processes = { api: apiReady.pid, worker: workerReady.pid, generator: generatorReady.pid };
   metrics.pools = { ...apiReady.pools, ...workerReady.pools, observer: 2 };
+  metrics.postgresApplicationNames = { api: apiReady.postgresApplicationName, worker: workerReady.postgresApplicationName, observer: RELEASE_PG_APPLICATION_NAMES.observer };
   metrics.prewarmed = apiReady.prewarmed; metrics.readiness = apiReady.readiness; metrics.redisReady = apiReady.redis;
   const auth = await generator.rpc('initialize', { ...fixture, base: apiReady.base });
   metrics.staffAuthenticationVerified = auth.realSessionCookies; metrics.enabledCapabilitiesVerified = auth.acceptedCapabilities;
@@ -108,13 +110,22 @@ try {
   const currentCounts = async () => (await observer.query('SELECT school_id,COUNT(*)::int AS count FROM heartbeats WHERE timestamp >= $1::timestamp GROUP BY school_id ORDER BY school_id',
     [time.localDateStartUtc(today, 'America/New_York').toISOString().replace('T', ' ').replace('Z', '')])).rows;
   phase.persistedBefore = await currentCounts();
+  phase.postgresPressure = { baseline: await readPostgresPressure(observer), samples: [],
+    sampleIntervalMs: POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS, maxSamples: POSTGRES_PRESSURE_MAX_SAMPLES };
   await Promise.all([api.rpc('reset'), worker.rpc('reset')]);
   const start = performance.now();
+  let nextPressureSampleAt = start + POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS;
   sampling = setInterval(async () => {
     if (samplePending || phase.pgWaitSamples.length >= 720) return; samplePending = true;
     try {
-      const rows = (await observer.query("SELECT COALESCE(state,'unknown') AS state,COALESCE(wait_event_type,'none') AS wait_type,COALESCE(wait_event,'none') AS wait_event,COUNT(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() GROUP BY 1,2,3 ORDER BY 1,2,3")).rows;
+      const rows = (await observer.query(POSTGRES_ROLE_WAITS_SQL)).rows;
       phase.pgWaitSamples.push({ elapsedMs: performance.now() - start, rows });
+      if (performance.now() >= nextPressureSampleAt && phase.postgresPressure.samples.length < POSTGRES_PRESSURE_MAX_SAMPLES) {
+        // Never catch up missed samples with a burst, and never add a probe pool.
+        nextPressureSampleAt = performance.now() + POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS;
+        const snapshot = await readPostgresPressure(observer);
+        phase.postgresPressure.samples.push({ elapsedMs: performance.now() - start, snapshot });
+      }
     } catch (error) { phase.samplingFailure = { code: error.code || 'SAMPLING_FAILURE' }; }
     finally { samplePending = false; }
   }, 250); sampling.unref();
@@ -129,7 +140,12 @@ try {
   phase.traffic = settled[0].status === 'fulfilled' ? settled[0].value : { error: { message: settled[0].reason.message } };
   phase.workers = settled.slice(1).map((result, index) => result.status === 'fulfilled' ? result.value : { schoolIndex: index, correct: false, error: { message: result.reason.message } });
   phase.durationMs = performance.now() - start; clearInterval(sampling); while (samplePending) await new Promise(resolve => setTimeout(resolve, 10));
-  await api.rpc('drain'); phase.api = await api.rpc('snapshot'); phase.worker = await worker.rpc('snapshot'); save();
+  await api.rpc('drain'); phase.api = await api.rpc('snapshot'); phase.worker = await worker.rpc('snapshot');
+  phase.postgresPressure.final = await readPostgresPressure(observer);
+  phase.postgresPressure.delta = postgresPressureDelta(phase.postgresPressure.baseline, phase.postgresPressure.final,
+    phase.postgresPressure.samples.map(sample => sample.snapshot));
+  phase.postgresPressure.valid = !phase.samplingFailure && phase.postgresPressure.delta.valid;
+  save();
   phase.persistedAfter = await currentCounts();
   phase.insertedObservations = phase.persistedAfter.reduce((sum, row) => sum + row.count - (phase.persistedBefore.find(before => before.school_id === row.school_id)?.count || 0), 0);
   const finishSource = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();

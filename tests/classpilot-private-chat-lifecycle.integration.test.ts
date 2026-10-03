@@ -81,6 +81,22 @@ const hasCode = (code: string) => (error: unknown): boolean => {
   if (!error || typeof error !== "object") return false;
   return "code" in error && error.code === code || "cause" in error && hasCode(code)(error.cause);
 };
+const freshRecovery = async () => {
+  await admin.query("UPDATE classpilot_chat_deliveries SET state='expired' WHERE school_id=$1", [ids.school]);
+  await token();
+};
+function faultNativeQuery(t: import("node:test").TestContext, select: (text: string) => boolean, replacement = "SELECT 1/0 AS injected_failure") {
+  const original = pg.Client.prototype.query;
+  let injected = 0;
+  const mocked = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+    const request = args[0];
+    const text = typeof request === "string" ? request
+      : request && typeof request === "object" && "text" in request ? String(request.text) : "";
+    if (select(text)) { injected++; return Reflect.apply(original, this, [replacement]); }
+    return Reflect.apply(original, this, args);
+  });
+  return { count: () => injected, restore: () => mocked.mock.restore() };
+}
 const expired = (messageId: string) => inSchool(() => lifecycle.isPrivateChatMessageExpired(messageId, ids.school));
 const ack = (messageId: string, privateChatLifecycle: PrivateChatLifecycle, index = 0) => inSchool(() => storage.acknowledgeTeacherChatDelivery({
   ...binding(index), chatMessageId: messageId, status: "delivered", privateChatLifecycle }));
@@ -326,7 +342,7 @@ test("an empty exact-student private outbox skips claim discovery while retainin
     "Empty outboxes need no owner, supervision or channel discovery");
 });
 
-test("pending-reply bootstrap and the SSO writer acquire policy before private settings without a lock cycle", async t => {
+for (const surface of ["bootstrap", "heartbeat recovery"] as const) test(`pending-reply ${surface} and the SSO writer acquire policy before private settings without a lock cycle`, async t => {
   const initial = await token(), pending = await reply("Pending reply across SSO update", initial);
   const current = await inSchool(() => storage.getClasspilotSsoPolicyForSchool(ids.school));
   const query = pg.Client.prototype.query;
@@ -363,13 +379,18 @@ test("pending-reply bootstrap and the SSO writer acquire policy before private s
     assert.ok(writerPid);
     const options = { ...binding(), freezeSsoPolicy: true };
     let settled = false;
-    bootstrap = inSchool(() => storage.withClasspilotStudentWebSocketBootstrapAuthority(options, async connection => {
+    const prepare = async (connection: typeof database) => {
       // This repeats the existing WebSocket preparation fence intentionally:
       // before the fix it occurs only after private settings are share-locked.
       // The repaired wrapper must have acquired the same fence before claiming.
       await storage.lockClasspilotSsoPolicyDeliveryAuthority(ids.school, connection);
       return storage.getClasspilotSsoPolicyForSchool(ids.school, connection);
-    }, (claimed, policy) => ({ messages: claimed.map(row => row.message.id), revision: policy.revision })));
+    };
+    bootstrap = inSchool(() => surface === "bootstrap"
+      ? storage.withClasspilotStudentWebSocketBootstrapAuthority(options, prepare,
+        (claimed, policy) => ({ messages: claimed.map(row => row.message.id), revision: policy.revision }))
+      : storage.withClasspilotStudentControlDeliveryAuthority(options, prepare,
+        (claimed, policy) => ({ messages: claimed.map(row => row.message.id), revision: policy.revision }), () => undefined));
     bootstrap.then(() => { settled = true; }, () => { settled = true; });
     const waiting = await blockedBehind(writerPid, () => settled, /pg_advisory_xact_lock_shared/);
     assert.equal(waiting.length, 1, "Bootstrap must wait behind the actual policy writer");
@@ -763,8 +784,14 @@ test("a student binding transfer refuses the old device's ACK and reconnects the
       reclaimRecoveryTokenHash: recoveryHashes[0]! }))).session.id;
   assert.notEqual(bindings[0], oldBinding.studentSessionId); await refresh(0);
   assert.equal(await inSchool(() => storage.acknowledgeTeacherChatDelivery({ ...oldBinding, chatMessageId: sent.message.id, status: "delivered", privateChatLifecycle: initial })), undefined);
+  assert.deepEqual(await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(oldBinding,
+    () => assert.fail("transferred binding cannot prepare"), () => assert.fail("transferred binding cannot send HTTP"),
+    () => assert.fail("transferred binding cannot recover private replies"))), { authorized: false });
   await admin.query("UPDATE classpilot_chat_deliveries SET next_attempt_at=now() WHERE id=$1", [sent.delivery.id]);
-  const claimed = await claim(); assert.equal(claimed.authorized, true);
+  let recovered = false;
+  const claimed = await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => undefined,
+    rows => ({ messages: rows.map(row => row.message.id) }), rows => { recovered = rows.some(row => row.message.id === sent.message.id); }));
+  assert.equal(claimed.authorized, true); assert.equal(recovered, true);
   if (claimed.authorized) assert.ok(claimed.value.messages.includes(sent.message.id));
   assert.ok(await ack(sent.message.id, initial));
 });
@@ -925,4 +952,165 @@ test("Redis private relay rechecks the real expiry after a held final exact-bind
       assert.deepEqual({ allowed, inbox }, { allowed: false, inbox: [] });
     });
   } finally { release(); await receiving?.catch(() => {}); mock.mock.restore(); }
+});
+
+test("heartbeat recovery uses one lease and one transaction for an empty outbox with fresh mandatory fences", async () => {
+  await freshRecovery();
+  const queries: string[] = [];
+  const diagnostics = await import("../src/services/usageCapacityDiagnostics.js");
+  diagnostics.resetUsageCapacityDiagnostics();
+  let prepared = 0, delivered = 0, optional = 0;
+  const result = await inSchool(async () => {
+    const store = getTenantStore(); assert.ok(store);
+    const traced = drizzle(store.client, { schema, logger: { logQuery: query => { queries.push(query); } } });
+    return tenantALS.run({ ...store, db: traced }, () => storage.withClasspilotStudentControlDeliveryAuthority(
+      { ...binding(), claimTeacherChatDeliveries: true }, async () => { prepared++; return "fresh-control"; },
+      (_rows, value) => { delivered++; return value; }, () => { optional++; }));
+  });
+  assert.deepEqual(result, { authorized: true, value: "fresh-control" });
+  assert.deepEqual({ prepared, delivered, optional }, { prepared: 1, delivered: 1, optional: 0 });
+  assert.equal(queries.filter(query => /^begin(?:\s|$)/i.test(query)).length, 1);
+  assert.equal(queries.filter(query => /^commit$/i.test(query)).length, 1);
+  assert.equal(queries.filter(query => /from "classpilot_chat_deliveries"/.test(query)).length, 1);
+  assert.equal(queries.filter(query => /from "student_sessions"/.test(query)).length, 2);
+  assert.ok(queries.some(query => /from "schools".*for share/i.test(query)));
+  assert.ok(queries.some(query => /from "product_licenses".*for share/i.test(query)));
+  assert.ok(queries.some(query => query.includes("classpilot-sso-policy")));
+  const operation = diagnostics.getUsageCapacityDiagnostics().operations.tenant_background;
+  assert.ok(operation);
+  assert.equal(operation.counters.checkoutSuccess, 1);
+});
+
+for (const failure of ["claim SQL", "local socket"] as const) test(`heartbeat recovery rolls back optional ${failure} failure while preserving required preparation`, async t => {
+  await freshRecovery();
+  const pending = await reply(`Optional ${failure}`);
+  const before = (await admin.query("SELECT state,attempt_count,last_attempt_student_session_id,last_attempt_device_id FROM classpilot_chat_deliveries WHERE id=$1", [pending.delivery.id])).rows;
+  let emitted = 0;
+  const injected = failure === "claim SQL" ? faultNativeQuery(t, text => /from "classpilot_chat_deliveries"/.test(text)) : undefined;
+  try {
+    const result = await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async connection => {
+      await connection.execute(sql`UPDATE students SET last_name='required-preparation-kept' WHERE id=${ids.students[0]!}`);
+      return "prepared";
+    }, (_rows, prepared) => ({ httpStatus: 200, prepared }), (rows) => {
+      assert.ok(rows.some(row => row.message.id === pending.message.id));
+      emitted++;
+      throw new Error("Synthetic synchronous socket.send failure");
+    }));
+    assert.deepEqual(result, { authorized: true, value: { httpStatus: 200, prepared: "prepared" } });
+    if (injected) assert.equal(injected.count(), 1);
+    assert.equal(emitted, failure === "local socket" ? 1 : 0);
+  } finally { injected?.restore(); }
+  assert.deepEqual((await admin.query("SELECT state,attempt_count,last_attempt_student_session_id,last_attempt_device_id FROM classpilot_chat_deliveries WHERE id=$1", [pending.delivery.id])).rows, before);
+  assert.equal((await admin.query("SELECT last_name FROM students WHERE id=$1", [ids.students[0]])).rows[0]!.last_name, "required-preparation-kept");
+});
+
+test("heartbeat recovery claims exact due replies before HTTP and preserves stable IDs and attempt bindings", async () => {
+  await freshRecovery();
+  const pending = await reply("Consolidated exact private delivery");
+  const expected = lifecycle.privateChatMessageLifecycle(pending.message);
+  const order: string[] = [];
+  const result = await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => {
+    order.push("required-preparation"); return { rawRevision: 19 };
+  }, (rows) => { order.push("http"); return rows.map(row => row.message.id); }, (rows, prepared) => {
+    order.push("private"); assert.equal(prepared.rawRevision, 19);
+    const row = rows.find(row => row.message.id === pending.message.id); assert.ok(row);
+    assert.deepEqual(lifecycle.privateChatMessageLifecycle(row.message), expected);
+    assert.equal(row.delivery.lastAttemptStudentSessionId, binding().studentSessionId);
+    assert.equal(row.delivery.lastAttemptDeviceId, binding().deviceId);
+  }));
+  assert.deepEqual(result, { authorized: true, value: [pending.message.id] });
+  assert.deepEqual(order, ["required-preparation", "private", "http"]);
+  assert.equal((await admin.query("SELECT state FROM classpilot_chat_deliveries WHERE id=$1", [pending.delivery.id])).rows[0]!.state, "attempted");
+});
+
+test("heartbeat recovery retries stable IDs after the second actual socket send fails and fences delayed publication after End", async t => {
+  await freshRecovery();
+  const first = await reply("First of two optional socket sends"), second = await reply("Second of two optional socket sends");
+  const stableIds = [first.message.id, second.message.id].sort();
+  const published: Array<Record<string, unknown>> = [];
+  let sends = 0;
+  await withStudentSocket(0, capabilities, async ({ inbox, drain }) => {
+    const originalSend = WebSocket.prototype.send;
+    const injected = t.mock.method(WebSocket.prototype, "send", function(this: WebSocket, ...args: unknown[]) {
+      if (typeof args[0] === "string" && args[0].includes('"type":"teacher-message"') && ++sends === 2) {
+        throw new Error("Synthetic second native WebSocket.send failure");
+      }
+      return Reflect.apply(originalSend, this, args);
+    });
+    try {
+      const result = await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => undefined,
+        () => "HTTP200", rows => {
+          for (const row of rows) {
+            const frame = { type: "teacher-message", messageKind: "private", _msgId: row.message.id,
+              chatMessageId: row.message.id, messageId: row.message.id, studentId: binding().studentId,
+              studentSessionId: binding().studentSessionId, message: row.message.content, fromName: "Teacher",
+              sessionId: live.id, privateChatLifecycle: lifecycle.privateChatMessageLifecycle(row.message) };
+            websocketBroadcast.sendToStudentBindingLocal(binding(), frame);
+            published.push(frame);
+          }
+        }));
+      assert.deepEqual(result, { authorized: true, value: "HTTP200" });
+      await drain();
+      assert.equal(sends, 2); assert.equal(inbox.length, 1); assert.equal(published.length, 1);
+    } finally { injected.mock.restore(); }
+    const rolledBack = await admin.query("SELECT state,attempt_count,last_attempt_student_session_id FROM classpilot_chat_deliveries WHERE id=ANY($1::varchar[])", [[first.delivery.id, second.delivery.id]]);
+    assert.deepEqual(rolledBack.rows, [0, 1].map(() => ({ state: "queued", attempt_count: 0, last_attempt_student_session_id: null })));
+    const retried: string[] = [];
+    await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => undefined,
+      () => undefined, rows => { retried.push(...rows.map(row => row.message.id)); }));
+    assert.deepEqual(retried.sort(), stableIds, "A partially emitted optional batch must retry with the same deduplication IDs");
+    await close(lifecycle.privateChatMessageLifecycle(first.message)!);
+    assert.equal(await relay(published[0]), false, "Queued publication must still recheck the committed lifecycle after End");
+    await drain(); assert.equal(inbox.length, 1);
+  });
+});
+
+test("heartbeat recovery latch failure cannot fail valid HTTP or bypass mandatory binding authority", async t => {
+  await freshRecovery();
+  const injected = faultNativeQuery(t, text => /^select "private_chat_lifecycle_required" from "settings"/.test(text));
+  let optional = 0;
+  try {
+    assert.deepEqual(await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => "valid",
+      (_rows, value) => value, () => { optional++; })), { authorized: true, value: "valid" });
+    assert.deepEqual(await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority({ ...binding(), studentSessionId: randomUUID() },
+      async () => assert.fail("stale binding cannot prepare"), () => assert.fail("stale binding cannot return HTTP200"), () => { optional++; })), { authorized: false });
+    assert.equal(injected.count(), 2);
+    assert.equal(optional, 0);
+  } finally { injected.restore(); }
+});
+
+for (const cleanup of ["ROLLBACK TO SAVEPOINT", "RELEASE SAVEPOINT"] as const) test(`heartbeat recovery propagates failed ${cleanup}`, async t => {
+  await freshRecovery();
+  await reply("Savepoint cleanup fault");
+  const injected = faultNativeQuery(t, text => text.startsWith(cleanup));
+  try {
+    await assert.rejects(inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => "prepared",
+      () => assert.fail("failed cleanup cannot emit HTTP200"), () => { throw new Error("Optional socket fault"); })), hasCode("22012"));
+    assert.equal(injected.count(), 1);
+  } finally { injected.restore(); }
+});
+
+test("heartbeat recovery never swallows required preparation or exact-binding SQL failures", async t => {
+  await freshRecovery();
+  await assert.rejects(inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async connection => {
+    await connection.execute(sql`SELECT 1/0 AS required_preparation_failure`);
+  }, () => assert.fail("required preparation must fail closed"), () => assert.fail("no optional emit"))), hasCode("22012"));
+  const pending = await reply("Required fence fault");
+  let bindingsRead = 0;
+  const injected = faultNativeQuery(t, text => text.includes('from "student_sessions"')
+    && text.includes('inner join "students"') && text.trim().endsWith("for share") && ++bindingsRead === 2);
+  try {
+    await assert.rejects(inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async () => "prepared",
+      () => assert.fail("required fence cannot emit HTTP200"), () => assert.fail("required fence cannot emit private content"))), hasCode("22012"));
+    assert.equal(injected.count(), 1);
+  } finally { injected.restore(); }
+  assert.equal((await admin.query("SELECT state FROM classpilot_chat_deliveries WHERE id=$1", [pending.delivery.id])).rows[0]!.state, "queued");
+});
+
+test("heartbeat recovery rejects a manual lease expired during required preparation before either delivery", async () => {
+  await freshRecovery(); await reply("Lease expiry across required preparation");
+  const result = await inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority(binding(), async connection => {
+    await connection.execute(sql`UPDATE student_sessions SET manual_lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=${binding().studentSessionId}`);
+  }, () => assert.fail("expired lease cannot receive HTTP authority"), () => assert.fail("expired lease cannot receive a private reply")));
+  assert.deepEqual(result, { authorized: false });
 });

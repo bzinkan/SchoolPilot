@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T01:51:09.829Z",
+  "status": "failed_combined_checks_pending_rerun",
+  "result": {
+    "sourceHead": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "startedAt": "2026-10-03T01:46:37.6546814Z",
+    "finishedAt": "2026-10-03T01:49:57.8463534Z",
+    "buildExit": 0,
+    "unitExit": 1,
+    "testTypesExit": 0,
+    "testCastsExit": 0,
+    "sourceFileCount": 1147,
+    "sourceUnchanged": true,
+    "output": "<CHECK_RUN>"
+  },
+  "unit": {
+    "passed": 1742,
+    "failed": 2,
+    "skipped": 4,
+    "cancelled": 0
+  },
+  "sourceSnapshot": {
+    "files": 1147,
+    "unchanged": true,
+    "before": "source-before.json.gz",
+    "after": "source-after.json.gz"
+  },
+  "failureAnalysis": [
+    {
+      "test": "student login keeps legacy SSO omission and only stages portal authority for negotiated clients",
+      "file": "tests/classpilot-late-signin-contract.test.ts",
+      "reason": "Static assertion expects an inline SSO lock call; the revised route requests freezeSsoPolicy through the authority wrapper."
+    },
+    {
+      "test": "deferred command frames and WebSocket auth revalidate exact binding authority",
+      "file": "tests/classpilot-late-signin-contract.test.ts",
+      "reason": "Static assertion requires exactly two exact-binding checks; optional heartbeat recovery now adds a third check before synchronous reply delivery."
+    }
+  ],
+  "disposition": "The two assertion updates are pending a separate full combined unit rerun. This failure is retained unchanged and does not become green evidence after later corrections.",
+  "capacityEvidence": false,
+  "productionReadiness": false,
+  "sourceOrTestEditsByArchive": false,
+  "sanitation": "UTF8/LF; local paths, connection strings, JWTs, session cookies, emails and UUIDs redacted. Complete sanitized logs and source snapshots retained; raw originals unchanged.",
+  "files": [
+    {
+      "file": "build.log.gz",
+      "rawBytes": 55,
+      "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedBytes": 51,
+      "sanitizedSha256": "772633829129174cb4182a3a35d82f3b55aa7db9b5c8cbb275c65451e5a9359c",
+      "gzipSha256": "977be9f2bef8af0d3e664371252eb7babe006768802718fc58286764de16b627"
+    },
+    {
+      "file": "result.json.gz",
+      "rawBytes": 396,
+      "rawSha256": "d66354533524354a1c181dc802b5b920883defe938d453954ab5dc40ee7f5a2b",
+      "sanitizedBytes": 318,
+      "sanitizedSha256": "3d98608e3d71b680fc682a51d6b8cbd49f4bbaa16ffade89d40a5d653435b51d",
+      "gzipSha256": "22b486c688c8ba2c1ea985e2283dad6a4bb0bc6cefb8571aae4775d3b5fef778"
+    },
+    {
+      "file": "source-after.json.gz",
+      "rawBytes": 173003,
+      "rawSha256": "237c106f0ccbbc559bbcec3ea576d050ed5c4cd15297447b39dd054e20896e0e",
+      "sanitizedBytes": 168413,
+      "sanitizedSha256": "0d4fda26145503907acc286af1a3ec2a60961f17faa3632eaf4502e43b80b141",
+      "gzipSha256": "10ee84e3b7a9bedbf4b769ba80bea2c4edb61f88ba2e06dff45727bff6a539c9"
+    },
+    {
+      "file": "source-before.json.gz",
+      "rawBytes": 173003,
+      "rawSha256": "237c106f0ccbbc559bbcec3ea576d050ed5c4cd15297447b39dd054e20896e0e",
+      "sanitizedBytes": 168413,
+      "sanitizedSha256": "0d4fda26145503907acc286af1a3ec2a60961f17faa3632eaf4502e43b80b141",
+      "gzipSha256": "10ee84e3b7a9bedbf4b769ba80bea2c4edb61f88ba2e06dff45727bff6a539c9"
+    },
+    {
+      "file": "test-casts.log.gz",
+      "rawBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedBytes": 176,
+      "sanitizedSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce",
+      "gzipSha256": "e146758497dc12c56ae73a46a51b7ccbb934ecd1078ea7fcb109a2f6dbb35099"
+    },
+    {
+      "file": "test-types.log.gz",
+      "rawBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedBytes": 199,
+      "sanitizedSha256": "718d56591c1784c9fd403388377ce8a2a1b8c73676d415ee615ba6bb5c5a6fc1",
+      "gzipSha256": "52b01fe9ecc9d159403862fa56505811d367f4559c5017c121eb42fd3774991a"
+    },
+    {
+      "file": "unit.log.gz",
+      "rawBytes": 484278,
+      "rawSha256": "a66a8ba8783662f15533c51e116f1601eb5fa7ad86637e3e04bc88dde77c8275",
+      "sanitizedBytes": 471662,
+      "sanitizedSha256": "c7bfeeaf24d05fceee420ce23e5c27e894c56c1730bc47e7e3d3796246a0715d",
+      "gzipSha256": "ae29bd0646dd3f9087cbb6b88ef5a9e82c88cfc6aed452c317d2da9b45410444"
+    }
+  ]
+}

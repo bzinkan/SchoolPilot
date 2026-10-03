@@ -4,6 +4,7 @@ import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { assertLocalScaleFixture, apiStatementKind } from './local-usage-scale.mjs';
 import { assertEnabledReleaseRuntime } from './release-enabled-profile.mjs';
 import pg from 'pg';
+import { RELEASE_PG_APPLICATION_NAMES } from './release-enabled-postgres-pressure.mjs';
 import { measureMethod } from './release-enabled-instrumentation.mjs';
 
 assertLocalScaleFixture(process.env);
@@ -58,6 +59,9 @@ if (role === 'api') {
   quiesce = batch.drainHeartbeatClassificationBatches;
   server = createServer(createApp()); wss = websocket.setupWebSocket(server);
   const prewarmed = await db.prewarmMainPool(); assert.equal(prewarmed, 16);
+  for (const pool of [mainPool, sessionPool]) {
+    assert.equal((await pool.query("SELECT current_setting('application_name') AS role")).rows[0].role, RELEASE_PG_APPLICATION_NAMES.api);
+  }
   db.startApiPoolReadiness();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const deadline = Date.now() + 10_000;
@@ -66,13 +70,14 @@ if (role === 'api') {
   const base = `http://127.0.0.1:${server.address().port}`;
   const response = await fetch(`${base}/readyz`); assert.equal(response.status, 200); assert.deepEqual(await response.json(), { status: 'ok' });
   timer = setInterval(() => { metrics.peakWaiting = Math.max(metrics.peakWaiting, mainPool.waitingCount); metrics.peakHeld = Math.max(metrics.peakHeld, mainPool.totalCount - mainPool.idleCount); }, 20); timer.unref();
-  process.send({ kind: 'ready', pid: process.pid, base, pools: { api: 16, session: 2 }, prewarmed, readiness: true, redis: true });
+  process.send({ kind: 'ready', pid: process.pid, base, pools: { api: 16, session: 2 }, postgresApplicationName: RELEASE_PG_APPLICATION_NAMES.api, prewarmed, readiness: true, redis: true });
 } else {
   ({ schedulerPool } = await import('../../../dist/services/schedulerDb.js'));
   assert.equal(schedulerPool.options.max, 5); instrument(schedulerPool, true);
-  assert.equal((await schedulerPool.query('SELECT current_setting(\'app.is_super\') AS scoped')).rows[0].scoped, 'on');
+  const workerSettings = (await schedulerPool.query("SELECT current_setting('app.is_super') AS scoped, current_setting('application_name') AS role")).rows[0];
+  assert.equal(workerSettings.scoped, 'on'); assert.equal(workerSettings.role, RELEASE_PG_APPLICATION_NAMES.worker);
   timer = setInterval(() => { metrics.peakWaiting = Math.max(metrics.peakWaiting, schedulerPool.waitingCount); metrics.peakHeld = Math.max(metrics.peakHeld, schedulerPool.totalCount - schedulerPool.idleCount); }, 20); timer.unref();
-  process.send({ kind: 'ready', pid: process.pid, pools: { worker: 5 } });
+  process.send({ kind: 'ready', pid: process.pid, pools: { worker: 5 }, postgresApplicationName: RELEASE_PG_APPLICATION_NAMES.worker });
 }
 
 const snapshot = () => ({ database: metrics, operations: diagnostics.getUsageCapacityDiagnostics(), measurementStartedHrtimeMicroseconds,

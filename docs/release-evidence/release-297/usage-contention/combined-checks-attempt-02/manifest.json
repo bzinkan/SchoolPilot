@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T01:54:21.598Z",
+  "status": "unit_suite_passed_receipt_command_failed",
+  "result": {
+    "sourceHead": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "beforeSnapshotAt": "2026-10-03T01:51:04.4108446Z",
+    "unitLogCompletedAt": "2026-10-03T01:52:23.7455019Z",
+    "recordedAt": "2026-10-03T01:53:24.7867297Z",
+    "unit": {
+      "passed": 1744,
+      "failed": 0,
+      "total": 1748,
+      "skipped": 4,
+      "cancelled": 0
+    },
+    "sourceFileCount": 1147,
+    "sourceUnchanged": true,
+    "changedSincePassingBuildTypesAndCasts": [
+      "tests/classpilot-late-signin-contract.test.ts"
+    ],
+    "receiptRepair": "Original outer PowerShell command exited 1 after unit and source-after capture because Select-Object -ExpandProperty cannot read the ordered-hashtable path key. No test or application failed; receipt reconstructed from retained snapshots and complete TAP log. Original command exit is not relabeled as zero.",
+    "output": "<CHECK_RUN>"
+  },
+  "unit": {
+    "passed": 1744,
+    "failed": 0,
+    "total": 1748,
+    "skipped": 4,
+    "cancelled": 0,
+    "evidence": "Complete retained TAP log; no unit failure"
+  },
+  "outerCommand": {
+    "exitCode": 1,
+    "stage": "Post-test receipt formatting after source-after capture",
+    "error": "Select-Object could not expand the ordered-hashtable path key",
+    "retained": "receipt-error.log.gz",
+    "relabeledAsSuccess": false
+  },
+  "receipt": {
+    "reconstructed": true,
+    "provenance": "Saved complete TAP log and before/after source snapshots; no re-execution or altered test output"
+  },
+  "sourceSnapshot": {
+    "files": 1147,
+    "unchanged": true,
+    "before": "source-before.json.gz",
+    "after": "source-after.json.gz",
+    "changedSincePassingBuildTypesAndCasts": [
+      "tests/classpilot-late-signin-contract.test.ts"
+    ]
+  },
+  "precedingChecks": {
+    "evidence": "../combined-checks-attempt-01/manifest.json",
+    "build": "passed",
+    "testTypes": "passed",
+    "testCasts": "passed",
+    "applicationBytesUnchanged": true,
+    "changedTest": "tests/classpilot-late-signin-contract.test.ts"
+  },
+  "disposition": "The full unit suite passed after two static assertions were updated to the preserved authority contract. Original failed attempt01 and outer command exit1 remain retained. This is source-verified unit evidence, not synthetic capacity or final-head CI.",
+  "capacityEvidence": false,
+  "productionReadiness": false,
+  "sourceOrTestEditsByArchive": false,
+  "sanitation": "UTF8/LF; local paths, connection strings, JWTs, session cookies, emails and UUIDs redacted. Complete sanitized logs and source snapshots retained; raw originals unchanged.",
+  "files": [
+    {
+      "file": "receipt-error.log.gz",
+      "rawBytes": 223,
+      "rawSha256": "7e32cd105651714bf4edf70b61ed35dc37f734a68bb97cba649b36b3e32af43e",
+      "sanitizedBytes": 222,
+      "sanitizedSha256": "792618ba6ca4a677a9abe1f54ac878c4ea70916a81b73dce372bb52a76eb4b9c",
+      "gzipSha256": "24cd7a1f4c8b516caa5e748a3301a3c25d7778702b018104abdd126af4a597b0"
+    },
+    {
+      "file": "result.json.gz",
+      "rawBytes": 930,
+      "rawSha256": "c0a19df2ac36836cd86cc264c74ecf24aa2b45b84fbc0629bcafae5690d79be7",
+      "sanitizedBytes": 844,
+      "sanitizedSha256": "3468bd77c72c6cb7511646a2c63197f921afb41e1c2aa0acfb83bc3ff29e08e9",
+      "gzipSha256": "0aa36cac2574431f6d573cca0bdcdc73741cecdc959df770d6fd757d2e67524f"
+    },
+    {
+      "file": "source-after.json.gz",
+      "rawBytes": 173003,
+      "rawSha256": "6f4a2c958d3a01141f0223a30ca430dfda8b06b9f0479463550aff8c7d6e4053",
+      "sanitizedBytes": 168413,
+      "sanitizedSha256": "792e2fe53bf327e428d647856fd600127452d28786123747746bf2ce39953002",
+      "gzipSha256": "8aa625de9446862bb57a642fd7f357725ae446272799b634bac9fc8d8f8c78ee"
+    },
+    {
+      "file": "source-before.json.gz",
+      "rawBytes": 173003,
+      "rawSha256": "6f4a2c958d3a01141f0223a30ca430dfda8b06b9f0479463550aff8c7d6e4053",
+      "sanitizedBytes": 168413,
+      "sanitizedSha256": "792e2fe53bf327e428d647856fd600127452d28786123747746bf2ce39953002",
+      "gzipSha256": "8aa625de9446862bb57a642fd7f357725ae446272799b634bac9fc8d8f8c78ee"
+    },
+    {
+      "file": "unit.log.gz",
+      "rawBytes": 459154,
+      "rawSha256": "275a3d9b9bf6254f9d1a21502176e175f603103eaaeef1dcb59452b811a8e58a",
+      "sanitizedBytes": 447130,
+      "sanitizedSha256": "0e412c1cffa36e7ae7521da4e6cc293849683d82d7b56e28aea64fed5cbcab10",
+      "gzipSha256": "f1a4a8156ef41f96e329a2081609be24313ccb90a47b751655bdcf9a59b7fed0"
+    }
+  ]
+}
