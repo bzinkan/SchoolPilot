@@ -7,7 +7,7 @@ import pg from "pg";
 import { sql } from "drizzle-orm";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
-import { focusRecord, readFocusAssignment, readFocusOpenIntent, readFocusRestriction } from "../src/services/classpilotFocus.js";
+import { focusRecord, focusStatusChanged, readClasspilotFocusStatusEnvelope, readFocusAssignment, readFocusOpenIntent, readFocusRestriction } from "../src/services/classpilotFocus.js";
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
@@ -437,6 +437,41 @@ test("bare stop survives gate/capability withdrawal and wholly withheld precise 
   assert.ok(frame.exactBinding.controlRevision < b.revision);
   assert.equal((await inSchool(() => storage.persistClasspilotCommandTargetAck(ack))).disposition, "terminal_rejected");
   assert.equal((await focus())?.active, true);
+});
+
+test("packaged Focus status crosses normalization and locked storage without JSONB-order rewrites", async () => {
+  await issue("focus-tab", { tabTargets: [row(0)] });
+  const initial = await control();
+  const assignment = readFocusAssignment(initial.desiredState); assert.ok(assignment);
+  const acknowledge = (status: unknown, overrides = {}) => inSchool(() => storage.acknowledgeClasspilotStudentControlState({
+    schoolId: ids.school, studentId: ids.students[0]!, studentSessionId: sessions[0]!, deviceId: ids.devices[0]!,
+    appliedRevision: initial.revision, outcome: "applied", acceptedCapabilities: capabilities,
+    focusStatus: readClasspilotFocusStatusEnvelope({ focusStatus: status }), ...overrides,
+  }));
+  for (const status of [
+    { state: "active", assignmentId: assignment.assignmentId },
+    { reason: "attention", state: "suspended", assignmentId: assignment.assignmentId },
+    { assignmentId: assignment.assignmentId, reason: "authentication", state: "suspended" },
+  ]) {
+    assert.ok(await acknowledge(status));
+    const stored = await control();
+    assert.equal(focusStatusChanged(stored.desiredState, status), false,
+      "JSONB round-trip key order must not request another ACK write");
+    assert.equal(stored.revision, initial.revision);
+  }
+  const invalidated = { state: "invalidated", assignmentId: assignment.assignmentId, reason: "focus_tab_closed" };
+  for (const overrides of [
+    { deviceId: ids.devices[1]! }, { appliedRevision: initial.revision - 1 },
+    { focusStatus: { ...invalidated, assignmentId: "another-assignment" } },
+    { focusStatus: readClasspilotFocusStatusEnvelope({ focusStatus: null, focus: invalidated }) },
+  ]) {
+    assert.equal(await acknowledge(invalidated, overrides), undefined);
+    assert.equal((await focus())?.active, true);
+  }
+  assert.ok(await acknowledge(invalidated));
+  assert.equal(await focus(), null);
+  assert.equal((await control()).revision, initial.revision + 1);
+  assert.equal(await acknowledge(invalidated), undefined, "a repeated old invalidation stays fenced");
 });
 
 test("recovery-token sign-out retires exact assignment and pending open continuation", async () => {

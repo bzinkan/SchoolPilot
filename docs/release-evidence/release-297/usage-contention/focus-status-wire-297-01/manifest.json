@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T13:50:12.594796+00:00",
+  "baseRevision": "b6dc88c5358a5339067d0b255c9cffabfd91fc52",
+  "sourceStatus": "Uncommitted narrow application correction; root-owned harness edits separate. No final acceptance claimed.",
+  "focused": {
+    "pass": 64,
+    "fail": 0,
+    "skip": 0
+  },
+  "nativeRestricted": {
+    "pass": 15,
+    "fail": 0,
+    "skip": 0,
+    "cleanup": true
+  },
+  "build": 0,
+  "testTypes": 0,
+  "casts": 0,
+  "sourceBindings": [
+    {
+      "path": "src/services/classpilotFocus.ts",
+      "sha256": "9292913c78ed5e5f2d21fe9064bf54ef557e054c185b05637cfd5cbe0ce0807c"
+    },
+    {
+      "path": "src/routes/classpilot/devices.ts",
+      "sha256": "099318bb7d11892c426ebdb8d22976a3bbfee66cdf69d278593d06e604ce6297"
+    },
+    {
+      "path": "src/realtime/websocket.ts",
+      "sha256": "5cb0d19255105c057c218bb180a27e53e465150c88a7a6cbfa7bbbbb2351da1b"
+    },
+    {
+      "path": "tests/classpilot-focus-wire.test.ts",
+      "sha256": "39af7a38d74733e77d7b37d2122db52d7212ccb2172c9201e95005e8e4830493"
+    },
+    {
+      "path": "tests/classpilot-focus.integration.test.ts",
+      "sha256": "2785e89ca35e4a732cdbdabda08029674aa141ed35d4e7f13ea64e55aee8b4a6"
+    },
+    {
+      "path": "tests/fixtures/classpilot-focus-wire-297.json",
+      "sha256": "9366fc7cf50691ba18b729d92750f807ef737aaceca40437824042250838bc6b"
+    },
+    {
+      "path": "docs/CLASSPILOT_FOCUS_BRING_FORWARD_CONTRACT.md",
+      "sha256": "ccef5c9ad29c9c678b1d11e9696cd1370df9d7539137c8fb438da843879055e7"
+    }
+  ],
+  "files": [
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-red-01.log",
+      "originalSha256": "a56b50b7a31696bed525ddfe9a896a1ca69dacc19234b7284d9a5a5ba5d8a43b",
+      "sanitizedSha256": "a56b50b7a31696bed525ddfe9a896a1ca69dacc19234b7284d9a5a5ba5d8a43b",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "01-release297-focus-wire-red-01.log.gz",
+      "archiveSha256": "a7e23d09795e01fc16a9eef1a0e3ccada39b5a8c348ffe37cca68412f9a0afd9",
+      "bytes": 21978
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-green-01.log",
+      "originalSha256": "9882d8bedc5d1a40529b4146ff17be331b503ac306db3ced7dcf431ab511b51d",
+      "sanitizedSha256": "9882d8bedc5d1a40529b4146ff17be331b503ac306db3ced7dcf431ab511b51d",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "02-release297-focus-wire-green-01.log.gz",
+      "archiveSha256": "2305d333cc50bd17a4b452997a0a992ded896f862f3d3a7d6c1586c7a5dd1495",
+      "bytes": 37925
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-green-02.log",
+      "originalSha256": "752319adf4bbe0ad9c5b9f978bbe3056f5bd2ce95ab8a6d625942c238957fb51",
+      "sanitizedSha256": "752319adf4bbe0ad9c5b9f978bbe3056f5bd2ce95ab8a6d625942c238957fb51",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "03-release297-focus-wire-green-02.log.gz",
+      "archiveSha256": "90edb8c0849c01600927bc5392a98b11546caf8ae6f98e00185345300551e5f4",
+      "bytes": 16470
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-01.ps1",
+      "originalSha256": "44ea2f4df2419128584ff3654560d656c7f18418f87a7764b44d505483303b26",
+      "sanitizedSha256": "44ea2f4df2419128584ff3654560d656c7f18418f87a7764b44d505483303b26",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "04-release297-focus-wire-native-01.ps1.gz",
+      "archiveSha256": "5341014db7992d5b8d8d475634e4148bfd5639349c6076a694c1a5984d974164",
+      "bytes": 6416
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-01.log",
+      "originalSha256": "3d88816f86195d59e8b7a089e7c98c631023f8261d7b1cfd518a068e4323b90c",
+      "sanitizedSha256": "3d88816f86195d59e8b7a089e7c98c631023f8261d7b1cfd518a068e4323b90c",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "05-release297-focus-wire-native-01.log.gz",
+      "archiveSha256": "553eb12f47a573219afb50915017cb091eecfe4fc20149708094a1e6bee766cf",
+      "bytes": 534
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-02.ps1",
+      "originalSha256": "356befe38cfe7e30e4356806b391b40431a7d158514ab4b00bc3fe3bee3e6111",
+      "sanitizedSha256": "356befe38cfe7e30e4356806b391b40431a7d158514ab4b00bc3fe3bee3e6111",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "06-release297-focus-wire-native-02.ps1.gz",
+      "archiveSha256": "476ea8c74d1760ecfe003b853c6e56f1b3eb425ac1b82412687af50ede6c520c",
+      "bytes": 6224
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-02.log",
+      "originalSha256": "77af9cfb327a6f2dd0283119a1300441620b2ba28c874b7ae70ed0b95b94cbba",
+      "sanitizedSha256": "77af9cfb327a6f2dd0283119a1300441620b2ba28c874b7ae70ed0b95b94cbba",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "07-release297-focus-wire-native-02.log.gz",
+      "archiveSha256": "5b49f47d725ed7695c13b88179858a3674936390bf9a1ac5c9f319dc6f7a73a1",
+      "bytes": 213
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-checks-01\\build.log",
+      "originalSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "08-build.log.gz",
+      "archiveSha256": "7b815632ad782744ee751da4c60767569d39d630acfbba7ee98736c198aabf58",
+      "bytes": 42
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-checks-01\\casts.log",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "09-casts.log.gz",
+      "archiveSha256": "cd2f39cded365e2bac395668e0a1ddc1a823ada3063791ebed1c0595dbd2aea8",
+      "bytes": 181
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-checks-01\\results.json",
+      "originalSha256": "d6800a8d00c6f64fe9899a2fc04e439a7174b4cb3a4845985efe3bc8bc581db4",
+      "sanitizedSha256": "d6800a8d00c6f64fe9899a2fc04e439a7174b4cb3a4845985efe3bc8bc581db4",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "10-results.json.gz",
+      "archiveSha256": "2221d63798e6c87d837812959a96c887233fef02fd57a8ba2caf368ea0b6bc31",
+      "bytes": 54
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-checks-01\\test-types.log",
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "11-test-types.log.gz",
+      "archiveSha256": "823696517fe7a689aa90bca7d820bf1aeac6bb0184e3ef39a52b1bc003725f93",
+      "bytes": 204
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\cleanup.json",
+      "originalSha256": "66ed3d9d43ecd4a72528ee83d04c093aa65f582496b53cb3ddc8e253a1f274d6",
+      "sanitizedSha256": "66ed3d9d43ecd4a72528ee83d04c093aa65f582496b53cb3ddc8e253a1f274d6",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "12-cleanup.json.gz",
+      "archiveSha256": "b617761c783efca2ddc59e35e7cdfb2db42ca0bf5b1c53a1f896629eb83b24f7",
+      "bytes": 120
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\cleanup.log",
+      "originalSha256": "c2c328e1c896cd8cc8c56855cee713cb910c94c7e5aa21d4f50128ebdff1f02f",
+      "sanitizedSha256": "c2c328e1c896cd8cc8c56855cee713cb910c94c7e5aa21d4f50128ebdff1f02f",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "13-cleanup.log.gz",
+      "archiveSha256": "337d7eecce75ae07655725709ab3d924a4d07f34d602ee58c44e93feb14778ee",
+      "bytes": 37
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\container-create.log",
+      "originalSha256": "5c59954eb33e488eadba2790bd74f476361b000c75cffd616d4a1edbf9fdb8b1",
+      "sanitizedSha256": "5c59954eb33e488eadba2790bd74f476361b000c75cffd616d4a1edbf9fdb8b1",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "14-container-create.log.gz",
+      "archiveSha256": "c0b672ead19d9045eae6f2433c7996f18edede2947f73605e7386e3dc662a671",
+      "bytes": 66
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\execution.json",
+      "originalSha256": "ce268158561b714a32c6fa5da4ad80b6fcb892e05ac655eb73bc88a26e125575",
+      "sanitizedSha256": "ce268158561b714a32c6fa5da4ad80b6fcb892e05ac655eb73bc88a26e125575",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "15-execution.json.gz",
+      "archiveSha256": "86b92b235f7d7f730f063341a09a188ecc999f4658d56bfa0274c41e9e4a4b72",
+      "bytes": 562
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\restore.log",
+      "originalSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "16-restore.log.gz",
+      "archiveSha256": "71968f5d4654bdef7389e3768f58a00eb95eca4b25319d1122a4551ebefa1f02",
+      "bytes": 20912
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\restricted-role.log",
+      "originalSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "17-restricted-role.log.gz",
+      "archiveSha256": "cb246026c9eaa49f62003b18f6e9d8258ba0982ee1928eccbcb59f22717a0b57",
+      "bytes": 34
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\restricted.log",
+      "originalSha256": "f2ffd22a4ed11a8d15ec00550c57eb1e0b245e9e17889742ea573a44cf5ca5a8",
+      "sanitizedSha256": "f2ffd22a4ed11a8d15ec00550c57eb1e0b245e9e17889742ea573a44cf5ca5a8",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "18-restricted.log.gz",
+      "archiveSha256": "10188a2748f640cd83eddd16db6722f056467074e1340f6aada82b2c6ea3184d",
+      "bytes": 11240
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\source-after.json",
+      "originalSha256": "42361f4c31460040fe3fb3aea5cb5848a43a0b65ac9d56824296bfc3082c3e51",
+      "sanitizedSha256": "42361f4c31460040fe3fb3aea5cb5848a43a0b65ac9d56824296bfc3082c3e51",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "19-source-after.json.gz",
+      "archiveSha256": "b1b51b3ddbd9f0394f57bf97c2e437f05960376c2392a3884a19f666d5434315",
+      "bytes": 1008
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-wire-native-dbdd1791889c\\source-before.json",
+      "originalSha256": "42361f4c31460040fe3fb3aea5cb5848a43a0b65ac9d56824296bfc3082c3e51",
+      "sanitizedSha256": "42361f4c31460040fe3fb3aea5cb5848a43a0b65ac9d56824296bfc3082c3e51",
+      "sanitization": "Unchanged: inspected synthetic test output, nonsecret resource context and variable-only runner commands. No credentials or user content.",
+      "archive": "20-source-before.json.gz",
+      "archiveSha256": "b1b51b3ddbd9f0394f57bf97c2e437f05960376c2392a3884a19f666d5434315",
+      "bytes": 1008
+    }
+  ],
+  "supplemental": [
+    {
+      "path": "README.md",
+      "sha256": "5a8dbdcb219de7fed4f12b0104e8a69c01ec54bd871ddaa418ac535f964dc5ae"
+    },
+    {
+      "path": "packaged-source-verification.json",
+      "sha256": "8520a6e1d6d3f66d164babe4ce315c0239337ccf144c0d8e4d0444883055f517"
+    }
+  ]
+}

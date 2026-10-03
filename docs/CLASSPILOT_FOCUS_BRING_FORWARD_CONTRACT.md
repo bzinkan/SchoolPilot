@@ -143,6 +143,8 @@ New Focus adoption must distinguish rejection from later suspension/invalidation
 
 Extend classroom-state ACKs and the heartbeat's state-ACK projection with this bounded addition:
 
+The wire field is `focusStatus` on both surfaces. The provisional `focus` input alias is accepted when `focusStatus` is absent. If both fields are present, both must validate to the same status; malformed or conflicting fields are ignored as optional status and never replace the ordinary ACK's locked assignment, binding and revision validation. A malformed canonical field never falls back to the alias. Public teacher status continues to use its existing `focus` projection.
+
 ```ts
 type FocusAck =
   | { state: "inactive" }

@@ -1,0 +1,12 @@
+{
+  "recordedAt": "2026-10-03T13:50:12.534484+00:00",
+  "zipPath": "C:\\GitHub\\ClassPilot-release-297\\dist\\ClassPilot-v2.9.7.zip",
+  "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "version": "2.9.7",
+  "entry": "service-worker.js",
+  "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+  "fixtureSha256": "9366fc7cf50691ba18b729d92750f807ef737aaceca40437824042250838bc6b",
+  "heartbeatProducerSnippetByteEqual": true,
+  "websocketProducerFunctionByteEqual": true,
+  "extensionModified": false
+}
