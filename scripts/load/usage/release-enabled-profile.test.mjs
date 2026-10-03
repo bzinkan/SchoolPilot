@@ -92,7 +92,8 @@ function accepted() {
   const database = () => ({ acquisitions: { count: 2, failures: 0, maxMs: 10 }, statements: { select: { failures: 0, maxMs: 10 } } });
   return { sourceClean: true, sourceUnchangedAtFinish: true, processes: { api: 1, worker: 2, generator: 3 }, enabledCapabilitiesVerified: true,
     staffAuthenticationVerified: true, pools: { api: 16, session: 2, worker: 5 }, correctness: { passed: true, currentDayWorkers: [{ durationMs: 48_000, correct: true }, { durationMs: 5, correct: true }] },
-    phases: [{ name: 'combined', insertedObservations: 6000, api: { database: database() }, worker: { database: database() },
+    phases: [{ name: 'combined', insertedObservations: 6000, api: { database: database(),
+      operations: { operations: { heartbeat_background: { counters: { heartbeatOptionalTelemetryFailures: 0 } } } } }, worker: { database: database() },
       workers: [{ durationMs: 48_000, correct: true }, { durationMs: 23_000, correct: true }],
       traffic: { heartbeats: { accepted: true, expected: 6000, timings: { count: 6000, maxMs: 19999 } }, heartbeatStatuses: { 200: 6000 },
         reports: [1, 7, 30, 365].flatMap(days => [0, 1].flatMap(schoolIndex => ['school', 'grade', 'class', 'student'].flatMap(scope => [0, 1].map(() => ({ days, schoolIndex, scope, status: 200, correct: true, durationMs: 100 }))))), lifecycle: { passed: true } } }] };
@@ -110,6 +111,8 @@ test('release-enabled acceptance refuses successful workers masking failed/off/d
     r => r.phases[0].traffic.reports[0].durationMs = 20_000, r => r.phases[0].traffic.reports.pop(),
     r => r.phases[0].traffic.reports[0].days = 365, r => r.phases[0].traffic.reports[0].scope = 'school-only',
     r => r.phases[0].traffic.lifecycle.passed = false, r => r.phases[0].api.database.acquisitions.failures++,
+    r => r.phases[0].api.operations.operations.heartbeat_background.counters.heartbeatOptionalTelemetryFailures++,
+    r => delete r.phases[0].api.operations,
     r => r.phases[0].worker.database.acquisitions.failures++, r => r.phases[0].api.database.acquisitions.maxMs = 5001,
     r => r.phases[0].worker.database.acquisitions.count = 0,
     r => r.phases[0].worker.database.acquisitions.maxMs = 10001, r => r.phases[0].api.database.statements.select.failures++,
@@ -120,6 +123,15 @@ test('release-enabled acceptance refuses successful workers masking failed/off/d
     r => r.correctness.passed = false]) {
     const result = accepted(); corrupt(result); assert.ok(Object.values(capacityAcceptance(result)).some(value => !value));
   }
+});
+test('a cleared minute summary cannot hide an earlier optional telemetry failure', () => {
+  const result = accepted();
+  result.phases[0].api.hotPath = { counters: { heartbeatOptionalTelemetryFailures: 0 } };
+  assert.equal(capacityAcceptance(result).noOptionalTelemetryFailures, true);
+  result.phases[0].api.operations.operations.heartbeat_background.counters.heartbeatOptionalTelemetryFailures = 1;
+  assert.equal(capacityAcceptance(result).noOptionalTelemetryFailures, false);
+  delete result.phases[0].api.operations.operations.heartbeat_background.counters.heartbeatOptionalTelemetryFailures;
+  assert.equal(capacityAcceptance(result).noOptionalTelemetryFailures, false);
 });
 test('new profile preserves old workload and explicit fixed pool budgets', () => {
   assert.equal(RELEASE_ENABLED_PROFILE.httpOffering.requestsPerSecond, 100);

@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T03:59:34.877Z",
+  "source": {
+    "baseCommit": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+    "state": "Incremental uncommitted changes; not final acceptance",
+    "files": [
+      {
+        "file": "src/services/usageCapacityDiagnostics.ts",
+        "sha256": "ef503c5d7e1bf593f5b06b4ed6d3e96bafb67d41ecc95e1c81c38e18e4adb550"
+      },
+      {
+        "file": "src/routes/classpilot/devices.ts",
+        "sha256": "d8d22ab3ef5bcea883e0eef405d26702999db6e88f25aeb21504eac0355afba0"
+      },
+      {
+        "file": "scripts/load/usage/release-enabled-profile.mjs",
+        "sha256": "c6ff6ce713f1444b2b77e993fd7b2cd707e6fed5bc04744751a172ee0b60b1da"
+      },
+      {
+        "file": "scripts/load/usage/release-enabled-profile.test.mjs",
+        "sha256": "a7e7309bca8ad8ff0add5c1b8a2d9979c45f8e199aa3e276f8691f3729c9e6ea"
+      },
+      {
+        "file": "tests/usage-capacity-diagnostics.test.ts",
+        "sha256": "ad493ad737e7ec11c9898391a40481709420f05f6842fcf9d41b4866f51cf0f1"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-classification-delivery.test.ts",
+        "sha256": "f8c9852fe5300e24bddd6539a259fc00ec9dadfa875150adb65ceaabb97ea0b0"
+      },
+      {
+        "file": "scripts/load/usage/release-enabled-scale.mjs",
+        "sha256": "7b8d1d9bd5e9edf592d89ec9ed551be6acf3af606b995d85b43fa01508b604ab"
+      },
+      {
+        "file": "scripts/load/usage/release-enabled-process.mjs",
+        "sha256": "30cbe37ee514d729fe89a7a13cb7d815804b26ba1c1c6d3fd8915e82a963d478"
+      }
+    ]
+  },
+  "scope": "Optional foreground/classification telemetry failures now remain in fixed content-free phase diagnostics independently of resetting minute summaries. Combined acceptance requires exactly zero; absent data fails closed.",
+  "commands": {
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test tests/usage-capacity-diagnostics.test.ts tests/classpilot-heartbeat-classification-delivery.test.ts",
+    "loadGuards": "node --test tests/private-load-usage-profiles.test.mjs"
+  },
+  "results": {
+    "firstFocused": {
+      "pass": 13,
+      "fail": 1,
+      "note": "New fixture incorrectly expected cleared sparse minute counter to be 0; actual contract returns undefined. Assertion corrected to undefined; phase counter assertions unchanged."
+    },
+    "focused": {
+      "pass": 14,
+      "fail": 0,
+      "skip": 0
+    },
+    "loadGuards": {
+      "pass": 49,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  "phaseBoundary": "Existing API diagnostics reset before offered traffic; traffic settles and classification producers drain before API snapshot. No harness workload, timeout, pool or performance threshold changed.",
+  "productionMutations": 0,
+  "records": [
+    {
+      "file": "release297-optional-telemetry-phase-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-optional-telemetry-phase-01.log",
+      "rawSha256": "cb2a4407278430f896d7b6b4d4519034abee8e8627b31e3a196981171a153efe",
+      "sanitizedSha256": "cb2a4407278430f896d7b6b4d4519034abee8e8627b31e3a196981171a153efe",
+      "gzipSha256": "6929542c661bcfad237fdf9c95bea40327c5c34971a6deee6cbbe80dc4f07ac8"
+    },
+    {
+      "file": "release297-optional-telemetry-phase-02.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-optional-telemetry-phase-02.log",
+      "rawSha256": "11aac87ad064046ade3dfa3ac0ab18b45d5063554283393e667606ea5fe8fc4f",
+      "sanitizedSha256": "11aac87ad064046ade3dfa3ac0ab18b45d5063554283393e667606ea5fe8fc4f",
+      "gzipSha256": "b5ad255d2022e13675837914dcf774bd4ab308780a9a98afde349d54c1a0c40c"
+    },
+    {
+      "file": "release297-optional-telemetry-load-guards-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-optional-telemetry-load-guards-01.log",
+      "rawSha256": "25a310643745b45962c40278c367f4806b7df38234bc32b078e44c887564e921",
+      "sanitizedSha256": "25a310643745b45962c40278c367f4806b7df38234bc32b078e44c887564e921",
+      "gzipSha256": "7745037974b46222091a5ba9e88d68e7d8b24acd9cea2133d9b1535d0f5570ca"
+    }
+  ]
+}

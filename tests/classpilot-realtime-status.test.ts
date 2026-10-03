@@ -40,6 +40,20 @@ function heartbeat(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ClassPilot cluster-safe realtime status", () => {
+  it("stores an already persisted classification in the first complete snapshot", async () => {
+    const store = createClasspilotRealtimeStatusStore(async () => undefined, () => 1_000_000);
+    const classification = { category: "educational", contentCategory: "Education", teacherIntentSource: null, safetyAlert: null };
+    const result = await store.write(heartbeat({ aiClassification: classification, classificationPending: false }));
+    assert.deepEqual(result.snapshot?.aiClassification, classification);
+    assert.equal(result.snapshot?.classificationPending, false);
+    const read = store.readLocal(binding.schoolId, [binding]).get(binding.studentId);
+    assert.equal(read?.status, "hit");
+    if (read?.status === "hit") assert.deepEqual(read.snapshot.aiClassification, classification);
+    const next = await store.write(heartbeat({ heartbeatId: "unknown-next", observedAt: 1_000_001 }));
+    assert.equal(next.snapshot?.classificationPending, true);
+    assert.equal(next.snapshot?.aiClassification, undefined, "new unknown page must not inherit prior classification");
+  });
+
   it("builds heartbeat fallback status from Date, string, and numeric timestamps", () => {
     const now = Date.parse("2026-08-25T13:20:00.000Z");
     const observedAt = now - 30_000;

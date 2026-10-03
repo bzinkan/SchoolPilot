@@ -10492,6 +10492,10 @@ export async function createHeartbeatAndRefreshPresence(
       id: string;
       studentEmail: string;
       timestamp: Date;
+      aiCategory?: string | null;
+      contentCategory?: string | null;
+      teacherIntentSource?: string | null;
+      safetyAlert?: string | null;
       authKind: StudentSessionAuthKind;
       authorityExpiresAt: Date | null;
       leaseRenewed: boolean;
@@ -10565,7 +10569,11 @@ export async function createHeartbeatAndRefreshPresence(
         camera_active,
         extension_version,
         chrome_version,
-        screenshot_health
+        screenshot_health,
+        ai_category,
+        content_category,
+        teacher_intent_source,
+        safety_alert
       )
       SELECT
         ${data.deviceId},
@@ -10582,9 +10590,13 @@ export async function createHeartbeatAndRefreshPresence(
         ${data.cameraActive ?? false},
         ${data.extensionVersion ?? null},
         ${data.chromeVersion ?? null},
-        ${screenshotHealthJson}::jsonb
+        ${screenshotHealthJson}::jsonb,
+        ${data.aiCategory ?? null},
+        ${data.contentCategory ?? null},
+        ${data.teacherIntentSource ?? null},
+        ${data.safetyAlert ?? null}
       FROM eligible_session
-      RETURNING id, student_email, timestamp
+      RETURNING id, student_email, timestamp, ai_category, content_category, teacher_intent_source, safety_alert
     ),
     refreshed_device AS (
       UPDATE devices
@@ -10631,6 +10643,10 @@ export async function createHeartbeatAndRefreshPresence(
       id,
       student_email,
       timestamp,
+      ai_category,
+      content_category,
+      teacher_intent_source,
+      safety_alert,
       (SELECT auth_kind FROM eligible_session LIMIT 1) AS auth_kind,
       COALESCE(
         (SELECT manual_lease_expires_at FROM refreshed_session LIMIT 1),
@@ -10661,6 +10677,10 @@ export async function createHeartbeatAndRefreshPresence(
       NULL::varchar AS id,
       NULL::text AS student_email,
       NULL::timestamp AS timestamp,
+      NULL::text AS ai_category,
+      NULL::text AS content_category,
+      NULL::text AS teacher_intent_source,
+      NULL::text AS safety_alert,
       NULL::text AS auth_kind,
       NULL::timestamptz AS authority_expires_at,
       false AS lease_renewed
@@ -10672,6 +10692,10 @@ export async function createHeartbeatAndRefreshPresence(
     id?: unknown;
     student_email?: unknown;
     timestamp?: unknown;
+    ai_category?: unknown;
+    content_category?: unknown;
+    teacher_intent_source?: unknown;
+    safety_alert?: unknown;
     auth_kind?: unknown;
     authority_expires_at?: unknown;
     lease_renewed?: unknown;
@@ -10696,6 +10720,18 @@ export async function createHeartbeatAndRefreshPresence(
   if (Number.isNaN(timestamp.getTime())) {
     throw new Error("Heartbeat insert returned an invalid timestamp");
   }
+  const classification: Record<"aiCategory" | "contentCategory" | "teacherIntentSource" | "safetyAlert", string | null> = {
+    aiCategory: null, contentCategory: null, teacherIntentSource: null, safetyAlert: null,
+  };
+  for (const [key, value] of [
+    ["aiCategory", row.ai_category], ["contentCategory", row.content_category],
+    ["teacherIntentSource", row.teacher_intent_source], ["safetyAlert", row.safety_alert],
+  ] as const) {
+    if (value !== null && typeof value !== "string") {
+      throw new Error("Heartbeat insert returned invalid classification metadata");
+    }
+    classification[key] = value;
+  }
   if (!(["legacy", "managed_profile", "manual_shared"] as const).includes(
     row.auth_kind as StudentSessionAuthKind
   )) {
@@ -10719,6 +10755,7 @@ export async function createHeartbeatAndRefreshPresence(
     // Realtime payloads historically normalize that optional value to "".
     studentEmail: row.student_email || "",
     timestamp,
+    ...classification,
     authKind: row.auth_kind as StudentSessionAuthKind,
     authorityExpiresAt,
     leaseRenewed: row.lease_renewed === true,
@@ -16178,6 +16215,81 @@ export async function getActiveClassOwnerForStudent(
 ): Promise<ActiveClassOwner | undefined> {
   const [owner] = await getActiveClassOwnersForStudents(schoolId, [studentId], dbInstance);
   return owner;
+}
+
+/**
+ * Fresh discovery for callers that already hold their authority locks. Keep
+ * those locks in earlier statements: a projection started before a lock wait
+ * would retain the earlier statement snapshot. This is not an authority cache.
+ * The ordinary helpers remain the reference for the exact legacy/frozen roster
+ * predicates and JS timestamp/id ranking; neither path applies time windows.
+ */
+export async function getClasspilotTelemetryOwnerProjection(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute"> = db,
+): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
+  const result = await dbInstance.execute<{
+    hasActiveSupervision: boolean;
+    id: string | null;
+    controlUpdatedAt: string | null;
+    startTime: string | null;
+    createdAt: string | null;
+  }>(sql`
+    WITH owner_candidates AS (
+      SELECT session.id, session.control_updated_at, session.start_time, session.created_at
+      FROM ${classpilotSessionStudents} roster
+      INNER JOIN ${teachingSessions} session ON session.id=roster.teaching_session_id
+        AND session.session_mode=${LIVE_TEACHING_SESSION_MODE}
+        AND session.roster_snapshot_completed_at IS NOT NULL AND session.end_time IS NULL
+      INNER JOIN ${groups} owner_group ON owner_group.id=session.group_id
+      WHERE roster.school_id=${schoolId} AND roster.student_id=${studentId}
+        AND owner_group.school_id=${schoolId}
+      UNION ALL
+      SELECT session.id, session.control_updated_at, session.start_time, session.created_at
+      FROM ${groupStudents} roster
+      INNER JOIN ${groups} owner_group ON owner_group.id=roster.group_id
+      INNER JOIN ${teachingSessions} session ON session.group_id=owner_group.id
+        AND session.session_mode=${LIVE_TEACHING_SESSION_MODE}
+        AND session.roster_snapshot_completed_at IS NULL AND session.end_time IS NULL
+      WHERE owner_group.school_id=${schoolId} AND roster.student_id=${studentId}
+    )
+    SELECT EXISTS (
+      SELECT 1 FROM ${classpilotSupervisionStudents} assignment
+      INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assignment.context_id
+      INNER JOIN ${students} student ON student.id=assignment.student_id
+        AND student.school_id=${schoolId} AND student.status='active'
+      WHERE assignment.school_id=${schoolId} AND assignment.student_id=${studentId}
+        AND assignment.released_at IS NULL AND context.school_id=${schoolId}
+        AND context.status='active' AND context.starts_at<=now() AND context.ends_at>now()
+    ) AS "hasActiveSupervision", owner.id, owner.control_updated_at AS "controlUpdatedAt",
+      owner.start_time AS "startTime", owner.created_at AS "createdAt"
+    FROM (SELECT 1) anchor LEFT JOIN owner_candidates owner ON true
+  `);
+  const candidates = result.rows.flatMap(row => {
+    if (row.id === null) return [];
+    if (row.startTime === null || row.createdAt === null) {
+      throw new TypeError("Telemetry owner candidate is missing required timestamps");
+    }
+    // Raw execute returns timestamp strings; use the same schema decoders as
+    // the existing select() helpers, including their millisecond precision.
+    return [{
+      id: row.id,
+      controlUpdatedAt: row.controlUpdatedAt === null ? null
+        : decodeHeartbeatControlTimestamp(teachingSessions.controlUpdatedAt, row.controlUpdatedAt),
+      startTime: decodeHeartbeatControlTimestamp(teachingSessions.startTime, row.startTime),
+      createdAt: decodeHeartbeatControlTimestamp(teachingSessions.createdAt, row.createdAt),
+    }];
+  }).sort((a, b) =>
+    (b.controlUpdatedAt || b.startTime).getTime() - (a.controlUpdatedAt || a.startTime).getTime()
+    || b.startTime.getTime() - a.startTime.getTime()
+    || b.createdAt.getTime() - a.createdAt.getTime()
+    || b.id.localeCompare(a.id)
+  );
+  return {
+    hasActiveSupervision: result.rows[0]?.hasActiveSupervision === true,
+    teachingSessionId: candidates[0]?.id,
+  };
 }
 
 export async function getTeachingSessionForStudent(
@@ -25083,21 +25195,14 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
   if (!candidate) return withReportingObservationRetention({ ...options,
     teachingSessionId: controlState.teachingSessionId }, studentAuthority, dbInstance);
 
-  // Drizzle transactions share one pg client. Keep these checks sequential so
-  // the authority projection remains compatible with pg@9's single-query rule.
-  const supervision = await getActiveSupervisionForStudents(
-    options.schoolId,
-    [options.studentId],
-    dbInstance
-  );
-  const owner = await getActiveClassOwnerForStudent(
+  const owner = await getClasspilotTelemetryOwnerProjection(
     options.schoolId,
     options.studentId,
     dbInstance
   );
   if (
-    supervision.length > 0
-    || owner?.session.id !== candidate.teachingSessionId
+    owner.hasActiveSupervision
+    || owner.teachingSessionId !== candidate.teachingSessionId
     || !candidate.rosterSnapshotCompletedAt
   ) {
     return studentAuthority;
@@ -25246,19 +25351,14 @@ export async function withClasspilotTeachingTelemetryAuthority<T>(options: {
     ) return undefined;
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
 
-    const [supervision] = await getActiveSupervisionForStudents(
-      options.schoolId,
-      [options.studentId],
-      transactionDb
-    );
-    if (supervision) return undefined;
-    const owner = await getActiveClassOwnerForStudent(
+    const owner = await getClasspilotTelemetryOwnerProjection(
       options.schoolId,
       options.studentId,
       transactionDb
     );
-    if (owner?.session.id !== options.teachingSessionId) {
-      if (owner || !options.allowReportingObservation || options.actorId) return undefined;
+    if (owner.hasActiveSupervision) return undefined;
+    if (owner.teachingSessionId !== options.teachingSessionId) {
+      if (owner.teachingSessionId || !options.allowReportingObservation || options.actorId) return undefined;
       const observation = await withReportingObservationRetention(options, {
         authority: { kind: "student_session", controlRevision: controlState.revision },
         authorityStartedAt: new Date(0), authorityExpiresAt: null,

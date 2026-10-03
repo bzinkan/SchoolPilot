@@ -178,6 +178,8 @@ export type ClasspilotRealtimeWriteInput = {
   cameraActive?: unknown;
   screenshotHealth?: unknown;
   classificationPending?: boolean;
+  /** Classification already persisted by the server with this exact heartbeat. */
+  aiClassification?: ClasspilotRealtimeClassification;
   extensionVersion?: unknown;
   clientProtocolVersion?: unknown;
   acceptedCapabilities?: unknown;
@@ -858,6 +860,12 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
       cameraActive: input.cameraActive === true,
     },
     classificationPending: input.classificationPending === true,
+    ...(input.aiClassification ? { aiClassification: {
+      category: boundedString(input.aiClassification.category, 64),
+      contentCategory: optionalString(input.aiClassification.contentCategory, 64) ?? null,
+      teacherIntentSource: optionalString(input.aiClassification.teacherIntentSource, 64) ?? null,
+      safetyAlert: optionalString(input.aiClassification.safetyAlert, 64) ?? null,
+    } } : {}),
   };
   const favicon = normalizeFavicon(input.favicon);
   const activeFlightPathName = optionalString(input.activeFlightPathName, 256);

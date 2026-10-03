@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T04:03:24.935Z",
+  "status": "combined_checks_failed",
+  "scope": "Root-run combined backend build, test type/cast ratchets and complete unit lane after classification and telemetry corrections. No test rerun by archivist.",
+  "source": {
+    "head": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+    "state": "Uncommitted release changes included and byte-bound; later checkpoint/remote CI/capacity acceptance remains separate.",
+    "files": 1155,
+    "beforeAfterDeepEqual": true,
+    "runnerReportedUnchanged": true,
+    "beforeReceipt": "source-before.json.gz",
+    "afterReceipt": "source-after.json.gz"
+  },
+  "runner": {
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-06.ps1",
+    "startedAt": "2026-10-03T04:00:01.0859932Z",
+    "finishedAt": "2026-10-03T04:03:14.2786708Z",
+    "checks": [
+      {
+        "command": "npm run build",
+        "startedAt": "2026-10-03T04:00:01.0909529Z",
+        "finishedAt": "2026-10-03T04:00:47.4098751Z",
+        "exitCode": 0,
+        "log": "build.log"
+      },
+      {
+        "command": "npm run check:tests",
+        "startedAt": "2026-10-03T04:00:47.4144117Z",
+        "finishedAt": "2026-10-03T04:01:52.8691801Z",
+        "exitCode": 1,
+        "log": "check-tests.log"
+      },
+      {
+        "command": "npm run check:test-casts",
+        "startedAt": "2026-10-03T04:01:52.8741027Z",
+        "finishedAt": "2026-10-03T04:01:53.4370817Z",
+        "exitCode": 0,
+        "log": "check-test-casts.log"
+      },
+      {
+        "command": "npm run test:unit",
+        "startedAt": "2026-10-03T04:01:53.4393377Z",
+        "finishedAt": "2026-10-03T04:03:13.9350358Z",
+        "exitCode": 0,
+        "log": "test-unit.log"
+      }
+    ],
+    "configuration": "DATABASE_URL absent, matching ordinary unit CI; individual unit fixtures configure their own imports",
+    "environment": {
+      "NODE_ENV": "test",
+      "SCHEDULER_ENABLED": "false",
+      "REDIS_URL": "empty",
+      "DATABASE_URL": "absent",
+      "DOTENV_CONFIG_PATH": "absent external dotenv"
+    }
+  },
+  "unit": {
+    "tests": 1773,
+    "pass": 1769,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 4,
+    "todo": 0
+  },
+  "conditionalSkips": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ],
+  "failedTapEntries": [],
+  "testTypeReceipt": [
+    "> schoolpilot-api@1.0.0 check:tests",
+    "> node scripts/check-test-types.mjs",
+    "",
+    "Test TypeScript debt increased:",
+    "tests/classpilot-telemetry-owner-projection.integration.test.ts#TS2352: 0 -> 1"
+  ],
+  "testCastReceipt": [
+    "> schoolpilot-api@1.0.0 check:test-casts",
+    "> node scripts/check-test-cast-ratchet.mjs",
+    "",
+    "Unsafe test cast ratchet OK: {\"asAny\":689,\"asUnknownAs\":7,\"tsIgnore\":0,\"tsExpectError\":0}"
+  ],
+  "limits": [
+    "Conditional cases are retained as skipped, never relabeled passed. Native owner/restricted evidence is separate.",
+    "This receipt establishes these local checks only; no final-source capacity result, browser acceptance, remote CI, deployment or activation is claimed.",
+    "All earlier failures and their evidence remain unchanged."
+  ],
+  "sanitization": "User-home paths, connection URLs and JWT-shaped values redacted; raw external originals unchanged. Every gzip round trip verified against sanitized bytes, with original/sanitized/archive hashes.",
+  "files": [
+    {
+      "file": "build.log.gz",
+      "originalSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "archiveSha256": "693976655c901e7c8d546795a1e39065e7494fd594ca48bf13366ea14b1916de",
+      "sourceBytes": 42,
+      "archiveBytes": 62,
+      "gzipVerified": true
+    },
+    {
+      "file": "check-test-casts.log.gz",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f",
+      "sourceBytes": 181,
+      "archiveBytes": 166,
+      "gzipVerified": true
+    },
+    {
+      "file": "check-tests.log.gz",
+      "originalSha256": "5db833ed0aa85eb736467e91ab563e41162fd7a5d47ce073cb8f39d2e026fbb9",
+      "sanitizedSha256": "5db833ed0aa85eb736467e91ab563e41162fd7a5d47ce073cb8f39d2e026fbb9",
+      "archiveSha256": "f65f7850dddd6e89df0dae941e990706a5c49a93e4486d3ba58ad6ac21fce526",
+      "sourceBytes": 191,
+      "archiveBytes": 166,
+      "gzipVerified": true
+    },
+    {
+      "file": "checks.json.gz",
+      "originalSha256": "65a741e9767d5d5d8c69078b20b879ca5cfbc4e7d63a48acbfbbaa40cf7600af",
+      "sanitizedSha256": "65a741e9767d5d5d8c69078b20b879ca5cfbc4e7d63a48acbfbbaa40cf7600af",
+      "archiveSha256": "54c61a4b300185d84bad0b6c9bee6aded4575f60ea1c1a95318d97a24409b0a5",
+      "sourceBytes": 803,
+      "archiveBytes": 257,
+      "gzipVerified": true
+    },
+    {
+      "file": "result.json.gz",
+      "originalSha256": "7a570de5228e51db9207f73c1d867113564c534fbf81595afa2c3f81532b0d7e",
+      "sanitizedSha256": "77bb9548cffa69d6ffe7e786e40ecfd4e458c9baa5b59824c89e6a77d0b46224",
+      "archiveSha256": "b4133faaef129f77be83557ebda86585727a2463642afc617b3c805859c643a8",
+      "sourceBytes": 1452,
+      "archiveBytes": 587,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "sanitizedSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "archiveSha256": "f0300f3a3b873fe6ee45e4bb11be2de1697508dac5758852b4e97e6a6e722551",
+      "sourceBytes": 174325,
+      "archiveBytes": 55307,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "sanitizedSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "archiveSha256": "f0300f3a3b873fe6ee45e4bb11be2de1697508dac5758852b4e97e6a6e722551",
+      "sourceBytes": 174325,
+      "archiveBytes": 55307,
+      "gzipVerified": true
+    },
+    {
+      "file": "test-unit.log.gz",
+      "originalSha256": "0f3a450b9bdc7d8874aff0090accdab1c351c4401f61df8b690fee4a31242ce5",
+      "sanitizedSha256": "0f3a450b9bdc7d8874aff0090accdab1c351c4401f61df8b690fee4a31242ce5",
+      "archiveSha256": "0d710e480dcf983e780ab24fd924e4f3f8410056f1c11d19739cc520264efe48",
+      "sourceBytes": 465401,
+      "archiveBytes": 78124,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-final-checks-06.ps1.gz",
+      "originalSha256": "7bbf05e64cc51f8e392bbcbb35a81c1a99566f16743f33a529bc9d76fda549ad",
+      "sanitizedSha256": "64f7013a4816f9a2da97ceea80855e80839b0870c562e825072326daff08a4bf",
+      "archiveSha256": "275df9dc4bf86867d0e7a766d64bfbbb2546ae79f552f95134019cbde40109b8",
+      "sourceBytes": 2531,
+      "archiveBytes": 1183,
+      "gzipVerified": true
+    }
+  ],
+  "manifestCorrection": {
+    "recordedAtUtc": "2026-10-03T04:04:40.068Z",
+    "reason": "Corrected skip extraction to match nested TAP # SKIP lines; original boundary-before-# regex incorrectly returned no entries.",
+    "rawLogUnchanged": true
+  }
+}

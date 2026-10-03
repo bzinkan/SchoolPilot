@@ -585,104 +585,124 @@ function classifyUnsafeSearch(url: string, domain: string): AiClassification | n
   }
 }
 
+function resolveImmediateUrlClassification(url: string, options: AiClassificationOptions) {
+  const domain = extractDomain(url);
+  const schoolDomain = normalizeDomainValue(options.schoolDomain);
+  const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${options.useAiFallback === false ? "off" : "on"}`;
+  const classify = (): AiClassification | null | undefined => {
+    // Unsafe searches are query-specific and must run before the domain cache,
+    // otherwise cached google.com = educational could hide a later risky search.
+    const unsafeSearch = classifyUnsafeSearch(url, domain);
+    if (unsafeSearch) return withBrowserClassificationExplanation(unsafeSearch);
+
+    const cached = classificationCache.get(cacheKey);
+    if (cached && Date.now() - cached.classifiedAt < CACHE_TTL_MS) {
+      return cached;
+    }
+
+    if (schoolDomain && domainMatches(domain, schoolDomain)) {
+      return cacheClassification(cacheKey, {
+        category: "educational",
+        safetyAlert: null,
+        domain,
+        classifiedAt: Date.now(),
+        matchedTerm: schoolDomain,
+        source: "school-domain",
+      });
+    }
+
+    // Generative-AI assistants — checked before the educational list so a
+    // Google-hosted assistant is not treated as educational via google.com.
+    const aiTool = findMatchingDomain(domain, KNOWN_AI_TOOLS);
+    if (aiTool) {
+      return cacheClassification(cacheKey, {
+        category: "non-educational",
+        safetyAlert: null,
+        domain,
+        classifiedAt: Date.now(),
+        matchedTerm: aiTool,
+        source: "ai-tool",
+      });
+    }
+
+    // Known domains — instant classification
+    const educational = findMatchingDomain(domain, KNOWN_EDUCATIONAL);
+    if (educational) {
+      const result: AiClassification = {
+        category: "educational",
+        safetyAlert: null,
+        domain,
+        classifiedAt: Date.now(),
+        matchedTerm: educational,
+        source: "known-list",
+      };
+      return cacheClassification(cacheKey, result);
+    }
+    const nonEducational = findMatchingDomain(domain, KNOWN_NON_EDUCATIONAL);
+    if (nonEducational) {
+      const result: AiClassification = {
+        category: "non-educational",
+        safetyAlert: null,
+        domain,
+        classifiedAt: Date.now(),
+        matchedTerm: nonEducational,
+        source: "known-list",
+      };
+      return cacheClassification(cacheKey, result);
+    }
+
+    // Known unsafe domains — instant safety alert
+    const unsafe = getUnsafeDomainMatch(domain);
+    if (unsafe) {
+      const result: AiClassification = {
+        category: "non-educational",
+        safetyAlert: unsafe.type,
+        domain,
+        classifiedAt: Date.now(),
+        matchedTerm: unsafe.domain,
+        source: "known-list",
+      };
+      return cacheClassification(cacheKey, result);
+    }
+
+    // Skip chrome-internal URLs
+    if (url.startsWith("chrome://") || url.startsWith("chrome-extension://") || url.startsWith("about:")) {
+      return null;
+    }
+
+    const reviewedCategory = reviewedContentCategoryForDomain(domain);
+    if (reviewedCategory) {
+      // Describing a site's content is independent of teacher intent. General
+      // news, finance, health and similar resources remain uncertain for task use.
+      const category = ["Gaming", "Social media", "Video", "Music", "Messaging", "Shopping", "Sports", "Entertainment", "Gambling"].includes(reviewedCategory)
+        ? "non-educational" : ["Education", "Reference", "Productivity"].includes(reviewedCategory) ? "educational" : "unknown";
+      return cacheClassification(cacheKey, { category, contentCategory: reviewedCategory, safetyAlert: null,
+        domain, classifiedAt: Date.now(), source: "known-list", matchedTerm: domain });
+    }
+    return undefined;
+  };
+  return { domain, cacheKey, classification: classify() };
+}
+
+/** The same canonical rules as classifyUrl, restricted to safe deterministic
+ * educational results that can be stored with the original heartbeat. */
+export function classifyImmediateEducationalUrl(
+  url: string,
+  options: AiClassificationOptions = {}
+): AiClassification | null {
+  const { classification } = resolveImmediateUrlClassification(url, options);
+  return classification?.category === "educational" && classification.safetyAlert === null
+    && (classification.source === "known-list" || classification.source === "school-domain")
+    ? classification : null;
+}
+
 export async function classifyUrl(
   url: string,
   title?: string,
   options: AiClassificationOptions = {}
 ): Promise<AiClassification | null> {
-  const domain = extractDomain(url);
-  const schoolDomain = normalizeDomainValue(options.schoolDomain);
-
-  // Unsafe searches are query-specific and must run before the domain cache,
-  // otherwise cached google.com = educational could hide a later risky search.
-  const unsafeSearch = classifyUnsafeSearch(url, domain);
-  if (unsafeSearch) return withBrowserClassificationExplanation(unsafeSearch);
-
-  const cacheKey = `domain|${BROWSER_SAFETY_RULESET_VERSION}|${CONTENT_CATEGORY_RULESET_VERSION}|${domain}|school:${schoolDomain || ""}|ai:${options.useAiFallback === false ? "off" : "on"}`;
-  const cached = classificationCache.get(cacheKey);
-  if (cached && Date.now() - cached.classifiedAt < CACHE_TTL_MS) {
-    return cached;
-  }
-
-  if (schoolDomain && domainMatches(domain, schoolDomain)) {
-    return cacheClassification(cacheKey, {
-      category: "educational",
-      safetyAlert: null,
-      domain,
-      classifiedAt: Date.now(),
-      matchedTerm: schoolDomain,
-      source: "school-domain",
-    });
-  }
-
-  // Generative-AI assistants — checked before the educational list so a
-  // Google-hosted assistant is not treated as educational via google.com.
-  const aiTool = findMatchingDomain(domain, KNOWN_AI_TOOLS);
-  if (aiTool) {
-    return cacheClassification(cacheKey, {
-      category: "non-educational",
-      safetyAlert: null,
-      domain,
-      classifiedAt: Date.now(),
-      matchedTerm: aiTool,
-      source: "ai-tool",
-    });
-  }
-
-  // Known domains — instant classification
-  const educational = findMatchingDomain(domain, KNOWN_EDUCATIONAL);
-  if (educational) {
-    const result: AiClassification = {
-      category: "educational",
-      safetyAlert: null,
-      domain,
-      classifiedAt: Date.now(),
-      matchedTerm: educational,
-      source: "known-list",
-    };
-    return cacheClassification(cacheKey, result);
-  }
-  const nonEducational = findMatchingDomain(domain, KNOWN_NON_EDUCATIONAL);
-  if (nonEducational) {
-    const result: AiClassification = {
-      category: "non-educational",
-      safetyAlert: null,
-      domain,
-      classifiedAt: Date.now(),
-      matchedTerm: nonEducational,
-      source: "known-list",
-    };
-    return cacheClassification(cacheKey, result);
-  }
-
-  // Known unsafe domains — instant safety alert
-  const unsafe = getUnsafeDomainMatch(domain);
-  if (unsafe) {
-    const result: AiClassification = {
-      category: "non-educational",
-      safetyAlert: unsafe.type,
-      domain,
-      classifiedAt: Date.now(),
-      matchedTerm: unsafe.domain,
-      source: "known-list",
-    };
-    return cacheClassification(cacheKey, result);
-  }
-
-  // Skip chrome-internal URLs
-  if (url.startsWith("chrome://") || url.startsWith("chrome-extension://") || url.startsWith("about:")) {
-    return null;
-  }
-
-  const reviewedCategory = reviewedContentCategoryForDomain(domain);
-  if (reviewedCategory) {
-    // Describing a site's content is independent of teacher intent. General
-    // news, finance, health and similar resources remain uncertain for task use.
-    const category = ["Gaming", "Social media", "Video", "Music", "Messaging", "Shopping", "Sports", "Entertainment", "Gambling"].includes(reviewedCategory)
-      ? "non-educational" : ["Education", "Reference", "Productivity"].includes(reviewedCategory) ? "educational" : "unknown";
-    return cacheClassification(cacheKey, { category, contentCategory: reviewedCategory, safetyAlert: null,
-      domain, classifiedAt: Date.now(), source: "known-list", matchedTerm: domain });
-  }
+  const { domain, cacheKey, classification: immediateClassification } = resolveImmediateUrlClassification(url, options);
+  if (immediateClassification !== undefined) return immediateClassification;
 
   if (!GEMINI_API_KEY || options.useAiFallback === false) {
     return cacheClassification(cacheKey, {

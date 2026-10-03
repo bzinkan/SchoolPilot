@@ -5,9 +5,22 @@ import {
   recordUsageCapacityCounter, recordUsageCapacityTiming, resetUsageCapacityDiagnostics,
   runWithUsageCapacityOperation, startUsageCapacityCheckout,
 } from "../src/services/usageCapacityDiagnostics.js";
+import { recordHeartbeatHotPathCounter, snapshotHeartbeatHotPathMetrics } from "../src/services/heartbeatHotPathMetrics.js";
 
 describe("bounded content-free capacity diagnostics", () => {
   beforeEach(resetUsageCapacityDiagnostics);
+
+  it("retains optional telemetry failures across minute summaries until explicit phase reset", () => {
+    recordUsageCapacityCounter("heartbeatOptionalTelemetryFailures", "heartbeat_background");
+    recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures");
+    snapshotHeartbeatHotPathMetrics({ reset: true });
+    assert.equal(snapshotHeartbeatHotPathMetrics().counters.heartbeatOptionalTelemetryFailures, undefined);
+    assert.equal(getUsageCapacityDiagnostics().operations.heartbeat_background!.counters.heartbeatOptionalTelemetryFailures, 1);
+    recordUsageCapacityCounter("heartbeatOptionalTelemetryFailures", "heartbeat_background");
+    assert.equal(getUsageCapacityDiagnostics().operations.heartbeat_background!.counters.heartbeatOptionalTelemetryFailures, 2);
+    resetUsageCapacityDiagnostics();
+    assert.equal(getUsageCapacityDiagnostics().operations.heartbeat_background!.counters.heartbeatOptionalTelemetryFailures, 0);
+  });
 
   it("isolates concurrent async owners and records failure duration without changing errors", async () => {
     const failure = new Error("private detail must not enter diagnostics");

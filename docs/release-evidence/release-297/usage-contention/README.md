@@ -3,6 +3,61 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+[Combined attempt 05](load-combined-05/manifest.json), on clean source
+`59f0e43110779b298df51cdba9ef7ff3de22e6a4`, failed: 1,592 of 6,000 heartbeat
+offers succeeded, 2,534 started requests failed and 1,874 offers reached the
+in-flight ceiling. Reports passed 25/64. Both bulk workers returned correct
+totals in 18.935/41.883 seconds including queueing. The API recorded 3,140
+connection-acquisition failures. It persisted 3,353 observations, a separate
+count from successfully acknowledged requests. The first classroom command
+failed with HTTP 500, and 272 unexpected classifications stopped the current-day
+oracle. Canonical control preparation now exercises actual classroom telemetry;
+this is not a controlled comparison isolating the preceding heartbeat projection.
+Background telemetry held 4,861 leases and ran 58,140 statements. Inspection found
+that awaited optional publication can prevent historical classification from
+being registered after persistence; individual affected rows cannot be recovered
+from the removed fixture. The strict oracle remains unchanged. All original
+evidence is retained and no capacity pass is claimed.
+
+The [CI record for that same source](ci-59f0e431.json) passed all four required
+workflows and all 17 CI jobs. It does not replace the failed load acceptance.
+The [fresh owner-projection proof](telemetry-owner-projection/manifest.json)
+records 11 passing owner and 11 passing restricted-role cases, including actual
+lock waits, cross-school isolation and canonical helper equivalence. It reduces
+discovery from three statements to one and separately verifies atomic initial
+classification fields. The tiny-fixture EXPLAIN record is not capacity evidence.
+All earlier fixture failures are retained.
+
+The [classification and ordering correction](classification-delivery-immediate/manifest.json)
+preserves the original failing cases and 47 passing focused checks. An independent
+47-case differential agrees with the prior canonical classifier. Historical
+classification is registered before optional publication, and current effects
+wait until the full foreground update has settled. Only server-derived,
+deterministic educational results without safety alerts are stored with the
+original INSERT; its returned fields must confirm persistence before asynchronous
+work is skipped. Other classifications retain their safety and authority checks.
+The [compatible correctness-only backport](rollback-classification-correctness/manifest.json)
+is pushed as `ed5599de0191b4b9961ed907586e1fc153ebd63b`: 24 focused tests and
+build/type/cast checks pass. It excludes the performance changes. Neither source
+has completed the next combined capacity run or final artifact rehearsal.
+
+The [cumulative telemetry gate](optional-telemetry-phase-counter/manifest.json)
+requires zero optional publication failures across the whole load phase. Minute
+summary resets cannot clear this evidence, and missing counters fail acceptance.
+All three publication failure paths are covered; 14 focused checks and 49 load
+guards pass. Offered traffic, pool limits, timeouts and report ranges are unchanged.
+
+[Combined checks, attempt 06](combined-checks-attempt-06/manifest.json) records
+the successful production build, cast check and full unit suite: 1,769 passed,
+zero failed, four explicitly named conditional skips. All 1,155 source-file hashes
+matched before and after. The overall attempt remains failed because the new
+native test asserted a transaction as a pool-bearing database type. Its separate
+test-only typing correction and native rerun do not rewrite that failed record.
+The [type/native follow-up](telemetry-owner-projection-type-followup/manifest.json)
+passes the type/cast checks and repeats all 11 owner and 11 restricted cases.
+Its source comparison confirms only that RLS-lane test changed; application
+bytes and every unit-selected test are identical to the passing build/unit run.
+
 The [latest combined unit and TypeScript checks](combined-checks-attempt-05/manifest.json)
 follow the Stop Focus transport correction: 1,752 passes, zero failures and four
 named conditional skips, with all 1,152 source files unchanged during the run.

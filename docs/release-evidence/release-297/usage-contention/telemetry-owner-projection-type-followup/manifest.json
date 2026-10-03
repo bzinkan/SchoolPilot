@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T04:07:08.460Z",
+  "source": {
+    "baseCommit": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+    "state": "Incremental test-only repair; production source unchanged from combined06",
+    "comparison": "source-equivalence.json",
+    "sourceCurrent": "source-current.json"
+  },
+  "originalFailure": {
+    "archive": "../combined-checks-attempt-06/manifest.json",
+    "manifestSha256": "b7f176e6a31301a6c1fde631ceda40dc1832010d05354f24f3b12485a8645ebf",
+    "status": "failed",
+    "reason": "TS2352 from direct transaction-to-pool-bearing database assertion. Build and unit passed; full unit 1769 pass,4 conditional skips,0 failures."
+  },
+  "repair": "Test-only Object.assign(tx,{$client:pool}) satisfies the existing database type structurally; real transaction methods and physical lease remain unchanged. No unsafe cast/debt baseline changes.",
+  "commands": {
+    "types": "npm run check:tests",
+    "casts": "npm run check:test-casts",
+    "native": "pwsh -NoProfile -File $env:TEMP/release297-telemetry-projection-native.ps1",
+    "test": "node scripts/load/usage/bounded-fixture-step.mjs 120000 --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-telemetry-owner-projection.integration.test.ts"
+  },
+  "results": {
+    "types": {
+      "exitCode": 0,
+      "existingTestDiagnostics": 438,
+      "baselineMaximum": 534,
+      "sourceErrors": 0
+    },
+    "casts": {
+      "exitCode": 0,
+      "asAny": 689,
+      "asUnknownAs": 7,
+      "tsIgnore": 0,
+      "tsExpectError": 0
+    },
+    "owner": {
+      "tests": 11,
+      "pass": 11,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "restricted": {
+      "tests": 11,
+      "pass": 11,
+      "fail": 0,
+      "skipped": 0,
+      "cancelled": 0
+    },
+    "nativeExecution": {
+      "ownerExit": 0,
+      "restrictedExit": 0,
+      "source": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+      "worktreeDirty": true,
+      "container": "schoolpilot-telemetry-projection-efc75877e747",
+      "database": "telemetry_projection_efc75877e747",
+      "schemaSource": "Combined04 exact post-convergence schema-only dump",
+      "schemaRawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "productionMutations": 0,
+      "sourceExecution": "tsx",
+      "sharedDistRebuilt": false
+    },
+    "ownedSourceUnchangedDuringNative": true,
+    "unitNotRepeatedReason": "Only the native fixture adapter changed; the lane script and every source selected by unit, plus all production/build inputs, match successful run06 receipts."
+  },
+  "sourceEquivalenceSha256": "dc8e7a9d3e89555f0ea3b7b42b3c80133f50567676c4776c0820a480587acd3d",
+  "sourceCurrentSha256": "7c44aa3da4cbbeaf82f794c3893dd0e5c2a9210e82dfd7711d47a6b5f51f4776",
+  "limits": [
+    "Owner lane is not an RLS proof; restricted role independently verifies forced RLS and cross-school denial.",
+    "Full build/unit were not repeated: exact 1155-file receipts prove production/unit bytes unchanged; only excluded native fixture changed.",
+    "This repair does not establish capacity acceptance, final-source CI, production catalog or live deployment readiness."
+  ],
+  "records": [
+    {
+      "file": "failed-combined06-result.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-contention-final-checks-06\\result.json",
+      "rawSha256": "7a570de5228e51db9207f73c1d867113564c534fbf81595afa2c3f81532b0d7e",
+      "sanitizedSha256": "7a570de5228e51db9207f73c1d867113564c534fbf81595afa2c3f81532b0d7e",
+      "gzipSha256": "26b4a8c4137d6dd20d92a408b30462b1c174e121bc78c5b6df2db1216f79ba6f"
+    },
+    {
+      "file": "failed-combined06-check-tests.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-contention-final-checks-06\\check-tests.log",
+      "rawSha256": "5db833ed0aa85eb736467e91ab563e41162fd7a5d47ce073cb8f39d2e026fbb9",
+      "sanitizedSha256": "5db833ed0aa85eb736467e91ab563e41162fd7a5d47ce073cb8f39d2e026fbb9",
+      "gzipSha256": "f65f7850dddd6e89df0dae941e990706a5c49a93e4486d3ba58ad6ac21fce526"
+    },
+    {
+      "file": "failed-combined06-source-before.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-contention-final-checks-06\\source-before.json",
+      "rawSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "sanitizedSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "gzipSha256": "f0300f3a3b873fe6ee45e4bb11be2de1697508dac5758852b4e97e6a6e722551"
+    },
+    {
+      "file": "failed-combined06-source-after.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-contention-final-checks-06\\source-after.json",
+      "rawSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "sanitizedSha256": "2294c2f5f980e343c443e2a2dc2305c85165e989a2a453602a0947598b7f85c0",
+      "gzipSha256": "f0300f3a3b873fe6ee45e4bb11be2de1697508dac5758852b4e97e6a6e722551"
+    },
+    {
+      "file": "native07-owner.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\owner.log",
+      "rawSha256": "9775a74e818eab1908212442ccee8c4354f34ee2739c6e3ee98a3d51033eb994",
+      "sanitizedSha256": "9775a74e818eab1908212442ccee8c4354f34ee2739c6e3ee98a3d51033eb994",
+      "gzipSha256": "ca573c069e92216c0af5c3a8ef92e14a518293b01dbaa69615746b2dfe59d15d"
+    },
+    {
+      "file": "native07-restricted.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\restricted.log",
+      "rawSha256": "ebdb85d7e5d071ebe8a6f73ec5c4a33db6aa85248b1c38111f01ff91fc5c4ed7",
+      "sanitizedSha256": "ebdb85d7e5d071ebe8a6f73ec5c4a33db6aa85248b1c38111f01ff91fc5c4ed7",
+      "gzipSha256": "c8b6916dd76dfb7902c7eaea2c0670b88c9b7031fa9056d7321134ca2642eb11"
+    },
+    {
+      "file": "native07-execution.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\execution.json",
+      "rawSha256": "d237fcbdadad9bd53a1ec9a54650fd6c7434e1b91aff2862cfc8cde7c9f1480c",
+      "sanitizedSha256": "d237fcbdadad9bd53a1ec9a54650fd6c7434e1b91aff2862cfc8cde7c9f1480c",
+      "gzipSha256": "537214564b107b17478a2b2ffb9d6b92d4c88eac6b9a2933540e0c4bf6817857"
+    },
+    {
+      "file": "native07-source-before.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\source-before.json",
+      "rawSha256": "283ff3ccfe5c54ff148632645bf1275366acb399e6762c89711ce4a5809d1974",
+      "sanitizedSha256": "283ff3ccfe5c54ff148632645bf1275366acb399e6762c89711ce4a5809d1974",
+      "gzipSha256": "fa2696fbb4e9d1046417299fc9e264231ac19fc61f47419ace22323f0c1ca2b8"
+    },
+    {
+      "file": "native07-source-after.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\source-after.json",
+      "rawSha256": "283ff3ccfe5c54ff148632645bf1275366acb399e6762c89711ce4a5809d1974",
+      "sanitizedSha256": "283ff3ccfe5c54ff148632645bf1275366acb399e6762c89711ce4a5809d1974",
+      "gzipSha256": "fa2696fbb4e9d1046417299fc9e264231ac19fc61f47419ace22323f0c1ca2b8"
+    },
+    {
+      "file": "native07-cleanup.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\cleanup.log",
+      "rawSha256": "8840e70e57afd8cf41432f942337cb0f0167dd9e46ddc1a6910bdeb30d6a5548",
+      "sanitizedSha256": "8840e70e57afd8cf41432f942337cb0f0167dd9e46ddc1a6910bdeb30d6a5548",
+      "gzipSha256": "4786064b2d963897d179ef4eae2e05f48ab6f6770881e5fe1906ef694cad9b78"
+    },
+    {
+      "file": "native07-container-create.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\container-create.log",
+      "rawSha256": "58d31fb2439fd961762820d12abcbb45b786b4d2d8e302ae9a01aa78f22c09b5",
+      "sanitizedSha256": "58d31fb2439fd961762820d12abcbb45b786b4d2d8e302ae9a01aa78f22c09b5",
+      "gzipSha256": "e53a6ff1517a70913157ad2da39992cb72f8ed37632db63578fc0bad12dfc9de"
+    },
+    {
+      "file": "native07-restore.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0"
+    },
+    {
+      "file": "native07-restricted-role.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-efc75877e747\\restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d"
+    },
+    {
+      "file": "release297-telemetry-projection-testtypes-02.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-testtypes-02.log",
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350"
+    },
+    {
+      "file": "release297-telemetry-projection-casts-02.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-casts-02.log",
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "gzipSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f"
+    },
+    {
+      "file": "release297-telemetry-projection-native-07.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-07.log",
+      "rawSha256": "36988c397293333022dda73dfff124ccde857f5146124d2c05bb10e440b6e8f0",
+      "sanitizedSha256": "36988c397293333022dda73dfff124ccde857f5146124d2c05bb10e440b6e8f0",
+      "gzipSha256": "4b302c18fad50e6bbb35690a0b60ca5f5824c1587740a2a4c6f0b7bcbfdb9cf0"
+    },
+    {
+      "file": "release297-telemetry-projection-native.ps1.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native.ps1",
+      "rawSha256": "9e5681e96daacf18e137a4b156ae5941e994296e5655882dfeafb48bcd95d1ed",
+      "sanitizedSha256": "9e5681e96daacf18e137a4b156ae5941e994296e5655882dfeafb48bcd95d1ed",
+      "gzipSha256": "397ce960903a879f6e6b784d276441b854d459f12ea714e632ba610543ba1623"
+    }
+  ]
+}

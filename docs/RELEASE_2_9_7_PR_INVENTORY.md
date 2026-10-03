@@ -21,7 +21,11 @@ The later [8069560d CI checkpoint](release-evidence/release-297/usage-contention
 
 The [release-enabled preflight at `5a2c0996`](release-evidence/release-297/usage-contention/load-preflight-5a2c0996-01/manifest.json) exposed a real Stop Focus delivery defect after canonical fixture preparation succeeded. The server omitted the full V2 binding after clearing the final feature-gated restriction. The [narrow server correction](release-evidence/release-297/usage-contention/stop-focus-v2-cleanup/manifest.json) preserves strict harness checks and the unchanged ClassPilot 2.9.7 package. Produced-frame regressions, exact extension authority checks and restricted-role cleanup tests pass. [Combined unit verification](release-evidence/release-297/usage-contention/combined-checks-attempt-05/manifest.json) passed 1,752 cases with four named conditional skips on 1,152 unchanged source files. New-head CI, combined capacity and final artifacts remain pending.
 
-The separately prepared fallback source is now `ff94f21e6cc91075e7e82f0d28b434ef43f4a118`
+The [CI checkpoint at `59f0e431`](release-evidence/release-297/usage-contention/ci-59f0e431.json) passed all four required workflows, including all 17 CI jobs. Its [combined capacity attempt 05](release-evidence/release-297/usage-contention/load-combined-05/manifest.json) nevertheless failed: 1,592/6,000 heartbeat successes, 25/64 successful reports and 3,140 API acquisition failures. Both workers met the 48-second bound. Canonical classroom ownership now exercises telemetry that the earlier incomplete fixture missed; this is not a controlled performance comparison. The strict current-day oracle also rejected 272 unclassified observations. Subsequent corrections register historical classification before optional telemetry, preserve publication ordering, persist deterministic educational classification atomically, and reduce fresh owner discovery from three statements to one. Final combined verification and capacity acceptance remain required.
+
+The [latest combined checks](release-evidence/release-297/usage-contention/combined-checks-attempt-06/manifest.json) passed the production build, cast check and 1,769 unit tests, with four named conditional skips. The attempt retains its native-test typing failure. A [separate test-only repair](release-evidence/release-297/usage-contention/telemetry-owner-projection-type-followup/manifest.json) passes test types/casts and 11 owner plus 11 restricted cases; application bytes and unit-selected tests are unchanged. The [cumulative telemetry acceptance gate](release-evidence/release-297/usage-contention/optional-telemetry-phase-counter/manifest.json) adds 14 focused and 49 load-guard passes, with zero optional publication failures required over the entire phase. Capacity and new-head CI remain pending.
+
+The separately prepared fallback source at the Stop Focus checkpoint is `ff94f21e6cc91075e7e82f0d28b434ef43f4a118`
 on `codex/release297-compatible-rollback-sso`: the reviewed `08802d02` floor plus
 the private-chat/SSO lock-order correction, monitoring lease-reuse fix and
 [six narrow production dependency updates](release-evidence/release-297/usage-contention/production-dependency-audit/rollback-followup-manifest.json).
@@ -30,7 +34,13 @@ is historical. The [exact351 source image evidence](release-evidence/release-297
 retains both builds: the uncached second build installed the fixed Alpine libpng
 package and passed pinned Trivy with zero findings. The newly discovered Stop Focus
 exact-binding repair has its [narrow fallback backport](release-evidence/release-297/usage-contention/rollback-stop-focus/manifest.json): three regressions fail before and pass after, and type/build checks pass. A new exact image and final-schema re-entry remain required; the `351422d7` artifacts remain intermediate preparation.
-This fallback is not another merged source PR. Registry publication and production
+The newer compatible fallback is `ed5599de0191b4b9961ed907586e1fc153ebd63b`.
+Its [classification-delivery backport](release-evidence/release-297/usage-contention/rollback-classification-correctness/manifest.json)
+changes only the historical-classification/publication barrier, its fixed failure
+counter and regression. Five baseline failures are retained; 24 focused cases and
+build/type/cast checks pass. It does not include the performance projections or
+immediate-classification optimization. A new exact image and migration re-entry
+are still required. This fallback is not another merged source PR. Registry publication and production
 task bindings remain separate. Historical artifacts are retained.
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|

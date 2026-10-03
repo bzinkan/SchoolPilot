@@ -1,0 +1,837 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T03:25:56.960Z",
+  "status": "failed_combined_capacity_attempt",
+  "sourceRevision": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+  "sourceClean": true,
+  "sourceAtFinish": {
+    "revision": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+    "clean": true
+  },
+  "sourceUnchangedAtFinish": true,
+  "sourceHashes": {
+    "local-usage-scale.mjs": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd",
+    "prepare-release-control-ownership.mjs": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+    "release-enabled-generator.mjs": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0",
+    "release-enabled-instrumentation.mjs": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+    "release-enabled-postgres-pressure.mjs": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+    "release-enabled-process.mjs": "30cbe37ee514d729fe89a7a13cb7d815804b26ba1c1c6d3fd8915e82a963d478",
+    "release-enabled-profile.mjs": "45bc110e37b39b2536c1532d8f9ecaa33910621d52a8ad8ca5f5e190a99c2a4c",
+    "release-enabled-profile.test.mjs": "4fe983eee8aa55069bed7e46eae1f9b68453c1b58e70482534ecabcddc0b6477",
+    "release-enabled-protocol.mjs": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf",
+    "release-enabled-scale.mjs": "7b8d1d9bd5e9edf592d89ec9ed551be6acf3af606b995d85b43fa01508b604ab",
+    "run-release-enabled-scale.ps1": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384"
+  },
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-release-enabled-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory <TEMP>/release297-enabled-combined-05 -Phase combined",
+  "exitCode": 1,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "diagnosticOnly": false,
+  "startedAt": "2026-10-03T03:18:49.436Z",
+  "phaseDurationMs": 73172.4791,
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 4126,
+    "succeeded": 1592,
+    "failed": 2534,
+    "refusedAtInFlightLimit": 1874,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 27.465600000003178,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2054,
+        "succeeded": 803,
+        "failed": 1251,
+        "refused": 946
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2072,
+        "succeeded": 789,
+        "failed": 1283,
+        "refused": 928
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 1997,
+      "REQUEST_FAILED": 537
+    },
+    "offerWindowMs": 60001.131799999996,
+    "outstandingAtEndOfOffering": 1000,
+    "totalIncludingDrainMs": 73168.7882,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 4126,
+      "minMs": 570.6742999999997,
+      "p50Ms": 14198.036199999999,
+      "p95Ms": 20008.213299999996,
+      "maxMs": 20016.797699999996
+    }
+  },
+  "persistence": {
+    "insertedObservations": 3353,
+    "acknowledgedSuccessfulHeartbeats": 1592,
+    "before": [
+      {
+        "school_id": "synthetic-school-0",
+        "count": 6
+      },
+      {
+        "school_id": "synthetic-school-1",
+        "count": 6
+      }
+    ],
+    "after": [
+      {
+        "school_id": "synthetic-school-0",
+        "count": 1676
+      },
+      {
+        "school_id": "synthetic-school-1",
+        "count": 1689
+      }
+    ],
+    "countsEqual": false,
+    "semantics": "Persisted observations count database writes, while successful heartbeats require accepted HTTP responses; neither count substitutes for the other."
+  },
+  "reports": {
+    "1d": {
+      "count": 16,
+      "success": 16,
+      "statuses": {
+        "200": 16
+      },
+      "maxMs": 5350.4018
+    },
+    "7d": {
+      "count": 16,
+      "success": 3,
+      "statuses": {
+        "0": 12,
+        "200": 3,
+        "500": 1
+      },
+      "maxMs": 20010.394
+    },
+    "30d": {
+      "count": 16,
+      "success": 4,
+      "statuses": {
+        "0": 9,
+        "200": 4,
+        "500": 2,
+        "503": 1
+      },
+      "maxMs": 20009.655
+    },
+    "365d": {
+      "count": 16,
+      "success": 2,
+      "statuses": {
+        "0": 12,
+        "200": 2,
+        "500": 2
+      },
+      "maxMs": 20009.817000000003
+    }
+  },
+  "reportTotals": {
+    "count": 64,
+    "success": 25,
+    "statuses": {
+      "0": 33,
+      "200": 25,
+      "500": 5,
+      "503": 1
+    }
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 18935.093,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 41883.262,
+      "correct": true
+    }
+  ],
+  "workerTimingAcceptance": {
+    "limitMs": 48000,
+    "bothWithinLimit": true,
+    "bothCorrect": true,
+    "repeatedColdRunAcceptance": false
+  },
+  "correctness": {
+    "passed": false,
+    "currentObservationCutoff": "2026-10-03T03:20:10.000Z",
+    "currentDayWorkers": [
+      {
+        "schoolIndex": 0,
+        "fixtureViolations": {
+          "unexpectedStudents": 0,
+          "unexpectedUrlObservations": 0,
+          "unexpectedClassificationObservations": 272,
+          "unexpectedTeacherIntentObservations": 0,
+          "currentAiDecisionRows": 0,
+          "invalidRosterStudents": 0
+        },
+        "correct": false
+      }
+    ]
+  },
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Current-day one-grain fixture invariant failed"
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "lock-screen HTTP 500: {\"error\":\"Internal server error\",\"requestId\":\"<SYNTHETIC_ID>\"}\n\n500 !== 201\n"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "performance": {
+    "apiCpuMicroseconds": {
+      "user": 62657000,
+      "system": 15204000
+    },
+    "apiEventLoop": {
+      "p50Ms": 21.610495,
+      "p95Ms": 30.130175,
+      "maxMs": 67.174399,
+      "utilization": 0.8808043172604554
+    },
+    "apiAcquisitions": {
+      "count": 18307,
+      "failures": 3140,
+      "maxMs": 5061.742600000001
+    },
+    "postgresPressure": {
+      "valid": true,
+      "settingsStable": true,
+      "groups": {
+        "wal": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "wal_records": "1180027",
+            "wal_fpi": "17062",
+            "wal_bytes": "318489367",
+            "wal_buffers_full": "0",
+            "wal_write": "5162",
+            "wal_sync": "5104"
+          },
+          "timingsMs": null
+        },
+        "bgwriter": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": true,
+          "counters": {
+            "checkpoints_timed": "0",
+            "checkpoints_req": "0",
+            "buffers_checkpoint": "0",
+            "buffers_clean": "25597",
+            "maxwritten_clean": "247",
+            "buffers_backend": "133232",
+            "buffers_backend_fsync": "0",
+            "buffers_alloc": "309551"
+          },
+          "timingsMs": {
+            "checkpoint_write_time": 0,
+            "checkpoint_sync_time": 0
+          }
+        },
+        "database": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "xact_commit": "42387",
+            "xact_rollback": "10",
+            "blks_read": "397635",
+            "blks_hit": "24176510",
+            "tup_returned": "29559476",
+            "tup_fetched": "11391166",
+            "tup_inserted": "171535",
+            "tup_updated": "4592",
+            "tup_deleted": "30",
+            "temp_files": "14",
+            "temp_bytes": "252813344",
+            "deadlocks": "0"
+          },
+          "timingsMs": null
+        }
+      },
+      "semantics": "Read-only counters from the owned PostgreSQL instance; statistics are asynchronously published and are not exact per-operation attribution. WAL/bgwriter counters are instance-wide; database counters cover this fixture. Timing disabled means unavailable, never a measured zero."
+    },
+    "waitSamples": 280
+  },
+  "workload": {
+    "profile": {
+      "name": "release-enabled-isolated-100rps-v1",
+      "students": 500,
+      "classes": 100,
+      "studentsPerClass": 5,
+      "periods": 6,
+      "lessonMinutes": 50,
+      "passingMinutes": 10,
+      "observationsPerStudent": 2000,
+      "cadenceSeconds": 10,
+      "domainDwellSeconds": 200,
+      "domainsPerStudent": 8,
+      "domainsSchoolWide": 200,
+      "rawPerSchool": 1000000,
+      "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+      "aiDecisionRowsPerSchool": 10000,
+      "aiDecisionsPerStudent": 20,
+      "aiDecisionEveryObservations": 100,
+      "aiDecisionCadenceSeconds": 1000,
+      "aiDecisionCategory": "matches the selected heartbeat",
+      "httpOffering": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "fullWorkerAcceptanceMs": 48000,
+      "classPilot": {
+        "extensionVersion": "2.9.7",
+        "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+        "sourceFile": "extension/service-worker.js",
+        "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+        "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad",
+        "capabilities": [
+          "helpRequestsV1",
+          "questionParkingV1",
+          "timerControlsV1",
+          "lessonActivitiesV1",
+          "exitTicketsV1",
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "scopedAuthorityChecksV1",
+          "scheduledClassroomV1",
+          "authBoundTelemetryV1",
+          "exactBindingAckV2",
+          "exactTabCloseV2",
+          "studentAuthGatePresenceV1",
+          "lateSignInRestrictionSsoV1",
+          "restrictionAuthPassThroughV1",
+          "preciseRestrictionResourcesV1",
+          "restrictionPortalFirstV1",
+          "afterHoursSafetyOnlyV1",
+          "schoolWebsiteBlockEnforcementV1",
+          "studentChatIdempotencyV1",
+          "screenshotTrackingWindowLeaseV1",
+          "screenshotActiveObservationCadenceV1",
+          "screenshotObservationLeaseV1",
+          "safetyEvidenceCaptureV1",
+          "liveViewIceServersV1",
+          "kioskLaunchTicketV1",
+          "kioskLaunchTicketV2",
+          "managedDeviceContinuityV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1",
+          "domainPreservingRestrictionsV1",
+          "chatPauseV1",
+          "chatSeenAckV1",
+          "focusTabV1",
+          "privateChatLifecycleV1"
+        ]
+      },
+      "coldDefinition": "Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed.",
+      "apiTasks": 1,
+      "apiMainPool": 16,
+      "apiSessionPool": 2,
+      "workerPool": 5,
+      "observerPool": 2,
+      "staffAuthentication": "real-password-login-and-session-cookie",
+      "capabilityModes": {
+        "preciseRestrictionResourcesV1": "on",
+        "focusTabV1": "on",
+        "privateChatLifecycleV1": "on"
+      },
+      "reportOffers": {
+        "waves": 4,
+        "maximumParallel": 16,
+        "total": 64,
+        "csvAfterConcurrent": 8,
+        "rangesInDays": [
+          1,
+          7,
+          30,
+          365
+        ]
+      },
+      "publicRequestDeadlineMs": 20000,
+      "preflightDevicesPerSchool": 5,
+      "reporting": "100% offered heartbeats and reports; errors, overload rejections, aborted requests and late offers fail acceptance"
+    },
+    "canonicalActiveControlPreparation": {
+      "schemaVersion": 1,
+      "sourceRevision": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+      "coldFixtureSha256": "b435f350f1f694ead1afcef9017f36a69a442a5e6b47a4cfaaab93c50df178a9",
+      "scriptSha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+      "passed": true,
+      "poolsClosed": true,
+      "schools": [
+        {
+          "schoolIndex": 0,
+          "currentSessions": 100,
+          "rosterRows": 500,
+          "staffBindings": 100,
+          "controlRows": 500,
+          "invalidBindings": 0,
+          "nonemptyRestrictions": 0,
+          "backfilledSessions": 100
+        },
+        {
+          "schoolIndex": 1,
+          "currentSessions": 100,
+          "rosterRows": 500,
+          "staffBindings": 100,
+          "controlRows": 500,
+          "invalidBindings": 0,
+          "nonemptyRestrictions": 0,
+          "backfilledSessions": 100
+        }
+      ]
+    },
+    "preparation": {
+      "seedMs": 284018.2487,
+      "fixtureCounts": [
+        {
+          "school_id": "synthetic-school-0",
+          "raw": "1000001",
+          "sessions": "36800",
+          "frozen_roster_rows": "184000",
+          "aggregates": "541500"
+        },
+        {
+          "school_id": "synthetic-school-1",
+          "raw": "1000001",
+          "sessions": "36800",
+          "frozen_roster_rows": "184000",
+          "aggregates": "541500"
+        }
+      ],
+      "heavyDeviceBindings": [
+        {
+          "schoolIndex": 0,
+          "pairs": 500,
+          "devices": 500,
+          "invalid": 0
+        },
+        {
+          "schoolIndex": 1,
+          "pairs": 500,
+          "devices": 500,
+          "invalid": 0
+        }
+      ],
+      "aiDecisionBindings": [
+        {
+          "schoolIndex": 0,
+          "rows": 10000,
+          "students": 500,
+          "observations": 10000,
+          "invalid": 0,
+          "minperstudent": 20,
+          "maxperstudent": 20
+        },
+        {
+          "schoolIndex": 1,
+          "rows": 10000,
+          "students": 500,
+          "observations": 10000,
+          "invalid": 0,
+          "minperstudent": 20,
+          "maxperstudent": 20
+        }
+      ],
+      "preparationStage": {
+        "kind": "complete"
+      }
+    },
+    "preparedStateSha256": "b435f350f1f694ead1afcef9017f36a69a442a5e6b47a4cfaaab93c50df178a9"
+  },
+  "resources": {
+    "postgres": {
+      "cpu": 4,
+      "memoryBytes": 4294967296,
+      "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6"
+    },
+    "redis": {
+      "imageDigest": "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2"
+    },
+    "nodeOldSpaceMiB": 512,
+    "pools": {
+      "api": 16,
+      "session": 2,
+      "worker": 5,
+      "observer": 2
+    },
+    "apiWorkerGenerator": "Separate local Windows Node processes; no CPU cgroup equivalence to production is claimed.",
+    "coldPostgresRestart": true,
+    "hostFilesystemCachesFlushed": false
+  },
+  "admission": {
+    "restrictedNonOwnerRole": true,
+    "rlsInventory": "classpilotPrivateChatLifecyclePostExpand",
+    "registrySha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+    "admittedTables": 129,
+    "currentFixtureMigrations": true
+  },
+  "interpretation": [
+    "This attempt failed independent heartbeat, report, lifecycle and current-day correctness acceptance. It is not a capacity pass or deployment green light.",
+    "Both one-million-observation heavy workers were correct and finished in 18.935093s and 41.883262s, below 48s. This does not satisfy the required three repeated successful combined cold runs.",
+    "6,000 offered heartbeats produced 1,592 accepted successes, 2,534 started failures and 1,874 in-flight refusals. 3,353 observations persisted; the larger persistence count cannot be relabeled successful client traffic.",
+    "25 of 64 reports succeeded and matched their oracle; 33 timed out client-side, 5 returned 500 and 1 returned 503.",
+    "The lifecycle reached websocket authentication, then lock-screen failed HTTP 500. No subsequent command, ACK, Focus/chat lifecycle or browser acceptance is claimed.",
+    "Current-day validation stopped on 272 unexpected classification observations in school 0. Later current-day rollup/CSV acceptance was not reached and remains unproven.",
+    "Compared with combined04, canonical control/staff ownership is now initialized for all 100 current classes and 500 students per school using the production backfill before the cold restart. This changes the exercised workload. Multiple source and fixture changes are present; these measurements do not isolate the heartbeat projection optimization or prove it caused the regression."
+  ],
+  "cleanup": {
+    "childShutdownClean": true,
+    "observedAt": "2026-10-03T03:23:29.4868359Z",
+    "command": "docker --host npipe:////./pipe/dockerDesktopLinuxEngine ps -a --filter name=9e83dfdc8441 --format {{.Names}} {{.Status}}",
+    "output": [],
+    "exitCode": 0,
+    "ownedContainersAbsent": true
+  },
+  "schema": {
+    "inputRawSha256": "f9fc21877644cf66f10f81a60b76addb06432d548fd2dfbe84b087e5ef1c4a3e",
+    "postConvergenceRawSha256": "4007b0ed119d979f0384fb7be28be330e897735e869f131499bd2bd8a3c62e87",
+    "fingerprint": {
+      "rawSha256": "4007b0ed119d979f0384fb7be28be330e897735e869f131499bd2bd8a3c62e87",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "UTF8/LF; remove only pg_dump restrict/unrestrict security nonce lines; preserve all DDL"
+    }
+  },
+  "omitted": [
+    {
+      "file": "cold-fixture-state.json",
+      "rawBytes": 183029,
+      "rawSha256": "b435f350f1f694ead1afcef9017f36a69a442a5e6b47a4cfaaab93c50df178a9",
+      "reason": "Populated identities and credentials excluded from shareable archive; original retained unchanged externally."
+    }
+  ],
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "api.log.gz",
+      "originalFile": "api.log",
+      "rawBytes": 187251,
+      "rawSha256": "e02f5739a1f58131452a75d511577f4716c2119258bc35d029417d6524362bcb",
+      "sanitizedBytes": 139797,
+      "sanitizedSha256": "3bec59ae7d35249e129e8c9dc28eec6e71220fe15f626bdcd87435e1fd329773",
+      "gzipSha256": "1dda96e56ccc76913e2a48b6d57c0a089219afae202d5165976c52ea677797e7"
+    },
+    {
+      "file": "build.log.gz",
+      "originalFile": "build.log",
+      "rawBytes": 42,
+      "rawSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedBytes": 38,
+      "sanitizedSha256": "293f3ae59b47b581fac6b4817aa1422d14ff3d4d21a6581e67ddbc35f5aaa98f",
+      "gzipSha256": "d8ff3c6e74dba5899df769a43ec409aba515dc83b0d5f2b988e9907c86bd50d0"
+    },
+    {
+      "file": "cold-restart.log.gz",
+      "originalFile": "cold-restart.log",
+      "rawBytes": 38,
+      "rawSha256": "dda57edf6dcd7400f133b73cf234971b48e722e9353acb668a95ef40f2803be6",
+      "sanitizedBytes": 37,
+      "sanitizedSha256": "996f23a0a76045164092d56400cfd167582654998c24df153c5566fa772fbaa6",
+      "gzipSha256": "4e4034d9cfe1f2e5e396fb7a03e3d849621449b4aab217c9279e51cbd774325a"
+    },
+    {
+      "file": "cold-restarted-state.json.gz",
+      "originalFile": "cold-restarted-state.json",
+      "rawBytes": 227,
+      "rawSha256": "6b9ce9aa2b7739c5d7e2ed2ab85fcca23efade1990f84332f808111c1e460199",
+      "sanitizedBytes": 226,
+      "sanitizedSha256": "fc59c9227d8ab968a18572a440368fe9de99cb7de72eccb019a90193e138aa88",
+      "gzipSha256": "1dcd320b3cc9a409360749061b73476d2a60e1fc66b867824944618f3aa673da"
+    },
+    {
+      "file": "container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "c742bd1fd4ffb3480d4ad75caaf5528bdd7ec4e2fbfeaf14fe667c8c2b2469d1",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "13ba2083162f0d0d614a9dac79d6ba4fed0f0b3fd1fc877b911b6baea3188cde",
+      "gzipSha256": "6c6a146e5144b0b77c117f74a53b5167c272e1108f6f4abff768bfcb90e74c54"
+    },
+    {
+      "file": "container-final-state.json.gz",
+      "originalFile": "container-final-state.json",
+      "rawBytes": 227,
+      "rawSha256": "6b9ce9aa2b7739c5d7e2ed2ab85fcca23efade1990f84332f808111c1e460199",
+      "sanitizedBytes": 226,
+      "sanitizedSha256": "fc59c9227d8ab968a18572a440368fe9de99cb7de72eccb019a90193e138aa88",
+      "gzipSha256": "1dcd320b3cc9a409360749061b73476d2a60e1fc66b867824944618f3aa673da"
+    },
+    {
+      "file": "container-final-stats.json.gz",
+      "originalFile": "container-final-stats.json",
+      "rawBytes": 248,
+      "rawSha256": "ca4cb5d45d3774e6f23a94876ba642faf04dd3739d3f1fe423bcf0fa9c0214fb",
+      "sanitizedBytes": 247,
+      "sanitizedSha256": "7491db4290fc802f58e35d288d912c4fcbdc80d941394300f981f34b237ad08f",
+      "gzipSha256": "0a22e4ae740b92e8ce86c50f0c0bfd10fed79fe48f0834c037e14fadc0d0228c"
+    },
+    {
+      "file": "execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 1604,
+      "rawSha256": "a11e02652851bf248c6583b2c6ce36eda105eb9477cd0b7a903346770c031a98",
+      "sanitizedBytes": 1573,
+      "sanitizedSha256": "77225bd9099111edf61a27a24863c335a586dc1d9646bb3d994e6523380148df",
+      "gzipSha256": "d20e8d4f0a265561b16bb8dad0e7b90b240b6c084b6ff2d65ea1c74f4cf1edfb"
+    },
+    {
+      "file": "fixture-legacy-convergence.log.gz",
+      "originalFile": "fixture-legacy-convergence.log",
+      "rawBytes": 12557,
+      "rawSha256": "303edabf91673731eac921154d4a83fc2a8197e7b70a8a7d6166ca4109cb2479",
+      "sanitizedBytes": 12421,
+      "sanitizedSha256": "6f2ddd1045a7ac361c17081725f8c293e097313f25f52e0560a237c4c79d7e0e",
+      "gzipSha256": "17479c876b1766d5ffb8f88c130d85a74f66c1c6f13a27010da18bff2d0d867f"
+    },
+    {
+      "file": "fixture-versioned-migrations.log.gz",
+      "originalFile": "fixture-versioned-migrations.log",
+      "rawBytes": 3648,
+      "rawSha256": "59d399e934416b44649fe8529cdb38f7e054fd026e223bb0ee87f55826b866f2",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "f6be4ab6df20fba6cc1d5292acab9d4fc8dde690a2cff24f2b68b0d7709683ba",
+      "gzipSha256": "94405ce1fa06d97c9f3fa8c2b15ccdc35d2b4059376f7ba5988735e4c5d84731"
+    },
+    {
+      "file": "generator.log.gz",
+      "originalFile": "generator.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "independent-capacity-summary.json.gz",
+      "originalFile": "independent-capacity-summary.json",
+      "rawBytes": 6510,
+      "rawSha256": "af93e3daf27d91b7c95e1b1b2c467a4ba23ec2502a0e389bbb15cbf05e80cd04",
+      "sanitizedBytes": 6488,
+      "sanitizedSha256": "e905b425e368a69345a0694a36b85670d5cab35fd208eaab108065d29ab284e7",
+      "gzipSha256": "20b4baa1c4830c1294ea47ab6c84ce668dc0ae7d809706ba8978f958dd02c6f3"
+    },
+    {
+      "file": "local-docker-daemon.json.gz",
+      "originalFile": "local-docker-daemon.json",
+      "rawBytes": 129,
+      "rawSha256": "ac3977cb203506418ab4960e2b6b0bf0244f421a2ae742abe2d8dba053345ee8",
+      "sanitizedBytes": 124,
+      "sanitizedSha256": "763840f55872b4f8c1d68d00fdce7ca2b03f5b484264e9f08872d374623d3835",
+      "gzipSha256": "ae7cb55d7931725a1398691ecaeec37411c554bdaf9a1c1fbf2a20132547b355"
+    },
+    {
+      "file": "post-convergence-schema.sql.gz",
+      "originalFile": "post-convergence-schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "4007b0ed119d979f0384fb7be28be330e897735e869f131499bd2bd8a3c62e87",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "4007b0ed119d979f0384fb7be28be330e897735e869f131499bd2bd8a3c62e87",
+      "gzipSha256": "4dcb51969b86dc6b175a441393b213ec45122a8b3020fcdb93d6e9f221b90dee"
+    },
+    {
+      "file": "preparation-fixture-contract.json.gz",
+      "originalFile": "preparation-fixture-contract.json",
+      "rawBytes": 35903,
+      "rawSha256": "6f7a01a0836a0f1e294eb6e00d168ef92fc37cd6bf2a85e6c8d8f3a9d8cacc7b",
+      "sanitizedBytes": 35903,
+      "sanitizedSha256": "6f7a01a0836a0f1e294eb6e00d168ef92fc37cd6bf2a85e6c8d8f3a9d8cacc7b",
+      "gzipSha256": "fb98f1094757617e8db587b2eb7baba874b4bc70e166770ec08161bfbf36b3fe"
+    },
+    {
+      "file": "preparation-metrics.json.gz",
+      "originalFile": "preparation-metrics.json",
+      "rawBytes": 45025,
+      "rawSha256": "99d036f6a77b5891115e5a7a5bef6b8e84c4ce75fbea0ecd9193d25b7f9cd9b8",
+      "sanitizedBytes": 44989,
+      "sanitizedSha256": "1d85dad71c44b5ab5aa4d1533150359e4116f5d16260fb56d02b38a58672fdf5",
+      "gzipSha256": "5991bef018508f4ed1dc60caf7666a5434583befa0edb81530cd64aa63f1d691"
+    },
+    {
+      "file": "preparation.log.gz",
+      "originalFile": "preparation.log",
+      "rawBytes": 45626,
+      "rawSha256": "e2a2bcf87abad4651b440bef89421ddd347a7e687ca9e133c9b09f2c2fa04f7e",
+      "sanitizedBytes": 45430,
+      "sanitizedSha256": "080914ef5534269f638146c28b5ef9fc668cf4cb93240a7927dfe35ea2abe3b7",
+      "gzipSha256": "e3746153dc9f1c4d203b259dcde6c6b4cad9b3bd6e96b61f8b407fae4ab99ef2"
+    },
+    {
+      "file": "redis-create.log.gz",
+      "originalFile": "redis-create.log",
+      "rawBytes": 66,
+      "rawSha256": "a1b435f61c4f8c82442458a9a50c3f78beb3d2042d4492a9cb13878c6dee2e9a",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "d61db274aa07486290ef55051be8958b44ca6a23e141edd1cf3ed4245e9f4a4b",
+      "gzipSha256": "01cee23951f232da47290dfdea5d729ca963dadfddbfb2959f97c79bdb261975"
+    },
+    {
+      "file": "redis-final-stats.json.gz",
+      "originalFile": "redis-final-stats.json",
+      "rawBytes": 244,
+      "rawSha256": "67daa18a382867cc666a91078a106693f03c84d17b5824e01b3db91532f2ae07",
+      "sanitizedBytes": 243,
+      "sanitizedSha256": "31d1605e60672a225fc04937c695b324e60189a26547d891fed556915adeef0b",
+      "gzipSha256": "6c8d6a584fef7d278ad77017140d8f1e4c3ad68ac07d2c0704bef9421758581e"
+    },
+    {
+      "file": "release-control-preparation.json.gz",
+      "originalFile": "release-control-preparation.json",
+      "rawBytes": 804,
+      "rawSha256": "96c9c5d4be6e537823ef9b47bd928785f5523d20eb2f8ae5ed25acf902e34e5a",
+      "sanitizedBytes": 804,
+      "sanitizedSha256": "96c9c5d4be6e537823ef9b47bd928785f5523d20eb2f8ae5ed25acf902e34e5a",
+      "gzipSha256": "8ac4b9d0adc269735430992adc3930d3d1aaaabc9a3aed8c41b8283e9e705118"
+    },
+    {
+      "file": "release-control-preparation.log.gz",
+      "originalFile": "release-control-preparation.log",
+      "rawBytes": 3334,
+      "rawSha256": "11a4593186138dec9b9b3827444840f4e6f4b53c853de57ace8ab753064f822f",
+      "sanitizedBytes": 3309,
+      "sanitizedSha256": "fb89fe81fda9ddee9e763b32cde4c4c297913765bf5aa3b755db49d2c6e6881c",
+      "gzipSha256": "a26905a0f6d9c55694e302a75fc6837e7b8e7b771b825e495cbc8a41346c58d9"
+    },
+    {
+      "file": "resource-caps.json.gz",
+      "originalFile": "resource-caps.json",
+      "rawBytes": 1560,
+      "rawSha256": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+      "sanitizedBytes": 1559,
+      "sanitizedSha256": "3f67631bc56fda34b8613897352cf2154cf4b7655e524fc01976782b4b93018e",
+      "gzipSha256": "e39c553d3f5c83bd03217b2c754ed2dcecda18c40c0917c83c80438d2c43936c"
+    },
+    {
+      "file": "scale.log.gz",
+      "originalFile": "scale.log",
+      "rawBytes": 252,
+      "rawSha256": "63f646b34f87823e13be2a8c997a581b7514ee1380954ca191243837dd3438a0",
+      "sanitizedBytes": 186,
+      "sanitizedSha256": "285b3760d567a1656c1d90d2d32768b63fde8f7ee644fafff96e99ef1f73f822",
+      "gzipSha256": "420004d85026367376ba93d60f8d0d15333bb78cf8f263a87ed56485ca43451b"
+    },
+    {
+      "file": "schema-fingerprint.json.gz",
+      "originalFile": "schema-fingerprint.json",
+      "rawBytes": 290,
+      "rawSha256": "73e356d752b0deba763f1c19f193d0aac8adf471a1d7082ea9f4af6ea9612e6f",
+      "sanitizedBytes": 285,
+      "sanitizedSha256": "262aca9a677828b5a072873430387c4d5468f5f939e5a714bb518e149eca75b6",
+      "gzipSha256": "f172e89058f65c6353888665b35a21552844ead4c79a9e4d340dccbb377add0f"
+    },
+    {
+      "file": "schema-only.sql.gz",
+      "originalFile": "schema-only.sql",
+      "rawBytes": 591139,
+      "rawSha256": "f9fc21877644cf66f10f81a60b76addb06432d548fd2dfbe84b087e5ef1c4a3e",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "d3f50c951c00a81c663546b428d35311903bbfad7831a47bb21dfb5ec201ee81",
+      "gzipSha256": "8f6fadf9e490d0b25c0965c701c7f4668582b3ce6a59ec406f1d2fcf7955e642"
+    },
+    {
+      "file": "schema-restore.log.gz",
+      "originalFile": "schema-restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "usage-scale.json.gz",
+      "originalFile": "usage-scale.json",
+      "rawBytes": 611824,
+      "rawSha256": "6d666a84b9b263a929011ce8821900441f5c5252c63320c6533546317918dfcf",
+      "sanitizedBytes": 611694,
+      "sanitizedSha256": "ba9e70ab89798e13816495165d3c04fae5d734be777e79433949812b803d61cd",
+      "gzipSha256": "f4b3ab739796e5f97069ce249dac7354228083acc6508cf3bff7c084f86db52d"
+    },
+    {
+      "file": "worker.log.gz",
+      "originalFile": "worker.log",
+      "rawBytes": 5220,
+      "rawSha256": "7f358b9c8371ad5b8ad99b0886aeedb352774b9931adfd3a2ee50c6af9d8aae8",
+      "sanitizedBytes": 5176,
+      "sanitizedSha256": "ec9bfa207f66dc33bfea4ba6e83b33d777f860b78a010c3ea4e42184a9199fcc",
+      "gzipSha256": "0d5771d6d3cc08d08f36dbe709e8873fa06b84b5c00d27d3b4fd41db4cfa2e6d"
+    },
+    {
+      "file": "runner.log.gz",
+      "originalFile": "release297-enabled-combined-05.runner.log",
+      "rawBytes": 252,
+      "rawSha256": "63f646b34f87823e13be2a8c997a581b7514ee1380954ca191243837dd3438a0",
+      "sanitizedBytes": 186,
+      "sanitizedSha256": "285b3760d567a1656c1d90d2d32768b63fde8f7ee644fafff96e99ef1f73f822",
+      "gzipSha256": "420004d85026367376ba93d60f8d0d15333bb78cf8f263a87ed56485ca43451b"
+    },
+    {
+      "file": "cleanup-observation.json.gz",
+      "originalFile": "release297-enabled-combined-05-cleanup-observation.json",
+      "rawBytes": 261,
+      "rawSha256": "99127264309138877e14ae4eab4d1c48ff681f5cc731ae20768659962277bf1d",
+      "sanitizedBytes": 254,
+      "sanitizedSha256": "f37d5de799e868441221f4245f83f587274b2fbf6ddbd1ec5e41967539f7e6d1",
+      "gzipSha256": "b4697ee4b99601fd24d0d6562a998cd7beea712bf1d4190fe968db15f124ed2d"
+    }
+  ],
+  "sanitation": "UTF8/LF; workstation paths, connection URLs, tokens, cookies, emails, UUIDs and SQL passwords redacted; original raw files unchanged. Schema DDL preserved apart from sanitation; raw hashes separately recorded."
+}

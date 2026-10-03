@@ -1,0 +1,22 @@
+[
+  {
+    "Path": "<USER>\\AppData\\Local\\Temp\\release297-classification-independent-01\\baseline-aiClassification.ts",
+    "Hash": "2EEFAAD8A8E8688716ED7F26EC6EFF3F81A646DF4C52135119222BF8915F87BB"
+  },
+  {
+    "Path": "<USER>\\AppData\\Local\\Temp\\release297-classification-independent-01\\probe.mjs",
+    "Hash": "D463BDD53E207B9DB0F792F6CCFAC4C8C3BB40BC4FA62FE5BA5A12FD7D69CC9A"
+  },
+  {
+    "Path": "<USER>\\AppData\\Local\\Temp\\release297-classification-independent-01\\result.json",
+    "Hash": "50EFC7CA8FF4DEC8D9CD2521ED08551BD85733D4BB72B0087FC3D269BFBDDE3E"
+  },
+  {
+    "Path": "<USER>\\AppData\\Local\\Temp\\release297-classification-independent-01\\attempt-01.log",
+    "Hash": "FEB93295953ABA05B257A971AA67BED71AC78FC887A9E8FA361781A9E2AC5C71"
+  },
+  {
+    "Path": "<USER>\\AppData\\Local\\Temp\\release297-classification-independent-01\\attempt-02.log",
+    "Hash": "CA9571E66FF5598279F4261F742FD7CBE757DA0E6FDAC2D04FC382BC985AEE0D"
+  }
+]

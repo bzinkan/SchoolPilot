@@ -69,6 +69,9 @@ export function capacityAcceptance(result) {
     currentDayWorkerHeadroom: result.correctness?.currentDayWorkers?.length === 2
       && result.correctness.currentDayWorkers.every(row => row.correct === true && row.durationMs <= 48_000),
     lifecycle: combined?.traffic?.lifecycle?.passed === true,
+    // This is reset only at phase start, unlike the minute-summary hotpath
+    // counters. The API snapshot is taken after all offers and producer drain.
+    noOptionalTelemetryFailures: combined?.api?.operations?.operations?.heartbeat_background?.counters?.heartbeatOptionalTelemetryFailures === 0,
     noPoolFailures: combined?.api?.database?.acquisitions?.failures === 0 && combined?.worker?.database?.acquisitions?.failures === 0
       && combined.worker.database.acquisitions.count >= 2,
     acquisitionDeadlines: combined?.api?.database?.acquisitions?.maxMs <= 5000 && combined?.worker?.database?.acquisitions?.maxMs <= 10000,
