@@ -52,6 +52,18 @@ CPU profile is next. Earlier b112 results are descriptive comparisons, not
 repeated controlled attribution. The same-source premeasurement snapshot is
 private; its later restore proof is separate from this immutable failed packet.
 
+The [e95 restored-owner proof](restored-owner-e95-01/manifest.json) validates the
+same-source snapshot under fresh restricted credentials, full native schema
+comparison, 53 migrations, 129 forced-RLS tables, data/control/clock checks and
+ANALYZE. A new read-only authority check precedes a same-container PostgreSQL
+restart. Clients close and the exact container and recorded anonymous volume
+are verified absent. The packet includes 308 passing harness guards and the
+chronology follow-up checks. No workload was offered: this proves fixture
+ownership and restoration, not the full workload's 13-receipt producer or
+capacity. Candidate mode stays disabled until that actual execution path is
+verified. Later schema-binding changes must preserve both the original
+canonical fingerprint and complete native reference/restored equality.
+
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five
 public Drizzle SELECT definitions on an exclusively owned heartbeat connection.
 Every execution retains fresh bindings, canonical decoding and database locks;
