@@ -44,6 +44,7 @@ const RLS_SERIAL = new Set([
   "passpilot-report-issuers.test.ts",
   "passpilot-rules-rls.test.ts",
   "classpilot-usage-rollup-rls.test.ts",
+  "classpilot-usage-domain-map.integration.test.ts",
   "rls-tenant-context.test.ts",
 ]);
 

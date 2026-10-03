@@ -183,9 +183,12 @@ describe("Monitored Browser Time rollup SQL", () => {
 
   it("keeps domains only for http(s) URLs and prefers the newest AI decision with the teacher-intent exemption", () => {
     const normalized = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "normalized", "classified");
-    assert.match(normalized, /CASE WHEN observation\.active_tab_url ~\* '\^https\?:\/\/'/);
-    assert.match(normalized, /ELSE ''\s+END AS domain/);
-    assert.match(normalized, /'\^www\\\.'/);
+    const domains = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "url_domains", "normalized");
+    assert.match(domains, /CASE WHEN observation\.active_tab_url ~\* '\^https\?:\/\/'/);
+    assert.match(domains, /ELSE ''\s+END AS domain/);
+    assert.match(domains, /'\^www\\\.'/);
+    assert.match(normalized, /COALESCE\(url_domains\.domain, ''\) AS domain/);
+    assert.match(normalized, /LEFT JOIN url_domains ON url_domains\.active_tab_url COLLATE "C" = observation\.active_tab_url COLLATE "C"/);
     assert.match(normalized, /COALESCE\(NULLIF\(ai_decision\.category, ''\), observation\.ai_category\)/);
     assert.match(normalized, /NULLIF\(ai_decision\.teacher_intent_source, ''\) IS NOT NULL\s+OR NULLIF\(observation\.teacher_intent_source, ''\) IS NOT NULL/);
     const schoolDecisions = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "school_ai_decisions", "school_excluded");

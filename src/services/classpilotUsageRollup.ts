@@ -196,6 +196,22 @@ ai_decision AS MATERIALIZED (
   JOIN deduplicated AS observation ON observation.id = decision.heartbeat_id
   ORDER BY decision.heartbeat_id, decision.created_at DESC, decision.id DESC
 ),
+distinct_urls AS MATERIALIZED (
+  -- Preserve the exact URL key while evaluating its domain once per student.
+  -- The selected value keeps its original collation for lower/regex below.
+  SELECT DISTINCT ON (active_tab_url COLLATE "C") active_tab_url
+  FROM deduplicated
+),
+url_domains AS MATERIALIZED (
+  SELECT observation.active_tab_url,
+    CASE WHEN observation.active_tab_url ~* '^https?://'
+      THEN left(regexp_replace(lower(COALESCE(
+        substring(observation.active_tab_url FROM '(?i)^https?://(?:[^/?#@]*@)?([^:/?#]*)'), ''
+      )), '^www\\.', ''), 253)
+      ELSE ''
+    END AS domain
+  FROM distinct_urls AS observation
+),
 normalized AS (
   SELECT observation.id, observation.student_id, observation.observed_at,
     LEAST(
@@ -208,12 +224,9 @@ normalized AS (
           AND excluded.start_at > observation.observed_at
       ) - observation.observed_at)) END
     ) AS attributed_seconds,
-    CASE WHEN observation.active_tab_url ~* '^https?://'
-      THEN left(regexp_replace(lower(COALESCE(
-        substring(observation.active_tab_url FROM '(?i)^https?://(?:[^/?#@]*@)?([^:/?#]*)'), ''
-      )), '^www\\.', ''), 253)
-      ELSE ''
-    END AS domain,
+    -- A null URL misses the equality join and has the same empty domain as
+    -- the canonical CASE. Exact non-null keys join to exactly one map row.
+    COALESCE(url_domains.domain, '') AS domain,
     CASE WHEN COALESCE(NULLIF(ai_decision.category, ''), observation.ai_category) IN ('educational', 'non-educational')
       THEN COALESCE(NULLIF(ai_decision.category, ''), observation.ai_category)
       ELSE 'unknown'
@@ -222,6 +235,7 @@ normalized AS (
       OR NULLIF(observation.teacher_intent_source, '') IS NOT NULL) AS teacher_intent_exempt
   FROM deduplicated AS observation
   LEFT JOIN ai_decision ON ai_decision.heartbeat_id = observation.id
+  LEFT JOIN url_domains ON url_domains.active_tab_url COLLATE "C" = observation.active_tab_url COLLATE "C"
   WINDOW student_timeline AS (PARTITION BY observation.student_id ORDER BY observation.observed_at, observation.id)
 ),
 classified AS (
