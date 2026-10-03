@@ -29,11 +29,11 @@ values, its precise minute-boundary cause remains an inference.
 [Follow-up CI at `97dad081`](ci-97dad081-final-01/manifest.json) passes all 17 CI
 jobs and three security workflows for the e95 application, including both
 database lanes, backend, frontend/browser and rollout safety. Conditional
-step-level skips remain skips. The uncommitted role harness is outside this
+step-level skips remain skips. The subsequently committed role harness is outside this
 CI source, and no capacity or release-execution gate is implied.
 [The later documentation head `f58f84bb`](ci-f58f84bb-final-01/manifest.json)
 also passes all 17 CI jobs and three security workflows on the same application.
-It likewise excludes the uncommitted role-harness changes.
+It likewise excludes the subsequent role-harness changes.
 
 The [combined e95 diagnostic](linux-role-combined-e95-01/manifest.json) fails
 capacity at 4,413/6,000 successful heartbeats, 949 failures, 638 in-flight refusals
@@ -105,6 +105,19 @@ whereas the draft validator expected an API/worker pair. The raw evidence is
 unchanged; candidate validation must correct that shape and require all
 6,000 modern heartbeats to return HTTP 200 with matching persisted and rollup
 counts. Historical legacy-204 allowances cannot qualify a candidate run.
+
+The [candidate harness checkpoint](role-candidate-harness-01/manifest.json),
+committed at `0650decf4dfdf0ad563a043b18b563ac5e19700c`, passes 378 aggregate
+guard tests without failures or skips. It binds candidate intent, exact source,
+runtime and schema to an immutable attempt journal before fixture creation.
+Strict counts and all preflight gauges are checked; failed, interrupted and
+unconfirmed-cleanup attempts cannot disappear or contribute a passing run.
+The packet retains the initial three fixture/anchor failures and 16 regressions
+demonstrated against earlier validators. A [separate EOF-only follow-up](role-harness-eof-followup-01/receipt.json)
+removes three extra terminal blank lines, with exact before/after hashes and
+unchanged non-newline content. Application bytes remain e95. New-head CI and
+native execution of candidate mode remain pending. The prior restored diagnostic
+is not relabeled; zero capacity runs are accepted.
 
 The [e95 restored-owner proof](restored-owner-e95-01/manifest.json) validates the
 same-source snapshot under fresh restricted credentials, full native schema

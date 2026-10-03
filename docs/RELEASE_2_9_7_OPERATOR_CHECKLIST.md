@@ -64,6 +64,13 @@ The candidate validator needs the observed single-API preflight-drain shape
 and strict 6,000 HTTP-200/persisted-observation agreement; the diagnostic is
 not relabeled as accepted. The required passing-run count remains zero.
 
+The [strict candidate harness](release-evidence/release-297/usage-contention/role-candidate-harness-01/manifest.json)
+is committed at `0650decf` with 378 passing guard tests and no skips. It now
+checks modern HTTP-200/capability/persistence agreement and actual preflight
+gauges, and preserves every registered attempt. A three-file EOF-only follow-up
+has separate hash/equivalence evidence. New-head CI and actual candidate-mode
+execution remain pending; these harness checks do not establish capacity.
+
 The preceding application was `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
 Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
 passes 1,906 unit tests without skips, 50 owner and 50 restricted native tests,
@@ -137,7 +144,7 @@ and accepted capacity before the separately authorized release steps below.
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Remote review source / CI | [Review head `97dad081`](release-evidence/release-297/usage-contention/ci-97dad081-final-01/manifest.json) contains application `e95a2b56` and passes all 17 CI jobs and three security workflows, including both database lanes, frontend/browser and rollout safety. The prior clock failure and test-only correction remain recorded. The unfinished new role harness remains outside this CI source. Approved merged main requires its own checks. |
+| Remote review source / CI | [Review head `97dad081`](release-evidence/release-297/usage-contention/ci-97dad081-final-01/manifest.json) contains application `e95a2b56` and passes all 17 CI jobs and three security workflows, including both database lanes, frontend/browser and rollout safety. The prior clock failure and test-only correction remain recorded. The subsequently committed role harness has 378 passing local guards and remains outside this CI source. Approved merged main requires its own checks. |
 | Current correction / local checks | The [domain-map correction](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json) passes 1,906 unit cases, 25 owner and 12 restricted native cases, all without skips, and build/type/cast checks. It preserves all nine semantic grain columns against immutable b112 SQL. Prepared reads, Focus, privacy and lifecycle corrections remain included. |
 | API / worker artifacts | **No final release image selected.** The [fresh e95 image](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json) passes an uncached build, pinned scan with zero findings and compatibility checks; Linux manifest `sha256:3b0816f59a00612b0bfb41e2b45e4767dbac2f7eba873d6354035cb24e523593`. The [6e251 fallback](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) remains compatible at the checked contract floor. The completed actual-image recovery pair used the preceding b112 candidate. Final capacity, recovery binding, registry identities, approved merged-main bindings and production task pairs remain unverified. |
 | Local recovery rehearsal | The [current b112/6e251 local rehearsal](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) verifies reconstructed empty baseline 7af9 → b112 → 6e251 → b112 with 53 migration IDs and 129 forced-RLS tables. Separate actual-image bundled-function checks preserve expired chat and exact Focus cleanup. These are synthetic source/schema and function proofs, not production catalog/data or service-traffic rollback verification. Earlier rehearsals remain historical. |

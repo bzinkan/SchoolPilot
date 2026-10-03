@@ -87,4 +87,3 @@ export function createBoundedSender(socket,{maxFrameBytes=MAX_FRAME_BYTES,maxBuf
   return socket.write(frame,callback);
  };
 }
-

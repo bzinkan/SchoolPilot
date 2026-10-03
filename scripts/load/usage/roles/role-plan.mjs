@@ -51,4 +51,3 @@ export function verifyCgroupV2({cpuMax,memoryMax,memorySwapMax},role){
  const limits=ROLE_LIMITS[role];assert.ok(limits);const [quota,period]=cpuMax.trim().split(/\s+/).map(Number);assert.ok(Number.isFinite(quota)&&quota>0&&Number.isFinite(period)&&period>0);assert.equal(quota/period,limits.cpu);
  assert.equal(Number(memoryMax.trim()),limits.memory);assert.equal(Number(memorySwapMax.trim()),0);return true;
 }
-

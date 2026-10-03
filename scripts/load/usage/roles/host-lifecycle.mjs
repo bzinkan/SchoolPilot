@@ -58,4 +58,3 @@ export async function cleanupOwnedRoles(adapter,owners){
  }
  return {roles:results,cleanupPassed:results.every(row=>row.cleanupPassed),clean:results.every(row=>row.cleanExit===true&&!row.forced)};
 }
-

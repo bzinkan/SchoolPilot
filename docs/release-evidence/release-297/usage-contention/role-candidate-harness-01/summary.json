@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "applicationSource": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "scope": "Frozen candidate harness and pure strict-count/ownership regression evidence; no application changes or native candidate execution",
+  "sourceFileCount": 56,
+  "rolesFiles": 55,
+  "aggregate": {
+    "passed": 378,
+    "failed": 0,
+    "skipped": 0
+  },
+  "focusedFinal": {
+    "passed": 230,
+    "failed": 0
+  },
+  "failedAttemptsRetained": [
+    {
+      "name": "preflight gauges on prior validator",
+      "failed": 12,
+      "expectedRed": true
+    },
+    {
+      "name": "initial candidate integration",
+      "passed": 227,
+      "failed": 3,
+      "cause": "CRLF-sensitive generator anchor and synthetic fixture nonce mismatch; repaired without weaker assertions"
+    },
+    {
+      "name": "strict-counts old validator",
+      "failed": 4,
+      "expectedRed": true
+    }
+  ],
+  "strictCountsFinal": {
+    "passed": 145,
+    "failed": 0,
+    "skipped": 0
+  },
+  "schemaMigrations": 53,
+  "applicationChanges": 0,
+  "capacityAccepted": false,
+  "acceptedRuns": 0,
+  "candidateExecutionNativeVerified": false,
+  "historicalDiagnosticRelabeled": false,
+  "productionActions": 0,
+  "limitations": [
+    "New candidate mode/attempt owner was verified with pure and real filesystem receipts, not a candidate workload.",
+    "Historical full restored e95 diagnostic remains numerically failed and permanently diagnostic.",
+    "Production readiness and deployed observation remain separate from the synthetic topology."
+  ]
+}
