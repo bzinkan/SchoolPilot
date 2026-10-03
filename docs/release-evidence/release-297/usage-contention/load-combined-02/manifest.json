@@ -1,0 +1,479 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:46:22.794Z",
+  "status": "failed_real_capacity_attempt",
+  "sourceRevision": "9f1580615d72f6b0647abac27677773b03a88269",
+  "sourceClean": true,
+  "applicationSource": "cb66014d70a275405a5469257b37debe8d20ea18",
+  "applicationSourceNote": "Executing parent verified the later 9f158061 harness/documentation checkpoint retains the same application bytes.",
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-release-enabled-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory C:/Users/zinka/AppData/Local/Temp/release297-enabled-combined-02 -Phase combined *> $env:TEMP\\release297-enabled-combined-02-runner.log; exit $LASTEXITCODE",
+  "workingDirectory": "SchoolPilot release worktree",
+  "shell": "PowerShell",
+  "exitCode": 1,
+  "startedAt": "2026-10-02T23:36:01.017Z",
+  "finishedAt": "2026-10-02T23:37:32.001Z",
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "diagnosticOnly": false,
+  "heartbeats": {
+    "offered": 6000,
+    "started": 4700,
+    "succeeded": 1355,
+    "failed": 3345,
+    "refusedAtInFlightLimit": 1300,
+    "lateOffers": 0,
+    "outstandingAfterDrain": 0
+  },
+  "reports": {
+    "offered": 64,
+    "passed": 17,
+    "failed": 47
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 15540.9899,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "durationMs": 15723.4094,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "correct": true
+    }
+  ],
+  "correctness": {
+    "passed": true,
+    "csvAuditCount": 8,
+    "independentHistoricalTotalsCorrect": true,
+    "currentDayWorkers": [
+      {
+        "schoolIndex": 0,
+        "rowCount": 526,
+        "seconds": 15996,
+        "heartbeatCount": 1251,
+        "durationMs": 219.91270000000077,
+        "correct": true
+      },
+      {
+        "schoolIndex": 1,
+        "rowCount": 530,
+        "seconds": 15859,
+        "heartbeatCount": 1236,
+        "durationMs": 127.25179999999818,
+        "correct": true
+      }
+    ]
+  },
+  "acceptance": {
+    "sourceFrozen": true,
+    "acceptanceRun": true,
+    "isolatedProcesses": true,
+    "enabledCapabilities": true,
+    "realSessionCookies": true,
+    "poolLimits": true,
+    "allHeartbeats": false,
+    "heartbeatCompletionDeadline": false,
+    "observationsRecorded": false,
+    "allReports": false,
+    "allReportScopesAndRanges": true,
+    "workerHeadroom": true,
+    "currentDayWorkerHeadroom": true,
+    "lifecycle": false,
+    "noPoolFailures": false,
+    "acquisitionDeadlines": false,
+    "statementDeadlines": true,
+    "correctness": true,
+    "ownedProcessCleanup": true
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "lock-screen HTTP 500: {\"error\":\"Internal server error\",\"requestId\":\"<SYNTHETIC_ID>\"}\n\n500 !== 201\n"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "measurements": {
+    "apiAcquisitions": {
+      "count": 17629,
+      "failures": 4775,
+      "maxMs": 5177.780400000003
+    },
+    "apiPeakWaiting": 1476,
+    "apiPeakHeld": 16,
+    "apiEventLoop": {
+      "p50Ms": 26.525695,
+      "p95Ms": 48.201727,
+      "maxMs": 155.320319,
+      "utilization": 0.9887521057317135
+    },
+    "connectionHoldMs": {
+      "heartbeat_persistence": {
+        "count": 2475,
+        "totalMs": 258225.32970000076,
+        "maxMs": 729.0453999999954,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          53,
+          1282,
+          1108,
+          27,
+          5,
+          0,
+          0,
+          0
+        ]
+      },
+      "heartbeat_final_delivery": {
+        "count": 4030,
+        "totalMs": 738224.6649999979,
+        "maxMs": 1231.885000000002,
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          9,
+          380,
+          3130,
+          422,
+          70,
+          19,
+          0,
+          0
+        ]
+      },
+      "heartbeat_background": {
+        "count": 2385,
+        "totalMs": 120054.89499999989,
+        "maxMs": 433.7600999999995,
+        "buckets": [
+          0,
+          0,
+          0,
+          233,
+          1246,
+          810,
+          81,
+          15,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "usage_report": {
+        "count": 19,
+        "totalMs": 6027.209700000016,
+        "maxMs": 1595.4651000000013,
+        "buckets": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          14,
+          1,
+          0,
+          2,
+          0,
+          0
+        ]
+      }
+    }
+  },
+  "measurementLimitations": [
+    "Post-run harness review found that the pre-measurement drain called flushHeartbeatClassificationBatches(), whose terminal flushAll() permanently set the default batcher to shuttingDown. Normal classification batching was therefore disabled throughout measured traffic. The observed failures and timings are retained, but this attempt is not representative of the normal batching configuration and cannot establish its capacity or identify a product-only bottleneck. A corrected nonterminal settlement path and a fresh run are required.",
+    "Worker acquisition wrapper assignment was ignored by schedulerPool Proxy get trap. Zero worker acquisition counts/failures do NOT establish absence of acquisition failures. Worker SQL and complete operation results/durations remain recorded; corrected instrumentation requires a new run.",
+    "API event-loop utilization and ClientRead waits suggest API/round-trip contention, but no CPU profile in this attempt establishes the specific cause.",
+    "This failed run does not establish capacity or authorize activation; successful independent correctness checks do not override traffic failures."
+  ],
+  "cleanup": {
+    "childShutdownClean": true,
+    "ownedContainersAbsent": true,
+    "observedAt": "2026-10-02T23:46:22.795Z",
+    "commands": [
+      "docker --host npipe:////./pipe/dockerDesktopLinuxEngine ps -a --filter name=c9342e7ab6f6 --format {{.Names}} {{.Status}}",
+      "docker --host npipe:////./pipe/dockerDesktopLinuxEngine ps --filter name=schoolpilot-db --format {{.Names}} {{.Status}}",
+      "docker --host npipe:////./pipe/dockerDesktopLinuxEngine ps --filter name=schoolpilot-redis --format {{.Names}} {{.Status}}"
+    ],
+    "outputs": {
+      "ownedMatches": [],
+      "shared": [
+        "schoolpilot-db Up 2 weeks (healthy)",
+        "schoolpilot-redis Up 2 weeks (healthy)"
+      ]
+    }
+  },
+  "schema": {
+    "inputRawSha256": "e7c3263bcc2f8b1e5880103ab4f6b03cacc4d93c9ac49ce9a41abe236e727c50",
+    "postConvergenceRawSha256": "61b5bb913f35edf0058a9bea8772d98d019d9ac72b0a6c2b08c1f02b45bd997f",
+    "fingerprint": {
+      "rawSha256": "61b5bb913f35edf0058a9bea8772d98d019d9ac72b0a6c2b08c1f02b45bd997f",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "UTF8/LF; remove only pg_dump restrict/unrestrict security nonce lines; preserve all DDL"
+    },
+    "scope": "Synthetic schema-only DDL, catalog and resource metadata retained in sanitized gzip files; no populated database export."
+  },
+  "omitted": [
+    {
+      "file": "cold-fixture-state.json",
+      "rawBytes": 183029,
+      "rawSha256": "e586264f5de138f2251840b55f71f3fb7beaf5c5fb3c2cf2711dc5466cb928f5",
+      "reason": "Contains populated fixture identities and credential material; contents deliberately excluded."
+    }
+  ],
+  "sanitation": "UTF8/LF; workstation paths, connection URLs, JWTs, session cookies, emails and other UUIDs redacted; known school UUIDs mapped to stable synthetic-school indices. Complete metrics and logs retained; originals remain unchanged.",
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "api.log.gz",
+      "originalFile": "api.log",
+      "rawBytes": 243061,
+      "rawSha256": "544c8bc32806ca3489a4816031cd7485a7e12aa907d7503fc5c28d3b96eccca0",
+      "sanitizedBytes": 180141,
+      "sanitizedSha256": "c2b08bf31ebd2096ff14819134ced2e600d8a51ff44596cc56e658f7acee8aca",
+      "gzipSha256": "7cf13ba2fd86e3829e6da127645b7f70ca6a2514b3d341440593e517a2ee8680"
+    },
+    {
+      "file": "build.log.gz",
+      "originalFile": "build.log",
+      "rawBytes": 55,
+      "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedBytes": 51,
+      "sanitizedSha256": "772633829129174cb4182a3a35d82f3b55aa7db9b5c8cbb275c65451e5a9359c",
+      "gzipSha256": "977be9f2bef8af0d3e664371252eb7babe006768802718fc58286764de16b627"
+    },
+    {
+      "file": "cold-restart.log.gz",
+      "originalFile": "cold-restart.log",
+      "rawBytes": 38,
+      "rawSha256": "a5a6e9f4379872fcaeae2c5c89bcd5ebfb4093896f5072e3c78e250fc7b2fb51",
+      "sanitizedBytes": 37,
+      "sanitizedSha256": "96b0744a55ad3724678da33987548467bb304ef93f3d23988954713f22d82d61",
+      "gzipSha256": "d493ed4ddab769dced66a91921aae04eb892ddc0b3ccdcc2f57e571eff1905ab"
+    },
+    {
+      "file": "cold-restarted-state.json.gz",
+      "originalFile": "cold-restarted-state.json",
+      "rawBytes": 229,
+      "rawSha256": "f78845e37fc785366f952d030cee9fc5168a561890bca991990005e91299f560",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "254bd342d7a99d3b512639923068d01f5970e325ddabe6af93bbaa7792c4ad45",
+      "gzipSha256": "45a7885fea76c9e6819adbcd19bbc7b74bbafeebb55bd3636e5da22919d7c785"
+    },
+    {
+      "file": "container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "f5417471704bc7936f303cb6edb9317e24f99b31b41a45d3fac89ee814a27d6c",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "6ec52c6e0c64809792a4741196dc0129c62d975e02067546faeec2c901e05e1b",
+      "gzipSha256": "48d7643fad1ec132ae3a1443c7be2e9f574bfd8392c13fac43eafdda5477eefd"
+    },
+    {
+      "file": "container-final-state.json.gz",
+      "originalFile": "container-final-state.json",
+      "rawBytes": 229,
+      "rawSha256": "f78845e37fc785366f952d030cee9fc5168a561890bca991990005e91299f560",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "254bd342d7a99d3b512639923068d01f5970e325ddabe6af93bbaa7792c4ad45",
+      "gzipSha256": "45a7885fea76c9e6819adbcd19bbc7b74bbafeebb55bd3636e5da22919d7c785"
+    },
+    {
+      "file": "container-final-stats.json.gz",
+      "originalFile": "container-final-stats.json",
+      "rawBytes": 247,
+      "rawSha256": "37d028886884567a738568ec776eb3956dcdd8b875934d5f44175ea1a5909520",
+      "sanitizedBytes": 246,
+      "sanitizedSha256": "6a638bd56cb2298977ead4ae1661aaa0acf3fcc54e5ef2160498528d818d3b24",
+      "gzipSha256": "aede2bcddbfb34db10e70ca5905c8aa6672ff848a31fb7f340a9c3a4d406dd35"
+    },
+    {
+      "file": "execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 1570,
+      "rawSha256": "cad407a15c76c6d19eddd53beb28362fd280999d4c8b41ab0e60302eca5074ed",
+      "sanitizedBytes": 1540,
+      "sanitizedSha256": "8ce29f0662889e3812dca3ea4fab95496635c3ee4a0386d26c6a1c055765aa5b",
+      "gzipSha256": "e86d2bb83dd0d80a5bd3702763663b76a86aa9df01666629b08acaabe7477361"
+    },
+    {
+      "file": "fixture-legacy-convergence.log.gz",
+      "originalFile": "fixture-legacy-convergence.log",
+      "rawBytes": 12553,
+      "rawSha256": "b464cc2d898f774c0e836e209a95b60e84871262b4c773b0929e29f5fcbb3b17",
+      "sanitizedBytes": 12417,
+      "sanitizedSha256": "f97350dd173950e632b7794c4439a6a34ef073f629b3ede72385d28fea8dfaa6",
+      "gzipSha256": "7b5d26b265378ad567ddaa2b503be89a4d4e3833ce1a15a1563313ea8b0f8222"
+    },
+    {
+      "file": "fixture-versioned-migrations.log.gz",
+      "originalFile": "fixture-versioned-migrations.log",
+      "rawBytes": 3648,
+      "rawSha256": "93b1d27f852ab26677d1d68602e0d108da35eaadd81331c735e5ac176de5f2d1",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "db54f577ace8e1a8cbee50fa5549b2479ee6251935ea8a96f2a42d451df0ed0c",
+      "gzipSha256": "f947631e9b3354b98a8cb18e4b5441d1ac14258756bba00a79524a66e01811fa"
+    },
+    {
+      "file": "generator.log.gz",
+      "originalFile": "generator.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "local-docker-daemon.json.gz",
+      "originalFile": "local-docker-daemon.json",
+      "rawBytes": 129,
+      "rawSha256": "ac3977cb203506418ab4960e2b6b0bf0244f421a2ae742abe2d8dba053345ee8",
+      "sanitizedBytes": 124,
+      "sanitizedSha256": "763840f55872b4f8c1d68d00fdce7ca2b03f5b484264e9f08872d374623d3835",
+      "gzipSha256": "ae7cb55d7931725a1398691ecaeec37411c554bdaf9a1c1fbf2a20132547b355"
+    },
+    {
+      "file": "post-convergence-schema.sql.gz",
+      "originalFile": "post-convergence-schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "61b5bb913f35edf0058a9bea8772d98d019d9ac72b0a6c2b08c1f02b45bd997f",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "61b5bb913f35edf0058a9bea8772d98d019d9ac72b0a6c2b08c1f02b45bd997f",
+      "gzipSha256": "8e964afe6c59160e360d7a128a0a8aaa9db5972c79d28a445f8d8f80e12af06b"
+    },
+    {
+      "file": "preparation-fixture-contract.json.gz",
+      "originalFile": "preparation-fixture-contract.json",
+      "rawBytes": 35903,
+      "rawSha256": "da55c71d27a7c91c273b213eb2005a0876da6dca278ca69866d4dbdb72b759d2",
+      "sanitizedBytes": 35903,
+      "sanitizedSha256": "da55c71d27a7c91c273b213eb2005a0876da6dca278ca69866d4dbdb72b759d2",
+      "gzipSha256": "fa7d23631ec3775a31ff1f3308c3466e7200dca8e96baf1a3e714b1fd35a47d8"
+    },
+    {
+      "file": "preparation-metrics.json.gz",
+      "originalFile": "preparation-metrics.json",
+      "rawBytes": 45025,
+      "rawSha256": "848e2b3321f1ff847fc428a0f544f3ff01e7d958034dd5026ac62ac9ed381273",
+      "sanitizedBytes": 44989,
+      "sanitizedSha256": "b1fcf0db4811c1a5d15455a93cfb47a72b33a7044673a53e6e839ae2e5d3b2fa",
+      "gzipSha256": "cbb8e315f4a9f8ba65d3693df03551319d12193f0fde228d36674a8132199bd2"
+    },
+    {
+      "file": "preparation.log.gz",
+      "originalFile": "preparation.log",
+      "rawBytes": 55910,
+      "rawSha256": "f29d77fbfaedfb48d634c3fefe8a3e700aa3f3bbedfea8cca524bec65ff99dde",
+      "sanitizedBytes": 55666,
+      "sanitizedSha256": "72bb4763bb89b13980ee05c344f365dc85fe7f64c3e75d5d8aedaaaa6ea38212",
+      "gzipSha256": "f587d05f0cd87eb4d1c667a8e5ad96a117e440afe5fec4289febb74bfcc54b67"
+    },
+    {
+      "file": "redis-create.log.gz",
+      "originalFile": "redis-create.log",
+      "rawBytes": 66,
+      "rawSha256": "cd11d1002271624e2a82f2e67c600ecb7c09b6deb73cafb324680c79f684141d",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "0e08b64c620395b5b22f8ddcee71c93e8cfe15beb44dae7ca4511fc0c57baf58",
+      "gzipSha256": "d5ed6e061ce602501a0eb440b637d4cb15e2b28d223cabe2ead705599568586c"
+    },
+    {
+      "file": "redis-final-stats.json.gz",
+      "originalFile": "redis-final-stats.json",
+      "rawBytes": 244,
+      "rawSha256": "5df21e8f07681dcead56460c6a83c945bc68bbaa857edd662d8333fe95efad7c",
+      "sanitizedBytes": 243,
+      "sanitizedSha256": "69799040360582348149480b1784432b8187c45fe3cc124be6e11996c2ebf57d",
+      "gzipSha256": "2139b820e0477c7faa9408ca44fe7b6e6240c712a52444e6eb19d52fd5cc6942"
+    },
+    {
+      "file": "resource-caps.json.gz",
+      "originalFile": "resource-caps.json",
+      "rawBytes": 1560,
+      "rawSha256": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+      "sanitizedBytes": 1559,
+      "sanitizedSha256": "3f67631bc56fda34b8613897352cf2154cf4b7655e524fc01976782b4b93018e",
+      "gzipSha256": "e39c553d3f5c83bd03217b2c754ed2dcecda18c40c0917c83c80438d2c43936c"
+    },
+    {
+      "file": "scale.log.gz",
+      "originalFile": "scale.log",
+      "rawBytes": 252,
+      "rawSha256": "71bbaeef5cea4d85f1904cbfe4ffeef31bfd1b70c2b8dd1fa8924928e3ae36f3",
+      "sanitizedBytes": 251,
+      "sanitizedSha256": "19cf603ddf285a21b8104d9a13f12b85e8d189c60cde12e46dd12383049a4d89",
+      "gzipSha256": "0f4b7e3c3ef564d31b62b754e02aa606474bdcbcb22760738ae5e5b051fdef7a"
+    },
+    {
+      "file": "schema-fingerprint.json.gz",
+      "originalFile": "schema-fingerprint.json",
+      "rawBytes": 290,
+      "rawSha256": "7ef204580944bb7d3e415364eae648f6919dc26a0205c3d952a0b45a66a2df6f",
+      "sanitizedBytes": 285,
+      "sanitizedSha256": "97785f49d8e6e9e5e5b86640252c983a2a45e9b806d939c4b538266a4bf4a823",
+      "gzipSha256": "7da128bc9f9d037c071991a38357de38e4b8ce41f851f212b2fae66f63896801"
+    },
+    {
+      "file": "schema-only.sql.gz",
+      "originalFile": "schema-only.sql",
+      "rawBytes": 591139,
+      "rawSha256": "e7c3263bcc2f8b1e5880103ab4f6b03cacc4d93c9ac49ce9a41abe236e727c50",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "7457eaf3134c726e73bf8eef4ae5a6a71a90d543189877d1505fb78f7a339d67",
+      "gzipSha256": "834df809c79170d1546756718a6b3a428f228e402d40b15741d0c14c1845506a"
+    },
+    {
+      "file": "schema-restore.log.gz",
+      "originalFile": "schema-restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "usage-scale.json.gz",
+      "originalFile": "usage-scale.json",
+      "rawBytes": 1309966,
+      "rawSha256": "620eb06a8620ba33bee10a2cba7c83a95d0d3e4b38fdd1729565e177b1197ebc",
+      "sanitizedBytes": 1309748,
+      "sanitizedSha256": "bf4ae5b33e6703c53f5a99db21855a627e7337b056ae0b7bfa83c3e1b6cf69e2",
+      "gzipSha256": "e62f319185ad47c2a724321f0905f0e43f3e5a5996c6d0f3db5265320b047cb5"
+    },
+    {
+      "file": "worker.log.gz",
+      "originalFile": "worker.log",
+      "rawBytes": 5220,
+      "rawSha256": "94d06a8faf5cdd8c408ffd63bd9b38892067d6ee50c898e9f118669cdbfb50a9",
+      "sanitizedBytes": 5176,
+      "sanitizedSha256": "ca840e44922c7f9175b3cc89e79d50986c131390db8d0243b6e4cea7d99aa8a8",
+      "gzipSha256": "a7359298bf7d54e4009648413e444e514be9245b8f633563348c87960174b72b"
+    },
+    {
+      "file": "runner.log.gz",
+      "originalFile": "release297-enabled-combined-02-runner.log",
+      "rawBytes": 252,
+      "rawSha256": "71bbaeef5cea4d85f1904cbfe4ffeef31bfd1b70c2b8dd1fa8924928e3ae36f3",
+      "sanitizedBytes": 251,
+      "sanitizedSha256": "19cf603ddf285a21b8104d9a13f12b85e8d189c60cde12e46dd12383049a4d89",
+      "gzipSha256": "0f4b7e3c3ef564d31b62b754e02aa606474bdcbcb22760738ae5e5b051fdef7a"
+    }
+  ]
+}

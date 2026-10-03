@@ -19960,6 +19960,8 @@ type ClasspilotTeacherChatBinding = {
   deviceId: string;
   limit?: number;
   claimTeacherChatDeliveries?: boolean;
+  /** SSO-bearing bootstrap must fence policy before private settings locks. */
+  freezeSsoPolicy?: boolean;
 };
 
 type ClasspilotClaimedTeacherChatDelivery = {
@@ -20057,6 +20059,13 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       );
       if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         return { authorized: false as const };
+      }
+      // The SSO writer takes its exclusive policy lock before settings FOR
+      // UPDATE. Bootstrap must take the matching shared lock before private
+      // chat takes settings FOR SHARE, or the two transactions can deadlock.
+      // Opt in only on surfaces that already freeze SSO policy for delivery.
+      if (options.freezeSsoPolicy) {
+        await lockClasspilotSsoPolicyDeliveryAuthority(options.schoolId, transactionDb);
       }
       // Canonical reply enqueue takes this same student-control lock. While it
       // is held, an empty exact-student outbox cannot gain a racing reply.

@@ -1,0 +1,860 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T00:09:48.610Z",
+  "scope": "Correct the pre-existing private-chat/WebSocket bootstrap versus SSO policy writer lock inversion; no heartbeat consolidation.",
+  "source": {
+    "baseCommit": "9f1580615d72f6b0647abac27677773b03a88269",
+    "archiveTimeHead": "9f1580615d72f6b0647abac27677773b03a88269",
+    "state": "incremental shared worktree changes; application/test slice frozen before archiving",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "src/services/storage.ts": "50a81f7693a75a35f3a816f515df2f02a3b33507d5d758649defafbc9563b263",
+      "src/realtime/websocket.ts": "5de51dd51ede2a98d5bdd068279a1f437f7c1f3757ea7ecc106a5f5183f02cea",
+      "tests/classpilot-private-chat-lifecycle.integration.test.ts": "41940167b95440be8d56c597d37431888d677259587fb9dd974d5b7c31f52fb4",
+      "tests/classpilot-sso-policy-delivery-contract.test.ts": "eef6d21f5e42e00604b1253986d3108bc1839868d130cb9b6cba9ed62d1c7305",
+      "tests/classpilot-websocket-auth-diagnostics.test.ts": "785157f56e277c79499fada0d3edf9464485fcb84ae249a7b04e3bb1c65df432"
+    },
+    "note": "Archive-time hashes do not retroactively identify earlier attempts. Native01/02 run before the source correction; native03 runs after it. Final clean commit and CI are separate."
+  },
+  "finding": {
+    "before": "Private bootstrap claimed the outbox and held settings FOR SHARE before requesting shared SSO advisory. Concurrent SSO writer held exclusive SSO advisory before settings FOR UPDATE, forming a native deadlock cycle.",
+    "after": "WebSocket bootstrap opts into freezeSsoPolicy. The shared exact-delivery helper takes existing shared SSO authority after entitlement/student/binding checks and before private settings locks; the later duplicate acquisition is removed. Lifecycle latch remains before the transaction; final DB-clock binding check remains mandatory.",
+    "heartbeatImpact": "No heartbeat consolidation or new heartbeat SSO query. Existing non-opted-in calls retain their prior path."
+  },
+  "commands": {
+    "native": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 --test-name-pattern 'pending-reply bootstrap' tests/classpilot-private-chat-lifecycle.integration.test.ts",
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-sso-policy-delivery-contract.test.ts tests/classpilot-control-lock-order-contract.test.ts tests/classpilot-late-signin-contract.test.ts tests/classpilot-student-session-recovery-contract.test.ts tests/classpilot-websocket-auth-diagnostics.test.ts",
+    "bootstrap": "Unique owned local PostgreSQL containers, explicit validated local npipe Docker host, loopback-only port,2CPU/2GiB limits; schema-only read from donor schoolpilot_redesign_usage_release297_20261002; separate owner bootstrap and restricted app credentials; label-checked cleanup."
+  },
+  "runs": [
+    {
+      "attempt": "01",
+      "originalRunId": "349d19a65f4d",
+      "status": "failed_expected_pre_fix",
+      "note": "Initial pre-fix proof: actual policy writer holds exclusive SSO advisory; pending-reply bootstrap reaches the conflicting shared advisory after private settings locks and is rejected.",
+      "owner": {
+        "file": "native-01-owner.log.gz",
+        "tap": {
+          "tests": 1,
+          "suites": 0,
+          "pass": 0,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "fixture owner"
+      },
+      "restricted": {
+        "file": "native-01-restricted.log.gz",
+        "tap": {
+          "tests": 1,
+          "suites": 0,
+          "pass": 0,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "execution": {
+        "ordinaryExit": 1,
+        "restrictedExit": 1,
+        "source": "9f1580615d72f6b0647abac27677773b03a88269",
+        "worktreeDirty": true,
+        "container": "schoolpilot-chat-sso-349d19a65f4d",
+        "database": "usage_native_349d19a65f4d",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "support": [
+        "native-01-execution.json.gz",
+        "native-01-cleanup.log.gz",
+        "native-01-container-create.log.gz",
+        "native-01-restore.log.gz",
+        "native-01-role.log.gz"
+      ],
+      "schemaSnapshotSha256": "11bd2ef8bc01b7464f150fbab7f7d859f95df5c5af4f1ac58a1605dd7d8eba93"
+    },
+    {
+      "attempt": "02",
+      "originalRunId": "748d7b77da90",
+      "status": "failed_expected_pre_fix",
+      "note": "Same pre-fix source, with explicit content-free driver-code diagnostics proving PostgreSQL deadlock SQLSTATE40P01 in both owner and restricted lanes.",
+      "owner": {
+        "file": "native-02-owner.log.gz",
+        "tap": {
+          "tests": 1,
+          "suites": 0,
+          "pass": 0,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "fixture owner"
+      },
+      "restricted": {
+        "file": "native-02-restricted.log.gz",
+        "tap": {
+          "tests": 1,
+          "suites": 0,
+          "pass": 0,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "execution": {
+        "ordinaryExit": 1,
+        "restrictedExit": 1,
+        "source": "9f1580615d72f6b0647abac27677773b03a88269",
+        "worktreeDirty": true,
+        "container": "schoolpilot-chat-sso-748d7b77da90",
+        "database": "usage_native_748d7b77da90",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "support": [
+        "native-02-execution.json.gz",
+        "native-02-cleanup.log.gz",
+        "native-02-container-create.log.gz",
+        "native-02-restore.log.gz",
+        "native-02-role.log.gz"
+      ],
+      "schemaSnapshotSha256": "b9487279841ab0ba2a70060a6fc5123c5c71ddf4029748e0254a989e6f4feae0"
+    },
+    {
+      "attempt": "03",
+      "originalRunId": "b7cb0521c345",
+      "status": "passed_incremental",
+      "note": "Corrected opt-in pre-claim shared SSO lock: both native transactions complete and bootstrap delivers the queued private reply with the newly committed policy revision.",
+      "owner": {
+        "file": "native-03-owner.log.gz",
+        "tap": {
+          "tests": 1,
+          "suites": 0,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "fixture owner"
+      },
+      "restricted": {
+        "file": "native-03-restricted.log.gz",
+        "tap": {
+          "tests": 1,
+          "suites": 0,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "execution": {
+        "ordinaryExit": 0,
+        "restrictedExit": 0,
+        "source": "9f1580615d72f6b0647abac27677773b03a88269",
+        "worktreeDirty": true,
+        "container": "schoolpilot-chat-sso-b7cb0521c345",
+        "database": "usage_native_b7cb0521c345",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "support": [
+        "native-03-execution.json.gz",
+        "native-03-cleanup.log.gz",
+        "native-03-container-create.log.gz",
+        "native-03-restore.log.gz",
+        "native-03-role.log.gz"
+      ],
+      "schemaSnapshotSha256": "c1138b2dfdccc14a1298a03246d7f10e0af1bd8a9e0f7ba5823d3c8dc10ee21e"
+    }
+  ],
+  "units": [
+    {
+      "file": "focused-01.log.gz",
+      "tap": {
+        "tests": 48,
+        "suites": 1,
+        "pass": 47,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "status": "failed_fixture_corrected",
+      "note": "Diagnostics fixture still injected bootstrap_projection failure through the removed late SSO call. The executable production branch correctly moved that lock into authority; fixture injection was moved to the still-present FAB preparation call."
+    },
+    {
+      "file": "focused-02.log.gz",
+      "tap": {
+        "tests": 48,
+        "suites": 1,
+        "pass": 48,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "status": "passed_incremental",
+      "note": "All focused cases pass, including actual executable WebSocket opt-in, unchanged operational failure responses, final binding contracts and lock-order source checks."
+    }
+  ],
+  "checks": [
+    {
+      "command": "npm run check",
+      "file": "source-check.log.gz",
+      "status": "passed_incremental"
+    },
+    {
+      "command": "npm run check:tests",
+      "file": "test-types.log.gz",
+      "status": "passed_incremental"
+    },
+    {
+      "command": "npm run check:test-casts",
+      "file": "test-casts.log.gz",
+      "status": "passed_incremental"
+    }
+  ],
+  "logs": [
+    {
+      "file": "native-01-owner.log.gz",
+      "sourceFile": "ordinary.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:03:08.946Z",
+      "rawBytes": 4022,
+      "rawSha256": "a585f860ae7a145cbca7dbfca23737f3ca2973e72fbcb8f039fd37d566ced1ce",
+      "sanitizedSha256": "a585f860ae7a145cbca7dbfca23737f3ca2973e72fbcb8f039fd37d566ced1ce",
+      "archiveBytes": 1242,
+      "archiveSha256": "985d98c7dac5e8c52a9eef9968f5a76997e3e6828f880dce60b799803f07c12f",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1,
+        "suites": 0,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-01-restricted.log.gz",
+      "sourceFile": "restricted.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:03:14.302Z",
+      "rawBytes": 4005,
+      "rawSha256": "1c0e377a7e16948816c46c3c46b1756e55a5c48e06f25dd531b37c9bdd2b5944",
+      "sanitizedSha256": "1c0e377a7e16948816c46c3c46b1756e55a5c48e06f25dd531b37c9bdd2b5944",
+      "archiveBytes": 1225,
+      "archiveSha256": "fa94395ab695947238673e4a3c7a6b13015cf2d97b71084f2eb9c2ae8f046e1c",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1,
+        "suites": 0,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-01-execution.json.gz",
+      "sourceFile": "execution.json",
+      "sourceModifiedAtUtc": "2026-10-03T00:03:14.374Z",
+      "rawBytes": 328,
+      "rawSha256": "7194a338fb66c9a49db0f39fce2e2cde99a9ef71ce2074281c9c89320741df69",
+      "sanitizedSha256": "7194a338fb66c9a49db0f39fce2e2cde99a9ef71ce2074281c9c89320741df69",
+      "archiveBytes": 236,
+      "archiveSha256": "7a92c9004f9c8b24afe02f573fa6ca0b00804d4b676b50a043f1b04d99d52e68",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-01-cleanup.log.gz",
+      "sourceFile": "cleanup.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:03:14.902Z",
+      "rawBytes": 35,
+      "rawSha256": "92b440dcb5b99f35865f6517d8c8f93eea4e84d0ed7eb76eb9ef5f4be5ce3834",
+      "sanitizedSha256": "92b440dcb5b99f35865f6517d8c8f93eea4e84d0ed7eb76eb9ef5f4be5ce3834",
+      "archiveBytes": 55,
+      "archiveSha256": "a309acdb4c8e126cc2241e0f3597d8cfbaed4e03b41637a7a0349e594232752b",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-01-container-create.log.gz",
+      "sourceFile": "container-create.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:02:55.881Z",
+      "rawBytes": 66,
+      "rawSha256": "7e4e3d7df5ee4c766b6200790a2f25139de05fd77fbc8191d7e227b0ae024804",
+      "sanitizedSha256": "7e4e3d7df5ee4c766b6200790a2f25139de05fd77fbc8191d7e227b0ae024804",
+      "archiveBytes": 75,
+      "archiveSha256": "a4081928da5dd8d68aa3ead153dfc3614aa8992478c9e478aa5b5210d7bd9720",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-01-restore.log.gz",
+      "sourceFile": "restore.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:03:03.435Z",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-01-role.log.gz",
+      "sourceFile": "role.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:03:03.618Z",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-02-owner.log.gz",
+      "sourceFile": "ordinary.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:21.686Z",
+      "rawBytes": 4097,
+      "rawSha256": "d7960a0ebc52d5abc033955379640daec0f68edf83d8dbe2655e1caa916564b6",
+      "sanitizedSha256": "d7960a0ebc52d5abc033955379640daec0f68edf83d8dbe2655e1caa916564b6",
+      "archiveBytes": 1283,
+      "archiveSha256": "f38338916090bed0494f5843cf210f32d31722fc450a18be4644af357b762fb7",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1,
+        "suites": 0,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-02-restricted.log.gz",
+      "sourceFile": "restricted.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:26.667Z",
+      "rawBytes": 4079,
+      "rawSha256": "1bbf840c26392f757fb3053dcd24e14bc979b9a9e9bb2bfcfc64f763b401b4fc",
+      "sanitizedSha256": "1bbf840c26392f757fb3053dcd24e14bc979b9a9e9bb2bfcfc64f763b401b4fc",
+      "archiveBytes": 1265,
+      "archiveSha256": "016580f3f382f3e5944eca19db588f54bfc1fd5dac220df197078f37aca859de",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1,
+        "suites": 0,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-02-execution.json.gz",
+      "sourceFile": "execution.json",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:26.738Z",
+      "rawBytes": 328,
+      "rawSha256": "84e44c43d153dc0ad84e3f756632b10fdb656aeb0fe7eb26300583a6b9c00e22",
+      "sanitizedSha256": "84e44c43d153dc0ad84e3f756632b10fdb656aeb0fe7eb26300583a6b9c00e22",
+      "archiveBytes": 235,
+      "archiveSha256": "9720eec150154f2a4c69ac73eb59334a6371e9cde0ae96d31de9737292e31571",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-02-cleanup.log.gz",
+      "sourceFile": "cleanup.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:27.348Z",
+      "rawBytes": 35,
+      "rawSha256": "b025cadba593c1ccd1c0fe7b5c8431f504c2702261c3c0b34821409cbe36938d",
+      "sanitizedSha256": "b025cadba593c1ccd1c0fe7b5c8431f504c2702261c3c0b34821409cbe36938d",
+      "archiveBytes": 55,
+      "archiveSha256": "e7a473b110c7cc66654e4eb3a731a2c508e200c94102e1b00c1309373c42d698",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-02-container-create.log.gz",
+      "sourceFile": "container-create.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:08.934Z",
+      "rawBytes": 66,
+      "rawSha256": "0e037a4188cbc839f24aef3198a720e22eaa27bc2bf097b56dfcff8d0b47636a",
+      "sanitizedSha256": "0e037a4188cbc839f24aef3198a720e22eaa27bc2bf097b56dfcff8d0b47636a",
+      "archiveBytes": 75,
+      "archiveSha256": "78eba6244094089744029186fc40697b07e74e7b903254a4c94f87ec686e9b77",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-02-restore.log.gz",
+      "sourceFile": "restore.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:16.239Z",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-02-role.log.gz",
+      "sourceFile": "role.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:04:16.408Z",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-03-owner.log.gz",
+      "sourceFile": "ordinary.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:23.376Z",
+      "rawBytes": 3144,
+      "rawSha256": "dd0e9f4e1f673cc82339ad24d8cbcf5b73d9dcd8e20776ab83033c5a747e2dfa",
+      "sanitizedSha256": "dd0e9f4e1f673cc82339ad24d8cbcf5b73d9dcd8e20776ab83033c5a747e2dfa",
+      "archiveBytes": 857,
+      "archiveSha256": "5e402c0a7f535be3a6006b7594c576402f15e85e5d542478ad71fcedaa2788bc",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1,
+        "suites": 0,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-03-restricted.log.gz",
+      "sourceFile": "restricted.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:31.228Z",
+      "rawBytes": 3128,
+      "rawSha256": "a60dd711135cbc9bc3f6ad9dbcab01ab7b758e95e97f7a6498f59c97081bee3b",
+      "sanitizedSha256": "a60dd711135cbc9bc3f6ad9dbcab01ab7b758e95e97f7a6498f59c97081bee3b",
+      "archiveBytes": 845,
+      "archiveSha256": "8be0310db83fa54c16f5531038bd4fe7c3bcde563ce431a223791f4e99ea3655",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1,
+        "suites": 0,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "native-03-execution.json.gz",
+      "sourceFile": "execution.json",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:31.346Z",
+      "rawBytes": 328,
+      "rawSha256": "aa57e63063be7ce2a9b86fce1fb5a44f5884bf88c8eda3966cba1303b850ea6f",
+      "sanitizedSha256": "aa57e63063be7ce2a9b86fce1fb5a44f5884bf88c8eda3966cba1303b850ea6f",
+      "archiveBytes": 236,
+      "archiveSha256": "1bd71da99e1312fca40c86e7d46bddeed836094a70970715081b72384f213fb0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-03-cleanup.log.gz",
+      "sourceFile": "cleanup.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:32.124Z",
+      "rawBytes": 35,
+      "rawSha256": "4eb7ef5df11833adac8f3ad7c88ac77a4db74870aada93f2ee9a6c8d82c84ac0",
+      "sanitizedSha256": "4eb7ef5df11833adac8f3ad7c88ac77a4db74870aada93f2ee9a6c8d82c84ac0",
+      "archiveBytes": 55,
+      "archiveSha256": "bdfebcf00e399600d3d64142477256787dbff22da87fe8941ddce7f9f3118657",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-03-container-create.log.gz",
+      "sourceFile": "container-create.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:06.406Z",
+      "rawBytes": 66,
+      "rawSha256": "c64c344ccbf321f4dd2a5c68f1951fd5fc29dc3f7d334e42df78c969031a4be2",
+      "sanitizedSha256": "c64c344ccbf321f4dd2a5c68f1951fd5fc29dc3f7d334e42df78c969031a4be2",
+      "archiveBytes": 74,
+      "archiveSha256": "f0c9f426dd309d61c24499b075555a0f0900a9d0ad05f2eccba404fec75e88d7",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-03-restore.log.gz",
+      "sourceFile": "restore.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:16.496Z",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "native-03-role.log.gz",
+      "sourceFile": "role.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:16.718Z",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "focused-01.log.gz",
+      "sourceFile": "release297-chat-sso-focused-01.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:12.818Z",
+      "rawBytes": 12849,
+      "rawSha256": "fd6d2b9c37dc067787286dc0d1ba9c0b7c1c420bd97c26f445832b073fd6979b",
+      "sanitizedSha256": "fd6d2b9c37dc067787286dc0d1ba9c0b7c1c420bd97c26f445832b073fd6979b",
+      "archiveBytes": 2808,
+      "archiveSha256": "66969e901d84ac152e6b53620e3724cfaee65d3fbd5f20b942d1c154dda19ff1",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 48,
+        "suites": 1,
+        "pass": 47,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "focused-02.log.gz",
+      "sourceFile": "release297-chat-sso-focused-02.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:07:11.630Z",
+      "rawBytes": 11847,
+      "rawSha256": "0382977df22c450690a43b39200503b8c02c47cb179b779b5f4da4f9c89c4b3a",
+      "sanitizedSha256": "0382977df22c450690a43b39200503b8c02c47cb179b779b5f4da4f9c89c4b3a",
+      "archiveBytes": 2417,
+      "archiveSha256": "c2934f9d8ce4f28ed1f79924243b609feb1406ea79ee5b8ac53fd2f178cf53cc",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 48,
+        "suites": 1,
+        "pass": 48,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "source-check.log.gz",
+      "sourceFile": "release297-chat-sso-check-01.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:06:07.169Z",
+      "rawBytes": 51,
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveBytes": 71,
+      "archiveSha256": "6459468e740490899bd8ae976788dcab3cf3aed6fbb9f4e79bc4a6e1042454be",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "test-types.log.gz",
+      "sourceFile": "release297-chat-sso-types-01.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:07:26.257Z",
+      "rawBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveBytes": 180,
+      "archiveSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "test-casts.log.gz",
+      "sourceFile": "release297-chat-sso-casts-01.log",
+      "sourceModifiedAtUtc": "2026-10-03T00:07:23.709Z",
+      "rawBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveBytes": 166,
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "cookie": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    }
+  ],
+  "limitations": [
+    "Incremental correctness evidence, not frozen-source capacity acceptance or deployment approval.",
+    "The native test exercises real shared bootstrap/storage transactions and the actual SSO writer. Real adapter opt-in is separately verified through executable WebSocket branch and source contracts.",
+    "No production changes, new pool capacity, timeout increases, migrations or RLS inventory changes.",
+    "Original failed attempts are retained; repeated cases must not be summed as distinct coverage."
+  ],
+  "productionMutations": 0,
+  "builds": 0,
+  "operationalAcceptance": {
+    "usageCapacity": false,
+    "deploymentGreenLight": false
+  }
+}

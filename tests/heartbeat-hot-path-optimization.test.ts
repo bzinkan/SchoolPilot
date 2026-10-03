@@ -143,6 +143,53 @@ describe("screenshot authority binding", () => {
 });
 
 describe("heartbeat classification batching", () => {
+  it("keeps ordinary batching active after a nonterminal preflight drain", async () => {
+    const immediate: string[] = [];
+    const batches: string[][] = [];
+    const batcher = new HeartbeatClassificationBatcher({
+      async persistImmediate(entry) { immediate.push(entry.heartbeatId); },
+      async persistBatch(_schoolId, entries) {
+        batches.push(entries.map((entry) => entry.heartbeatId));
+      },
+      async patchCache() { return true; },
+    });
+    await batcher.persist(classificationEntry(500));
+    await batcher.drainPending();
+    assert.deepEqual(batches, [["heartbeat-500"]]);
+
+    await batcher.persist(classificationEntry(501));
+    await batcher.persist(classificationEntry(502));
+    await batcher.persist(classificationEntry(503, { safetyAlert: "violence" }));
+    assert.deepEqual(immediate, ["heartbeat-503"]);
+    assert.equal(batches.length, 1, "ordinary rows must remain queued after preflight");
+    await batcher.drainPending();
+    assert.deepEqual(batches[1], ["heartbeat-501", "heartbeat-502"]);
+
+    await batcher.flushAll();
+    await batcher.persist(classificationEntry(504));
+    assert.deepEqual(immediate, ["heartbeat-503", "heartbeat-504"], "terminal shutdown retains its immediate-write behavior");
+  });
+
+  it("nonterminal drain waits for cache writes and batches enqueued while draining", async () => {
+    const batches: string[][] = [];
+    let release!: (value: boolean) => void;
+    const cacheWrite = new Promise<boolean>(resolve => { release = resolve; });
+    const batcher = new HeartbeatClassificationBatcher({
+      async persistImmediate() { assert.fail("ordinary classifications must use batching"); },
+      async persistBatch(_schoolId, entries) { batches.push(entries.map(entry => entry.heartbeatId)); },
+      async patchCache() { return true; },
+    });
+    await batcher.persist(classificationEntry(510, { cacheWrite }));
+    let drained = false;
+    const draining = batcher.drainPending().then(() => { drained = true; });
+    await delay(0);
+    await batcher.persist(classificationEntry(511, { schoolId: "school-b" }));
+    assert.equal(drained, false);
+    release(true);
+    await draining;
+    assert.deepEqual(batches, [["heartbeat-510"], ["heartbeat-511"]]);
+  });
+
   it("persists critical classifications immediately and bounds school batches to 100", async () => {
     const immediate: string[] = [];
     const batches: string[][] = [];

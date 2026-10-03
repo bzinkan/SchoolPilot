@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { RELEASE_ENABLED_PROFILE, enabledReleaseEnvironment, capacityAcceptance, assertEnabledReleaseRuntime, releaseRangeFixture } from './release-enabled-profile.mjs';
+import { RELEASE_ENABLED_PROFILE, enabledReleaseEnvironment, capacityAcceptance, assertEnabledReleaseRuntime, releaseRangeFixture, releaseTrafficOptions } from './release-enabled-profile.mjs';
+import { measureMethod } from './release-enabled-instrumentation.mjs';
 import { canonicalSchemaFingerprint } from './release-schema-fingerprint.mjs';
 import { commandTransportAcknowledgement, assertPrivateLifecycleAdvanced } from './release-enabled-protocol.mjs';
 
@@ -49,9 +50,45 @@ test('Docker locality guard rejects remote daemons and every daemon operation pi
   assert.equal(actions.length, 2); assert.ok(actions.every(action => action.startsWith('context ')), 'Only local context metadata may precede endpoint pinning');
   assert.match(runner, /'DOCKER_CONTEXT','DOCKER_HOST','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH','DOCKER_TLS'/);
 });
+test('CPU profiling preserves all6000offers and cannot become acceptance evidence', () => {
+  assert.deepEqual(releaseTrafficOptions({ USAGE_RELEASE_CPU_PROFILE: 'true', USAGE_RELEASE_DIAGNOSTIC: 'true', USAGE_RELEASE_PHASE: 'ingest' }), {});
+  assert.deepEqual(releaseTrafficOptions({ USAGE_RELEASE_DIAGNOSTIC: 'true', USAGE_RELEASE_PHASE: 'preflight' }), { durationMs: 10000 });
+  assert.throws(() => releaseTrafficOptions({ USAGE_RELEASE_CPU_PROFILE: 'true', USAGE_RELEASE_PHASE: 'ingest' }));
+  assert.throws(() => releaseTrafficOptions({ USAGE_RELEASE_CPU_PROFILE: 'true', USAGE_RELEASE_DIAGNOSTIC: 'true', USAGE_RELEASE_PHASE: 'combined' }));
+  const result = accepted(); result.cpuProfile = { enabled: true }; assert.equal(capacityAcceptance(result).acceptanceRun, false);
+});
+test('preflight quiescence preserves normal batching until traffic completes', () => {
+  const processSource = readFileSync(new URL('./release-enabled-process.mjs', import.meta.url), 'utf8');
+  const coordinator = readFileSync(new URL('./release-enabled-scale.mjs', import.meta.url), 'utf8');
+  assert.match(processSource, /quiesce = batch\.drainHeartbeatClassificationBatches/);
+  assert.match(processSource, /flush = batch\.flushHeartbeatClassificationBatches/);
+  assert.match(processSource, /request\.operation === 'quiesce'\) await quiesce\(\)/);
+  const preflight = coordinator.indexOf("await api.rpc('quiesce')");
+  const measuredTraffic = coordinator.indexOf("generator.rpc('phase'");
+  const terminalDrain = coordinator.indexOf("await api.rpc('drain')");
+  assert.ok(preflight > 0 && preflight < measuredTraffic);
+  assert.ok(terminalDrain > measuredTraffic, 'terminal flush cannot precede measured traffic');
+});
+
+test('lazy worker proxy checkouts preserve the real receiver, both pg overloads and failures', async () => {
+  class Pool {
+    constructor(label) { this.options = { label }; }
+    connect(callback) { const result = { scope: this.options.label }; if (callback) { queueMicrotask(() => callback(null, result)); return 'callback-token'; } return Promise.resolve(result); }
+  }
+  const real = new Pool('worker'), other = new Pool('other'), options = real.options, observations = [];
+  const lazy = new Proxy(Object.create(Pool.prototype), { get(_target, name) { const value = real[name]; return typeof value === 'function' ? value.bind(real) : value; } });
+  measureMethod(Pool.prototype, 'connect', (duration, error) => observations.push({ duration, error }), { appliesTo: receiver => receiver.options === options });
+  assert.deepEqual(await lazy.connect(), { scope: 'worker' });
+  await new Promise((resolve, reject) => { assert.equal(lazy.connect((error, client) => { if (error) reject(error); else { assert.equal(client.scope, 'worker'); resolve(); } }), 'callback-token'); });
+  assert.deepEqual(await other.connect(), { scope: 'other' }); assert.equal(observations.length, 2); assert.ok(observations.every(row => row.duration >= 0 && !row.error));
+  const failure = new Error('checkout failed'), rejected = { connect(callback) { if (callback) return callback(failure); return Promise.reject(failure); } }, failures = [];
+  measureMethod(rejected, 'connect', (_duration, error) => failures.push(error));
+  await assert.rejects(rejected.connect(), error => error === failure); rejected.connect(error => assert.equal(error, failure));
+  assert.deepEqual(failures, [failure, failure]);
+});
 
 function accepted() {
-  const database = () => ({ acquisitions: { failures: 0, maxMs: 10 }, statements: { select: { failures: 0, maxMs: 10 } } });
+  const database = () => ({ acquisitions: { count: 2, failures: 0, maxMs: 10 }, statements: { select: { failures: 0, maxMs: 10 } } });
   return { sourceClean: true, sourceUnchangedAtFinish: true, processes: { api: 1, worker: 2, generator: 3 }, enabledCapabilitiesVerified: true,
     staffAuthenticationVerified: true, pools: { api: 16, session: 2, worker: 5 }, correctness: { passed: true, currentDayWorkers: [{ durationMs: 48_000, correct: true }, { durationMs: 5, correct: true }] },
     phases: [{ name: 'combined', insertedObservations: 6000, api: { database: database() }, worker: { database: database() },
@@ -73,6 +110,7 @@ test('release-enabled acceptance refuses successful workers masking failed/off/d
     r => r.phases[0].traffic.reports[0].days = 365, r => r.phases[0].traffic.reports[0].scope = 'school-only',
     r => r.phases[0].traffic.lifecycle.passed = false, r => r.phases[0].api.database.acquisitions.failures++,
     r => r.phases[0].worker.database.acquisitions.failures++, r => r.phases[0].api.database.acquisitions.maxMs = 5001,
+    r => r.phases[0].worker.database.acquisitions.count = 0,
     r => r.phases[0].worker.database.acquisitions.maxMs = 10001, r => r.phases[0].api.database.statements.select.failures++,
     r => r.phases[0].worker.database.statements.select.failures++, r => r.phases[0].api.database.statements.select.maxMs = 15001,
     r => r.phases[0].worker.database.statements.select.maxMs = 60001, r => r.phases[0].worker.database.statements = {},

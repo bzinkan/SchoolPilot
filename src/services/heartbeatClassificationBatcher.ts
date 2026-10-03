@@ -238,6 +238,28 @@ export class HeartbeatClassificationBatcher {
     }
   }
 
+  /**
+   * Drain existing work without changing how future classifications persist.
+   * Callers must first stop their producers; unlike flushAll, this is safe at a
+   * preflight boundary before the same process starts accepting more traffic.
+   */
+  async drainPending(options: { maxAttempts?: number } = {}): Promise<void> {
+    while (this.batches.size > 0 || this.inFlightPersistence.size > 0) {
+      const results = await Promise.allSettled([
+        ...this.inFlightPersistence,
+        ...[...this.batches.keys()].map((schoolId) =>
+          this.flushSchool(schoolId, { maxAttempts: options.maxAttempts ?? 3 })
+        ),
+      ]);
+      const failed = results.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected"
+      );
+      if (failed) throw failed.reason;
+      // A producer already running when draining began may enqueue another
+      // school's batch. Recheck both tracked sets before declaring quiescence.
+    }
+  }
+
   async flushAll(options: { maxAttempts?: number } = {}): Promise<void> {
     this.shuttingDown = true;
     for (const state of this.batches.values()) {
@@ -298,6 +320,11 @@ export async function persistHeartbeatClassification(
   entry: HeartbeatClassificationPersistence
 ): Promise<void> {
   return defaultBatcher.persist(entry);
+}
+
+export async function drainHeartbeatClassificationBatches(): Promise<void> {
+  await flushHeartbeatClassificationProducers();
+  return defaultBatcher.drainPending({ maxAttempts: 3 });
 }
 
 export async function flushHeartbeatClassificationBatches(): Promise<void> {

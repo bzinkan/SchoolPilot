@@ -1,0 +1,465 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-02T23:55:50.248Z",
+  "scope": "Physical PoolClient Drizzle metadata reuse, fresh authority and cleanup regressions, and repair of a private-chat native lock-observation fixture.",
+  "source": {
+    "baseCommit": "9f1580615d72f6b0647abac27677773b03a88269",
+    "archiveTimeHead": "9f1580615d72f6b0647abac27677773b03a88269",
+    "state": "shared dirty worktree; incremental uncommitted changes",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "src/middleware/tenantContext.ts": "5829f7cd7ab595c1e8fce846816a30175fbe57d54d0276e72c951462bab9ebda",
+      "tests/tenant-context-cleanup.test.ts": "5db1adcdd49eeef78dd6efae5a582fe15bb7cd74bc3401a8a3d2681d0d3738a3",
+      "tests/tenant-context-reuse.integration.test.ts": "9d1e21c83d498a4ca8fb0d884b6b30a2d1bb9a05e3155d0406fdba350a24fcbf",
+      "scripts/run-test-lane.mjs": "65a002f133399315fa67680bde1d88cc1b23014da9ec5236d0e17ee27f994836",
+      "tests/classpilot-private-chat-lifecycle.integration.test.ts": "edaf0dbedaae5e8e899adc709e55edce7f552c14cdacb78a667653da8fa7458b"
+    },
+    "note": "Archive-time hashes describe current local files. Earlier CI source is separately identified as9f158061; final frozen-source checks remain required."
+  },
+  "originalFailure": {
+    "file": "reports-metadata-original-ci-db-failure.log.gz",
+    "sourceCommit": "9f1580615d72f6b0647abac27677773b03a88269",
+    "status": "failed",
+    "note": "Original full ordinary DB CI job retained in full after credential redaction. The private-chat lock helper observed pg_blocking_pids before pg_stat_activity.query advanced past BEGIN, failing the existing advisory-lock assertion. Repaired helper waits within the same5s bound for active Lock state and the expected SQL, retaining existing assertions."
+  },
+  "commands": {
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/tenant-context-cleanup.test.ts tests/usage-capacity-diagnostics.test.ts tests/classpilot-usage-execution.test.ts",
+    "native": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 --test-name-pattern 'without legacy settings|physical client metadata' tests/tenant-context-reuse.integration.test.ts tests/classpilot-private-chat-lifecycle.integration.test.ts",
+    "bootstrap": "Unique owned PostgreSQL container, local Docker npipe explicitly pinned for every daemon action, loopback-only dynamic port,2CPU/2GiB limits; read-only schema export from schoolpilot_redesign_usage_release297_20261002; separate NOSUPERUSER NOBYPASSRLS NOINHERIT app role and owner bootstrap connection; label-checked container cleanup."
+  },
+  "runs": {
+    "focused": {
+      "file": "reports-metadata-focused.log.gz",
+      "tap": {
+        "tests": 24,
+        "suites": 3,
+        "pass": 24,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    "native": {
+      "runId": "6e9b87e18f02",
+      "owner": {
+        "file": "reports-metadata-native-owner.log.gz",
+        "tap": {
+          "tests": 2,
+          "suites": 0,
+          "pass": 2,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "owner: connection/GUC/transaction plumbing only"
+      },
+      "restricted": {
+        "file": "reports-metadata-native-restricted.log.gz",
+        "tap": {
+          "tests": 2,
+          "suites": 0,
+          "pass": 2,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "non-superuser/non-BYPASSRLS app role; temporary table FORCE RLS active"
+      },
+      "execution": {
+        "ordinaryExit": 0,
+        "restrictedExit": 0,
+        "source": "9f1580615d72f6b0647abac27677773b03a88269",
+        "worktreeDirty": true,
+        "container": "schoolpilot-tenant-metadata-6e9b87e18f02",
+        "database": "usage_native_6e9b87e18f02",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "support": [
+        "reports-metadata-native-execution.json.gz",
+        "reports-metadata-native-cleanup.log.gz",
+        "reports-metadata-native-container-create.log.gz",
+        "reports-metadata-native-restore.log.gz",
+        "reports-metadata-native-role.log.gz"
+      ],
+      "schemaSnapshotSha256": "7ee2876e5332113da098ce04a4da88bcf4d734121b6566c4bf01ec583151c8d3"
+    }
+  },
+  "checks": [
+    {
+      "command": "npm run check",
+      "file": "reports-metadata-source-check.log.gz"
+    },
+    {
+      "command": "npm run check:tests",
+      "file": "reports-metadata-test-types-01.log.gz"
+    },
+    {
+      "command": "npm run check:tests",
+      "file": "reports-metadata-test-types-02.log.gz"
+    },
+    {
+      "command": "npm run check:test-casts",
+      "file": "reports-metadata-test-casts.log.gz"
+    }
+  ],
+  "coverage": [
+    "Only raw physical PoolClient ORM metadata is cached; each lease installs its own school/super GUCs and fresh ALS store. Usage request-guarded clients are excluded.",
+    "The same native physical connection is reused from super school A to ordinary school B; GUCs reset after every release and unbound restricted reads expose no rows.",
+    "Committed updates, transaction rollback and subsequent queries remain fresh; discarded connections do not share metadata with replacement clients.",
+    "Existing exactly-once release/disconnect/reset-failure and Usage cancellation ownership cases remain passing.",
+    "The selected repaired private-chat native race test passes in both owner and restricted lanes."
+  ],
+  "logs": [
+    {
+      "file": "reports-metadata-original-ci-db-failure.log.gz",
+      "sourceFile": "release297-ci-9f-db-job.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:45:35.162Z",
+      "rawBytes": 2542340,
+      "rawSha256": "5fd19f64bc82871657e7870cbc7d4cb6f48e19afdf3cf2da1ffe78038dc945e2",
+      "sanitizedBytes": 2541969,
+      "sanitizedSha256": "6444ab1f775bba25e9d19a713c76acb92888fe2b2b342075d9eff308e084fa1d",
+      "archiveBytes": 352593,
+      "archiveSha256": "ab38b8367244f6b4d07b09cf02f5d8272e24b51dc292183d66218bcfeba85c15",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 10,
+        "secretAssignment": 23,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 1395,
+        "suites": 121,
+        "pass": 1386,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 8,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-metadata-native-owner.log.gz",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:14.895Z",
+      "rawBytes": 3515,
+      "rawSha256": "9423d4ada4ce9585bffc741ab6abfea6f4df0336e77279dafea9e58df2a6cf84",
+      "sanitizedBytes": 3515,
+      "sanitizedSha256": "9423d4ada4ce9585bffc741ab6abfea6f4df0336e77279dafea9e58df2a6cf84",
+      "archiveBytes": 982,
+      "archiveSha256": "1473ffde3d29cbeaca683d5319d1795e11c256fcd277dc06dd73a2eb19b2c4d4",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 2,
+        "suites": 0,
+        "pass": 2,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-metadata-native-restricted.log.gz",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:22.576Z",
+      "rawBytes": 3467,
+      "rawSha256": "1b7b4cbee89a2de7701b4bfe077ba6ab20eafbb458ed9fe924983059197654e7",
+      "sanitizedBytes": 3467,
+      "sanitizedSha256": "1b7b4cbee89a2de7701b4bfe077ba6ab20eafbb458ed9fe924983059197654e7",
+      "archiveBytes": 946,
+      "archiveSha256": "e2bcda6d3b2999580afb1835c6d823a80b1ffba292be95a4f27d4d48875b93c9",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 2,
+        "suites": 0,
+        "pass": 2,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-metadata-native-execution.json.gz",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:22.657Z",
+      "rawBytes": 335,
+      "rawSha256": "c15d9957c88ab3c160659427971742dce68f0de723f409c140081ee92b907221",
+      "sanitizedBytes": 335,
+      "sanitizedSha256": "c15d9957c88ab3c160659427971742dce68f0de723f409c140081ee92b907221",
+      "archiveBytes": 237,
+      "archiveSha256": "bf4dec05923b5ff5bc72f229492d110a30b7b16b9f5b0dadc83010f82b97460a",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-native-cleanup.log.gz",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:23.320Z",
+      "rawBytes": 42,
+      "rawSha256": "7ef3762873302d45c373820c285f84cf7a9514807fcb1bc30460309a96600d78",
+      "sanitizedBytes": 42,
+      "sanitizedSha256": "7ef3762873302d45c373820c285f84cf7a9514807fcb1bc30460309a96600d78",
+      "archiveBytes": 62,
+      "archiveSha256": "791ce348bbe5e33aa14fdd43af2edbbaa8a8d8d53c62d2e69e4888de672704f9",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-native-container-create.log.gz",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:00.335Z",
+      "rawBytes": 66,
+      "rawSha256": "a31613f6064f2ea4efb64676a753a7a0527e1bf672e97474dcfd7047f403b8d2",
+      "sanitizedBytes": 66,
+      "sanitizedSha256": "a31613f6064f2ea4efb64676a753a7a0527e1bf672e97474dcfd7047f403b8d2",
+      "archiveBytes": 75,
+      "archiveSha256": "bc5f8340f97d5e5590809dd5a0fd79e844ef328f15c273007092be5120254792",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-native-restore.log.gz",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:08.045Z",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-native-role.log.gz",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:53:08.192Z",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-focused.log.gz",
+      "sourceFile": "release297-tenant-metadata-focused-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:46:01.118Z",
+      "rawBytes": 14328,
+      "rawSha256": "bbffb069f14e45128e4d2b99dadeab1ff2f05012ffc2423df52107837e1ca271",
+      "sanitizedBytes": 14328,
+      "sanitizedSha256": "bbffb069f14e45128e4d2b99dadeab1ff2f05012ffc2423df52107837e1ca271",
+      "archiveBytes": 3155,
+      "archiveSha256": "43713ea25d21ced66f46d9dda0d90de1328115740d0e347e0e6d6bfc1b5be89a",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 24,
+        "suites": 3,
+        "pass": 24,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-metadata-source-check.log.gz",
+      "sourceFile": "release297-tenant-metadata-check-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:45:52.638Z",
+      "rawBytes": 51,
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedBytes": 51,
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveBytes": 71,
+      "archiveSha256": "6459468e740490899bd8ae976788dcab3cf3aed6fbb9f4e79bc4a6e1042454be",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-test-types-01.log.gz",
+      "sourceFile": "release297-tenant-metadata-types-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:47:18.200Z",
+      "rawBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedBytes": 204,
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveBytes": 180,
+      "archiveSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-test-types-02.log.gz",
+      "sourceFile": "release297-tenant-metadata-types-02.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:49:47.326Z",
+      "rawBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedBytes": 204,
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveBytes": 180,
+      "archiveSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-metadata-test-casts.log.gz",
+      "sourceFile": "release297-tenant-metadata-casts-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T23:48:26.054Z",
+      "rawBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedBytes": 181,
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveBytes": 166,
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f",
+      "credentialRedactions": {
+        "privateKey": 0,
+        "awsKey": 0,
+        "jwt": 0,
+        "githubToken": 0,
+        "databaseUrl": 0,
+        "bearer": 0,
+        "secretAssignment": 0,
+        "sqlPassword": 0
+      },
+      "credentialShapeScanPassed": true,
+      "gzipRoundtripVerified": true
+    }
+  ],
+  "productionMutations": 0,
+  "builds": 0,
+  "limitations": [
+    "Incremental verification only, not final frozen-source CI or capacity acceptance. No new timeouts, pools or production infrastructure.",
+    "The one-client setting exists only inside the native fixture to prove physical reuse. Production pool limits are unchanged.",
+    "CPU profiling and full intended cadence acceptance remain separate. This optimization does not establish deployment readiness."
+  ],
+  "operationalAcceptance": {
+    "finalSourceChecks": false,
+    "usageCapacity": false,
+    "deploymentGreenLight": false
+  }
+}

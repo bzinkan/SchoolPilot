@@ -48,7 +48,7 @@ export function capacityAcceptance(result) {
   const combined = result.phases?.find(phase => phase.name === 'combined');
   return {
     sourceFrozen: result.sourceClean === true && result.sourceUnchangedAtFinish === true,
-    acceptanceRun: result.diagnosticOnly !== true,
+    acceptanceRun: result.diagnosticOnly !== true && result.cpuProfile?.enabled !== true,
     isolatedProcesses: new Set(Object.values(result.processes ?? {})).size === 3,
     enabledCapabilities: result.enabledCapabilitiesVerified === true,
     realSessionCookies: result.staffAuthenticationVerified === true,
@@ -69,7 +69,8 @@ export function capacityAcceptance(result) {
     currentDayWorkerHeadroom: result.correctness?.currentDayWorkers?.length === 2
       && result.correctness.currentDayWorkers.every(row => row.correct === true && row.durationMs <= 48_000),
     lifecycle: combined?.traffic?.lifecycle?.passed === true,
-    noPoolFailures: combined?.api?.database?.acquisitions?.failures === 0 && combined?.worker?.database?.acquisitions?.failures === 0,
+    noPoolFailures: combined?.api?.database?.acquisitions?.failures === 0 && combined?.worker?.database?.acquisitions?.failures === 0
+      && combined.worker.database.acquisitions.count >= 2,
     acquisitionDeadlines: combined?.api?.database?.acquisitions?.maxMs <= 5000 && combined?.worker?.database?.acquisitions?.maxMs <= 10000,
     statementDeadlines: ['api', 'worker'].every(role => {
       const rows = Object.values(combined?.[role]?.database?.statements ?? {});
@@ -77,6 +78,15 @@ export function capacityAcceptance(result) {
     }),
     correctness: result.correctness?.passed === true,
   };
+}
+
+export function releaseTrafficOptions(env) {
+  if (env.USAGE_RELEASE_CPU_PROFILE === 'true') {
+    assert.equal(env.USAGE_RELEASE_PHASE, 'ingest', 'CPU collection is restricted to diagnostic ingestion');
+    assert.equal(env.USAGE_RELEASE_DIAGNOSTIC, 'true', 'Profiler runs cannot establish capacity acceptance');
+    return {}; // Preserve60seconds,100offers/sec,6000offers; never shorten a CPU diagnostic.
+  }
+  return env.USAGE_RELEASE_DIAGNOSTIC === 'true' ? { durationMs: 10_000 } : {};
 }
 
 export function releaseRangeFixture(fixture, days = 365) {

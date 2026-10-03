@@ -10,7 +10,7 @@ import pg from 'pg';
 import { hash } from 'bcryptjs';
 import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff } from './local-usage-scale.mjs';
 import { schoolDayOracle } from './school-day-profile.mjs';
-import { RELEASE_ENABLED_PROFILE, enabledReleaseEnvironment, capacityAcceptance } from './release-enabled-profile.mjs';
+import { RELEASE_ENABLED_PROFILE, enabledReleaseEnvironment, capacityAcceptance, releaseTrafficOptions } from './release-enabled-profile.mjs';
 
 assertLocalScaleFixture(process.env);
 const root = fileURLToPath(new URL('../../../', import.meta.url)), output = process.env.USAGE_SCALE_OUTPUT;
@@ -18,6 +18,8 @@ const directory = dirname(output), digest = data => createHash('sha256').update(
 const write = (path, value) => writeFileSync(resolve(directory, path), JSON.stringify(value, null, 2) + '\n');
 const env = enabledReleaseEnvironment(process.env);
 const phaseName = process.env.USAGE_RELEASE_PHASE || 'combined';
+const trafficOptions = releaseTrafficOptions(process.env);
+const collectCpuProfile = process.env.USAGE_RELEASE_CPU_PROFILE === 'true';
 assert.ok(['combined', 'ingest', 'reports', 'worker', 'preflight'].includes(phaseName));
 const sourceClean = execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim() === '';
 assert.ok(sourceClean || process.env.USAGE_RELEASE_DIAGNOSTIC === 'true', 'Capacity evidence requires clean source');
@@ -27,6 +29,7 @@ const files = readdirSync(resolve(root, 'scripts/load/usage')).filter(name => na
 const sourceHashes = Object.fromEntries(files.map(name => [name, digest(readFileSync(resolve(root, 'scripts/load/usage', name)))]));
 const metrics = { schemaVersion: 1, profile: RELEASE_ENABLED_PROFILE, sourceRevision: source, sourceClean, sourceHashes,
   startedAt: new Date().toISOString(), productionReadiness: false, capacityAccepted: false, diagnosticOnly: process.env.USAGE_RELEASE_DIAGNOSTIC === 'true', phases: [],
+  cpuProfile: { enabled: collectCpuProfile, ...(collectCpuProfile ? { file: 'api.cpuprofile', samplingIntervalMicroseconds: 1000, includesStartupAndDrain: true, capacityEvidence: false } : {}) },
   limitations: ['Local PostgreSQL quotas are not RDS I/O proof.', 'Generator, API and worker use separate Node processes with512MiB heap caps; Windows process CPU and RSS are not hard-limited.',
     'Managed-browser enforcement is not simulated-client ACK evidence.', 'Cold PostgreSQL shared buffers; host filesystem caches are not flushed. Real login/capability/report preflights happen before the measured traffic.',
     'The scheduler fleet and all other hourly jobs are outside this bounded two-school operation test.'],
@@ -37,7 +40,7 @@ let sequence = 0, sampling, samplePending = false;
 async function child(name, file, extraEnv) {
   const stdout = createWriteStream(resolve(directory, `${name}.log`), { flags: 'wx' });
   const processChild = fork(resolve(root, `scripts/load/usage/${file}`), [], { cwd: root, env: { ...env, ...extraEnv },
-    execArgv: ['--max-old-space-size=512'], stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true });
+    execArgv: ['--max-old-space-size=512', ...(collectCpuProfile && name === 'api' ? ['--cpu-prof', `--cpu-prof-dir=${directory}`, '--cpu-prof-name=api.cpuprofile', '--cpu-prof-interval=1000'] : [])], stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true });
   processChild.stdout.pipe(stdout, { end: false }); processChild.stderr.pipe(stdout, { end: false });
   const closed = new Promise(resolve => processChild.once('close', (code, signal) => { stdout.end(); resolve({ code, signal }); }));
   const pending = new Map(); let readyResolve, readyReject;
@@ -98,7 +101,9 @@ try {
   metrics.prewarmed = apiReady.prewarmed; metrics.readiness = apiReady.readiness; metrics.redisReady = apiReady.redis;
   const auth = await generator.rpc('initialize', { ...fixture, base: apiReady.base });
   metrics.staffAuthenticationVerified = auth.realSessionCookies; metrics.enabledCapabilitiesVerified = auth.acceptedCapabilities;
-  await api.rpc('drain');
+  // A shutdown flush permanently disables batching. Preflight must leave the
+  // live process's normal batching policy intact for the measured traffic.
+  await api.rpc('quiesce');
   const phase = { name: phaseName, startedAt: new Date().toISOString(), pgWaitSamples: [], workers: [] }; metrics.phases.push(phase); save();
   const currentCounts = async () => (await observer.query('SELECT school_id,COUNT(*)::int AS count FROM heartbeats WHERE timestamp >= $1::timestamp GROUP BY school_id ORDER BY school_id',
     [time.localDateStartUtc(today, 'America/New_York').toISOString().replace('T', ' ').replace('Z', '')])).rows;
@@ -114,7 +119,7 @@ try {
     finally { samplePending = false; }
   }, 250); sampling.unref();
   const traffic = generator.rpc('phase', { ingest: ['combined', 'ingest'].includes(phaseName), reports: ['combined', 'reports'].includes(phaseName),
-    lifecycle: phaseName === 'combined' || phaseName === 'preflight', ...(process.env.USAGE_RELEASE_DIAGNOSTIC === 'true' ? { durationMs: 10_000 } : {}) });
+    lifecycle: phaseName === 'combined' || phaseName === 'preflight', ...trafficOptions });
   const oracle = schoolDayOracle('school');
   const workers = ['combined', 'worker'].includes(phaseName) ? fixture.schools.map(async school => {
     const result = await worker.rpc('rollup', { schoolId: school.id, date: heavyDate, cutoff: time.localDateStartUtc(time.addLocalDays(heavyDate, 1), 'America/New_York').toISOString() });
@@ -186,6 +191,13 @@ try {
     if (exit.code !== 0) { metrics.childCleanupFailure = true; process.exitCode = 1; }
   }
   await observer.end();
+  if (collectCpuProfile) {
+    try {
+      const bytes = readFileSync(resolve(directory, 'api.cpuprofile')), profile = JSON.parse(bytes.toString('utf8'));
+      assert.ok(profile.nodes?.length > 0 && profile.samples?.length > 0, 'API CPU profile must contain real samples');
+      Object.assign(metrics.cpuProfile, { sha256: digest(bytes), bytes: bytes.length, samples: profile.samples.length, startTime: profile.startTime, endTime: profile.endTime });
+    } catch (error) { metrics.cpuProfile.collectionFailure = String(error.message).slice(0, 300); process.exitCode = 1; }
+  }
   metrics.childShutdownClean = metrics.childCleanupFailure !== true;
   if (metrics.acceptance) metrics.acceptance.ownedProcessCleanup = metrics.childShutdownClean;
   if (!metrics.childShutdownClean) metrics.capacityAccepted = false;

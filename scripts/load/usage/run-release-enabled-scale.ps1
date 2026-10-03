@@ -4,9 +4,11 @@ param(
   [ValidatePattern('^schoolpilot_redesign_usage_[a-z0-9_]+$')][string]$SchemaDatabase = 'schoolpilot_redesign_usage_20260930',
   [Parameter(Mandatory=$true)][string]$OutputDirectory,
   [ValidateSet('combined','ingest','reports','worker','preflight')][string]$Phase = 'combined',
-  [switch]$DiagnosticOnly
+  [switch]$DiagnosticOnly,
+  [switch]$CollectApiCpuProfile
 )
 $ErrorActionPreference = 'Stop'
+if ($CollectApiCpuProfile -and $Phase -cne 'ingest') { throw 'CPU profiling is a diagnostic-only ingest phase with the complete6000offer workload.' }
 function Assert-LocalDockerEndpoint {
   param([string]$Endpoint)
   # A pipe must address this machine. Refuse TCP/SSH and UNC remote pipes,
@@ -43,8 +45,8 @@ $names = @('DATABASE_URL','ADMIN_DATABASE_URL','DATABASE_URL_PRIVILEGED','JWT_SE
 $saved = @{}; foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 $redisContainer = 'schoolpilot-usage-redis-' + $run
 $created = $false; $redisCreated = $false; $exitCode = 1
-$names += @('USAGE_RELEASE_PHASE','USAGE_RELEASE_DIAGNOSTIC','DOTENV_CONFIG_PATH','DOTENV_CONFIG_QUIET','DOCKER_CONTEXT','DOCKER_HOST','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH','DOCKER_TLS')
-foreach ($name in @('USAGE_RELEASE_PHASE','USAGE_RELEASE_DIAGNOSTIC','DOTENV_CONFIG_PATH','DOTENV_CONFIG_QUIET','DOCKER_CONTEXT','DOCKER_HOST','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH','DOCKER_TLS')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+$names += @('USAGE_RELEASE_PHASE','USAGE_RELEASE_DIAGNOSTIC','USAGE_RELEASE_CPU_PROFILE','DOTENV_CONFIG_PATH','DOTENV_CONFIG_QUIET','DOCKER_CONTEXT','DOCKER_HOST','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH','DOCKER_TLS')
+foreach ($name in @('USAGE_RELEASE_PHASE','USAGE_RELEASE_DIAGNOSTIC','USAGE_RELEASE_CPU_PROFILE','DOTENV_CONFIG_PATH','DOTENV_CONFIG_QUIET','DOCKER_CONTEXT','DOCKER_HOST','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH','DOCKER_TLS')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 Push-Location -LiteralPath $repository
 try {
   # Context metadata is local. Pin its validated endpoint before the first
@@ -68,7 +70,8 @@ try {
   if (-not $DiagnosticOnly -and (git status --porcelain).Length -gt 0) { throw 'Commit source and harness before collecting evidence.' }
   $env:USAGE_SOURCE_REVISION = (git rev-parse HEAD).Trim()
   $env:DOTENV_CONFIG_PATH = Join-Path $output 'intentionally-absent-dotenv'; $env:DOTENV_CONFIG_QUIET = 'true'
-  $env:USAGE_RELEASE_PHASE = $Phase; $env:USAGE_RELEASE_DIAGNOSTIC = if ($DiagnosticOnly) { 'true' } else { 'false' }
+  $env:USAGE_RELEASE_PHASE = $Phase; $env:USAGE_RELEASE_DIAGNOSTIC = if ($DiagnosticOnly -or $CollectApiCpuProfile) { 'true' } else { 'false' }
+  $env:USAGE_RELEASE_CPU_PROFILE = if ($CollectApiCpuProfile) { 'true' } else { 'false' }
   npm run build *> (Join-Path $output 'build.log')
   if ($LASTEXITCODE -ne 0) { throw 'Plain backend build failed; see build.log.' }
   $schema = Join-Path $output 'schema-only.sql'
@@ -212,7 +215,7 @@ try {
     $exitCode = $LASTEXITCODE
   } finally { $ErrorActionPreference = $strictPreference }
   Get-Content -LiteralPath (Join-Path $output 'scale.log') | Where-Object { $_ -match '"event":"release_enabled_usage_complete' }
-  [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; workloadProfile='release-enabled-isolated-100rps-v1'; phase=$Phase; diagnosticOnly=[bool]$DiagnosticOnly; redisImageDigest=$redisImage; redisContainer=$redisContainer; rlsInventory=$RlsInventory; registrySha256=$registrySha256; admittedTables=$selectedInventory.tables.Count; currentFixtureMigrations=($RlsInventory -cne 'classpilotUsageRollupDaysPostExpand'); coldPostgresRestart=($Profile -ceq 'cold-open-loop-ai'); hostFilesystemCachesFlushed=$false; preparedStateSha256=$env:USAGE_SCALE_COLD_STATE_SHA256; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); inputSchemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); postConvergenceSchemaSha256=$convergedSchemaSha256; postConvergenceSchemaNormalization='UTF8/LF; no owner/grants; pg_dump nonce retained'; imageDigest=$image; container=$container; database=$database; restrictedNonOwnerRole=$true; postgresCpu=4; postgresMemoryBytes=4294967296; nodeOldSpaceMiB=512; productionMutations=0; exitCode=$exitCode } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
+  [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; workloadProfile='release-enabled-isolated-100rps-v1'; phase=$Phase; diagnosticOnly=([bool]$DiagnosticOnly -or [bool]$CollectApiCpuProfile); collectApiCpuProfile=[bool]$CollectApiCpuProfile; redisImageDigest=$redisImage; redisContainer=$redisContainer; rlsInventory=$RlsInventory; registrySha256=$registrySha256; admittedTables=$selectedInventory.tables.Count; currentFixtureMigrations=($RlsInventory -cne 'classpilotUsageRollupDaysPostExpand'); coldPostgresRestart=($Profile -ceq 'cold-open-loop-ai'); hostFilesystemCachesFlushed=$false; preparedStateSha256=$env:USAGE_SCALE_COLD_STATE_SHA256; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); inputSchemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); postConvergenceSchemaSha256=$convergedSchemaSha256; postConvergenceSchemaNormalization='UTF8/LF; no owner/grants; pg_dump nonce retained'; imageDigest=$image; container=$container; database=$database; restrictedNonOwnerRole=$true; postgresCpu=4; postgresMemoryBytes=4294967296; nodeOldSpaceMiB=512; productionMutations=0; exitCode=$exitCode } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
   if ($HoldFixtureForDiagnostics) {
     # This optional local-only hold permits read-only EXPLAIN work on the same
     # costly synthetic fixture. No credentials are persisted. Signal completion

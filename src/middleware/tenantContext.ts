@@ -20,6 +20,20 @@ export { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErro
 
 const pendingTenantReleases = new Set<Promise<void>>();
 const checkoutDiagnostics = new WeakMap<PoolClient, () => void>();
+// Reuse only the physical client's ORM/schema metadata. Drizzle's default
+// cache is a no-op; results, transactions and tenant authority are not cached.
+// Every lease still installs fresh GUCs and its own ALS store below. In
+// particular, request-scoped guarded clients must never enter this cache.
+const tenantClientDatabases = new WeakMap<PoolClient, TenantStore["db"]>();
+
+function databaseForTenantClient(client: PoolClient): TenantStore["db"] {
+  let database = tenantClientDatabases.get(client);
+  if (!database) {
+    database = drizzle(client, { schema });
+    tenantClientDatabases.set(client, database);
+  }
+  return database;
+}
 
 export function getTenantContextReleaseSnapshot(): { pending: number } {
   return { pending: pendingTenantReleases.size };
@@ -169,7 +183,7 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
   res.locals.releaseTenantContext = release;
   const store = {
     client,
-    db: drizzle(client, { schema }),
+    db: databaseForTenantClient(client),
     schoolId,
     isSuper,
   };
@@ -200,7 +214,7 @@ export async function runWithTenantContext<T>(
       );
       const store: TenantStore = {
         client,
-        db: drizzle(client, { schema }),
+        db: databaseForTenantClient(client),
         schoolId: opts.schoolId,
         isSuper: opts.isSuper,
       };

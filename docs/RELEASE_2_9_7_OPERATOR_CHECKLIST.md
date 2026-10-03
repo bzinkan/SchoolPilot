@@ -6,9 +6,10 @@ is recorded by this document. The current release inventory is
 [here](RELEASE_2_9_7_PR_INVENTORY.md). Preserve the historical September 30 evidence;
 its 2.10.0 package results do not certify this successor.
 
-The latest [read-only production snapshot](release-evidence/release-297/readonly-production-20261002.json)
+The dated October 2 [read-only production snapshot](release-evidence/release-297/readonly-production-20261002.json)
 records existing-service health, the bounded metrics window and verification
-limits. It is not candidate capacity evidence or approval for an operational window.
+limits at its recorded time. It is not current health verification, candidate
+capacity evidence or approval for an operational window.
 The historical [combined CI checkpoint](release-evidence/release-297/ci-app-checkpoint-d69322ef.json)
 preserves exact successful logs, test counts, conditional skips, source-tree
 equivalence and deployment-tool results. The current Usage contention changes
@@ -32,14 +33,15 @@ recipient, enforcement, tenancy or deployment health checks.
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Remote review source / CI | #603 at `08802d020a3c51beea504140f923126ab518aac6`; [20 reported checks passed](release-evidence/release-297/usage-contention/pr-review-checkpoint.json). This predates the current Usage correction. Final freeze, applicable final-head checks and green merged main are pending. |
-| API / worker artifacts | Final corrected candidate image and deployable registry/task-definition bindings pending. A local compatible rollback image from `08802d02` is prepared and scanned; [exact image/archive/scan proof](release-evidence/release-297/usage-contention/rollback-artifact/index.json). Both Usage modes must remain off on that older image. |
+| Remote review source / CI | The [earlier 20-check checkpoint](release-evidence/release-297/usage-contention/pr-review-checkpoint.json) was at `08802d020a3c51beea504140f923126ab518aac6`. The later `9f1580615d72f6b0647abac27677773b03a88269` ordinary DB lane failed an existing private-chat lock-observation race; [original failure and focused repair evidence](release-evidence/release-297/usage-contention/reports-metadata-manifest.json) are retained. The repaired fixture and metadata reuse pass focused owner/restricted checks, but final source freeze, complete final-head checks and green approved merged main remain pending. |
+| API / worker artifacts | A [local candidate image from `cb66014d`](release-evidence/release-297/usage-contention/candidate-artifact-cb66014d/index.json) was built, scanned and archived. It predates the pending ORM metadata-reuse application change and is not the final corrected image. Final image/source binding and deployable registry/task-definition bindings remain pending. A local compatible rollback image from `08802d02` is prepared and scanned; [exact image/archive/scan proof](release-evidence/release-297/usage-contention/rollback-artifact/index.json). Both Usage modes must remain off on that older image. |
+| Migration rehearsal | [Local reconstructed-baseline rehearsal at `cb66014d`](release-evidence/release-297/usage-contention/rehearsal-cb66014d/index.json) covers expansion, repeats and compatible rollback re-entry. The baseline had already applied the staff-identity contract; its explicit-flag step was idempotent re-entry. Actual production catalog/ledger verification and a final-source reconciliation are pending. |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [all five jobs passed](https://github.com/bzinkan/ClassPilot/actions/runs/37048485018), including Chrome 120, 133, 152 and stable. Five cancelled sibling-run entries remain and GitHub reports `UNSTABLE`; reconcile required-check status before merge. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes. |
-| Frontend aggregate | [Historical full-command log](release-evidence/release-297/frontend-aggregate-60bb2338.json): 738 Node-runner cases passed with zero skips, plus direct browser scripts. Current Usage overload/retry interface changes require their own final combined frontend gates. |
-| Live validation | Not started; minimum 30 minutes with nonzero samples for every required lifecycle category |
-| Usage capacity | Held off. [Retained cold Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json) failed concurrent reports and authenticated arrivals despite workers finishing in 22.623 / 22.753 seconds. The current admission/deadline/heartbeat correction has incremental tests only; diagnostic preflights do not establish three-run acceptance or a supported 100-request/second envelope. |
+| Frontend aggregate | [Current frontend source-bound evidence](release-evidence/release-297/usage-contention/frontend-final-source.json): 739 Node-runner cases passed with zero skips, plus direct browser scripts; build and lint passed with 29 existing lint warnings. Artifact SHA-256 `7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f`. Reconcile its recorded frontend blobs with the eventual final release commit; this does not certify later backend changes. |
+| Live pilot / validation | User confirmed St. Francis DeSales, Cincinnati (`desalescincy.org`), with 133 students, three administrators and nine teachers shown in the supplied screenshot. Production school UUID and current eligibility remain unverified. Live validation has not started; minimum 30 minutes with nonzero samples for every required lifecycle category. |
+| Usage capacity | Held off. Earlier [cold Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json) remains failed. The later [combined attempt 02 at `9f158061`](release-evidence/release-297/usage-contention/load-combined-02/manifest.json) recorded 1,355/6,000 heartbeat successes, 17/64 passing reports and correct workers in 15.541/15.723 seconds. Post-run review found the harness had permanently disabled classification batching before measurement; worker checkout instrumentation also missed real acquisitions. This failure remains preserved but does not represent normal batching capacity. Corrected harness/source acceptance is pending; no supported 100-request/second envelope is established. Synthetic acceptance continues to use two schools, distinct from the one live pilot. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)
@@ -174,6 +176,14 @@ enabled immutable path supplies both `--immutable-image-sha` and
 `--immutable-image-digest` for the exact green image.
 
 Reconcile the live catalog and migration ledger before forming admission plans.
+The [read-only access feasibility record](release-evidence/release-297/usage-contention/production-schema-read-feasibility.json)
+establishes that this workstation had no verified existing path to obtain the
+full private production catalog and ledger. A separately authorized bounded
+inspection task, or an operator export through an approved existing path, is
+required. Do not substitute the reconstructed local rehearsal for that evidence
+or derive school UUIDs from a name/domain screenshot. Verify the named DeSales
+school's UUID, domain and current licensing/eligibility through authorized
+production reads before generating any pilot plan.
 Preserve all historical inventory entries and migration checksums. From the
 observed 121-table baseline, the missing reviewed bundles are:
 
@@ -231,8 +241,10 @@ retain this fence even with private issuance disabled.
    script owner actually changed. Native 2.9.6 upgrade tests require a safe manual
    page reload fallback; do not label that seamless adoption or enable controls
    against stale pages.
-5. Use `scripts/deploy-classpilot-runtime-config.ps1` to prepare current-school
-   pilot profiles. Bind precise/Focus waiver receipts to the exact reviewed
+5. Use `scripts/deploy-classpilot-runtime-config.ps1` to prepare pilot profiles
+   for the verified St. Francis DeSales, Cincinnati school UUID. Confirm its
+   `desalescincy.org` identity and eligibility; do not use either synthetic load
+   school or guess a UUID. Bind precise/Focus waiver receipts to the exact reviewed
    source, image and ZIP. Enable all three pilots below and let the final
    API/worker pair converge before starting combined classroom acceptance.
    Pilot and global promotion are separate operations.
@@ -258,7 +270,7 @@ state is final; stale plans must be regenerated.
 | Precise restrictions | `precise-restriction-resources-pilot` | `precise-restriction-resources-global-on` |
 | Focus | `focus-tab-pilot` | `focus-tab-global-on` |
 
-Each pilot profile is `{"schemaVersion":7,"mode":"<pilot profile>","pilotSchoolId":"<current-school UUID>"}`.
+Each pilot profile is `{"schemaVersion":7,"mode":"<pilot profile>","pilotSchoolId":"<verified DeSales school UUID>"}`.
 Its global successor is `{"schemaVersion":7,"mode":"<global profile>"}` and
 must omit `pilotSchoolId`. There is no combined global profile or generic unpin
 bypass for these capabilities. Each promotion receipt requires at least 30
@@ -299,7 +311,7 @@ interchangeable CLI contracts and this table is not an approved production plan.
 
 ## Independent product live checks
 
-Use approved sample records in the current school. Record timestamps, roles,
+Use approved sample records in the verified DeSales school. Record timestamps, roles,
 opaque record IDs, actual outcomes and evidence hashes privately. Release each
 feature through its own governed gate; the classroom pilot does not certify it.
 Do not place real student identities or confidential test content in public PRs.
@@ -313,7 +325,8 @@ Do not place real student identities or confidential test content in public PRs.
 
 ## Classroom live acceptance record
 
-Record start/end timestamps, school, exact API/worker task definitions, image and
+Bind the record to the verified DeSales school UUID and `desalescincy.org` before
+selecting any live recipients. Record start/end timestamps, school, exact API/worker task definitions, image and
 source, runtime fingerprints, extension source/version/ID/ZIP and participating
 opaque student bindings in private evidence. Do not place student identities or
 message content in a public PR. Observe for **at least 30 minutes with actual

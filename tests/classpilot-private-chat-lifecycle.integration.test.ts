@@ -84,11 +84,13 @@ const hasCode = (code: string) => (error: unknown): boolean => {
 const expired = (messageId: string) => inSchool(() => lifecycle.isPrivateChatMessageExpired(messageId, ids.school));
 const ack = (messageId: string, privateChatLifecycle: PrivateChatLifecycle, index = 0) => inSchool(() => storage.acknowledgeTeacherChatDelivery({
   ...binding(index), chatMessageId: messageId, status: "delivered", privateChatLifecycle }));
-const blockedBehind = async (pid: number, settled: () => boolean): Promise<{ pid: number; query: string }[]> => {
+const blockedBehind = async (pid: number, settled: () => boolean, expectedQuery?: RegExp): Promise<{ pid: number; query: string }[]> => {
   for (const deadline = Date.now() + 5_000; !settled() && Date.now() < deadline;) {
     const result = await admin.query<{ pid: number; query: string }>(
-      "SELECT pid,query FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))", [pid]);
-    if (result.rows.length) return result.rows;
+      "SELECT pid,query FROM pg_stat_activity WHERE state='active' AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))", [pid]);
+    // Blocking state and activity text can become visible at different moments.
+    // Wait for the actual expected statement, keeping the same bounded deadline.
+    if (result.rows.length && (!expectedQuery || result.rows.every(row => expectedQuery.test(row.query)))) return result.rows;
     await pause(10);
   }
   return [];
@@ -280,14 +282,14 @@ test("the dark-deployment bridge remains legacy until first adoption, which perm
       let adoptionSettled = false;
       adopting = inSchool(() => lifecycle.latchPrivateChatLifecycle(ids.school));
       adopting.then(() => { adoptionSettled = true; }, () => { adoptionSettled = true; });
-      const writer = await blockedBehind(pid, () => adoptionSettled);
+      const writer = await blockedBehind(pid, () => adoptionSettled, /settings/);
       assert.equal(writer.length, 1); assert.match(writer[0]!.query, /settings/);
       // Model a compatible preactivation writer while the adopting image owns
       // its exclusive school fence but has not committed the sticky row yet.
       process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
       let claimSettled = false;
       legacyClaim = claim(); legacyClaim.then(() => { claimSettled = true; }, () => { claimSettled = true; });
-      const waiting = await blockedBehind(writer[0]!.pid, () => claimSettled);
+      const waiting = await blockedBehind(writer[0]!.pid, () => claimSettled, /pg_advisory_xact_lock_shared/);
       assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /pg_advisory_xact_lock_shared/);
       await blocker.query("COMMIT"); await adopting;
       assert.deepEqual(await legacyClaim, { authorized: true, value: { messages: [] } });
@@ -318,9 +320,76 @@ test("an empty exact-student private outbox skips claim discovery while retainin
   assert.deepEqual(result, { authorized: true, value: { messages: [], prepared: "prepared-empty-response" } });
   assert.equal(queries.filter(query => /from "classpilot_chat_deliveries"/.test(query)).length, 1);
   assert.ok(queries.some(query => /pg_advisory_xact_lock/.test(query)), "The exact-student lock still precedes the empty check");
+  assert.ok(!queries.some(query => query.includes("classpilot-sso-policy")), "Ordinary heartbeat reply recovery does not add an SSO query");
   assert.equal(queries.filter(query => /from "student_sessions"/.test(query)).length, 2, "Both exact-binding checks remain");
   assert.ok(!queries.some(query => /"teaching_sessions"|"classpilot_supervision_students"|"session_settings"/.test(query)),
     "Empty outboxes need no owner, supervision or channel discovery");
+});
+
+test("pending-reply bootstrap and the SSO writer acquire policy before private settings without a lock cycle", async t => {
+  const initial = await token(), pending = await reply("Pending reply across SSO update", initial);
+  const current = await inSchool(() => storage.getClasspilotSsoPolicyForSchool(ids.school));
+  const query = pg.Client.prototype.query;
+  let writerLocked!: () => void, releaseWriter!: () => void;
+  const ready = new Promise<void>(resolve => { writerLocked = resolve; });
+  const held = new Promise<void>(resolve => { releaseWriter = resolve; });
+  let writerPid: number | undefined;
+  let heldWriter = false;
+  // Run the real exclusive advisory query, then pause only its continuation.
+  // The competing production writer still owns that native transaction lock.
+  const queryMock = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+    const request = args[0];
+    const text = typeof request === "string" ? request
+      : request && typeof request === "object" && "text" in request ? String(request.text) : "";
+    const result = Reflect.apply(query, this, args);
+    if (!heldWriter && /pg_advisory_xact_lock\(/.test(text) && text.includes("classpilot-sso-policy")) {
+      heldWriter = true;
+      return Promise.resolve(result).then(async value => {
+        const pid = await Reflect.apply(query, this, ["SELECT pg_backend_pid() AS pid"]);
+        writerPid = pid.rows[0].pid;
+        writerLocked();
+        await held;
+        return value;
+      });
+    }
+    return result;
+  });
+  const writing = inSchool(() => storage.updateClasspilotSsoPolicy({ schoolId: ids.school,
+    expectedRevision: current.revision, policy: current.policy, actorUserId: ids.teacher, actorRole: "school_admin" }));
+  const writerResult = Promise.allSettled([writing]);
+  let bootstrap: Promise<unknown> | undefined;
+  try {
+    await Promise.race([ready, pause(5_000, undefined, { ref: false }).then(() => assert.fail("The native SSO writer must own its exclusive advisory lock"))]);
+    assert.ok(writerPid);
+    const options = { ...binding(), freezeSsoPolicy: true };
+    let settled = false;
+    bootstrap = inSchool(() => storage.withClasspilotStudentWebSocketBootstrapAuthority(options, async connection => {
+      // This repeats the existing WebSocket preparation fence intentionally:
+      // before the fix it occurs only after private settings are share-locked.
+      // The repaired wrapper must have acquired the same fence before claiming.
+      await storage.lockClasspilotSsoPolicyDeliveryAuthority(ids.school, connection);
+      return storage.getClasspilotSsoPolicyForSchool(ids.school, connection);
+    }, (claimed, policy) => ({ messages: claimed.map(row => row.message.id), revision: policy.revision })));
+    bootstrap.then(() => { settled = true; }, () => { settled = true; });
+    const waiting = await blockedBehind(writerPid, () => settled, /pg_advisory_xact_lock_shared/);
+    assert.equal(waiting.length, 1, "Bootstrap must wait behind the actual policy writer");
+    releaseWriter();
+    const [writeOutcome] = await writerResult;
+    const [bootstrapOutcome] = await Promise.allSettled([bootstrap]);
+    if (writeOutcome!.status === "rejected") t.diagnostic(`Native SSO writer rejected with PostgreSQL deadlock SQLSTATE 40P01: ${hasCode("40P01")(writeOutcome!.reason)}`);
+    if (bootstrapOutcome!.status === "rejected") t.diagnostic(`Native bootstrap rejected with PostgreSQL deadlock SQLSTATE 40P01: ${hasCode("40P01")(bootstrapOutcome!.reason)}`);
+    assert.equal(writeOutcome!.status, "fulfilled", "The native policy writer must not deadlock against private settings");
+    assert.equal(bootstrapOutcome!.status, "fulfilled", "The pending-reply bootstrap must not be the deadlock victim");
+    if (writeOutcome!.status === "fulfilled" && bootstrapOutcome!.status === "fulfilled") {
+      assert.equal(writeOutcome!.value.revision, current.revision + 1);
+      assert.deepEqual(bootstrapOutcome!.value, { authorized: true,
+        value: { messages: [pending.message.id], revision: current.revision + 1 } });
+    }
+  } finally {
+    releaseWriter();
+    await Promise.allSettled([writing, ...(bootstrap ? [bootstrap] : [])]);
+    queryMock.mock.restore();
+  }
 });
 
 for (const state of ["queued", "leased", "attempted", "retry"] as const) test(`an expired ${state} private outbox still enters the original cleanup path`, async () => {
@@ -343,7 +412,7 @@ test("canonical enqueue waits behind an empty claim and is delivered by the next
     const pid = await ready;
     enqueuing = reply("Reply after empty snapshot", initial);
     enqueuing.then(() => { enqueueSettled = true; }, () => { enqueueSettled = true; });
-    const waiting = await blockedBehind(pid, () => enqueueSettled);
+    const waiting = await blockedBehind(pid, () => enqueueSettled, /pg_advisory_xact_lock/);
     assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /pg_advisory_xact_lock/);
     release(); assert.deepEqual(await claiming, { authorized: true, value: { messages: [] } });
     const sent = await enqueuing, next = await claim();
@@ -366,7 +435,7 @@ for (const operation of ["send", "claim", "ack"] as const) test(`first adoption 
     let adoptionSettled = false;
     adopting = under(() => lifecycle.latchPrivateChatLifecycle(own.school));
     adopting.then(() => { adoptionSettled = true; }, () => { adoptionSettled = true; });
-    const writer = await blockedBehind(pid, () => adoptionSettled);
+    const writer = await blockedBehind(pid, () => adoptionSettled, /settings/);
     assert.equal(writer.length, 1); assert.match(writer[0]!.query, /settings/);
     process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
     let operationSettled = false;
@@ -377,7 +446,7 @@ for (const operation of ["send", "claim", "ack"] as const) test(`first adoption 
         : under(() => storage.withClasspilotStudentControlDeliveryAuthority({ ...exactBinding, claimTeacherChatDeliveries: true },
           async () => undefined, rows => ({ messages: rows.map(row => row.message.id) })));
     racing.then(() => { operationSettled = true; }, () => { operationSettled = true; });
-    const waiting = await blockedBehind(writer[0]!.pid, () => operationSettled);
+    const waiting = await blockedBehind(writer[0]!.pid, () => operationSettled, /pg_advisory_xact_lock_shared/);
     assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /pg_advisory_xact_lock_shared/);
     await blocker.query("COMMIT"); await adopting;
     if (operation === "send") await assert.rejects(racing, hasCode("PRIVATE_CHAT_DISABLED"));
@@ -442,7 +511,7 @@ test("a school without legacy settings stays unstamped in the dark bridge and re
       process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
       adopting = under(() => lifecycle.teacherPrivateChatLifecycles(activityScope));
       adopting.then(() => { adoptionSettled = true; }, () => { adoptionSettled = true; });
-      const waiting = await blockedBehind(pid, () => adoptionSettled);
+      const waiting = await blockedBehind(pid, () => adoptionSettled, /pg_advisory_xact_lock/);
       assert.equal(waiting.length, 1, "First adoption must wait for the native legacy delivery transaction even without a settings row");
       assert.match(waiting[0]!.query, /pg_advisory_xact_lock/);
       release(); const legacy = await claiming;
@@ -571,12 +640,12 @@ for (const operation of ["send", "ack"] as const) for (const first of ["close", 
     let firstSettled = false;
     firstCall = first === "close" ? close(initial) : issue();
     firstCall.then(() => { firstSettled = true; }, () => { firstSettled = true; });
-    const waiting = await blockedBehind(pid, () => firstSettled);
+    const waiting = await blockedBehind(pid, () => firstSettled, /classpilot_private_chat_threads/);
     assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /classpilot_private_chat_threads/);
     let secondSettled = false;
     secondCall = first === "close" ? issue() : close(initial);
     secondCall.then(() => { secondSettled = true; }, () => { secondSettled = true; });
-    const serialized = await blockedBehind(waiting[0]!.pid, () => secondSettled);
+    const serialized = await blockedBehind(waiting[0]!.pid, () => secondSettled, /pg_advisory_xact_lock/);
     assert.equal(serialized.length, 1); assert.match(serialized[0]!.query, /pg_advisory_xact_lock/);
     await blocker.query("COMMIT"); const firstResult = await firstCall;
     if (first === "close" && operation === "send") await assert.rejects(secondCall, hasCode("PRIVATE_CHAT_LIFECYCLE_STALE"));
@@ -648,7 +717,7 @@ for (const operation of ["send", "claim", "ack"] as const) test(`school hard-off
     let settled = false;
     racing = operation === "send" ? reply("Send behind off", initial) : operation === "claim" ? claim() : ack(sent.message.id, initial);
     racing.then(() => { settled = true; }, () => { settled = true; });
-    const waiting = await blockedBehind(pid, () => settled);
+    const waiting = await blockedBehind(pid, () => settled, /settings|private_chat_lifecycle_required/);
     assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /settings|private_chat_lifecycle_required/);
     await writer.query("COMMIT");
     if (operation === "send") await assert.rejects(racing, hasCode("FAB_FEATURE_DISABLED"));

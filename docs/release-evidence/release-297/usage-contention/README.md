@@ -24,7 +24,31 @@ source binding and do not turn a failed launch into measured capacity.
 - [Combined load launch 01](load-launch-01-cb66014d.json): retained launcher
   failure from two Docker executable matches. It failed before fixture creation
   or capacity measurement; a corrected harness needs a fresh recorded attempt.
+- [Combined capacity attempt 02](load-combined-02/manifest.json): real workload
+  at `9f1580615d72f6b0647abac27677773b03a88269` failed. Only 1,355 of 6,000
+  heartbeat offers succeeded; 3,345 started requests failed and 1,300 offers were
+  refused at the in-flight ceiling. Reports passed 17/64. Workers finished in
+  15,540.9899/15,723.4094 ms with correct independent totals, but these successes
+  do not override failed traffic and lifecycle acceptance. Full sanitized logs,
+  metrics, schema and resource metadata are retained; the populated fixture
+  identity snapshot is hash-only. Owned processes/containers drained and shared
+  local database/Redis containers remained healthy. A worker instrumentation
+  defect means its zero acquisition counts are **not** evidence of zero worker
+  acquisition failures. Post-run review also found that pre-measurement drain
+  permanently shut down the classification batcher, disabling normal batching
+  during the measured workload. The failures are real observations of that
+  altered configuration, not a representative measurement of normal batching
+  or proof of a product-only bottleneck. Both harness defects require correction
+  and a fresh run; original logs, metrics and hash records remain unchanged.
 
+- [Batching preflight correction](batching-preflight-fix/manifest.json) preserves
+  two failing-before regressions, all 60 passing focused checks with no skips,
+  the successful type check, and exact dirty-source byte hashes. The full suite
+  includes the CPU-profile and worker-proxy guards. Preflight now drains pending
+  work without putting the batcher into permanent shutdown; actual shutdown
+  retains its terminal flush. These checks repair the test workload and do not
+  establish capacity acceptance. Red/type records explicitly identify their
+  structured tool-transcript provenance; the complete green log is retained.
 - [Report admission and cancellation](reports-manifest.json) indexes ordinary
   and restricted-role PostgreSQL tests, strict audit failure, queued revocation,
   cookie-session invalidation and focused unit checks. The initial failed native
@@ -53,6 +77,20 @@ source binding and do not turn a failed launch into measured capacity.
   the observed private database access boundary. A local reconstructed baseline
   is not an actual production catalog export; that verification requires the
   separately authorized inspection task or an approved operator export.
+
+- [Tenant metadata reuse](reports-metadata-manifest.json) verifies that reusing
+  immutable ORM setup preserves fresh school authority, GUC cleanup, RLS and
+  transaction boundaries on the same physical client. Owner and restricted-role
+  native cases pass; the original CI lock-observer failure remains archived.
+- [Private-chat and SSO lock order](sso-private-lock/manifest.json) preserves
+  actual PostgreSQL `40P01` failures before the correction in both database roles,
+  followed by successful native races and 48 focused checks. The WebSocket
+  bootstrap now takes its existing SSO fence before private settings locks;
+  ordinary heartbeat query counts are unchanged.
+- [Combined unit suite after these corrections](unit-metadata-sso.json) records
+  1,710 passing cases, no failures and four conditional skips. Its 1,139 source
+  file hashes were captured before the run and verified unchanged afterward.
+  This does not replace full CI, database lanes or frozen capacity acceptance.
 
 Manifest entries contain raw and sanitized log hashes. Gzip logs retain complete
 sanitized output; transcript-only attempts are explicitly identified where no
