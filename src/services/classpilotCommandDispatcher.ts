@@ -724,8 +724,18 @@ export function classpilotCommandFrameForTarget(
   };
   const exactBindingControlRevision = classroomState?.revision
     ?? delivery.exactBindingControlRevision ?? target.controlRevision;
+  // Stop Focus still requires complete V2 authority after removing the last
+  // feature-gated restriction. Cleanup must not depend on Focus being enabled
+  // or on another restriction incidentally supplying a capability envelope.
+  if (commandType === "stop-focus" && (
+    ![schoolId, target.studentId, target.studentSessionId, target.deviceId]
+      .every(value => typeof value === "string" && value.trim().length > 0)
+    || !Number.isSafeInteger(exactBindingControlRevision)
+    || exactBindingControlRevision! < 0
+  )) return null;
   const deferredExactBindingEnvelope = (
-    delivery.requiredCapability
+    commandType === "stop-focus"
+    || delivery.requiredCapability
     || delivery.requiredCapabilities?.length
     || Number.isSafeInteger(delivery.exactBindingControlRevision)
     || (commandType === "open-tab" && typeof payload.afterRestrictionCommandId === "string")

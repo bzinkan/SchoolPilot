@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { after, before, beforeEach, describe, test } from "node:test";
 import { setTimeout as pause } from "node:timers/promises";
 import pg from "pg";
 import { sql } from "drizzle-orm";
+import { WebSocket, WebSocketServer } from "ws";
+import { z } from "zod";
 import { focusRecord, readFocusAssignment, readFocusOpenIntent, readFocusRestriction } from "../src/services/classpilotFocus.js";
 
 process.env.REDIS_URL = "";
@@ -317,6 +320,78 @@ test("Focus invalidation clears only its own layer and retirement ACK cannot rep
   assert.deepEqual(focusRecord((await control()).desiredState).restrictions, focusRecord(current.desiredState).restrictions &&
     Object.fromEntries(Object.entries(focusRecord(focusRecord(current.desiredState).restrictions)).filter(([key]) => key !== "focus")));
   assert.equal(await inSchool(() => storage.acknowledgeClasspilotStudentControlState(ack)), undefined);
+});
+
+test("snapshot Stop Focus sends complete V2 authority after capability withdrawal and preserves other controls", { timeout: 30_000 }, async () => {
+  await issue("focus-tab", { tabTargets: [row(0)] });
+  const active = await control(), original = focusRecord(active.desiredState);
+  const blockList = { active: true, blockedDomains: ["blocked.example"], name: "Existing policy" };
+  await admin.query("UPDATE classpilot_student_control_states SET desired_state=$2::jsonb WHERE id=$1", [active.id,
+    JSON.stringify({ ...original, restrictions: { ...focusRecord(original.restrictions), blockList, tabLimit: 4 } })]);
+  const broadcast = await import("../src/realtime/ws-broadcast.js");
+  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(wss, "listening");
+  const address = wss.address(); assert.ok(address && typeof address !== "string");
+  const connection = once(wss, "connection");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(client, "open");
+  const [server] = await connection;
+  assert.ok(server instanceof WebSocket);
+  broadcast.registerWsClient(server);
+  broadcast.authenticateWsClient(server, { schoolId: ids.school, role: "student", ...target(0), acceptedCapabilities: ["scopedAuthorityChecksV1"] });
+  process.env.CLASSPILOT_CAP_FOCUS_TAB_V1 = "false";
+  await refresh(0, ["scopedAuthorityChecksV1"]);
+  let messageTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const binding = z.object({ bindingVersion: z.literal(2), schoolId: z.literal(ids.school), studentId: z.literal(ids.students[0]!),
+      studentSessionId: z.literal(sessions[0]!), deviceId: z.literal(ids.devices[0]!), controlRevision: z.number().int().nonnegative() });
+    const message = new Promise<unknown>((resolve, reject) => {
+      messageTimer = setTimeout(() => reject(new Error("Stop Focus frame was not delivered")), 5_000);
+      client.on("message", data => {
+        const value: unknown = JSON.parse(data.toString());
+        const envelope = z.object({ type: z.literal("remote-control"), command: z.object({ type: z.literal("stop-focus") }) }).safeParse(value);
+        if (envelope.success) { clearTimeout(messageTimer); resolve(value); }
+      });
+    });
+    // Observe timeout rejection even if issuance itself fails before the await.
+    void message.catch(() => undefined);
+    const stopped = await issue("stop-focus", {});
+    const frame = z.object({ commandId: z.literal(stopped.command.id), exactBinding: binding,
+      command: z.object({ exactBinding: binding }), classroomState: z.object({ revision: z.number(), restrictions: z.record(z.unknown()) }) }).parse(await message);
+    const current = await control();
+    assert.equal(frame.exactBinding.controlRevision, current.revision);
+    assert.deepEqual(frame.command.exactBinding, frame.exactBinding);
+    assert.equal(frame.classroomState.revision, current.revision);
+    assert.deepEqual(frame.classroomState.restrictions.blockList, blockList);
+    assert.equal(frame.classroomState.restrictions.tabLimit, 4);
+    assert.equal(frame.classroomState.restrictions.focus, undefined);
+    assert.equal(await focus(), null);
+    const ack = { commandId: stopped.command.id, schoolId: ids.school, studentId: ids.students[0]!, studentSessionId: sessions[0]!,
+      deviceId: ids.devices[0]!, controlRevision: current.revision, ackState: "completed" as const, acceptedCapabilities: ["scopedAuthorityChecksV1"] };
+    for (const invalid of [{ ...ack, controlRevision: current.revision - 1 }, { ...ack, deviceId: ids.devices[1]! }])
+      assert.notEqual((await inSchool(() => storage.persistClasspilotCommandTargetAck(invalid))).disposition, "applied");
+    assert.equal((await inSchool(() => storage.persistClasspilotCommandTargetAck(ack))).disposition, "applied");
+    const publicCommand = (await import("../src/services/classpilotCommandPublic.js")).publicClasspilotCommand(stopped.command);
+    assert.ok(!JSON.stringify(publicCommand).includes(ids.devices[0]!) && !JSON.stringify(publicCommand).includes(sessions[0]!));
+  } finally {
+    clearTimeout(messageTimer); client.removeAllListeners("message");
+    broadcast.removeWsClient(server); client.terminate(); server.terminate();
+    await new Promise<void>(resolve => wss.close(() => resolve()));
+  }
+});
+
+test("offline Stop Focus retains durable cleanup when new Focus issuance is disabled", async () => {
+  await issue("focus-tab", { tabTargets: [row(0)] });
+  const active = await control();
+  process.env.CLASSPILOT_CAP_FOCUS_TAB_V1 = "false";
+  await inSchool(() => dispatcher.executeClasspilotCommand({ schoolId: ids.school, actorId: ids.teacher,
+    supervisionContextId: context.id, contextAuthorityRevision: String(context.classroomAuthorityRevision), targetScope: "students",
+    commandType: "stop-focus", rawCommandPayload: {}, targets: [{ ...target(0), available: false, unavailableReason: "Offline fixture" }] }));
+  const current = await control();
+  assert.equal(await focus(), null);
+  assert.equal(readFocusAssignment(current.desiredState), null);
+  assert.ok(focusRecord(current.desiredState).focusCleanupV1);
+  assert.ok(current.revision > active.revision);
 });
 
 test("bare stop survives gate/capability withdrawal and wholly withheld precise state, but never crosses assignment B", async () => {

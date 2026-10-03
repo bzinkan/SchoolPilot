@@ -19,14 +19,19 @@ The later [8069560d CI checkpoint](release-evidence/release-297/usage-contention
 
 [Local checks after these changes](release-evidence/release-297/usage-contention/combined-checks-attempt-04/manifest.json) passed 1,752 unit cases and all 48 load guards. Clean install, build, test-type and cast checks passed on identical source bytes; four conditional unit skips remain explicit. The six narrow production dependency updates cleared all production audit findings. The original unit environment failure and its separate native index-parser verification are retained. Remote CI and measured capacity still require this final source.
 
-The separately prepared fallback source is now `351422d75a1aefd428e79d0c0d290b2171776f2e`
+The [release-enabled preflight at `5a2c0996`](release-evidence/release-297/usage-contention/load-preflight-5a2c0996-01/manifest.json) exposed a real Stop Focus delivery defect after canonical fixture preparation succeeded. The server omitted the full V2 binding after clearing the final feature-gated restriction. The [narrow server correction](release-evidence/release-297/usage-contention/stop-focus-v2-cleanup/manifest.json) preserves strict harness checks and the unchanged ClassPilot 2.9.7 package. Produced-frame regressions, exact extension authority checks and restricted-role cleanup tests pass. [Combined unit verification](release-evidence/release-297/usage-contention/combined-checks-attempt-05/manifest.json) passed 1,752 cases with four named conditional skips on 1,152 unchanged source files. New-head CI, combined capacity and final artifacts remain pending.
+
+The separately prepared fallback source is now `ff94f21e6cc91075e7e82f0d28b434ef43f4a118`
 on `codex/release297-compatible-rollback-sso`: the reviewed `08802d02` floor plus
 the private-chat/SSO lock-order correction, monitoring lease-reuse fix and
 [six narrow production dependency updates](release-evidence/release-297/usage-contention/production-dependency-audit/rollback-followup-manifest.json).
 Both Usage modes stay off. The [preceding source/image evidence](release-evidence/release-297/usage-contention/rollback-artifact-2bbcdb37/index.json)
-is historical; a rebuilt image and final-schema re-entry are still required for
-the new source. This fallback is not another merged source PR. Registry publication
-and production task bindings remain separate. Historical artifacts are retained.
+is historical. The [exact351 source image evidence](release-evidence/release-297/usage-contention/rollback-artifact-351422d7/index.json)
+retains both builds: the uncached second build installed the fixed Alpine libpng
+package and passed pinned Trivy with zero findings. The newly discovered Stop Focus
+exact-binding repair has its [narrow fallback backport](release-evidence/release-297/usage-contention/rollback-stop-focus/manifest.json): three regressions fail before and pass after, and type/build checks pass. A new exact image and final-schema re-entry remain required; the `351422d7` artifacts remain intermediate preparation.
+This fallback is not another merged source PR. Registry publication and production
+task bindings remain separate. Historical artifacts are retained.
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|
 | [SchoolPilot #547](https://github.com/bzinkan/SchoolPilot/pull/547) | already merged | `45dd3333ffb043c797ac095387c0c87e5d31a238` | main | Keep the AI assistant's Flight Path list to the teacher's own paths |

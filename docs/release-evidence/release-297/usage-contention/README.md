@@ -3,6 +3,15 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The [latest combined unit and TypeScript checks](combined-checks-attempt-05/manifest.json)
+follow the Stop Focus transport correction: 1,752 passes, zero failures and four
+named conditional skips, with all 1,152 source files unchanged during the run.
+The [compatible rollback backport](rollback-stop-focus/manifest.json) is committed
+as `ff94f21e6cc91075e7e82f0d28b434ef43f4a118`; its three focused regressions fail
+before and pass after, and its type/build checks pass. A fresh image and final
+candidate-schema re-entry remain pending. These checks do not turn the failed
+preflight or earlier load attempts into accepted capacity.
+
 The first frozen correction checkpoint is
 `cb66014d70a275405a5469257b37debe8d20ea18`. Its new records below preserve exact
 source identities; later harness/documentation corrections require their own
@@ -251,6 +260,31 @@ directory above and are not replaced by these focused tests.
   found no vulnerabilities; the full audit retained four moderate findings and
   no high or critical findings. These remain local checks, with final-source CI
   and capacity acceptance separate.
+
+- [Rollback351 image preparation](rollback-artifact-351422d7/index.json)
+  retains both exact source builds, scans and export hashes. The first reused a
+  cached Alpine package layer with a fixable libpng finding of unknown severity.
+  The second rebuilt without layer caching, installed the fixed package and has
+  zero pinned-Trivy findings. Embedded 129-table and writer1/bridge1/relay1 checks
+  passed. Both images remain intermediate: the newly discovered Stop Focus
+  exact-binding correction must be backported before selecting final rollback
+  source and completing migration re-entry. Both Usage modes stay off.
+
+- [Lifecycle preflight at `5a2c0996`](load-preflight-5a2c0996-01/manifest.json)
+  preserves the failed diagnostic run. The first school passed precise and
+  Focus synthetic ACKs, private-chat closure/expiry and reconnect checks, then
+  Stop Focus lacked its required exact transport binding. This was a server
+  frame defect: the remaining snapshot did not supply a binding either. The
+  second school and full capacity workload were not exercised.
+- [Stop Focus V2 cleanup correction](stop-focus-v2-cleanup/manifest.json)
+  records three failing regressions followed by 18 passing focused cases.
+  The exact ClassPilot 2.9.7 binding parser and full-authority gate reject the
+  original server frame and accept the fixed frame, while rejecting stale,
+  conflicting and incomplete variants. Both native runs passed 14 restricted
+  Focus integration cases, including actual socket delivery with Focus disabled,
+  preservation of other controls, and offline cleanup; 15 owner-backed pure
+  cases also passed. The strict load harness is unchanged. Parser/native checks
+  do not establish browser enforcement or capacity acceptance.
 
 Release acceptance additionally requires three consecutive successful combined
 release-enabled capacity runs on unchanged application source/schema, the

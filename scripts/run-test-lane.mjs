@@ -46,6 +46,7 @@ const DB_SERIAL = new Set([
   "tenant-context-reuse.integration.test.ts",
   "classpilot-usage-admission.integration.test.ts",
   "classpilot-lesson-prerequisite-frame.test.ts",
+  "classpilot-stop-focus-frame.test.ts",
   "passpilot-appointments.integration.test.ts",
   "passpilot-appointment-eligibility-races.integration.test.ts",
   "passpilot-school-year.integration.test.ts",

@@ -1,0 +1,373 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T03:08:57.272Z",
+  "status": "focused_server_fix_verified",
+  "baseSourceRevision": "5a2c09968df0d10a80d5b2321b8658dacf0457da",
+  "worktreeDirty": true,
+  "sourceBinding": [
+    {
+      "file": "src/services/classpilotCommandDispatcher.ts",
+      "sha256": "027d998942466e00d706987ea5b4b85b9bd5d0e7fc13bd6dd775c37048e0e22e"
+    },
+    {
+      "file": "tests/classpilot-stop-focus-frame.test.ts",
+      "sha256": "f5294afe772cf3818b5d0c0e0d269d22ddb0378a5a3356170861a3a13e7a4c8d"
+    },
+    {
+      "file": "tests/classpilot-focus.integration.test.ts",
+      "sha256": "1198752378b6cab992918d9302a2259c25e378c93642ddef29d3ac8e47c03948"
+    },
+    {
+      "file": "scripts/run-test-lane.mjs",
+      "sha256": "586222b27315e39c639b158beef646546c2f5f72b054670afd5753230577355e"
+    }
+  ],
+  "baselineDispatcherGitBlobSha256": "2f079d4cf6b07501e2738cbd241c95a3262a36b1fa5965a14ef4c0cb00eb5e76",
+  "baselineDispatcherHashEncoding": "Git blob bytes, before local checkout newline conversion",
+  "regression": {
+    "red": {
+      "tests": 3,
+      "passed": 0,
+      "failed": 3,
+      "exitCode": 1
+    },
+    "green": {
+      "tests": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "scope": "New produced-frame tests plus retained exact-tab and Focus unit tests; database transport is not exercised by these pure cases."
+  },
+  "extensionAdmission": {
+    "repository": "ClassPilot",
+    "version": "2.9.7",
+    "sourceRevision": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "serviceWorkerSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+    "before": "STUDENT_BINDING_MISMATCH",
+    "after": "accepted",
+    "wrongStaleConflictingOrPartialVariantsRejected": 4,
+    "limitation": "Runs exact source-extracted binding parser and full-authority gate used by handleRemoteControl. Does not run browser APIs, the complete handler, or managed devices."
+  },
+  "native": [
+    {
+      "attempt": 1,
+      "ownerBackedPureCasesPassed": 15,
+      "restrictedIntegrationCasesPassed": 14,
+      "skipped": 0,
+      "sourceUnchanged": true
+    },
+    {
+      "attempt": 2,
+      "ownerBackedPureCasesPassed": 15,
+      "restrictedIntegrationCasesPassed": 14,
+      "skipped": 0,
+      "sourceUnchanged": true,
+      "changeSinceAttempt1": "Test cleanup only: cancel the pending message timer and remove listener when command issuance fails."
+    }
+  ],
+  "testTypes": {
+    "exitCode": 0,
+    "existingTestDiagnostics": 438,
+    "baselineAllowance": 534,
+    "applicationAndSyntaxErrors": 0
+  },
+  "testCasts": {
+    "exitCode": 0,
+    "asAny": 689,
+    "asUnknownAs": 7
+  },
+  "commands": [
+    "node --import ./tests/test-environment.mjs --import tsx --test tests/classpilot-stop-focus-frame.test.ts",
+    "node --import ./tests/test-environment.mjs --import tsx --test tests/classpilot-stop-focus-frame.test.ts tests/classpilot-2-7-1-command-frame.test.ts tests/classpilot-focus.test.ts",
+    "node --import ./tests/test-environment.mjs --import tsx <TEMP>/release297-stop-focus-extension-admission.mjs",
+    "pwsh -NoProfile -File <TEMP>/release297-stop-focus-native.ps1",
+    "npm run check:tests",
+    "npm run check:test-casts"
+  ],
+  "coverage": [
+    "Stop Focus receives full V2 binding even when no remaining restriction advertises a capability; incomplete tuple and invalid revision fail closed.",
+    "Restricted-role integration captures the actual local WebSocket frame after new Focus and focusTabV1 capability are withdrawn. Snapshot revision matches persisted current state; blockList/tabLimit remain. Wrong binding and stale revision ACKs fail; exact ACK succeeds.",
+    "Existing native cases cover private target isolation, authority/ACK races, withheld-snapshot bare cleanup and replacement assignment protection. Added offline case confirms Focus is removed durably while new issuance is disabled.",
+    "Teacher DTO regression keeps device/session/frozen revision details private. New pure frame test is registered DB_SERIAL because dispatcher imports database services."
+  ],
+  "interpretation": "The failed preflight exposed a production transport defect. The strict load helper remains unchanged. This focused fix requires new final-source CI and unchanged-source combined load acceptance; these logs do not establish readiness, capacity or browser enforcement.",
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "productionMutations": 0,
+  "sharedDistRebuilt": false,
+  "files": [
+    {
+      "file": "frame-red.log.gz",
+      "originalFile": "release297-stop-focus-v2-red.log",
+      "rawBytes": 9982,
+      "rawSha256": "028c6c6c227ae76f92a609ef5f2e16c19ec51762d89e2b16222744e166939f69",
+      "sanitizedBytes": 9094,
+      "sanitizedSha256": "c8c8a9af37baa1f90026a2c440cf454ca950aad29d7e8b90a07f742bf248137a",
+      "gzipSha256": "c0929c0c9febfa52256df73461dfd1406d853b5b32a0870f9571878be8cc1dc9"
+    },
+    {
+      "file": "frame-green.log.gz",
+      "originalFile": "release297-stop-focus-v2-green.log",
+      "rawBytes": 7575,
+      "rawSha256": "ab799b4fc53de0c9173ce4c3a21511435276114a25bba6ecbfd6b7676ba5d16e",
+      "sanitizedBytes": 7425,
+      "sanitizedSha256": "e6bd2dbc348db64c1e67dd1302207504fbca6293cb0c772c1a9629b6630da460",
+      "gzipSha256": "9a61f9ba446d9b28d3fd93ebdc39f43f5543909fd68507d2ac490124973dc748"
+    },
+    {
+      "file": "exact-extension-admission.mjs.gz",
+      "originalFile": "release297-stop-focus-extension-admission.mjs",
+      "rawBytes": 3125,
+      "rawSha256": "3a7d67e2ce43a7fd420661d90790a6dd4765bda89d2c4e7804c45ff2b653249d",
+      "sanitizedBytes": 3113,
+      "sanitizedSha256": "3dd8d8406b2551a6c7be9ce41a9a56a05d026fefe058c222ff239163d82463cb",
+      "gzipSha256": "f85c01ff646422103ac3f902fcf45b03503871423f1a3ec3596c28e7fb651ec1"
+    },
+    {
+      "file": "exact-extension-red.log.gz",
+      "originalFile": "release297-stop-focus-extension-red.log",
+      "rawBytes": 4685,
+      "rawSha256": "b38c7b9890a7a10b0669760cba4e7bc2d128d653bf66720670bb45e2c5c45a68",
+      "sanitizedBytes": 4577,
+      "sanitizedSha256": "8c967b39e2e854c5b0229f63c1ba1a8a0478d5876596fb6c62a5170a5a06a23f",
+      "gzipSha256": "2d6d04cbb8bf5eb12d13766943a76edd1d833e883c3a0ffa5b0aa443abebf193"
+    },
+    {
+      "file": "exact-extension-green.log.gz",
+      "originalFile": "release297-stop-focus-extension-green.log",
+      "rawBytes": 5102,
+      "rawSha256": "4b3f63efc36064cb19dcdb30beba444ded1b7808a25ffe013e7f7d782affd473",
+      "sanitizedBytes": 4978,
+      "sanitizedSha256": "0b4150c3221484b7217d1d5056686534f0a5b32e91a8a8d73d64e7bbf69c3f88",
+      "gzipSha256": "cdbd26500391cb26596bab666bd94b08d44cc0ccedf7886d04db95b3d9501157"
+    },
+    {
+      "file": "native-runner.ps1.gz",
+      "originalFile": "release297-stop-focus-native.ps1",
+      "rawBytes": 5350,
+      "rawSha256": "f00d8ee393a15387cc3c0cbd8af7401e95e85810466b522e99e4ff13e93586c4",
+      "sanitizedBytes": 5214,
+      "sanitizedSha256": "4649cfd31f92f4b50c6d22bfbd24d400ca8c46c0998f140c56b0a0277f15b74b",
+      "gzipSha256": "d1796b70b8d4ac07f6c4c8bafea867ef6e9dcf29b3f6a1add1b5b534a78d88ee"
+    },
+    {
+      "file": "native-runner-01.log.gz",
+      "originalFile": "release297-stop-focus-native-runner.log",
+      "rawBytes": 131,
+      "rawSha256": "79df2d18c1ac31917ae682452dc37e6577ff8dd8eb2ee42cedb27ea91226d221",
+      "sanitizedBytes": 98,
+      "sanitizedSha256": "930af5531e1c70b1e795f7cff4c6ba6665c9f6f710f8b2f9135c3d7eea506952",
+      "gzipSha256": "3fdb1b61c9037ebd33320cd017a1e43cca25cd5c3a77f1d2061d4949ead64b3e"
+    },
+    {
+      "file": "native-runner-02.log.gz",
+      "originalFile": "release297-stop-focus-native-runner-02.log",
+      "rawBytes": 131,
+      "rawSha256": "c789d007bb04ade2ccda1e1e76d9ae454fb15febab163a7444e1c945e1541813",
+      "sanitizedBytes": 98,
+      "sanitizedSha256": "d33c92bc980f2bb7a751734f08724f28d7da483545c22f08dfb49f75dc1e2ab4",
+      "gzipSha256": "6bd1d6d450820c11656aba35352e9f78707f8a173e1ad7c46cbb263098796121"
+    },
+    {
+      "file": "test-types.log.gz",
+      "originalFile": "release297-stop-focus-test-types.log",
+      "rawBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedBytes": 199,
+      "sanitizedSha256": "718d56591c1784c9fd403388377ce8a2a1b8c73676d415ee615ba6bb5c5a6fc1",
+      "gzipSha256": "52b01fe9ecc9d159403862fa56505811d367f4559c5017c121eb42fd3774991a"
+    },
+    {
+      "file": "test-casts.log.gz",
+      "originalFile": "release297-stop-focus-casts.log",
+      "rawBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedBytes": 176,
+      "sanitizedSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce",
+      "gzipSha256": "e146758497dc12c56ae73a46a51b7ccbb934ecd1078ea7fcb109a2f6dbb35099"
+    },
+    {
+      "file": "native-1-cleanup.log.gz",
+      "originalFile": "cleanup.log",
+      "rawBytes": 37,
+      "rawSha256": "ea5135e00ac87ece59145698b4c6255fbaa539fe89ce355fbf6c998b0a5cb28b",
+      "sanitizedBytes": 36,
+      "sanitizedSha256": "09e8ed14b98eba119c57d3458e7a3257b697f7f36eb2aaa71bb1b9b52a5b8f1d",
+      "gzipSha256": "e540039cb6c9f3ff2daf9f082503bb1ec3b890c1a826bfbbd4af9f8345380f0f"
+    },
+    {
+      "file": "native-1-container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "d3a9ff2b2b30bec5eefd5afffc484a93e79e1f4f9b5e41a0ac7464905f56d581",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "40f522c0045058ccd36cc9849f95eac865b34895d114aac5a2fa64fb88a74e98",
+      "gzipSha256": "ff7e8cb91e06e5b5d70b4bcef215dc7a3e0b3145d7f0ae1737591ad702038963"
+    },
+    {
+      "file": "native-1-execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 488,
+      "rawSha256": "253a6ec88447320808fca55789a4c6be1a97d313cd40e84343e11dd6fbe5d388",
+      "sanitizedBytes": 475,
+      "sanitizedSha256": "2b14c828cd32f39cdc7d9848ac211d972d6f965476214f3e818b4d8ce9a30389",
+      "gzipSha256": "58b9e2bbbf88ea3f6267c2397504c127dccc2f797f8dad290e54d3b117905128"
+    },
+    {
+      "file": "native-1-owner.log.gz",
+      "originalFile": "owner.log",
+      "rawBytes": 6842,
+      "rawSha256": "a585f00a19a52a37053df9ab399e54b4fbd69ff3caa40531778e1b4ffb3bd335",
+      "sanitizedBytes": 6711,
+      "sanitizedSha256": "977bda125b50a4f6f8321a00df914c89304a1bc61c2637d7b387cdbc2aefd54c",
+      "gzipSha256": "69588a2ec407d27ac246ef1e68c43247392427d16723320f564e469a43200c99"
+    },
+    {
+      "file": "native-1-restore.log.gz",
+      "originalFile": "restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "native-1-restricted-role.log.gz",
+      "originalFile": "restricted-role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128"
+    },
+    {
+      "file": "native-1-restricted.log.gz",
+      "originalFile": "restricted.log",
+      "rawBytes": 10732,
+      "rawSha256": "1b1e9694ac6747c95e27b2518ff9678d7320e7df9686f98c34ea7e4b762edb58",
+      "sanitizedBytes": 10557,
+      "sanitizedSha256": "a039b3ed09dd2fc665929940ff7c63fa766cc16b98c4c71fe7ff538d70601e11",
+      "gzipSha256": "2f6cd61c6e9c6f2dac8f166eb63d46aa096f853787e66cbaf301780f060ca1f4"
+    },
+    {
+      "file": "native-1-schema.sql.gz",
+      "originalFile": "schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "47376d7edc483dd3c1311a5b5a16e098f5b67f5aeff3c252fc0e0c25cf475dca",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "47376d7edc483dd3c1311a5b5a16e098f5b67f5aeff3c252fc0e0c25cf475dca",
+      "gzipSha256": "e08b131b7eaca03053bd53ccd703f5108110c9939543393e994e0d22f94c423c"
+    },
+    {
+      "file": "native-1-source-after.json.gz",
+      "originalFile": "source-after.json",
+      "rawBytes": 461,
+      "rawSha256": "6bc7fde495779c05129e782f47dc4bd2a047e8fdf4c9f2edb43f6bc90c1283e7",
+      "sanitizedBytes": 447,
+      "sanitizedSha256": "8f643b67e205655176e3c2b08cdfcc7d99b55bc407d286c7d63147ec63886625",
+      "gzipSha256": "8a5279282623b474eee3bc83814541982195c43ccb4a9aff020ce8008218a90d"
+    },
+    {
+      "file": "native-1-source-before.json.gz",
+      "originalFile": "source-before.json",
+      "rawBytes": 461,
+      "rawSha256": "6bc7fde495779c05129e782f47dc4bd2a047e8fdf4c9f2edb43f6bc90c1283e7",
+      "sanitizedBytes": 447,
+      "sanitizedSha256": "8f643b67e205655176e3c2b08cdfcc7d99b55bc407d286c7d63147ec63886625",
+      "gzipSha256": "8a5279282623b474eee3bc83814541982195c43ccb4a9aff020ce8008218a90d"
+    },
+    {
+      "file": "native-2-cleanup.log.gz",
+      "originalFile": "cleanup.log",
+      "rawBytes": 37,
+      "rawSha256": "4eaa29e70e3dbedbf1af85373d5f7fe4dce077a1c599f76d3678180942592d7d",
+      "sanitizedBytes": 36,
+      "sanitizedSha256": "64b3942ecb39a9aa67e0553967283784e28c69e947c815332c964e7730f469f8",
+      "gzipSha256": "92663e6d4ab5aceab3ca9cd4096167c96d4a436ac5aa37f0ef6a8f8e49a54ba8"
+    },
+    {
+      "file": "native-2-container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "5beb4d6d17f8e7b34c18d3a5a5f539b4feb080562cdb060bfe3dc9ea37b85aa8",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "3ffcf43d48f49e66640abac552e3c807b649536dd1ef5242eede2d7e14281274",
+      "gzipSha256": "39f286bbf46fd1e8837bdfe44013d46cc8cd73cc98fc793d2e6a086f89157a98"
+    },
+    {
+      "file": "native-2-execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 488,
+      "rawSha256": "a071f206c068900cbdfa7b713d6bd5d3c2f0e2e13c527d7ec72c78c0763cdbd9",
+      "sanitizedBytes": 475,
+      "sanitizedSha256": "76dab5777771942c488842cfc2c62185bb5e1de4a1a361b9796795c23420f159",
+      "gzipSha256": "bb566e34f79183728b6560be8c23e349c3c2c3a8b72012199606e1f9c9613c74"
+    },
+    {
+      "file": "native-2-owner.log.gz",
+      "originalFile": "owner.log",
+      "rawBytes": 6839,
+      "rawSha256": "b407987da1c8d8865c78542e1f688b742f8b255c26fef80828093b82b31274de",
+      "sanitizedBytes": 6708,
+      "sanitizedSha256": "920583cf99d664ed57b57ce0a745dec058f3c4dfe75c0f7fc07fbaab00d757f3",
+      "gzipSha256": "27d94f8786858e2291b3a17a73390b67028f45f073d477f05ed38f37faedb698"
+    },
+    {
+      "file": "native-2-restore.log.gz",
+      "originalFile": "restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "native-2-restricted-role.log.gz",
+      "originalFile": "restricted-role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128"
+    },
+    {
+      "file": "native-2-restricted.log.gz",
+      "originalFile": "restricted.log",
+      "rawBytes": 10734,
+      "rawSha256": "8084f9c866a664dab390fb41c1923fb368f708ee06e8d9b0f6b392a0a08b92fd",
+      "sanitizedBytes": 10559,
+      "sanitizedSha256": "656b5fab96531f346d50fee6eed1bb61b6df69a5e07f64f6cc4a0461eea9b50f",
+      "gzipSha256": "22076369bd916516798e47899057cc07d007fc8c3913367a262c74a0fbaa0e91"
+    },
+    {
+      "file": "native-2-schema.sql.gz",
+      "originalFile": "schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "47376d7edc483dd3c1311a5b5a16e098f5b67f5aeff3c252fc0e0c25cf475dca",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "47376d7edc483dd3c1311a5b5a16e098f5b67f5aeff3c252fc0e0c25cf475dca",
+      "gzipSha256": "e08b131b7eaca03053bd53ccd703f5108110c9939543393e994e0d22f94c423c"
+    },
+    {
+      "file": "native-2-source-after.json.gz",
+      "originalFile": "source-after.json",
+      "rawBytes": 461,
+      "rawSha256": "ce3a3ac6c9cf19e22e4732c77c91332b3a9f6cdf6cab901e3fa17411f4fcd523",
+      "sanitizedBytes": 447,
+      "sanitizedSha256": "8835f9f40948b2e3e51ebc42562b44d6b23129e8a9061ad0fc281237da03c328",
+      "gzipSha256": "65371f193ae896e36951af67300a0e7de38bb98b9dee4fd060bb707725f7ccbf"
+    },
+    {
+      "file": "native-2-source-before.json.gz",
+      "originalFile": "source-before.json",
+      "rawBytes": 461,
+      "rawSha256": "ce3a3ac6c9cf19e22e4732c77c91332b3a9f6cdf6cab901e3fa17411f4fcd523",
+      "sanitizedBytes": 447,
+      "sanitizedSha256": "8835f9f40948b2e3e51ebc42562b44d6b23129e8a9061ad0fc281237da03c328",
+      "gzipSha256": "65371f193ae896e36951af67300a0e7de38bb98b9dee4fd060bb707725f7ccbf"
+    }
+  ],
+  "sanitation": "UTF8/LF; workstation paths, URLs, tokens, cookies, emails, UUIDs and SQL passwords redacted; raw originals unchanged."
+}
