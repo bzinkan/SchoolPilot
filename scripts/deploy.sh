@@ -6328,22 +6328,33 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   else
     # Legacy build path remains until two successful shadow deployments prove
     # the immutable-image workflow. It can then be removed in a separate PR.
+    LEGACY_IMAGE_EVIDENCE=$(node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" init "$LOCAL_SHA")
     info "Building Docker image..."
-    docker build -t "${NAME}-api:${IMAGE_TAG}" .
+    docker build --label "org.opencontainers.image.revision=${LOCAL_SHA}" \
+      --iidfile "$LEGACY_IMAGE_EVIDENCE/build-image-id.txt" -t "${NAME}-api:${IMAGE_TAG}" .
     success "Docker build complete"
+
+    info "Scanning the exact built image before ECR publication..."
+    LEGACY_IMAGE_SCAN=$(node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" scan \
+      "$LEGACY_IMAGE_EVIDENCE" "$LOCAL_SHA" "${NAME}-api:${IMAGE_TAG}")
+    LEGACY_IMAGE_ID=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).imageId)')
+    LEGACY_DOCKER_HOST=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).dockerHost)')
+    LEGACY_SCAN_RECEIPT=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).receiptPath)')
+    LEGACY_SCAN_SHA256=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).receiptSha256)')
+    success "Exact image scan passed; evidence: ${LEGACY_IMAGE_EVIDENCE}"
 
     info "Logging into ECR..."
     aws ecr get-login-password --region "$REGION" | \
-      docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+      MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
     success "ECR login OK"
 
     info "Pushing to ECR..."
-    docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:${IMAGE_TAG}"
-    docker push "${ECR_REPO}:${IMAGE_TAG}"
+    MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" tag "$LEGACY_IMAGE_ID" "${ECR_REPO}:${IMAGE_TAG}"
+    MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" push "${ECR_REPO}:${IMAGE_TAG}"
 
     if [[ "$IMAGE_TAG" != "latest" ]]; then
-      docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:latest"
-      docker push "${ECR_REPO}:latest"
+      MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" tag "$LEGACY_IMAGE_ID" "${ECR_REPO}:latest"
+      MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" push "${ECR_REPO}:latest"
     fi
     success "Image pushed: ${ECR_REPO}:${IMAGE_TAG}"
 
@@ -6355,6 +6366,9 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       --output text \
       --region "$REGION")
     info "Digest: $DIGEST"
+    DIGEST="${DIGEST%$'\r'}"
+    node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" verify-registry \
+      "$LEGACY_SCAN_RECEIPT" "$LEGACY_SCAN_SHA256" "$LOCAL_SHA" "${NAME}-api" "$DIGEST" "$REGION"
   fi
 
   DIGEST="${DIGEST%$'\r'}"
