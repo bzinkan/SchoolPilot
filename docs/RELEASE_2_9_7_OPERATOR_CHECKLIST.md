@@ -17,6 +17,27 @@ have separate [incremental evidence](release-evidence/release-297/usage-contenti
 and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
+The latest [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
+fails acceptance: 4,840/6,000 heartbeats and 51/64 reports succeeded; 974
+heartbeats failed, 186 offers were refused and 140 were late. Both historical
+workers produced correct totals in 19.107/42.142 seconds, but 978 acquisition
+failures and 10 aborted responses prevent acceptance. Current-day and CSV
+correctness checks were not reached. Physical ownership returned to zero and
+all owned fixtures were removed. The final unchanged-source check was not
+reached; the record leaves that field unavailable. This shared-container Linux
+diagnostic does not reproduce production CPU and memory limits per role.
+
+The exact local `204ae93d` candidate built and passed the pinned full scan with
+zero findings. Its Linux/amd64 manifest is
+`sha256:7d20930a7105d0e805eb7c221a81973998a02930de8185684b1b5acf083b4b9b`;
+the exported archive SHA-256 is
+`d7fcd3d8b7b55d2719262f92231153ae46ff81e0d5b653d16a5b7f8acbc02b8a`.
+Embedded 129-table/lifecycle compatibility checks and default-off Usage pass.
+The permanent local artifact manifest is
+`1428153e1985b0fee87b5142efea9b4f28ccfdbd6f7a4afd3bad05064d498a57`.
+This image is retained for local validation; its build and scan do not override
+the failed capacity result or establish registry/deployment identities.
+
 The later [204ae93d CI checkpoint](release-evidence/release-297/usage-contention/ci-204ae93d.json)
 passes security workflows and 16 CI jobs but fails the rollout-safety startup-probe
 test: the monitor records a generic exception instead of the expected fatal
@@ -27,6 +48,15 @@ CI. Five evidence assertions and 169 targeted rollout assertions pass locally;
 the original exception did not reproduce. The full CI suite remains unchanged
 and must pass on the new head. Production monitor behavior is unchanged.
 
+The [next CI/checkpoint record](release-evidence/release-297/usage-contention/test-lane-listing-flush/manifest.json)
+retains `35712eb`'s 15 successful CI jobs, two failures and three successful
+security workflows. The infrastructure failure is reproduced and corrected:
+lane listing now waits for piped stdout to flush before exiting. Local checks
+pass 1,825 unit cases (four existing skips) and 699 infrastructure cases on
+unchanged source. The other failure identifies a test generator that was no
+longer live at binding validation; its exact underlying cause is not established.
+A fixture lifetime correction and fresh complete CI remain pending.
+
 The subsequent [Linux ingestion CPU diagnostic](release-evidence/release-297/usage-contention/linux-ingest-cpu-01/manifest.json)
 fails with 5,832 successful offers and 168 refused offers out of 6,000, despite
 zero request/acquisition failures and clean drain/cleanup. It omits concurrent
@@ -34,7 +64,7 @@ reports and rollups, so it cannot count as combined capacity. Its [clipped CPU
 analysis](release-evidence/release-297/usage-contention/linux-ingest-cpu-analysis/manifest.json)
 guides further measurement; no deployment recommendation follows from it.
 
-A later ingestion-only SQL-shape diagnostic delivered all 6,000 heartbeats with
+A later [ingestion-only SQL-shape diagnostic](release-evidence/release-297/usage-contention/linux-ingest-sql-shape-01/manifest.json) delivered all 6,000 heartbeats with
 no refused, failed or late offers and no acquisition failures. The source was
 still the historical `d6492333`, and reports and rollups were absent. It improves
 attribution without establishing combined capacity or a deployment green light.
@@ -90,7 +120,7 @@ recipient, enforcement, tenancy or deployment health checks.
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [reconciled read-only check](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. The [previously cancelled sibling run](https://github.com/bzinkan/ClassPilot/actions/runs/37048477885) passed on rerun, including Chrome 120, 133, 152 and stable. The PR remains open/draft. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes; CI is not publication or live acceptance. |
 | Frontend aggregate | [Current frontend source-bound evidence](release-evidence/release-297/usage-contention/frontend-final-source.json): 739 Node-runner cases passed with zero skips, plus direct browser scripts; build and lint passed with 29 existing lint warnings. Artifact SHA-256 `7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f`. Reconcile its recorded frontend blobs with the eventual final release commit; this does not certify later backend changes. |
 | Live pilot / validation | User confirmed St. Francis DeSales, Cincinnati (`desalescincy.org`), with 133 students, three administrators and nine teachers shown in the supplied screenshot. Production school UUID and current eligibility remain unverified. Live validation has not started; minimum 30 minutes with nonzero samples for every required lifecycle category. |
-| Usage capacity | Held off. [Windows combined09](release-evidence/release-297/usage-contention/load-combined-09/manifest.json) fails with 3,677/6,000 successful offers and 30/64 reports. The [same-source Linux diagnostic](release-evidence/release-297/usage-contention/load-linux-combined-01/manifest.json) also fails: 5,652 successful offers, 348 refused, five late, and 38/64 successful reports. Its workers return correct historical totals in 15.582/36.344 seconds, with zero acquisition failures; 23 aborted responses prevent drain certification and current-day/CSV verification. Separate Linux roles shared one unrestricted container, so this is diagnostic evidence only. All owned fixtures were removed. Three consecutive final-source combined passes and the original comparison remain pending. Both fixture schools are synthetic; DeSales is the sole live school. |
+| Usage capacity | Held off. The latest [204ae93d combined diagnostic](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json) fails with 4,840/6,000 successful heartbeat offers, 51/64 successful reports and 978 acquisition failures. Workers return correct historical totals in 19.107/42.142 seconds; 10 aborted responses prevent drain certification. Current-day/CSV verification and final source-equivalence completion are unavailable. Separate Linux roles shared one unrestricted container, so this is diagnostic evidence only. All owned fixtures were removed. Three consecutive final-source combined passes and the original comparison remain pending. Earlier failures remain in the evidence index. Both fixture schools are synthetic; DeSales is the sole live school. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)

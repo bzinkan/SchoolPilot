@@ -3,6 +3,19 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The latest [Linux combined diagnostic at `204ae93d`](linux-combined-204-01/manifest.json)
+fails: 4,840/6,000 heartbeats succeed, with 974 failed requests, 186 refused and
+140 late offers; 51/64 reports succeed. Both historical workers return correct
+totals in 19.107/42.142 seconds. There are 978 acquisition failures and 10 aborted
+responses, so the drain gate fails even though physical ownership reaches zero.
+Current-day and audited CSV checks are not reached; final source-equivalence
+completion is also unavailable rather than asserted. Owned Docker cleanup passes.
+The raw result SHA-256 is
+`35071a7294b217a32fadba258ddc34291c9c194a2f33d109720b24c88352adf6`.
+The accompanying exact image passes the pinned full scan with zero findings and
+embedded compatibility checks. No performance improvement is inferred from this
+mixed failure, and no deployment or capacity approval follows.
+
 [CI at `204ae93d`](ci-204ae93d.json) passes all three security workflows and
 16 CI jobs. The rollout-safety job fails because the startup-probe test records
 `monitor_exception` instead of its expected specific fatal reason. Investigation
@@ -13,7 +26,21 @@ retains bounded, redacted mock logs before cleanup and uploads them on CI failur
 Five diagnostics assertions and 169 targeted startup/start-gate assertions pass;
 the original exception did not reproduce and remains unidentified. CI now checks
 the capture contract before running the full existing suite, with all original
-assertions. The production monitor is unchanged. Fresh full CI remains required.
+assertions. The production monitor is unchanged.
+
+The [subsequent `35712eb` CI record and listing correction](test-lane-listing-flush/manifest.json)
+preserve 15 successful CI jobs, two failed jobs and three successful security
+workflows. Infrastructure governance exposed truncated lane-list output on Linux:
+the runner exited before its piped stdout had flushed. Awaiting the write fixes
+the exact Linux reproduction; its new regression is red against the old runner
+and green against the correction. Windows passes both and is not claimed as a
+red reproduction. The corrected local checkpoint passes 1,825 unit cases
+(four existing skips) and all 699 infrastructure cases on 1,171 unchanged source
+files. The separate rollout fixture failure now has captured diagnostics: its
+configured generator binding was no longer live when the monitor checked it.
+The evidence does not establish whether expiry or another binding mismatch
+caused that condition. A test-fixture lifetime correction is under verification;
+fresh full CI remains required.
 
 The [inbox owner projection](inbox-projection/manifest.json) reduces the teaching
 inbox authority reads from five to two while retaining the fresh control-row
@@ -65,7 +92,8 @@ profile alone. Analysis01 is retained but superseded by analysis02's harness-pat
 classification correction. The next diagnostic measures synchronous query
 construction by bounded, content-free shape without changing application logic.
 
-That subsequent SQL-shape diagnostic on `d6492333` delivered 6,000 of 6,000
+That subsequent [SQL-shape diagnostic](linux-ingest-sql-shape-01/manifest.json)
+on `d6492333` delivered 6,000 of 6,000
 heartbeats, with zero refused, failed or late offers and zero acquisition
 failures. Maximum heartbeat duration was 8.487 seconds. Attribution was complete
 across 31 shapes, with no collector or original-method errors. SQL construction
@@ -74,6 +102,11 @@ seconds; these measurements overlap and must not be added. Collector bookkeeping
 took 1.298 seconds. This ingestion-only result used no CPU profiler, reports or
 rollups and remains diagnostic-only, with capacity explicitly unaccepted. Source
 cleanliness, unchanged source, physical drain and owned-container cleanup passed.
+The frozen per-shape analysis identifies only 1.050 seconds of preparation for
+the largest individual shape across all 6,000 requests. It supports measuring
+the current combined workload before considering a broader compilation cache;
+it does not establish an achievable performance gain. The archive's external-only
+fields describe its creation before this verified repository copy.
 
 [Combined09](load-combined-09/manifest.json), on clean `d6492333`, remains failed:
 3,677 of 6,000 offers succeeded, 1,911 started requests failed and 412 offers were

@@ -1,0 +1,198 @@
+{
+  "source": "d6492333520608df1524c021999d9440a26149de",
+  "sourceUnchangedAtFinish": true,
+  "profile": "release-enabled-linux-shared-namespace-ingest-sql-shape-100rps-v1",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "diagnosticPassed": true,
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 6000,
+    "succeeded": 6000,
+    "failed": 0,
+    "refusedAtInFlightLimit": 0,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 31.183594000000085,
+    "peakInFlight": 848,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 3000,
+        "succeeded": 3000,
+        "failed": 0,
+        "refused": 0
+      },
+      "1": {
+        "offered": 3000,
+        "started": 3000,
+        "succeeded": 3000,
+        "failed": 0,
+        "refused": 0
+      }
+    },
+    "offerWindowMs": 59989.556354,
+    "outstandingAtEndOfOffering": 462,
+    "totalIncludingDrainMs": 63133.199554000006,
+    "outstandingAfterDrain": 0,
+    "accepted": true,
+    "timings": {
+      "count": 6000,
+      "minMs": 97.3866710000002,
+      "p50Ms": 7106.455532,
+      "p95Ms": 8298.615611999998,
+      "maxMs": 8486.549934000002
+    }
+  },
+  "cpuProfile": {
+    "enabled": false
+  },
+  "apiAcquisitions": {
+    "count": 18000,
+    "failures": 0,
+    "maxMs": 3262.296392000004
+  },
+  "apiCpuMicroseconds": {
+    "user": 63811862,
+    "system": 12831355
+  },
+  "apiEventLoop": {
+    "p50Ms": 21.790719,
+    "p95Ms": 27.099135,
+    "maxMs": 72.024063,
+    "utilization": 0.9855452114435074
+  },
+  "serverDrain": {
+    "api": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 12.21952300000703,
+      "passes": 3,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.577994999999646,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "sqlShapeCompilation": {
+    "complete": true,
+    "totalCalls": 181848,
+    "shapeCount": 31,
+    "failures": {
+      "collectorErrors": 0,
+      "missingSql": 0,
+      "oversizedSql": 0,
+      "droppedShapes": 0,
+      "resetWhileActive": 0
+    },
+    "totals": {
+      "sqlToQuery": {
+        "count": 135904,
+        "originalFailures": 0,
+        "totalNs": 4680979618,
+        "maxNs": 4409464,
+        "nestedCollectorNs": 0,
+        "histogram": [
+          51120,
+          49923,
+          27997,
+          6490,
+          324,
+          40,
+          9,
+          1,
+          0,
+          0,
+          0
+        ]
+      },
+      "selectPrepare": {
+        "count": 45944,
+        "originalFailures": 0,
+        "totalNs": 5283658676,
+        "maxNs": 4552695,
+        "nestedCollectorNs": 481470977,
+        "histogram": [
+          0,
+          2514,
+          21524,
+          19892,
+          1805,
+          195,
+          12,
+          2,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "collectorBookkeepingNs": 1297600573,
+    "overlap": "selectPrepare includes nested sqlToQuery; totals overlap and must not be added. Nested collector timing is reported separately, not subtracted. Bookkeeping excludes wrapper clock calls."
+  },
+  "childShutdownClean": true,
+  "allOwnedContainersCleanup": {
+    "cleanupPassed": true,
+    "resources": [
+      {
+        "role": "harness",
+        "removed": false,
+        "cleanupPassed": true,
+        "confirmedAbsent": true
+      },
+      {
+        "role": "redis",
+        "removed": true,
+        "cleanupPassed": true
+      },
+      {
+        "role": "postgres",
+        "removed": true,
+        "cleanupPassed": true
+      }
+    ]
+  },
+  "currentDayAndCsvVerificationCompleted": false,
+  "reportsOrWorkersMeasured": false,
+  "exactCommand": "pwsh -NoProfile -File ./run-linux-ingest-sql-shape.ps1 -SourceRepository C:/Users/zinka/AppData/Local/Temp/release297-linux-d649-host-02 -DiagnosticImageManifest C:/Users/zinka/AppData/Local/Temp/release297-linux-helper-d649-ingest-sql-shape-build-01/diagnostic-image-binding.json -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory C:/Users/zinka/AppData/Local/Temp/release297-enabled-linux-ingest-sql-shape-01 -Phase ingest",
+  "commandCwd": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-sql-shape-design-01",
+  "caveat": "Historical d649 before pending inbox projection. Ingest only; synchronous elapsed compilation timings overlap, not exclusive CPU. Shared Linux namespace without hard per-role CPU/RSS; not production capacity."
+}

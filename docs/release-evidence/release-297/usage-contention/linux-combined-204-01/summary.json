@@ -1,0 +1,203 @@
+{
+  "source": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+  "sourceCleanAtStart": true,
+  "sourceUnchangedAtFinish": null,
+  "sourceEndVerification": "Not reached after failed drain; no final source-unchanged claim",
+  "profile": "release-enabled-linux-shared-namespace-diagnostic-100rps-v1",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "diagnosticChecksPassed": false,
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5814,
+    "succeeded": 4840,
+    "failed": 974,
+    "refusedAtInFlightLimit": 186,
+    "lateOffers": 140,
+    "maxOfferLatenessMs": 1455.8176559999993,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2906,
+        "succeeded": 2421,
+        "failed": 485,
+        "refused": 94
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2908,
+        "succeeded": 2419,
+        "failed": 489,
+        "refused": 92
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 974
+    },
+    "offerWindowMs": 59990.401333,
+    "outstandingAtEndOfOffering": 672,
+    "totalIncludingDrainMs": 64882.328131999995,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5814,
+      "minMs": 406.04162500000075,
+      "p50Ms": 6842.529515999999,
+      "p95Ms": 11329.767454,
+      "maxMs": 12815.665044000001
+    }
+  },
+  "reports": {
+    "total": 64,
+    "correct": 51
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 19106.733927,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 42142.251731,
+      "correct": true
+    }
+  ],
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated",
+      "precise_command_ack"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "Expected values to be strictly equal:\n\n500 !== 200\n"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "cpuProfile": {
+    "enabled": false
+  },
+  "apiAcquisitions": {
+    "count": 16699,
+    "failures": 978,
+    "maxMs": 6443.673575000001
+  },
+  "apiCpuMicroseconds": {
+    "user": 61735410,
+    "system": 12969259
+  },
+  "apiEventLoop": {
+    "p50Ms": 21.495807,
+    "p95Ms": 28.295167,
+    "maxMs": 1469.054975,
+    "utilization": 0.9251468203729643
+  },
+  "generatorEventLoop": {
+    "p95Ms": 21.037055,
+    "maxMs": 1483.735039,
+    "utilization": 0.2039224260152469
+  },
+  "serverDrain": {
+    "api": {
+      "complete": false,
+      "budgetMs": 20000,
+      "elapsedMs": 25.09798000000592,
+      "passes": 4,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 10,
+      "failure": "DRAIN_UNVERIFIABLE_ABORT",
+      "stage": "verification"
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 3.6003229999914765,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "childShutdownClean": false,
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Server work remained active after bounded drain; metrics preserved"
+  },
+  "currentDayAndCsvVerificationCompleted": false,
+  "allOwnedContainersCleanup": {
+    "cleanupPassed": true,
+    "resources": [
+      {
+        "role": "harness",
+        "removed": false,
+        "cleanupPassed": true,
+        "confirmedAbsent": true
+      },
+      {
+        "role": "redis",
+        "removed": true,
+        "cleanupPassed": true
+      },
+      {
+        "role": "postgres",
+        "removed": true,
+        "cleanupPassed": true
+      }
+    ]
+  },
+  "exactCommand": "pwsh -NoProfile -File ./generated/run-linux-diagnostic.prototype.ps1 -SourceRepository C:/Users/zinka/AppData/Local/Temp/release297-linux-204-host-01 -DiagnosticImageManifest C:/Users/zinka/AppData/Local/Temp/release297-linux-helper-204-combined-build-01/diagnostic-image-binding.json -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory C:/Users/zinka/AppData/Local/Temp/release297-enabled-linux-combined-204-01 -Phase combined",
+  "commandCwd": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-204-context-01",
+  "rawMetricsSha256": "35071a7294b217a32fadba258ddc34291c9c194a2f33d109720b24c88352adf6",
+  "candidateArtifact": "C:/Users/zinka/.codex/artifacts/release297-candidate-204ae93d-01",
+  "candidateManifestSha256": "1428153e1985b0fee87b5142efea9b4f28ccfdbd6f7a4afd3bad05064d498a57",
+  "caveats": [
+    "Failed mixed workload does not attribute improvement or regression to the five-to-two inbox projection.",
+    "API and generator both stalled about1.45seconds; late offers and978acquisition failures are observations, not proof of a leak or a sole cause.",
+    "Shared Linux namespace has no hard per-role CPU or RSS cap; this is not production-topology capacity acceptance.",
+    "API physical ownership gauges reached zero but10abortedresponses leave callback uncertainty; drain correctly fails closed.",
+    "Artifact/source proof precedes run; final source verification and post-load current-day/CSV correctness were not reached."
+  ]
+}

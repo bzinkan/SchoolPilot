@@ -202,9 +202,14 @@ if (!["unit", "db", "rls", "infrastructure", "list"].includes(requested)) {
 }
 
 if (requested === "list") {
-  for (const path of all) {
-    process.stdout.write(`${primaryLane(path)}\t${relative(root, path).replaceAll("\\", "/")}\n`);
-  }
+  const listing = all.map((path) =>
+    `${primaryLane(path)}\t${relative(root, path).replaceAll("\\", "/")}\n`
+  ).join("");
+  // Piped stdout is asynchronous on some platforms. Do not exit while a
+  // caller's complete lane inventory is still buffered in this process.
+  await new Promise((resolve, reject) => {
+    process.stdout.write(listing, (error) => error ? reject(error) : resolve());
+  });
   process.exit(0);
 }
 
