@@ -20,9 +20,10 @@ pass 1,906 unit tests, 25 owner and 12 restricted database tests without skips,
 and build/type/cast checks. All nine semantic grain columns match immutable
 b112 SQL. A repeated-URL prototype improves, with a documented all-distinct
 kernel slowdown. Its [fresh image](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json)
-passes build/scan/compatibility checks. Final-source capacity and complete
-follow-up CI remain pending after a [test-only rollout clock fix](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json);
-there is still no deployment green light.
+passes build/scan/compatibility checks. [Follow-up CI at `97dad081`](release-evidence/release-297/usage-contention/ci-97dad081-final-01/manifest.json)
+passes all 17 CI jobs and three security workflows after a
+[test-only rollout clock fix](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json).
+Final-source capacity remains unaccepted; there is still no deployment green light.
 
 The [subsequent full e95 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json)
 has 4,413/6,000 successful heartbeats, 949 failures, 638 refusals and zero late

@@ -25,8 +25,12 @@ before/after clock values, logging all three. The real Git Bash probe passes;
 forced minute/day transitions pass, the original equality fails at the forced
 minute transition, and an incorrect clock result is still rejected. Production
 `deploy.sh` is unchanged. Because the original failure did not log its two
-values, its precise minute-boundary cause remains an inference. Complete CI
-after this test correction is still required.
+values, its precise minute-boundary cause remains an inference.
+[Follow-up CI at `97dad081`](ci-97dad081-final-01/manifest.json) passes all 17 CI
+jobs and three security workflows for the e95 application, including both
+database lanes, backend, frontend/browser and rollout safety. Conditional
+step-level skips remain skips. The uncommitted role harness is outside this
+CI source, and no capacity or release-execution gate is implied.
 
 The [combined e95 diagnostic](linux-role-combined-e95-01/manifest.json) fails
 capacity at 4,413/6,000 successful heartbeats, 949 failures, 638 in-flight refusals
