@@ -1,6 +1,8 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { createHash } from "node:crypto";
 import pg from "pg";
+import { createFairMainPoolClass, shouldScheduleUsagePool } from "./db/fairMainPool.js";
+import { getUsageCapacityOperation } from "./services/usageCapacityDiagnostics.js";
 import * as schema from "./schema/index.js";
 import { getTenantStore, rlsGucEnabled } from "./db/tenantContext.js";
 import { buildPgSslConfig } from "./db/ssl.js";
@@ -47,7 +49,12 @@ const redactedQueryLogger = {
   },
 };
 
-const pool = new pg.Pool({
+// Usage availability is a governed process environment setting. Select once at
+// startup; workers, sessions and the default-off API retain native scheduling.
+const MainPool = shouldScheduleUsagePool(poolLimits.role)
+  ? createFairMainPoolClass(pg.Pool, { readOperation: getUsageCapacityOperation })
+  : pg.Pool;
+const pool = new MainPool({
   connectionString: url,
   max: poolLimits.main,
   min: poolMinimums.main,

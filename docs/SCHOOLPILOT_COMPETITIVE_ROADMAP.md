@@ -14,6 +14,14 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
+The subsequent [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
+separates waiting report requests from other main-pool requests with alternating
+FIFO service, using the same pool and deadlines. It is active only for admitted
+Usage reporting. Build/type/cast checks, 38 focused cases, eight native cases and
+the actual application regression under owner and restricted roles pass.
+Combined capacity remains unproven; this implementation does not change the
+release or activation status.
+
 The latest [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
 remains failed: 4,840/6,000 heartbeats, 51/64 reports and 978 acquisition failures.
 Workers return correct historical totals below 48 seconds; aborted responses and

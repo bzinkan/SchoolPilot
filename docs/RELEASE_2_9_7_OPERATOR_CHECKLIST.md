@@ -17,6 +17,17 @@ have separate [incremental evidence](release-evidence/release-297/usage-contenti
 and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
+The [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
+adds alternating FIFO admission for report and other main-pool requests when
+Usage reporting is enabled. Default-off API, worker and session pools keep
+native scheduling. The existing configured connection limits and deadlines
+remain unchanged. Build/type/cast checks, 38 focused tests, eight native driver
+cases and the actual application regression under owner and restricted roles
+pass. Cancellation retains ownership until cleanup finishes. Native logical
+pool limits are preserved; closing sockets are tracked through shutdown without
+claiming a stricter physical-socket ceiling. Combined capacity and final-source
+checks remain pending, and the older image below does not contain this change.
+
 The latest [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
 fails acceptance: 4,840/6,000 heartbeats and 51/64 reports succeeded; 974
 heartbeats failed, 186 offers were refused and 140 were late. Both historical

@@ -3,6 +3,19 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The [fair main-pool scheduler](fair-main-pool-scheduler-01/manifest.json) preserves
+the complete prototype failure history and final typed integration proof.
+Report and other acquisitions use alternating FIFO queues in the existing API
+pool when Usage reporting is admitted and on. Worker/session pools and the
+reporting-off API are unchanged. Build, type and cast checks pass; focused tests
+pass 38/38, native driver tests 8/8, and the actual application test passes once
+under each owner/restricted role with no skips. It verifies tenant GUC cleanup,
+ordering and report cancellation ownership. The configured logical connection
+cap and five-second caller deadline remain unchanged. Closing sockets retain
+native pg behavior and are tracked until actual end; no stricter socket ceiling
+or performance improvement is claimed. Full combined checks and capacity on
+this new application source are pending.
+
 The latest [Linux combined diagnostic at `204ae93d`](linux-combined-204-01/manifest.json)
 fails: 4,840/6,000 heartbeats succeed, with 974 failed requests, 186 refused and
 140 late offers; 51/64 reports succeed. Both historical workers return correct

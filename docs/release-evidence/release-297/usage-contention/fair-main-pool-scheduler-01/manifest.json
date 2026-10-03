@@ -1,0 +1,825 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T11:28:48.912482+00:00",
+  "baseCommit": "9fc4b0e000abd73ac59aa49654745dbc3ab7f91f",
+  "sourceState": "Uncommitted incremental fair-pool integration; not final-source capacity acceptance",
+  "sourceSha256": {
+    "src/db.ts": "38174d8ac22e0711e5167f6085c293dedf65f76595d348938f8c450cb80eb823",
+    "src/db/fairMainPool.ts": "7e5e5ef2a076fb4a047f5064f30e17140cfe68776533d6cae416bbbee2f332b1",
+    "tests/fair-main-pool.test.mjs": "fb8c71846208743d723530b20813f40d431e5d367ba693e7a20d8dedcd6a226d",
+    "tests/fair-main-pool-config.test.mjs": "405a1463e8c6dfde9fba03700969403789a0a0f22f5ee0185658a51d079044a9",
+    "tests/fair-main-pool.integration.test.mjs": "e2ecdd583e14d7b726fb2c6fc7b78c877990bc216f3e9c63214f025937906b8a",
+    "scripts/run-test-lane.mjs": "10728dc600aa6cf69ecbb2047b48ef64542cdc8f273cedeb195c9eab70374065"
+  },
+  "commands": {
+    "prototype": "node --test fair-main-pool.test.mjs",
+    "focused": "node --import tsx --test tests/fair-main-pool.test.mjs tests/fair-main-pool-config.test.mjs",
+    "build": "npm run build",
+    "types": "npm run check:tests",
+    "casts": "npm run check:test-casts",
+    "native": "node run-native-postgres.mjs in external release297-fair-main-pool-integrated-01; exact retained runner executes typed8-case proof then durable native owner/restricted test"
+  },
+  "results": {
+    "prototype": {
+      "pass": 36,
+      "fail": 0
+    },
+    "focused": {
+      "pass": 38,
+      "fail": 0,
+      "skip": 0
+    },
+    "build": "passed",
+    "testTypes": "passed438existing/534maximum;0sourceerrors",
+    "casts": "passed689asAny/7asUnknownAs/0suppressions, unchanged",
+    "integratedNative": {
+      "cases": 8,
+      "pass": 8,
+      "restrictedRoleVerified": true
+    },
+    "durableNative": {
+      "ownerPass": 1,
+      "restrictedPass": 1,
+      "skip": 0,
+      "cleanupPassed": true
+    },
+    "capacity": "UNPROVEN; no combined workload run on this new adapter"
+  },
+  "limitations": [
+    "Native configured logical client ceiling is preserved; no stricter closing-socket ceiling claimed. Old strict claim and red proof retained.",
+    "Native failure constructors are tracked globally through public end, never attributed to caller ALS.",
+    "API scheduler selected once at startup only with reporting on and both modes/RLS admissions valid. No supported live process env mutation found; runtime tool replaces ECS env/tasks.",
+    "Owner-role lane proves plumbing only; separate actual NOSUPERUSER/NOBYPASSRLS lane proves tenant isolation.",
+    "Prototype initial README/review-manifest and initial35bea fixture role claim are historical/superseded, not final proof. See FINAL-REVIEW.md.",
+    "First typed checks failed mechanical type declarations; first config test failed wrong scheduler file path. Corrected results preserved separately.",
+    "First cast command used nonexistent check:casts and failed; correct check:test-casts passed.",
+    "No schema, pool caps, SQL/worker deadlines, workload, production or infrastructure changes."
+  ],
+  "files": [
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.client-hook-32-pass.mjs",
+      "archive": "prototype/fair-main-pool.client-hook-32-pass.mjs.gz",
+      "rawSha256": "3e648e3dcafae36cf956faa857da24c3b447bec150cc825addb5231c4bfa59e5",
+      "sanitizedSha256": "3e648e3dcafae36cf956faa857da24c3b447bec150cc825addb5231c4bfa59e5",
+      "gzipSha256": "0e8088afcdb13f2ff00e0066c4d096748403a201ac8d0690e0f9e2c453cb5347",
+      "bytes": 12207,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.idle-close-30-pass.mjs",
+      "archive": "prototype/fair-main-pool.idle-close-30-pass.mjs.gz",
+      "rawSha256": "60a7acd2a4c012927accf0daf08b6280b6f29f17dce37d3e50feda07aacdc2fc",
+      "sanitizedSha256": "60a7acd2a4c012927accf0daf08b6280b6f29f17dce37d3e50feda07aacdc2fc",
+      "gzipSha256": "1679b5480aaf2e0cd0a66ebf087eeeba03508fd65a8d4d6657018fef77634259",
+      "bytes": 11231,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.idle-close-30-pass.test.mjs",
+      "archive": "prototype/fair-main-pool.idle-close-30-pass.test.mjs.gz",
+      "rawSha256": "e4c4c48b89a2e4c5feafcb61a2077474765563159504f16084acda122dff351e",
+      "sanitizedSha256": "e4c4c48b89a2e4c5feafcb61a2077474765563159504f16084acda122dff351e",
+      "gzipSha256": "f5572dd3b7e6e919055275ba09c26f026ce7d7db563b803c25598b4a7c0b56ac",
+      "bytes": 19256,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.initial-24-pass.mjs",
+      "archive": "prototype/fair-main-pool.initial-24-pass.mjs.gz",
+      "rawSha256": "8b30a41db4da1e56dd018d6da9b9466437c499755b15e3d9153a1e7d96256579",
+      "sanitizedSha256": "8b30a41db4da1e56dd018d6da9b9466437c499755b15e3d9153a1e7d96256579",
+      "gzipSha256": "8a7982e77c3daaf15ded93ffbeef1fc43711fe19c54e640f085f311861be53fb",
+      "bytes": 9502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.mjs",
+      "archive": "prototype/fair-main-pool.mjs.gz",
+      "rawSha256": "a6693a749e486cddf503951e9b8e31c7274a8c272295079717795dca96b00eda",
+      "sanitizedSha256": "a6693a749e486cddf503951e9b8e31c7274a8c272295079717795dca96b00eda",
+      "gzipSha256": "0cc40d8271fa49a2b485d8f5a74327cb2142033f0e5c7505237bbd8b370d8dc0",
+      "bytes": 12564,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.reviewed-26-pass.mjs",
+      "archive": "prototype/fair-main-pool.reviewed-26-pass.mjs.gz",
+      "rawSha256": "5140f429ea8d8f2498c56e68a96879f9ca76fc76491e4a41d9db8a35b30f7465",
+      "sanitizedSha256": "5140f429ea8d8f2498c56e68a96879f9ca76fc76491e4a41d9db8a35b30f7465",
+      "gzipSha256": "3809eb57df99ab9cab7690a9dc61d27477291078d2bdc55b493fc165bbbed88d",
+      "bytes": 9905,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.reviewed-26-pass.test.mjs",
+      "archive": "prototype/fair-main-pool.reviewed-26-pass.test.mjs.gz",
+      "rawSha256": "866072721207349724df67a167f3f52a3c4492b402737e1a5c697be6f2d94c48",
+      "sanitizedSha256": "866072721207349724df67a167f3f52a3c4492b402737e1a5c697be6f2d94c48",
+      "gzipSha256": "a85ffcb89926849a83e3932169e3553eaa1b35dfdd37a4191a6c302f18680413",
+      "bytes": 17232,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.strict-socket-abandoned.mjs",
+      "archive": "prototype/fair-main-pool.strict-socket-abandoned.mjs.gz",
+      "rawSha256": "1e74bea5ff8be6219d9ccf81e9d597828fc5b5db0d52469db6c8b990d20c3d7d",
+      "sanitizedSha256": "1e74bea5ff8be6219d9ccf81e9d597828fc5b5db0d52469db6c8b990d20c3d7d",
+      "gzipSha256": "a7809aa4ab8a3f06a4cda65eae1f5df30482458871523badec03c3d53a23d919",
+      "bytes": 12962,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.strict-socket-abandoned.test.mjs",
+      "archive": "prototype/fair-main-pool.strict-socket-abandoned.test.mjs.gz",
+      "rawSha256": "67f922d1e432cc9d7ff3cf1a7a1f093b47f55cc728c46a413a61c5b14ed52d55",
+      "sanitizedSha256": "67f922d1e432cc9d7ff3cf1a7a1f093b47f55cc728c46a413a61c5b14ed52d55",
+      "gzipSha256": "a8d8a974c68cfe02780e81ff7054f7cac7ad6d3ff0acbd6d9440644ae8fb197a",
+      "bytes": 21641,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\fair-main-pool.test.mjs",
+      "archive": "prototype/fair-main-pool.test.mjs.gz",
+      "rawSha256": "45d3096ad27fcd57afaa97b1d5950486b22a55c7ed9d60ad199e3a3a00271395",
+      "sanitizedSha256": "45d3096ad27fcd57afaa97b1d5950486b22a55c7ed9d60ad199e3a3a00271395",
+      "gzipSha256": "3bddfc01ddf3de10982e8f6142b8c3a74bf1b398b710b7d0d6ffc88d964ed285",
+      "bytes": 23296,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\FINAL-REVIEW.md",
+      "archive": "prototype/FINAL-REVIEW.md.gz",
+      "rawSha256": "1f5bd8b158c0c89d31bc2d2db7af17cb2e0ff1b8ab20350e63fa552791ce16be",
+      "sanitizedSha256": "1f5bd8b158c0c89d31bc2d2db7af17cb2e0ff1b8ab20350e63fa552791ce16be",
+      "gzipSha256": "6ef384c67bd2947731ac50c4326c5ca05f62701d72cca09d827e4fc26c8da537",
+      "bytes": 3151,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\make-review-manifest.mjs",
+      "archive": "prototype/make-review-manifest.mjs.gz",
+      "rawSha256": "368a0e9f195c7b89d6de1c91ee02ac3d541a6c39b6bad5acba6ce5a957f1e770",
+      "sanitizedSha256": "368a0e9f195c7b89d6de1c91ee02ac3d541a6c39b6bad5acba6ce5a957f1e770",
+      "gzipSha256": "583912e70efc5b80fb8c7ca7538e87004529927f13851f2584548f5edd491349",
+      "bytes": 1404,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-failure-modes-01.json",
+      "archive": "prototype/native-failure-modes-01.json.gz",
+      "rawSha256": "5322d680e8dd3be491c91c21e7d00131787a8c47396547a0c6047cd630e72279",
+      "sanitizedSha256": "5322d680e8dd3be491c91c21e7d00131787a8c47396547a0c6047cd630e72279",
+      "gzipSha256": "80af28f0f61e4503a36b15e700a5d1832c84ef3dd5f4ae64ca48535fd1fd4d58",
+      "bytes": 7970,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-failure-modes-01.log",
+      "archive": "prototype/native-failure-modes-01.log.gz",
+      "rawSha256": "4986072b49d35f75c216f02af4415eefa95d0ee23c68ade2608ffec4956265d3",
+      "sanitizedSha256": "4986072b49d35f75c216f02af4415eefa95d0ee23c68ade2608ffec4956265d3",
+      "gzipSha256": "0231e3d7caf9952a9a7dc02a0e1fbef400e86c1e8ca448f68c5efa47e291046a",
+      "bytes": 5289,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-failure-modes-02.json",
+      "archive": "prototype/native-failure-modes-02.json.gz",
+      "rawSha256": "e9f6b6fe47d6648e9760f44b5f6e7a53f8397114b8f4724bcab124b2acba24f4",
+      "sanitizedSha256": "e9f6b6fe47d6648e9760f44b5f6e7a53f8397114b8f4724bcab124b2acba24f4",
+      "gzipSha256": "209cce704552207e309bc3a43904638ddab8958c63a2b9631c882f67e5b059a6",
+      "bytes": 8001,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-failure-modes-02.log",
+      "archive": "prototype/native-failure-modes-02.log.gz",
+      "rawSha256": "90f75b6adffede384334a31e32efadc1386615d7a6ab420488c2f2bbb64f1856",
+      "sanitizedSha256": "90f75b6adffede384334a31e32efadc1386615d7a6ab420488c2f2bbb64f1856",
+      "gzipSha256": "2b661e7dca658ce66e1caf71bb8c03806a18cf694c2aa97d8957967aa5a26679",
+      "bytes": 5320,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-failure-modes.mjs",
+      "archive": "prototype/native-failure-modes.mjs.gz",
+      "rawSha256": "36a8e179767ddb7baa63310240b07eb3643f600d15e5f94fb04e3bf1ab04c6e8",
+      "sanitizedSha256": "36a8e179767ddb7baa63310240b07eb3643f600d15e5f94fb04e3bf1ab04c6e8",
+      "gzipSha256": "76c4cc9ee2b5fb7bddd1bc47513ad713b0a1a5ab8b605a4d5fa367b707eec668",
+      "bytes": 4358,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-proof.attempt03.mjs",
+      "archive": "prototype/native-postgres-proof.attempt03.mjs.gz",
+      "rawSha256": "4a0ac46f965178e30ff18dc42e7237787cae8b06dbef176214919314dfca8624",
+      "sanitizedSha256": "4a0ac46f965178e30ff18dc42e7237787cae8b06dbef176214919314dfca8624",
+      "gzipSha256": "98d6cb989e1d6d81bb41b1422ad10af84c0e7413bf8d9ccb41cdb29e8a83fbfe",
+      "bytes": 7393,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-proof.initial.mjs",
+      "archive": "prototype/native-postgres-proof.initial.mjs.gz",
+      "rawSha256": "36aa46c417b0856eac9e53cefa6cce2631a6797b0c576ae600ea88b5dd379028",
+      "sanitizedSha256": "36aa46c417b0856eac9e53cefa6cce2631a6797b0c576ae600ea88b5dd379028",
+      "gzipSha256": "12a75f5e15675cd4967aa54c5f1f2dd009a462483fc89a49928e87ac46c65731",
+      "bytes": 7227,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-proof.mjs",
+      "archive": "prototype/native-postgres-proof.mjs.gz",
+      "rawSha256": "65dbd3f5e1904af59bc300c4b5886f3e50bccf80796f5a961b73970d0643706b",
+      "sanitizedSha256": "65dbd3f5e1904af59bc300c4b5886f3e50bccf80796f5a961b73970d0643706b",
+      "gzipSha256": "8c14467dff1c9b69f198087d8be0d81a73ba6e1137a8edc1b3c0efd4ec5d47c2",
+      "bytes": 8974,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-runner-01.log",
+      "archive": "prototype/native-postgres-runner-01.log.gz",
+      "rawSha256": "08bf0fba4192c92d733d248c83ab3f53a432684b7559f400be5b48b719cec287",
+      "sanitizedSha256": "08bf0fba4192c92d733d248c83ab3f53a432684b7559f400be5b48b719cec287",
+      "gzipSha256": "2fc91a48c930233a50e8dccfcbae15194ebd0c31b05c1833714380252f6a678d",
+      "bytes": 502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-runner-02.log",
+      "archive": "prototype/native-postgres-runner-02.log.gz",
+      "rawSha256": "df12dcadaaff77e6723e3f84b7f61088736836ff7387ec7acf7a3bd72b18ab5f",
+      "sanitizedSha256": "df12dcadaaff77e6723e3f84b7f61088736836ff7387ec7acf7a3bd72b18ab5f",
+      "gzipSha256": "5a9452db97829ac78c91b65e941125f4a1dbfdebe7239914fe8da0b06b571143",
+      "bytes": 502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-runner-03.log",
+      "archive": "prototype/native-postgres-runner-03.log.gz",
+      "rawSha256": "53082a6cfbc058b643f4e151f94227bc8b8e02d8952fbd2d9b12f67501a60eac",
+      "sanitizedSha256": "53082a6cfbc058b643f4e151f94227bc8b8e02d8952fbd2d9b12f67501a60eac",
+      "gzipSha256": "482842409ba39d17552f7b4e35ba25f6d750326829ca364644414ed1c5c12777",
+      "bytes": 502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-postgres-runner-04.log",
+      "archive": "prototype/native-postgres-runner-04.log.gz",
+      "rawSha256": "5754bc01891225b9defb875bf2f862576b2ea6b40d54a7158c0a58eaa78f4a6a",
+      "sanitizedSha256": "5754bc01891225b9defb875bf2f862576b2ea6b40d54a7158c0a58eaa78f4a6a",
+      "gzipSha256": "8abeca7caa3794378e0922f870b3e54cc7483676a9e81304ec7e2516ea305159",
+      "bytes": 502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-runner-01.log",
+      "archive": "prototype/native-runner-01.log.gz",
+      "rawSha256": "8e68b97eb8d3e1ca774a64996167d77de2ff324410464148fec4094ed9cebe32",
+      "sanitizedSha256": "8e68b97eb8d3e1ca774a64996167d77de2ff324410464148fec4094ed9cebe32",
+      "gzipSha256": "79f558475bdf765f02747c1b9e1d115008a66a6c3aed3f9d755fc6146d9bc9c3",
+      "bytes": 502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-01.json",
+      "archive": "prototype/native-socket-proof-01.json.gz",
+      "rawSha256": "7f9c4d992f854d3c8b7f913cbe217ec69abaf0d26aac2c71f3f95dba97fe3c99",
+      "sanitizedSha256": "7f9c4d992f854d3c8b7f913cbe217ec69abaf0d26aac2c71f3f95dba97fe3c99",
+      "gzipSha256": "2a1c4522b95bfe3b9d3c7fa46f4409073106d598bb74d90ce833881fce3a2c94",
+      "bytes": 1039,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-01.log",
+      "archive": "prototype/native-socket-proof-01.log.gz",
+      "rawSha256": "e7ddbb2b9602c5782513948b55df3875aab7eea94a64cb43a2e96dde2ac5df88",
+      "sanitizedSha256": "e7ddbb2b9602c5782513948b55df3875aab7eea94a64cb43a2e96dde2ac5df88",
+      "gzipSha256": "ac812a17277d08e5692dedf700fbb43b85c3aa89fcf680d4de722c3e9c2872e7",
+      "bytes": 1252,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-02.json",
+      "archive": "prototype/native-socket-proof-02.json.gz",
+      "rawSha256": "ea4866ab503aa996b5ff5e7f8bf686f53006bb1bd86b240eefbf72cb26519d5f",
+      "sanitizedSha256": "ea4866ab503aa996b5ff5e7f8bf686f53006bb1bd86b240eefbf72cb26519d5f",
+      "gzipSha256": "5a923d7e39215ca010b912884d466f4bcf905f03326c91e1d831c6dad37e7a09",
+      "bytes": 1048,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-02.log",
+      "archive": "prototype/native-socket-proof-02.log.gz",
+      "rawSha256": "fa5094dd7c86f16e69eb468437100817acf7c0d37149a64b3b80ccecda562b0a",
+      "sanitizedSha256": "fa5094dd7c86f16e69eb468437100817acf7c0d37149a64b3b80ccecda562b0a",
+      "gzipSha256": "9eb36628f4c981ffbe91e3ae36d573f5bb86a9ba8a6c4057a7dac22ea7c09a36",
+      "bytes": 807,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-02.mjs",
+      "archive": "prototype/native-socket-proof-02.mjs.gz",
+      "rawSha256": "bda6ab6653d4c05d87147633161bb079d534b0d654e121f3f4dc6f162d218435",
+      "sanitizedSha256": "bda6ab6653d4c05d87147633161bb079d534b0d654e121f3f4dc6f162d218435",
+      "gzipSha256": "7aeff60ecd935803ffd20dcf08adff527c09bc2d908ae5333a52327e86f0d44f",
+      "bytes": 2925,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-03.json",
+      "archive": "prototype/native-socket-proof-03.json.gz",
+      "rawSha256": "d24d1510c683d302b9ad6aec7c2cbcc3936a490d7d6d43f7406e4dac2b0e2c47",
+      "sanitizedSha256": "d24d1510c683d302b9ad6aec7c2cbcc3936a490d7d6d43f7406e4dac2b0e2c47",
+      "gzipSha256": "ed19aa01607946eb22e9136ea082b1d74c2af679a1b052b8885432a179f5e629",
+      "bytes": 1038,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-03.log",
+      "archive": "prototype/native-socket-proof-03.log.gz",
+      "rawSha256": "6ac0be04e52bc3ff859952541859093d4062a23eeca2bf2dc9d60e89c8256d73",
+      "sanitizedSha256": "6ac0be04e52bc3ff859952541859093d4062a23eeca2bf2dc9d60e89c8256d73",
+      "gzipSha256": "cec3f4ac2b52ce26d113ccebaa31a5c7736f32173949809e6c6893b8b08d94fe",
+      "bytes": 797,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof-03.mjs",
+      "archive": "prototype/native-socket-proof-03.mjs.gz",
+      "rawSha256": "d2b77d054a2aa4a50640ea49ed97b455b035356bcbe06ceccf303eafff316481",
+      "sanitizedSha256": "d2b77d054a2aa4a50640ea49ed97b455b035356bcbe06ceccf303eafff316481",
+      "gzipSha256": "2dd983228abf6401194bcd6eaf74ed35d1aca8fe3e27cbc0fc2fa9a2dc677cb6",
+      "bytes": 2892,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\native-socket-proof.mjs",
+      "archive": "prototype/native-socket-proof.mjs.gz",
+      "rawSha256": "34fbcc3be6e944d9727dabc5e3d530bff6bcabb2bb0f67957ae23fca4a30552d",
+      "sanitizedSha256": "34fbcc3be6e944d9727dabc5e3d530bff6bcabb2bb0f67957ae23fca4a30552d",
+      "gzipSha256": "89686efcbbc17335eab81de6935361655270c2ff3a145848b70ecc084e77d048",
+      "bytes": 2925,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\README.md",
+      "archive": "prototype/README.md.gz",
+      "rawSha256": "c1877ab85aa0142893ed02d6c2935621bcda6d37ed1beaf07b78a05ef4d026fa",
+      "sanitizedSha256": "c1877ab85aa0142893ed02d6c2935621bcda6d37ed1beaf07b78a05ef4d026fa",
+      "gzipSha256": "676ec69989ec6af0b09080fc45afdc54584bd06e5a022a430e2cbf44bd3a3430",
+      "bytes": 5037,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\review-manifest.json",
+      "archive": "prototype/review-manifest.json.gz",
+      "rawSha256": "43cb80d53baddf0b69d579ae739cfd3ceec8f4527c791038ebd6e27aa7afab75",
+      "sanitizedSha256": "43cb80d53baddf0b69d579ae739cfd3ceec8f4527c791038ebd6e27aa7afab75",
+      "gzipSha256": "c0f689d4d7faa97d4098e50e55a7a3d529be83bb4fa95c632a5895ce7060d8f2",
+      "bytes": 1981,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\run-native-postgres.initial.mjs",
+      "archive": "prototype/run-native-postgres.initial.mjs.gz",
+      "rawSha256": "3d78f14621dfea0106b480ef24e3e05ab266898edb12ded28d18cbaba0782f29",
+      "sanitizedSha256": "3d78f14621dfea0106b480ef24e3e05ab266898edb12ded28d18cbaba0782f29",
+      "gzipSha256": "fa87cf1ec83a45237dc3a8e529850cca2b28ad0b032372c6708a9d1f8665c7cd",
+      "bytes": 3253,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\run-native-postgres.mjs",
+      "archive": "prototype/run-native-postgres.mjs.gz",
+      "rawSha256": "2471f4a0bd0db15e5d3eaba9572030644bc1b38d4132efecc55e6da7209265af",
+      "sanitizedSha256": "2471f4a0bd0db15e5d3eaba9572030644bc1b38d4132efecc55e6da7209265af",
+      "gzipSha256": "9b6cd8ac532bf34b99a37f26f6e6f0a809e22182e72d770fef2db9eb9c8df7d6",
+      "bytes": 3270,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-01.log",
+      "archive": "prototype/tests-01.log.gz",
+      "rawSha256": "eb3892fcf22e4e3140c3e1a6280458de08c383e15d641793d6ff8db5f2d705ac",
+      "sanitizedSha256": "eb3892fcf22e4e3140c3e1a6280458de08c383e15d641793d6ff8db5f2d705ac",
+      "gzipSha256": "5713e32ae9e641a6c7842b5b24b0cea8285986e2e4418fd59e59fdc5d0a61269",
+      "bytes": 5585,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-02.log",
+      "archive": "prototype/tests-02.log.gz",
+      "rawSha256": "0c43e0c25ff90a4b7d173b91c2471faaae341fa794f3ab5140d17c11ec6af392",
+      "sanitizedSha256": "0c43e0c25ff90a4b7d173b91c2471faaae341fa794f3ab5140d17c11ec6af392",
+      "gzipSha256": "c2a35a6e7ab527a0a09b16cc050845e685eadab562e8bad00a562a9f11f13ce2",
+      "bytes": 6713,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-03.log",
+      "archive": "prototype/tests-03.log.gz",
+      "rawSha256": "306d1e0dda8b8bbb31176288176aadbdbe2d392be6fe999909ff6501e2614fda",
+      "sanitizedSha256": "306d1e0dda8b8bbb31176288176aadbdbe2d392be6fe999909ff6501e2614fda",
+      "gzipSha256": "0eec6ad4d62f2d81cfa81ca0552f311a9b9d673607aeabfcbf7e34b8d6d8cea9",
+      "bytes": 6048,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-04-idle-close-red.log",
+      "archive": "prototype/tests-04-idle-close-red.log.gz",
+      "rawSha256": "1bc64dbe95007393fcd1470f20c62bb36ae258e7a1e3711635564befa11d56e1",
+      "sanitizedSha256": "1bc64dbe95007393fcd1470f20c62bb36ae258e7a1e3711635564befa11d56e1",
+      "gzipSha256": "4e3b486f2b0f0c7826b115b052e62ce13cfdef96c72cffc9e714f63ec66da28e",
+      "bytes": 9459,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-05-idle-close-green.log",
+      "archive": "prototype/tests-05-idle-close-green.log.gz",
+      "rawSha256": "9cd0e59cbf028e429f9f424d126507e34b44a642d6d89cab4c1738cd76f2b4b8",
+      "sanitizedSha256": "9cd0e59cbf028e429f9f424d126507e34b44a642d6d89cab4c1738cd76f2b4b8",
+      "gzipSha256": "1f7cec4019094bbd7192728347d254a3c19332acde3fe20e78325aa562642c98",
+      "bytes": 6844,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-06-client-hook.log",
+      "archive": "prototype/tests-06-client-hook.log.gz",
+      "rawSha256": "c8900c89e09cfac83241dbd1098a046ab51637b4ebaf53195dca88ca52bc0b11",
+      "sanitizedSha256": "c8900c89e09cfac83241dbd1098a046ab51637b4ebaf53195dca88ca52bc0b11",
+      "gzipSha256": "417601b0227ee8080dcd69234282d606457699ada8d90b19c36fa1c11df2cef1",
+      "bytes": 6841,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-07-client-hook-green.log",
+      "archive": "prototype/tests-07-client-hook-green.log.gz",
+      "rawSha256": "64d405974b29b40ddb53ac8ce1b2c8f02b88ea132db4125061e2237018f68578",
+      "sanitizedSha256": "64d405974b29b40ddb53ac8ce1b2c8f02b88ea132db4125061e2237018f68578",
+      "gzipSha256": "dad8efea09d43bcc959657734899defb92d3eadcf90cc11d33f7b9499f87ac34",
+      "bytes": 7301,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-08-native-queue-red.log",
+      "archive": "prototype/tests-08-native-queue-red.log.gz",
+      "rawSha256": "b5c3e9d68e4755d0f00a6cf63dddb925f4d46ccf96be1b680749c323fe2411b1",
+      "sanitizedSha256": "b5c3e9d68e4755d0f00a6cf63dddb925f4d46ccf96be1b680749c323fe2411b1",
+      "gzipSha256": "d39a64f1c79c037d364618bc91680c36d1565638b7c9367be76ba4477dafb64d",
+      "bytes": 8416,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-09-native-ceiling-contract.log",
+      "archive": "prototype/tests-09-native-ceiling-contract.log.gz",
+      "rawSha256": "de03f58cdf8216e5db95d5985942dd8fb362449da88fdd06aa414ff5214c8d8c",
+      "sanitizedSha256": "de03f58cdf8216e5db95d5985942dd8fb362449da88fdd06aa414ff5214c8d8c",
+      "gzipSha256": "cc4079a8f413afa81377e9da0573cc23ff613f3b10a893ae602c57731648c0e6",
+      "bytes": 8162,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-prototype-01\\tests-10-final-narrow.log",
+      "archive": "prototype/tests-10-final-narrow.log.gz",
+      "rawSha256": "899fe546dc359a8c2e62790837c1365619813669a1a23b8bba90e4dd8ba1ecbe",
+      "sanitizedSha256": "899fe546dc359a8c2e62790837c1365619813669a1a23b8bba90e4dd8ba1ecbe",
+      "gzipSha256": "538ce2a2b62c4565f9fdf078045a820c76020aecd6d420f046784ac4f5d20447",
+      "bytes": 8356,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-35bea9ffd925\\native.log",
+      "archive": "native/release297-fair-pool-native-35bea9ffd925/native.log.gz",
+      "rawSha256": "75e739cf4cb358f36253cc5d222e2b43b0488a7ecc9502601c5110d73a65b01c",
+      "sanitizedSha256": "75e739cf4cb358f36253cc5d222e2b43b0488a7ecc9502601c5110d73a65b01c",
+      "gzipSha256": "e6774643feff8ad32e156d7acdc7104d45934f31476fe923a09b71fd6ac12db3",
+      "bytes": 449,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-35bea9ffd925\\proof.json",
+      "archive": "native/release297-fair-pool-native-35bea9ffd925/proof.json.gz",
+      "rawSha256": "797e2f2ea79c0604c960af62b11f978dd577cb7d02a00c1eafae314ab7f84ac1",
+      "sanitizedSha256": "797e2f2ea79c0604c960af62b11f978dd577cb7d02a00c1eafae314ab7f84ac1",
+      "gzipSha256": "4fbbb05b8e9b55eff70f003af30ced8f818a97a791c87acd49d1810cd782c43f",
+      "bytes": 539,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-35bea9ffd925\\runner-receipt.json",
+      "archive": "native/release297-fair-pool-native-35bea9ffd925/runner-receipt.json.gz",
+      "rawSha256": "a7a7d8934cf47dd3344af64445aa84d674fcf5aa5b602ce88248b7c3cf80c31e",
+      "sanitizedSha256": "a7a7d8934cf47dd3344af64445aa84d674fcf5aa5b602ce88248b7c3cf80c31e",
+      "gzipSha256": "aa320bde39fb34367db11ee01fb5da3f876b58e2af37f1f0b0d3434a4aaef81b",
+      "bytes": 561,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-e93788e63d3b\\native.log",
+      "archive": "native/release297-fair-pool-native-e93788e63d3b/native.log.gz",
+      "rawSha256": "dec3c51ce0ab280edd86321b40e645d35a07666cc2cd05ee6dfaa5e0aa70ec2b",
+      "sanitizedSha256": "dec3c51ce0ab280edd86321b40e645d35a07666cc2cd05ee6dfaa5e0aa70ec2b",
+      "gzipSha256": "a86875dc8548fff0dfaa5772e6cd94a3d0a4f7303b4041aef7ec4db0600fb514",
+      "bytes": 1330,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-e93788e63d3b\\runner-receipt.json",
+      "archive": "native/release297-fair-pool-native-e93788e63d3b/runner-receipt.json.gz",
+      "rawSha256": "45bbb485289a2e371e43f64c162ace60b45aada5fdb8a8794bcbfcfe92b71c62",
+      "sanitizedSha256": "45bbb485289a2e371e43f64c162ace60b45aada5fdb8a8794bcbfcfe92b71c62",
+      "gzipSha256": "04bab1284cbfc98abd0903be1c04edfdc9f617b0dc71762a7e50e9752f9e72f2",
+      "bytes": 561,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-cb4957b917f7\\native.log",
+      "archive": "native/release297-fair-pool-native-cb4957b917f7/native.log.gz",
+      "rawSha256": "d03e968d8eced00c183bf934e5f8cd6098d2cd2fce442be67c7b01f246831d8d",
+      "sanitizedSha256": "d03e968d8eced00c183bf934e5f8cd6098d2cd2fce442be67c7b01f246831d8d",
+      "gzipSha256": "f847216dffe46f6059509d873c8d008a4a1427f34e3f90dfa3803fc61996f0fc",
+      "bytes": 1290,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-cb4957b917f7\\proof.json",
+      "archive": "native/release297-fair-pool-native-cb4957b917f7/proof.json.gz",
+      "rawSha256": "bd2e5182c4d9326ede02c493185d8bb7838e58e5ee86cab81b211b4a91d864bd",
+      "sanitizedSha256": "bd2e5182c4d9326ede02c493185d8bb7838e58e5ee86cab81b211b4a91d864bd",
+      "gzipSha256": "8f7cea6051af8a7ae007d125aaf08d802fd34c55266beeb59907ca7ba8e255e8",
+      "bytes": 1608,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-cb4957b917f7\\runner-receipt.json",
+      "archive": "native/release297-fair-pool-native-cb4957b917f7/runner-receipt.json.gz",
+      "rawSha256": "20c49c842f7aa0f42c84f2b060414942b68c16fc78c83e0ab32388b9808b4acd",
+      "sanitizedSha256": "20c49c842f7aa0f42c84f2b060414942b68c16fc78c83e0ab32388b9808b4acd",
+      "gzipSha256": "9066ce33e0b4c81697353720540ecbba1d635bc35f5098a5ab43d61262f3489c",
+      "bytes": 561,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-97517490b8f7\\native.log",
+      "archive": "native/release297-fair-pool-native-97517490b8f7/native.log.gz",
+      "rawSha256": "fe02a0c3bb9799847d44807777b6ec14b9ab481de56082721b402cf25278e4e7",
+      "sanitizedSha256": "fe02a0c3bb9799847d44807777b6ec14b9ab481de56082721b402cf25278e4e7",
+      "gzipSha256": "36f088f37b7bb2cb1050d62aaee67dd1ca6b4ec9e9be0a6bbebbca63362b819f",
+      "bytes": 1651,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-97517490b8f7\\proof.json",
+      "archive": "native/release297-fair-pool-native-97517490b8f7/proof.json.gz",
+      "rawSha256": "04388f80b6383cc18f92aa0415f6a9404c9d013ef37e575d18771f821b557f25",
+      "sanitizedSha256": "04388f80b6383cc18f92aa0415f6a9404c9d013ef37e575d18771f821b557f25",
+      "gzipSha256": "a0ed3dfbb4f5c2dea9cb36d2f769e37ac6dbcab03ff7b5576eccada4b151da7b",
+      "bytes": 2137,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-97517490b8f7\\runner-receipt.json",
+      "archive": "native/release297-fair-pool-native-97517490b8f7/runner-receipt.json.gz",
+      "rawSha256": "016d99ba60033a0e0edbb48e0e2699b79a34c9736d5e3634eecf37f7630896fa",
+      "sanitizedSha256": "016d99ba60033a0e0edbb48e0e2699b79a34c9736d5e3634eecf37f7630896fa",
+      "gzipSha256": "ad41709ddfcbe52bbf7250df03a07c6e0856b9c67b366667e33bb331829d66a8",
+      "bytes": 561,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-be766e738fd9\\native.log",
+      "archive": "native/release297-fair-pool-native-be766e738fd9/native.log.gz",
+      "rawSha256": "2ba43f211c645ab73fa883d68d8ef62ee7f2e711c16c03e9d8a139d7786e629f",
+      "sanitizedSha256": "2ba43f211c645ab73fa883d68d8ef62ee7f2e711c16c03e9d8a139d7786e629f",
+      "gzipSha256": "f89dc573e866d41145842ebaa000f90685ccedcf9e66e6ac9b4b971450b46786",
+      "bytes": 1642,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-be766e738fd9\\proof.json",
+      "archive": "native/release297-fair-pool-native-be766e738fd9/proof.json.gz",
+      "rawSha256": "47c1eae7c8947df0951374ce34546d6e0b8727666c883787a9f62a8b9e9b58a9",
+      "sanitizedSha256": "47c1eae7c8947df0951374ce34546d6e0b8727666c883787a9f62a8b9e9b58a9",
+      "gzipSha256": "443e384aad9ce912ecfbd4d602af2f062b1cf5fc20a02f31faefd1b8abbabaa8",
+      "bytes": 2128,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-native-be766e738fd9\\runner-receipt.json",
+      "archive": "native/release297-fair-pool-native-be766e738fd9/runner-receipt.json.gz",
+      "rawSha256": "ad505337b2892928669cdffff1a7facc6fd2109e6f5d9bac4574631723c47f68",
+      "sanitizedSha256": "ad505337b2892928669cdffff1a7facc6fd2109e6f5d9bac4574631723c47f68",
+      "gzipSha256": "b49d8b3b50fb75773f282126aba6d25344f3aa15dd5caea8d82c5a3d58da156a",
+      "bytes": 561,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-ac14ddbb89f8\\fair_app-integration.log",
+      "archive": "native/release297-fair-pool-integrated-native-ac14ddbb89f8/fair_app-integration.log.gz",
+      "rawSha256": "e308beb06520708f3b0ddb76f8a1d8bea2540e852a5a52b30a06680b3f83a451",
+      "sanitizedSha256": "e308beb06520708f3b0ddb76f8a1d8bea2540e852a5a52b30a06680b3f83a451",
+      "gzipSha256": "8e0bce5e0048df96201d6f4dc9f317dd98316d48f08ddc571982e1d90ebfcf03",
+      "bytes": 409,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-ac14ddbb89f8\\fair_owner-integration.log",
+      "archive": "native/release297-fair-pool-integrated-native-ac14ddbb89f8/fair_owner-integration.log.gz",
+      "rawSha256": "082387a89c6c6187d49a5d868921fc89ed0441067ccb27a8eb0e05bf659303ba",
+      "sanitizedSha256": "082387a89c6c6187d49a5d868921fc89ed0441067ccb27a8eb0e05bf659303ba",
+      "gzipSha256": "673a298ac50b9fda6924027cfb2912101a0b68b610e0b8f9fff16032153bdc6d",
+      "bytes": 418,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-ac14ddbb89f8\\native.log",
+      "archive": "native/release297-fair-pool-integrated-native-ac14ddbb89f8/native.log.gz",
+      "rawSha256": "c5cbdfc7a7ccf2425d24232536e2245039bed82e62bce6409ea33c182e0cad9d",
+      "sanitizedSha256": "c5cbdfc7a7ccf2425d24232536e2245039bed82e62bce6409ea33c182e0cad9d",
+      "gzipSha256": "e9c3228d942f9ceeb5f3bcdf5a8821ce1d79e8bff302b9b020f4f6994ec8121e",
+      "bytes": 1656,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-ac14ddbb89f8\\proof.json",
+      "archive": "native/release297-fair-pool-integrated-native-ac14ddbb89f8/proof.json.gz",
+      "rawSha256": "325bda4e69b02280ee30be524042a2d157c723a411a698afa8cea600809e0776",
+      "sanitizedSha256": "325bda4e69b02280ee30be524042a2d157c723a411a698afa8cea600809e0776",
+      "gzipSha256": "a543e93f08a14cfa940925ffcc0c6eefec4c4da5ca52b971ee4192a7fb735ed8",
+      "bytes": 2138,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-integrated-native-ac14ddbb89f8\\runner-receipt.json",
+      "archive": "native/release297-fair-pool-integrated-native-ac14ddbb89f8/runner-receipt.json.gz",
+      "rawSha256": "ad11dd6c5a38203fe4872eefc8c5cff835393d22d1dd036f1c6d75e4bcb5a4a5",
+      "sanitizedSha256": "ad11dd6c5a38203fe4872eefc8c5cff835393d22d1dd036f1c6d75e4bcb5a4a5",
+      "gzipSha256": "ff00a3bc8c07c88cb8b5b6ac11d9afcd8c74e0a356b417d88dc790fe094e0106",
+      "bytes": 652,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-integrated-01\\native-postgres-proof.mjs",
+      "archive": "native/release297-fair-main-pool-integrated-01/native-postgres-proof.mjs.gz",
+      "rawSha256": "acd0b90415c50693023bcc1412a5152744ac96e067410403d7468b73888a2e04",
+      "sanitizedSha256": "acd0b90415c50693023bcc1412a5152744ac96e067410403d7468b73888a2e04",
+      "gzipSha256": "346f3c3036d65a0afaf745af895fff7a4edfe79775783c364c91352df1e59f41",
+      "bytes": 9167,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-integrated-01\\native-runner-01.log",
+      "archive": "native/release297-fair-main-pool-integrated-01/native-runner-01.log.gz",
+      "rawSha256": "1a14368839edc28b7f81157f3c3c061642e29b002ccb158a1bc36bea43946308",
+      "sanitizedSha256": "1a14368839edc28b7f81157f3c3c061642e29b002ccb158a1bc36bea43946308",
+      "gzipSha256": "2638ad5ff76f443b4b72f2987be34af042e442dc6b860214c302a90fadd6ed6c",
+      "bytes": 585,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-main-pool-integrated-01\\run-native-postgres.mjs",
+      "archive": "native/release297-fair-main-pool-integrated-01/run-native-postgres.mjs.gz",
+      "rawSha256": "b2d607b54f496eb1dd331928d02a9d7bcd41be33b6b6d405759cc463ca79f63b",
+      "sanitizedSha256": "b2d607b54f496eb1dd331928d02a9d7bcd41be33b6b6d405759cc463ca79f63b",
+      "gzipSha256": "113d283e06e7b742392e6432f1d178d5f5c51286327f36702df53c8decd448bf",
+      "bytes": 4422,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-types-01.log",
+      "archive": "checks/release297-fair-pool-types-01.log.gz",
+      "rawSha256": "35a75a0efaff7229409902bc178b31be908d0c8d700f6f7ceed8f77847397a19",
+      "sanitizedSha256": "35a75a0efaff7229409902bc178b31be908d0c8d700f6f7ceed8f77847397a19",
+      "gzipSha256": "c66af7c3203e98caa7b45ade0e2c455ebd578cdd5fd530c57916ffad0845c34f",
+      "bytes": 985,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-pool-types-02.log",
+      "archive": "checks/release297-fair-pool-types-02.log.gz",
+      "rawSha256": "6701d4fd8bef593f7f39300d2f8a3f30338319b23883e9a15861cff97ef348a0",
+      "sanitizedSha256": "6701d4fd8bef593f7f39300d2f8a3f30338319b23883e9a15861cff97ef348a0",
+      "gzipSha256": "de99015619e78128f71e54fbd21a6ee582afbd13ec7aa2b908600f567cc01977",
+      "bytes": 366,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-focused-01.log",
+      "archive": "checks/release297-fair-integrated-focused-01.log.gz",
+      "rawSha256": "38a1490decf21bce56c635eff341ed26a77aee39a9d50e94cf48d9790f1539ce",
+      "sanitizedSha256": "38a1490decf21bce56c635eff341ed26a77aee39a9d50e94cf48d9790f1539ce",
+      "gzipSha256": "50b609547c5046462e26728b49e27040936cbafb61c6ce03b842583e445ac497",
+      "bytes": 8362,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-focused-02.log",
+      "archive": "checks/release297-fair-integrated-focused-02.log.gz",
+      "rawSha256": "8e8044577bafcf094a81e8ecff988bdd7e57c3f4a887df76466517a4ff65f947",
+      "sanitizedSha256": "8e8044577bafcf094a81e8ecff988bdd7e57c3f4a887df76466517a4ff65f947",
+      "gzipSha256": "ddf6cda58b7c8351df9b72ef7644f5d7dd7a9f7ab8b96aa567b6659b07ba9577",
+      "bytes": 9758,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-focused-03.log",
+      "archive": "checks/release297-fair-integrated-focused-03.log.gz",
+      "rawSha256": "6f73529cbb32ce48c5016b9e1273680721602ec2c47cde63266340ba512ea5a1",
+      "sanitizedSha256": "6f73529cbb32ce48c5016b9e1273680721602ec2c47cde63266340ba512ea5a1",
+      "gzipSha256": "d652c70d2178e2f89dfcc9ab9f39c87e824cd1bec013cad0d787b7c10060f39a",
+      "bytes": 8843,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-build-01.log",
+      "archive": "checks/release297-fair-integrated-build-01.log.gz",
+      "rawSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "gzipSha256": "7b815632ad782744ee751da4c60767569d39d630acfbba7ee98736c198aabf58",
+      "bytes": 42,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-test-types-01.log",
+      "archive": "checks/release297-fair-integrated-test-types-01.log.gz",
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "823696517fe7a689aa90bca7d820bf1aeac6bb0184e3ef39a52b1bc003725f93",
+      "bytes": 204,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-casts-01.log",
+      "archive": "checks/release297-fair-integrated-casts-01.log.gz",
+      "rawSha256": "3a61ba56abb19b35d557ef23b28c94917d79b946c96e5f741fc07ebaf6f66435",
+      "sanitizedSha256": "3a61ba56abb19b35d557ef23b28c94917d79b946c96e5f741fc07ebaf6f66435",
+      "gzipSha256": "fa83caf2fb8502deebc2798e5432c36aea70f36935afe5a13a14d167e85db324",
+      "bytes": 365,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-integrated-casts-02.log",
+      "archive": "checks/release297-fair-integrated-casts-02.log.gz",
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "gzipSha256": "cd2f39cded365e2bac395668e0a1ddc1a823ada3063791ebed1c0595dbd2aea8",
+      "bytes": 181,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\src\\db.ts",
+      "archive": "source/src/db.ts.gz",
+      "rawSha256": "38174d8ac22e0711e5167f6085c293dedf65f76595d348938f8c450cb80eb823",
+      "sanitizedSha256": "38174d8ac22e0711e5167f6085c293dedf65f76595d348938f8c450cb80eb823",
+      "gzipSha256": "73dcc0537f82a040e38b2978332a2958bd73e60ef13047f942a70dbe0d8043bf",
+      "bytes": 8255,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\src\\db\\fairMainPool.ts",
+      "archive": "source/src/db/fairMainPool.ts.gz",
+      "rawSha256": "7e5e5ef2a076fb4a047f5064f30e17140cfe68776533d6cae416bbbee2f332b1",
+      "sanitizedSha256": "7e5e5ef2a076fb4a047f5064f30e17140cfe68776533d6cae416bbbee2f332b1",
+      "gzipSha256": "ce48836adbd9c29e34d409ae5a3f629110136815b4055ffc6bb1d5832eabf342",
+      "bytes": 16426,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\fair-main-pool.test.mjs",
+      "archive": "source/tests/fair-main-pool.test.mjs.gz",
+      "rawSha256": "fb8c71846208743d723530b20813f40d431e5d367ba693e7a20d8dedcd6a226d",
+      "sanitizedSha256": "fb8c71846208743d723530b20813f40d431e5d367ba693e7a20d8dedcd6a226d",
+      "gzipSha256": "83f00c6f8daf770828ed8dd913cbc55b0b822baf6fdf1ee374da4f658287a29f",
+      "bytes": 23502,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\fair-main-pool-config.test.mjs",
+      "archive": "source/tests/fair-main-pool-config.test.mjs.gz",
+      "rawSha256": "405a1463e8c6dfde9fba03700969403789a0a0f22f5ee0185658a51d079044a9",
+      "sanitizedSha256": "405a1463e8c6dfde9fba03700969403789a0a0f22f5ee0185658a51d079044a9",
+      "gzipSha256": "f03a922ce5c13610919a91bcc003480247704f4d11b5f22e2c9c96df11b5a387",
+      "bytes": 1990,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\fair-main-pool.integration.test.mjs",
+      "archive": "source/tests/fair-main-pool.integration.test.mjs.gz",
+      "rawSha256": "e2ecdd583e14d7b726fb2c6fc7b78c877990bc216f3e9c63214f025937906b8a",
+      "sanitizedSha256": "e2ecdd583e14d7b726fb2c6fc7b78c877990bc216f3e9c63214f025937906b8a",
+      "gzipSha256": "5ffc269bd601207842548de733d684048a7cc58cce874398e0c160d30c708434",
+      "bytes": 6040,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    },
+    {
+      "source": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\run-test-lane.mjs",
+      "archive": "source/scripts/run-test-lane.mjs.gz",
+      "rawSha256": "10728dc600aa6cf69ecbb2047b48ef64542cdc8f273cedeb195c9eab70374065",
+      "sanitizedSha256": "10728dc600aa6cf69ecbb2047b48ef64542cdc8f273cedeb195c9eab70374065",
+      "gzipSha256": "e2bd91a74c37469935e6b2c843c0cc294773079901cb335034835e5c097b5979",
+      "bytes": 10789,
+      "sanitization": "No transformation needed; inspected synthetic fixture output/source, no credential-bearing DSNs retained"
+    }
+  ]
+}

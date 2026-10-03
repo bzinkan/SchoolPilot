@@ -4,8 +4,12 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
-Current preparation remains in #603, with application source `204ae93d` and
-subsequent test/evidence-only checkpoints. Its [combined Linux diagnostic](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
+Current preparation remains in #603. The new [API connection scheduler](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
+has passed focused, native-driver and restricted-role regression checks; its
+combined capacity acceptance is pending. It applies only when Usage reporting
+is enabled and retains existing pool limits and deadlines. The preceding
+application source `204ae93d` and subsequent test/evidence-only checkpoints remain
+historical. Their [combined Linux diagnostic](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
 fails capacity (4,840/6,000 heartbeat offers, 51/64 reports, 978 acquisition
 failures), while its exact local image scan and compatibility checks pass.
 [CI and the listing correction](release-evidence/release-297/usage-contention/test-lane-listing-flush/manifest.json)

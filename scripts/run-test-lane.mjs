@@ -8,6 +8,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsRoot = join(root, "tests");
 
 const RLS_SERIAL = new Set([
+  "fair-main-pool.integration.test.mjs",
   "classpilot-final-delivery-context.integration.test.ts",
   "classpilot-heartbeat-foreground-authority.integration.test.ts",
   "classpilot-heartbeat-inbox-authority.integration.test.ts",
