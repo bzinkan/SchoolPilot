@@ -3,7 +3,20 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
-Latest application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five
+Latest application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds the per-student
+exact-URL domain map measured below. [Implementation evidence](domain-map-implementation-e95a2b56/manifest.json)
+preserves all three native attempts and the initial typecheck failure. Final
+checks pass 1,906 unit cases, 25 owner and 12 restricted native cases with zero
+skips, plus build/type/cast checks. All 1,243 captured source files are identical
+before and after verification. The new native scenarios compare all nine
+semantic grain columns to immutable b112 SQL and exercise actual atomic writes
+and restricted tenant isolation. PostgreSQL/Redis container removal passed;
+the runner requested exact-owner `--volumes` removal, but did not independently
+enumerate anonymous-volume absence. Fresh image and combined load results remain
+pending. No capacity run is accepted. The [e95 frontend binding](frontend-e95-binding-01/receipt.json)
+verifies unchanged source blobs and retained artifact bytes.
+
+Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five
 public Drizzle SELECT definitions on an exclusively owned heartbeat connection.
 Every execution retains fresh bindings, canonical decoding and database locks;
 whole mandatory read tasks must settle before delivery. Recognized expired or
@@ -52,7 +65,8 @@ connection hold time. Driver-await durations include database wait, JavaScript
 resumption and decoding; they are not database CPU time. Asynchronous PostgreSQL
 statistics cannot establish exact write timing, and the failed lifecycle HTTP
 500 lacks a retained exact exception. No leak, prepared-read regression or host
-pause cause is established. Exact rollup plan investigation is the next step.
+pause cause is established. The subsequent exact rollup plan investigation and
+domain-map experiment are recorded below.
 
 The [local candidate/fallback recovery proof](recovery-pair-b112-6e251/manifest.json) passed
 for b112 candidate → 6e251 fallback → b112 candidate. Actual bundled image
@@ -71,11 +85,14 @@ full schema after native PostgreSQL rendering, 53 migration entries, 129 forced
 RLS tables, exact data/control/identity bindings, standard ANALYZE, closed
 clients and a 16-minute authority-expiry horizon without refreshing timestamps
 or credentials. Both failed validation attempts remain preserved. The restored
-fixture was consumed by an isolated query diagnostic and removed; it cannot
+fixture was consumed by an isolated query diagnostic and its container removed; it cannot
 qualify as a capacity run. Future restores require their own proof and fresh
 password login/session prewarm, followed by the documented PostgreSQL restart.
 This does not flush the host filesystem cache. The strict three-run acceptance
-validator and its native receipt producers remain under development.
+validator and its native receipt producers remain under development. Those
+historical restore owners did not request anonymous-volume removal; their
+cleanup receipts prove container absence only. The reusable owner must verify
+exact owned-volume cleanup separately.
 
 The [b112 rollup plan and URL-map experiment](rollup-domain-prototype-b112-01/manifest.json)
 records an isolated actual-image rewrite in 13.443 seconds, with 84,000 stored

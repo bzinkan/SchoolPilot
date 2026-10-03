@@ -17,7 +17,17 @@ development checkpoints below are historical and do not establish current readin
 
 ## Current preparation selections
 
-Current application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` adds owned
+Current application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds an exact-URL
+domain map per student, preserving classification, timing, tenant scope and
+atomic coverage. Its [local evidence](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)
+passes 1,906 unit tests, 25 owner and 12 restricted database tests without skips,
+plus build/type/cast checks. Native parity compares all nine semantic columns
+against immutable b112 SQL. The repeated-URL prototype improves, while its
+all-distinct kernel becomes slower; neither is capacity acceptance. Fresh image,
+combined capacity and full e95 CI remain pending. [Frontend equivalence](release-evidence/release-297/usage-contention/frontend-e95-binding-01/receipt.json)
+confirms the retained artifact and all 632 input blobs are unchanged.
+
+Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` adds owned
 heartbeat SELECT metadata reuse with fresh values and mandatory-work sealing.
 [Regression evidence](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
 records 1,906 unit passes with no skips, 50 owner and 50 restricted native passes,
@@ -60,7 +70,7 @@ persists; completed drain and cleanup do not establish capacity acceptance.
 
 | Item | Selected source / limitation |
 |---|---|
-| Application | `b11202fc305198d76e73c5e6d711b7dc9ed2d938` in #603; local focused/native/full-unit checks pass. [Review head `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) passes all 17 CI jobs and three security workflows; the new uncommitted role harness is outside that source. Combined capacity failed and has zero accepted runs. |
+| Application | `e95a2b56476b1225434c1b0f3907db46c9d84fe3` in #603; local full-unit/native/build/type/cast checks pass. Full e95 CI is pending; preceding [review head `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) covers b112 only. The new uncommitted role harness is outside the committed source. Combined capacity has zero accepted runs. |
 | Earlier completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the preceding `6035239b` application, without the later Focus correction. |
 | Local candidate image | [`b11202fc`](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json) passes a fresh uncached build, pinned scan with zero findings, compatibility checks and cleanup. Its Linux/amd64 manifest is `sha256:e2ff94d03e7c35a58d81cc568865ccbec4ac3fc2d6c21d8a4ce2363c2f889f24`. Local recovery pairing passed within the linked synthetic-fixture scope; final release selection still requires accepted capacity and checks on any subsequent application or accepted-harness changes. Earlier images remain historical. |
 | Compatible fallback | Source [`6e251f2d1eece2b98fa2325e1fa46bd2b8553420`](release-evidence/release-297/usage-contention/rollback-focus-wire-01/manifest.json) includes the tested Focus backport and retains the compatibility floor. Its [fresh local image and scan](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) pass with zero findings, verified embedded compatibility and cleanup. Both Usage modes must remain off. The [b112/6e251 local recovery pair](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passes the recorded source re-entry and adopted-state function checks; production service-traffic rollback is not established. The `5c01944e`, `ed5599de` and `351422d7` image artifacts remain historical. |

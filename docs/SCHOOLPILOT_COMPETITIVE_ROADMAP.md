@@ -14,7 +14,15 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
-Latest October 3 application `b11202fc305198d76e73c5e6d711b7dc9ed2d938`
+Latest October 3 application `e95a2b56476b1225434c1b0f3907db46c9d84fe3`
+normalizes exact repeated URLs once per student's rollup. Its [local checks](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)
+pass 1,906 unit tests, 25 owner and 12 restricted database tests without skips,
+and build/type/cast checks. All nine semantic grain columns match immutable
+b112 SQL. A repeated-URL prototype improves, with a documented all-distinct
+kernel slowdown. Final-source capacity, image preparation and full CI remain
+pending; there is still no deployment green light.
+
+Preceding October 3 application `b11202fc305198d76e73c5e6d711b7dc9ed2d938`
 reuses heartbeat query definitions while retaining fresh authority, tenant
 bindings and mandatory-work sealing. [Checks](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
 pass 1,906 unit tests without skips, 50 owner and 50 restricted native tests,
@@ -26,7 +34,7 @@ passes an uncached build, a pinned scan with zero findings and compatibility
 checks. The [local recovery pair](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passes synthetic source
 re-entry and actual-image function checks, including hard-off expiration and
 Focus cleanup. It does not establish production catalog or service-traffic
-rollback. [Current-head CI at `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) passes all 17 jobs and all three security workflows.
+rollback. [Earlier CI at `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) passes all 17 jobs and all three security workflows for b112.
 
 The [combined b112 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-b112-01/manifest.json) failed: 3,020 of
 6,000 offered heartbeats succeeded, 2,095 failed and 885 were refused at the
