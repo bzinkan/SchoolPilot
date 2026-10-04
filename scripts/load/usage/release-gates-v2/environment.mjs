@@ -19,7 +19,7 @@ export function remapObservedEnvironment(capture, scopeBinding, today, fixtureSc
   for (const [key, value] of Object.entries(env)) if (/(?:SCHOOL_IDS|EXCLUDED_SCHOOL_IDS)$/.test(key) && value) env[key] = value.split(',').map(id => remap(id.trim())).join(',');
   return { environment: env, observedFlagsSha256: hash(JSON.stringify(api.environment)), scopeBindingSha256: hash(JSON.stringify(scopeBinding)) };
 }
-export function roleEnvironment({ base, source, run, appUrl, adminUrl, profile, role, tables, secrets, arm = 'C', apiIndex = 0 }) {
+export function roleEnvironment({ base, source, run, appUrl, adminUrl, profile, role, tables, secrets, clientCapabilities, arm = 'C', apiIndex = 0 }) {
   assert.ok(Number(base.DB_POOL_MAX) >= 16); assert.equal(base.SCHEDULER_DB_POOL_MAX, '5');
   // The observed raw20 is clamped by production source to effective16. Keep
   // the same effective quota and record the raw capture's independent hash.
@@ -38,8 +38,15 @@ export function roleEnvironment({ base, source, run, appUrl, adminUrl, profile, 
     PGAPPNAME: role.startsWith('api') ? 'usage_release_api' : role === 'worker' ? 'usage_release_worker' : 'usage_release_observer',
     RELEASE297_PROFILE: profile.name, RELEASE297_API_PORT: String(4001 + apiIndex), RELEASE297_EXTENSION_VERSION: arm === 'C' ? '2.9.7' : '2.9.6',
     RELEASE297_REQUIRED_CAPABILITIES: JSON.stringify(['scopedAuthorityChecksV1', 'screenshotTrackingWindowLeaseV1']),
-    RELEASE297_CLIENT_CAPABILITIES: JSON.stringify(['scopedAuthorityChecksV1', 'screenshotTrackingWindowLeaseV1', 'scheduledClassroomV1', 'lateSignInRestrictionSsoV1', 'restrictionAuthPassThroughV1', 'screenshotActiveObservationCadenceV1']),
+    RELEASE297_CLIENT_CAPABILITIES: JSON.stringify(clientCapabilities??[]),
   };
   if (arm !== 'A') for (const [cap, flag] of Object.entries(newCaps)) env['CLASSPILOT_CAP_' + flag] = maps[cap].mode === 'on' ? 'true' : 'false';
   return env;
+}
+export function validateBaselineAdvertisement(receipt){
+  assert.equal(receipt.verified,true);assert.equal(receipt.version,'2.9.6');assert.match(receipt.taggedSource,/^[a-f0-9]{40}$/);
+  assert.match(receipt.archiveSha256,/^[a-f0-9]{64}$/);assert.match(receipt.packagedServiceWorkerSha256,/^[a-f0-9]{64}$/);
+  assert.equal(receipt.advertisedCapabilities?.length,36);assert.equal(new Set(receipt.advertisedCapabilities).size,36);
+  assert.ok(receipt.advertisedCapabilities.includes('scopedAuthorityChecksV1')&&receipt.advertisedCapabilities.includes('screenshotTrackingWindowLeaseV1'));
+  return [...receipt.advertisedCapabilities];
 }

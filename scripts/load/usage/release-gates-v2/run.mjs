@@ -13,7 +13,7 @@ import { checkPersistence } from './persistence.mjs';
 import { runMixed } from './mixed.mjs';
 import { assertOutside, ownRole } from './owner.mjs';
 import { pause } from './application.mjs';
-import { roleEnvironment, remapObservedEnvironment } from './environment.mjs';
+import { roleEnvironment, remapObservedEnvironment, validateBaselineAdvertisement } from './environment.mjs';
 import { withCommonDatabase } from './common-database.mjs';
 import { withRestoredSnapshot } from '../roles/restore-snapshot.mjs';
 import { loadSnapshot } from '../roles/snapshot-contract.mjs';
@@ -41,6 +41,11 @@ export async function runV2(options) {
   const envBytes = readFileSync(options.observedEnvironmentFile); assert.equal(hash(envBytes), options.observedEnvironmentSha256);
   const preparedSnapshot=profile.usage?loadSnapshot(options.snapshotDirectory,options.snapshotManifestSha256,{source:options.source,today:today()}):null;
   const remapped = remapObservedEnvironment(JSON.parse(envBytes), options.scopeBinding, today(),preparedSnapshot?.data['cold-fixture-state.json'].schools.map(row=>row.id));
+  let clientCapabilities;
+  if(['blackbox','diagnostic'].includes(profile.kind)){
+    const advertisementBytes=readFileSync(options.clientAdvertisementFile);assert.equal(hash(advertisementBytes),options.clientAdvertisementSha256);
+    clientCapabilities=validateBaselineAdvertisement(JSON.parse(advertisementBytes));
+  }
   const reservationBytes=readFileSync(options.reservationFile);assert.equal(hash(reservationBytes),options.reservationSha256);
   const reservation=JSON.parse(reservationBytes);assert.equal(reservation.run,options.run);assert.equal(reservation.source,options.source);assert.equal(reservation.arm,options.arm);
   assert.equal(reservation.profile,profile.name);assert.equal(reservation.contractSha256,profileHash(profile));assert.equal(reservation.observedFlagsSha256,remapped.observedFlagsSha256);
@@ -53,6 +58,7 @@ export async function runV2(options) {
   assert.ok(['A', 'B', 'C'].includes(arm)); assert.equal(profile.usage, !!options.snapshotDirectory);
   const plan = { schemaVersion: 2, run, source: options.source, arm, mode: 'diagnostic', declaredAt, profile: profile.name, contractSha256: profileHash(profile),
     reservationSha256:options.reservationSha256,campaignContractSha256:reservation.campaignContractSha256,
+    clientAdvertisementSha256:options.clientAdvertisementSha256??null,clientAdvertisementVersion:clientCapabilities?'2.9.6':'2.9.7',
     applicationImage: binding.applicationImage, helperImage: options.helperImage, helperBindingSha256: options.helperBindingSha256,
     observedEnvironmentSha256: options.observedEnvironmentSha256, observedFlagsSha256: remapped.observedFlagsSha256,
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
@@ -82,7 +88,7 @@ export async function runV2(options) {
     const schemaReceipt = options.schemaReceiptFile ? read(options.schemaReceiptFile) : null;
     const tables = options.rlsTables ?? schemaReceipt?.rlsTables; assert.ok(Array.isArray(tables) && new Set(tables).size === tables.length);
     let observer, fixture;
-    const environmentFor = (role, index = 0) => roleEnvironment({ base: remapped.environment, source: options.source, run, appUrl: configuration.appUrl, adminUrl: configuration.adminUrl, profile, role, tables, secrets, arm, apiIndex: index });
+    const environmentFor = (role, index = 0) => roleEnvironment({ base: remapped.environment, source: options.source, run, appUrl: configuration.appUrl, adminUrl: configuration.adminUrl, profile, role, tables, secrets, clientCapabilities, arm, apiIndex: index });
     async function role(name, entryFile, cpu, memory, index = 0) {
       const owner = await ownRole({ docker: dockerInput, run, source: options.source, helperImage: options.helperImage, helperConfigDigest: options.helperConfigDigest,
         helperContainerImage: binding.helperContainerImage, preparation, pgContainerId: configuration.pgContainerId, role: name, entryFile, environment: environmentFor(name, index), privateDirectory: control, outputDirectory: output, cpu, memory });

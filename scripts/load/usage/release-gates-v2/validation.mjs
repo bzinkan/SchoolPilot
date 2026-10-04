@@ -50,6 +50,7 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
   }
   assert.deepEqual(records.map(row => row.arm), ['A', 'A', 'A', 'B', 'B', 'A', 'A', 'B']);
   assert.equal(new Set(records.map(row => row.fixtureLogicalSha256)).size, 1); assert.equal(new Set(records.map(row => row.nodeVersion)).size, 1);
+  assert.equal(new Set(records.map(row=>row.clientAdvertisementSha256)).size,1);assert.ok(records.every(row=>/^[a-f0-9]{64}$/.test(row.clientAdvertisementSha256)&&row.clientAdvertisementVersion==='2.9.6'));
   const controls = records.slice(0, 2), pairs = [[records[2], records[3]], [records[5], records[4]], [records[6], records[7]]];
   const ratio = (a, b, key) => b[key] / a[key];
   const controlsStable = Math.max(...controls.map(row => row.cpuMsPer200)) / Math.min(...controls.map(row => row.cpuMsPer200)) <= 1.05

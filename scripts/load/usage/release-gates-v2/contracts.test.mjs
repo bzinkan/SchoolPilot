@@ -83,7 +83,7 @@ function reportRows(){return [0,1].flatMap(schoolIndex=>['school','grade','class
 test('all64 reports cover every school, scope, range and replica',()=>{const rows=reportRows();assert.equal(reportMatrix(rows),true);assert.equal(reportMatrix(Array(64).fill(rows[0])),false);rows[63].status=503;assert.equal(reportMatrix(rows),false);});
 function pairRecords(){return ['A','A','A','B','B','A','A','B'].map(arm=>({profile:PROFILES.normal.name,contractSha256:profileHash(PROFILES.normal),observedFlagsSha256:digest,arm,
   source:arm==='A'?source:candidate,runPassed:true,cleanupPassed:true,sourceUnchanged:true,cpuMsPer200:arm==='A'?10:10.4,p95Ms:arm==='A'?100:108,
-  verifiedReceiptManifestSha256:digest,fixtureLogicalSha256:digest,nodeVersion:'v22.23.3'}));}
+  verifiedReceiptManifestSha256:digest,fixtureLogicalSha256:digest,nodeVersion:'v22.23.3',clientAdvertisementSha256:digest,clientAdvertisementVersion:'2.9.6'}));}
 test('paired nonregression rejects noisy controls, bad margins and another profile',()=>{
   const options={profile:PROFILES.normal,baselineSource:source,candidateSource:candidate,observedFlagsSha256:digest};
   const rows=pairRecords();assert.equal(validatePairs(rows,options).passed,true);
