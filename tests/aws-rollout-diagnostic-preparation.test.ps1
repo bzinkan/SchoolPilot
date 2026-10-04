@@ -762,7 +762,19 @@ function Read-TestJournal {
     $records = [Collections.Generic.List[object]]::new()
     $expectedPrevious = $null
     $expectedSequence = 1
-    foreach ($line in [IO.File]::ReadLines($journalPath, [Text.UTF8Encoding]::new($false))) {
+    # The supervisor may still own its append handle. Match the independent
+    # production reader's sharing without accepting partial or invalid records.
+    $stream = [IO.FileStream]::new(
+        $journalPath, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+        ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+    )
+    try {
+        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true, 4096, $true)
+        try { $journalText = $reader.ReadToEnd() }
+        finally { $reader.Dispose() }
+    }
+    finally { $stream.Dispose() }
+    foreach ($line in ($journalText -split "`n")) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $record = $line | ConvertFrom-Json -DateKind String -AsHashtable -Depth 60
         Assert-Condition ([int]$record.sequence -eq $expectedSequence) `
@@ -1535,6 +1547,28 @@ try {
     Assert-Condition ($terminal.status -ceq 'completed' -and $terminal.healthy -eq $true -and
         $terminal.journal.terminalCommitted -eq $true) `
         "Detached fake preparation must complete with a terminal journal (status=$(ConvertTo-Json -InputObject $terminal -Depth 20 -Compress))."
+    $successJournalPath = [string]$success.Manifest.paths.journalPath
+    $successJournalHashBeforeSharedRead = Get-Sha256 $successJournalPath
+    $unlockedSuccessRecords = @(Read-TestJournal $success)
+    $appendOwner = [IO.FileStream]::new(
+        $successJournalPath, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::Read
+    )
+    try {
+        $oldReaderDenied = $false
+        try { [void]@([IO.File]::ReadLines($successJournalPath, [Text.UTF8Encoding]::new($false))) }
+        catch { $oldReaderDenied = $_.Exception.GetBaseException() -is [IO.IOException] }
+        Assert-Condition $oldReaderDenied `
+            'The preceding ReadLines reader must reproduce the open-writer sharing failure.'
+        $sharedSuccessRecords = @(Read-TestJournal $success)
+        Assert-Condition (
+            $sharedSuccessRecords.Count -eq $unlockedSuccessRecords.Count -and
+            ($sharedSuccessRecords | ConvertTo-Json -Compress -Depth 60) -ceq
+                ($unlockedSuccessRecords | ConvertTo-Json -Compress -Depth 60)
+        ) 'The shared reader must independently validate identical complete journal records while the append owner is open.'
+    }
+    finally { $appendOwner.Dispose() }
+    Assert-Condition ((Get-Sha256 $successJournalPath) -ceq $successJournalHashBeforeSharedRead) `
+        'Shared journal observation must not change the retained journal bytes.'
     $successTerminalEvidence = New-TerminalPreparationEvidenceBinding `
         -Context $success -Status $terminal
     Assert-Condition (
