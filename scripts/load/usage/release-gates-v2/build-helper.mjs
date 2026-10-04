@@ -8,6 +8,25 @@ import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
 import { verifyImageProbe, cleanupImageProbe } from '../roles/image-probe.mjs';
 const execute = promisify(execFile);
+export async function withPinnedBuildBase(applicationImage, invoke, use, save) {
+  if (!applicationImage.startsWith('sha256:')) return use(applicationImage);
+  const original = JSON.parse((await invoke(['image','inspect',applicationImage])).stdout)[0];
+  assert.equal(original.Id,applicationImage);
+  const tag='schoolpilot-release297-v2-owned-base-'+randomBytes(6).toString('hex')+':pinned';
+  let created=false,cleanupPassed=false;
+  try {
+    let existing=false;try { await invoke(['image','inspect',tag]);existing=true; } catch {}
+    assert.equal(existing,false);
+    await invoke(['image','tag',applicationImage,tag]);created=true;
+    const tagged=JSON.parse((await invoke(['image','inspect',tag])).stdout)[0];assert.equal(tagged.Id,original.Id);
+    return await use(tag);
+  } finally {
+    if(created){const tagged=JSON.parse((await invoke(['image','inspect',tag])).stdout)[0];assert.equal(tagged.Id,original.Id);await invoke(['image','rm',tag]);}
+    let exists=false;try { await invoke(['image','inspect',tag]);exists=true; } catch {}
+    assert.equal(exists,false);cleanupPassed=true;
+    save('build-base-custody.json',{applicationImage,temporaryLocalTag:tag,imageId:original.Id,created,cleanupPassed,baseBytesChanged:false});
+  }
+}
 export async function buildHelper(options) {
   assert.match(options.endpoint,/^(?:npipe:\/{2,4}\.\/pipe\/[a-zA-Z0-9_.-]+|unix:\/\/\/[^\s?#]+)$/);
   const context=resolve(options.contextDirectory), output=resolve(options.outputDirectory);
@@ -21,8 +40,8 @@ export async function buildHelper(options) {
   const before=await inspect(preparation.applicationImage);
   const verifyFiles=()=>{ for(const [name,expected] of Object.entries(preparation.executedFiles)) assert.equal(hash(readFileSync(join(context,'overlay',name))),expected); };
   verifyFiles();
-  try { const result=await invoke(['build','--builder','default','--pull=false','--platform','linux/amd64','--build-arg','APPLICATION_IMAGE='+preparation.applicationImage,
-    '--iidfile',join(output,'image-id.txt'),'--file',join(context,'Dockerfile'),context],300_000); writeFileSync(join(output,'build.log'),result.stdout+result.stderr,{flag:'wx'}); }
+  try { await withPinnedBuildBase(preparation.applicationImage,invoke,async buildBase=>{const result=await invoke(['build','--builder','default','--pull=false','--platform','linux/amd64','--build-arg','APPLICATION_IMAGE='+buildBase,
+    '--iidfile',join(output,'image-id.txt'),'--file',join(context,'Dockerfile'),context],300_000);writeFileSync(join(output,'build.log'),result.stdout+result.stderr,{flag:'wx'});},save); }
   catch(error){writeFileSync(join(output,'build.log'),String(error.stdout||'')+String(error.stderr||''),{flag:'wx'});throw Error('V2_HELPER_BUILD_FAILED');}
   verifyFiles(); assert.deepEqual(await inspect(preparation.applicationImage),before);
   const helperImage=readFileSync(join(output,'image-id.txt'),'utf8').trim(); assert.match(helperImage,/^sha256:[a-f0-9]{64}$/);

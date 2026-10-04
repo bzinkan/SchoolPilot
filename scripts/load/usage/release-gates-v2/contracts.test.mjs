@@ -14,6 +14,7 @@ import { declareCampaign, reserveAttempt, registerAttempt } from './campaign.mjs
 import { loadReceipt } from './receipts.mjs';
 import { remapObservedEnvironment } from './environment.mjs';
 import { ownRole } from './owner.mjs';
+import { withPinnedBuildBase } from './build-helper.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
 test('new profiles pin real offerings and retain the failed single task separately',()=>{
@@ -95,6 +96,21 @@ test('a final response published during exit is checked, while missing or foreig
     };
     const owner=await ownRole({docker,run,source,helperImage:image,helperConfigDigest:containerImage,helperContainerImage:containerImage,preparation:{executedFiles:{'scripts/load/usage/release-gates-v2/blackbox-api.mjs':digest}},pgContainerId,role,entryFile:'/harness/blackbox-api.mjs',environment:{NODE_ENV:'test'},privateDirectory,outputDirectory,cpu:1,memory:1024});
     if(reply==='bound')assert.equal(await owner.rpc('shutdown'), 'final-ack');else await assert.rejects(owner.rpc('shutdown'));
+  }
+});
+
+test('a bare image digest builds only through its verified owned local tag and cleans on failure',async()=>{
+  for(const buildFails of [false,true]){
+    const image='sha256:'+digest,tags=new Map([[image,{Id:image}]]),receipts=[];
+    const invoke=async args=>{
+      if(args[1]==='inspect'){if(!tags.has(args[2]))throw Error('Missing local image');return{stdout:JSON.stringify([tags.get(args[2])])};}
+      if(args[1]==='tag'){assert.equal(args[2],image);assert.equal(tags.has(args[3]),false);tags.set(args[3],tags.get(image));return{stdout:''};}
+      if(args[1]==='rm'){assert.ok(args[2].startsWith('schoolpilot-release297-v2-owned-base-'));tags.delete(args[2]);return{stdout:''};}
+      throw Error('Unexpected image operation');
+    };
+    const operation=withPinnedBuildBase(image,invoke,async tag=>{assert.ok(tag.startsWith('schoolpilot-release297-v2-owned-base-'));assert.equal(tags.get(tag).Id,image);if(buildFails)throw Error('Build failure');return'compiled';},(name,value)=>receipts.push({name,value}));
+    if(buildFails)await assert.rejects(operation,/Build failure/);else assert.equal(await operation,'compiled');
+    assert.equal(tags.size,1);assert.equal(receipts[0].value.cleanupPassed,true);assert.equal(receipts[0].value.baseBytesChanged,false);
   }
 });
 test('CPU window cannot use late cleanup to dilute an overloaded offering',()=>{
