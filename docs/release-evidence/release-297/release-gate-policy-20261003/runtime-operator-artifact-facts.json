@@ -1,0 +1,267 @@
+{
+  "schemaVersion": 1,
+  "kind": "final_local_artifact_and_operator_facts",
+  "createdAt": "2026-10-04T06:56:45.386Z",
+  "serving": {
+    "role": "serving",
+    "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+    "sourceCleanAtBuildAndFinish": true,
+    "imageIdentities": {
+      "imageId": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "imageIdKind": "index",
+      "indexDigest": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "platformManifestDigest": "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+      "configDigest": "sha256:8b66f44e342194c35c36cf50e30cdc0ae7e467ab0b52aa9c50d1a0d6c370f799",
+      "exportIndexSha256": "4a2a17c85fcd2e165fc24b9d4267b7a343b2e2e3fd938e49cab259d6fe7d4635",
+      "verifiedBlobDigests": [
+        "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+        "sha256:4a4a4c5332a42b7555d4452c2d2c2959fc300ef7474d7bc84198ce43b8f47a28"
+      ]
+    },
+    "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+    "dockerfileDerivation": {
+      "committed": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+      "derived": "ac09cd9ad1fdf9c0c1d448b00e1fc1de3cc1aed96f872435bb7976d13b2a7791",
+      "diff": [
+        {
+          "line": 6,
+          "before": "FROM node:22-alpine AS builder",
+          "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder"
+        },
+        {
+          "line": 24,
+          "before": "FROM node:22-alpine",
+          "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+        }
+      ]
+    },
+    "startedAt": "2026-10-04T06:12:09.949Z",
+    "finishedAt": "2026-10-04T06:14:44.559Z",
+    "buildAndScanPassed": true,
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "archiveSha256": "78dfee093d214208e01e8d5c3776f46df6d66eda144c1352f25b113b3dd02ec8",
+    "fullScanSha256": "938e4692065c98c89effefcfddcbeb7344ed465dccdf236a77a31f3db8b73ac2",
+    "embeddedCompatibilityAndCorrectionChecksPassed": true,
+    "actualServiceAcceptance": false,
+    "exactOwnedScannerInspectorCleanupPassed": true,
+    "forcedCleanup": false,
+    "usageModes": "off/off",
+    "evidence": {
+      "preparation": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\candidate-preparation.json",
+        "sha256": "38a197c5e7d3964664dc588e08c583030ed6d1c7753e8036c4235f165af3433d"
+      },
+      "scan": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\scan-receipt.json",
+        "sha256": "3525d01efc16568ae5f773f80570c76beaaa8e67b6ea69f111dc3e0f6965f787"
+      },
+      "imageBinding": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\image-binding.json",
+        "sha256": "86c4b4f4627a9ebac314bfe4a0efbc1aeff47d14667928541405461308a64b21"
+      }
+    }
+  },
+  "fallback": {
+    "role": "compatibleFallback",
+    "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "sourceCleanAtBuildAndFinish": true,
+    "imageIdentities": {
+      "imageId": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+      "imageIdKind": "index",
+      "indexDigest": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+      "platformManifestDigest": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+      "configDigest": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+      "exportIndexSha256": "abea3027b2bb875632f8b405238b1c9f59cd0b84056455b55dec6f68ae9b5832",
+      "verifiedBlobDigests": [
+        "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+        "sha256:504184dea9b4b1f2f0ba9599c5de9d0f7b3beac69862d006c4be973f5991f682"
+      ]
+    },
+    "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+    "dockerfileDerivation": {
+      "committed": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+      "derived": "ac09cd9ad1fdf9c0c1d448b00e1fc1de3cc1aed96f872435bb7976d13b2a7791",
+      "diff": [
+        {
+          "line": 6,
+          "before": "FROM node:22-alpine AS builder",
+          "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder"
+        },
+        {
+          "line": 24,
+          "before": "FROM node:22-alpine",
+          "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+        }
+      ]
+    },
+    "startedAt": "2026-10-04T06:15:35.179Z",
+    "finishedAt": "2026-10-04T06:19:46.608Z",
+    "buildAndScanPassed": true,
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "archiveSha256": "1cbedd3fda3b18e806a8f56a82342e80a48107d13030265918d2d19fd8bc2fa3",
+    "fullScanSha256": "d11290c715ab10818103e9441ed267ece611f6ebe4c57c094073635899393ba3",
+    "embeddedCompatibilityAndCorrectionChecksPassed": true,
+    "actualServiceAcceptance": false,
+    "exactOwnedScannerInspectorCleanupPassed": true,
+    "forcedCleanup": false,
+    "usageModes": "off/off",
+    "evidence": {
+      "preparation": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\candidate-preparation.json",
+        "sha256": "5719fd07da19e4655322cb36c9062e055c4e05529e03f79e87b78d331dec1a5f"
+      },
+      "scan": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\scan-receipt.json",
+        "sha256": "616b9e94b980d97f0c5b5cfeb7f9a911e30984ac3c330b7616ef773d21e45c13"
+      },
+      "imageBinding": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\image-binding.json",
+        "sha256": "aa4087dd5caa03ef7ae20a214bab74615384ff95258d49f113bb07b33fb24417"
+      }
+    }
+  },
+  "stagedActualServiceRecovery": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\staging-public-summary.json",
+    "bytes": 6445,
+    "sha256": "cca18d0e2d122a2f21ffa6f66b7160636f0dfe6ebc1ffeb8c7f43c5ff5879c98"
+  },
+  "syntheticStagingPassed": true,
+  "actualServices": 8,
+  "actualFullApiHealthCycles": 4,
+  "gracefulSqlDrains": 8,
+  "recoveryFloor": {
+    "appointmentsAdmission": 128,
+    "privateChatAdmission": 129,
+    "privateChatThreadTable": "classpilot_private_chat_threads",
+    "lifecycleWriterVersion": 1,
+    "bridgeVersion": 1,
+    "relayVersion": 1,
+    "servingMigrationManifest": 54,
+    "compatibleFallbackMigrationManifest": 53,
+    "fallbackIntentionallyLacksDeclaration": "classpilot-heartbeat-screenshot-evidence-v1-20261003",
+    "databaseCompletedLedgerRetainedAcrossFallback": 54,
+    "screenshotFunctionBodyAndScopedExecuteRetained": true,
+    "legacyProductionImageIsValidPostAdoptionRollback": false,
+    "bothUsageModesRequiredOffForPreparedFallback": true,
+    "neverShrinkAdmissionOrRemoveAdoptionStateOnRollback": true
+  },
+  "flagsForInitialCompatibleDarkStage": {
+    "CLASSPILOT_USAGE_ROLLUP_MODE": "off",
+    "CLASSPILOT_DIGITAL_USAGE_MODE": "off",
+    "newIssuance": {
+      "focusTabV1": "off",
+      "preciseRestrictionResourcesV1": "off",
+      "privateChatLifecycleV1": "off"
+    },
+    "note": "Use governed runtime plans for the intended school and exact source/image/admission; this record is not an executable production environment. Existing controls and cleanup remain available according to their established contracts."
+  },
+  "expectedOrderedAdmissionDeltasFromHistorical121": {
+    "observedProductionStateMustBeRefreshed": true,
+    "bundles": [
+      {
+        "tables": "passpilot_destination_policies,passpilot_pass_limits,passpilot_encounter_restrictions,passpilot_pass_denials",
+        "count": 125
+      },
+      {
+        "tables": "classpilot_usage_rollups",
+        "count": 126
+      },
+      {
+        "tables": "classpilot_usage_rollup_days",
+        "count": 127
+      },
+      {
+        "tables": "passpilot_appointments",
+        "count": 128
+      },
+      {
+        "tables": "classpilot_private_chat_threads",
+        "count": 129
+      }
+    ],
+    "oneMissingReviewedBundlePerOperation": true,
+    "repeatOnlyMissingBundles": true,
+    "verifyBothApiAndWorkerAfterEachOperation": true,
+    "before129": "Verify exact compatible API and scheduler-worker images at128, private issuance off; fully drain all incompatible API/worker tasks and old ALB targets before final thread admission.",
+    "after129": "Verify matching129 admission on every serving API/worker task; retain compatible lifecycle writer/bridge/relay before activation or recovery."
+  },
+  "healthSentinel": {
+    "name": "public._health_sentinel",
+    "ddl": "CREATE TABLE public._health_sentinel (id SERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW())",
+    "runtimePrivileges": [
+      "SELECT",
+      "INSERT",
+      "DELETE",
+      "sequence USAGE"
+    ],
+    "schemaCreateRequiredForExistingTable": false,
+    "unprivilegedMissingTableRemainsHealthFailure": true,
+    "operationOutsideTenantRlsInventoryAnd54MigrationLedger": true,
+    "productionOwnerExistenceAndActualRuntimePrivilegesMustBeReadBeforeExecution": true,
+    "actualFullHealthCycleRequiredInAdditionToReadyz": true
+  },
+  "evidence": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-runtime-artifacts-ddc5996b-c578120d-01.json",
+      "bytes": 8108,
+      "sha256": "fde5d6bbd20e1e7f922ef86e56aeed4efffb7ff72fafbdfe79277b73d441ab4a"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-schema-continuity-03.json",
+      "bytes": 60547,
+      "sha256": "6f518b36e09b7925d8770c9a4108ef12c2805cae4beff1b84dadf87978d3d169"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-input-ddc5996b-01\\ready-inputs.json",
+      "bytes": 5838,
+      "sha256": "5db2ef361cd0587685c15635fd18102b178af2255ffe2039d4393e03f584a563"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\OPERATOR_ADDENDUM.md",
+      "bytes": 3190,
+      "sha256": "9a57482008c09dd972c1a71b2e4742f53d2c043698233d0c1233020e7db69f0a"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\execution.json",
+      "bytes": 27971,
+      "sha256": "e69fd739a1632debee331e7560e33da422a330dfe7283d9d33efc4a6d5d70161"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\custody-manifest.json",
+      "bytes": 41023,
+      "sha256": "a62084dcc0580a0cbe9f930bd57fc6ab00f9e0e6833d83e1d24c79b73d8a4a7d"
+    }
+  ],
+  "outstandingSeparateGates": [
+    "Final-source CI, dark production-source regression and current-school mixed capacity acceptance.",
+    "Separately authorized merges and resulting-main source equivalence and CI.",
+    "Supported final registry image/source/scan/floor binding; local image identities are not ECR readiness.",
+    "Fresh actual production catalog, migration ledger, every API/worker image, old ALB target drains, backups, health, flags and approved operational window.",
+    "Store listing and pending submissions check, separately authorized publication, installed2.9.7/capability confirmation and live classroom validation.",
+    "Separate Usage synthetic campaign and deployed shadow/rollup observation before reporting activation."
+  ],
+  "productionMutations": 0,
+  "productionCatalogProven": false,
+  "actualEcsAlbDrainProven": false,
+  "capacityAccepted": false,
+  "deploymentGreenLight": false,
+  "executionAuthorized": false
+}
