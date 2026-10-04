@@ -19,14 +19,22 @@ paired regression, current-school, three-to-two and separate Usage checks.
 Usage's deployed observation remains a later activation gate. SFU implementation
 and legacy media changes remain excluded.
 
-Current preparation uses application `ed026513`, which passes all 20 reported
+Current application source is `ddc5996b3b8645859fa51a9613486db52c481b7f`.
+Its narrow Redis correction passes [24 component tests, including four native regressions](release-evidence/release-297/release-gate-policy-20261003/realtime-native-green-02.json);
+the [restricted-role health correction](release-evidence/release-297/release-gate-policy-20261003/health-native-green-03.json)
+passes six native tests. The combined standard backend type check passes.
+Fresh combined CI, serving/fallback scans, actual service recovery and measured
+release acceptance remain pending. Store submission remains held.
+
+Historical application `ed026513` passes all 20 reported
 CI checks and 2,032 local unit tests with no skips. Fresh local candidate,
 frontend and synthetic schema proofs are bound in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json).
 The [read-only CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
 records exact commits and unchanged ClassPilot 2.9.7 bytes. New measured release
 acceptance and separate Usage capacity remain pending. The [corrected-fallback image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json)
 passes with the complete ledger, chat expiration/history and exact Focus cleanup.
-Subsequent harness/documentation changes need fresh review-head CI.
+The new runtime corrections require fresh source-bound artifacts and acceptance;
+the earlier evidence remains historical. Subsequent review heads need CI.
 The owner is holding Store submission until preparation is complete.
 
 The following checkpoints are historical. The October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)

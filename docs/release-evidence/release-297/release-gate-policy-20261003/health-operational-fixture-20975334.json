@@ -1,0 +1,28 @@
+{
+  "kind": "synthetic-health-operational-fixture",
+  "commit": "20975334b48afe84a48dbc0ae2e4036c6a3f6b14",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "files": {
+    "scripts/load/usage/release-gates-v2/common-database.mjs": "0f686260f9c5b8f1045b219cbf5b9f4e4cd3184884bc3731a1ea3bdc90b52ee5",
+    "scripts/load/usage/release-gates-v2/run.mjs": "0c74d661e07d6e5687980672cde1f51ae858c21da6dfae6db6c62b3009959c10",
+    "scripts/load/usage/release-gates-v2/operational-fixture.mjs": "502f7b4656dfb4375c350b5edf59929fe20d945b782ec4aafdb44ec6ed201c23",
+    "scripts/load/usage/release-gates-v2/operational-fixture.test.mjs": "d072757f08d233fc88197299ab2d5193ad44f9fd5abca739c835e44dd44f3137",
+    "tests/release297-gates-v2.test.mjs": "5fc36b280047095e5544a9621c2b1a6ede9fe509c8bf26d5d3906cecc654ab3e"
+  },
+  "tests": {
+    "logSha256": "fe691bbf8a3c00aef8ba84ba256a1bf0e3a8099a4a91c0a97492d4f54b38ca2c",
+    "command": "node --test tests/release297-gates-v2.test.mjs tests/release297-report-cost.test.mjs",
+    "skipped": 0,
+    "passed": 57,
+    "failed": 0
+  },
+  "fixture": "Owner prepares the existing operational public health-sentinel table; runtime receives SELECT/INSERT/DELETE and sequence USAGE only. Native before/after schema fingerprints remain separate from the unchanged migration schema.",
+  "originalSnapshotAndRestoreAbiUnchanged": true,
+  "profilesAndThresholdsUnchanged": true,
+  "sourceMigrationsRlsInventoryUnchanged": true,
+  "runtimeFrontendInfraAndPoolLimitsUnchanged": true,
+  "nativeExecution": false,
+  "healthMonitorExecuted": false,
+  "capacityAcceptance": false,
+  "remaining": "Fresh helper10 build and real setup/service acceptance are required."
+}

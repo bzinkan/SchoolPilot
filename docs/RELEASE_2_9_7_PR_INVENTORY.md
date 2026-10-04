@@ -1,14 +1,18 @@
 # SchoolPilot / ClassPilot 2.9.7 release inventory
 
-The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Application `ed026513` passes all 20 reported CI checks and 2,032 local unit tests without skips; unchanged extension `8069a9c9` passes all 10 checks. The [current read-only checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json) binds exact commits and package bytes. Subsequent harness/documentation changes require new review-head CI. Paired/current-school acceptance remains pending. The [corrected-fallback image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json) passes with the complete 54-entry ledger. Historical Usage failures remain intact.
+The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Current application source `ddc5996b3b8645859fa51a9613486db52c481b7f` incorporates Redis serialization/revision and least-privilege health corrections. Their [24 Redis component passes](release-evidence/release-297/release-gate-policy-20261003/realtime-native-green-02.json) and [six native health passes](release-evidence/release-297/release-gate-policy-20261003/health-native-green-03.json) have no skips; the combined standard backend type check passes. Fresh combined CI, scanned serving/fallback images and staged service recovery remain required. Historical application `ed026513` passes all 20 reported CI checks and 2,032 unit tests; unchanged extension `8069a9c9` passes all 10 checks. The [earlier checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json) binds those older commits and package bytes. Paired/current-school acceptance remains pending. The [earlier image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json) passes with the complete 54-entry ledger but does not certify the corrected backend. Historical Usage failures remain intact.
 
 The [current read-only reconciliation](release-evidence/release-297/release-gate-policy-20261003/source-pr-inventory-current-reconciliation.json) confirms all 60 tracked PR heads are unchanged. Three historical whole-patch/base proofs (#564, #574 and #586) are replaced for current review by explicit implementation ancestry, exact files and retained hunks; no implementation omission was found. Open-PR historical mergeCommit fields do not establish a completed merge. The original inventory remains unchanged.
 
 New corrections incorporated directly into #603 include bounded heartbeat admission,
 Usage-aware pool fairness, changed/missing/vanished rollup writes, and tenant-owned
 cleanup/retention/audit transactions. They preserve the 54 migrations and 129-table
-inventory. The reviewed safe fallback is `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`,
-a narrow cleanup backport to the historical fallback; both Usage modes must stay off.
+inventory. Redis and health corrections are also incorporated directly through
+`c73db8ea` and `ddc5996b`. The refreshed fallback source is
+`c578120d980d4c2405a72f4f40b2d3c29a07e20b`, preserving the preceding
+`6d1f3a7e737ebd2e3e266f2f571cdea811db5e27` and adding only those runtime fixes,
+native tests and lane registrations. Its new build/scan/recovery is pending;
+both Usage modes must stay off.
 No additional source PR has been independently merged or closed by this work.
 
 This is an inclusion inventory, not merge, deployment, or activation evidence. The structured record preserves full commits, base dependencies and inclusion proofs. Checkpoint 60bb2338157a9f0c313ebffae3f42a69ac3e3345 is based on main 996d965f0b044f8fc4d4bbc399c5ab3781fbac04. Preserve original review branches; reconcile their PRs only after the single integration PR lands.

@@ -1,0 +1,26 @@
+{
+  "schema": "independent-aws-test-journal-reader-v1",
+  "reviewedAtUtc": "2026-10-04T06:18:19.7150359Z",
+  "originalGitSource": "72578c05014297d3e00dbecd269e8e9670180456",
+  "path": "tests/aws-rollout-diagnostic-preparation.test.ps1",
+  "originalExtractedFunctionsSha256": "5b74313d513b439838e92844650b691346c528f2168c6d6553fc8c71fcc08a39",
+  "fixedExtractedFunctionsSha256": "34bcf7dd5b478638424e79c00c57ff9783111648d38e85542f5d9a6d093ea6aa",
+  "oldNativeWindowsSharingFailure": true,
+  "fixedStrictRecords": 2,
+  "recordsIdentical": true,
+  "journalBytesUnchanged": true,
+  "strictRejectedCases": [
+    "malformed-json",
+    "partial-trailing-record",
+    "hash-mismatch",
+    "sequence-gap",
+    "previous-record-hash-mismatch"
+  ],
+  "readersDisposedAfterSuccessAndFailure": true,
+  "productionToolingModified": false,
+  "dockerCommands": 0,
+  "databaseConnections": 0,
+  "appBuilds": 0,
+  "fullAwsSuiteRun": false,
+  "passed": true
+}
