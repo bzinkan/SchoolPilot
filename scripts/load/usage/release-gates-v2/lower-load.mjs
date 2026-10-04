@@ -12,11 +12,33 @@ export const LOWER_CONTRACT=Object.freeze({name:'release297-usage-off-lower-hear
   initial133ConfirmationRuns:3,selectedLevelConfirmationRuns:3,stopUpwardOnHardFailure:true,stopUpwardOnHeadroomLoss:true,
   selectionHeadroom:{maxApiMeanCpuFraction:.50,maxP95Ms:400},hardLimits:{maxApiMeanCpuFractionExclusive:.60,maxP95Ms:500},
   extensionVersion:'2.9.6',advertisedCapabilities:36,usage:false,newPilots:false,apiTasks:1,mainPool:16,sessionPool:2,
-  queryRecorder:false,cpuProfiler:false,activeSchoolIndex:0,foreignSchoolIndex:1,staffReadsPerRun:12,
+  queryRecorder:false,cpuProfiler:false,indirectAcquisitionLogProofRequired:true,activeSchoolIndex:0,foreignSchoolIndex:1,staffReadsPerRun:12,
   trackingHoursDisabled:true,trackingHoursPostureSource:'operator_report_2026-10-04_about_14:10Z',productionSchoolSettingsRead:false,
   capacityScope:'UsageOFF heartbeat envelope with scoped teacher reads only',
   deploymentPopulation:133,higherFleetClassroomOrSurvivalClaim:false,comparisonPolicyAmended:false,fullAttemptReserveMs:600000});
 export const lowerContractHash=()=>hash(JSON.stringify(LOWER_CONTRACT));
+export function lowerAcquisitionLogProof(logs,{source,measuredEndsAtMs,complete}){
+  assert.equal(complete,true);assert.equal(typeof logs,'string');assert.ok(Number.isFinite(measuredEndsAtMs));
+  assert.ok(!logs.includes('[ErrorMonitor] ALERT:'));
+  const records=[];
+  for(const line of logs.split(/\r?\n/)){
+    let record;try{record=JSON.parse(line);}catch{if(line.includes('SchoolPilot/Monitoring'))throw Error('LOWER_MONITOR_EMF_INVALID');continue;}
+    if(record.event==='api_pool_readiness_transition')assert.ok(!['probe_deferred','pool_stalled'].includes(record.state));
+    assert.notEqual(record.event,'api_pool_readiness_sample_failed');
+    if(!record._aws?.CloudWatchMetrics?.some(row=>row.Namespace==='SchoolPilot/Monitoring'))continue;
+    assert.equal(record.Release,source);assert.equal(record.Service,'api');assert.equal(record.Environment,'test');
+    assert.match(record.InstanceId,/^[a-f0-9-]{36}$/);
+    assert.ok(Number.isSafeInteger(record._aws.Timestamp)&&record._aws.Timestamp>0);
+    for(const key of ['DatabaseConnectivityMonitorCapturedInterval','MonitorCaptured','MonitorCapturedInterval']){assert.ok(Number.isSafeInteger(record[key])&&record[key]>=0);assert.equal(record[key],0);}
+    if(record.DatabaseConnectivityMonitorCaptured!==undefined){assert.ok(Number.isSafeInteger(record.DatabaseConnectivityMonitorCaptured)&&record.DatabaseConnectivityMonitorCaptured>=0);assert.equal(record.DatabaseConnectivityMonitorCaptured,0);}
+    records.push(record);
+  }
+  assert.ok(records.length>0,'Final source-defined monitor evidence unavailable');
+  assert.equal(new Set(records.map(record=>record.InstanceId)).size,1);
+  const lastEmfAtMs=Math.max(...records.map(row=>row._aws.Timestamp));assert.ok(lastEmfAtMs>=measuredEndsAtMs);
+  return{passed:true,sha256:hash(logs),emfRecords:records.length,lastEmfAtMs,databaseConnectivityCapturedIntervals:0,
+    recoveredAcquisitionEvidence:'source-defined final ErrorMonitor/readiness logs',rawAcquisitionCountersAvailable:false};
+}
 export function assertLowerSafetyPrerequisites(inputs){
   assert.deepEqual(inputs.map(row=>row.kind).sort(),['classroom','mixed','recovery']);
   const source='ddc5996b3b8645859fa51a9613486db52c481b7f',image='sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835';

@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {PROFILES,profileHash,assertOffering,hash} from './contracts.mjs';
-import {LOWER_LEVELS,LOWER_CONTRACT,lowerContractHash,assertLowerReservation,assertLowerPostRls,lowerCreateArguments,lowerHeadroom,assertLowerConfirmation,verifyLowerNativeCustody,verifyLowerPersistenceCustody} from './lower-load.mjs';
+import {LOWER_LEVELS,LOWER_CONTRACT,lowerContractHash,assertLowerReservation,assertLowerPostRls,lowerCreateArguments,lowerHeadroom,assertLowerConfirmation,verifyLowerNativeCustody,verifyLowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 import {checkPersistence} from './persistence.mjs';
 import {checkLowerStaffRows,createLowerStaffReader} from './lower-staff.mjs';
 import {lowerScreenDisposition,assertLowerRecordedResult} from './lower-sweep.mjs';
@@ -16,7 +16,20 @@ function rows(){return PROFILES.lower133.lowerStaffReads.waveOffsetsMs.flatMap((
 const native=()=>({passed:true,restrictedRole:true,crossSchool:true,resetScope:true,catalog:Array.from({length:129},(_,n)=>({relname:'table'+n,relrowsecurity:true,relforcerowsecurity:true})),migrations:Array.from({length:54},(_,n)=>({id:'migration'+n,checksum:'b'.repeat(64),status:'complete'}))});
 function record(n=0){return{run:String(n).padStart(12,'0'),source:'a'.repeat(40),applicationImage:'sha256:'+'a'.repeat(64),schemaSha256:'a'.repeat(64),helperImage:'sha256:'+'b'.repeat(64),harnessSource:'a'.repeat(40),hostHarnessSource:'b'.repeat(40),observedFlagsSha256:'c'.repeat(64),clientAdvertisementSha256:'d'.repeat(64),verifiedReceiptManifestSha256:'e'.repeat(64),
   profile:PROFILES.lower133.name,contractSha256:profileHash(PROFILES.lower133),arm:'B',runPassed:true,cleanupPassed:true,sourceUnchanged:true,hostHarnessSourceUnchanged:true,expectedNegativeLogCoverage:true,errorCoverage:[{complete:true,available:true,errorCount:0},{complete:true,available:true,errorCount:0}],
-  lowerLoad:{contractSha256:lowerContractHash()},postLowerRlsVerification:native(),databasePreparation:native(),p95Ms:200,rounds:[{acceptance:{checks:{cpuBound:true,latency:true,scopedTeacherReads:true,persistence:true,capabilityAcknowledgements:true,offering:true}},cpuByRole:[{}],apiCpuMeanFraction:.40,traffic:{lowerStaffReads:{passed:true}}}]};}
+  lowerAcquisitionLogEvidence:{passed:true},lowerLoad:{contractSha256:lowerContractHash()},postLowerRlsVerification:native(),databasePreparation:native(),p95Ms:200,rounds:[{acceptance:{checks:{cpuBound:true,latency:true,scopedTeacherReads:true,persistence:true,capabilityAcknowledgements:true,offering:true}},cpuByRole:[{}],apiCpuMeanFraction:.40,traffic:{lowerStaffReads:{passed:true}}}]};}
+const emf=()=>({_aws:{Timestamp:2000,CloudWatchMetrics:[{Namespace:'SchoolPilot/Monitoring'}]},Release:'a'.repeat(40),Service:'api',Environment:'test',InstanceId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',MonitorCaptured:0,MonitorCapturedInterval:0,DatabaseConnectivityMonitorCapturedInterval:0});
+test('final source-defined monitor log proof accepts stable zero without optional lifetime',()=>{
+  const proof=lowerAcquisitionLogProof(JSON.stringify(emf()),{source:'a'.repeat(40),measuredEndsAtMs:1000,complete:true});assert.equal(proof.passed,true);assert.equal(proof.rawAcquisitionCountersAvailable,false);
+});
+test('recovered acquisition, readiness deferral and missing/invalid final EMF are fatal',()=>{
+  const settings={source:'a'.repeat(40),measuredEndsAtMs:1000,complete:true};
+  for(const mutate of [row=>row.DatabaseConnectivityMonitorCapturedInterval=1,row=>row.DatabaseConnectivityMonitorCaptured=1,row=>delete row.DatabaseConnectivityMonitorCapturedInterval,row=>row.DatabaseConnectivityMonitorCapturedInterval=NaN,row=>row.Release='b'.repeat(40),row=>row._aws.Timestamp=999,row=>row.MonitorCaptured=1]){const row=emf();mutate(row);assert.throws(()=>lowerAcquisitionLogProof(JSON.stringify(row),settings));}
+  for(const bad of ['[ErrorMonitor] ALERT: database_connectivity - 1 matching errors in 5 min',JSON.stringify({event:'api_pool_readiness_transition',state:'probe_deferred'}),JSON.stringify({event:'api_pool_readiness_transition',state:'pool_stalled'}),JSON.stringify({event:'api_pool_readiness_sample_failed'})])assert.throws(()=>lowerAcquisitionLogProof(JSON.stringify(emf())+'\n'+bad,settings));
+  assert.throws(()=>lowerAcquisitionLogProof('',settings));assert.throws(()=>lowerAcquisitionLogProof(JSON.stringify(emf()),{...settings,complete:false}));
+  assert.throws(()=>lowerAcquisitionLogProof(JSON.stringify({...emf(),DatabaseConnectivityMonitorCapturedInterval:1})+'\n'+JSON.stringify({...emf(),_aws:{...emf()._aws,Timestamp:3000}}),settings));
+  assert.throws(()=>lowerAcquisitionLogProof(JSON.stringify(emf())+'\n'+JSON.stringify({...emf(),InstanceId:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'}),settings));
+  const unsafe=record();unsafe.lowerAcquisitionLogEvidence.passed=false;assert.equal(lowerScreenDisposition(unsafe).fatal,true);
+});
 test('lower levels use one school, exact packaged cadence and preserved old profiles',async()=>{
   assert.deepEqual(LOWER_LEVELS.map(row=>row.offering.schoolDevices),[[133,0],[250,0],[340,0],[500,0]]);
   assert.deepEqual(LOWER_LEVELS.map(row=>row.offering.expected),[798,1500,2040,3000]);for(const profile of LOWER_LEVELS){assertOffering(profile.offering);assert.equal(profile.offering.deviceCadenceMs,10000);}

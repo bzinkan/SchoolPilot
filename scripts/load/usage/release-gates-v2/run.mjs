@@ -24,7 +24,7 @@ import {runBoundaryPreparation} from './boundary-preparation.mjs';
 import {assertUsagePostVerificationReservation,verifyUsageClassroomAfterLoad} from './usage-post-verification.mjs';
 import { assertDistinctGeneratedBinding, verifyOriginalUsagePrerequisites, executeDistinctProfile, verifyDistinctCompletedRun } from './distinct-report-run.mjs';
 import { sanitizedDistinctOperationFailure } from './distinct-report-operation.mjs';
-import {assertLowerRun,lowerCreateArguments,assertLowerReservation,assertLowerPostRls,lowerPersistenceCustody} from './lower-load.mjs';
+import {assertLowerRun,lowerCreateArguments,assertLowerReservation,assertLowerPostRls,lowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -295,6 +295,11 @@ export async function runV2(options) {
       writeFileSync(join(control,'postgres-log.private'),pgLog,{flag:'wx',mode:0o600});
       metrics.errorCoverage.push(classifyLog(pgLog,'postgres',{complete:true}));
       metrics.expectedNegativeLogCoverage=negativeLogCoverage(metrics.errorCoverage,runNegativeProbes(metrics));
+      if(lower){
+        try{metrics.lowerAcquisitionLogEvidence=lowerAcquisitionLogProof(readFileSync(join(control,'api0-log.private'),'utf8'),{
+          source:options.source,measuredEndsAtMs:metrics.rounds[0].traffic.actualStartedAtMs+profile.offering.durationMs,complete:exits.find(exit=>exit.role==='api0')?.clean===true});
+        }catch{metrics.lowerAcquisitionLogEvidence={passed:false,error:'LOWER_ACQUISITION_LOG_PROOF_FAILED',rawAcquisitionCountersAvailable:false};}
+      }
       const ids = (await dockerInput(['container', 'ls', '-a', '--filter', `label=codex.release297-v2=${run}`, '--no-trunc', '--format', '{{.ID}}'])).trim().split(/\r?\n/).filter(Boolean);
       for (const id of ids) {
         if (id === configuration.pgContainerId) continue;
@@ -355,6 +360,7 @@ export async function runV2(options) {
         catch(error){metrics.runPassed=false;failure=sanitizedDistinctOperationFailure(error).code;}
       }
       if(lower)metrics.runPassed&&=metrics.postLowerRlsVerification?.passed===true&&metrics.hostHarnessSourceUnchanged===true
+        &&metrics.lowerAcquisitionLogEvidence?.passed===true
         &&metrics.lowerLogCustodyFailure!==true&&metrics.lowerRecoveredOwner!==true
         &&Date.now()<Date.parse(window.expiresAt)
         &&JSON.stringify(metrics.roleCleanup?.exits.map(row=>row.role).sort())===JSON.stringify(['api0','generator','observer','seeder']);

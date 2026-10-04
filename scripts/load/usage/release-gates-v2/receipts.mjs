@@ -8,7 +8,7 @@ import { verifyOperationalFixtureCustody } from './operational-fixture.mjs';
 import { verifyClassroomNativeCustody } from './classroom-bindings.mjs';
 import {verifyUsagePostVerificationCustody} from './usage-post-verification.mjs';
 import {verifyDistinctReceiptCustody} from './distinct-report-custody.mjs';
-import {lowerContractHash,assertLowerPostRls,verifyLowerNativeCustody,verifyLowerPersistenceCustody} from './lower-load.mjs';
+import {lowerContractHash,assertLowerPostRls,verifyLowerNativeCustody,verifyLowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const root=realpathSync(directory), path=join(root,'receipt-manifest.json'), bytes=readFileSync(path);
@@ -34,6 +34,8 @@ export function loadReceipt(directory, manifestSha256, privateDirectory) {
     assert.deepEqual(cleanup.exits.map(row=>row.role).sort(),['api0','generator','observer','seeder']);
     assertLowerPostRls(metrics.postLowerRlsVerification,metrics.databasePreparation);assert.equal(metrics.hostHarnessSourceUnchanged,true);
     verifyLowerNativeCustody(privateDirectory,metrics,profile);verifyLowerPersistenceCustody(privateDirectory,metrics);}
+  if(profile.lowerLoadEnvelope)assert.deepEqual(metrics.lowerAcquisitionLogEvidence,lowerAcquisitionLogProof(readFileSync(join(privateDirectory,'api0-log.private'),'utf8'),{
+    source:metrics.source,measuredEndsAtMs:metrics.rounds[0].traffic.actualStartedAtMs+profile.offering.durationMs,complete:cleanup.exits.find(exit=>exit.role==='api0')?.clean===true}));
   if(metrics.operationalFixtureBootstrapRequired)assert.ok(manifest.records['operational-fixture-bootstrap.json']);
   if(manifest.records['operational-fixture-bootstrap.json'])verifyOperationalFixtureCustody(root,metrics);
   if(metrics.runPassed||metrics.smokePassed)verifyClassroomNativeCustody(privateDirectory,metrics);

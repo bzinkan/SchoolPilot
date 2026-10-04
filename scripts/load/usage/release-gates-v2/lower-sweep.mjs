@@ -17,6 +17,7 @@ const git=(directory,args)=>execFileSync('git',['-C',directory,...args],{encodin
 export function lowerScreenDisposition(record){
   const checks=record.rounds?.[0]?.acceptance?.checks;
   const safe=record.cleanupPassed===true&&record.sourceUnchanged===true&&record.hostHarnessSourceUnchanged===true
+    &&record.lowerAcquisitionLogEvidence?.passed===true
     &&record.expectedNegativeLogCoverage===true&&record.errorCoverage?.length>1&&record.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0)
     &&record.rounds?.length===1&&record.postLowerRlsVerification?.passed===true&&checks
     &&Object.entries(checks).filter(([key])=>!['cpuBound','latency'].includes(key)).every(([,value])=>value===true);
