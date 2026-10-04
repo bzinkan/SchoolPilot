@@ -1143,8 +1143,10 @@ directory above and are not replaced by these focused tests.
   cases also passed. The strict load harness is unchanged. Parser/native checks
   do not establish browser enforcement or capacity acceptance.
 
-Release acceptance additionally requires three consecutive successful combined
-release-enabled capacity runs on unchanged application source/schema, the
-retained comparison profile, final combined CI, local artifacts and migration/
-recovery evidence. Deployed observation and live classroom validation are later
+The historical October 2 release policy required three consecutive successful
+combined release-enabled capacity runs and the retained comparison. The owner
+adopted the October 3 [separate release and Usage gates](../../../RELEASE_297_DEPLOY_READINESS.md):
+paired regressions with Usage off, current-school classroom checks, final CI and
+artifact/recovery evidence gate release; the new three-API campaign gates later
+Usage activation. All historical failures above retain their original result. Deployed observation and live classroom validation are later
 operational gates. Managed-Chromebook testing remains waived, not passed.

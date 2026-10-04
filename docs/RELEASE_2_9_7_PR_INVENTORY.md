@@ -1,6 +1,6 @@
 # SchoolPilot / ClassPilot 2.9.7 release inventory
 
-The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Current-source checks at c237cd7a and extension 8069a9c9 are green; new paired/current-school acceptance is not yet measured. Historical Usage failures remain intact.
+The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Historical review-head checks at c237cd7a and unchanged extension 8069a9c9 are green; changed SchoolPilot source requires fresh combined checks. New paired/current-school acceptance is not yet measured. Historical Usage failures remain intact.
 
 This is an inclusion inventory, not merge, deployment, or activation evidence. The structured record preserves full commits, base dependencies and inclusion proofs. Checkpoint 60bb2338157a9f0c313ebffae3f42a69ac3e3345 is based on main 996d965f0b044f8fc4d4bbc399c5ab3781fbac04. Preserve original review branches; reconcile their PRs only after the single integration PR lands.
 
@@ -17,7 +17,7 @@ application bytes; final-source capacity acceptance remains pending. No release
 execution is approved. The source-PR inclusion table is unchanged; the older
 development checkpoints below are historical and do not establish current readiness.
 
-## Current preparation selections
+## Historical preparation checkpoints
 
 The latest [screenshot-reader correction in #603](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
 passes 2,012 unit cases, 190 owner/restricted database cases, four private-chat
