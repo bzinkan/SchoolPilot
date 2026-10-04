@@ -805,7 +805,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       );
     }
     const devices = await source("src/routes/classpilot/devices.ts");
-    for (const route of ["command-acks", "heartbeat", "screenshot", "event", "runtime-error"]) {
+    for (const route of ["command-acks", "screenshot", "event", "runtime-error"]) {
       // Inspect the middleware header up to the handler arrow, including
       // multiline lifetime wrappers. An entitlement call in the body cannot
       // substitute for installing the canonical middleware before the handler.
@@ -815,6 +815,17 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       assert.ok(header, `${route} route header must exist`);
       assert.match(header[1]!, /requireClasspilotEntitlement/);
     }
+    // The heartbeat factory's uncached resolver has its own arrow. Inspect
+    // through the actual handler signature rather than stopping at that arrow.
+    const heartbeatHeader = devices.match(
+      /router\.post\("\/device\/heartbeat",([\s\S]*?)async\s*\(req,\s*res,\s*next\)\s*=>/
+    );
+    assert.ok(heartbeatHeader, "heartbeat route middleware header must exist");
+    assert.match(
+      heartbeatHeader[1]!,
+      /^\s*trackUsageCapacityMiddleware\("heartbeat_middleware", requireCryptographicDeviceAuth\),\s*withClasspilotHeartbeatAdmission\(\[\s*trackUsageCapacityMiddleware\("heartbeat_middleware", createRequireClasspilotEntitlement\(schoolId =>\s*runWithUsageCapacityOperation\("heartbeat_middleware", \(\) => resolveClasspilotEntitlement\(schoolId\)\)\)\),\s*trackUsageCapacityMiddleware\("heartbeat_middleware", deviceHeartbeatLimiter\),\s*$/,
+      "heartbeat must authenticate before admission, then use the uncached canonical entitlement gate before its limiter"
+    );
     const monitoringEvents = await source("src/routes/classpilot/monitoringEvents.ts");
     assert.match(
       monitoringEvents,
