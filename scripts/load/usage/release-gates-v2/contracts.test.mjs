@@ -7,14 +7,15 @@ import { createServer } from 'node:http';
 import { PROFILES, assertOffering, profileHash, stageForRound, stickyTarget, hash } from './contracts.mjs';
 import { offerHeartbeats, sealTimings, targetFor } from './offering.mjs';
 import { patchGeneratorV2, patchProcessV2, patchDrainV2 } from './patch.mjs';
-import { validateRound, validatePairs, reportMatrix, validateMixedRuns } from './validation.mjs';
+import { validateRound, validatePairs, reportMatrix, validateMixedRuns,expectedTopologyCounts,validateLostReconnectEvidence } from './validation.mjs';
 import { classifyLog, cpuWindow, negativeLogCoverage } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
-import { declareCampaign, reserveAttempt, registerAttempt } from './campaign.mjs';
+import { declareCampaign, reserveAttempt, registerAttempt, verifyPairedClosure, verifyUsageComparisons } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
 import { remapObservedEnvironment, roleEnvironment } from './environment.mjs';
 import { ownRole } from './owner.mjs';
 import { withPinnedBuildBase } from './build-helper.mjs';
+import { lostReconnectBindings } from './reconnect.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
 test('new profiles pin real offerings and retain the failed single task separately',()=>{
@@ -22,6 +23,9 @@ test('new profiles pin real offerings and retain the failed single task separate
   assert.equal(PROFILES.sole.offering.expected,798);assert.equal(PROFILES.normal.offering.expected,2040);
   assert.deepEqual(PROFILES.normal.offering.schoolDevices,[170,170]);assert.equal(PROFILES.usage.apiTasks,3);
   assertOffering(PROFILES.mixed.continuousOffering);assert.equal(PROFILES.mixed.continuousOffering.expected,11970);
+  assertOffering(PROFILES.broader.continuousOffering);assert.equal(PROFILES.broader.continuousOffering.expected,72000);
+  assert.equal(PROFILES.broader.initialApiTasks,3);assert.deepEqual(PROFILES.broader.offering.schoolDevices,[400,400]);
+  assert.notEqual(profileHash(PROFILES.broader),profileHash(PROFILES.mixed));
   assert.notEqual(PROFILES.usage.name,PROFILES.overload.name);assert.equal(PROFILES.overload.kind,'diagnostic');
   assert.throws(()=>assertOffering({...PROFILES.sole.offering,expected:6000}));
   assert.deepEqual([0,5,7,10].map(round=>[stageForRound(round).active.length,stageForRound(round).distribution]),[[1,'uniform'],[3,'uniform'],[3,'sticky80'],[2,'survivors']]);
@@ -61,7 +65,7 @@ test('generated overlays are strict, fix the polling budget and never alter cano
   const original=file('release-enabled-generator.mjs'), before=hash(original), generated=patchGeneratorV2(original);
   assert.equal(hash(file('release-enabled-generator.mjs')),before);assert.ok(generated.includes('AbortSignal.timeout(20_000)'));
   assert.ok(!generated.includes('Math.max(1, deadline - Date.now())'));assert.ok(generated.includes('allowPreflightThrottle && result.status === 204'));
-  assert.ok(generated.includes('continuousStartsAtMs+601_000'));assert.ok(generated.includes('controlSockets[2]=reconnected'));
+  assert.ok(generated.includes('stage.fromRound*60_000+stage.reconnectStartDelayMs'));assert.ok(generated.includes('controlSockets[2]=reconnected'));
   assert.ok(generated.includes('Forbidden same-school recipient'));assert.ok(!generated.includes('offer.index < RELEASE_ENABLED_PROFILE.preflightDevicesPerSchool'));
   assert.throws(()=>patchGeneratorV2(original.replace('let fixture, base, schools;','changed')));
   const process=patchProcessV2(file('release-enabled-process.mjs'));assert.ok(process.includes('dist/middleware/classpilotHeartbeatAdmission.js'));
@@ -141,13 +145,57 @@ test('all64 reports cover every school, scope, range and replica',()=>{const row
 function pairRecords(){return ['A','A','A','B','B','A','A','B'].map(arm=>({profile:PROFILES.normal.name,contractSha256:profileHash(PROFILES.normal),observedFlagsSha256:digest,arm,
   source:arm==='A'?source:candidate,runPassed:true,cleanupPassed:true,sourceUnchanged:true,cpuMsPer200:arm==='A'?10:10.4,p95Ms:arm==='A'?100:108,
   verifiedReceiptManifestSha256:digest,fixtureLogicalSha256:digest,nodeVersion:'v22.23.3',clientAdvertisementSha256:digest,clientAdvertisementVersion:'2.9.6',
+  harnessSource:'c'.repeat(40),schemaSha256:arm==='A'?digest:'b'.repeat(64),
   wholeOwnedCpuIncludesFinalClassificationFlush:true,wholeOwnedApiCpuMicroseconds:(arm==='A'?10:10.4)*2040*1000}));}
 test('paired nonregression rejects noisy controls, bad margins and another profile',()=>{
   const options={profile:PROFILES.normal,baselineSource:source,candidateSource:candidate,observedFlagsSha256:digest};
   const rows=pairRecords();assert.equal(validatePairs(rows,options).passed,true);
   rows[3].cpuMsPer200=11.1;rows[3].wholeOwnedApiCpuMicroseconds=11.1*2040*1000;assert.equal(validatePairs(rows,options).passed,false);
-  const noise=pairRecords();noise[1].cpuMsPer200=10.6;noise[1].wholeOwnedApiCpuMicroseconds=10.6*2040*1000;assert.equal(validatePairs(noise,options).disposition,'inconclusive-host-noise');
+  const noise=pairRecords();noise[1].cpuMsPer200=10.6;noise[1].wholeOwnedApiCpuMicroseconds=10.6*2040*1000;assert.equal(validatePairs(noise,options).disposition,'inconclusive-control-variance');
   const wrong=pairRecords();wrong[3].profile=PROFILES.sole.name;assert.throws(()=>validatePairs(wrong,options));
+  const drift=pairRecords();drift[3].harnessSource='d'.repeat(40);assert.throws(()=>validatePairs(drift,options));
+  const schemaDrift=pairRecords();schemaDrift[3].schemaSha256='c'.repeat(64);assert.throws(()=>validatePairs(schemaDrift,options));
+});
+
+test('the separate800 profile selects only acknowledged lost clients and keeps survivor bindings steady',()=>{
+  const profile=PROFILES.broader,startsAtMs=1000,sticky=stageForRound(9,profile),survivors=stageForRound(10,profile);
+  const samples=[0,1].flatMap(schoolIndex=>Array.from({length:400},(_,deviceIndex)=>({schoolIndex,deviceIndex,targetIndex:stickyTarget(schoolIndex*500+deviceIndex,sticky.active,sticky.distribution),observedAtMs:startsAtMs+590_000})));
+  const selected=lostReconnectBindings(samples,profile,startsAtMs);assert.equal(selected.observedBindings,800);assert.equal(selected.lostBindings,640);assert.deepEqual(selected.schools.map(row=>row.length),[320,320]);
+  assert.deepEqual(expectedTopologyCounts(profile,survivors),{1:4320,2:480});
+  const extra={lostBindingEvidence:selected,offered:640,targetHistogram:{1:640},bindings:Object.fromEntries(selected.schools.flatMap((rows,schoolIndex)=>rows.map(row=>[`${schoolIndex}:${row.deviceIndex}`,{acknowledged204:1}])))};
+  assert.equal(validateLostReconnectEvidence(extra,profile),true);assert.equal(validateLostReconnectEvidence({...extra,targetHistogram:{1:639,2:1}},profile),false);
+  for(const sample of samples){const target=stickyTarget(sample.schoolIndex*500+sample.deviceIndex,survivors.active,survivors.distribution);assert.equal(target,sample.targetIndex===0?1:sample.targetIndex);}
+  assert.throws(()=>lostReconnectBindings(samples.slice(1),profile,startsAtMs));
+  assert.throws(()=>lostReconnectBindings(samples.map((row,index)=>index===0?{...row,targetIndex:2}:row),profile,startsAtMs));
+  assert.throws(()=>lostReconnectBindings(samples.map(row=>({...row,observedAtMs:startsAtMs+600_000})),profile,startsAtMs));
+});
+
+test('declared reconnect subsets offer exact actual bindings and cannot remap ordinary traffic',async()=>{
+  const config={...PROFILES.sole.offering,requestsPerSecond:20,schoolDevices:[3,0],durationMs:150,deviceCadenceMs:150,expected:3,maxInFlight:3},seen=[];
+  const mapper=offer=>({...offer,deviceIndex:[0,2,3][offer.deviceIndex]});
+  const result=await offerHeartbeats(async offer=>{seen.push(offer.deviceIndex);return{status:204,targetIndex:1};},{config,reconnect:true,mapOffer:mapper});
+  assert.deepEqual(seen,[0,2,3]);assert.equal(result.accepted,true);assert.equal(result.bindings['0:3'].acknowledged204,1);assert.equal(result.bindings['0:1'],undefined);
+  await assert.rejects(offerHeartbeats(async()=>({status:200}),{config,mapOffer:mapper}));
+});
+
+test('Usage requires measured paired release closures, while the old single-task journal stays diagnostic',()=>{
+  const root=mkdtempSync(join(tmpdir(),'release297-usage-comparisons-'));
+  const usage=declareCampaign({directory:join(root,'usage'),kind:'usage',profile:PROFILES.usage.name,candidateSource:candidate,observedFlagsSha256:digest});
+  assert.equal(usage.pairedReleaseComparisonRequired,true);assert.equal(usage.historicalSingleTaskDiagnosticOnly,true);assert.equal(usage.originalComparisonRequired,undefined);
+  const broad=declareCampaign({directory:join(root,'broader'),kind:'mixed',profile:PROFILES.broader.name,candidateSource:candidate,observedFlagsSha256:digest});assert.deepEqual(broad.order,['C','C','C']);assert.equal(broad.capacityAccepted,false);
+  assert.throws(()=>verifyUsageComparisons({originalComparisonFile:'old-single-task',originalComparisonSha256:digest},usage));
+});
+
+test('paired closure verification rejects wrong candidate, incomplete campaigns and old-single substitution',()=>{
+  const root=mkdtempSync(join(tmpdir(),'release297-paired-closure-negative-'));
+  for(const kind of ['wrong-source','incomplete','old-single']){
+    const directory=join(root,kind);mkdirSync(directory);
+    const contract={kind:'paired',profile:kind==='old-single'?PROFILES.overload.name:PROFILES.normal.name,candidateSource:kind==='wrong-source'?source:candidate,observedFlagsSha256:digest,contractSha256:profileHash(PROFILES.normal)};
+    const contractBytes=JSON.stringify(contract),journalBytes=JSON.stringify({contractSha256:hash(contractBytes),closed:true,attempts:Array(7).fill({state:'recorded'})});
+    writeFileSync(join(directory,'contract.json'),contractBytes);writeFileSync(join(directory,'journal.json'),journalBytes);
+    const closureBytes=JSON.stringify({contractSha256:hash(contractBytes),journalSha256:hash(journalBytes),passed:true});writeFileSync(join(directory,'closure.json'),closureBytes);
+    assert.throws(()=>verifyPairedClosure({directory,closureSha256:hash(closureBytes),privateDirectories:Array(8).fill(root)},{profile:PROFILES.normal,candidateSource:candidate,observedFlagsSha256:digest}));
+  }
 });
 test('a final failed mixed run cannot be accepted from passing minute claims',()=>{
   assert.throws(()=>validateMixedRuns(Array.from({length:3},()=>({profile:PROFILES.mixed.name,rounds:Array(15).fill({}),cleanupPassed:true,runPassed:false}))));

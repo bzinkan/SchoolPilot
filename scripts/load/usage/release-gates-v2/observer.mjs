@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { requireFromApplication, moduleFromApplication } from './application.mjs';
 import { seedCommonFixture } from './common-fixture.mjs';
+import { profileFor } from './contracts.mjs';
 const pg = requireFromApplication('pg');
 const pool = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 15_000 });
 let fixture;
@@ -79,7 +80,7 @@ process.on('message', async request => {
           assert.equal(row.session_id,school.currentSession);assert.equal(row.sender_id,school.teachers[0]);assert.equal(row.student_id,school.students[2]);
           assert.equal(row.recipient_id,school.students[2]);assert.equal(row.student_session_id,school.studentSessions[2]);assert.equal(row.device_id,school.devices[2]);
           assert.ok(['delivered','expired'].includes(row.delivery_status));}
-        const repetitions=process.env.RELEASE297_PROFILE.includes('1-3-2')?15:1;
+        const currentProfile=profileFor(process.env.RELEASE297_PROFILE),repetitions=currentProfile.kind==='mixed'?currentProfile.rounds:1;
         assert.equal(commands.length,repetitions*8);assert.equal(messages.length,repetitions*4);
         assert.equal(messages.filter(row=>row.delivery_status==='delivered').length,repetitions*2);
         assert.equal(messages.filter(row=>row.delivery_status==='expired').length,repetitions*2);

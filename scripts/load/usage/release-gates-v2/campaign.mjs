@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { profileFor, profileHash, OLD_CONTRACT_SHA256, PROFILES, hash } from './contracts.mjs';
+import { profileFor, profileHash, OLD_CONTRACT_SHA256, OLD_CLOSED_JOURNAL_SHA256, PROFILES, hash } from './contracts.mjs';
 import { loadReceipt } from './receipts.mjs';
 import { validatePairs, validateMixedRuns } from './validation.mjs';
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
@@ -15,7 +15,7 @@ export function declareCampaign(options) {
   const contract={schemaVersion:2,declaredAt:new Date().toISOString(),kind:options.kind,profile:profile.name,contractSha256:profileHash(profile),
     candidateSource:options.candidateSource,baselineSource:options.baselineSource??null,observedFlagsSha256:options.observedFlagsSha256,
     originalFailedContractSha256:OLD_CONTRACT_SHA256,order:options.kind==='preparation'?[options.arm||'C']:options.kind==='paired'?['A','A','A','B','B','A','A','B']:['C','C','C'].slice(0,options.kind==='classroom'?1:3),
-    originalComparisonRequired:options.kind==='usage',originalComparisonReceipt:null,capacityAccepted:false,productionReadiness:false};
+    pairedReleaseComparisonRequired:options.kind==='usage',historicalSingleTaskDiagnosticOnly:true,capacityAccepted:false,productionReadiness:false};
   writeFileSync(join(directory,'contract.json'),JSON.stringify(contract,null,2)+'\n',{flag:'wx'});
   writeFileSync(join(directory,'journal.json'),JSON.stringify({contractSha256:hash(readFileSync(join(directory,'contract.json'))),attempts:[],closed:false},null,2)+'\n',{flag:'wx'});
   return contract;
@@ -54,6 +54,31 @@ export function reserveAttempt(options) {
   writeFileSync(join(directory,'journal.next'),JSON.stringify(journal,null,2)+'\n',{flag:'wx'});renameSync(join(directory,'journal.next'),join(directory,'journal.json'));
   return{reservationFile:file,reservationSha256,run:options.run,arm,source:reservation.source};
 }
+export function verifyPairedClosure(input,{profile,candidateSource,observedFlagsSha256}){
+  const directory=resolve(input.directory),closureBytes=readFileSync(join(directory,'closure.json'));
+  assert.equal(hash(closureBytes),input.closureSha256);const closure=JSON.parse(closureBytes),contract=read(join(directory,'contract.json')),journal=read(join(directory,'journal.json'));
+  assert.equal(contract.kind,'paired');assert.equal(contract.profile,profile.name);assert.equal(contract.candidateSource,candidateSource);
+  assert.equal(contract.observedFlagsSha256,observedFlagsSha256);assert.equal(contract.contractSha256,profileHash(profile));
+  assert.equal(closure.contractSha256,hash(readFileSync(join(directory,'contract.json'))));assert.equal(closure.journalSha256,hash(readFileSync(join(directory,'journal.json'))));
+  assert.equal(journal.contractSha256,closure.contractSha256);assert.equal(journal.closed,true);assert.equal(closure.passed,true);
+  assert.equal(journal.attempts.length,8);assert.equal(input.privateDirectories?.length,8);
+  const records=journal.attempts.map((attempt,index)=>{assert.equal(attempt.state,'recorded');assert.ok(!attempt.receipt.verificationFailure);
+    return loadReceipt(attempt.receiptDirectory,attempt.receiptManifestSha256,input.privateDirectories[index]);});
+  const result=validatePairs(records,{profile,baselineSource:contract.baselineSource,candidateSource,observedFlagsSha256});assert.equal(result.passed,true);
+  assert.deepEqual(closure.checks,result.checks);
+  return{profile:profile.name,candidateSource,baselineSource:contract.baselineSource,closureSha256:input.closureSha256,passed:true};
+}
+export function verifyUsageComparisons(options,contract){
+  assert.equal(options.pairedReleaseComparisons?.length,2);
+  const comparisons=[PROFILES.sole,PROFILES.normal].map(profile=>{
+    const matching=options.pairedReleaseComparisons.filter(input=>read(join(resolve(input.directory),'contract.json')).profile===profile.name);assert.equal(matching.length,1);
+    return verifyPairedClosure(matching[0],{profile,candidateSource:contract.candidateSource,observedFlagsSha256:contract.observedFlagsSha256});
+  });
+  assert.equal(new Set(comparisons.map(row=>row.baselineSource)).size,1);
+  assert.equal(options.preservedDiagnosticJournalSha256,OLD_CLOSED_JOURNAL_SHA256);
+  assert.equal(hash(readFileSync(options.preservedDiagnosticJournalFile)),OLD_CLOSED_JOURNAL_SHA256);
+  return{comparisons,historicalDiagnostic:{journalSha256:OLD_CLOSED_JOURNAL_SHA256,originalContractSha256:OLD_CONTRACT_SHA256,reinterpreted:false,activationGate:false}};
+}
 export function closeCampaign(options) {
   const directory=resolve(options.directory), contract=read(join(directory,'contract.json')), journal=read(join(directory,'journal.json'));
   assert.equal(journal.closed,false);assert.equal(journal.contractSha256,hash(readFileSync(join(directory,'contract.json'))));
@@ -67,10 +92,9 @@ export function closeCampaign(options) {
   else if(contract.kind==='paired'&&contract.profile!==PROFILES.overload.name) result=validatePairs(records,{profile:profileFor(contract.profile),baselineSource:contract.baselineSource,candidateSource:contract.candidateSource,observedFlagsSha256:contract.observedFlagsSha256});
   else if(contract.kind==='mixed') result=validateMixedRuns(records);
   else if(contract.kind==='usage') {
-    assert.ok(options.originalComparisonFile);const original=read(options.originalComparisonFile);assert.equal(hash(readFileSync(options.originalComparisonFile)),options.originalComparisonSha256);
-    assert.equal(original.source,contract.candidateSource);assert.equal(original.originalContractSha256,OLD_CONTRACT_SHA256);assert.equal(original.executed,true);assert.equal(original.reinterpreted,false);
+    const evidence=verifyUsageComparisons(options,contract);
     result={passed:records.every(record=>record.runPassed&&record.cleanupPassed&&record.sourceUnchanged)&&new Set(records.map(record=>record.schemaSha256)).size===1,
-      originalComparisonSha256:options.originalComparisonSha256,capacityAccepted:false};
+      ...evidence,capacityAccepted:false};
   } else if(contract.kind==='paired') {
     result={passed:false,diagnosticOnly:true,recordsComplete:records.length===8,
       safetyAndRecoveryPassed:records.every(record=>record.cleanupPassed&&record.sourceUnchanged&&record.rounds.every(round=>round.persistence?.passed&&round.drains.every(drain=>drain.complete))),capacityAccepted:false};

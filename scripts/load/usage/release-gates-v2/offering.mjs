@@ -12,16 +12,18 @@ export function targetFor(index, config) {
   }
   throw Error('Invalid fixture target');
 }
-export async function offerHeartbeats(send, { config, now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), reconnect = false } = {}) {
-  if (!reconnect) assertOffering(config);
-  else { assert.equal(config.expected, 133); assert.equal(config.durationMs, 10_000); assert.equal(config.requestsPerSecond, 13.3); }
+export async function offerHeartbeats(send, { config, now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), reconnect = false, mapOffer } = {}) {
+  assertOffering(config);if(mapOffer)assert.equal(reconnect,true,'Only declared reconnect subsets may remap the ordinary population');
   const pending = new Set(), start = now();
   const fresh = configured => ({ configured: structuredClone(configured), expected: configured.expected, offered: 0, started: 0, succeeded: 0, failed: 0,
     refusedAtInFlightLimit: 0, lateOffers: 0, maxOfferLatenessMs: 0, peakInFlight: 0, outstandingAfterDrain: null,
     bySchool: {}, bindings: {}, targetHistogram: {}, timingsMs: [], buckets: [], statusHistogram: {} });
   const result=fresh(config);result.windows=config.durationMs>60_000?Array.from({length:config.durationMs/60_000},(_,index)=>({...fresh({...config,durationMs:60_000,expected:Math.round(config.requestsPerSecond*60)}),windowIndex:index})):[];
   for (let index = 0; index < config.expected; index++) {
-    const offer = targetFor(index, config), due = start + offer.offsetMs;
+    const selected=targetFor(index,config),offer=mapOffer?mapOffer(selected):selected;
+    assert.equal(offer.index,selected.index);assert.equal(offer.offsetMs,selected.offsetMs);assert.equal(offer.schoolIndex,selected.schoolIndex);
+    assert.ok(Number.isSafeInteger(offer.deviceIndex)&&offer.deviceIndex>=0&&offer.deviceIndex<500);
+    const due = start + offer.offsetMs;
     const minute=result.windows[Math.floor(offer.offsetMs/60_000)], outputs=minute?[result,minute]:[result];
     if (now() < due) await sleep(due - now());
     const lateness = Math.max(0, now() - due), bucketIndex = Math.floor(offer.offsetMs / 5000);

@@ -61,7 +61,7 @@ export async function runV2(options) {
   const plan = { schemaVersion: 2, run, source: options.source, arm, mode: 'diagnostic', declaredAt, profile: profile.name, contractSha256: profileHash(profile),
     reservationSha256:options.reservationSha256,campaignContractSha256:reservation.campaignContractSha256,
     clientAdvertisementSha256:options.clientAdvertisementSha256??null,clientAdvertisementVersion:clientCapabilities?'2.9.6':'2.9.7',
-    applicationImage: binding.applicationImage, helperImage: options.helperImage, helperBindingSha256: options.helperBindingSha256,
+    applicationImage: binding.applicationImage, helperImage: options.helperImage, helperBindingSha256: options.helperBindingSha256,harnessSource:preparation.harnessSource,
     observedEnvironmentSha256: options.observedEnvironmentSha256, observedFlagsSha256: remapped.observedFlagsSha256,
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
@@ -120,7 +120,7 @@ export async function runV2(options) {
       const blackbox = ['blackbox', 'diagnostic'].includes(profile.kind);
       async function startApi(index) { const owner = await role('api' + index, blackbox ? '/harness/blackbox-api.mjs' : '/diagnostic/scripts/load/usage/release-enabled-process.mjs', 1, 2 * 1024 ** 3, index); active.set(index, owner); return owner; }
       await startApi(0);
-      if (profile.kind === 'usage') { await startApi(1); await startApi(2); }
+      if (profile.kind === 'usage'||profile.initialApiTasks===3) { await startApi(1); await startApi(2); }
       const worker = profile.usage ? await role('worker', '/diagnostic/scripts/load/usage/release-enabled-process.mjs', .5, 1024 ** 3) : null;
       const generator = await role('generator', blackbox ? '/harness/blackbox-generator.mjs' : '/diagnostic/scripts/load/usage/release-enabled-generator.mjs', 2, 1024 ** 3);
       const apiBases = [0, 1, 2].map(n => 'http://127.0.0.1:' + (4001 + n));

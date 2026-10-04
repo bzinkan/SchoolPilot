@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 
 // New contracts only. The failed single-API 100/s contract is immutable.
 export const OLD_CONTRACT_SHA256 = '10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92';
+export const OLD_CLOSED_JOURNAL_SHA256 = '0fa077d62df01d2423c629738e0e76695532ed44ba4ab02ed413aa18327c6604';
 export const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const frozen = value => Object.freeze(value);
 const offering = (rate, schoolDevices, durationMs = 60_000) => frozen({ requestsPerSecond: rate,
@@ -22,7 +23,13 @@ export const PROFILES = frozen({
       frozen({ fromRound: 10, active: frozen([1, 2]), distribution: 'survivors', lost: 0, reconnectOffers: 133, reconnectWindowMs: 10_000, reconnectStartDelayMs: 1000 }),
     ]) }),
   usage: frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
-    apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, originalComparison: null }),
+    apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, pairedReleaseComparisonRequired: true }),
+  broader: frozen({name:'release297-classroom-800-3-2-reconnect-v2',kind:'mixed',offering:offering(80,[400,400]),usage:false,
+    apiTasks:3,initialApiTasks:3,rounds:15,repetitions:3,continuousOffering:offering(80,[400,400],900_000),broaderCapacityGate:true,stages:frozen([
+      frozen({fromRound:0,active:frozen([0,1,2]),distribution:'uniform'}),
+      frozen({fromRound:5,active:frozen([0,1,2]),distribution:'sticky80'}),
+      frozen({fromRound:10,active:frozen([1,2]),distribution:'lostToOneSurvivor',lost:0,reconnectOffers:640,reconnectSchoolDevices:frozen([320,320]),reconnectWindowMs:8000,reconnectStartDelayMs:1000,reconnectLostOnly:true,reconnectTarget:1}),
+    ])}),
 });
 export const NONREGRESSION = frozen({ controlRuns: 2, pairs: 3, medianCpuRatio: 1.05, medianP95Ratio: 1.10,
   medianP95IncreaseMs: 50, individualCpuRatio: 1.10, individualP95IncreaseMs: 100,
@@ -44,10 +51,11 @@ export function stickyTarget(studentOrdinal, active, distribution) {
   assert.ok(Number.isSafeInteger(studentOrdinal) && studentOrdinal >= 0);
   assert.ok(active.length > 0 && new Set(active).size === active.length);
   if (distribution === 'sticky80' && active.length === 3) return studentOrdinal % 10 < 8 ? active[0] : active[1 + studentOrdinal % 2];
+  if(distribution==='lostToOneSurvivor'&&active.length===2)return studentOrdinal%10<8?active[0]:active[studentOrdinal%2];
   assert.ok(['uniform', 'sticky80', 'survivors'].includes(distribution));
   return active[studentOrdinal % active.length];
 }
-export function stageForRound(round) {
-  assert.ok(Number.isSafeInteger(round) && round >= 0 && round < 15);
-  return [...PROFILES.mixed.stages].reverse().find(stage => round >= stage.fromRound);
+export function stageForRound(round,profile=PROFILES.mixed) {
+  assert.equal(profile.kind,'mixed');assert.ok(Number.isSafeInteger(round) && round >= 0 && round < profile.rounds);
+  return [...profile.stages].reverse().find(stage => round >= stage.fromRound);
 }

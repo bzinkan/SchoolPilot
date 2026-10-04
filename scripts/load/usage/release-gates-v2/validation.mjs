@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict';
-import { profileFor, profileHash, NONREGRESSION, PROFILES } from './contracts.mjs';
+import { profileFor, profileHash, NONREGRESSION, PROFILES,stickyTarget } from './contracts.mjs';
 import { cpuWindow, negativeProbes } from './measurements.mjs';
+import { lostReconnectBindings } from './reconnect.mjs';
 const median = values => { const rows = [...values].sort((a, b) => a - b); return rows.length % 2 ? rows[(rows.length - 1) / 2] : (rows[rows.length / 2 - 1] + rows[rows.length / 2]) / 2; };
+export function expectedTopologyCounts(profile,stage){
+  const counts={};for(let schoolIndex=0;schoolIndex<2;schoolIndex++)for(let deviceIndex=0;deviceIndex<profile.offering.schoolDevices[schoolIndex];deviceIndex++){
+    const target=stickyTarget(schoolIndex*500+deviceIndex,stage.active,stage.distribution);counts[target]=(counts[target]??0)+60_000/profile.offering.deviceCadenceMs;
+  }return counts;
+}
+export function validateLostReconnectEvidence(extra,profile){
+  try{
+    const evidence=extra.lostBindingEvidence,selected=lostReconnectBindings(evidence.observedSamples,profile,evidence.startsAtMs);
+    assert.deepEqual(evidence,selected);const stage=profile.stages.find(row=>row.reconnectLostOnly);
+    assert.equal(extra.offered,stage.reconnectOffers);assert.deepEqual(extra.targetHistogram,{[stage.reconnectTarget]:stage.reconnectOffers});
+    assert.deepEqual(Object.keys(extra.bindings).sort(),selected.schools.flatMap((samples,schoolIndex)=>samples.map(row=>`${schoolIndex}:${row.deviceIndex}`)).sort());
+    return true;
+  }catch{return false;}
+}
 export function validateRound(round, profile, { diagnostic = false, baseline = false } = {}) {
   assert.deepEqual(profile, profileFor(profile.name)); const traffic = round.traffic?.heartbeats ?? round.traffic;
   const extra = round.traffic?.reconnect;
@@ -10,13 +25,14 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
     && traffic.accepted === true && traffic.started === profile.offering.expected && traffic.succeeded === profile.offering.expected
     && traffic.failed === 0 && traffic.refusedAtInFlightLimit === 0 && traffic.lateOffers === 0 && traffic.outstandingAfterDrain === 0
     && traffic.timings?.count === profile.offering.expected && traffic.timings.maxMs < 20_000;
-  const reconnect = !round.reconnect || (extra?.expected === 133 && extra.accepted === true && extra.succeeded === 133 && extra.failed === 0 && extra.lateOffers === 0 && extra.outstandingAfterDrain === 0);
+  const reconnect = !round.reconnect || (extra?.expected === round.topology.reconnectOffers && extra.accepted === true && extra.succeeded === round.topology.reconnectOffers && extra.failed === 0 && extra.lateOffers === 0 && extra.outstandingAfterDrain === 0);
   const checks = { actualProfile: round.profile === profile.name && round.contractSha256 === profileHash(profile),
     offering: !!ordinary, reconnect: !!reconnect, persistence: round.invalidBindings === 0 && round.persistence?.passed === true
       && (round.continuousGlobal ? round.continuousGlobal.passed===true && round.continuousGlobal.actualPersisted===round.continuousGlobal.acknowledged200 : round.persisted===expected),
     capabilityAcknowledgements:traffic?.capabilityAcknowledgements200===profile.offering.expected,
     targetCounts:round.continuousGlobal ? round.continuousGlobal.targetCounts===true : round.api?.length===round.topology.active.length && round.api.every((row,n)=>
       (row.seenHeartbeatOffers??row.http?.seenHeartbeatOffers)===(traffic?.targetHistogram?.[round.topology.active[n]]??0)+(extra?.targetHistogram?.[round.topology.active[n]]??0)),
+    declaredDistribution:profile.kind!=='mixed'||JSON.stringify(traffic?.targetHistogram)===JSON.stringify(expectedTopologyCounts(profile,round.topology)),
     drains: round.drains?.length > 0 && round.drains.every(row => row.complete === true),
     cpuBound: baseline || (round.measuredWindowMs===60_000 && round.cpuByRole?.length===round.topology.active.length
       && round.cpuByRole.every(row=>cpuWindow(row.window).meanFraction < NONREGRESSION.meanCpuFraction)
@@ -26,6 +42,7 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
     database: round.errorCoverage?.length === round.topology.active.length+1+(profile.usage?1:0)
       && round.errorCoverage.every(row=>row.available===true && row.complete===true && row.errorCount===0 && /^[a-f0-9]{64}$/.test(row.sha256))
       && round.databaseFailures===0 };
+  if(profile.broaderCapacityGate&&round.reconnect)checks.exactLostReconnects=validateLostReconnectEvidence(extra,profile);
   if (profile.kind === 'usage') {
     checks.reports = reportMatrix(round.traffic?.reports);
     checks.workers = round.workers?.length === 2 && [0,1].every(index=>round.workers.filter(row=>row.schoolIndex===index && row.correct===true && row.durationMs<=48_000).length===1);
@@ -52,6 +69,8 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
   }
   assert.deepEqual(records.map(row => row.arm), ['A', 'A', 'A', 'B', 'B', 'A', 'A', 'B']);
   assert.equal(new Set(records.map(row => row.fixtureLogicalSha256)).size, 1); assert.equal(new Set(records.map(row => row.nodeVersion)).size, 1);
+  assert.equal(new Set(records.map(row=>row.harnessSource)).size,1);assert.ok(records.every(row=>/^[a-f0-9]{40}$/.test(row.harnessSource)));
+  for(const arm of ['A','B']){const sameArm=records.filter(row=>row.arm===arm);assert.equal(new Set(sameArm.map(row=>row.schemaSha256)).size,1);assert.ok(sameArm.every(row=>/^[a-f0-9]{64}$/.test(row.schemaSha256)));}
   assert.equal(new Set(records.map(row=>row.clientAdvertisementSha256)).size,1);assert.ok(records.every(row=>/^[a-f0-9]{64}$/.test(row.clientAdvertisementSha256)&&row.clientAdvertisementVersion==='2.9.6'));
   const controls = records.slice(0, 2), pairs = [[records[2], records[3]], [records[5], records[4]], [records[6], records[7]]];
   const ratio = (a, b, key) => b[key] / a[key];
@@ -62,21 +81,22 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
   const p95Increases = pairs.map(([a, b]) => b.p95Ms - a.p95Ms);
   const checks = { controlsStable, medianCpu: median(cpuRatios) <= 1.05, medianP95: median(p95Ratios) <= 1.10,
     medianP95Increase: median(p95Increases) <= 50, individualCpu: cpuRatios.every(value => value <= 1.10), individualP95: p95Increases.every(value => value <= 100) };
-  return { checks, passed: Object.values(checks).every(Boolean), disposition: !controlsStable ? 'inconclusive-host-noise' : Object.values(checks).every(Boolean) ? 'accepted-synthetic-nonregression' : 'nonregression-failed', cpuRatios, p95Ratios, p95Increases };
+  return { checks, passed: Object.values(checks).every(Boolean), disposition: !controlsStable ? 'inconclusive-control-variance' : Object.values(checks).every(Boolean) ? 'accepted-synthetic-nonregression' : 'nonregression-failed', cpuRatios, p95Ratios, p95Increases };
 }
 // Avoid inferring the chosen contract from a result's rates.
 export function validateMixedRuns(runs) {
-  assert.equal(runs.length, 3); const profile = PROFILES.mixed;
+  assert.equal(runs.length, 3); const profile = profileFor(runs[0].profile);assert.ok([PROFILES.mixed.name,PROFILES.broader.name].includes(profile.name));
   for (const run of runs) {
-    assert.equal(run.profile, profile.name); assert.equal(run.rounds.length, 15); assert.equal(run.cleanupPassed, true);assert.equal(run.runPassed,true);assert.equal(run.failure,null);
-    assert.equal(run.continuous?.passed,true);assert.equal(run.continuous.expected,11970);assert.equal(run.continuous.offered,11970);assert.equal(run.continuous.windowsContinuous,true);
+    assert.equal(run.profile, profile.name); assert.equal(run.rounds.length, profile.rounds); assert.equal(run.cleanupPassed, true);assert.equal(run.runPassed,true);assert.equal(run.failure,null);
+    assert.equal(run.continuous?.passed,true);assert.equal(run.continuous.expected,profile.continuousOffering.expected);assert.equal(run.continuous.offered,profile.continuousOffering.expected);assert.equal(run.continuous.windowsContinuous,true);
     assert.equal(run.contractSha256, profileHash(profile)); assert.equal(run.sourceUnchanged, true);
     for (const round of run.rounds) assert.equal(validateRound(round, profile).passed, true);
-    assert.deepEqual(run.transitions.map(row => [row.round,row.active.length,row.distribution]), [[0,1,'uniform'],[5,3,'uniform'],[7,3,'sticky80'],[10,2,'survivors']]);
+    assert.deepEqual(run.transitions.map(row => [row.round,row.active.length,row.distribution]),profile.stages.map(row=>[row.fromRound,row.active.length,row.distribution]));
     assert.equal(run.transitions.at(-1).lostRole, 'api0'); assert.equal(run.transitions.at(-1).cleanShutdown, true);
   }
   assert.equal(new Set(runs.map(row => row.source)).size, 1); assert.equal(new Set(runs.map(row => row.schemaSha256)).size, 1);
-  return { passed: true, currentSchoolOnly: true, broaderCapacityClaimed: false };
+  assert.equal(new Set(runs.map(row=>row.harnessSource)).size,1);assert.ok(runs.every(row=>/^[a-f0-9]{40}$/.test(row.harnessSource)));
+  return { passed: true, currentSchoolOnly: !profile.broaderCapacityGate, broaderSyntheticCapacityGatePassed:profile.broaderCapacityGate===true,broaderCapacityClaimed:false };
 }
 export function reportMatrix(rows) {
   if (!Array.isArray(rows) || rows.length!==64 || !rows.every(row=>row.status===200 && row.correct===true && Number.isFinite(row.durationMs) && row.durationMs<20_000)) return false;
