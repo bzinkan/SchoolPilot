@@ -300,7 +300,7 @@ test('v2 snapshot cleanup overlays only exact owned graceful cleanup and preserv
   assert.equal(hash(readFileSync(url,'utf8')),before);assert.ok(overlay.includes("call(['stop','--time','30',actualId]"));
   assert.ok(overlay.includes("assert.equal(stopped.ExitCode,0)"));assert.ok(!overlay.includes("call(['rm','--force'"));assert.ok(overlay.includes("call(['rm','--volumes',actualId]"));
   const native=await import(url),adapted=await import('data:text/javascript;base64,'+Buffer.from(overlay).toString('base64'));
-  assert.equal(typeof adapted.withRestoredSnapshot,'function');assert.equal(adapted.assertUnexpiredRestoreGate.toString(),native.assertUnexpiredRestoreGate.toString());
-  assert.equal(adapted.compareNativeSchemas.toString(),native.compareNativeSchemas.toString());assert.equal(adapted.verifyOwnedSnapshotContainer.toString(),native.verifyOwnedSnapshotContainer.toString());
+  assert.equal(typeof adapted.withRestoredSnapshot,'function');assert.equal(adapted.assertUnexpiredRestoreGate.toString().replaceAll('\r\n','\n'),native.assertUnexpiredRestoreGate.toString().replaceAll('\r\n','\n'));
+  assert.equal(adapted.compareNativeSchemas.toString().replaceAll('\r\n','\n'),native.compareNativeSchemas.toString().replaceAll('\r\n','\n'));assert.equal(adapted.verifyOwnedSnapshotContainer.toString().replaceAll('\r\n','\n'),native.verifyOwnedSnapshotContainer.toString().replaceAll('\r\n','\n'));
   assert.throws(()=>gracefulSnapshotOverlay(original.replace("remove:actualId=>call(['rm','--force','--volumes',actualId]","changed"),url));
 });
