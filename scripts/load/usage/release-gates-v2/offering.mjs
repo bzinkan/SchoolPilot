@@ -22,6 +22,8 @@ export async function offerHeartbeats(send, { config, now = () => performance.no
     refusedAtInFlightLimit: 0, lateOffers: 0, maxOfferLatenessMs: 0, peakInFlight: 0, outstandingAfterDrain: null,
     bySchool: {}, bindings: {}, targetHistogram: {}, timingsMs: [], buckets: [], statusHistogram: {} });
   const result=fresh(config);result.declaredStartedAtMs=startsAtMs??null;result.actualStartedAtMs=wallNow();
+  result.declaredStartLatenessMs=startsAtMs===undefined?null:result.actualStartedAtMs-startsAtMs;
+  result.startAlignmentAccepted=startsAtMs===undefined||(result.declaredStartLatenessMs>=0&&result.declaredStartLatenessMs<=config.maxOfferLatenessMs);
   result.windows=config.durationMs>60_000?Array.from({length:config.durationMs/60_000},(_,index)=>({...fresh({...config,durationMs:60_000,expected:Math.round(config.requestsPerSecond*60)}),windowIndex:index})):[];
   for (let index = 0; index < config.expected; index++) {
     const selected=targetFor(index,config),offer=mapOffer?mapOffer(selected):selected;
@@ -66,7 +68,7 @@ export async function offerHeartbeats(send, { config, now = () => performance.no
   result.offerWindowMs = now() - start; result.outstandingAtEndOfOffering = pending.size;
   await Promise.all([...pending]); result.totalIncludingDrainMs = now() - start; result.outstandingAfterDrain = pending.size;
   result.accepted = result.offered === config.expected && result.started === config.expected && result.succeeded === config.expected
-    && result.offerWindowMs>=config.durationMs && !result.failed && !result.refusedAtInFlightLimit && !result.lateOffers && !pending.size;
+    && result.startAlignmentAccepted && result.offerWindowMs>=config.durationMs && !result.failed && !result.refusedAtInFlightLimit && !result.lateOffers && !pending.size;
   for(const minute of result.windows){minute.outstandingAfterDrain=0;minute.capabilityAcknowledgements200=minute.succeeded;
     minute.accepted=minute.offered===minute.expected&&minute.started===minute.expected&&minute.succeeded===minute.expected&&!minute.failed&&!minute.refusedAtInFlightLimit&&!minute.lateOffers;}
   return result;

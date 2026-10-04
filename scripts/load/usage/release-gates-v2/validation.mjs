@@ -32,6 +32,9 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
   const checks = { actualProfile: round.profile === profile.name && round.contractSha256 === profileHash(profile),
     offering: !!ordinary, reconnect: !!reconnect, persistence: round.invalidBindings === 0 && round.persistence?.passed === true
       && (round.continuousGlobal ? round.continuousGlobal.passed===true && round.continuousGlobal.actualPersisted===round.continuousGlobal.acknowledged200 : round.persisted===expected),
+    declaredStartAlignment:traffic?.declaredStartedAtMs==null||(traffic.startAlignmentAccepted===true
+      &&traffic.declaredStartLatenessMs===traffic.actualStartedAtMs-traffic.declaredStartedAtMs
+      &&traffic.declaredStartLatenessMs>=0&&traffic.declaredStartLatenessMs<=profile.offering.maxOfferLatenessMs),
     capabilityAcknowledgements:traffic?.capabilityAcknowledgements200===profile.offering.expected,
     targetCounts:round.continuousGlobal ? round.continuousGlobal.targetCounts===true : round.api?.length===round.topology.active.length && round.api.every((row,n)=>
       (row.seenHeartbeatOffers??row.http?.seenHeartbeatOffers)===(traffic?.targetHistogram?.[round.topology.active[n]]??0)+(extra?.targetHistogram?.[round.topology.active[n]]??0)),

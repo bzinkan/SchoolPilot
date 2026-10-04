@@ -325,3 +325,13 @@ test('a future declared offering start anchors the monotonic epoch after actual 
   assert.equal(result.declaredStartedAtMs,1100);assert.ok(result.actualStartedAtMs>=1100);assert.ok(result.offerWindowMs>=150);
   assert.ok(clock>=250);assert.ok(clock<253);
 });
+
+
+test('a late initial wake cannot shift traffic past the declared CPU window and still pass',async()=>{
+  let clock=0;const seen=[];
+  const config={...PROFILES.normal.offering,requestsPerSecond:20,schoolDevices:[3,0],durationMs:150,deviceCadenceMs:150,expected:3,maxInFlight:3};
+  const result=await offerHeartbeats(async offer=>{seen.push(offer.index);return{status:200,targetIndex:0};},
+    {config,now:()=>clock,wallNow:()=>1000+clock,startsAtMs:1100,sleep:async ms=>{clock+=ms+200;}});
+  assert.equal(result.accepted,false);assert.equal(result.startAlignmentAccepted,false);assert.equal(result.declaredStartLatenessMs,200);
+  assert.deepEqual(seen,[0,1,2]);assert.equal(result.offered,3);assert.equal(result.outstandingAfterDrain,0);
+});
