@@ -2,6 +2,8 @@
 
 The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Application `ed026513` passes all 20 reported CI checks and 2,032 local unit tests without skips; unchanged extension `8069a9c9` passes all 10 checks. The [current read-only checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json) binds exact commits and package bytes. Subsequent harness/documentation changes require new review-head CI. Paired/current-school acceptance remains pending. The [corrected-fallback image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json) passes with the complete 54-entry ledger. Historical Usage failures remain intact.
 
+The [current read-only reconciliation](release-evidence/release-297/release-gate-policy-20261003/source-pr-inventory-current-reconciliation.json) confirms all 60 tracked PR heads are unchanged. Three historical whole-patch/base proofs (#564, #574 and #586) are replaced for current review by explicit implementation ancestry, exact files and retained hunks; no implementation omission was found. Open-PR historical mergeCommit fields do not establish a completed merge. The original inventory remains unchanged.
+
 New corrections incorporated directly into #603 include bounded heartbeat admission,
 Usage-aware pool fairness, changed/missing/vanished rollup writes, and tenant-owned
 cleanup/retention/audit transactions. They preserve the 54 migrations and 129-table

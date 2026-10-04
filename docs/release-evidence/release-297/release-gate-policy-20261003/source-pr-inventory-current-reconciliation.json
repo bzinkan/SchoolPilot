@@ -1,0 +1,1248 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T02:38:17.293Z",
+  "purpose": "Current source PR inclusion and GitHub status reconciliation; no original PR was merged or closed",
+  "originalInventory": {
+    "path": "docs/release-evidence/release-2.9.7-pr-inventory.json",
+    "sha256": "b03f0455f6b3c9111041c1e2ecdfbabb9e745324475886ac479ef1b9078ec366",
+    "capturedAt": "2026-10-02T19:39:06.566Z"
+  },
+  "observedSourceHeads": {
+    "SchoolPilot": "ba5e7adc140d72ae6a6de78b820cd05892f06543",
+    "ClassPilot": "8069a9c9bd50352e187847158b356a69edc4e45d"
+  },
+  "currentSchoolPilotSource": "44c1932f4a5ac5565f00a1e915e8a6fffc480b8c",
+  "currentSourceRetainsObservedRuntime": true,
+  "mainHeads": {
+    "bzinkan/SchoolPilot": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
+    "bzinkan/ClassPilot": "55bb531cb5f130cebec9d994daa957e82e87a13b"
+  },
+  "rawReadOnlyRevalidationSha256": "213553c76232646c22d6875558cedd3ab859fc6b72ba25753d9a2b99594e09ea",
+  "independentInclusionReview": {
+    "path": "source-pr-inclusion-review-ba5e.json",
+    "sha256": "a9ea397c77ce623430e69a19e4e5c861988bf036e288ca73d43b09cb901a71ff"
+  },
+  "trackedOriginalPRs": 60,
+  "allTrackedHeadsUnchanged": true,
+  "baselineIsAncestor": true,
+  "historicalSourceCheckpointIsAncestor": true,
+  "records": [
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 547,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/547",
+      "title": "Keep the AI assistant's Flight Path list to the teacher's own paths",
+      "disposition": "already_merged",
+      "recordedHead": "45dd3333ffb043c797ac095387c0c87e5d31a238",
+      "observedHead": "45dd3333ffb043c797ac095387c0c87e5d31a238",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-29T22:34:03Z",
+      "observedMergeCommit": "131269b4a5f4844936e4fba99672c8165de6fa83",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 548,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/548",
+      "title": "Harden the shadow daily usage rollup so set-based can be promoted (roadmap PR 10a)",
+      "disposition": "already_merged",
+      "recordedHead": "22c183c450b5d1f1a1aef72ba4772f546e3132ab",
+      "observedHead": "22c183c450b5d1f1a1aef72ba4772f546e3132ab",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-29T22:34:36Z",
+      "observedMergeCommit": "7daa1c16108d2e790db60844331b72f7aff68ac8",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 549,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/549",
+      "title": "Add the competitive roadmap and the legacy Live View/TURN media audit",
+      "disposition": "already_merged",
+      "recordedHead": "eda5c1f2576c06608de16fe8ca5296c954d716d8",
+      "observedHead": "eda5c1f2576c06608de16fe8ca5296c954d716d8",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-29T22:36:42Z",
+      "observedMergeCommit": "e5315e9eed677d09f06b86cc5d5e05307d0c8feb",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 550,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/550",
+      "title": "Withhold precise restriction resources so a rollback past PR 2 never widens a Waypoint (roadmap PR 2-pre)",
+      "disposition": "already_merged",
+      "recordedHead": "1dae1ff1e8ca30aca4fde3185f65bfdd0e2eccc3",
+      "observedHead": "1dae1ff1e8ca30aca4fde3185f65bfdd0e2eccc3",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-29T22:36:07Z",
+      "observedMergeCommit": "e14448d00bb41b962fff5a577a9558674929174a",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 551,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/551",
+      "title": "Guard retained TURN identity with prevent_destroy and refuse legacy Live View signaling by default",
+      "disposition": "already_merged",
+      "recordedHead": "7efe17119507edfe9e0be3274e35eb77d5bba346",
+      "observedHead": "7efe17119507edfe9e0be3274e35eb77d5bba346",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-29T23:21:45Z",
+      "observedMergeCommit": "ee754b609e187177667e5c3b0d354db2675e0df8",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 552,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/552",
+      "title": "Add a governed production setter for the wave-1 product flags",
+      "disposition": "already_merged",
+      "recordedHead": "f63e5d87524d4d0cf591de58e0caea5bd1d82174",
+      "observedHead": "f63e5d87524d4d0cf591de58e0caea5bd1d82174",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-29T23:22:16Z",
+      "observedMergeCommit": "f7e2c246f61748125ba3d14228b723a3aa75ff9e",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 553,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/553",
+      "title": "Add a School Library for shared and official Flight Paths and Block Lists",
+      "disposition": "already_merged",
+      "recordedHead": "eb4293011bb8cc73dfad4339d67689de7bd59969",
+      "observedHead": "eb4293011bb8cc73dfad4339d67689de7bd59969",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T00:04:40Z",
+      "observedMergeCommit": "af901c5ef77328dd82324af6051499968b02f14f",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 554,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/554",
+      "title": "PassPilot issuance rules: capacity, daily/period limits, encounter restrictions, admin override (roadmap PR 7)",
+      "disposition": "already_merged",
+      "recordedHead": "296b7f204b47be1aafb04ddd875e72b8c01750e4",
+      "observedHead": "296b7f204b47be1aafb04ddd875e72b8c01750e4",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T00:52:15Z",
+      "observedMergeCommit": "e8d286cae7b4ab60082b2036939467b61ece2171",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 555,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/555",
+      "title": "Add precise restriction resources and preciseRestrictionResourcesV1 on the server (roadmap PR 2)",
+      "disposition": "already_merged",
+      "recordedHead": "87fdeb128b9a7531e6f159754687982876b757be",
+      "observedHead": "87fdeb128b9a7531e6f159754687982876b757be",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T04:47:10Z",
+      "observedMergeCommit": "48ec7750f2dfaa2e35624c8e33466d7b77243050",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 556,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/556",
+      "title": "Add Monitored Browser Time rollups, retention and the admin Digital Usage API (dark)",
+      "disposition": "already_merged",
+      "recordedHead": "c94dff4b4e1250f8d97a0afbc7ed44fca9545dcf",
+      "observedHead": "c94dff4b4e1250f8d97a0afbc7ed44fca9545dcf",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T02:37:14Z",
+      "observedMergeCommit": "50adcb198316606ab5f5fe42fddd11fe86ff4576",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 557,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/557",
+      "title": "Move the transitive engine.io to 6.6.11 for GHSA-2gc4-cqfq-p2gv",
+      "disposition": "already_merged",
+      "recordedHead": "cebf305b9fdcd994bd51a64a4f5acf030b40a8d0",
+      "observedHead": "cebf305b9fdcd994bd51a64a4f5acf030b40a8d0",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T04:46:46Z",
+      "observedMergeCommit": "29843af3cd1a05a846cdb93cf3ff009c6217b39f",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 558,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/558",
+      "title": "Record wave-1 roadmap status and the real PR 2-pre activation rule",
+      "disposition": "already_merged",
+      "recordedHead": "fe89219c2dca7a85a73e9de2381a376c03ad6362",
+      "observedHead": "fe89219c2dca7a85a73e9de2381a376c03ad6362",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T05:10:11Z",
+      "observedMergeCommit": "3a92512ac0151ca413d2d56850b71ee8aa79d9f6",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 559,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/559",
+      "title": "Harden the precise restriction matcher and clear CLI (roadmap PR 2 follow-up)",
+      "disposition": "already_merged",
+      "recordedHead": "a84101283819f0fb34ffde525666669cbf7dadc1",
+      "observedHead": "a84101283819f0fb34ffde525666669cbf7dadc1",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T05:43:57Z",
+      "observedMergeCommit": "60f33dbcf93b6901ac038c2d0066f79fbd9632a4",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 560,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/560",
+      "title": "Reconcile remaining roadmap and release preparation gates",
+      "disposition": "superseded",
+      "recordedHead": "aafdddd98ca575f4bbc377e4c4bef80ee3c224f4",
+      "observedHead": "aafdddd98ca575f4bbc377e4c4bef80ee3c224f4",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "documentation_reconciled",
+        "resolution": "Historical evidence retained in schoolpilot-remaining-roadmap-20260930.json and historical checklist. Current release instructions replaced by RELEASE_2_9_7_OPERATOR_CHECKLIST.md and this inventory; do not merge the old candidate/device-gate instructions.",
+        "verifiedBy": "historical checkpoint retained; current checklist and adopted policy supersede it"
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 561,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/561",
+      "title": "Propose Present to Class hosting security and budget decision",
+      "disposition": "included",
+      "recordedHead": "2798431612be182aeca42a5bf3fe65be20cfada6",
+      "observedHead": "2798431612be182aeca42a5bf3fe65be20cfada6",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "2341a690dc1b68a9e57ec750333aed32349470df",
+          "643a506e5bd0f116bc1601913fcb4014e64ab619",
+          "2798431612be182aeca42a5bf3fe65be20cfada6"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 562,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/562",
+      "title": "Refresh transitive Axios to clear current security advisories",
+      "disposition": "superseded",
+      "recordedHead": "ac4675e828cdde8f3b825be191e90e2a442b793c",
+      "observedHead": "ac4675e828cdde8f3b825be191e90e2a442b793c",
+      "headUnchanged": true,
+      "observedState": "CLOSED",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "superseded_by",
+        "pullRequest": "SchoolPilot#580",
+        "verifiedBy": "replacement PR independently included below"
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 563,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/563",
+      "title": "Fix Monitored Browser Time coverage and processed cutoffs",
+      "disposition": "included",
+      "recordedHead": "69a191ddd50af030ceee6a7490016a263143ff28",
+      "observedHead": "69a191ddd50af030ceee6a7490016a263143ff28",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "fd9cd30105c102c02f91741b0bf7ca3ffb37b088",
+          "f2bf378786ef184b609ae899deeae6945edfb3ac",
+          "294cdcb92196816722363329b97e8426e83ab374"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 564,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/564",
+      "title": "Run CI and security checks for stacked roadmap PRs",
+      "disposition": "included",
+      "recordedHead": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+      "observedHead": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "base_already_included",
+        "base": "d4f3f232be7529ac4d584c2559768e6ad1b5421a",
+        "explanation": "PR head has no remaining commits outside its current base; stacked CI behavior retained in combined workflow.",
+        "verified": false
+      },
+      "inclusionReconciliation": {
+        "kind": "explicit_ancestry_file_and_hunk_equivalence",
+        "originalMechanicalProofInsufficient": true,
+        "currentImplementationVerified": true,
+        "details": "Replace incorrect no-remaining-commits explanation with original implementation commit ancestry plus retained triggers"
+      }
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 565,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/565",
+      "title": "Define Focus and Bring Forward server and extension contract",
+      "disposition": "included",
+      "recordedHead": "7f413fd564f6370e4374570486dd208daefc1f6a",
+      "observedHead": "7f413fd564f6370e4374570486dd208daefc1f6a",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 566,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/566",
+      "title": "Conceal retained encounter overrides in all public pass responses",
+      "disposition": "included",
+      "recordedHead": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+      "observedHead": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "59641b9acac49bbecb14aa65941062ef1c98c0f7",
+          "9055393d016d21ca96703a3ff90e0caeee1d7e90"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 567,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/567",
+      "title": "Preview normalized restriction scopes and broader website access",
+      "disposition": "included",
+      "recordedHead": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+      "observedHead": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 568,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/568",
+      "title": "Add administrator Monitored Browser Time page with truthful coverage",
+      "disposition": "included",
+      "recordedHead": "34c93eb86e7ce72b7af611254609b96ca882d809",
+      "observedHead": "34c93eb86e7ce72b7af611254609b96ca882d809",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "0608a7f96eabab9f458a176a1bc2c20102dc8ca3",
+          "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+          "34c93eb86e7ce72b7af611254609b96ca882d809"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 569,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/569",
+      "title": "Measure corrected usage rollups with guarded local synthetic load",
+      "disposition": "included",
+      "recordedHead": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+      "observedHead": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 570,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/570",
+      "title": "Add atomic manual PassPilot appointments and retained lifecycle",
+      "disposition": "included",
+      "recordedHead": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+      "observedHead": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "b47355358a5d9bc7e29cc047104c2b281c538dbb"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 571,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/571",
+      "title": "Review precise resource and Classroom scopes before authoring",
+      "disposition": "included",
+      "recordedHead": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+      "observedHead": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 572,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/572",
+      "title": "Add exact Focus commands and atomic Open + Focus continuation",
+      "disposition": "included",
+      "recordedHead": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+      "observedHead": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 573,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/573",
+      "title": "Serialize appointment eligibility with attendance and dismissal",
+      "disposition": "included",
+      "recordedHead": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+      "observedHead": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "91eead05e8a3d5c822426bcd4b5279dd55f05011"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 574,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/574",
+      "title": "Add PassPilot-only canonical school-year setup",
+      "disposition": "included",
+      "recordedHead": "9250fab903d16b41769d86ec12086dfef21f9a12",
+      "observedHead": "9250fab903d16b41769d86ec12086dfef21f9a12",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": false,
+        "equivalentCommits": [],
+        "nonEquivalentCommits": [
+          "9250fab903d16b41769d86ec12086dfef21f9a12"
+        ],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": {
+        "kind": "explicit_ancestry_file_and_hunk_equivalence",
+        "originalMechanicalProofInsufficient": true,
+        "currentImplementationVerified": true,
+        "details": "Use exact-file-content equivalence plus route/lane retention and explicit additive documentation/router adaptation, not a whole-commit patch-equivalence claim"
+      }
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 575,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/575",
+      "title": "Add exact teacher Focus and Bring Forward controls",
+      "disposition": "included",
+      "recordedHead": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+      "observedHead": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 576,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/576",
+      "title": "Drain Student Information browser handlers before teardown",
+      "disposition": "included",
+      "recordedHead": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+      "observedHead": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 577,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/577",
+      "title": "Add reviewed Classroom actions with pinned policy and confirmed students",
+      "disposition": "included",
+      "recordedHead": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+      "observedHead": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 578,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/578",
+      "title": "Tolerate a replaced task's draining ALB target and require CI in the deploy gate",
+      "disposition": "already_merged",
+      "recordedHead": "d2c047c27698990b25892bbce79200ba91920f8b",
+      "observedHead": "d2c047c27698990b25892bbce79200ba91920f8b",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T22:49:34Z",
+      "observedMergeCommit": "d4f3f232be7529ac4d584c2559768e6ad1b5421a",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 579,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/579",
+      "title": "Add staff appointment scheduling and current-class reminders",
+      "disposition": "included",
+      "recordedHead": "6efc27f4de187b4e43c923df31d6139c081727f7",
+      "observedHead": "6efc27f4de187b4e43c923df31d6139c081727f7",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "6efc27f4de187b4e43c923df31d6139c081727f7"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 580,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/580",
+      "title": "Refresh transitive Axios to 1.20.0 for current security advisories",
+      "disposition": "already_merged",
+      "recordedHead": "27879128ccfe09ae1469d0b6252ea5b37e36059f",
+      "observedHead": "27879128ccfe09ae1469d0b6252ea5b37e36059f",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-09-30T22:11:18Z",
+      "observedMergeCommit": "0f24de412f8a0b25f5d8752bf7b7e73574a8c8f0",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 581,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/581",
+      "title": "Keep kiosk metrics HTTP assertions within one minute",
+      "disposition": "included",
+      "recordedHead": "5e2fb408413abe50be6e79a5dd43071286de077b",
+      "observedHead": "5e2fb408413abe50be6e79a5dd43071286de077b",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 582,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/582",
+      "title": "Fence reviewed Classroom lessons and acknowledged opening",
+      "disposition": "included",
+      "recordedHead": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+      "observedHead": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 583,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/583",
+      "title": "PassPilot Reports v2: scoped aggregates and audited CSV",
+      "disposition": "included",
+      "recordedHead": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+      "observedHead": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "d1069bdd55e8a5b52231aef08dda5fdd257a229c"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 584,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/584",
+      "title": "Add scoped server-backed PassPilot Reports v2 interface",
+      "disposition": "included",
+      "recordedHead": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+      "observedHead": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "5bec1e401450ac0a1a8cac84e2245da47d8485cc",
+          "76caaab8eb200e62afbcaee23df4d198df35815e",
+          "1e59e4a04b8360eb1bff9fc614a641c179be3f75",
+          "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 585,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/585",
+      "title": "test(passpilot): keep restricted reminder fixture stable at midnight",
+      "disposition": "included",
+      "recordedHead": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+      "observedHead": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "a65a82283c4c44fcb8d1e32746010117ac7d6810"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 586,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/586",
+      "title": "Reduce usage attribution and report query work",
+      "disposition": "included",
+      "recordedHead": "157c47baef24f65176da5bbc694309fe6cdeff03",
+      "observedHead": "157c47baef24f65176da5bbc694309fe6cdeff03",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": false,
+        "equivalentCommits": [
+          "157c47baef24f65176da5bbc694309fe6cdeff03"
+        ],
+        "nonEquivalentCommits": [
+          "6b0ef9dbe3962512ff19d08dfc9d171a88da52d1"
+        ],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": {
+        "kind": "explicit_ancestry_file_and_hunk_equivalence",
+        "originalMechanicalProofInsufficient": true,
+        "currentImplementationVerified": true,
+        "details": "Six original commits are ancestors; kiosk fix is patch-equivalent and its file is exact; canonical class helper and all five calls are exact retained hunks. Current whole test blob has subsequent delta/cleanup race coverage."
+      }
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 587,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/587",
+      "title": "Keep kiosk issuance fixtures inside an active schedule window",
+      "disposition": "included",
+      "recordedHead": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+      "observedHead": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 588,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/588",
+      "title": "Fence preview fixture phases after paint and native capture completion",
+      "disposition": "included",
+      "recordedHead": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+      "observedHead": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "328a814993e9c6ce79c172817e6d8e83c58b426b"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 589,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/589",
+      "title": "Keep narrow Class tools usable and await actual browser state",
+      "disposition": "included",
+      "recordedHead": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+      "observedHead": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 590,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/590",
+      "title": "Make load harness fixture readiness and latency cohorts explicit",
+      "disposition": "included",
+      "recordedHead": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+      "observedHead": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 591,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/591",
+      "title": "Measure capped two-school usage profiles and preserve capacity limits",
+      "disposition": "included",
+      "recordedHead": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+      "observedHead": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "4d6d220b62325fa8df0d24e4916e10dfcfe33ce6",
+          "0e9f04c77f20dc65c1d12c3771c6dfeee9a2460c",
+          "f970d569ed6af0d57f852a3177d35219edb98c45",
+          "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 592,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/592",
+      "title": "Seed canonical primary assignments in usage fixtures",
+      "disposition": "included",
+      "recordedHead": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+      "observedHead": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "53e9a426d642046ec042d0cd157a8ca01b0062b3"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 593,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/593",
+      "title": "Fix concurrent ClassPilot device creation without rebinding",
+      "disposition": "included",
+      "recordedHead": "deecce0c3478b8b34424fef5748fd8df826515e5",
+      "observedHead": "deecce0c3478b8b34424fef5748fd8df826515e5",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "deecce0c3478b8b34424fef5748fd8df826515e5"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 594,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/594",
+      "title": "test(classpilot): retain auth fixture lifecycle roots",
+      "disposition": "included",
+      "recordedHead": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+      "observedHead": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "patch_equivalence",
+        "verified": true,
+        "equivalentCommits": [
+          "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5"
+        ],
+        "nonEquivalentCommits": [],
+        "headIsAncestor": false
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 595,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/595",
+      "title": "Freeze recipients for classroom actions and never widen a cleared selection",
+      "disposition": "included",
+      "recordedHead": "cffd1ed55fdda7f71f1ab1d7c94d769f26d4d015",
+      "observedHead": "cffd1ed55fdda7f71f1ab1d7c94d769f26d4d015",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 596,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/596",
+      "title": "Let teachers start a message with any student",
+      "disposition": "included",
+      "recordedHead": "a7cb6f941e5f3a965a12c6eab6f9f18fce3fffe8",
+      "observedHead": "a7cb6f941e5f3a965a12c6eab6f9f18fce3fffe8",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 597,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/597",
+      "title": "Show the class roster in Messages",
+      "disposition": "included",
+      "recordedHead": "dbaa4cdda517da49ede343043aa9ad994ac37a28",
+      "observedHead": "dbaa4cdda517da49ede343043aa9ad994ac37a28",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 598,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/598",
+      "title": "Record public ECS tasks and NAT removal in the production Terraform profile",
+      "disposition": "already_merged",
+      "recordedHead": "37c2dbacd9169477c03f961cecfc25cb73de7e75",
+      "observedHead": "37c2dbacd9169477c03f961cecfc25cb73de7e75",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-10-02T02:27:40Z",
+      "observedMergeCommit": "0a64427364668c8c63dc1403fbc13e7aa1a7eaa0",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 599,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/599",
+      "title": "Accept the AWS provider's computed leaves in the NatRollback inverse check",
+      "disposition": "already_merged",
+      "recordedHead": "13e3401c6c7f4797a534ca53d6357100e13db2f1",
+      "observedHead": "13e3401c6c7f4797a534ca53d6357100e13db2f1",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-10-02T03:40:18Z",
+      "observedMergeCommit": "8c4dffe2e9ff9ce022ed287c98e968fc4f015d11",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 600,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/600",
+      "title": "Record that production has no NAT gateways and what that requires",
+      "disposition": "already_merged",
+      "recordedHead": "da1689f3704746993174eaea1c0c801c8b24b3f2",
+      "observedHead": "da1689f3704746993174eaea1c0c801c8b24b3f2",
+      "headUnchanged": true,
+      "observedState": "MERGED",
+      "observedMergedAt": "2026-10-02T04:12:08Z",
+      "observedMergeCommit": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
+      "inclusionProof": {
+        "kind": "merge_commit_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 601,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/601",
+      "title": "Refuse live teacher replies while messaging is switched off",
+      "disposition": "included",
+      "recordedHead": "f13cc336a028509bee57026a9770ce7e09ba3200",
+      "observedHead": "f13cc336a028509bee57026a9770ce7e09ba3200",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/SchoolPilot",
+      "number": 602,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/602",
+      "title": "Hold the denial refresh until the Observe denial banner is seen",
+      "disposition": "included",
+      "recordedHead": "6990e10b3bc620ca3c07a4e9df8cb87b1e109f7a",
+      "observedHead": "6990e10b3bc620ca3c07a4e9df8cb87b1e109f7a",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/ClassPilot",
+      "number": 119,
+      "url": "https://github.com/bzinkan/ClassPilot/pull/119",
+      "title": "Enforce precise resources with atomic policy rollback",
+      "disposition": "included",
+      "recordedHead": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+      "observedHead": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/ClassPilot",
+      "number": 120,
+      "url": "https://github.com/bzinkan/ClassPilot/pull/120",
+      "title": "Implement exact Focus and Bring Forward lifecycle",
+      "disposition": "included",
+      "recordedHead": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+      "observedHead": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/ClassPilot",
+      "number": 121,
+      "url": "https://github.com/bzinkan/ClassPilot/pull/121",
+      "title": "Prepare precise and Focus candidate 2.10.0",
+      "disposition": "included",
+      "recordedHead": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+      "observedHead": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    },
+    {
+      "repository": "bzinkan/ClassPilot",
+      "number": 122,
+      "url": "https://github.com/bzinkan/ClassPilot/pull/122",
+      "title": "Fix 2.10.0 Attention and lesson regressions and harden teacher chat delivery",
+      "disposition": "included",
+      "recordedHead": "2aa6df988a78cb5860cef2c0866cab46566ffec5",
+      "observedHead": "2aa6df988a78cb5860cef2c0866cab46566ffec5",
+      "headUnchanged": true,
+      "observedState": "OPEN",
+      "observedMergedAt": null,
+      "observedMergeCommit": null,
+      "inclusionProof": {
+        "kind": "head_is_ancestor",
+        "verified": true
+      },
+      "inclusionReconciliation": null
+    }
+  ],
+  "actualImplementationOmissionsFound": false,
+  "mergeEvidenceRule": "Only an observed mergedAt and verified merge commit establish a completed merge; historical open-PR mergeCommit values are not merge evidence",
+  "reconciliationAfterIntegrationMerge": "pending separate authorization; preserve individual review branches"
+}

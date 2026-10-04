@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T02:36:20.938Z",
+  "purpose": "Final harness focused checks and source equivalence, not capacity acceptance",
+  "harnessOwnerSource": "af3f3f909b064b3ecbc3375e9c1f05bb22102e75",
+  "rootIntegratedSource": "6e0c8aa9e7ebcf58891e8c16ba8445bce73fd255",
+  "harnessTreeOid": "5846f4b87e6475dbd2030b37e9d5b525e3365e04",
+  "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "runtimeAndFrontendInputsIdentical": true,
+  "rootHarnessMatchesOwner": true,
+  "focusedTests": {
+    "tests": 36,
+    "passed": 36,
+    "failed": 0,
+    "skipped": 0
+  },
+  "preservedEarlierRootAttempt": {
+    "tests": 34,
+    "passed": 33,
+    "failed": 1,
+    "reason": "Single timer await could wake before the declared window; corrected with monotonic sleep-until loops without weakening the assertion"
+  },
+  "evidence": [
+    {
+      "name": "harness-61a3d547-34.log",
+      "bytes": 9143,
+      "sha256": "0219d02a660f4d67e60d933c6ae50aa4769e45f55f06d9921ea7eb8fa032a25f"
+    },
+    {
+      "name": "harness-6e0c8aa9-36.log",
+      "bytes": 8890,
+      "sha256": "cbddd40d01a2223d225894319a81914690d3b95cb971892a6190c6256405eb0e"
+    }
+  ],
+  "guards": [
+    "Original frozen campaign contract remains pinned",
+    "Exact image and canonical schema required across campaign closures",
+    "Both Usage-enabled800 loss routing profiles require reports, workers, correctness and graceful drain",
+    "New snapshot restore overlay retains historical immutable ABI and requires graceful owned cleanup",
+    "Declared starts and offering deadlines use monotonic wait-until guards"
+  ],
+  "limitations": [
+    "Measured capacity and classroom campaigns remain pending",
+    "Preparation smokes and focused tests do not establish live or broader capacity",
+    "No Store submission, merge, deployment or runtime activation"
+  ]
+}

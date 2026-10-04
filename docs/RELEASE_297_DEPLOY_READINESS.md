@@ -26,7 +26,7 @@ ClassPilot to the Store.
   pass. Recovery retains the full ledger, private-chat expiration/history,
   screenshot function permissions and exact offline Focus cleanup.
   These proofs do not establish capacity, production admission or deployment.
-- New harness validators pass 23 checks. Real production-image and candidate-image
+- [Frozen harness validators](release-evidence/release-297/release-gate-policy-20261003/harness-frozen-44c1932f-summary.json) pass 37 checks. Real production-image and candidate-image
   preparation smokes have passed; they are explicitly preparation-only. Paired
   current-school capacity and continuous mixed-classroom acceptance are pending.
   Historical Usage acceptance remains zero. Successful report/worker timings in
