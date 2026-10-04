@@ -24,7 +24,12 @@ const broader = (variant, distribution) => frozen({name:`release297-usage-800-3-
     frozen({fromRound:10,active:frozen([1,2]),distribution,lost:0,reconnectOffers:640,reconnectSchoolDevices:frozen([320,320]),
       reconnectWindowMs:8000,reconnectStartDelayMs:1000,reconnectLostOnly:true,...(distribution==='lostToOneSurvivor'?{reconnectTarget:1}:{})}),
   ])});
+const lowerEnvelope=(clients,rate,schools)=>frozen({name:`release297-usage-off-one-api-${clients}-heartbeat-envelope-v1`,
+  kind:'blackbox',offering:offering(rate,schools),usage:false,apiTasks:1,lowerLoadEnvelope:true,
+  lowerStaffReads:frozen({waveOffsetsMs:frozen([0,10000,20000,30000,40000,50000]),ownSessionReads:6,foreignSessionDenials:6,requestTimeoutMs:20000})});
 export const PROFILES = frozen({
+  lower133:lowerEnvelope(133,13.3,[133,0]),lower250:lowerEnvelope(250,25,[250,0]),
+  lower340:lowerEnvelope(340,34,[340,0]),lower500:lowerEnvelope(500,50,[500,0]),
   sole: frozen({ name: 'release297-blackbox-sole-133-v2', kind: 'blackbox', offering: offering(13.3, [133, 0]), usage: false, apiTasks: 1 }),
   normal: frozen({ name: 'release297-blackbox-normal-34-v2', kind: 'blackbox', offering: offering(34, [170, 170]), usage: false, apiTasks: 1 }),
   overload: frozen({ name: 'release297-blackbox-overload-100-diagnostic-v2', kind: 'diagnostic', offering: offering(100, [500, 500]), usage: false, apiTasks: 1 }),

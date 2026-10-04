@@ -53,6 +53,10 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
       && round.databaseFailures===0 };
   if(profile.classroomBindingOracle)checks.nativeClassroomBindings=(round.classroomBindings??round.continuousGlobal?.classroom)?.passed===true
     &&/^[a-f0-9]{64}$/.test((round.classroomBindings??round.continuousGlobal?.classroom)?.nativeRowsSha256??'');
+  if(profile.lowerLoadEnvelope)checks.scopedTeacherReads=traffic?.lowerStaffReads?.passed===true
+    &&traffic.lowerStaffReads.ownSessionReads===6&&traffic.lowerStaffReads.foreignSessionDenials===6
+    &&traffic.lowerStaffReads.offered===12&&traffic.lowerStaffReads.sameApi===true&&traffic.lowerStaffReads.schoolIndex===0
+    &&/^[a-f0-9]{64}$/.test(traffic.lowerStaffReads.nativeProofSha256??'');
   if(profile.broaderCapacityGate&&round.reconnect)checks.exactLostReconnects=validateLostReconnectEvidence(extra,profile);
   if (profile.usage) {
     const usage=round.continuousGlobal?.usage??round;

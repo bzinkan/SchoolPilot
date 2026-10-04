@@ -24,6 +24,7 @@ import {runBoundaryPreparation} from './boundary-preparation.mjs';
 import {assertUsagePostVerificationReservation,verifyUsageClassroomAfterLoad} from './usage-post-verification.mjs';
 import { assertDistinctGeneratedBinding, verifyOriginalUsagePrerequisites, executeDistinctProfile, verifyDistinctCompletedRun } from './distinct-report-run.mjs';
 import { sanitizedDistinctOperationFailure } from './distinct-report-operation.mjs';
+import {assertLowerRun,lowerCreateArguments,assertLowerReservation,assertLowerPostRls,lowerPersistenceCustody} from './lower-load.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -32,6 +33,7 @@ const git = (directory, args) => execFileSync('git', ['-C', directory, ...args],
 
 export async function runV2(options) {
   const profile = profileFor(options.profile), output = resolve(options.outputDirectory), control = resolve(options.privateDirectory);
+  const lower=profile.lowerLoadEnvelope?assertLowerRun(options,profile):null;
   if(profile.preparationOnly)assert.equal(options.preparationSmoke,true,'Preparation-only profiles cannot be release runs');
   assert.match(options.source, /^[a-f0-9]{40}$/); assert.match(options.run, /^[a-f0-9]{12}$/);
   assert.match(options.endpoint, /^(?:npipe:\/{2,4}\.\/pipe\/[a-zA-Z0-9_.-]+|unix:\/\/\/[^\s?#]+)$/);
@@ -60,6 +62,7 @@ export async function runV2(options) {
   const reservationBytes=readFileSync(options.reservationFile);assert.equal(hash(reservationBytes),options.reservationSha256);
   const reservation=JSON.parse(reservationBytes);assert.equal(reservation.run,options.run);assert.equal(reservation.source,options.source);assert.equal(reservation.arm,options.arm);
   assert.equal(reservation.profile,profile.name);assert.equal(reservation.contractSha256,profileHash(profile));assert.equal(reservation.observedFlagsSha256,remapped.observedFlagsSha256);
+  if(lower)assertLowerReservation(reservation,lower);
   const requiredUsagePostVerification=assertUsagePostVerificationReservation(reservation,options,profile);
   const hostHarnessDirectory=resolve(dirname(fileURLToPath(import.meta.url)),'../../../..');
   let originalColdRunPrerequisites;
@@ -74,6 +77,7 @@ export async function runV2(options) {
     assert.equal(reservation.originalUsageCampaignContractSha256,options.originalUsageCampaign.contractSha256);
     assert.equal(reservation.originalUsageCampaignJournalSha256,options.originalUsageCampaign.journalSha256);
   }
+  if(lower){assert.equal(git(hostHarnessDirectory,['rev-parse','HEAD']),options.hostHarnessSource);assert.equal(git(hostHarnessDirectory,['status','--porcelain']),'');}
   if(requiredUsagePostVerification){
     assert.equal(options.preparationSmoke===true,false,'The cold Usage post-verification contract is not a preparation smoke');
     assert.equal(git(hostHarnessDirectory,['rev-parse','HEAD']),options.hostHarnessSource);assert.equal(git(hostHarnessDirectory,['status','--porcelain']),'');
@@ -95,6 +99,7 @@ export async function runV2(options) {
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
     operationalFixtureBootstrapRequired: true,
+    ...(lower?{lowerLoad:lower,hostHarnessSource:options.hostHarnessSource,lowerAuthorizedWindow:{startsAt:window.startsAt,expiresAt:window.expiresAt}}:{}),
     sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false,
     ...(options.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:options.usagePostVerificationContractSha256,hostHarnessSource:options.hostHarnessSource}:{}),
     ...(profile.distinctReports?{distinctReportRpc:true,originalColdRunPrerequisites,originalUsageCampaignBinding:{
@@ -102,6 +107,7 @@ export async function runV2(options) {
   const planFile = output + '.plan.json'; writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n', { flag: 'wx' }); const planSha256 = hash(readFileSync(planFile));
   const environment = { ...process.env }; for (const key of Object.keys(environment)) if (/^(?:DOCKER_|BUILDX_BUILDER$|NODE_OPTIONS$)/.test(key)) delete environment[key];
   const docker = async (args, { input, timeout = 120_000 } = {}) => {
+    if(lower)args=lowerCreateArguments(args,lower);
     try { const result = await execute(options.docker || 'docker', ['--host', options.endpoint, ...args], { env: environment, input, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 16 * 1024 ** 2 }); return result.stdout + (args[0] === 'logs' ? result.stderr : ''); }
     catch (error) { throw Object.assign(Error('V2_DOCKER_OPERATION_FAILED'), { privateDetail: String(error.stderr || '').slice(0, 4000) }); }
   };
@@ -129,8 +135,10 @@ export async function runV2(options) {
     let observer, fixture;
     const environmentFor = (role, index = 0) => roleEnvironment({ base: remapped.environment, source: options.source, run, appUrl: configuration.appUrl, adminUrl: configuration.adminUrl, profile, role, tables, secrets, clientCapabilities, arm, apiIndex: index });
     async function role(name, entryFile, cpu, memory, index = 0) {
+      const rolePreparation=lower&&name==='generator'?{...preparation,executedFiles:{...preparation.executedFiles,
+        'scripts/load/usage/release-gates-v2/blackbox-generator.mjs':lower.overlays.find(row=>row.name==='blackbox-generator.mjs').sha256}}:preparation;
       const owner = await ownRole({ docker: dockerInput, run, source: options.source, helperImage: options.helperImage, helperConfigDigest: options.helperConfigDigest,
-        helperContainerImage: binding.helperContainerImage, preparation, pgContainerId: configuration.pgContainerId, role: name, entryFile, environment: environmentFor(name, index), privateDirectory: control, outputDirectory: output, cpu, memory });
+        helperContainerImage: binding.helperContainerImage, preparation:rolePreparation, pgContainerId: configuration.pgContainerId, role: name, entryFile, environment: environmentFor(name, index), privateDirectory: control, outputDirectory: output, cpu, memory });
       owners.push(owner); return owner;
     }
     async function stop(owner) { const exit = await owner.shutdown(); exits.push(exit); await dockerInput(['rm', '--volumes', owner.id]); return exit; }
@@ -164,6 +172,7 @@ export async function runV2(options) {
       const generator = await role('generator', blackbox ? '/harness/blackbox-generator.mjs' : '/diagnostic/scripts/load/usage/release-enabled-generator.mjs', 2, 1024 ** 3);
       const generatorInitialization=await generator.rpc('initialize', { ...fixture, apiBases });
       if(profile.distinctReports)metrics.generatorInitialization=generatorInitialization;
+      if(lower)metrics.lowerStaffFixtureSha256=hash(readFileSync(join(control,'generator','request-1.json')));
       await pause(5500); // Keep the preflight's existing5s throttle out of measured ordinary offers.
       await Promise.all([...active.values()].map(owner => owner.rpc('quiesce')));
       if(profile.distinctReports){
@@ -217,7 +226,7 @@ export async function runV2(options) {
         const trafficPromise = generator.rpc('phase', { startsAtMs, offering: profile.offering, topology: stage, ingest: true, reports: profile.usage, lifecycle: !blackbox, reconnect: profile.kind === 'mixed' && index === 10 });
         const workerOperation=worker?(async()=>{while(Date.now()<startsAtMs)await pause(Math.max(1,startsAtMs-Date.now()));return runHeavyUsageWorkers(worker,fixture);})():Promise.resolve([]);
         const results=await Promise.allSettled([trafficPromise,workerOperation]);
-        if(options.usagePostVerificationContractSha256)retainCompletedGeneratorTraffic(results,metrics,(name,value)=>save(output,name,value));
+        if(options.usagePostVerificationContractSha256||lower)retainCompletedGeneratorTraffic(results,metrics,(name,value)=>save(output,name,value));
         const traffic=results[0].status==='fulfilled'?results[0].value:{failed:true,error:'GENERATOR_PHASE_FAILED'};
         const workers=results[1].status==='fulfilled'?results[1].value:[{correct:false,error:'WORKER_PHASE_FAILED'}];
         const windows = await Promise.all(windowPromises);
@@ -254,6 +263,7 @@ export async function runV2(options) {
         assert.ok(Date.now() < Date.parse(window.expiresAt), 'Declared quiet window expired during measured work');
       }
       canary.disable();
+      if(lower){metrics.postLowerRlsVerification=await observer.rpc('verify');save(output,'lower-post-rls-verification.json',metrics.postLowerRlsVerification);assertLowerPostRls(metrics.postLowerRlsVerification,metrics.databasePreparation);metrics.lowerPersistenceCustody=lowerPersistenceCustody(control);}
       if(profile.usage&&options.reportCostCases){
         metrics.reportCostDiagnostic=await observer.rpc('queryPlans',{source:options.source,schemaSha256:metrics.schemaSha256,profile:profile.name,cases:options.reportCostCases},120_000);
         assert.equal(metrics.reportCostDiagnostic.capacityAcceptance,false);save(output,'report-cost-diagnostic.json',metrics.reportCostDiagnostic);
@@ -275,9 +285,14 @@ export async function runV2(options) {
         metrics.wholeOwnedApiCpuMicroseconds=whole;metrics.cpuMsPer200=successful&&Number.isFinite(whole)?whole/1000/successful:null;
         metrics.wholeOwnedCpuIncludesFinalClassificationFlush=true;
       }
-      metrics.errorCoverage = owners.map(owner => ({ role:owner.role,
-        ...classifyLog(readFileSync(join(control,`${owner.role}-log.private`),'utf8'),'api',{complete:exits.find(exit => exit.containerId===owner.id)?.clean===true,expectedNegativeProbes:owner.role.startsWith('api')?runNegativeProbes(metrics):[]}) }));
-      const pgLog = await dockerInput(['logs',configuration.pgContainerId]); writeFileSync(join(control,'postgres-log.private'),pgLog,{flag:'wx',mode:0o600});
+      metrics.errorCoverage = owners.map(owner => {
+        let logs,complete=exits.find(exit=>exit.containerId===owner.id)?.clean===true;
+        try{logs=readFileSync(join(control,`${owner.role}-log.private`),'utf8');}catch(error){if(!lower)throw error;logs='';complete=false;metrics.lowerLogCustodyFailure=true;}
+        return{role:owner.role,...classifyLog(logs,'api',{complete,expectedNegativeProbes:owner.role.startsWith('api')?runNegativeProbes(metrics):[]})};
+      });
+      let pgLog;
+      try{pgLog=await dockerInput(['logs',configuration.pgContainerId]);}catch(error){if(!lower)throw error;pgLog='';metrics.lowerLogCustodyFailure=true;}
+      writeFileSync(join(control,'postgres-log.private'),pgLog,{flag:'wx',mode:0o600});
       metrics.errorCoverage.push(classifyLog(pgLog,'postgres',{complete:true}));
       metrics.expectedNegativeLogCoverage=negativeLogCoverage(metrics.errorCoverage,runNegativeProbes(metrics));
       const ids = (await dockerInput(['container', 'ls', '-a', '--filter', `label=codex.release297-v2=${run}`, '--no-trunc', '--format', '{{.ID}}'])).trim().split(/\r?\n/).filter(Boolean);
@@ -286,7 +301,9 @@ export async function runV2(options) {
         const actual = JSON.parse(await dockerInput(['inspect', id]))[0]; assert.equal(actual.Config.Labels['codex.release297-v2'], run); assert.equal(actual.Config.Labels['codex.release297-source'], options.source);
         assert.ok(id === redisId || actual.Image === binding.helperContainerImage);
         if (actual.State.Running) { await dockerInput(['stop','--time','10',id]); const stopped=JSON.parse(await dockerInput(['inspect',id]))[0].State;
-          if (id===redisId) metrics.redisCleanStop=stopped.ExitCode===0&&!stopped.OOMKilled&&!stopped.Running; }
+          if (id===redisId) metrics.redisCleanStop=stopped.ExitCode===0&&!stopped.OOMKilled&&!stopped.Running;
+          else if(lower){metrics.lowerRecoveredOwner=true;assert.equal(stopped.Running,false);}
+        }
         await dockerInput(['rm', '--volumes', id]);
       }
       const remaining = (await dockerInput(['container', 'ls', '-a', '--filter', `label=codex.release297-v2=${run}`, '--no-trunc', '--format', '{{.ID}}'])).trim().split(/\r?\n/).filter(Boolean);
@@ -318,7 +335,7 @@ export async function runV2(options) {
   finally {
     if (existsSync(output)) {
       metrics.sourceUnchanged = git(options.sourceDirectory, ['rev-parse', 'HEAD']) === options.source && git(options.sourceDirectory, ['status', '--porcelain']) === '';
-      if(options.usagePostVerificationContractSha256)metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===options.hostHarnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
+      if(options.usagePostVerificationContractSha256||lower)metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===options.hostHarnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
       const pgCleanup = ['postgres-cleanup.json', 'cleanup.json'].map(name => join(output, name)).find(existsSync);
       metrics.cleanupPassed = metrics.roleCleanup?.cleanupPassed === true && pgCleanup && read(pgCleanup).cleanupPassed === true;
       metrics.diagnosticCompleted = !failure && profile.kind === 'diagnostic' && metrics.rounds.length === 1 && metrics.cleanupPassed===true && metrics.sourceUnchanged;
@@ -337,6 +354,10 @@ export async function runV2(options) {
         if(metrics.runPassed)try{metrics.distinctNativeCustody=verifyDistinctCompletedRun(output,control,metrics);}
         catch(error){metrics.runPassed=false;failure=sanitizedDistinctOperationFailure(error).code;}
       }
+      if(lower)metrics.runPassed&&=metrics.postLowerRlsVerification?.passed===true&&metrics.hostHarnessSourceUnchanged===true
+        &&metrics.lowerLogCustodyFailure!==true&&metrics.lowerRecoveredOwner!==true
+        &&Date.now()<Date.parse(window.expiresAt)
+        &&JSON.stringify(metrics.roleCleanup?.exits.map(row=>row.role).sort())===JSON.stringify(['api0','generator','observer','seeder']);
       metrics.failure = failure ?? null; metrics.finishedAt = new Date().toISOString();
       if (metrics.rounds.length) { metrics.cpuMsPer200 ??= metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }
       save(output, 'metrics.json', metrics);

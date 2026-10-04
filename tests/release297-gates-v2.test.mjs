@@ -11,3 +11,4 @@ import '../scripts/load/usage/release-gates-v2/distinct-reports.test.mjs';
 import '../scripts/load/usage/release-gates-v2/distinct-report-operation.test.mjs';
 import '../scripts/load/usage/release-gates-v2/distinct-report-rpc.test.mjs';
 import '../scripts/load/usage/release-gates-v2/distinct-report-integration.test.mjs';
+import '../scripts/load/usage/release-gates-v2/lower-load.test.mjs';
