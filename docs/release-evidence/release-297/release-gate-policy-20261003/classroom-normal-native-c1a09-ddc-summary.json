@@ -1,0 +1,117 @@
+{
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "harnessSource": "c1a09d3e20e1d6042f927ee725721d814f1afa7d",
+  "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "helperImage": "sha256:cb189f6378ee8468520efec38ab00cee93601432ea8e0be220542b8a88129fbf",
+  "profile": "release297-classroom-normal-34-native-v3",
+  "profileSha256": "85a3e14fb421687ec47ffa8c1c378d16763b407456078bc2c2fcc19c9e1ff0a7",
+  "run": "bd480fa2d6be",
+  "startedAt": "2026-10-04T08:03:43.495Z",
+  "finishedAt": "2026-10-04T08:05:31.296Z",
+  "runPassed": true,
+  "cleanupPassed": true,
+  "sourceUnchanged": true,
+  "receiptManifestSha256": "6e6c13cb32cbaa74ef2e0bdca2fc4c8eb6e9a5a63fd9b954c82e6f6698fc2873",
+  "closureSha256": "2e429c88de19d31ae6ac69980d583e30b3416509eb50d52b8b3a57235296fa79",
+  "nativeOracle": {
+    "passed": true,
+    "declaredSchoolIndices": [
+      0,
+      1
+    ],
+    "repetitions": 1,
+    "observedCommands": 8,
+    "expectedCommands": 8,
+    "observedMessages": 4,
+    "expectedMessages": 4,
+    "commandTargetsChecked": 8,
+    "privateBindingsChecked": 4,
+    "attemptedExpiredMessages": 2,
+    "unattemptedExpiredMessages": 0,
+    "exactRecipientOnly": true,
+    "nativeRowsSha256": "bb85c42eb772de1c07df24f297ded503dd7014e7db634a349546e2b06378b8a3"
+  },
+  "traffic": {
+    "offered": 2040,
+    "succeeded": 2040,
+    "failed": 0,
+    "refused": 0,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 6.014763999999559,
+    "outstandingAfterDrain": 0,
+    "persisted": 2040,
+    "invalidBindings": 0,
+    "p95Ms": 179.87427299999945,
+    "wholeWindowApiCpuMeanPercent": 55.38603166666667
+  },
+  "checks": {
+    "actualProfile": true,
+    "offering": true,
+    "reconnect": true,
+    "persistence": true,
+    "declaredStartAlignment": true,
+    "capabilityAcknowledgements": true,
+    "targetCounts": true,
+    "declaredDistribution": true,
+    "drains": true,
+    "cpuBound": true,
+    "latency": true,
+    "classroom": true,
+    "database": true,
+    "nativeClassroomBindings": true
+  },
+  "errorCoverage": [
+    {
+      "role": "generator",
+      "complete": true,
+      "available": true,
+      "errorCount": 0
+    },
+    {
+      "role": "api0",
+      "complete": true,
+      "available": true,
+      "errorCount": 0
+    },
+    {
+      "role": "observer",
+      "complete": true,
+      "available": true,
+      "errorCount": 0
+    },
+    {
+      "role": "seeder",
+      "complete": true,
+      "available": true,
+      "errorCount": 0
+    },
+    {
+      "role": "postgres",
+      "complete": true,
+      "available": true,
+      "errorCount": 0
+    }
+  ],
+  "intentionalNegativeCoverage": true,
+  "operationalFixture": {
+    "sourceSchemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+    "canonicalSourceSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+    "beforeDumpSha256": "f0bb3d191ccc4d40961b4c357acb70e6e8a08fad4dce5ca1237ae7aa7105babc",
+    "beforeCanonicalSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+    "afterDumpSha256": "7e1f63e58e27b7eb166680b421dc5bbed619e935b3ef2e094d6ea526a3ea48b9",
+    "afterCanonicalSha256": "e893e43039298aa691efbad29302189836694f257dfd492ecdc4c0b97b4d9920",
+    "migrationInventoryChanged": false,
+    "tenantRlsInventoryChanged": false,
+    "healthMonitorExecuted": false
+  },
+  "usageModes": "off",
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "actualServiceHealthClaimed": false,
+  "liveValidation": false,
+  "limitations": [
+    "Synthetic single API34/s classroom check; does not substitute for three900-second current-school runs.",
+    "Independent actual raw message/outbox/thread rows verified and byte-bound; no previous failed run was relabeled.",
+    "Strict baseline nonregression comparisons remain a separate unaccepted gate."
+  ]
+}

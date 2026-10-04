@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "dated-public-store-version-observation",
+  "recordedAt": "2026-10-04T09:06:05.8859903+00:00",
+  "observedDate": "2026-10-04",
+  "url": "https://chromewebstore.google.com/detail/classpilot/iggbfegfcjkfieoemeolfmfnapepalca",
+  "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
+  "publicVersion": "2.9.6",
+  "publicUpdatedDate": "2026-09-27",
+  "verification": "Read the official public Chrome Web Store listing through web open",
+  "pendingSubmissionsVerified": false,
+  "developerDashboardRead": false,
+  "uploaded": false,
+  "submitted": false,
+  "published": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Public version is a dated observation; repeat immediately before any separately authorized upload",
+    "Public listing does not establish pending submissions or installed client versions",
+    "ClassPilot2.9.7 submission remains held while release acceptance and operational gates are incomplete"
+  ]
+}

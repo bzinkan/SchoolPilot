@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "kind": "exact-review-head-ci-and-package-checkpoint",
+  "observedAt": "2026-10-04T07:30:49.926Z",
+  "evidenceReceiptSha256": "cfb514a644055dff3e5409ccd953665d0e1b00635aafdfaf58c230c101f9d10b",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "schoolPilot": {
+    "head": "a39b2d41bf585c7ee67d696775c9765c5c62dcb9",
+    "state": "OPEN",
+    "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
+    "allReportedChecksSuccess": true,
+    "successfulChecks": 20,
+    "reportedChecks": 20,
+    "draft": true,
+    "workflowsComplete": true,
+    "base": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04"
+  },
+  "classPilot": {
+    "head": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "state": "OPEN",
+    "url": "https://github.com/bzinkan/ClassPilot/pull/123",
+    "allReportedChecksSuccess": true,
+    "successfulChecks": 10,
+    "reportedChecks": 10,
+    "draft": true,
+    "workflowsComplete": true,
+    "base": "55bb531cb5f130cebec9d994daa957e82e87a13b"
+  },
+  "applicationEquivalence": [
+    {
+      "path": "src",
+      "applicationGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "reviewGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "package.json",
+      "applicationGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "reviewGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "package-lock.json",
+      "applicationGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "reviewGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "Dockerfile",
+      "applicationGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "reviewGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": ".dockerignore",
+      "applicationGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "reviewGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "tsconfig.json",
+      "applicationGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "reviewGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "drizzle.config.ts",
+      "applicationGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "reviewGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "migrations",
+      "applicationGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "reviewGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "schoolpilot-app",
+      "applicationGitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "reviewGitObject": "b182c7eb835dc771f4952a42821846acc1875fe8",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [
+        "schoolpilot-app/scripts/passpilot-reports-v2-browser.test.mjs"
+      ]
+    },
+    {
+      "path": "infra",
+      "applicationGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "reviewGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    },
+    {
+      "path": "docs/soc2",
+      "applicationGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "reviewGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": []
+    }
+  ],
+  "classPilotPackageBinding": {
+    "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "packagedSourceAncestorOfHead": true,
+    "extensionTree": {
+      "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+      "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+    },
+    "documentationOnlyDiff": [
+      "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+      "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+    ],
+    "zip": {
+      "path": "C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip",
+      "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+      "bytes": 376052,
+      "rebuildPerformed": false
+    }
+  },
+  "namedNativeRegressionsAccepted": true,
+  "allRequiredRemoteChecksPassed": true,
+  "mergePerformed": false,
+  "deployed": false,
+  "capacityAccepted": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Exact reported review-head checks and preserved complete log evidence; not resulting-main CI or release approval",
+    "SchoolPilot application/build inputs remain ddc5996b; frontend cancellation correction affects test script only",
+    "Current-school/classroom capacity, fresh production catalog/health/headroom/backups/window and authorized operations remain separate gates"
+  ]
+}

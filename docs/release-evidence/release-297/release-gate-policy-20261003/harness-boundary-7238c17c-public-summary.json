@@ -1,0 +1,48 @@
+{
+  "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "preparationOnly": true,
+  "capacityAcceptance": false,
+  "pureTests": {
+    "passed": 81,
+    "failed": 0,
+    "skipped": 0,
+    "logSha256": "0bc3a87da943e4202b78775fba7b8c7501746ba10b37d41ac8bae61f08296124"
+  },
+  "generatedWrapper": {
+    "proofSha256": "a31e27dddafcb43b8aab31a8374e3cb4563e063ea40ca5c17dee3f55546e45bb",
+    "oldHarness": "c1a09d3e20e1d6042f927ee725721d814f1afa7d",
+    "oldPatchSha256": "0fca0e84caf64925fc0b13c456b5296b43f921b6881ef6d6b762aae53ceb7aae",
+    "newPatchSha256": "0dd78af22ed140d06b4a4ec4a2706368ad9279e6d4763f846507b4644e7fc1fc",
+    "canonicalGeneratorSha256": "7556ccda91225eee0c08e31474ba85655c4947b07e4aeae304f03b9a6dd0f660",
+    "oldRedExit": 1,
+    "redLogSha256": "aa5f3b39aeb07312d5afda79955ed4c5e0110e806e4243452a66ce9cead6743a",
+    "nominalOffsetMs": 600000,
+    "simulatedWallOffsetMs": 599999,
+    "oldObserved": {
+      "targetIndex": 0,
+      "calls": 1,
+      "endpoint": "api0"
+    },
+    "newObserved": {
+      "targetIndex": 1,
+      "calls": 1,
+      "endpoint": "api1"
+    }
+  },
+  "correctedGuards": [
+    "Exact declared offset reaches generated heartbeat wrapper",
+    "Separate133reconnects preserve exact survivor distribution",
+    "Actual ingress ownership count required before API0 drain",
+    "Physical shutdown required before reconnect epoch",
+    "Independent mixed closure rejects missing or late handoff",
+    "Failed topology preserves settled traffic",
+    "Short native profile remains preparation-only"
+  ],
+  "retainedAdapterFailure": {
+    "driverSha256": "e6faa2f3e4d14c1676ca698220a982a6e475442004b378f5bb0a3d826ddffd3e",
+    "logSha256": "066282e781657145c9d269748e60125e4207e2479faf96d5cf58b41aad204479"
+  },
+  "limitation": "This generated-wrapper red/green proves exact routing under a declared boundary; the earlier run has no per-offer actual timestamp and does not establish the precise clock cause.",
+  "nativeEvidence": false
+}

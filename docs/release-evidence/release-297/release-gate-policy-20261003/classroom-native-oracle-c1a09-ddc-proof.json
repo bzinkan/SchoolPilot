@@ -1,0 +1,93 @@
+{
+  "startedAt": "2026-10-04T07:57:48.847Z",
+  "completedAt": "2026-10-04T07:58:44.602Z",
+  "withinAuthorizedWindow": true,
+  "planSha256": "72f9e34de095b6f68cb1f1613b932af69ad06ee01bbd478375764a28da54ceb0",
+  "passed": true,
+  "failure": null,
+  "proof": {
+    "passed": true,
+    "preparationOnly": true,
+    "capacityAcceptance": false,
+    "liveValidation": false,
+    "actualServiceHealthClaimed": false,
+    "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+    "harnessSource": "c1a09d3e20e1d6042f927ee725721d814f1afa7d",
+    "profile": "release297-classroom-normal-34-native-v3",
+    "run": "5684d399244f",
+    "receiptManifestSha256": "ec6ff1968c29a7274b69f0ee20dfd8f0c14c77d148143745b4c31925798857da",
+    "closureSha256": "f99d93f3220243b956329af99a5c61be8618e10e1dad5bdb78e299f46b5d2ce1",
+    "nativeRowsSha256": "2867820dc67952cc892aa322a27f7de852acf91150e8ca6c1502bee98df0a484",
+    "oldOracleSha256": "8790f8d42e6d789e00f57392286ede5acd2ea919c04aef738a0e5bf058fb7267",
+    "oldOracleRejected": "CLASSROOM_ORACLE_MESSAGE_TARGET_BINDING",
+    "newOracle": {
+      "passed": true,
+      "declaredSchoolIndices": [
+        0,
+        1
+      ],
+      "repetitions": 1,
+      "observedCommands": 8,
+      "expectedCommands": 8,
+      "observedMessages": 4,
+      "expectedMessages": 4,
+      "commandTargetsChecked": 8,
+      "privateBindingsChecked": 4,
+      "attemptedExpiredMessages": 2,
+      "unattemptedExpiredMessages": 0,
+      "exactRecipientOnly": true
+    },
+    "rejected": [
+      {
+        "label": "wrong-school",
+        "code": "CLASSROOM_ORACLE_DELIVERY_PARENT",
+        "rejected": true
+      },
+      {
+        "label": "wrong-student",
+        "code": "CLASSROOM_ORACLE_DELIVERY_PARENT",
+        "rejected": true
+      },
+      {
+        "label": "wrong-session",
+        "code": "CLASSROOM_ORACLE_MESSAGE_TARGET_BINDING",
+        "rejected": true
+      },
+      {
+        "label": "wrong-device",
+        "code": "CLASSROOM_ORACLE_MESSAGE_TARGET_BINDING",
+        "rejected": true
+      },
+      {
+        "label": "missing-delivery",
+        "code": "CLASSROOM_ORACLE_DELIVERY_CARDINALITY",
+        "rejected": true
+      },
+      {
+        "label": "duplicate-delivery",
+        "code": "CLASSROOM_ORACLE_DELIVERY_CARDINALITY",
+        "rejected": true
+      },
+      {
+        "label": "future-generation",
+        "code": "CLASSROOM_ORACLE_LIFECYCLE_FENCE",
+        "rejected": true
+      },
+      {
+        "label": "unattempted-invented-binding",
+        "code": "CLASSROOM_ORACLE_MESSAGE_TARGET_BINDING",
+        "rejected": true
+      }
+    ],
+    "legitimateUnattemptedProjection": {
+      "syntheticMutationOfProducedRows": true,
+      "passed": true,
+      "count": 1
+    },
+    "cleanupPassed": true
+  },
+  "smokePassed": true,
+  "cleanupPassed": true,
+  "preparationOnly": true,
+  "capacityAcceptance": false
+}

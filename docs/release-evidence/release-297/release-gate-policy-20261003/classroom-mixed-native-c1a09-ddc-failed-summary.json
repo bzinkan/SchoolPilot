@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "harnessSource": "c1a09d3e20e1d6042f927ee725721d814f1afa7d",
+  "helperImage": "sha256:cb189f6378ee8468520efec38ab00cee93601432ea8e0be220542b8a88129fbf",
+  "run": "9177f9901ec6",
+  "profile": "release297-classroom-133-1-3-2-native-v3",
+  "profileSha256": "93230128f74469bc58c952f578a5dc0cda394b14ea986b708d7bac2ad15a7cd2",
+  "startedAt": "2026-10-04T08:06:32.296Z",
+  "finishedAt": "2026-10-04T08:22:24.964Z",
+  "overallPassed": false,
+  "acceptedAttempts": 0,
+  "remainingAttemptsHeld": 2,
+  "runPassed": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "receiptManifestSha256": "7cc7dd96df1aff5e700d92f17f859a28f1632d5566cc8bdb192ff7e747c81149",
+  "metricsSha256": "9facf22a947fb51158752190dac3bfb698d7851a76f7f0eb852c836108a4cf5e",
+  "dispositionSha256": "66c1c91dde2a6f63d6679e304580ed8b43ddb2ae196feb762298894af31245e2",
+  "passedMinuteChecks": 14,
+  "totalMinutes": 15,
+  "failures": [
+    {
+      "minuteIndex": 10,
+      "check": "declaredDistribution"
+    }
+  ],
+  "lossMinuteDistribution": {
+    "expected": {
+      "1": 402,
+      "2": 396
+    },
+    "actual": {
+      "0": 1,
+      "1": 401,
+      "2": 396
+    }
+  },
+  "ordinary": {
+    "offered": 11970,
+    "succeeded": 11970,
+    "statusHistogram": {
+      "200": 11970
+    },
+    "failed": 0,
+    "lateOffers": 0,
+    "refusedAtInFlightLimit": 0,
+    "outstandingAfterDrain": 0
+  },
+  "reconnect": {
+    "offered": 133,
+    "succeeded": 133,
+    "statusHistogram": {
+      "200": 133
+    },
+    "failed": 0,
+    "targetHistogram": {
+      "1": 67,
+      "2": 66
+    }
+  },
+  "independentlyPersisted": 12103,
+  "acknowledged200": 12103,
+  "exactBindingPersistence": true,
+  "nativeClassroom": {
+    "passed": true,
+    "commands": 60,
+    "messages": 30,
+    "exactRecipientOnly": true,
+    "nativeRowsSha256": "50cddb8b66ead45c0de5558a61cfced576abf0c83591141819e779dfe5424bcf"
+  },
+  "completeErrorCoverage": true,
+  "expectedNegativeLogCoverage": true,
+  "cleanupPassed": true,
+  "sourceUnchanged": true,
+  "interpretation": "The declared loss minute routed one ordinary offer to API0. The prior generator used a live wall clock for routing while minute membership used nominal offsets. The exact individual clock/dispatch cause is inferred; that receipt lacks per-offer actual dispatch timestamps. The failed campaign remains failed and no host-noise attribution or retrospective acceptance is made.",
+  "nextEvidence": "A newly bound helper must pass the named short physical boundary preparation proof before a new three-run classroom campaign."
+}
