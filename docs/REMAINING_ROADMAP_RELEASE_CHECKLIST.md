@@ -7,6 +7,8 @@ and waived the two-Chromebook prerequisite in favor of documented live validatio
 The 2.10.0 package and managed-device requirements below describe the earlier
 candidate; retain them as history, not current execution instructions.
 
+The [October 4 preparation checkpoint](RELEASE_297_DEPLOY_READINESS.md#october-4-preparation-update) records three final-source 133-client headroom passes, retained higher-load failures, separate Usage acceptance and pending operational gates. No deployment or activation is recorded.
+
 Status: preparation only, scope dated 2026-09-30; final local evidence through
 2026-10-01 UTC. No deployment, activation, Store upload,
 paid service creation or legacy resource deletion is authorized by this document.

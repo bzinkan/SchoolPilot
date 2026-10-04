@@ -1,0 +1,41 @@
+{
+  "sourceCommit": "dd1f6666fedd02df36d5cd192a8ef0fdf416d2bb",
+  "runtimeVersion": "v22.18.0",
+  "command": [
+    "node",
+    "--test",
+    "--test-timeout=20000",
+    "tests/release297-gates-v2.test.mjs",
+    "tests/release297-report-cost.test.mjs",
+    "tests/release297-compatible-fallback-inactive.test.mjs"
+  ],
+  "perFileTimeoutMs": 20000,
+  "outerBoundSeconds": 25,
+  "startedAtUtc": "2026-10-04T15:50:58.9260442+00:00",
+  "endedAtUtc": "2026-10-04T15:51:17.6368856+00:00",
+  "exitCode": 0,
+  "forcedTermination": false,
+  "ownedProcessIds": [
+    36052,
+    41396,
+    84060
+  ],
+  "remainingOwnedProcessIds": [],
+  "exactOwnedProcessesAbsent": true,
+  "tapSha256": "d70661bb87fb05fd398e1ef5ade5622cd0b7fcbf0978e311f56bcc883477adeb",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "summary": [
+    "# tests 181",
+    "# suites 0",
+    "# pass 181",
+    "# fail 0",
+    "# cancelled 0",
+    "# skipped 0",
+    "# todo 0",
+    "# duration_ms 17559.0601"
+  ],
+  "nativeDatabaseExecuted": false,
+  "cloudCommands": 0,
+  "capacityAccepted": false,
+  "workingTreeDifferences": "documentation and retained public evidence only"
+}

@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "kind": "production-catalog-inspection-original-failure-and-correction-preparation",
+  "operationPlanSha256": "90304b10360df6cc8d01b60cb1ccc9bcb29776e17d211d23243b14e741ea0d32",
+  "approvalSha256": "7c3ab05893ecf0bfc478411666a5f81d822a70d55661cb40cd9f77b758fa5412",
+  "failedReceiptSha256": "0ea6037dd03e01145a9a12e2be16bc6948d7e4529a5b457d888503d86cba2d74",
+  "originalWrapperSha256": "ace7cc42886839b870b7b2a31ce7f50443e6e11cfd44fddad9818bf9264701e0",
+  "originalBundleSha256": "03d8a6207187138f0497da52bd3674a89de9551d70132db8414cf3a8fc937f25",
+  "inspectorSqlSourceSha256": "0d6d94ced775f780b4d47d0437f374842d303c5c71aff580eabe48c5731cae5a",
+  "observedOperation": {
+    "status": "failed_before_database_task_launch",
+    "exitCode": 1,
+    "ownedDefinitionRegistered": true,
+    "ownedDefinitionDeregistered": true,
+    "ownedDefinitionObservedInactive": true,
+    "taskArnRecorded": false,
+    "taskStoppedReceiptFlag": false,
+    "ownedListedRunningTaskCount": 0,
+    "databaseQueriesObserved": 0,
+    "databaseWrites": 0,
+    "servingServicesUpdated": 0,
+    "taskExitOrOomEvidence": "not_applicable_no_task_launched",
+    "forcedTaskStopObserved": false
+  },
+  "diagnosis": {
+    "basis": "source_and_post_failure_tagged_capture_with_exact_red_green_replay",
+    "actualTaggedCaptureSha256": "eac5c249c609bbdfc9bc027c3cd859ac3019d9baa82c30f0db87c3e75e113abb",
+    "ownedTaskListSha256": "97c8df30bd5dee0cd66a3c74327d2ca398bcabc8e81afe0293ecf467e8a617d8",
+    "sameExactUniqueEnvironmentBindings": 4,
+    "onlyCapturedRequestDifference": "environment array order",
+    "exactOwnershipTagCount": 1,
+    "allOtherRequestedFieldsEqual": true,
+    "providerAddedDefaults": 0,
+    "initialUntaggedCaptureDoesNotEstablishMissingTags": true,
+    "originalPrelaunchDescribePayloadNotSeparatelyRetained": true,
+    "currentSqlReadOnlyTransactionFlags": "source_bound_but_not_executed",
+    "databaseRuntimeCredentialIdentity": "not_observed"
+  },
+  "productionChecks": {
+    "catalogVerified": false,
+    "actualLedgerVerified": false,
+    "actualRlsAdmissionVerified": false,
+    "deSalesUniqueSchoolAndEligibilityVerified": false,
+    "healthSentinelLayoutAndAclVerified": false,
+    "screenshotFunctionBodyAndAclVerified": false,
+    "metadataNotRestorableSchemaExport": true
+  },
+  "expectedAdmissionPreparation": [
+    {
+      "argument": "passpilot_destination_policies,passpilot_pass_limits,passpilot_encounter_restrictions,passpilot_pass_denials",
+      "resultingCount": 125,
+      "actualMissingOrPresent": "unverified",
+      "order": 1
+    },
+    {
+      "argument": "classpilot_usage_rollups",
+      "resultingCount": 126,
+      "actualMissingOrPresent": "unverified",
+      "order": 2
+    },
+    {
+      "argument": "classpilot_usage_rollup_days",
+      "resultingCount": 127,
+      "actualMissingOrPresent": "unverified",
+      "order": 3
+    },
+    {
+      "argument": "passpilot_appointments",
+      "resultingCount": 128,
+      "actualMissingOrPresent": "unverified",
+      "order": 4
+    },
+    {
+      "argument": "classpilot_private_chat_threads",
+      "resultingCount": 129,
+      "actualMissingOrPresent": "unverified",
+      "order": 5
+    }
+  ],
+  "newPreparation": {
+    "bundle": "C:/Users/zinka/.codex/artifacts/release297-production-metadata-inspector-03-durable-01/bundle.json",
+    "bundleSha256": "69f7e77500d94ce2a36dec8fd82bcf8a698db2547790906b281ce20a85adf392",
+    "wrapperSha256": "af59212299e2bd16e9b62cc1ef94274d9c93dd9d5a3cc62837008d5c210c78cc",
+    "sqlSourceUnchanged": true,
+    "resourcesPoolsAndDeadlinesUnchanged": true,
+    "tagsOtherFieldsAndArraysStrict": true,
+    "newFunctionChecks": 15,
+    "checksPassed": 15,
+    "independentProofSha256": "befc561fd8aac3f704f539adf14f7acd216ca13cd9fde5e92f29f29b3ca12eac",
+    "newPlanAndExactExecutionApprovalRequired": true,
+    "productionRetryExecutedByWriter": false
+  },
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "schoolIdentifiersIncluded": false,
+  "credentialValuesIncluded": false
+}

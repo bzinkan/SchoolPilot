@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent-retained-primary-combined-pure-review",
+  "reviewedAtUtc": "2026-10-04T15:56:36.3631965+00:00",
+  "sourceCommit": "dd1f6666fedd02df36d5cd192a8ef0fdf416d2bb",
+  "passed": true,
+  "receiptSha256": "4e42271e19551be952dd0b0c310fefbbc4c3f8b3c38f11f0a9ebed7383f86b27",
+  "tapSha256": "d70661bb87fb05fd398e1ef5ade5622cd0b7fcbf0978e311f56bcc883477adeb",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "tests": 181,
+  "uniqueSubtestNames": 181,
+  "uniquePassedNames": 181,
+  "fail": 0,
+  "cancel": 0,
+  "skip": 0,
+  "todo": 0,
+  "configuredPerFileTimeoutMs": 20000,
+  "reportedDurationMs": 17559.0601,
+  "outerBoundSeconds": 25,
+  "retainedOwnedProcessIds": [
+    36052,
+    41396,
+    84060
+  ],
+  "retainedOwnedProcessesAbsent": true,
+  "unforced": true,
+  "sourceRecords": [
+    {
+      "path": "tests/release297-gates-v2.test.mjs",
+      "workingSha256": "ea2c6e37d71eeb37a9bc7ace02b95aad6daa8fdd2ba19f2be48580333004a77a",
+      "gitBlob": "8ad446a6fe55e8c09331a81e32d546f8999e9324"
+    },
+    {
+      "path": "tests/release297-report-cost.test.mjs",
+      "workingSha256": "c1df1b6531de9abfe0aaa8d6ac4966aa72c17979038cbd157459489493a1dbad",
+      "gitBlob": "f84a373e1c85c907feb9eef4e4ac52b933c8263f"
+    },
+    {
+      "path": "tests/release297-compatible-fallback-inactive.test.mjs",
+      "workingSha256": "2e2691c7a3ac6128c4d58946b6bb8e57e9c948b08196916b658ae28f42acdddb",
+      "gitBlob": "aff16f9fc5708d3113fa7568cadbd6a7e65392d9"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/run.mjs",
+      "workingSha256": "4670404f2b44f4055a7a15fb07527521531fd676fd051ba545651e66820353cd",
+      "gitBlob": "ed2466d963b601076f12f071ffb011975acfcbde"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/receipts.mjs",
+      "workingSha256": "a0c8ca0e08af338e74f1638166d28c96bd8c0fbf0d0cdbfb1fb4e3b9fa77553d",
+      "gitBlob": "2b4c138e35a3db20fd7e543f9e014f74482a4c3a"
+    }
+  ],
+  "applicationPackageBuildWorkflowFrontendInfraInputsEqualB5": true,
+  "applicationRuntimeEqualDdc": true,
+  "workingChangesDocumentationOnly": true,
+  "limitations": [
+    "Retained pure host/component tests only; no new test invocation by reviewer",
+    "All181 passed names are unique; this is not full native/remote CI, capacity, deployment or Usage acceptance",
+    "Source equality with final application is separate from historical evidence"
+  ],
+  "reviewerTestsExecuted": 0,
+  "reviewerNativeActions": 0,
+  "reviewerCloudActions": 0,
+  "capacityAccepted": false,
+  "productionReadiness": false
+}

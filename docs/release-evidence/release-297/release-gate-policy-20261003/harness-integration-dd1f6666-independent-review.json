@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "reviewedAtUtc": "2026-10-04T15:38:33.2623841+00:00",
+  "repositoryHead": "dd1f6666fedd02df36d5cd192a8ef0fdf416d2bb",
+  "reviewKind": "independent-static-host-integration",
+  "result": "no-actionable-findings",
+  "members": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/run.mjs",
+      "workingSha256": "4670404f2b44f4055a7a15fb07527521531fd676fd051ba545651e66820353cd",
+      "gitBlob": "ed2466d963b601076f12f071ffb011975acfcbde"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/receipts.mjs",
+      "workingSha256": "a0c8ca0e08af338e74f1638166d28c96bd8c0fbf0d0cdbfb1fb4e3b9fa77553d",
+      "gitBlob": "2b4c138e35a3db20fd7e543f9e014f74482a4c3a"
+    },
+    {
+      "path": "tests/release297-gates-v2.test.mjs",
+      "workingSha256": "ea2c6e37d71eeb37a9bc7ace02b95aad6daa8fdd2ba19f2be48580333004a77a",
+      "gitBlob": "8ad446a6fe55e8c09331a81e32d546f8999e9324"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/contracts.mjs",
+      "workingSha256": "8494ddeef5c66f1f8ec462027738e2f252650114ac9d760473f360a8f3c644b6",
+      "gitBlob": "9b43248fa8c888561eab3e6e25440f266e5c38d5"
+    }
+  ],
+  "checks": {
+    "applicationInputsEqualB5": true,
+    "applicationRuntimeEqualDdc": true,
+    "ddcFullFrontendDifference": "Previously reviewed test-only export-cancellation strengthening; product input equality remains separate",
+    "lowerModulesAndValidationEqualAaf": true,
+    "distinctModulesEqualB5": true,
+    "singleApiBasesDeclaration": true,
+    "generatorInitializationRetained": true,
+    "lowerStaffFixtureCustodyRetained": true,
+    "distinctColdPrerequisitesRetained": true,
+    "distinctEightRoleLogAndNativeCustodyRetained": true,
+    "lowerNativeTeacherEmfFatalReplayRetained": true,
+    "separateLiteralProfilesRetained": true,
+    "legacyOriginalUsageProfileUnchanged": true,
+    "aggregateImportsUnique": true,
+    "aggregateImportCount": 13
+  },
+  "limitations": [
+    "Static review only; no local tests, syntax execution, build, native or cloud operations",
+    "Final merged-source pure suite and exact-head remote CI remain pending",
+    "Current primary documentation changes are owned separately by root",
+    "No comparison-policy acceptance, capacity selection, deployment, Store or Usage activation claim"
+  ]
+}

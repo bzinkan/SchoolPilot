@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "observedAtUtc": "2026-10-04T15:16:49.438Z",
+  "purpose": "Bounded read-only preparation metadata; not deployment approval",
+  "cloudMutationsPerformed": 0,
+  "productionDatabaseConnections": 0,
+  "database": {
+    "identifier": "schoolpilot-production-db",
+    "status": "available",
+    "class": "db.t4g.medium",
+    "engine": "postgres",
+    "engineVersion": "16.4",
+    "allocatedStorageGiB": 100,
+    "storageType": "gp3",
+    "backupRetentionDays": 14,
+    "latestRestorableTime": "2026-10-04T15:11:57+00:00",
+    "latestRestorableAgeSeconds": 292.438,
+    "deletionProtection": true,
+    "multiAZ": false,
+    "pendingModifiedFields": []
+  },
+  "metricsWindow": {
+    "startUtc": "2026-10-04T14:15:00.000Z",
+    "endUtc": "2026-10-04T15:15:00.000Z",
+    "periodSeconds": 300,
+    "statistic": "Average",
+    "alignedToCompletedFiveMinutePeriods": true
+  },
+  "metrics": [
+    {
+      "id": "m0",
+      "label": "schoolpilot-production-api/CPUUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 1.0740945061047873,
+      "maximum": 1.7663609902064006,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 1.3882914662361145
+      },
+      "messages": []
+    },
+    {
+      "id": "m1",
+      "label": "schoolpilot-production-api/MemoryUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 12.939453125,
+      "maximum": 12.941080729166668,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 12.939453125
+      },
+      "messages": []
+    },
+    {
+      "id": "m2",
+      "label": "schoolpilot-production-scheduler-worker/CPUUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.04793467605486513,
+      "maximum": 0.34512898751224086,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 0.05317870198438566
+      },
+      "messages": []
+    },
+    {
+      "id": "m3",
+      "label": "schoolpilot-production-scheduler-worker/MemoryUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 15.556640625,
+      "maximum": 15.625,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 15.625
+      },
+      "messages": []
+    },
+    {
+      "id": "m4",
+      "label": "schoolpilot-production-db/CPUUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 4.391699256415573,
+      "maximum": 5.244476095285689,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 4.401223284422723
+      },
+      "messages": []
+    },
+    {
+      "id": "m5",
+      "label": "schoolpilot-production-db/FreeableMemory",
+      "unit": "Bytes",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 2030519091.2,
+      "maximum": 2036821196.8,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 2031522611.2
+      },
+      "messages": []
+    },
+    {
+      "id": "m6",
+      "label": "schoolpilot-production-db/DatabaseConnections",
+      "unit": "Count",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 16,
+      "maximum": 16.2,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 16
+      },
+      "messages": []
+    },
+    {
+      "id": "m7",
+      "label": "schoolpilot-production-db/FreeStorageSpace",
+      "unit": "Bytes",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 97583013888,
+      "maximum": 97586991923.2,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 97586862489.6
+      },
+      "messages": []
+    },
+    {
+      "id": "m8",
+      "label": "schoolpilot-production-db/ReadLatency",
+      "unit": "Seconds",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0,
+      "maximum": 0.0004,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 0
+      },
+      "messages": []
+    },
+    {
+      "id": "m9",
+      "label": "schoolpilot-production-db/WriteLatency",
+      "unit": "Seconds",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.0008025332826879217,
+      "maximum": 0.0019507287568236308,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 0.0008929824561403508
+      },
+      "messages": []
+    },
+    {
+      "id": "m10",
+      "label": "schoolpilot-production-db/DiskQueueDepth",
+      "unit": "Count",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.005289739204334148,
+      "maximum": 0.018669263625223635,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 0.00586407746124734
+      },
+      "messages": []
+    },
+    {
+      "id": "m11",
+      "label": "schoolpilot-production-db/CPUCreditBalance",
+      "unit": "Count",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 576,
+      "maximum": 576,
+      "latest": {
+        "at": "2026-10-04T11:10:00-04:00",
+        "value": 576
+      },
+      "messages": []
+    },
+    {
+      "id": "m12",
+      "label": "schoolpilot-production-db/BurstBalance",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 0,
+      "minimum": null,
+      "maximum": null,
+      "latest": null,
+      "messages": []
+    }
+  ],
+  "commands": [
+    {
+      "service": "sts",
+      "operation": "get-caller-identity",
+      "startedAt": "2026-10-04T15:16:45.940Z",
+      "finishedAt": "2026-10-04T15:16:47.064Z",
+      "exitCode": 0
+    },
+    {
+      "service": "rds",
+      "operation": "describe-db-instances",
+      "startedAt": "2026-10-04T15:16:47.065Z",
+      "finishedAt": "2026-10-04T15:16:48.317Z",
+      "exitCode": 0
+    },
+    {
+      "service": "cloudwatch",
+      "operation": "get-metric-data",
+      "startedAt": "2026-10-04T15:16:48.319Z",
+      "finishedAt": "2026-10-04T15:16:49.436Z",
+      "exitCode": 0
+    }
+  ],
+  "limitations": [
+    "Five-minute CloudWatch averages may conceal transient spikes and are not school-day capacity acceptance.",
+    "Missing samples remain unavailable; they are never inferred to be zero.",
+    "Backup configuration and a restorable timestamp do not prove a successful restore rehearsal.",
+    "Database connection observations do not establish headroom without actual server limits and workload context.",
+    "No credentials, secret values, SQL, task registration, deployment, runtime change, or load probe was performed.",
+    "All freshness-sensitive metadata must be repeated immediately before the separately authorized operation."
+  ]
+}

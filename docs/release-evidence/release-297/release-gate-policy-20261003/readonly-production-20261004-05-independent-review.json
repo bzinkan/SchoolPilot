@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_readonly_production_ro05_context_review",
+  "createdAtUtc": "2026-10-04T15:29:09.148Z",
+  "passed": true,
+  "safeReceiptSha256": "5859271efc31349ea3b342c4029869f71c440edff8d0b9942ecb8243bda69cf0",
+  "flagsBindingSha256": "ad5c00fcc2d86b7ee24d82e53223b9628ba713723f50f74bac5e43e143682760",
+  "privateFlagsSha256": "3f677a51782b3017bd7a53b8baef31fb03b9708f96ed1f36d87b9e15784a3dff",
+  "backupSummarySha256": "0aa99b2cc1e28925212617a583e144561edacc9a3a350745379fac0f1d1fdf35",
+  "rawArtifactsRehashed": 14,
+  "approvedPlanSha256": "90304b10360df6cc8d01b60cb1ccc9bcb29776e17d211d23243b14e741ea0d32",
+  "planContextMatchesFreshCapture": true,
+  "contextHashes": {
+    "network": "5b68e818380132ee0832587b2c7fd82ad389c36726754c713a74bc25c61adf76",
+    "admission": "29fe6f0aecaf6a0269692b46ea8ca6f4e409c3408ed557c5672cbd0e52726ad1",
+    "databaseCredentialReference": "494938c856c3499095ef3382c3e3b079e446fbe6685c77805d8fa5faf00e11a8"
+  },
+  "observedAtUtc": "2026-10-04T15:16:45.793Z",
+  "servingSource": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "servingImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+  "api": {
+    "revision": 163,
+    "desired": 1,
+    "running": 1,
+    "pending": 0,
+    "providerHealth": "HEALTHY",
+    "healthyAlTargets": 1
+  },
+  "worker": {
+    "revision": 179,
+    "desired": 1,
+    "running": 1,
+    "pending": 0,
+    "providerHealth": "UNKNOWN"
+  },
+  "configuredRlsAdmissionTables": 121,
+  "pairedDatabaseSecretReferencesEqual": true,
+  "plaintextDatabaseEnvironmentAbsent": true,
+  "all28WhitelistedFlagValuesUnchangedFromRo04": true,
+  "completeEnvironmentValuesUnchangedFromRo04": true,
+  "schedule": {
+    "weekdayArrivalFloor": 3,
+    "offHoursFloor": 1,
+    "min": 1,
+    "max": 6,
+    "suspended": false,
+    "timezone": "America/New_York",
+    "exactTaskCountClaim": false
+  },
+  "backup": {
+    "retentionDays": 14,
+    "latestRestorableTime": "2026-10-04T15:11:57+00:00",
+    "latestRestorableAgeSeconds": 292.438,
+    "restoreRehearsalProved": false
+  },
+  "cloudwatch": {
+    "series": 13,
+    "completedAverageWindow": {
+      "startUtc": "2026-10-04T14:15:00.000Z",
+      "endUtc": "2026-10-04T15:15:00.000Z",
+      "periodSeconds": 300,
+      "statistic": "Average",
+      "alignedToCompletedFiveMinutePeriods": true
+    },
+    "emptyBurstBalanceUnavailable": true,
+    "observedZeroReadLatencyPreserved": true
+  },
+  "limitations": [
+    "Provider health/counts and five-minute averages are metadata, not application/capacity acceptance.",
+    "RLS121 is configured admission; no production catalog/ledger/settings was read by this review.",
+    "Matching secret references do not disclose credentials or establish database grants; catalog operation remains separate.",
+    "Restorable timestamp and retention configuration do not prove restore success.",
+    "Sequential capture is stable at observed endpoints; the actual authorized operator must retain its immediate drift checks."
+  ],
+  "reviewerCloudCommands": 0,
+  "reviewerNativeActions": 0,
+  "reviewerProductionDatabaseConnections": 0,
+  "capacityAccepted": false,
+  "productionReadiness": false
+}
