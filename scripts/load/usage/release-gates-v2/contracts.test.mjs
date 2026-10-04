@@ -18,6 +18,7 @@ import { withPinnedBuildBase } from './build-helper.mjs';
 import { lostReconnectBindings } from './reconnect.mjs';
 import { gracefulSnapshotOverlay } from './restore.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
+import { blackboxPhysicallyIdle, drainBlackboxServer } from './blackbox-drain.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
 test('new profiles pin real offerings and retain the failed single task separately',()=>{
@@ -75,6 +76,59 @@ test('generated overlays are strict, fix the polling budget and never alter cano
   const snapshot={operations:{schemaVersion:2,operations:Object.fromEntries(drain.RELEASE_DRAIN_OPERATIONS.map(name=>[name,{activeOperations:0,pendingCheckouts:0,activeCheckouts:0}]))},
     database:{pendingAcquisitions:0,activeQueries:0,pools:{api:{waiting:0,held:0}}},http:{activeResponses:0},tenantReleases:{pending:0},heartbeatAdmission:{queued:1,active:0}};
   assert.equal(drain.releaseServerIsIdle(snapshot),false);snapshot.heartbeatAdmission.queued=0;assert.equal(drain.releaseServerIsIdle(snapshot),true);
+});
+
+test('blackbox failed workload can physically settle without becoming accepted or erasing aborts',async()=>{
+  let clock=0,drains=0,samples=0;
+  const state={responses:0,aborted:322,pools:[{waiting:0,held:0},{waiting:0,held:0}],tenantReleases:{pending:0}};
+  const receipt=await drainBlackboxServer({snapshot:()=>{samples++;return structuredClone(state);},
+    drainBackground:async()=>{drains++;},pause:async ms=>{clock+=ms;},now:()=>clock});
+  assert.equal(drains,2);assert.equal(samples,2);assert.equal(receipt.physicallySettled,true);
+  assert.equal(receipt.complete,false);assert.equal(receipt.abortedResponses,322);
+  assert.equal(receipt.failure,'DRAIN_UNVERIFIABLE_ABORT');assert.equal(receipt.preHandlerCallbackCompletionClaimed,false);
+  assert.equal(state.aborted,322);
+  const api=readFileSync(new URL('./blackbox-api.mjs',import.meta.url),'utf8');
+  assert.ok(api.includes('assert.equal(aborted, 0)'));assert.ok(api.includes('assert.equal(value.physicallySettled, true)'));
+});
+
+test('blackbox physical settlement rejects missing owners, outstanding work, deadline and producer failures',async()=>{
+  const idle={responses:0,aborted:0,pools:[{waiting:0,held:0},{waiting:0,held:0}],tenantReleases:{pending:0}};
+  for(const state of [{...idle,pools:[]},{...idle,tenantReleases:null},{...idle,responses:undefined},{...idle,aborted:undefined},{...idle,pools:[{waiting:0,held:1},{waiting:0,held:0}]}]){
+    assert.equal(blackboxPhysicallyIdle(state),false);let clock=0;
+    const receipt=await drainBlackboxServer({snapshot:()=>state,drainBackground:async()=>{},pause:async ms=>{clock+=ms;},now:()=>clock,budgetMs:50});
+    assert.equal(receipt.physicallySettled,false);assert.equal(receipt.complete,false);assert.equal(receipt.failure,'DRAIN_DEADLINE');
+  }
+  let clock=0;
+  const deadline=await drainBlackboxServer({snapshot:()=>idle,drainBackground:async()=>{clock+=30;},pause:async ms=>{clock+=ms;},now:()=>clock,budgetMs:50});
+  assert.equal(deadline.physicallySettled,false);assert.equal(deadline.failure,'DRAIN_DEADLINE');
+  const rejected=await drainBlackboxServer({snapshot:()=>idle,drainBackground:async()=>{throw Error('owned producer failed');},pause:async()=>{}});
+  assert.equal(rejected.physicallySettled,false);assert.equal(rejected.failure,'DRAIN_OPERATION_FAILED');
+  let release,settled=false;const owned=new Promise(resolve=>{release=resolve;});
+  const pending=drainBlackboxServer({snapshot:()=>idle,drainBackground:()=>owned,pause:async()=>{}}).then(value=>{settled=true;return value;});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(settled,false);release();assert.equal((await pending).physicallySettled,true);
+});
+
+test('candidate physical marker requires completed stages and two valid idle passes before deadline',async()=>{
+  const drain=await import('data:text/javascript;base64,'+Buffer.from(patchDrainV2(file('release-enabled-drain.mjs'))).toString('base64'));
+  const snapshot={operations:{schemaVersion:2,operations:Object.fromEntries(drain.RELEASE_DRAIN_OPERATIONS.map(name=>[name,{activeOperations:0,pendingCheckouts:0,activeCheckouts:0}]))},
+    database:{pendingAcquisitions:0,activeQueries:0,pools:{api:{waiting:0,held:0},session:{waiting:0,held:0}}},http:{activeResponses:0,abortedResponses:3},tenantReleases:{pending:0},heartbeatAdmission:{queued:0,active:0}};
+  let clock=0;const stages=[];
+  const options={snapshot:()=>snapshot,drainClassification:async()=>{stages.push('classification');},drainWebSocket:async()=>{stages.push('websocket');},drainTenantReleases:async()=>{stages.push('tenant');},
+    now:()=>clock,yieldTurn:async()=>{clock++;},pause:async()=>{clock++;},budgetMs:50};
+  const aborted=await drain.drainReleaseServer(options);
+  assert.deepEqual(stages,['classification','websocket','tenant','classification','websocket','tenant']);
+  assert.equal(aborted.physicallySettled,true);assert.equal(aborted.complete,false);assert.equal(aborted.abortedResponses,3);assert.equal(aborted.failure,'DRAIN_UNVERIFIABLE_ABORT');
+  const failed=await drain.drainReleaseServer({...options,drainWebSocket:async()=>{throw Error('owned websocket failed');}});
+  assert.equal(failed.physicallyIdle,true);assert.equal(failed.physicallySettled,false);assert.equal(failed.complete,false);assert.equal(failed.failure,'DRAIN_OPERATION_FAILED');
+  clock=0;const deadline=await drain.drainReleaseServer({...options,yieldTurn:async()=>{clock=51;}});
+  assert.equal(deadline.physicallyIdle,true);assert.equal(deadline.physicallySettled,false);assert.equal(deadline.failure,'DRAIN_DEADLINE');
+  clock=0;delete snapshot.heartbeatAdmission;
+  const missing=await drain.drainReleaseServer(options);assert.equal(missing.physicallySettled,false);assert.equal(missing.physicallyIdle,false);
+  snapshot.heartbeatAdmission={queued:0,active:0};snapshot.http.abortedResponses=0;clock=0;
+  const clean=await drain.drainReleaseServer(options);assert.equal(clean.physicallySettled,true);assert.equal(clean.complete,true);
+  delete snapshot.http.abortedResponses;clock=0;
+  const unknownAbort=await drain.drainReleaseServer(options);assert.equal(unknownAbort.physicallySettled,false);assert.equal(unknownAbort.complete,false);
+  assert.ok(patchProcessV2(file('release-enabled-process.mjs')).includes("assert.equal(drained.physicallySettled, true, 'Owned server work did not physically settle before shutdown')"));
 });
 test('missing logs and native error markers remain unavailable or fail; never become zeros',()=>{
   assert.equal(classifyLog('','api').available,false);

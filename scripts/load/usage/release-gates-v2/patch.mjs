@@ -102,13 +102,19 @@ export function patchProcessV2(source) {
 const heartbeatGate = role === 'api' ? await import('../../../dist/middleware/classpilotHeartbeatAdmission.js') : null;
 if (heartbeatGate) assert.equal(typeof heartbeatGate.getClasspilotHeartbeatAdmissionSnapshot, 'function');`);
   text = replaceOnce(text, 'http: { activeResponses, abortedResponses }, tenantReleases:', 'http: { activeResponses, abortedResponses, seenHeartbeatOffers }, heartbeatAdmission: heartbeatGate?.getClasspilotHeartbeatAdmissionSnapshot(), tenantReleases:');
+  text = replaceOnce(text, "assert.equal(drained.complete, true, 'Owned server work did not drain before shutdown');",
+    "assert.equal(drained.physicallySettled, true, 'Owned server work did not physically settle before shutdown');");
   return text;
 }
 
 export function patchDrainV2(source) {
   let text = source.replaceAll('\r\n', '\n');
   text = replaceOnce(text, '    pendingTenantReleases: snapshot.tenantReleases?.pending,', `    pendingTenantReleases: snapshot.tenantReleases?.pending,
-    queuedHeartbeats: snapshot.heartbeatAdmission?.queued ?? 0,
-    admittedHeartbeats: snapshot.heartbeatAdmission?.active ?? 0,`);
+    queuedHeartbeats: snapshot.database?.pools?.api ? snapshot.heartbeatAdmission?.queued : 0,
+    admittedHeartbeats: snapshot.database?.pools?.api ? snapshot.heartbeatAdmission?.active : 0,`);
+  text = replaceOnce(text, "let passes = 0, stage = 'start';", "let passes = 0, stage = 'start', physicallySettled = false;");
+  text = replaceOnce(text, 'const receipt = (complete, failure) => ({ complete, budgetMs,',
+    'const receipt = (complete, failure) => ({ complete, physicallySettled, budgetMs,');
+  text = replaceOnce(text, "        stage = 'verification';", "        stage = 'verification'; physicallySettled = number(snapshot().http?.abortedResponses);");
   return text;
 }

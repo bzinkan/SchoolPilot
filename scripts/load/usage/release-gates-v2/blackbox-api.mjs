@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { moduleFromApplication, pause } from './application.mjs';
+import { drainBlackboxServer } from './blackbox-drain.mjs';
 
 // Both arms import exactly these common serving modules. No query/pool wrappers
 // and no candidate-only instrumentation are injected into the baseline arm.
@@ -37,20 +38,12 @@ const snapshot = () => ({ cpuMicroseconds: process.cpuUsage(cpuStart), elapsedMs
   tenantReleases: tenant.getTenantContextReleaseSnapshot?.() ?? null,
   eventLoop: { maxMs: delay.max / 1e6, p95Ms: delay.percentile(95) / 1e6, utilization: performance.eventLoopUtilization(utilization).utilization } });
 async function drain() {
-  const deadline = Date.now() + 20_000; let idle = 0;
-  while (Date.now() < deadline) {
+  return drainBlackboxServer({ snapshot, pause, drainBackground: async () => {
     // Baseline has producer flush, candidate has a non-disabling drain. Neither
     // phase reset calls the permanent batch shutdown method.
     await (batch.drainHeartbeatClassificationBatches ?? batch.flushHeartbeatClassificationProducers)();
     await websocket.drainWebSocketWork?.(); await tenant.drainTenantContextReleases?.();
-    const state = snapshot();
-    if (!state.responses && state.pools.every(pool => pool.waiting === 0 && pool.held === 0) && !(state.tenantReleases?.pending > 0)) idle++; else idle = 0;
-    if (idle >= 2) return { complete: aborted === 0, snapshot: state, abortedResponses: aborted,
-      ownershipCoverage: 'common runtime producers, WebSocket work when exported, tenant releases, pool and response gauges',
-      preHandlerCallbackCompletionClaimed: false };
-    await pause(25);
-  }
-  return { complete: false, snapshot: snapshot(), failure: 'DRAIN_DEADLINE' };
+  } });
 }
 process.send({ kind: 'ready', pid: process.pid, base, pools: { api: 16, session: 2 }, readiness: true, redis: true });
 process.on('message', async request => {
@@ -60,7 +53,7 @@ process.on('message', async request => {
     else if (request.operation === 'snapshot') value = snapshot();
     else if (request.operation === 'drain' || request.operation === 'quiesce') value = await drain();
     else if (request.operation === 'shutdown') {
-      value = await drain(); assert.equal(value.complete, true);
+      value = await drain(); assert.equal(value.physicallySettled, true);
       websocket.stopWebSocketWork?.(); for (const socket of wss.clients) socket.terminate();
       server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
       await batch.flushHeartbeatClassificationBatches(); db.stopApiPoolReadiness(); await db.drainApiPoolReadiness();
