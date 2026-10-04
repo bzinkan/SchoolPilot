@@ -39,7 +39,8 @@ export async function runV2(options) {
   const prepBytes = readFileSync(options.preparationFile); assert.equal(hash(prepBytes), binding.preparationSha256);
   const preparation = JSON.parse(prepBytes); assert.equal(preparation.applicationSource, options.source); assert.equal(preparation.applicationImage, binding.applicationImage);
   const envBytes = readFileSync(options.observedEnvironmentFile); assert.equal(hash(envBytes), options.observedEnvironmentSha256);
-  const remapped = remapObservedEnvironment(JSON.parse(envBytes), options.scopeBinding, today());
+  const preparedSnapshot=profile.usage?loadSnapshot(options.snapshotDirectory,options.snapshotManifestSha256,{source:options.source,today:today()}):null;
+  const remapped = remapObservedEnvironment(JSON.parse(envBytes), options.scopeBinding, today(),preparedSnapshot?.data['cold-fixture-state.json'].schools.map(row=>row.id));
   const reservationBytes=readFileSync(options.reservationFile);assert.equal(hash(reservationBytes),options.reservationSha256);
   const reservation=JSON.parse(reservationBytes);assert.equal(reservation.run,options.run);assert.equal(reservation.source,options.source);assert.equal(reservation.arm,options.arm);
   assert.equal(reservation.profile,profile.name);assert.equal(reservation.contractSha256,profileHash(profile));assert.equal(reservation.observedFlagsSha256,remapped.observedFlagsSha256);

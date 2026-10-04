@@ -12,6 +12,7 @@ import { classifyLog, cpuWindow } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { declareCampaign, reserveAttempt, registerAttempt } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
+import { remapObservedEnvironment } from './environment.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
 test('new profiles pin real offerings and retain the failed single task separately',()=>{
@@ -25,6 +26,12 @@ test('new profiles pin real offerings and retain the failed single task separate
   assert.deepEqual(targetFor(169,PROFILES.normal.offering),{index:169,schoolIndex:0,deviceIndex:169,studentOrdinal:169,offsetMs:169*1000/34});
   assert.equal(targetFor(170,PROFILES.normal.offering).schoolIndex,1);assert.equal(targetFor(340,PROFILES.normal.offering).deviceIndex,0);
   assert.equal(Array.from({length:100},(_,n)=>stickyTarget(n,[0,1,2],'sticky80')).filter(n=>n===0).length,80);
+});
+test('observed rollout scopes remap to the actual profile fixture, including a restored Usage snapshot',()=>{
+  const capture={definitions:[{service:'schoolpilot-production-api',environment:{CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({restrictionAuthPassThroughV1:{mode:'schools',schoolIds:['observed']}})}}]};
+  const mapped=remapObservedEnvironment(capture,[{observedSchoolId:'observed',fixtureSchoolIndex:0}],'2026-10-03',['actual-snapshot-school0','actual-snapshot-school1']);
+  assert.deepEqual(JSON.parse(mapped.environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON).restrictionAuthPassThroughV1.schoolIds,['actual-snapshot-school0']);
+  assert.throws(()=>remapObservedEnvironment(capture,[],'2026-10-03'));
 });
 test('new offering makes real HTTP calls, respects nondefault population and completes the declared window',async()=>{
   const seen=[],server=createServer((request,response)=>{seen.push(request.url);response.writeHead(200,{'Content-Type':'application/json'});response.end('{}');});

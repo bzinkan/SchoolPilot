@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { commonFixture } from './common-fixture.mjs';
 import { hash } from './contracts.mjs';
 
-export function remapObservedEnvironment(capture, scopeBinding, today) {
+export function remapObservedEnvironment(capture, scopeBinding, today, fixtureSchoolIds = commonFixture(today).schools.map(row=>row.id)) {
   const api = capture.definitions.find(row => row.service === 'schoolpilot-production-api'); assert.ok(api?.environment);
-  const fixture = commonFixture(today), scopes = new Map(scopeBinding.map(row => [row.observedSchoolId, fixture.schools[row.fixtureSchoolIndex]?.id]));
+  assert.ok(Array.isArray(fixtureSchoolIds)&&fixtureSchoolIds.length===2&&new Set(fixtureSchoolIds).size===2);
+  const scopes = new Map(scopeBinding.map(row => [row.observedSchoolId, fixtureSchoolIds[row.fixtureSchoolIndex]]));
   assert.ok([...scopes.values()].every(Boolean));
   const env = structuredClone(api.environment);
   const remap = id => { assert.ok(scopes.has(id), 'Observed school scope needs an explicit synthetic binding'); return scopes.get(id); };
