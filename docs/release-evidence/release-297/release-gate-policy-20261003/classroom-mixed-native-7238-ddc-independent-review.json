@@ -1,0 +1,1119 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent-three-run-current-school-classroom-retained-evidence-review",
+  "recordedAtUtc": "2026-10-04T10:07:14.930Z",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+  "reviewHead": "dd6d54c029a3d139f9c28746fb448b49af032d51",
+  "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "profile": "release297-classroom-133-1-3-2-native-v3",
+  "fullIndependentReviewComplete": true,
+  "canonicalAggregate": {
+    "passed": true,
+    "currentSchoolOnly": true,
+    "broaderVariant": null,
+    "broaderVariantPassed": false,
+    "broaderSyntheticCapacityGatePassed": false,
+    "broaderCapacityClaimed": false
+  },
+  "runs": [
+    {
+      "attempt": 1,
+      "run": "b28401c608e9",
+      "receiptManifestSha256": "bc303542ea1f36c710ffa4366bd92908e15486ef7844e237becef939454672e8",
+      "allReceiptRecordsRehashed": true,
+      "completeLogsReclassified": true,
+      "all15RoundsReevaluated": true,
+      "ordinaryOffers": 11970,
+      "reconnectOffers": 133,
+      "persistedExactTuples": 12103,
+      "nativeClassroomReevaluated": true,
+      "nativeCommands": 60,
+      "nativeMessages": 30,
+      "nativeRowsSha256": "35e55076343360b4b3834abf0b766b0fb7495f1cc046ab23c06a1ed3c2936ec5",
+      "privateWitnesses": [
+        {
+          "kind": "fixture",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-1\\private\\observer\\response-1.json",
+          "sha256": "32067e4454d58027f6e2cc5739b033f89c4c92e35df21dca667e618f32d8e425"
+        },
+        {
+          "kind": "before",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-1\\private\\observer\\response-2.json",
+          "sha256": "0f58637dc8ffe7c87a4441cabdd815d4553af23378f2dba486e83e5bfc12e423"
+        },
+        {
+          "kind": "after",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-1\\private\\observer\\response-3.json",
+          "sha256": "376105e5fec2196c89eff96632e8634ef91f4069ae0bb8a79377aea37559669a"
+        },
+        {
+          "kind": "native",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-1\\private\\observer\\classroom-bindings.private.json",
+          "sha256": "35e55076343360b4b3834abf0b766b0fb7495f1cc046ab23c06a1ed3c2936ec5"
+        }
+      ],
+      "rounds": [
+        {
+          "index": 0,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.2473642,
+          "p95Ms": 48.614255999993475
+        },
+        {
+          "index": 1,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.21990225,
+          "p95Ms": 47.42694999999367
+        },
+        {
+          "index": 2,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.19593815,
+          "p95Ms": 44.28798600001028
+        },
+        {
+          "index": 3,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.19913486666666666,
+          "p95Ms": 44.039099999994505
+        },
+        {
+          "index": 4,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.21684695,
+          "p95Ms": 53.8263759999536
+        },
+        {
+          "index": 5,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.12274795,
+          "p95Ms": 62.79187700001057
+        },
+        {
+          "index": 6,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.10852495,
+          "p95Ms": 51.46358300000429
+        },
+        {
+          "index": 7,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.2111435,
+          "p95Ms": 56.75515500002075
+        },
+        {
+          "index": 8,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.1926293,
+          "p95Ms": 51.2892109999666
+        },
+        {
+          "index": 9,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.19295501666666667,
+          "p95Ms": 54.347396000055596
+        },
+        {
+          "index": 10,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.17335998333333333,
+          "p95Ms": 70.98795600002632
+        },
+        {
+          "index": 11,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.13851643333333333,
+          "p95Ms": 56.54428800009191
+        },
+        {
+          "index": 12,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.13523786666666668,
+          "p95Ms": 61.505923999939114
+        },
+        {
+          "index": 13,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.11954793333333333,
+          "p95Ms": 51.9339049999835
+        },
+        {
+          "index": 14,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.11933451666666667,
+          "p95Ms": 60.882161000045016
+        }
+      ],
+      "physicalLoss": {
+        "exactPrelossIngress": 6456,
+        "observedOwnedAbsenceAtMs": 1791106071914,
+        "reconnectDeclaredAtMs": 1791106072259,
+        "absenceMarginBeforeReconnectMs": 345
+      },
+      "gracefulOwnedCleanup": true,
+      "cleanupPassed": true
+    },
+    {
+      "attempt": 2,
+      "run": "ed57a628b200",
+      "receiptManifestSha256": "6e0139bf6808b333af8dd6a69619503279dcb5f33322277048ee2fe746e4e53e",
+      "allReceiptRecordsRehashed": true,
+      "completeLogsReclassified": true,
+      "all15RoundsReevaluated": true,
+      "ordinaryOffers": 11970,
+      "reconnectOffers": 133,
+      "persistedExactTuples": 12103,
+      "nativeClassroomReevaluated": true,
+      "nativeCommands": 60,
+      "nativeMessages": 30,
+      "nativeRowsSha256": "5ed9566377f65b9e5ae486abf4098ef417e3d4a503864149c35762878e2147f9",
+      "privateWitnesses": [
+        {
+          "kind": "fixture",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-2\\private\\observer\\response-1.json",
+          "sha256": "f50de55b78051d37bbb07c3f5fd931e6f16bc0b59d021a8cd020b5b25001d898"
+        },
+        {
+          "kind": "before",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-2\\private\\observer\\response-2.json",
+          "sha256": "70cd6fc01f98039d2c763caf266d05876014e95183360b294a11357275aca4f8"
+        },
+        {
+          "kind": "after",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-2\\private\\observer\\response-3.json",
+          "sha256": "ea8a691852776eff908348074a54ce029b8fddfdd03058f21926e76a340f9cad"
+        },
+        {
+          "kind": "native",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-2\\private\\observer\\classroom-bindings.private.json",
+          "sha256": "5ed9566377f65b9e5ae486abf4098ef417e3d4a503864149c35762878e2147f9"
+        }
+      ],
+      "rounds": [
+        {
+          "index": 0,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.22720655,
+          "p95Ms": 57.99608999999691
+        },
+        {
+          "index": 1,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.21015068333333334,
+          "p95Ms": 53.06984099998954
+        },
+        {
+          "index": 2,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.19849595,
+          "p95Ms": 52.05184699999518
+        },
+        {
+          "index": 3,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.22148096666666667,
+          "p95Ms": 64.17395600001328
+        },
+        {
+          "index": 4,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.2263184,
+          "p95Ms": 69.88802700000815
+        },
+        {
+          "index": 5,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.13411116666666667,
+          "p95Ms": 76.37338699999964
+        },
+        {
+          "index": 6,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.09836338333333333,
+          "p95Ms": 50.46026500000153
+        },
+        {
+          "index": 7,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.19053276666666666,
+          "p95Ms": 59.5739889999968
+        },
+        {
+          "index": 8,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.16897418333333333,
+          "p95Ms": 54.22214199998416
+        },
+        {
+          "index": 9,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.2012295,
+          "p95Ms": 115.3166579999961
+        },
+        {
+          "index": 10,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.16626825,
+          "p95Ms": 67.05099200003315
+        },
+        {
+          "index": 11,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.14477298333333333,
+          "p95Ms": 63.32368300005328
+        },
+        {
+          "index": 12,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.1221454,
+          "p95Ms": 62.451828000019304
+        },
+        {
+          "index": 13,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.1344232,
+          "p95Ms": 61.40745199995581
+        },
+        {
+          "index": 14,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.13301515,
+          "p95Ms": 55.692590000107884
+        }
+      ],
+      "physicalLoss": {
+        "exactPrelossIngress": 6456,
+        "observedOwnedAbsenceAtMs": 1791107045071,
+        "reconnectDeclaredAtMs": 1791107045393,
+        "absenceMarginBeforeReconnectMs": 322
+      },
+      "gracefulOwnedCleanup": true,
+      "cleanupPassed": true
+    },
+    {
+      "attempt": 3,
+      "run": "834c02fbaf42",
+      "receiptManifestSha256": "040fcd326ae5406eeb631b8b868bc579d979fbda44c74c59339842a4e35abdbb",
+      "allReceiptRecordsRehashed": true,
+      "completeLogsReclassified": true,
+      "all15RoundsReevaluated": true,
+      "ordinaryOffers": 11970,
+      "reconnectOffers": 133,
+      "persistedExactTuples": 12103,
+      "nativeClassroomReevaluated": true,
+      "nativeCommands": 60,
+      "nativeMessages": 30,
+      "nativeRowsSha256": "cd7c4129aa57fa5402b6c3d250cfa1595113d8c3e23616aa25cd63713b38be62",
+      "privateWitnesses": [
+        {
+          "kind": "fixture",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-3\\private\\observer\\response-1.json",
+          "sha256": "681eedfc9958671c015f33f14286229e9e5b2f9e54973250f505bed69097413a"
+        },
+        {
+          "kind": "before",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-3\\private\\observer\\response-2.json",
+          "sha256": "d130b01d994b495e08159f302ad985d23459ef864bd277faadde4de61b2fc91f"
+        },
+        {
+          "kind": "after",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-3\\private\\observer\\response-3.json",
+          "sha256": "761f56321010212b16753595f8e3ecab1bb7d15de45f2cb6f91fc9726b656d0c"
+        },
+        {
+          "kind": "native",
+          "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-classroom-mixed-native-7238-ddc-20261004-01\\attempt-3\\private\\observer\\classroom-bindings.private.json",
+          "sha256": "cd7c4129aa57fa5402b6c3d250cfa1595113d8c3e23616aa25cd63713b38be62"
+        }
+      ],
+      "rounds": [
+        {
+          "index": 0,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.24745423333333333,
+          "p95Ms": 59.37099600000147
+        },
+        {
+          "index": 1,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.24178688333333334,
+          "p95Ms": 63.020386999996845
+        },
+        {
+          "index": 2,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.20268315,
+          "p95Ms": 49.31692299997667
+        },
+        {
+          "index": 3,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.21840846666666666,
+          "p95Ms": 53.99969399999827
+        },
+        {
+          "index": 4,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.2382624,
+          "p95Ms": 61.973234999983106
+        },
+        {
+          "index": 5,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.12838546666666667,
+          "p95Ms": 65.42546300002141
+        },
+        {
+          "index": 6,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.09786626666666666,
+          "p95Ms": 55.408450999995694
+        },
+        {
+          "index": 7,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.20243828333333333,
+          "p95Ms": 59.84052399999928
+        },
+        {
+          "index": 8,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.18742058333333333,
+          "p95Ms": 68.87310700002126
+        },
+        {
+          "index": 9,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.17208655,
+          "p95Ms": 52.50924199994188
+        },
+        {
+          "index": 10,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.18414671666666665,
+          "p95Ms": 74.6799840000458
+        },
+        {
+          "index": 11,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.15160436666666666,
+          "p95Ms": 51.92734199995175
+        },
+        {
+          "index": 12,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.12129053333333334,
+          "p95Ms": 42.300767999957316
+        },
+        {
+          "index": 13,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.12184001666666666,
+          "p95Ms": 42.63949600001797
+        },
+        {
+          "index": 14,
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "apiCpuMeanFraction": 0.12747481666666666,
+          "p95Ms": 46.88503100001253
+        }
+      ],
+      "physicalLoss": {
+        "exactPrelossIngress": 6456,
+        "observedOwnedAbsenceAtMs": 1791108019997,
+        "reconnectDeclaredAtMs": 1791108020173,
+        "absenceMarginBeforeReconnectMs": 176
+      },
+      "gracefulOwnedCleanup": true,
+      "cleanupPassed": true
+    }
+  ],
+  "actualStudentRecipientPayloadsIncluded": false,
+  "localNativeOrLoadActions": 0,
+  "approvedPairedPolicyChanged": false,
+  "pairedComparisonAccepted": false,
+  "usageCapacityAccepted": false,
+  "broader800CapacityAccepted": false,
+  "deployed": false,
+  "liveValidated": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Three current-school synthetic classroom runs only; paired policy, Usage, broader800, resulting-main, production catalog, Store pending submissions and live acceptance remain separate."
+  ]
+}

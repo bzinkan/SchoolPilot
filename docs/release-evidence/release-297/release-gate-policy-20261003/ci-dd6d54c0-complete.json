@@ -1,0 +1,554 @@
+{
+  "schemaVersion": 1,
+  "kind": "reviewed-exact-head-ci-checkpoint",
+  "recordedAtUtc": "2026-10-04T10:09:18.961Z",
+  "rawReceipt": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-ready-ci-dd6d54c0-01/observation-05-receipt.json",
+    "sha256": "eb62ab5ebf5e34241f956962822d8133dbce2381f1cd5ce063e4498bbaf5a0c4"
+  },
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "schoolPilotReviewHead": "dd6d54c029a3d139f9c28746fb448b49af032d51",
+  "classPilotReviewHead": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "schoolPilotChecks": [
+    {
+      "name": "Detect changed paths",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586366"
+    },
+    {
+      "name": "Analyze (javascript-typescript)",
+      "workflow": "CodeQL",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203358/job/111406586114"
+    },
+    {
+      "name": "Scan for secrets",
+      "workflow": "Gitleaks",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203368/job/111406586076"
+    },
+    {
+      "name": "Scan Docker image",
+      "workflow": "Trivy Container Scan",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203374/job/111406586206"
+    },
+    {
+      "name": "Backend (TypeScript + Build)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586376"
+    },
+    {
+      "name": "Cross-tenant isolation tests",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586468"
+    },
+    {
+      "name": "RLS-enabled cross-tenant tests",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586305"
+    },
+    {
+      "name": "Frontend (Vite Build)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586437"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 1)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586520"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 2)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586430"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 3)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586427"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 4)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586493"
+    },
+    {
+      "name": "AWS rollout safety (PowerShell + Terraform)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406638788"
+    },
+    {
+      "name": "SOC 2 privileged access evidence",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111407420824"
+    },
+    {
+      "name": "SOC 2 deployment evidence",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111409233226"
+    },
+    {
+      "name": "SOC 2 incident evidence",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111409233191"
+    },
+    {
+      "name": "SOC 2 tenant isolation evidence",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111409233291"
+    },
+    {
+      "name": "SOC 2 AI/privacy evidence",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111408389813"
+    },
+    {
+      "name": "SOC 2 monitoring evidence",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111408389798"
+    },
+    {
+      "name": "SOC 2 approval queue",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111409270633"
+    }
+  ],
+  "classPilotChecks": [
+    {
+      "name": "test",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697682"
+    },
+    {
+      "name": "test",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424496"
+    },
+    {
+      "name": "chrome-compatibility (120.0.6099.109)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698145"
+    },
+    {
+      "name": "chrome-compatibility (120.0.6099.109)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424609"
+    },
+    {
+      "name": "chrome-compatibility (133.0.6943.141)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697900"
+    },
+    {
+      "name": "chrome-compatibility (133.0.6943.141)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424685"
+    },
+    {
+      "name": "chrome-compatibility (152.0.7977.82)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697831"
+    },
+    {
+      "name": "chrome-compatibility (152.0.7977.82)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424815"
+    },
+    {
+      "name": "chrome-compatibility (stable)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698242"
+    },
+    {
+      "name": "chrome-compatibility (stable)",
+      "workflow": "CI",
+      "conclusion": "SUCCESS",
+      "status": "COMPLETED",
+      "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424822"
+    }
+  ],
+  "schoolPilotEquivalence": [
+    {
+      "path": "src",
+      "applicationGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "reviewGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "oldEd026GitObject": "87754e8794fdcec712f2438e52540e32ad30107b",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": false
+    },
+    {
+      "path": "package.json",
+      "applicationGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "reviewGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "oldEd026GitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "package-lock.json",
+      "applicationGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "reviewGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "oldEd026GitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "Dockerfile",
+      "applicationGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "reviewGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "oldEd026GitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": ".dockerignore",
+      "applicationGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "reviewGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "oldEd026GitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "tsconfig.json",
+      "applicationGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "reviewGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "oldEd026GitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "drizzle.config.ts",
+      "applicationGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "reviewGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "oldEd026GitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "migrations",
+      "applicationGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "reviewGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "oldEd026GitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "schoolpilot-app",
+      "applicationGitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "reviewGitObject": "b182c7eb835dc771f4952a42821846acc1875fe8",
+      "oldEd026GitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "finalSourceEqual": false,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [
+        "schoolpilot-app/scripts/passpilot-reports-v2-browser.test.mjs"
+      ],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "infra",
+      "applicationGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "reviewGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "oldEd026GitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "docs/soc2",
+      "applicationGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "reviewGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "oldEd026GitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    }
+  ],
+  "classPilotPackageBinding": {
+    "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "packagedSourceAncestorOfHead": true,
+    "extensionTree": {
+      "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+      "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+    },
+    "documentationOnlyDiff": [
+      "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+      "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+    ],
+    "zip": {
+      "path": "C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip",
+      "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+      "bytes": 376052,
+      "rebuildPerformed": false
+    }
+  },
+  "nativeRegressionEvidence": {
+    "status": "completed-success",
+    "jobId": 111406586468,
+    "jobUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37192203360/job/111406586468",
+    "logFile": "db-native-job-111406586468.log",
+    "logSha256": "7015e0105f2505488961414302f620123d5ae565f1eee78f6bf76971f0d72b8c",
+    "logBytes": 2684759,
+    "cases": [
+      {
+        "name": "health sentinel round trip preserves no-CREATE runtime permissions and qualified cleanup",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "restricted missing-table bootstrap still fails without granting CREATE",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "owner bootstrap retains the persistent public sentinel and removes its own row",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "existing sentinel works without CREATE despite the old IF NOT EXISTS rejection",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "round-trip cleanup removes only the probe and old sentinel rows",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "real DML permission failure remains a health failure",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis preserves empty tabs and nested policy arrays through every mutation",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis keeps exact increasing revisions for writes and patches in one current millisecond",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis preserves escaped and unknown root values and removes duplicate replaced keys",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis retains exact binding, stale-write and signout fences without refreshing stale keys",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      }
+    ],
+    "accepted": true,
+    "jobSteps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Initialize containers",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Run actions/checkout@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Run actions/setup-node@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install bounded PDF processing runtime",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Create test schema",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install screenshot evidence migration-owned test contract",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install appointment migration-owned test contract",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "DB and ordinary cross-tenant tests (serial)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Checkout released ClassPilot 2.9.3 capture runtime",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install preview browser dependencies",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Real extension capture to observed and claimed tiles (serial)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload real capture evidence",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Collect SOC 2 evidence",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload SOC 2 evidence",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Checkout released ClassPilot 2.9.3 capture runtime",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Run actions/setup-node@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Run actions/checkout@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Stop containers",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "limitations": [
+      "Named native regressions verified from complete job log; historical unrelated suite skips are not counted as these cases passing"
+    ]
+  },
+  "allRequiredRemoteChecksPassed": true,
+  "merged": false,
+  "deployed": false,
+  "activated": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Only exact-head reported remote checks and named native test outcomes; unfinished or missing checks remain pending",
+    "ed026 backend image/artifacts and capacity results remain historical after runtime source changes",
+    "Resulting-main checks, exact artifacts, recovery, production state and accepted release policy remain separate requirements"
+  ]
+}

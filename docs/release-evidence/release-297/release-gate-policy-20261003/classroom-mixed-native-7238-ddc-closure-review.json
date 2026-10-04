@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-04T10:08:52.662Z",
+  "kind": "independent-closed-three-run-classroom-campaign-custody-review",
+  "closureSha256": "937efed67e2bd802a97bb0c45e2004fdca3ed98dc6578dcc286b62cd3dd3eef3",
+  "contractSha256": "f3b9a1996ae24cb5f841fd95730553d2a1922663092e17032aaf4110baca072f",
+  "journalSha256": "7395ebbccf85eec92299b81472df0b6ac405fd62ed4603dca1714f13c055eedc",
+  "fullCanonicalReviewSha256": "c01874825b6555c0b3e3421fca361f5d8e4f443dbbb6e9c2c9c4f0f4176198cf",
+  "passed": true,
+  "registrations": [
+    {
+      "run": "b28401c608e9",
+      "manifestSha256": "bc303542ea1f36c710ffa4366bd92908e15486ef7844e237becef939454672e8",
+      "attemptSha256": "415deed99ffa1b511cd8252629d85085818182e6240c973a5477052abb2c365b",
+      "reservationSha256": "07c1aec11c994a49e1d0e664b284223b071deb966a09a21e47f3089fa753c165"
+    },
+    {
+      "run": "ed57a628b200",
+      "manifestSha256": "6e0139bf6808b333af8dd6a69619503279dcb5f33322277048ee2fe746e4e53e",
+      "attemptSha256": "d806fb58ae94c76ed0ef1e6a0ce47c830d2c1fa08827eefb7cdd051a77f18f76",
+      "reservationSha256": "91f31a612aa5f176021035f68c9aa0008f1446229fae3e94337285242efc41a9"
+    },
+    {
+      "run": "834c02fbaf42",
+      "manifestSha256": "040fcd326ae5406eeb631b8b868bc579d979fbda44c74c59339842a4e35abdbb",
+      "attemptSha256": "44897a06acbbc3eea5d0a636a747da5b87e1fe62febe8d81ca1705b34a8ec547",
+      "reservationSha256": "e10cc59b11b73187173d2ffcbc3b000fdc65a6aaffd7c2adc8a8df5d90fb424d"
+    }
+  ],
+  "allRegisteredReceiptsEqualActualRehashedMetrics": true,
+  "currentSchoolOnly": true,
+  "pairedComparisonAccepted": false,
+  "usageCapacityAccepted": false,
+  "productionReadiness": false
+}

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "kind": "distinct report RPC bounded pure retest 02",
+  "passed": false,
+  "status": "FAILED_UNCHANGED_20_SECOND_DEADLINE",
+  "source": "cbe0638480fe86301a9491a58d3b60b1720b04f5",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "startedAt": "2026-10-04T10:12:50.658Z",
+  "finishedAt": "2026-10-04T10:13:11.767Z",
+  "syntax": {
+    "tests": 3,
+    "pass": 3
+  },
+  "pureResult": {
+    "completeSuite": false,
+    "expected": 38,
+    "completedVisibleCoordinatorCases": 10,
+    "signal": "SIGTERM",
+    "error": "ETIMEDOUT",
+    "configuredDeadlineMs": 20000,
+    "blockedCaseCause": "not yet established; file-ordered TAP does not localize it"
+  },
+  "originalFailureUnchanged": true,
+  "sourceBeforeAfterUnchanged": true,
+  "exactOwnedProcessesAbsent": true,
+  "forceUsed": false,
+  "nativeActions": 0,
+  "applicationEdits": 0,
+  "sharedHarnessEdits": 0,
+  "committed": false,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "records": [
+    {
+      "file": "run-pure.mjs",
+      "bytes": 6516,
+      "sha256": "f3a5fa0d4ea5b141bb7c631cd404d5986deefc1e5d9994cb243d8c23c50bb6e9"
+    },
+    {
+      "file": "execution.json",
+      "bytes": 5328,
+      "sha256": "b54848251fafbbb7087f6481ebec165947d543f17444934c8636e00bbd4ababd"
+    },
+    {
+      "file": "tests.tap",
+      "bytes": 2753,
+      "sha256": "0a86af3a3151f496380dbb399079f487b443e9f2acd9a37e10a0906225b8476c"
+    },
+    {
+      "file": "process-containment.json",
+      "bytes": 302,
+      "sha256": "980d771ae91a92bcf4a4b47edb5a013a09d28e2c3b754c84f8ebabca02768a81"
+    },
+    {
+      "file": "distinct-report-rpc.mjs.syntax.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "distinct-report-rpc-overlay.mjs.syntax.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "distinct-report-rpc.test.mjs.syntax.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

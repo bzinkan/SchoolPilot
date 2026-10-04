@@ -1,0 +1,2648 @@
+{
+  "schemaVersion": 1,
+  "completedAt": "2026-10-04T10:14:43.724Z",
+  "passed": true,
+  "currentSchoolOnly": true,
+  "summaryAdapterSha256": "29f28d2e1084029da1c63523bb807b7e3c9c160237544a41cd7fc096ada9823f",
+  "scope": "Three consecutive final-source 133-client synthetic classroom lifecycle runs, Usage off",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+  "helperImage": "sha256:0efe4b7e82529ee285bb6a65b3a9ae37e87b2aa257df36e086f975578bb45ae7",
+  "profile": "release297-classroom-133-1-3-2-native-v3",
+  "profileSha256": "93230128f74469bc58c952f578a5dc0cda394b14ea986b708d7bac2ad15a7cd2",
+  "sourceSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+  "campaignClosureSha256": "937efed67e2bd802a97bb0c45e2004fdca3ed98dc6578dcc286b62cd3dd3eef3",
+  "campaignContractSha256": "f3b9a1996ae24cb5f841fd95730553d2a1922663092e17032aaf4110baca072f",
+  "campaignJournalSha256": "7395ebbccf85eec92299b81472df0b6ac405fd62ed4603dca1714f13c055eedc",
+  "independentFullReviewSha256": "c01874825b6555c0b3e3421fca361f5d8e4f443dbbb6e9c2c9c4f0f4176198cf",
+  "independentCampaignClosureReviewSha256": "140277af1bad96d5f4dc6243da66d562f10f016a94d5d4cf8f23390c98da4e66",
+  "originalNativePreparationOnlyProofSha256": "04be3ea4df26ea32e7e0f4de8a90950e387150e9ea2690b046191c0f1e886e09",
+  "aggregate": {
+    "passed": true,
+    "currentSchoolOnly": true,
+    "broaderVariant": null,
+    "broaderVariantPassed": false,
+    "broaderSyntheticCapacityGatePassed": false,
+    "broaderCapacityClaimed": false
+  },
+  "totals": {
+    "ordinaryOffered": 35910,
+    "reconnectOffered": 399,
+    "http200": 36309,
+    "persistedExactBindings": 36309,
+    "commands": 180,
+    "privateMessages": 90
+  },
+  "runs": [
+    {
+      "index": 1,
+      "run": "b28401c608e9",
+      "startedAt": "2026-10-04T09:16:52.358Z",
+      "finishedAt": "2026-10-04T09:33:00.091Z",
+      "runPassed": true,
+      "cleanupPassed": true,
+      "sourceUnchanged": true,
+      "receiptManifestSha256": "bc303542ea1f36c710ffa4366bd92908e15486ef7844e237becef939454672e8",
+      "metricsSha256": "caeb58c0127445d591e80c202e6df45812fc8e9482932f1b81c8ec4f0e2a0a16",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+      "helperImage": "sha256:0efe4b7e82529ee285bb6a65b3a9ae37e87b2aa257df36e086f975578bb45ae7",
+      "helperBindingSha256": "8e4e3948f146658f67a74096efb591bcf3ecc93af5886b9c02c12fcd0fc7240d",
+      "nodeVersion": "v22.23.3",
+      "profile": "release297-classroom-133-1-3-2-native-v3",
+      "profileSha256": "93230128f74469bc58c952f578a5dc0cda394b14ea986b708d7bac2ad15a7cd2",
+      "sourceSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+      "schemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+      "fixtureLogicalSha256": "0cb731a661cb0cec200d922c944a05023e2d106af2e712ffccb72d46c57b64cc",
+      "clientAdvertisementVersion": "2.9.7",
+      "clientAdvertisementSha256": null,
+      "observedFlagsSha256": "2a4366a1066a4f30c2cea1724b460a05dbfcb6367d3f285e3a6d0b5d24a6ffe9",
+      "operationalFixtureBootstrapRequired": true,
+      "operationalBootstrapReceiptSha256": "e3d6562df38e90985d5dfa4edffec7c47faf0f1be9a4f40caa25fb6e0a63f9d5",
+      "continuousOffering": {
+        "durationMs": 900000.925931,
+        "windowsContinuous": true,
+        "declaredStartedAtMs": 1791105471259,
+        "actualStartedAtMs": 1791105471261,
+        "startAlignmentAccepted": true,
+        "ordinaryOffered": 11970,
+        "ordinarySucceeded": 11970,
+        "ordinaryStatusHistogram": {
+          "200": 11970
+        },
+        "reconnectOffered": 133,
+        "reconnectSucceeded": 133,
+        "reconnectStatusHistogram": {
+          "200": 133
+        },
+        "failed": 0,
+        "refused": 0,
+        "lateOffers": 0,
+        "outstandingAfterDrain": 0,
+        "maxOfferLatenessMs": 13.890545594040304,
+        "ordinaryCapabilityAcknowledgements200": 11970,
+        "reconnectCapabilityCounterAvailable": false,
+        "reconnectCapabilityValidation": "Every successful reconnect uses the unchanged heartbeat wrapper which rejects a mismatched accepted-capability response; no aggregate reconnect capability counter was recorded.",
+        "actualPersisted": 12103,
+        "invalidBindings": 0,
+        "targetCountsVerified": true,
+        "actualTargetCounts": [
+          {
+            "index": 0,
+            "count": 6456
+          },
+          {
+            "index": 1,
+            "count": 2839
+          },
+          {
+            "index": 2,
+            "count": 2808
+          }
+        ]
+      },
+      "maximumMinuteP95Ms": 70.98795600002632,
+      "maximumActiveApiMinuteMeanCpuFraction": 0.2473642,
+      "declaredMinuteChecks": [
+        {
+          "minute": 0,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 48.614255999993475,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.2473642
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 1,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 47.42694999999367,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.21990225
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 2,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 44.28798600001028,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.19593815
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 3,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 44.039099999994505,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.19913486666666666
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 4,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 53.8263759999536,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.21684695
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 5,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 270,
+            "1": 264,
+            "2": 264
+          },
+          "p95Ms": 62.79187700001057,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.11159055
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.12274795
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11934158333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 6,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 270,
+            "1": 264,
+            "2": 264
+          },
+          "p95Ms": 51.46358300000429,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.10168125
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.10852495
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.09541035
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 7,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 56.75515500002075,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.2111435
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.058165916666666664
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.0632558
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 8,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 51.2892109999666,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.1926293
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.04356605
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.04346235
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 9,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 54.347396000055596,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.19295501666666667
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.0444073
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.04422563333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 10,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 70.98795600002632,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.17335998333333333
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.14710128333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 11,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 56.54428800009191,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.13851643333333333
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.12154536666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 12,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 61.505923999939114,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.13523786666666668
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11154423333333334
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 13,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 51.9339049999835,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.11954793333333333
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11434843333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 14,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 60.882161000045016,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.11933451666666667
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.10848156666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        }
+      ],
+      "physicalLoss": {
+        "lossAtMs": 1791106071259,
+        "reconnectAtMs": 1791106072259,
+        "expectedPreLossOffers": 6456,
+        "observedPreLossOffers": 6456,
+        "actualServerOwnership": true,
+        "ingressStartedAtMs": 1791106071290,
+        "ingressCompletedAtMs": 1791106071321,
+        "shutdownCompletedAtMs": 1791106071914,
+        "shutdownMarginBeforeReconnectMs": 345,
+        "exactLostRoleAbsent": true,
+        "cleanShutdown": true
+      },
+      "nativeClassroomOracle": {
+        "passed": true,
+        "declaredSchoolIndices": [
+          0
+        ],
+        "repetitions": 15,
+        "observedCommands": 60,
+        "expectedCommands": 60,
+        "observedMessages": 30,
+        "expectedMessages": 30,
+        "commandTargetsChecked": 60,
+        "privateBindingsChecked": 30,
+        "attemptedExpiredMessages": 15,
+        "unattemptedExpiredMessages": 0,
+        "exactRecipientOnly": true,
+        "nativeRowsSha256": "35e55076343360b4b3834abf0b766b0fb7495f1cc046ab23c06a1ed3c2936ec5"
+      },
+      "intentionalNegativeProbes": 15,
+      "expectedNegativeLogCoverage": true,
+      "completeLogEvidence": [
+        {
+          "role": "api2",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "1bfe5539e0afec9a82f5a29ae5052b9882d4bdd9557886832b6207fc665330f0"
+        },
+        {
+          "role": "api1",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "ac7744e42343cf87b44115792c961199565911bfffdeffc9b05f23e6952d3c7f"
+        },
+        {
+          "role": "generator",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "role": "api0",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "67db51615a4e385e7c14aa7882f7739bd902b2d79058f118f2e817abbba07d81"
+        },
+        {
+          "role": "observer",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "22ddde623c6fa854fa601e9cbfbf39ab5f9bdb9dc081f5f606ed187e61aba618"
+        },
+        {
+          "role": "seeder",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "ef5140111534f882703445a10b238fa9521c4358b3058abd63d24ac6b0d27463"
+        },
+        {
+          "role": null,
+          "kind": "postgres",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "6a8928f5894c68eafc068ed4a1eaccd0ba7a04bfb57e7912f2533a37780a327c"
+        }
+      ],
+      "allDrainGaugesZero": true,
+      "roleExits": [
+        {
+          "role": "seeder",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api0",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api2",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api1",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "generator",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "observer",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        }
+      ],
+      "allOwnedRolesConfirmedAbsent": true,
+      "postgresCleanupPassed": true,
+      "redisCleanStop": true,
+      "sourceAndSchemaAcceptance": false,
+      "productionReadiness": false,
+      "usageModes": "off",
+      "broaderCapacityClaimed": false,
+      "limitations": [
+        "Local4CPU/4GiBPostgreSQL is not production headroom.",
+        "Synthetic client ACKs do not prove packaged browser enforcement.",
+        "Host filesystem cache is not cleared."
+      ]
+    },
+    {
+      "index": 2,
+      "run": "ed57a628b200",
+      "startedAt": "2026-10-04T09:33:01.056Z",
+      "finishedAt": "2026-10-04T09:49:12.873Z",
+      "runPassed": true,
+      "cleanupPassed": true,
+      "sourceUnchanged": true,
+      "receiptManifestSha256": "6e0139bf6808b333af8dd6a69619503279dcb5f33322277048ee2fe746e4e53e",
+      "metricsSha256": "c9b3d4350ba74061f4cac6245ece3a3caf0fc2841a8768454d1aa71a319172f2",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+      "helperImage": "sha256:0efe4b7e82529ee285bb6a65b3a9ae37e87b2aa257df36e086f975578bb45ae7",
+      "helperBindingSha256": "8e4e3948f146658f67a74096efb591bcf3ecc93af5886b9c02c12fcd0fc7240d",
+      "nodeVersion": "v22.23.3",
+      "profile": "release297-classroom-133-1-3-2-native-v3",
+      "profileSha256": "93230128f74469bc58c952f578a5dc0cda394b14ea986b708d7bac2ad15a7cd2",
+      "sourceSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+      "schemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+      "fixtureLogicalSha256": "0cb731a661cb0cec200d922c944a05023e2d106af2e712ffccb72d46c57b64cc",
+      "clientAdvertisementVersion": "2.9.7",
+      "clientAdvertisementSha256": null,
+      "observedFlagsSha256": "2a4366a1066a4f30c2cea1724b460a05dbfcb6367d3f285e3a6d0b5d24a6ffe9",
+      "operationalFixtureBootstrapRequired": true,
+      "operationalBootstrapReceiptSha256": "bdd8490ceb85dd8c6c00c65c8d8d5cf8cde1307d796b4e7f842b9425425b9a6d",
+      "continuousOffering": {
+        "durationMs": 900000.942961,
+        "windowsContinuous": true,
+        "declaredStartedAtMs": 1791106444393,
+        "actualStartedAtMs": 1791106444395,
+        "startAlignmentAccepted": true,
+        "ordinaryOffered": 11970,
+        "ordinarySucceeded": 11970,
+        "ordinaryStatusHistogram": {
+          "200": 11970
+        },
+        "reconnectOffered": 133,
+        "reconnectSucceeded": 133,
+        "reconnectStatusHistogram": {
+          "200": 133
+        },
+        "failed": 0,
+        "refused": 0,
+        "lateOffers": 0,
+        "outstandingAfterDrain": 0,
+        "maxOfferLatenessMs": 6.652722240600269,
+        "ordinaryCapabilityAcknowledgements200": 11970,
+        "reconnectCapabilityCounterAvailable": false,
+        "reconnectCapabilityValidation": "Every successful reconnect uses the unchanged heartbeat wrapper which rejects a mismatched accepted-capability response; no aggregate reconnect capability counter was recorded.",
+        "actualPersisted": 12103,
+        "invalidBindings": 0,
+        "targetCountsVerified": true,
+        "actualTargetCounts": [
+          {
+            "index": 0,
+            "count": 6456
+          },
+          {
+            "index": 1,
+            "count": 2839
+          },
+          {
+            "index": 2,
+            "count": 2808
+          }
+        ]
+      },
+      "maximumMinuteP95Ms": 115.3166579999961,
+      "maximumActiveApiMinuteMeanCpuFraction": 0.22720655,
+      "declaredMinuteChecks": [
+        {
+          "minute": 0,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 57.99608999999691,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.22720655
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 1,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 53.06984099998954,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.21015068333333334
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 2,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 52.05184699999518,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.19849595
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 3,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 64.17395600001328,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.22148096666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 4,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 69.88802700000815,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.2263184
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 5,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 270,
+            "1": 264,
+            "2": 264
+          },
+          "p95Ms": 76.37338699999964,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.1117409
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.13411116666666667
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.1300224
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 6,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 270,
+            "1": 264,
+            "2": 264
+          },
+          "p95Ms": 50.46026500000153,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.09836338333333333
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.09435956666666667
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.08858698333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 7,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 59.5739889999968,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.19053276666666666
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.05677185
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.06149405
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 8,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 54.22214199998416,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.16897418333333333
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.044715616666666666
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.043079966666666664
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 9,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 115.3166579999961,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.2012295
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.0492736
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.05085258333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 10,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 67.05099200003315,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.16626825
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.14219301666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 11,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 63.32368300005328,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.14477298333333333
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.12579976666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 12,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 62.451828000019304,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.1221454
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11583726666666666
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 13,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 61.40745199995581,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.1344232
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.12441061666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 14,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 55.692590000107884,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.13301515
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11996056666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        }
+      ],
+      "physicalLoss": {
+        "lossAtMs": 1791107044393,
+        "reconnectAtMs": 1791107045393,
+        "expectedPreLossOffers": 6456,
+        "observedPreLossOffers": 6456,
+        "actualServerOwnership": true,
+        "ingressStartedAtMs": 1791107044404,
+        "ingressCompletedAtMs": 1791107044435,
+        "shutdownCompletedAtMs": 1791107045071,
+        "shutdownMarginBeforeReconnectMs": 322,
+        "exactLostRoleAbsent": true,
+        "cleanShutdown": true
+      },
+      "nativeClassroomOracle": {
+        "passed": true,
+        "declaredSchoolIndices": [
+          0
+        ],
+        "repetitions": 15,
+        "observedCommands": 60,
+        "expectedCommands": 60,
+        "observedMessages": 30,
+        "expectedMessages": 30,
+        "commandTargetsChecked": 60,
+        "privateBindingsChecked": 30,
+        "attemptedExpiredMessages": 15,
+        "unattemptedExpiredMessages": 0,
+        "exactRecipientOnly": true,
+        "nativeRowsSha256": "5ed9566377f65b9e5ae486abf4098ef417e3d4a503864149c35762878e2147f9"
+      },
+      "intentionalNegativeProbes": 15,
+      "expectedNegativeLogCoverage": true,
+      "completeLogEvidence": [
+        {
+          "role": "api2",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "0f109fb8e710729f2fe585714a47b5c59528cc4e446badc23ddc708dd7222a71"
+        },
+        {
+          "role": "api1",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "6b23a482c151d965af40fa6529461336c85c8fbcb1b0e8e00ec6b2710f5aae10"
+        },
+        {
+          "role": "generator",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "role": "api0",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "f0a405e0d7555c36ed51e16b45625204cf73b639ae0b721e5ba3804cb6bc464d"
+        },
+        {
+          "role": "observer",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "188a8d8b2862ae28c418ccf0cef011e82e7da740ace637941d4eebc88370b52d"
+        },
+        {
+          "role": "seeder",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "84ffa6878a65bf1c0d4471dfd5a72d18cf74e906ca651a26ba48a4fcfeeb1996"
+        },
+        {
+          "role": null,
+          "kind": "postgres",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "052985e72b15b02b6cd6f20c6d43d540f07691ef115e4e8256e02c0b8db909b2"
+        }
+      ],
+      "allDrainGaugesZero": true,
+      "roleExits": [
+        {
+          "role": "seeder",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api0",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api2",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api1",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "generator",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "observer",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        }
+      ],
+      "allOwnedRolesConfirmedAbsent": true,
+      "postgresCleanupPassed": true,
+      "redisCleanStop": true,
+      "sourceAndSchemaAcceptance": false,
+      "productionReadiness": false,
+      "usageModes": "off",
+      "broaderCapacityClaimed": false,
+      "limitations": [
+        "Local4CPU/4GiBPostgreSQL is not production headroom.",
+        "Synthetic client ACKs do not prove packaged browser enforcement.",
+        "Host filesystem cache is not cleared."
+      ]
+    },
+    {
+      "index": 3,
+      "run": "834c02fbaf42",
+      "startedAt": "2026-10-04T09:49:14.455Z",
+      "finishedAt": "2026-10-04T10:05:26.604Z",
+      "runPassed": true,
+      "cleanupPassed": true,
+      "sourceUnchanged": true,
+      "receiptManifestSha256": "040fcd326ae5406eeb631b8b868bc579d979fbda44c74c59339842a4e35abdbb",
+      "metricsSha256": "edf3fe8a41f5214c75891cb5d7946d097c748f53674d16b74ea9681a4b07dab6",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+      "helperImage": "sha256:0efe4b7e82529ee285bb6a65b3a9ae37e87b2aa257df36e086f975578bb45ae7",
+      "helperBindingSha256": "8e4e3948f146658f67a74096efb591bcf3ecc93af5886b9c02c12fcd0fc7240d",
+      "nodeVersion": "v22.23.3",
+      "profile": "release297-classroom-133-1-3-2-native-v3",
+      "profileSha256": "93230128f74469bc58c952f578a5dc0cda394b14ea986b708d7bac2ad15a7cd2",
+      "sourceSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+      "schemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+      "fixtureLogicalSha256": "0cb731a661cb0cec200d922c944a05023e2d106af2e712ffccb72d46c57b64cc",
+      "clientAdvertisementVersion": "2.9.7",
+      "clientAdvertisementSha256": null,
+      "observedFlagsSha256": "2a4366a1066a4f30c2cea1724b460a05dbfcb6367d3f285e3a6d0b5d24a6ffe9",
+      "operationalFixtureBootstrapRequired": true,
+      "operationalBootstrapReceiptSha256": "aaa790caacb692dd7c06bb8dce681e37c11f62e81a1c513610af6f0e4decc439",
+      "continuousOffering": {
+        "durationMs": 900001.059828,
+        "windowsContinuous": true,
+        "declaredStartedAtMs": 1791107419173,
+        "actualStartedAtMs": 1791107419174,
+        "startAlignmentAccepted": true,
+        "ordinaryOffered": 11970,
+        "ordinarySucceeded": 11970,
+        "ordinaryStatusHistogram": {
+          "200": 11970
+        },
+        "reconnectOffered": 133,
+        "reconnectSucceeded": 133,
+        "reconnectStatusHistogram": {
+          "200": 133
+        },
+        "failed": 0,
+        "refused": 0,
+        "lateOffers": 0,
+        "outstandingAfterDrain": 0,
+        "maxOfferLatenessMs": 14.236311624059454,
+        "ordinaryCapabilityAcknowledgements200": 11970,
+        "reconnectCapabilityCounterAvailable": false,
+        "reconnectCapabilityValidation": "Every successful reconnect uses the unchanged heartbeat wrapper which rejects a mismatched accepted-capability response; no aggregate reconnect capability counter was recorded.",
+        "actualPersisted": 12103,
+        "invalidBindings": 0,
+        "targetCountsVerified": true,
+        "actualTargetCounts": [
+          {
+            "index": 0,
+            "count": 6456
+          },
+          {
+            "index": 1,
+            "count": 2839
+          },
+          {
+            "index": 2,
+            "count": 2808
+          }
+        ]
+      },
+      "maximumMinuteP95Ms": 74.6799840000458,
+      "maximumActiveApiMinuteMeanCpuFraction": 0.24745423333333333,
+      "declaredMinuteChecks": [
+        {
+          "minute": 0,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 59.37099600000147,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.24745423333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 1,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 63.020386999996845,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.24178688333333334
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 2,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 49.31692299997667,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.20268315
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 3,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 53.99969399999827,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.21840846666666666
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 4,
+          "activeApiIndices": [
+            0
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 798
+          },
+          "p95Ms": 61.973234999983106,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.2382624
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 5,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 270,
+            "1": 264,
+            "2": 264
+          },
+          "p95Ms": 65.42546300002141,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.10822276666666666
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.1257964
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.12838546666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 6,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 270,
+            "1": 264,
+            "2": 264
+          },
+          "p95Ms": 55.408450999995694,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.09786626666666666
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.09679633333333333
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.09582995
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 7,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 59.84052399999928,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.20243828333333333
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.06416058333333333
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.060754383333333335
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 8,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 68.87310700002126,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.18742058333333333
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.04337273333333334
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.04463175
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 9,
+          "activeApiIndices": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "0": 642,
+            "1": 78,
+            "2": 78
+          },
+          "p95Ms": 52.50924199994188,
+          "cpuByRole": [
+            {
+              "role": "api0",
+              "available": true,
+              "meanFraction": 0.17208655
+            },
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.04165976666666667
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.03900281666666667
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 10,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 74.6799840000458,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.18414671666666665
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.15587618333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 11,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 51.92734199995175,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.15160436666666666
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.12860838333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 12,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 42.300767999957316,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.12129053333333334
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.10978728333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 13,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 42.63949600001797,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.12184001666666666
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11215498333333333
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        },
+        {
+          "minute": 14,
+          "activeApiIndices": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "ordinaryOffered": 798,
+          "ordinaryTargetHistogram": {
+            "1": 402,
+            "2": 396
+          },
+          "p95Ms": 46.88503100001253,
+          "cpuByRole": [
+            {
+              "role": "api1",
+              "available": true,
+              "meanFraction": 0.12747481666666666
+            },
+            {
+              "role": "api2",
+              "available": true,
+              "meanFraction": 0.11349115
+            }
+          ],
+          "checks": {
+            "actualProfile": true,
+            "offering": true,
+            "reconnect": true,
+            "persistence": true,
+            "declaredStartAlignment": true,
+            "capabilityAcknowledgements": true,
+            "targetCounts": true,
+            "declaredDistribution": true,
+            "drains": true,
+            "cpuBound": true,
+            "latency": true,
+            "classroom": true,
+            "database": true,
+            "nativeClassroomBindings": true
+          },
+          "passed": true
+        }
+      ],
+      "physicalLoss": {
+        "lossAtMs": 1791108019173,
+        "reconnectAtMs": 1791108020173,
+        "expectedPreLossOffers": 6456,
+        "observedPreLossOffers": 6456,
+        "actualServerOwnership": true,
+        "ingressStartedAtMs": 1791108019185,
+        "ingressCompletedAtMs": 1791108019246,
+        "shutdownCompletedAtMs": 1791108019997,
+        "shutdownMarginBeforeReconnectMs": 176,
+        "exactLostRoleAbsent": true,
+        "cleanShutdown": true
+      },
+      "nativeClassroomOracle": {
+        "passed": true,
+        "declaredSchoolIndices": [
+          0
+        ],
+        "repetitions": 15,
+        "observedCommands": 60,
+        "expectedCommands": 60,
+        "observedMessages": 30,
+        "expectedMessages": 30,
+        "commandTargetsChecked": 60,
+        "privateBindingsChecked": 30,
+        "attemptedExpiredMessages": 15,
+        "unattemptedExpiredMessages": 0,
+        "exactRecipientOnly": true,
+        "nativeRowsSha256": "cd7c4129aa57fa5402b6c3d250cfa1595113d8c3e23616aa25cd63713b38be62"
+      },
+      "intentionalNegativeProbes": 15,
+      "expectedNegativeLogCoverage": true,
+      "completeLogEvidence": [
+        {
+          "role": "api2",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "c4e3875f6419de8c4737f0a374fe0a1c15e8caabbbc92beaa88e7c33e139187c"
+        },
+        {
+          "role": "api1",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "4d0c5d3d5c4b1f2cadc60d427e75b1d132e986fbe9c4b9562354e2cd94df8011"
+        },
+        {
+          "role": "generator",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "role": "api0",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "ed5781aea8d484c1b086bfe63bd246659748225f66d92e64aeb248c961710dcd"
+        },
+        {
+          "role": "observer",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "ff649fd3998bd6d2ef47fbfd5b51fdf8e503f458f40840387c11d006d510da40"
+        },
+        {
+          "role": "seeder",
+          "kind": "api",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "0592a5107ef19889e2f7ec0dca3d9708b44035add34f1dda316ceee34afc4834"
+        },
+        {
+          "role": null,
+          "kind": "postgres",
+          "available": true,
+          "complete": true,
+          "errorCount": 0,
+          "sha256": "9e5335f346ab00d66651234dad9a06824caca6fb3a2c0a9e975b3a8708718b3c"
+        }
+      ],
+      "allDrainGaugesZero": true,
+      "roleExits": [
+        {
+          "role": "seeder",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api0",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api2",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "api1",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "generator",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        },
+        {
+          "role": "observer",
+          "exitCode": 0,
+          "clean": true,
+          "forced": false,
+          "oomKilled": false
+        }
+      ],
+      "allOwnedRolesConfirmedAbsent": true,
+      "postgresCleanupPassed": true,
+      "redisCleanStop": true,
+      "sourceAndSchemaAcceptance": false,
+      "productionReadiness": false,
+      "usageModes": "off",
+      "broaderCapacityClaimed": false,
+      "limitations": [
+        "Local4CPU/4GiBPostgreSQL is not production headroom.",
+        "Synthetic client ACKs do not prove packaged browser enforcement.",
+        "Host filesystem cache is not cleared."
+      ]
+    }
+  ],
+  "retainedHistoricalFailuresRemainFailed": true,
+  "productionReadiness": false,
+  "usageCapacityAccepted": false,
+  "broaderCapacityClaimed": false,
+  "comparisonPolicyAmendmentApproved": false,
+  "liveValidationPerformed": false,
+  "limits": [
+    "Synthetic current-school client count only; not the separate 800-client broader capacity gate.",
+    "Both Usage modes remained off; no Usage capacity or activation acceptance.",
+    "The failed historical paired comparison is unchanged; no comparison-policy amendment is assumed.",
+    "Capacity wrappers do not start index.ts HealthMonitor; actual-service health has separate staged-service proof.",
+    "Synthetic client acknowledgements do not establish installed Chromebook package enforcement or live acceptance.",
+    "PostgreSQL restart does not clear the host filesystem cache; local PostgreSQL resources do not establish production headroom."
+  ]
+}

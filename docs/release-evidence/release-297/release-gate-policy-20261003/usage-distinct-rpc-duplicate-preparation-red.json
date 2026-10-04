@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "content-free bounded first-case localization",
+  "source": "cbe0638480fe86301a9491a58d3b60b1720b04f5",
+  "passed": false,
+  "originalFirstPrepareCompletedMs": 401,
+  "canonicalHashCompletedMs": 61,
+  "importsCompleted": true,
+  "lastStage": "prepare:duplicate-rejection:start",
+  "configuredChildDeadlineMs": 20000,
+  "childError": "ETIMEDOUT",
+  "childSignal": "SIGTERM",
+  "localizedOperation": "duplicate prepare leading state guard",
+  "exactOwnedNodeProcessesAbsent": true,
+  "forceUsed": false,
+  "originalStatementsAndSourceUnchanged": true,
+  "fullSuiteAcceptance": false,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "records": [
+    {
+      "file": "execution-01/execution.json",
+      "bytes": 5012,
+      "sha256": "77be365edea7a813159de1a279ef31445ffd60ef53604f395de08410290096ac"
+    },
+    {
+      "file": "execution-01/stages.ndjson",
+      "bytes": 943,
+      "sha256": "10ddb2be3429c9acf95f321d065c825bd0d872afa402160c9c41b5e3733dfd53"
+    },
+    {
+      "file": "execution-01/driver.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "execution-01/process-containment.json",
+      "bytes": 243,
+      "sha256": "858669337cbb877c872c2c7632b7dcbf85814f12fb9a2fd7b4cf405605a9d0d7"
+    }
+  ]
+}

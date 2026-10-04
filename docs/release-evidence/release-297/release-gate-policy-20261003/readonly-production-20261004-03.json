@@ -1,0 +1,625 @@
+{
+  "schemaVersion": 1,
+  "kind": "bounded-read-only-production-preparation",
+  "observedAtUtc": "2026-10-04T10:15:05.987Z",
+  "rawReceipts": [
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-readonly-production-20261004-03/receipt.safe.json",
+      "sha256": "2b1927d8fe84271135ad7e6d6e0330bc8d7d96befdeca1554fdf790be066b236"
+    },
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-readonly-production-20261004-03/backup-headroom.safe.json",
+      "sha256": "594e9085466aee22959c04deae9bed6271bbe6e5fe72557e0c2aa92dbbc510d9"
+    },
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-readonly-production-20261004-03/baseline-flags-binding.safe.json",
+      "sha256": "2f46b07a3bf6a49d16986a23e705d22c3b7474b1b64f32c3218a5061dfff1e4d"
+    }
+  ],
+  "services": [
+    {
+      "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:163",
+      "cpu": "1024",
+      "memory": "2048",
+      "containerCpu": 0,
+      "containerMemory": null,
+      "image": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "rlsGucEnabled": "true",
+      "rlsTableCount": 121,
+      "dbPoolMax": "20",
+      "schedulerDbPoolMax": "5",
+      "capabilityModes": {
+        "scopedAuthorityChecksV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "exactBindingAckV2": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "exactTabCloseV2": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "authBoundTelemetryV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "studentChatIdempotencyV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotObservationLeaseV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "safetyEvidenceCaptureV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "liveViewIceServersV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "kioskLaunchTicketV2": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotTrackingWindowLeaseV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotActiveObservationCadenceV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "studentAuthGatePresenceV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "lateSignInRestrictionSsoV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "restrictionAuthPassThroughV1": {
+          "mode": "on",
+          "schoolScoped": true,
+          "schoolCount": 1
+        },
+        "scheduledClassroomV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "afterHoursSafetyOnlyV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "schoolWebsiteBlockEnforcementV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotReadOnlyObservationV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "kioskLaunchTicketV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        }
+      },
+      "usageModes": {
+        "rollup": "unset",
+        "digital": "unset"
+      },
+      "environmentCanonicalSha256": "542395c09d2acebcc670eea9c3e5a5b3efe89b5c905147e9a7361a76d02de8a2",
+      "name": "schoolpilot-production-api",
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "deployments": [
+        {
+          "status": "PRIMARY",
+          "rolloutState": "COMPLETED",
+          "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:163",
+          "desired": 1,
+          "running": 1,
+          "pending": 0
+        }
+      ],
+      "targetGroupArns": [
+        "arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/schoolpilot-production-api-tg/eea85b6c514168ec"
+      ]
+    },
+    {
+      "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:179",
+      "cpu": "512",
+      "memory": "1024",
+      "containerCpu": 0,
+      "containerMemory": null,
+      "image": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "rlsGucEnabled": "true",
+      "rlsTableCount": 121,
+      "dbPoolMax": "20",
+      "schedulerDbPoolMax": "5",
+      "capabilityModes": {
+        "scopedAuthorityChecksV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "exactBindingAckV2": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "exactTabCloseV2": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "authBoundTelemetryV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "studentChatIdempotencyV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotObservationLeaseV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "safetyEvidenceCaptureV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "liveViewIceServersV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "kioskLaunchTicketV2": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotTrackingWindowLeaseV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotActiveObservationCadenceV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "studentAuthGatePresenceV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "lateSignInRestrictionSsoV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "restrictionAuthPassThroughV1": {
+          "mode": "on",
+          "schoolScoped": true,
+          "schoolCount": 1
+        },
+        "scheduledClassroomV1": {
+          "mode": "on",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "afterHoursSafetyOnlyV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "schoolWebsiteBlockEnforcementV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "screenshotReadOnlyObservationV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        },
+        "kioskLaunchTicketV1": {
+          "mode": "off",
+          "schoolScoped": false,
+          "schoolCount": 0
+        }
+      },
+      "usageModes": {
+        "rollup": "unset",
+        "digital": "unset"
+      },
+      "environmentCanonicalSha256": "b5e1cc56af7db69abca44c680d9c012fe7562c81fe9dd9eed58bbaf17f6707c1",
+      "name": "schoolpilot-production-scheduler-worker",
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "deployments": [
+        {
+          "status": "PRIMARY",
+          "rolloutState": "COMPLETED",
+          "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:179",
+          "desired": 1,
+          "running": 1,
+          "pending": 0
+        }
+      ],
+      "targetGroupArns": []
+    }
+  ],
+  "tasks": [
+    {
+      "service": "schoolpilot-production-api",
+      "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:163",
+      "lastStatus": "RUNNING",
+      "desiredStatus": "RUNNING",
+      "healthStatus": "HEALTHY",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "containers": [
+        {
+          "name": "api",
+          "image": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+          "imageDigest": "sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+          "lastStatus": "RUNNING",
+          "healthStatus": "HEALTHY"
+        }
+      ],
+      "runtimeIdSha256": "df28b0eba4004827009e59e466fa1012f742a673bb93f1ea2aa6229b5ef69dad"
+    },
+    {
+      "service": "schoolpilot-production-scheduler-worker",
+      "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:179",
+      "lastStatus": "RUNNING",
+      "desiredStatus": "RUNNING",
+      "healthStatus": "UNKNOWN",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "containers": [
+        {
+          "name": "scheduler-worker",
+          "image": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+          "imageDigest": "sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+          "lastStatus": "RUNNING",
+          "healthStatus": "UNKNOWN"
+        }
+      ],
+      "runtimeIdSha256": "73841c2e192dbcf18d6a8098d4286c9e9160c9e8b910f7dc869e8e13acc387b1"
+    }
+  ],
+  "scaling": [
+    {
+      "min": 1,
+      "max": 6,
+      "suspended": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "name": "schoolpilot-production-api-arrival-scale-down",
+      "schedule": "cron(0 16 ? * MON-FRI *)",
+      "timezone": "America/New_York",
+      "target": {
+        "MinCapacity": 1
+      }
+    },
+    {
+      "name": "schoolpilot-production-api-arrival-scale-up",
+      "schedule": "cron(45 5 ? * MON-FRI *)",
+      "timezone": "America/New_York",
+      "target": {
+        "MinCapacity": 3
+      }
+    }
+  ],
+  "targets": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/schoolpilot-production-api-tg/eea85b6c514168ec",
+      "states": [
+        {
+          "state": "healthy",
+          "reason": null
+        }
+      ],
+      "targetCount": 1
+    }
+  ],
+  "metadataCaptureStable": true,
+  "fullEnvironmentUnchangedSincePreviousOct4Observation": true,
+  "originalOct3WhitelistIdentical": true,
+  "whitelistNames": [
+    "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1",
+    "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1",
+    "CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1",
+    "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2",
+    "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1",
+    "SCHEDULER_DB_POOL_MAX",
+    "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1",
+    "NODE_ENV",
+    "RLS_GUC_ENABLED",
+    "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1",
+    "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1",
+    "CLASSPILOT_PROTOCOL_V3_ENABLED",
+    "RLS_ENABLED_TABLES",
+    "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1",
+    "GIT_SHA",
+    "CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1",
+    "CLASSPILOT_CAP_EXACT_BINDING_ACK_V2",
+    "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1",
+    "CLASSPILOT_CAP_EXACT_TAB_CLOSE_V2",
+    "CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1",
+    "DB_POOL_MAX",
+    "CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1",
+    "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1",
+    "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1",
+    "SCHEDULER_ENABLED",
+    "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1",
+    "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON",
+    "CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1"
+  ],
+  "baselineFlagsFileSha256": "7d38b0261bc91b5d90edfb311f3dd2a796b4473d1bc6f241d63f120194c663bc",
+  "database": {
+    "identifier": "schoolpilot-production-db",
+    "status": "available",
+    "class": "db.t4g.medium",
+    "engine": "postgres",
+    "engineVersion": "16.4",
+    "allocatedStorageGiB": 100,
+    "storageType": "gp3",
+    "backupRetentionDays": 14,
+    "latestRestorableTime": "2026-10-04T10:12:03+00:00",
+    "latestRestorableAgeSeconds": 193.438,
+    "deletionProtection": true,
+    "multiAZ": false,
+    "pendingModifiedFields": []
+  },
+  "databaseObservedAtUtc": "2026-10-04T10:15:16.438Z",
+  "metricsWindow": {
+    "startUtc": "2026-10-04T09:15:00.000Z",
+    "endUtc": "2026-10-04T10:15:00.000Z",
+    "periodSeconds": 300,
+    "statistic": "Average",
+    "alignedToCompletedFiveMinutePeriods": true
+  },
+  "metrics": [
+    {
+      "id": "m0",
+      "label": "schoolpilot-production-api/CPUUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.9805968602498372,
+      "maximum": 1.7984518607457478,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 1.3956575244665146
+      },
+      "messages": []
+    },
+    {
+      "id": "m1",
+      "label": "schoolpilot-production-api/MemoryUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 12.890625,
+      "maximum": 12.897135416666666,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 12.890625
+      },
+      "messages": []
+    },
+    {
+      "id": "m2",
+      "label": "schoolpilot-production-scheduler-worker/CPUUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.048592910449951884,
+      "maximum": 0.6522199405046801,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 0.05013086324712883
+      },
+      "messages": []
+    },
+    {
+      "id": "m3",
+      "label": "schoolpilot-production-scheduler-worker/MemoryUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 14.700520833333334,
+      "maximum": 15.72265625,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 15.450032552083334
+      },
+      "messages": []
+    },
+    {
+      "id": "m4",
+      "label": "schoolpilot-production-db/CPUUtilization",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 4.369564816141204,
+      "maximum": 4.809479668603093,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 4.422369969943999
+      },
+      "messages": []
+    },
+    {
+      "id": "m5",
+      "label": "schoolpilot-production-db/FreeableMemory",
+      "unit": "Bytes",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 2009996492.8,
+      "maximum": 2012315648,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 2010982809.6
+      },
+      "messages": []
+    },
+    {
+      "id": "m6",
+      "label": "schoolpilot-production-db/DatabaseConnections",
+      "unit": "Count",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 16,
+      "maximum": 16.4,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 16
+      },
+      "messages": []
+    },
+    {
+      "id": "m7",
+      "label": "schoolpilot-production-db/FreeStorageSpace",
+      "unit": "Bytes",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 97587132825.6,
+      "maximum": 97587242598.4,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 97587132825.6
+      },
+      "messages": []
+    },
+    {
+      "id": "m8",
+      "label": "schoolpilot-production-db/ReadLatency",
+      "unit": "Seconds",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0,
+      "maximum": 0.0004,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 0.0002
+      },
+      "messages": []
+    },
+    {
+      "id": "m9",
+      "label": "schoolpilot-production-db/WriteLatency",
+      "unit": "Seconds",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.000758922455710118,
+      "maximum": 0.002687586768982118,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 0.001075834232775679
+      },
+      "messages": []
+    },
+    {
+      "id": "m10",
+      "label": "schoolpilot-production-db/DiskQueueDepth",
+      "unit": "Count",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 0.00452659388964152,
+      "maximum": 0.016757102503545687,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 0.004729449309045606
+      },
+      "messages": []
+    },
+    {
+      "id": "m11",
+      "label": "schoolpilot-production-db/CPUCreditBalance",
+      "unit": "Count",
+      "status": "Complete",
+      "sampleCount": 12,
+      "minimum": 576,
+      "maximum": 576,
+      "latest": {
+        "at": "2026-10-04T06:10:00-04:00",
+        "value": 576
+      },
+      "messages": []
+    },
+    {
+      "id": "m12",
+      "label": "schoolpilot-production-db/BurstBalance",
+      "unit": "Percent",
+      "status": "Complete",
+      "sampleCount": 0,
+      "minimum": null,
+      "maximum": null,
+      "latest": null,
+      "messages": []
+    }
+  ],
+  "actualProductionCatalogInspected": false,
+  "actualMigrationHistoryVerified": false,
+  "runtimeDatabasePrivilegesVerified": false,
+  "successfulBackupRestoreProven": false,
+  "operationalWindowApproved": false,
+  "deploymentGreenLight": false,
+  "cloudMutationsPerformed": 0,
+  "productionDatabaseConnections": 0,
+  "limitations": [
+    "Metadata observed sequentially; service counts/task definitions were rechecked for stability.",
+    "RLS admission is configured environment only; no database catalog or migration-history read.",
+    "No secret values were retrieved; task-definition raw metadata and scoped capability settings remain private.",
+    "Provider task/ALB health is not application or capacity acceptance; no HTTP/load probe performed.",
+    "Configured scheduled minimum3 weekdays0545–1600Eastern and minimum1 otherwise does not force exactly that running count.",
+    "No backups, current database headroom, production deployment or release green light is claimed.",
+    "Five-minute CloudWatch averages may conceal transient spikes and are not school-day capacity acceptance.",
+    "Missing samples remain unavailable; they are never inferred to be zero.",
+    "Backup configuration and a restorable timestamp do not prove a successful restore rehearsal.",
+    "Database connection observations do not establish headroom without actual server limits and workload context.",
+    "No credentials, secret values, SQL, task registration, deployment, runtime change, or load probe was performed.",
+    "All freshness-sensitive metadata must be repeated immediately before the separately authorized operation.",
+    "The serving receipt compares its full environment against the original Oct3 whitelist, which excludes additional metadata keys. Direct full-environment comparison against the preceding Oct4 observation is unchanged.",
+    "Configured admission has121tables; actual PostgreSQL RLS/catalog/ledger and school eligibility require the separately authorized bounded inspector.",
+    "Sunday low-load metrics are not school-day capacity evidence. Store pending submissions and participating-client installation remain unverified."
+  ]
+}
