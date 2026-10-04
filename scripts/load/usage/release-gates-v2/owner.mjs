@@ -40,8 +40,13 @@ export async function ownRole({ docker, run, source, helperImage, helperConfigDi
   privateFile(join(control, 'binding.json'), binding);
   await docker(['start', id]);
   let nextId = 0, settled = 0, expired = 0, closed = false; const pending = new Map(), resources = [];
+  let checkedAt=0, stateReading, lastState;
+  async function checkAlive(){
+    if(!stateReading&&Date.now()-checkedAt>=1000){checkedAt=Date.now();stateReading=docker(['inspect',id]).then(bytes=>{lastState=JSON.parse(bytes)[0].State;}).finally(()=>{stateReading=undefined;});}
+    if(stateReading)await stateReading;if(lastState&&!lastState.Running)throw Error('V2_ROLE_EXITED_BEFORE_RESPONSE');
+  }
   async function wait(name, deadlineMs = 30_000) {
-    const deadline = Date.now() + deadlineMs, file = join(control, name); let checkedAt = 0;
+    const deadline = Date.now() + deadlineMs, file = join(control, name);
     while (Date.now() < deadline) {
       if (existsSync(file)) {
         const message = JSON.parse(readFileSync(file, 'utf8'));
@@ -49,10 +54,7 @@ export async function ownRole({ docker, run, source, helperImage, helperConfigDi
         if (message.resources) resources.push({ operation: name, ...message.resources });
         return message;
       }
-      if (Date.now() - checkedAt >= 1000) {
-        const state = JSON.parse(await docker(['inspect', id]))[0].State;
-        if (!state.Running) throw Error('V2_ROLE_EXITED_BEFORE_RESPONSE'); checkedAt = Date.now();
-      }
+      await checkAlive();
       await pause(25);
     }
     throw Error('V2_ROLE_RESPONSE_DEADLINE');
