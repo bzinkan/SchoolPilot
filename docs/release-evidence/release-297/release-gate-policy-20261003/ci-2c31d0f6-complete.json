@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T03:16:10.9822431Z",
+  "operation": "read_only_final_review_head_ci",
+  "schoolPilot": {
+    "headRefOid": "2c31d0f6e6c39044c5a53bc36d8fc21c0304fd46",
+    "isDraft": true,
+    "state": "OPEN",
+    "url": "https://github.com/bzinkan/SchoolPilot/pull/603"
+  },
+  "schoolPilotChecks": [
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111348382943",
+      "name": "SOC 2 approval queue",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111348354831",
+      "name": "SOC 2 incident evidence",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111348354893",
+      "name": "SOC 2 deployment evidence",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111348354791",
+      "name": "SOC 2 tenant isolation evidence",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111347649837",
+      "name": "SOC 2 monitoring evidence",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111347649865",
+      "name": "SOC 2 AI/privacy evidence",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111346656274",
+      "name": "SOC 2 privileged access evidence",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345996556",
+      "name": "AWS rollout safety (PowerShell + Terraform)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940938",
+      "name": "Cross-tenant isolation tests",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940947",
+      "name": "Frontend release-focused gates (shard 2)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345941013",
+      "name": "Frontend release-focused gates (shard 3)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345941002",
+      "name": "Frontend release-focused gates (shard 4)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940967",
+      "name": "Frontend release-focused gates (shard 1)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940954",
+      "name": "Frontend (Vite Build)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940930",
+      "name": "RLS-enabled cross-tenant tests",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940806",
+      "name": "Detect changed paths",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683741/job/111345940927",
+      "name": "Backend (TypeScript + Build)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683794/job/111345727499",
+      "name": "Scan Docker image",
+      "state": "SUCCESS",
+      "workflow": "Trivy Container Scan"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683871/job/111345727722",
+      "name": "Scan for secrets",
+      "state": "SUCCESS",
+      "workflow": "Gitleaks"
+    },
+    {
+      "link": "https://github.com/bzinkan/SchoolPilot/actions/runs/37171683742/job/111345727322",
+      "name": "Analyze (javascript-typescript)",
+      "state": "SUCCESS",
+      "workflow": "CodeQL"
+    }
+  ],
+  "classPilot": {
+    "headRefOid": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "isDraft": true,
+    "state": "OPEN",
+    "url": "https://github.com/bzinkan/ClassPilot/pull/123"
+  },
+  "classPilotChecks": [
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424822",
+      "name": "chrome-compatibility (stable)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424496",
+      "name": "test",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424609",
+      "name": "chrome-compatibility (120.0.6099.109)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424685",
+      "name": "chrome-compatibility (133.0.6943.141)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424815",
+      "name": "chrome-compatibility (152.0.7977.82)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698145",
+      "name": "chrome-compatibility (120.0.6099.109)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697831",
+      "name": "chrome-compatibility (152.0.7977.82)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698242",
+      "name": "chrome-compatibility (stable)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697682",
+      "name": "test",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "link": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697900",
+      "name": "chrome-compatibility (133.0.6943.141)",
+      "state": "SUCCESS",
+      "workflow": "CI"
+    }
+  ],
+  "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "applicationAndFrontendUnchanged": true,
+  "deploymentGreenLight": false,
+  "remaining": "Measured paired comparison fails; mixed/Usage/staging acceptance pending; merges and production operations separately authorized"
+}
