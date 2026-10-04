@@ -1,0 +1,1712 @@
+{
+  "schemaVersion": 1,
+  "kind": "additive_operator_preparation_and_inclusion_checkpoint",
+  "recordedAtUtc": "2026-10-04T13:58:58.5272093Z",
+  "reviewHead": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "classPilotReviewHead": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "originalEvidenceUnchanged": true,
+  "auditOperations": [
+    "static_source_reads",
+    "small_receipt_hash_checks",
+    "git_inclusion_ancestry_read",
+    "two_additive_documentation_files"
+  ],
+  "evidence": {
+    "originalInventory": {
+      "path": "docs/release-evidence/release-2.9.7-pr-inventory.json",
+      "sha256": "b03f0455f6b3c9111041c1e2ecdfbabb9e745324475886ac479ef1b9078ec366",
+      "bytes": 51752
+    },
+    "sourceReconciliation": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/source-pr-inventory-current-reconciliation.json",
+      "sha256": "3908bcc8e7573c63cdd71357032808d3ce25aa01be69dea6283307085526ba81",
+      "bytes": 47725
+    },
+    "artifactFacts": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json",
+      "sha256": "f1eb27e03e21ab434665d3ee6682af954dd4c6e72af1b9fe08b9b3d72d258e94",
+      "bytes": 12618
+    },
+    "stagedServices": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json",
+      "sha256": "cca18d0e2d122a2f21ffa6f66b7160636f0dfe6ebc1ffeb8c7f43c5ff5879c98",
+      "bytes": 6445
+    },
+    "classroomBlock": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-passed-block.json",
+      "sha256": "f4f6ff8aa6d714dad17963f225817e0f0a5a8d06d659bddde2ce8972498d3e57",
+      "bytes": 78775
+    },
+    "classroomIndependent": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-independent-review.json",
+      "sha256": "c01874825b6555c0b3e3421fca361f5d8e4f443dbbb6e9c2c9c4f0f4176198cf",
+      "bytes": 37046
+    },
+    "usageFailed": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/usage-native-ddc5996b-df919-failed-03.json",
+      "sha256": "849e03e2b1ba44d444d64836f71a48059331198138a159398ba2d6880362cfce",
+      "bytes": 15696
+    },
+    "ci": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-ready-ci-b5d59130-01/observation-05-receipt.json",
+      "sha256": "a20706c6fbb25d72ada30e01cf8a6e05033350e04fdfe44a31130483fb76b565",
+      "bytes": 133872
+    },
+    "ciIndependent": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-ready-ci-b5d59130-independent-01/independent-review.json",
+      "sha256": "9d03efd226cf3e29f1f972b13c92697eb52cc92ba30fe14909f9e5aaf403df97",
+      "bytes": 7567
+    },
+    "productionMetadata": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-readonly-production-20261004-04/receipt.safe.json",
+      "sha256": "ce204f1441b9baedcd36cf443a0ab3c2fa89b5501ba7a92953d0e0b7faa51ab8",
+      "bytes": 13609
+    },
+    "baselineFlags": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-readonly-production-20261004-04/baseline-flags-binding.safe.json",
+      "sha256": "45477bcf7fb7abdb4077124d843ece18a1f966d21fa9052e85ea2453e040f242",
+      "bytes": 2239
+    },
+    "backupMetadata": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-readonly-production-20261004-04/backup-headroom.safe.json",
+      "sha256": "b609339de0e84f4cc53bd972f1411e0d97e768cdb98788142aeba256034d78c8",
+      "bytes": 6704
+    },
+    "frontendPreparation": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-frontend-ed026-01/frontend-preparation.json",
+      "sha256": "a518a58434978722eacb890a248044c60af03b01a98a26cec0c982e8c9079f5e",
+      "bytes": 122674
+    }
+  },
+  "releaseChecks": {
+    "observationAtUtc": "2026-10-04T12:46:59.957Z",
+    "schoolPilot": {
+      "number": 603,
+      "head": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+      "state": "OPEN",
+      "isDraft": true,
+      "reported": 20,
+      "successful": 20,
+      "complete": true
+    },
+    "classPilot": {
+      "number": 123,
+      "head": "8069a9c9bd50352e187847158b356a69edc4e45d",
+      "state": "OPEN",
+      "isDraft": true,
+      "reported": 10,
+      "successful": 10,
+      "complete": true
+    },
+    "applicationInputs": [
+      {
+        "path": "src",
+        "applicationGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+        "reviewGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+        "oldEd026GitObject": "87754e8794fdcec712f2438e52540e32ad30107b",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": false
+      },
+      {
+        "path": "package.json",
+        "applicationGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+        "reviewGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+        "oldEd026GitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "package-lock.json",
+        "applicationGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+        "reviewGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+        "oldEd026GitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "Dockerfile",
+        "applicationGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "reviewGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "oldEd026GitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": ".dockerignore",
+        "applicationGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "reviewGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "oldEd026GitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "tsconfig.json",
+        "applicationGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "reviewGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "oldEd026GitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "drizzle.config.ts",
+        "applicationGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+        "reviewGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+        "oldEd026GitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "migrations",
+        "applicationGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+        "reviewGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+        "oldEd026GitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "schoolpilot-app",
+        "applicationGitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+        "reviewGitObject": "b182c7eb835dc771f4952a42821846acc1875fe8",
+        "oldEd026GitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+        "finalSourceEqual": false,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [
+          "schoolpilot-app/scripts/passpilot-reports-v2-browser.test.mjs"
+        ],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "infra",
+        "applicationGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+        "reviewGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+        "oldEd026GitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      },
+      {
+        "path": "docs/soc2",
+        "applicationGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+        "reviewGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+        "oldEd026GitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+        "finalSourceEqual": true,
+        "applicationInputsEqual": true,
+        "reviewedTestOnlyChanges": [],
+        "unchangedSinceEd026": true
+      }
+    ],
+    "package": {
+      "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+      "packagedSourceAncestorOfHead": true,
+      "extensionTree": {
+        "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+        "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+      },
+      "documentationOnlyDiff": [
+        "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+        "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+      ],
+      "zip": {
+        "path": "C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip",
+        "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+        "bytes": 376052,
+        "rebuildPerformed": false
+      }
+    },
+    "resultingMainVerified": false
+  },
+  "inclusion": {
+    "total": 60,
+    "alreadyMerged": 18,
+    "included": 40,
+    "superseded": 2,
+    "observedAt": "2026-10-04T02:38:17.293Z",
+    "source": "44c1932f4a5ac5565f00a1e915e8a6fffc480b8c",
+    "sourceIsAncestorOfReviewHead": true,
+    "newRemoteSourcePrRead": false,
+    "historicalMechanicalProofExceptions": [
+      564,
+      574,
+      586
+    ],
+    "sourcePrMergedOrClosedByAudit": false,
+    "records": [
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 547,
+        "disposition": "already_merged",
+        "recordedHead": "45dd3333ffb043c797ac095387c0c87e5d31a238",
+        "observedHead": "45dd3333ffb043c797ac095387c0c87e5d31a238",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 548,
+        "disposition": "already_merged",
+        "recordedHead": "22c183c450b5d1f1a1aef72ba4772f546e3132ab",
+        "observedHead": "22c183c450b5d1f1a1aef72ba4772f546e3132ab",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 549,
+        "disposition": "already_merged",
+        "recordedHead": "eda5c1f2576c06608de16fe8ca5296c954d716d8",
+        "observedHead": "eda5c1f2576c06608de16fe8ca5296c954d716d8",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 550,
+        "disposition": "already_merged",
+        "recordedHead": "1dae1ff1e8ca30aca4fde3185f65bfdd0e2eccc3",
+        "observedHead": "1dae1ff1e8ca30aca4fde3185f65bfdd0e2eccc3",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 551,
+        "disposition": "already_merged",
+        "recordedHead": "7efe17119507edfe9e0be3274e35eb77d5bba346",
+        "observedHead": "7efe17119507edfe9e0be3274e35eb77d5bba346",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 552,
+        "disposition": "already_merged",
+        "recordedHead": "f63e5d87524d4d0cf591de58e0caea5bd1d82174",
+        "observedHead": "f63e5d87524d4d0cf591de58e0caea5bd1d82174",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 553,
+        "disposition": "already_merged",
+        "recordedHead": "eb4293011bb8cc73dfad4339d67689de7bd59969",
+        "observedHead": "eb4293011bb8cc73dfad4339d67689de7bd59969",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 554,
+        "disposition": "already_merged",
+        "recordedHead": "296b7f204b47be1aafb04ddd875e72b8c01750e4",
+        "observedHead": "296b7f204b47be1aafb04ddd875e72b8c01750e4",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 555,
+        "disposition": "already_merged",
+        "recordedHead": "87fdeb128b9a7531e6f159754687982876b757be",
+        "observedHead": "87fdeb128b9a7531e6f159754687982876b757be",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 556,
+        "disposition": "already_merged",
+        "recordedHead": "c94dff4b4e1250f8d97a0afbc7ed44fca9545dcf",
+        "observedHead": "c94dff4b4e1250f8d97a0afbc7ed44fca9545dcf",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 557,
+        "disposition": "already_merged",
+        "recordedHead": "cebf305b9fdcd994bd51a64a4f5acf030b40a8d0",
+        "observedHead": "cebf305b9fdcd994bd51a64a4f5acf030b40a8d0",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 558,
+        "disposition": "already_merged",
+        "recordedHead": "fe89219c2dca7a85a73e9de2381a376c03ad6362",
+        "observedHead": "fe89219c2dca7a85a73e9de2381a376c03ad6362",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 559,
+        "disposition": "already_merged",
+        "recordedHead": "a84101283819f0fb34ffde525666669cbf7dadc1",
+        "observedHead": "a84101283819f0fb34ffde525666669cbf7dadc1",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 560,
+        "disposition": "superseded",
+        "recordedHead": "aafdddd98ca575f4bbc377e4c4bef80ee3c224f4",
+        "observedHead": "aafdddd98ca575f4bbc377e4c4bef80ee3c224f4",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "documentation_reconciled",
+          "resolution": "Historical evidence retained in schoolpilot-remaining-roadmap-20260930.json and historical checklist. Current release instructions replaced by RELEASE_2_9_7_OPERATOR_CHECKLIST.md and this inventory; do not merge the old candidate/device-gate instructions.",
+          "verifiedBy": "historical checkpoint retained; current checklist and adopted policy supersede it"
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 561,
+        "disposition": "included",
+        "recordedHead": "2798431612be182aeca42a5bf3fe65be20cfada6",
+        "observedHead": "2798431612be182aeca42a5bf3fe65be20cfada6",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "2341a690dc1b68a9e57ec750333aed32349470df",
+            "643a506e5bd0f116bc1601913fcb4014e64ab619",
+            "2798431612be182aeca42a5bf3fe65be20cfada6"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 562,
+        "disposition": "superseded",
+        "recordedHead": "ac4675e828cdde8f3b825be191e90e2a442b793c",
+        "observedHead": "ac4675e828cdde8f3b825be191e90e2a442b793c",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "CLOSED",
+        "inclusionProof": {
+          "kind": "superseded_by",
+          "pullRequest": "SchoolPilot#580",
+          "verifiedBy": "replacement PR independently included below"
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 563,
+        "disposition": "included",
+        "recordedHead": "69a191ddd50af030ceee6a7490016a263143ff28",
+        "observedHead": "69a191ddd50af030ceee6a7490016a263143ff28",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "fd9cd30105c102c02f91741b0bf7ca3ffb37b088",
+            "f2bf378786ef184b609ae899deeae6945edfb3ac",
+            "294cdcb92196816722363329b97e8426e83ab374"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 564,
+        "disposition": "included",
+        "recordedHead": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+        "observedHead": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "base_already_included",
+          "base": "d4f3f232be7529ac4d584c2559768e6ad1b5421a",
+          "explanation": "PR head has no remaining commits outside its current base; stacked CI behavior retained in combined workflow.",
+          "verified": false
+        },
+        "inclusionReconciliation": {
+          "kind": "explicit_ancestry_file_and_hunk_equivalence",
+          "originalMechanicalProofInsufficient": true,
+          "currentImplementationVerified": true,
+          "details": "Replace incorrect no-remaining-commits explanation with original implementation commit ancestry plus retained triggers"
+        },
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 565,
+        "disposition": "included",
+        "recordedHead": "7f413fd564f6370e4374570486dd208daefc1f6a",
+        "observedHead": "7f413fd564f6370e4374570486dd208daefc1f6a",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 566,
+        "disposition": "included",
+        "recordedHead": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+        "observedHead": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "59641b9acac49bbecb14aa65941062ef1c98c0f7",
+            "9055393d016d21ca96703a3ff90e0caeee1d7e90"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 567,
+        "disposition": "included",
+        "recordedHead": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+        "observedHead": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 568,
+        "disposition": "included",
+        "recordedHead": "34c93eb86e7ce72b7af611254609b96ca882d809",
+        "observedHead": "34c93eb86e7ce72b7af611254609b96ca882d809",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "0608a7f96eabab9f458a176a1bc2c20102dc8ca3",
+            "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+            "34c93eb86e7ce72b7af611254609b96ca882d809"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 569,
+        "disposition": "included",
+        "recordedHead": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+        "observedHead": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 570,
+        "disposition": "included",
+        "recordedHead": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+        "observedHead": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "b47355358a5d9bc7e29cc047104c2b281c538dbb"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 571,
+        "disposition": "included",
+        "recordedHead": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+        "observedHead": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 572,
+        "disposition": "included",
+        "recordedHead": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+        "observedHead": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 573,
+        "disposition": "included",
+        "recordedHead": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+        "observedHead": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "91eead05e8a3d5c822426bcd4b5279dd55f05011"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 574,
+        "disposition": "included",
+        "recordedHead": "9250fab903d16b41769d86ec12086dfef21f9a12",
+        "observedHead": "9250fab903d16b41769d86ec12086dfef21f9a12",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": false,
+          "equivalentCommits": [],
+          "nonEquivalentCommits": [
+            "9250fab903d16b41769d86ec12086dfef21f9a12"
+          ],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": {
+          "kind": "explicit_ancestry_file_and_hunk_equivalence",
+          "originalMechanicalProofInsufficient": true,
+          "currentImplementationVerified": true,
+          "details": "Use exact-file-content equivalence plus route/lane retention and explicit additive documentation/router adaptation, not a whole-commit patch-equivalence claim"
+        },
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 575,
+        "disposition": "included",
+        "recordedHead": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+        "observedHead": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 576,
+        "disposition": "included",
+        "recordedHead": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+        "observedHead": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 577,
+        "disposition": "included",
+        "recordedHead": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+        "observedHead": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 578,
+        "disposition": "already_merged",
+        "recordedHead": "d2c047c27698990b25892bbce79200ba91920f8b",
+        "observedHead": "d2c047c27698990b25892bbce79200ba91920f8b",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 579,
+        "disposition": "included",
+        "recordedHead": "6efc27f4de187b4e43c923df31d6139c081727f7",
+        "observedHead": "6efc27f4de187b4e43c923df31d6139c081727f7",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "6efc27f4de187b4e43c923df31d6139c081727f7"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 580,
+        "disposition": "already_merged",
+        "recordedHead": "27879128ccfe09ae1469d0b6252ea5b37e36059f",
+        "observedHead": "27879128ccfe09ae1469d0b6252ea5b37e36059f",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 581,
+        "disposition": "included",
+        "recordedHead": "5e2fb408413abe50be6e79a5dd43071286de077b",
+        "observedHead": "5e2fb408413abe50be6e79a5dd43071286de077b",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 582,
+        "disposition": "included",
+        "recordedHead": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+        "observedHead": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 583,
+        "disposition": "included",
+        "recordedHead": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+        "observedHead": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "d1069bdd55e8a5b52231aef08dda5fdd257a229c"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 584,
+        "disposition": "included",
+        "recordedHead": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+        "observedHead": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "5bec1e401450ac0a1a8cac84e2245da47d8485cc",
+            "76caaab8eb200e62afbcaee23df4d198df35815e",
+            "1e59e4a04b8360eb1bff9fc614a641c179be3f75",
+            "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 585,
+        "disposition": "included",
+        "recordedHead": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+        "observedHead": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "a65a82283c4c44fcb8d1e32746010117ac7d6810"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 586,
+        "disposition": "included",
+        "recordedHead": "157c47baef24f65176da5bbc694309fe6cdeff03",
+        "observedHead": "157c47baef24f65176da5bbc694309fe6cdeff03",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": false,
+          "equivalentCommits": [
+            "157c47baef24f65176da5bbc694309fe6cdeff03"
+          ],
+          "nonEquivalentCommits": [
+            "6b0ef9dbe3962512ff19d08dfc9d171a88da52d1"
+          ],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": {
+          "kind": "explicit_ancestry_file_and_hunk_equivalence",
+          "originalMechanicalProofInsufficient": true,
+          "currentImplementationVerified": true,
+          "details": "Six original commits are ancestors; kiosk fix is patch-equivalent and its file is exact; canonical class helper and all five calls are exact retained hunks. Current whole test blob has subsequent delta/cleanup race coverage."
+        },
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 587,
+        "disposition": "included",
+        "recordedHead": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+        "observedHead": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 588,
+        "disposition": "included",
+        "recordedHead": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+        "observedHead": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "328a814993e9c6ce79c172817e6d8e83c58b426b"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 589,
+        "disposition": "included",
+        "recordedHead": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+        "observedHead": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 590,
+        "disposition": "included",
+        "recordedHead": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+        "observedHead": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 591,
+        "disposition": "included",
+        "recordedHead": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+        "observedHead": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "4d6d220b62325fa8df0d24e4916e10dfcfe33ce6",
+            "0e9f04c77f20dc65c1d12c3771c6dfeee9a2460c",
+            "f970d569ed6af0d57f852a3177d35219edb98c45",
+            "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 592,
+        "disposition": "included",
+        "recordedHead": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+        "observedHead": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "53e9a426d642046ec042d0cd157a8ca01b0062b3"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 593,
+        "disposition": "included",
+        "recordedHead": "deecce0c3478b8b34424fef5748fd8df826515e5",
+        "observedHead": "deecce0c3478b8b34424fef5748fd8df826515e5",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "deecce0c3478b8b34424fef5748fd8df826515e5"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 594,
+        "disposition": "included",
+        "recordedHead": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+        "observedHead": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "patch_equivalence",
+          "verified": true,
+          "equivalentCommits": [
+            "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5"
+          ],
+          "nonEquivalentCommits": [],
+          "headIsAncestor": false
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 595,
+        "disposition": "included",
+        "recordedHead": "cffd1ed55fdda7f71f1ab1d7c94d769f26d4d015",
+        "observedHead": "cffd1ed55fdda7f71f1ab1d7c94d769f26d4d015",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 596,
+        "disposition": "included",
+        "recordedHead": "a7cb6f941e5f3a965a12c6eab6f9f18fce3fffe8",
+        "observedHead": "a7cb6f941e5f3a965a12c6eab6f9f18fce3fffe8",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 597,
+        "disposition": "included",
+        "recordedHead": "dbaa4cdda517da49ede343043aa9ad994ac37a28",
+        "observedHead": "dbaa4cdda517da49ede343043aa9ad994ac37a28",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 598,
+        "disposition": "already_merged",
+        "recordedHead": "37c2dbacd9169477c03f961cecfc25cb73de7e75",
+        "observedHead": "37c2dbacd9169477c03f961cecfc25cb73de7e75",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 599,
+        "disposition": "already_merged",
+        "recordedHead": "13e3401c6c7f4797a534ca53d6357100e13db2f1",
+        "observedHead": "13e3401c6c7f4797a534ca53d6357100e13db2f1",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 600,
+        "disposition": "already_merged",
+        "recordedHead": "da1689f3704746993174eaea1c0c801c8b24b3f2",
+        "observedHead": "da1689f3704746993174eaea1c0c801c8b24b3f2",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "MERGED",
+        "inclusionProof": {
+          "kind": "merge_commit_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "retain_merged_history"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 601,
+        "disposition": "included",
+        "recordedHead": "f13cc336a028509bee57026a9770ce7e09ba3200",
+        "observedHead": "f13cc336a028509bee57026a9770ce7e09ba3200",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 602,
+        "disposition": "included",
+        "recordedHead": "6990e10b3bc620ca3c07a4e9df8cb87b1e109f7a",
+        "observedHead": "6990e10b3bc620ca3c07a4e9df8cb87b1e109f7a",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 119,
+        "disposition": "included",
+        "recordedHead": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+        "observedHead": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 120,
+        "disposition": "included",
+        "recordedHead": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+        "observedHead": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 121,
+        "disposition": "included",
+        "recordedHead": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+        "observedHead": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 122,
+        "disposition": "included",
+        "recordedHead": "2aa6df988a78cb5860cef2c0866cab46566ffec5",
+        "observedHead": "2aa6df988a78cb5860cef2c0866cab46566ffec5",
+        "headUnchangedAtHistoricalObservation": true,
+        "githubStateAtHistoricalObservation": "OPEN",
+        "inclusionProof": {
+          "kind": "head_is_ancestor",
+          "verified": true
+        },
+        "inclusionReconciliation": null,
+        "currentCarryForward": "reconciled_source_ancestor_of_review_head",
+        "afterIntegrationAction": "reconcile_only_after_authorized_integration_merge"
+      }
+    ],
+    "originalHunksReplayedByAudit": false,
+    "subsequentProductInputChanges": [
+      "src/services/classpilotRealtimeStatus.ts",
+      "src/services/healthDbRoundTrip.ts",
+      "src/services/healthMonitor.ts"
+    ],
+    "subsequentFrontendSourceAndMigrationInputsUnchanged": true
+  },
+  "artifacts": {
+    "serving": {
+      "role": "serving",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "sourceCleanAtBuildAndFinish": true,
+      "imageIdentities": {
+        "imageId": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "imageIdKind": "index",
+        "indexDigest": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "platformManifestDigest": "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+        "configDigest": "sha256:8b66f44e342194c35c36cf50e30cdc0ae7e467ab0b52aa9c50d1a0d6c370f799",
+        "exportIndexSha256": "4a2a17c85fcd2e165fc24b9d4267b7a343b2e2e3fd938e49cab259d6fe7d4635",
+        "verifiedBlobDigests": [
+          "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+          "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+          "sha256:4a4a4c5332a42b7555d4452c2d2c2959fc300ef7474d7bc84198ce43b8f47a28"
+        ]
+      },
+      "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+      "dockerfileDerivation": {
+        "committed": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+        "derived": "ac09cd9ad1fdf9c0c1d448b00e1fc1de3cc1aed96f872435bb7976d13b2a7791",
+        "diff": [
+          {
+            "line": 6,
+            "before": "FROM node:22-alpine AS builder",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder"
+          },
+          {
+            "line": 24,
+            "before": "FROM node:22-alpine",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+          }
+        ]
+      },
+      "startedAt": "2026-10-04T06:12:09.949Z",
+      "finishedAt": "2026-10-04T06:14:44.559Z",
+      "buildAndScanPassed": true,
+      "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+      "counts": {
+        "UNKNOWN": 0,
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0
+      },
+      "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+      "archiveSha256": "78dfee093d214208e01e8d5c3776f46df6d66eda144c1352f25b113b3dd02ec8",
+      "fullScanSha256": "938e4692065c98c89effefcfddcbeb7344ed465dccdf236a77a31f3db8b73ac2",
+      "embeddedCompatibilityAndCorrectionChecksPassed": true,
+      "actualServiceAcceptance": false,
+      "exactOwnedScannerInspectorCleanupPassed": true,
+      "forcedCleanup": false,
+      "usageModes": "off/off",
+      "evidence": {
+        "preparation": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\candidate-preparation.json",
+          "sha256": "38a197c5e7d3964664dc588e08c583030ed6d1c7753e8036c4235f165af3433d"
+        },
+        "scan": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\scan-receipt.json",
+          "sha256": "3525d01efc16568ae5f773f80570c76beaaa8e67b6ea69f111dc3e0f6965f787"
+        },
+        "imageBinding": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\image-binding.json",
+          "sha256": "86c4b4f4627a9ebac314bfe4a0efbc1aeff47d14667928541405461308a64b21"
+        }
+      }
+    },
+    "fallback": {
+      "role": "compatibleFallback",
+      "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "sourceCleanAtBuildAndFinish": true,
+      "imageIdentities": {
+        "imageId": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "imageIdKind": "index",
+        "indexDigest": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "platformManifestDigest": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+        "configDigest": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+        "exportIndexSha256": "abea3027b2bb875632f8b405238b1c9f59cd0b84056455b55dec6f68ae9b5832",
+        "verifiedBlobDigests": [
+          "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+          "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+          "sha256:504184dea9b4b1f2f0ba9599c5de9d0f7b3beac69862d006c4be973f5991f682"
+        ]
+      },
+      "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+      "dockerfileDerivation": {
+        "committed": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+        "derived": "ac09cd9ad1fdf9c0c1d448b00e1fc1de3cc1aed96f872435bb7976d13b2a7791",
+        "diff": [
+          {
+            "line": 6,
+            "before": "FROM node:22-alpine AS builder",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder"
+          },
+          {
+            "line": 24,
+            "before": "FROM node:22-alpine",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+          }
+        ]
+      },
+      "startedAt": "2026-10-04T06:15:35.179Z",
+      "finishedAt": "2026-10-04T06:19:46.608Z",
+      "buildAndScanPassed": true,
+      "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+      "counts": {
+        "UNKNOWN": 0,
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0
+      },
+      "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+      "archiveSha256": "1cbedd3fda3b18e806a8f56a82342e80a48107d13030265918d2d19fd8bc2fa3",
+      "fullScanSha256": "d11290c715ab10818103e9441ed267ece611f6ebe4c57c094073635899393ba3",
+      "embeddedCompatibilityAndCorrectionChecksPassed": true,
+      "actualServiceAcceptance": false,
+      "exactOwnedScannerInspectorCleanupPassed": true,
+      "forcedCleanup": false,
+      "usageModes": "off/off",
+      "evidence": {
+        "preparation": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\candidate-preparation.json",
+          "sha256": "5719fd07da19e4655322cb36c9062e055c4e05529e03f79e87b78d331dec1a5f"
+        },
+        "scan": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\scan-receipt.json",
+          "sha256": "616b9e94b980d97f0c5b5cfeb7f9a911e30984ac3c330b7616ef773d21e45c13"
+        },
+        "imageBinding": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\image-binding.json",
+          "sha256": "aa4087dd5caa03ef7ae20a214bab74615384ff95258d49f113bb07b33fb24417"
+        }
+      }
+    },
+    "localOnly": true,
+    "registryPublicationVerified": false,
+    "frontend": {
+      "preparationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+      "archiveSha256": "7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675",
+      "preparationPassed": true,
+      "currentApplicationInputsEquivalent": true,
+      "archiveRehashedByAudit": false,
+      "rebuiltByAudit": false
+    },
+    "recoveryFloor": {
+      "appointmentsAdmission": 128,
+      "privateChatAdmission": 129,
+      "privateChatThreadTable": "classpilot_private_chat_threads",
+      "lifecycleWriterVersion": 1,
+      "bridgeVersion": 1,
+      "relayVersion": 1,
+      "servingMigrationManifest": 54,
+      "compatibleFallbackMigrationManifest": 53,
+      "fallbackIntentionallyLacksDeclaration": "classpilot-heartbeat-screenshot-evidence-v1-20261003",
+      "databaseCompletedLedgerRetainedAcrossFallback": 54,
+      "screenshotFunctionBodyAndScopedExecuteRetained": true,
+      "legacyProductionImageIsValidPostAdoptionRollback": false,
+      "bothUsageModesRequiredOffForPreparedFallback": true,
+      "neverShrinkAdmissionOrRemoveAdoptionStateOnRollback": true
+    }
+  },
+  "acceptance": {
+    "currentSchoolClassroom": {
+      "passed": true,
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "threeConsecutive900SecondRuns": true,
+      "currentSchoolOnly": true,
+      "totals": {
+        "ordinaryOffered": 35910,
+        "reconnectOffered": 399,
+        "http200": 36309,
+        "persistedExactBindings": 36309,
+        "commands": 180,
+        "privateMessages": 90
+      },
+      "liveValidation": false
+    },
+    "localActualServiceRecovery": {
+      "passed": true,
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "fallbackSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "actualServices": 8,
+      "fullHealthCycles": 4,
+      "retainedLedger": 54,
+      "productionCatalogVerified": false,
+      "ecsAlbDrainVerified": false
+    },
+    "lowerLoadHeadroomDecision": "pending_separately_registered_evidence",
+    "strictHistoricalComparison": "unaccepted_preserved",
+    "usage": {
+      "acceptedColdRuns": 0,
+      "retainedFailedRun": "df9199c13d82",
+      "retainedFailedAttemptPassed": false,
+      "rollupMode": "off",
+      "digitalUsageMode": "off",
+      "partialReportAndWorkerEvidenceNotAcceptance": true
+    },
+    "broaderCapacityAccepted": false,
+    "managedChromebookGate": "waived_not_passed"
+  },
+  "productionObservation": {
+    "metadataObservedAtUtc": "2026-10-04T13:46:21.833Z",
+    "providerMetadataOnly": true,
+    "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+    "image": "sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+    "apiTasks": 1,
+    "workerTasks": 1,
+    "configuredRlsTables": 121,
+    "catalogRead": false,
+    "whitelistKeysPerService": 28,
+    "whitelistedFlagsIdenticalToPrior": true,
+    "fullMetadataEquality": false,
+    "fullComparisonDifference": "additional_metadata_keys",
+    "backupMetadata": {
+      "identifier": "schoolpilot-production-db",
+      "status": "available",
+      "class": "db.t4g.medium",
+      "engine": "postgres",
+      "engineVersion": "16.4",
+      "allocatedStorageGiB": 100,
+      "storageType": "gp3",
+      "backupRetentionDays": 14,
+      "latestRestorableTime": "2026-10-04T09:47:01-04:00",
+      "latestRestorableAgeSeconds": 125.231,
+      "deletionProtection": true,
+      "multiAZ": false,
+      "pendingModifiedFields": []
+    },
+    "sundayMetricsAreCapacityEvidence": false,
+    "successfulRestoreProven": false,
+    "freshnessSensitiveMustRepeat": true,
+    "apiContainerHealth": "HEALTHY",
+    "workerContainerHealth": "UNKNOWN",
+    "healthyAlbTargets": 1
+  },
+  "missingExecutionBindings": [
+    "accepted_release_envelope",
+    "authorized_merges_and_resulting_main_ci_source_binding",
+    "per_stage_scanned_registry_image_and_api_worker_task_definition_bindings",
+    "compatible_production_recovery_publication_and_supported_exact_command",
+    "actual_production_catalog_migration_ledger_roles_function_acl_and_health_sentinel",
+    "approved_america_new_york_operational_window_and_current_headroom_backups_restore",
+    "verified_desales_identity_eligibility_and_governed_plan_hashes",
+    "frontend_publication_and_targeted_completed_invalidation_receipt",
+    "fresh_store_listing_pending_submission_and_installed_client_evidence",
+    "sample_bearing_current_pair_pilot_and_individual_promotion_evidence"
+  ],
+  "commands": {
+    "executed": false,
+    "initialCompatibleDarkStage": {
+      "CLASSPILOT_USAGE_ROLLUP_MODE": "off",
+      "CLASSPILOT_DIGITAL_USAGE_MODE": "off",
+      "newIssuance": {
+        "focusTabV1": "off",
+        "preciseRestrictionResourcesV1": "off",
+        "privateChatLifecycleV1": "off"
+      },
+      "note": "Use governed runtime plans for the intended school and exact source/image/admission; this record is not an executable production environment. Existing controls and cleanup remain available according to their established contracts."
+    },
+    "admissionArguments": {
+      "observedProductionStateMustBeRefreshed": true,
+      "bundles": [
+        {
+          "tables": "passpilot_destination_policies,passpilot_pass_limits,passpilot_encounter_restrictions,passpilot_pass_denials",
+          "count": 125
+        },
+        {
+          "tables": "classpilot_usage_rollups",
+          "count": 126
+        },
+        {
+          "tables": "classpilot_usage_rollup_days",
+          "count": 127
+        },
+        {
+          "tables": "passpilot_appointments",
+          "count": 128
+        },
+        {
+          "tables": "classpilot_private_chat_threads",
+          "count": 129
+        }
+      ],
+      "oneMissingReviewedBundlePerOperation": true,
+      "repeatOnlyMissingBundles": true,
+      "verifyBothApiAndWorkerAfterEachOperation": true,
+      "before129": "Verify exact compatible API and scheduler-worker images at128, private issuance off; fully drain all incompatible API/worker tasks and old ALB targets before final thread admission.",
+      "after129": "Verify matching129 admission on every serving API/worker task; retain compatible lifecycle writer/bridge/relay before activation or recovery."
+    },
+    "supportedController": "./scripts/deploy.sh production --backend --activate-emergency --enable-rls-table",
+    "oneMissingBundlePerOperation": true,
+    "privateAdmissionRequiresCompatible128PairAndCompleteIncompatibleTaskTargetDrain": true,
+    "immutableImageWorkflowMustRemainDisabled": true
+  },
+  "exclusions": [
+    "sfu",
+    "turn_changes",
+    "paid_provisioning",
+    "legacy_deletion",
+    "unrelated_observe",
+    "unintegrated_formatter_general_optimization"
+  ],
+  "limits": [
+    "Existing receipts were replayed as static metadata; no tests, builds, browser, load, SQL or containers ran in this audit.",
+    "Review-head CI is distinct from resulting-main CI and deployment approval.",
+    "Tracked source PR heads were not fetched again; historical verified reconciliation is carried forward by ancestry.",
+    "Local artifact identities are not registry publication or production recovery definitions.",
+    "Synthetic service and classroom proof does not certify production catalog, ECS/ALB drains or live Chrome/SSO clients.",
+    "The lower-load/headroom block remains pending; no policy/pass is inferred.",
+    "No raw private flags, credentials, school UUIDs, student/device identifiers or test-cookie material is included."
+  ],
+  "mergePerformed": false,
+  "deploymentPerformed": false,
+  "storePublicationPerformed": false,
+  "activationPerformed": false,
+  "productionMutations": 0,
+  "deploymentGreenLight": false,
+  "distinctStatus": {
+    "implemented": "classroom_source_in_603_123_usage_capacity_unresolved",
+    "tested": "exact_head_ci_classroom_and_local_recovery_pass_usage_capacity_fail",
+    "packaged": "local_bound_images_retained_frontend_and_exact_297_zip",
+    "deployed": false,
+    "activatedAndLiveValidated": false
+  },
+  "storeObservation": {
+    "source": "operator_report",
+    "reportedDate": "2026-10-04",
+    "recordedAtUtc": "2026-10-04T14:09:55.6668257Z",
+    "reportedPublishedVersion": "2.9.6",
+    "reportedPendingReviews": 0,
+    "reportedDrafts": 0,
+    "automatedStoreObservation": false,
+    "operatorIntendsToSubmitVersion": "2.9.7",
+    "submissionCondition": "once_ready",
+    "reportedUsualTurnaroundMinutes": [
+      20,
+      30
+    ],
+    "turnaroundIsEstimateNotGuarantee": true,
+    "uploadOrPublicationAuthorization": false,
+    "listingAndPendingStateMustBeRecheckedImmediatelyBeforeUpload": true
+  },
+  "schoolSettingsObservation": {
+    "source": "operator_report",
+    "reportedDate": "2026-10-04",
+    "recordedAtUtc": "2026-10-04T14:10:29.2096573Z",
+    "school": "St. Francis DeSales Cincinnati",
+    "reportedSchoolHoursLimitsDisabled": true,
+    "existingSyntheticFixtureEnableTrackingHours": false,
+    "actualProductionDatabaseRowVerified": false,
+    "schoolUuidVerified": false,
+    "productionCatalogVerified": false,
+    "formatterOptimizationIsUsageRepair": false
+  }
+}
