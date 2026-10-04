@@ -96,17 +96,22 @@ async function sharedRealtimeCommand(args: string[]): Promise<unknown> {
   }
   if (args[0] === "EVAL") {
     const key = args[3];
-    if (args[1]?.includes('current.aiClassification = classification')) {
+    // Dispatch by the stable command ABI, not the Lua implementation's text.
+    if (args.length === 12 && args[2] === '1') {
       const encoded = key ? sharedRealtimeRows.get(key) : undefined;
       if (!key || !encoded) return '';
       const current = JSON.parse(encoded) as Record<string, unknown>;
       if (current.state !== 'active' || current.schoolId !== args[4] || current.studentId !== args[5]
         || current.studentSessionId !== args[6] || current.deviceId !== args[7] || current.heartbeatId !== args[8]) return '';
-      current.aiClassification = JSON.parse(args[10] || 'null');
+      const classification = JSON.parse(args[10] || 'null');
+      if (classification === null) delete current.aiClassification;
+      else current.aiClassification = classification;
       current.classificationPending = false;
       current.revision = Math.max(Number(args[9]) || 0, Number(current.revision || 0) + 1);
       const next = JSON.stringify(current); sharedRealtimeRows.set(key, next); return next;
     }
+    assert.equal(args.length, 7, 'Only the declared write/classification ABI is supported in this fixture');
+    assert.equal(args[2], '1');
     const snapshotJson = args[5];
     if (!key || !snapshotJson) throw new Error("Malformed realtime EVAL in test");
     const snapshot = JSON.parse(snapshotJson) as Record<string, unknown>;
