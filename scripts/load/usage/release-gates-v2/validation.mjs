@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { profileFor, profileHash, NONREGRESSION, PROFILES,stickyTarget } from './contracts.mjs';
 import { cpuWindow, negativeProbes } from './measurements.mjs';
 import { lostReconnectBindings } from './reconnect.mjs';
+import { lifecycleAudience } from './lifecycle-audience.mjs';
 const median = values => { const rows = [...values].sort((a, b) => a - b); return rows.length % 2 ? rows[(rows.length - 1) / 2] : (rows[rows.length / 2 - 1] + rows[rows.length / 2]) / 2; };
 export function expectedTopologyCounts(profile,stage){
   const counts={};for(let schoolIndex=0;schoolIndex<2;schoolIndex++)for(let deviceIndex=0;deviceIndex<profile.offering.schoolDevices[schoolIndex];deviceIndex++){
@@ -44,10 +45,13 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
       && round.cpuByRole.every(row=>cpuWindow(row.window).meanFraction < NONREGRESSION.meanCpuFraction)
       && round.apiCpuMeanFraction===Math.max(...round.cpuByRole.map(row=>cpuWindow(row.window).meanFraction))),
     latency: traffic?.timings?.p95Ms <= NONREGRESSION.p95Ms,
-    classroom: ['classroom', 'mixed', 'usage'].includes(profile.kind) ? round.traffic?.lifecycle?.passed === true&&negativeProbes(round.traffic).length===2 : true,
+    classroom: ['classroom', 'mixed', 'usage'].includes(profile.kind) ? round.traffic?.lifecycle?.passed === true
+      &&negativeProbes(round.traffic).length===lifecycleAudience(profile).schoolIndices.length : true,
     database: round.errorCoverage?.length === round.topology.active.length+1+(profile.usage?1:0)
       && round.errorCoverage.every(row=>row.available===true && row.complete===true && row.errorCount===0 && /^[a-f0-9]{64}$/.test(row.sha256))
       && round.databaseFailures===0 };
+  if(profile.classroomBindingOracle)checks.nativeClassroomBindings=(round.classroomBindings??round.continuousGlobal?.classroom)?.passed===true
+    &&/^[a-f0-9]{64}$/.test((round.classroomBindings??round.continuousGlobal?.classroom)?.nativeRowsSha256??'');
   if(profile.broaderCapacityGate&&round.reconnect)checks.exactLostReconnects=validateLostReconnectEvidence(extra,profile);
   if (profile.usage) {
     const usage=round.continuousGlobal?.usage??round;
@@ -99,7 +103,7 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
 }
 // Avoid inferring the chosen contract from a result's rates.
 export function validateMixedRuns(runs) {
-  assert.equal(runs.length, 3); const profile = profileFor(runs[0].profile);assert.ok([PROFILES.mixed.name,PROFILES.broader.name,PROFILES.broaderConcentrated.name].includes(profile.name));
+  assert.equal(runs.length, 3); const profile = profileFor(runs[0].profile);assert.ok([PROFILES.mixed.name,PROFILES.mixedNative.name,PROFILES.broader.name,PROFILES.broaderConcentrated.name].includes(profile.name));
   for (const run of runs) {
     assert.equal(run.profile, profile.name); assert.equal(run.rounds.length, profile.rounds); assert.equal(run.cleanupPassed, true);assert.equal(run.runPassed,true);assert.equal(run.failure,null);
     assert.equal(run.continuous?.passed,true);assert.equal(run.continuous.expected,profile.continuousOffering.expected);assert.equal(run.continuous.offered,profile.continuousOffering.expected);assert.equal(run.continuous.windowsContinuous,true);

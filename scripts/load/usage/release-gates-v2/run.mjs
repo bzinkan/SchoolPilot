@@ -142,8 +142,11 @@ export async function runV2(options) {
         const before=await observer.rpc('snapshot',{since:new Date(Date.now()-86400_000).toISOString()});
         const result=blackbox?await generator.rpc('verify'):await generator.rpc('phase',{offering:profile.offering,topology:{active:[...active.keys()],distribution:'uniform'},ingest:false,reports:false,lifecycle:true,reconnect:false});
         const drained=await Promise.all([...active.values()].map(owner=>owner.rpc('drain')));
+        const classroomBindings=profile.classroomBindingOracle?await observer.rpc('correctness',{classroom:true}):null;
+        if(classroomBindings)save(output,'classroom-bindings.json',classroomBindings);
         const after=await observer.rpc('snapshot',{since:new Date(Date.now()-86400_000).toISOString()});
-        metrics.preparationSmokeResult={passed:drained.every(row=>row.complete)&&after.invalid===0&&(blackbox?result.passed:result.lifecycle?.passed),result,drained,
+        metrics.preparationSmokeResult={passed:drained.every(row=>row.complete)&&after.invalid===0&&(blackbox?result.passed:result.lifecycle?.passed)
+          &&(!profile.classroomBindingOracle||classroomBindings?.passed===true),result,drained,classroomBindings,
           persistedAfterWarmVerification:after.total-before.total,capacityAccepted:false,releaseAcceptance:false};
         save(output,'preparation-smoke.json',metrics.preparationSmokeResult);return;
       }
@@ -194,6 +197,7 @@ export async function runV2(options) {
           postWindowApiCpuMicroseconds: wholeCpuUsec-cpuUsec, cpuMsPer200: successful ? wholeCpuUsec / 1000 / successful : null,
           errorCoverage, databaseFailures: errorCoverage.reduce((sum,row) => sum + row.errorCount,0),
           rawBlackboxSqlFailureCountersAvailable: !blackbox, hostCanaryMaxMs: canary.max / 1e6 };
+        if(profile.classroomBindingOracle){round.classroomBindings=await observer.rpc('correctness',{classroom:true});save(output,'classroom-bindings.json',round.classroomBindings);}
         if (profile.usage) {
           const usage=await completeUsageChecks({worker,observer,generator,fixture});
           round.correctness=usage.correctness;round.workerDatabase=usage.workerDatabase;round.drains.push(usage.drain);

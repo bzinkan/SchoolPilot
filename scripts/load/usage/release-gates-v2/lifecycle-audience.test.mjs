@@ -5,6 +5,7 @@ import { lifecycleAudience, verifyClassroomBindings, sanitizedClassroomOracleFai
 import { PROFILES } from './contracts.mjs';
 import { patchGeneratorV2 } from './patch.mjs';
 import { runNegativeProbes, retainCompletedGeneratorTraffic } from './measurements.mjs';
+import {validateRound} from './validation.mjs';
 
 const schools = [0, 1].map(index => ({ index, id: 'school-' + index,
   teachers: ['teacher-' + index], currentSession: 'class-' + index,
@@ -13,7 +14,11 @@ const schools = [0, 1].map(index => ({ index, id: 'school-' + index,
   studentSessions: Array.from({ length: 500 }, (_, i) => `binding-${index}-${i}`) }));
 const fixture = { schools };
 function rows(profile) {
-  const audience = lifecycleAudience(profile, schools), commands = [], messages = [];
+  const audience = lifecycleAudience(profile, schools), commands = [], messages = [],deliveries=[],threads=[],memberships=[],staff=[],schoolSettings=[],activitySettings=[];
+  for(const i of audience.schoolIndices){const school=schools[i];threads.push({id:'thread-'+i,school_id:school.id,student_id:school.students[2],teaching_session_id:school.currentSession,supervision_context_id:null,authority_assignment_id:'assignment-'+i,generation:audience.repetitions+1});
+    memberships.push({id:'assignment-'+i,school_id:school.id,student_id:school.students[2],teaching_session_id:school.currentSession});
+    staff.push({school_id:school.id,teaching_session_id:school.currentSession,staff_id:school.teachers[0]});schoolSettings.push({school_id:school.id,private_chat_epoch:1,student_messaging_enabled:true});
+    activitySettings.push({school_id:school.id,session_id:school.currentSession,supervision_context_id:null,private_chat_epoch:1,chat_enabled:true});}
   for (const i of audience.schoolIndices) for (let n = 0; n < audience.repetitions; n++) {
     const school = schools[i];
     for (const type of ['lock-screen', 'focus-tab', 'stop-focus', 'unlock-screen']) {
@@ -22,11 +27,14 @@ function rows(profile) {
         command_type: type, target_scope: 'students', target_count: 1, student_id: school.students[target],
         student_session_id: school.studentSessions[target], device_id: school.devices[target], status: 'completed' });
     }
-    for (const status of ['delivered', 'expired']) messages.push({ school_id: school.id, session_id: school.currentSession,
-      sender_id: school.teachers[0], student_id: school.students[2], recipient_id: school.students[2],
-      student_session_id: school.studentSessions[2], device_id: school.devices[2], delivery_status: status });
+    for (const status of ['delivered', 'expired']) {const id=`message-${i}-${n}-${status}`;messages.push({id,school_id: school.id, session_id: school.currentSession,supervision_context_id:null,
+      sender_id: school.teachers[0], student_id: school.students[2], recipient_id: school.devices[2],
+      student_session_id:null,device_id: school.devices[2],delivery_status:status==='delivered'?'delivered':'sent',delivered_at:status==='delivered'?'2026-10-04T00:00:00Z':null,
+      private_chat_thread_id:'thread-'+i,private_chat_school_epoch:1,private_chat_activity_epoch:1,private_chat_generation:n+1});
+      deliveries.push({id:'delivery-'+id,chat_message_id:id,school_id:school.id,student_id:school.students[2],teaching_session_id:school.currentSession,supervision_context_id:null,
+        state:status==='delivered'?'delivered':'attempted',attempt_count:1,last_attempt_at:'2026-10-04T00:00:00Z',last_attempt_student_session_id:school.studentSessions[2],last_attempt_device_id:school.devices[2],delivered_at:status==='delivered'?'2026-10-04T00:00:00Z':null});}
   }
-  return { commands, messages, fixture, profile };
+  return { commands, messages,deliveries,threads,memberships,staff,schoolSettings,activitySettings,fixture,profile };
 }
 
 test('generated positive lifecycle never targets preflight-only inactive school', () => {
@@ -104,4 +112,49 @@ test('oracle failure evidence contains counts and predicate, never fixture ident
     assert.equal(error.publicOracleEvidence.observedCommands, 60);
     return true;
   });
+});
+test('canonical teacher history uses transport recipient and relational expiry without worker materialization',()=>{
+  const input=rows(PROFILES.classroom);assert.equal(input.messages[0].student_session_id,null);assert.equal(input.messages[1].delivery_status,'sent');
+  assert.equal(input.deliveries[1].state,'attempted');assert.equal(verifyClassroomBindings(input).passed,true);
+});
+test('missing duplicate foreign and rebound durable deliveries reject independently',()=>{
+  const mutations=[input=>input.deliveries.pop(),input=>input.deliveries.push({...input.deliveries[0]}),
+    input=>input.deliveries.push({...input.deliveries[0],chat_message_id:'foreign-parent'}),
+    input=>input.deliveries[0].school_id=schools[1].id,input=>input.deliveries[0].student_id=schools[0].students[3],
+    input=>input.deliveries[0].last_attempt_student_session_id=schools[0].studentSessions[3],input=>input.deliveries[0].last_attempt_device_id=schools[0].devices[3],
+    input=>input.deliveries[0].teaching_session_id='wrong-class',input=>input.messages[0].recipient_id=schools[0].students[2]];
+  for(const mutate of mutations){const input=rows(PROFILES.classroom);mutate(input);assert.throws(()=>verifyClassroomBindings(input));}
+});
+test('wrong lifecycle assignment epochs generation and missing sender authority reject',()=>{
+  for(const mutate of [input=>input.threads[0].authority_assignment_id='foreign-assignment',input=>input.threads[0].student_id=schools[0].students[3],
+    input=>input.messages[1].private_chat_generation=2,input=>input.messages[1].private_chat_school_epoch=2,
+    input=>input.messages[1].private_chat_activity_epoch=2,input=>input.schoolSettings[0].student_messaging_enabled=false,
+    input=>input.threads[0].generation=1,input=>input.staff.pop(),input=>input.messages[1].delivery_status='expired']){
+    const input=rows(PROFILES.classroom);mutate(input);assert.throws(()=>verifyClassroomBindings(input));}
+});
+test('never attempted expired rows retain null transport facts without claiming delivery',()=>{
+  const input=rows(PROFILES.classroom),row=input.messages[1],child=input.deliveries[1];row.device_id=null;row.recipient_id=null;
+  Object.assign(child,{attempt_count:0,last_attempt_at:null,last_attempt_student_session_id:null,last_attempt_device_id:null,state:'expired'});
+  const result=verifyClassroomBindings(input);assert.equal(result.passed,true);assert.equal(result.unattemptedExpiredMessages,1);assert.equal(result.attemptedExpiredMessages,1);
+  child.last_attempt_device_id=schools[0].devices[2];assert.throws(()=>verifyClassroomBindings(input),error=>error.code==='CLASSROOM_ORACLE_MESSAGE_TARGET_BINDING');
+});
+test('attempt metadata cannot contradict accepted delivery history',()=>{
+  for(const value of [null,'invalid-time']){const input=rows(PROFILES.classroom);input.deliveries[0].last_attempt_at=value;assert.throws(()=>verifyClassroomBindings(input),error=>error.code==='CLASSROOM_ORACLE_DELIVERY_ATTEMPT');}
+});
+test('one-school minute expects its single exact negative probe; idle schools add no obligations',()=>{
+  const probe={requestId:'00000000-0000-0000-0000-000000000001',status:409,code:'PRIVATE_CHAT_LIFECYCLE_STALE'};
+  const round={topology:{active:[0],distribution:'uniform'},traffic:{lifecycle:{passed:true,expectedNegativeProbes:[probe]}}};
+  assert.equal(validateRound(round,PROFILES.mixedNative).checks.classroom,true);
+  round.traffic.lifecycle.expectedNegativeProbes.push({...probe,requestId:'00000000-0000-0000-0000-000000000002'});
+  assert.equal(validateRound(round,PROFILES.mixedNative).checks.classroom,false);
+});
+test('native-binding profile keeps original workload and requires an independent row receipt',()=>{
+  for(const [prior,next] of [[PROFILES.classroom,PROFILES.classroomNative],[PROFILES.mixed,PROFILES.mixedNative]]){
+    const {name:_name,classroomBindingOracle:_oracle,...unchanged}=next;
+    const {name:_prior,...original}=prior;assert.deepEqual(unchanged,original);
+    const round={topology:{active:[0],distribution:'uniform'},traffic:{lifecycle:{passed:false}}};
+    assert.equal(validateRound(round,next).checks.nativeClassroomBindings,false);
+    round.classroomBindings={passed:true,nativeRowsSha256:'a'.repeat(64)};
+    assert.equal(validateRound(round,next).checks.nativeClassroomBindings,true);
+  }
 });

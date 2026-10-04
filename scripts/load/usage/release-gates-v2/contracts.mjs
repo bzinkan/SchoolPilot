@@ -24,6 +24,8 @@ export const PROFILES = frozen({
   normal: frozen({ name: 'release297-blackbox-normal-34-v2', kind: 'blackbox', offering: offering(34, [170, 170]), usage: false, apiTasks: 1 }),
   overload: frozen({ name: 'release297-blackbox-overload-100-diagnostic-v2', kind: 'diagnostic', offering: offering(100, [500, 500]), usage: false, apiTasks: 1 }),
   classroom: frozen({ name: 'release297-classroom-normal-34-v2', kind: 'classroom', offering: offering(34, [170, 170]), usage: false, apiTasks: 1 }),
+  classroomNative:frozen({name:'release297-classroom-normal-34-native-v3',kind:'classroom',offering:offering(34,[170,170]),usage:false,apiTasks:1,
+    classroomBindingOracle:'durable-delivery-relational-lifecycle-v1'}),
   mixed: frozen({ name: 'release297-classroom-133-1-3-2-v2', kind: 'mixed', offering: offering(13.3, [133, 0]), usage: false, apiTasks: 3,
     rounds: 15, repetitions: 3, continuousOffering: offering(13.3,[133,0],900_000), warmNewApisAtMs:270_000, stages: frozen([
       frozen({ fromRound: 0, active: frozen([0]), distribution: 'uniform' }),
@@ -31,6 +33,12 @@ export const PROFILES = frozen({
       frozen({ fromRound: 7, active: frozen([0, 1, 2]), distribution: 'sticky80' }),
       frozen({ fromRound: 10, active: frozen([1, 2]), distribution: 'survivors', lost: 0, reconnectOffers: 133, reconnectWindowMs: 10_000, reconnectStartDelayMs: 1000 }),
     ]) }),
+  mixedNative:frozen({name:'release297-classroom-133-1-3-2-native-v3',kind:'mixed',offering:offering(13.3,[133,0]),usage:false,apiTasks:3,
+    classroomBindingOracle:'durable-delivery-relational-lifecycle-v1',rounds:15,repetitions:3,continuousOffering:offering(13.3,[133,0],900_000),warmNewApisAtMs:270_000,stages:frozen([
+      frozen({fromRound:0,active:frozen([0]),distribution:'uniform'}),frozen({fromRound:5,active:frozen([0,1,2]),distribution:'uniform'}),
+      frozen({fromRound:7,active:frozen([0,1,2]),distribution:'sticky80'}),
+      frozen({fromRound:10,active:frozen([1,2]),distribution:'survivors',lost:0,reconnectOffers:133,reconnectWindowMs:10_000,reconnectStartDelayMs:1000}),
+    ])}),
   usage: frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
     apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, pairedReleaseComparisonRequired: true }),
   broader: broader('ordinary-survivors','survivors'),

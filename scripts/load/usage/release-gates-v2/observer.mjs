@@ -1,4 +1,5 @@
 import { verifyClassroomBindings } from './lifecycle-audience.mjs';
+import { readClassroomBindings } from './classroom-bindings.mjs';
 import assert from 'node:assert/strict';
 import { requireFromApplication, moduleFromApplication } from './application.mjs';
 import { seedCommonFixture } from './common-fixture.mjs';
@@ -62,13 +63,8 @@ process.on('message', async request => {
       value=await recordUsageReportCosts({pool,fixture,request:request.value});
     } else if (request.operation === 'correctness') {
       if(request.value.classroom){
-        const commands=(await pool.query(`SELECT command.id,command.school_id,command.teacher_id,command.teaching_session_id,command.target_scope,
-          command.command_type,target.student_id,target.student_session_id,target.device_id,target.status,
-          COUNT(target.id) OVER(PARTITION BY command.id)::int AS target_count
-          FROM classpilot_commands command LEFT JOIN classpilot_command_targets target ON target.command_id=command.id ORDER BY command.id`)).rows;
-        const messages=(await pool.query(`SELECT school_id,session_id,student_id,student_session_id,device_id,recipient_id,sender_id,delivery_status
-          FROM chat_messages WHERE sender_type='teacher' ORDER BY school_id,id`)).rows;
-        const result = verifyClassroomBindings({ commands, messages, fixture, profile: profileFor(process.env.RELEASE297_PROFILE) });
+        const {snapshot,nativeRowsSha256}=await readClassroomBindings(pool);
+        const result = {...verifyClassroomBindings({ ...snapshot, fixture, profile: profileFor(process.env.RELEASE297_PROFILE) }),nativeRowsSha256};
         process.send({id:request.id,value:result});return;
       }
       if (request.value.audit) {
