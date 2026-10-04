@@ -4,11 +4,12 @@ import { stageForRound, profileHash } from './contracts.mjs';
 import { cpuWindow, classifyLog, negativeProbes } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { validateRound } from './validation.mjs';
+import { runHeavyUsageWorkers,completeUsageChecks } from './usage-checks.mjs';
 
 // One continuous offering, with fixed-clock routing and actual process loss.
 // Database observations are whole-run exact binding totals. They are never
 // presented as minute-level rows inferred from client acknowledgement timing.
-export async function runMixed({profile,active,startApi,stop,generator,observer,fixture,metrics,save,docker,readLog,pgContainerId,expiresAt}) {
+export async function runMixed({profile,active,startApi,stop,generator,observer,worker,fixture,metrics,save,docker,readLog,pgContainerId,expiresAt}) {
   const since=new Date(Date.now()-86400_000).toISOString(), before=await observer.rpc('snapshot',{since});
   await Promise.all([...active.values()].map(owner=>owner.rpc('reset')));const startsAtMs=Date.now()+1500, windows=new Map(), terminal=new Map(), drains=[];
   const waitAt=async offset=>{await pause(Math.max(0,startsAtMs+offset-Date.now()));assert.ok(Date.now()<Date.parse(expiresAt),'Quiet window expired');};
@@ -18,8 +19,12 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
       .catch(error=>({windowFailed:true,errorCode:error.code||'WINDOW_CAPTURE_FAILED'})));
   };
   const loss=profile.stages.find(stage=>stage.lost!==undefined);
+  if(profile.usage){assert.ok(worker);await worker.rpc('reset');}
   for(const index of active.keys())scheduleWindows(index,0,index===loss.lost?loss.fromRound:profile.rounds);
-  const phase=generator.rpc('phase',{startsAtMs,offering:profile.continuousOffering,continuous:true,topology:stageForRound(0,profile),ingest:true,reports:false,lifecycle:true,reconnect:true},960_000);
+  const phase=generator.rpc('phase',{startsAtMs,offering:profile.continuousOffering,continuous:true,topology:stageForRound(0,profile),ingest:true,reports:profile.usage,lifecycle:true,reconnect:true},960_000);
+  let workerStartedOffsetMs;
+  const workerOperation=profile.usage?(async()=>{await waitAt(profile.workerStartAtMs);workerStartedOffsetMs=Date.now()-startsAtMs;
+    return runHeavyUsageWorkers(worker,fixture);})():Promise.resolve([]);
   const topology=(async()=>{
     const initial=profile.stages[0];metrics.transitions.push({round:0,active:initial.active,distribution:initial.distribution,atOffsetMs:0});
     if(profile.warmNewApisAtMs!==undefined){
@@ -42,7 +47,7 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
       metrics.transitions.push({round:stage.fromRound,active:stage.active,distribution:stage.distribution,atOffsetMs:stage.fromRound*60_000,...removal});
     }
   })();
-  const settled=await Promise.allSettled([phase,topology]);
+  const settled=await Promise.allSettled([phase,topology,workerOperation]);
   if(settled.some(row=>row.status==='rejected'))throw Error('CONTINUOUS_MIXED_OPERATION_FAILED');
   const traffic=settled[0].value;assert.equal(traffic.heartbeats.windows.length,profile.rounds);
   for(const [index,owner] of active){drains.push(await owner.rpc('drain'));terminal.set(index,await owner.rpc('snapshot'));}
@@ -50,10 +55,13 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
   const actualCounts=[...terminal].map(([index,state])=>({index,count:state.http?.seenHeartbeatOffers}));
   const targetCounts=actualCounts.every(({index,count})=>count===(traffic.heartbeats.targetHistogram[index]??0)+(traffic.reconnect.targetHistogram[index]??0));
   const classroom=await observer.rpc('correctness',{classroom:true});
+  const usage=profile.usage?{...await completeUsageChecks({worker,observer,generator,fixture}),workers:settled[2].value,reports:traffic.reports,
+    workerStartAtMs:profile.workerStartAtMs,workerStartedOffsetMs,startsAtMs}:null;
+  if(usage)drains.push(usage.drain);
   const global={passed:traffic.heartbeats.accepted&&traffic.reconnect.accepted&&traffic.lifecycle.passed&&persistence.passed&&targetCounts&&classroom.passed,
     offered:traffic.heartbeats.offered,expected:profile.continuousOffering.expected,actualPersisted:persistence.total,
     acknowledged200:(traffic.heartbeats.statusHistogram[200]??0)+(traffic.reconnect.statusHistogram[200]??0),targetCounts,actualTargetCounts:actualCounts,
-    persistence,drains,classroom,durationMs:traffic.heartbeats.offerWindowMs,reconnect:traffic.reconnect,traffic,windowsContinuous:true};
+    persistence,drains,classroom,usage,durationMs:traffic.heartbeats.offerWindowMs,reconnect:traffic.reconnect,traffic,windowsContinuous:true};
   assert.equal(global.offered,profile.continuousOffering.expected);assert.ok(Date.now()<Date.parse(expiresAt));metrics.continuous=global;
   const errorCoverage=[];
   // Every serving role has actual complete logs, even API0 lost at minute10.
@@ -62,13 +70,14 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
   const api0Exit=metrics.transitions.at(-1).exit;
   // The stopped owner's complete private log is returned by the run owner.
   errorCoverage.push({role:'api0',...classifyLog(readLog('api0'),'api',{complete:api0Exit.clean,expectedNegativeProbes:negativeProbes(traffic)})});
+  if(worker)errorCoverage.push({role:'worker',...classifyLog(await worker.logs(),'api',{complete:true})});
   errorCoverage.push(classifyLog(await docker(['logs',pgContainerId]),'postgres',{complete:true}));
   for(let minute=0;minute<profile.rounds;minute++){
     const stage=stageForRound(minute,profile), cpuByRole=[];
     for(const index of stage.active){const window=await windows.get(`${index}:${minute}`);cpuByRole.push({role:'api'+index,window,...cpuWindow(window)});}
     const perMinute=traffic.heartbeats.windows[minute],reconnect=minute===loss.fromRound?traffic.reconnect:null;
     const lifecycle=traffic.lifecycle.rounds[minute];
-    const coverage=errorCoverage.filter(row=>row.kind==='postgres'||stage.active.some(index=>row.role==='api'+index));
+    const coverage=errorCoverage.filter(row=>row.kind==='postgres'||row.role==='worker'||stage.active.some(index=>row.role==='api'+index));
     const round={index:minute,profile:profile.name,contractSha256:profileHash(profile),topology:stage,reconnect:minute===loss.fromRound,
       measuredWindowMs:60_000,cpuByRole,apiCpuMeanFraction:Math.max(...cpuByRole.map(row=>row.meanFraction)),
       traffic:{heartbeats:perMinute,reconnect,lifecycle},continuousGlobal:global,persistence, persisted:persistence.total,invalidBindings:after.invalid,

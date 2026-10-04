@@ -55,6 +55,17 @@ const endpointFor = (school, index) => {
       observedStickyBindings.clear();
       topology = rpc.value.topology; base = apiBases[topology.active[0]];
       assert.ok(base);`);
+  // Long survival waves are fixed-clock offers, routed through targets that
+  // are active when offered. They do not reuse the last lifecycle's base.
+  text = replaceOnce(text, '  const start = performance.now(), result = await staffRequest(school, `/admin/usage?${query}`);',
+    '  const start = performance.now(), result = await staffRequest(school, `/admin/usage?${query}`, {endpoint:endpointFor(school,0)});');
+  text = replaceOnce(text, '    const days = RELEASE_ENABLED_PROFILE.reportOffers.rangesInDays[wave];',
+    `    if(continuousStartsAtMs)await sleep(Math.max(0,continuousStartsAtMs+v2Profile.reportWaveOffsetsMs[wave]-Date.now()));
+    const days = RELEASE_ENABLED_PROFILE.reportOffers.rangesInDays[wave];`);
+  text = replaceOnce(text, 'const row = { wave, days, schoolIndex: school.index, scope, status: 0, correct: false };',
+    `const row = { wave, days, schoolIndex: school.index, scope, status: 0, correct: false,
+      scheduledOffsetMs:continuousStartsAtMs?v2Profile.reportWaveOffsetsMs[wave]:null,
+      offeredOffsetMs:continuousStartsAtMs?Date.now()-continuousStartsAtMs:null,endpointIndex:apiBases.indexOf(endpointFor(school,0)) };`);
   text = replaceOnce(text, 'const [heartbeats, reports, classroom] = await Promise.all([', 'const [heartbeats, reports, classroom, reconnect] = await Promise.all([');
   text = replaceOnce(text, 'rpc.value.reports ? reportWaves() : [], rpc.value.lifecycle ? lifecycle() : null,', `rpc.value.reports ? reportWaves() : [], rpc.value.lifecycle ? (rpc.value.continuous ? (async()=>{
           const rounds=[];for(let minute=0;minute<v2Profile.rounds;minute++){
@@ -77,6 +88,9 @@ const endpointFor = (school, index) => {
 export function patchProcessV2(source) {
   let text = source.replaceAll('\r\n', '\n');
   text = replaceOnce(text, 'let metrics;', 'let metrics; let seenHeartbeatOffers=0;');
+  text = replaceOnce(text, 'const started = performance.now();', 'const started = performance.now(), operationStartedAtMs=Date.now();');
+  text = replaceOnce(text, 'value = { ...value, durationMs: performance.now() - started };',
+    'value = { ...value, durationMs: performance.now() - started, startedAtMs:operationStartedAtMs, finishedAtMs:Date.now() };');
   text = replaceOnce(text, 'const reset = () => { metrics = fresh();', 'const reset = () => { seenHeartbeatOffers=0; metrics = fresh();');
   text = replaceOnce(text, '    activeResponses++; let ended = false;', "    if(_req.url?.split('?')[0]==='/api/classpilot/device/heartbeat')seenHeartbeatOffers++;\n    activeResponses++; let ended = false;");
   // API ports are stable within the owned PostgreSQL network namespace. Each

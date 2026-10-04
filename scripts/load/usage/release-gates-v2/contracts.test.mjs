@@ -7,15 +7,16 @@ import { createServer } from 'node:http';
 import { PROFILES, assertOffering, profileHash, stageForRound, stickyTarget, hash } from './contracts.mjs';
 import { offerHeartbeats, sealTimings, targetFor } from './offering.mjs';
 import { patchGeneratorV2, patchProcessV2, patchDrainV2 } from './patch.mjs';
-import { validateRound, validatePairs, reportMatrix, validateMixedRuns,expectedTopologyCounts,validateLostReconnectEvidence } from './validation.mjs';
+import { validateRound, validatePairs, reportMatrix, validateMixedRuns,expectedTopologyCounts,validateLostReconnectEvidence,workerLossOverlap } from './validation.mjs';
 import { classifyLog, cpuWindow, negativeLogCoverage } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
-import { declareCampaign, reserveAttempt, registerAttempt, verifyPairedClosure, verifyUsageComparisons } from './campaign.mjs';
+import { declareCampaign, reserveAttempt, registerAttempt, verifyPairedClosure, verifyUsageComparisons, assertCandidateBinding, usageCandidateBinding, verifyBroaderGate } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
 import { remapObservedEnvironment, roleEnvironment } from './environment.mjs';
 import { ownRole } from './owner.mjs';
 import { withPinnedBuildBase } from './build-helper.mjs';
 import { lostReconnectBindings } from './reconnect.mjs';
+import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
 test('new profiles pin real offerings and retain the failed single task separately',()=>{
@@ -145,7 +146,7 @@ test('all64 reports cover every school, scope, range and replica',()=>{const row
 function pairRecords(){return ['A','A','A','B','B','A','A','B'].map(arm=>({profile:PROFILES.normal.name,contractSha256:profileHash(PROFILES.normal),observedFlagsSha256:digest,arm,
   source:arm==='A'?source:candidate,runPassed:true,cleanupPassed:true,sourceUnchanged:true,cpuMsPer200:arm==='A'?10:10.4,p95Ms:arm==='A'?100:108,
   verifiedReceiptManifestSha256:digest,fixtureLogicalSha256:digest,nodeVersion:'v22.23.3',clientAdvertisementSha256:digest,clientAdvertisementVersion:'2.9.6',
-  harnessSource:'c'.repeat(40),schemaSha256:arm==='A'?digest:'b'.repeat(64),
+  harnessSource:'c'.repeat(40),schemaSha256:arm==='A'?digest:'b'.repeat(64),applicationImage:'sha256:'+(arm==='A'?digest:'b'.repeat(64)),
   wholeOwnedCpuIncludesFinalClassificationFlush:true,wholeOwnedApiCpuMicroseconds:(arm==='A'?10:10.4)*2040*1000}));}
 test('paired nonregression rejects noisy controls, bad margins and another profile',()=>{
   const options={profile:PROFILES.normal,baselineSource:source,candidateSource:candidate,observedFlagsSha256:digest};
@@ -158,7 +159,7 @@ test('paired nonregression rejects noisy controls, bad margins and another profi
 });
 
 test('the separate800 profile selects only acknowledged lost clients and keeps survivor bindings steady',()=>{
-  const profile=PROFILES.broader,startsAtMs=1000,sticky=stageForRound(9,profile),survivors=stageForRound(10,profile);
+  const profile=PROFILES.broaderConcentrated,startsAtMs=1000,sticky=stageForRound(9,profile),survivors=stageForRound(10,profile);
   const samples=[0,1].flatMap(schoolIndex=>Array.from({length:400},(_,deviceIndex)=>({schoolIndex,deviceIndex,targetIndex:stickyTarget(schoolIndex*500+deviceIndex,sticky.active,sticky.distribution),observedAtMs:startsAtMs+590_000})));
   const selected=lostReconnectBindings(samples,profile,startsAtMs);assert.equal(selected.observedBindings,800);assert.equal(selected.lostBindings,640);assert.deepEqual(selected.schools.map(row=>row.length),[320,320]);
   assert.deepEqual(expectedTopologyCounts(profile,survivors),{1:4320,2:480});
@@ -214,4 +215,72 @@ test('a reserved failed setup is preserved and cannot be silently retried in pla
   assert.equal(registerAttempt({directory,receiptDirectory:join(root,'receipt'),receiptManifestSha256:digest,privateDirectory:join(root,'private')}).runPassed,false);
   const journal=JSON.parse(readFileSync(join(directory,'journal.json'),'utf8'));assert.equal(journal.attempts[0].receipt.verificationFailure,'RECEIPT_UNAVAILABLE_OR_INVALID');
   assert.throws(()=>reserveAttempt({directory,run:'a'.repeat(12),receiptDirectory:join(root,'other'),privateDirectory:join(root,'other-private')}));
+});
+
+
+test('Usage paired comparisons reject candidate image and canonical schema drift',()=>{
+  const binding={source:candidate,applicationImage:'sha256:'+'b'.repeat(64),schemaSha256:'b'.repeat(64)};
+  assert.doesNotThrow(()=>assertCandidateBinding(pairRecords(),binding));
+  for(const key of ['applicationImage','schemaSha256']){
+    const rows=pairRecords();rows[3][key]=key==='applicationImage'?'sha256:'+'c'.repeat(64):'c'.repeat(64);
+    assert.throws(()=>assertCandidateBinding(rows,binding));
+  }
+  const usage=Array.from({length:3},()=>({...pairRecords()[3],arm:'C',profile:PROFILES.usage.name}));
+  assert.deepEqual(usageCandidateBinding(usage,candidate),binding);
+  assert.throws(()=>assertCandidateBinding(pairRecords(),{...binding,schemaSha256:'c'.repeat(64)}));
+  assert.throws(()=>usageCandidateBinding([{...usage[0],applicationImage:'sha256:'+'d'.repeat(64)},...usage.slice(1)],candidate));
+});
+
+test('canonical native schema retains function, parent validation, RLS and inventory semantics',()=>{
+  const ddl="\\restrict ABC123\nCREATE FUNCTION test() RETURNS text AS $$ SELECT 'original'; $$ LANGUAGE sql;\nCREATE TRIGGER parent_check BEFORE INSERT ON messages EXECUTE FUNCTION test();\nCREATE POLICY school_scope ON messages USING (school_id = current_setting('app.school_id'));\nALTER TABLE messages ADD CONSTRAINT parent_fk FOREIGN KEY (parent_id) REFERENCES threads(id);\nINSERT INTO tenant_rls_inventory VALUES ('messages');\n\\unrestrict ABC123\n";
+  const fingerprint=canonicalSchemaFingerprint(ddl);
+  assert.equal(fingerprint,canonicalSchemaFingerprint('\uFEFF'+ddl.replaceAll('ABC123','XYZ789').replaceAll('\n','\r\n')));
+  for(const [before,after] of [["'original'","'changed'"],['BEFORE INSERT','BEFORE UPDATE'],['school_id =','school_id <>'],['threads(id)','other_threads(id)'],["('messages')","('threads')"]])
+    assert.notEqual(fingerprint,canonicalSchemaFingerprint(ddl.replace(before,after)));
+});
+
+test('both Usage-enabled 800 routing cases require actual report and worker obligations',()=>{
+  const ordinary=PROFILES.broader,concentrated=PROFILES.broaderConcentrated;
+  assert.notEqual(profileHash(ordinary),profileHash(concentrated));
+  for(const profile of [ordinary,concentrated]){
+    assert.equal(profile.usage,true);assert.equal(profile.reports,64);assert.equal(profile.rawPerSchool,1_000_000);
+    assert.equal(profile.workerAcceptanceMs,48_000);assert.equal(profile.workerStartAtMs,600_000);assert.equal(profile.capacityDeadlinesOnly,true);
+    assert.deepEqual(profile.reportWaveOffsetsMs,[0,300_000,600_000,720_000]);
+    assert.equal(stageForRound(10,profile).reconnectOffers,640);
+  }
+  const profile=ordinary,startsAtMs=1000,sticky=stageForRound(9,profile),survivors=stageForRound(10,profile);
+  const samples=[0,1].flatMap(schoolIndex=>Array.from({length:400},(_,deviceIndex)=>({schoolIndex,deviceIndex,targetIndex:stickyTarget(schoolIndex*500+deviceIndex,sticky.active,sticky.distribution),observedAtMs:startsAtMs+590_000})));
+  const selected=lostReconnectBindings(samples,profile,startsAtMs);
+  const extra={lostBindingEvidence:selected,offered:640,targetHistogram:{1:320,2:320},bindings:Object.fromEntries(selected.schools.flatMap((rows,schoolIndex)=>rows.map(row=>[`${schoolIndex}:${row.deviceIndex}`,{acknowledged204:1}])))};
+  assert.deepEqual(expectedTopologyCounts(profile,survivors),{1:2400,2:2400});assert.equal(validateLostReconnectEvidence(extra,profile),true);
+  assert.equal(validateLostReconnectEvidence({...extra,targetHistogram:{1:640}},profile),false);
+  assert.throws(()=>verifyBroaderGate({campaigns:[{directory:'single-concentrated-case'}]}));
+});
+
+
+test('mixed Usage cannot omit workers, reports, coverage, audit or worker database evidence',()=>{
+  const profile=PROFILES.broader,stage=stageForRound(0,profile),negative=[{requestId:'12345678-1234-4123-8123-123456789abc',status:409,code:'PRIVATE_CHAT_LIFECYCLE_STALE'},{requestId:'22345678-1234-4123-8123-123456789abc',status:409,code:'PRIVATE_CHAT_LIFECYCLE_STALE'}];
+  const reports=reportRows().map(row=>({...row,scheduledOffsetMs:profile.reportWaveOffsetsMs[row.wave],offeredOffsetMs:profile.reportWaveOffsetsMs[row.wave]+1,
+    endpointIndex:stickyTarget(row.schoolIndex*500,stageForRound(Math.floor(profile.reportWaveOffsetsMs[row.wave]/60_000),profile).active,stageForRound(Math.floor(profile.reportWaveOffsetsMs[row.wave]/60_000),profile).distribution)}));
+  const usage={reports,workers:[0,1].map(schoolIndex=>({schoolIndex,correct:true,durationMs:47_000,startedAtMs:601003,finishedAtMs:648003})),correctness:{passed:true,audit:{passed:true,auditRecords:Array(8).fill({})}},
+    workerDatabase:{acquisitions:{count:2,failures:0},statements:{rollup:{failures:0}}},workerStartAtMs:600_000,workerStartedOffsetMs:600_002,startsAtMs:1000};
+  const traffic={expected:4800,configured:profile.offering,accepted:true,started:4800,succeeded:4800,failed:0,refusedAtInFlightLimit:0,lateOffers:0,outstandingAfterDrain:0,
+    timings:{count:4800,maxMs:15000,p95Ms:1000},capabilityAcknowledgements200:4800,targetHistogram:expectedTopologyCounts(profile,stage)};
+  const round={profile:profile.name,contractSha256:profileHash(profile),traffic:{heartbeats:traffic,lifecycle:{passed:true,expectedNegativeProbes:negative}},topology:stage,
+    invalidBindings:0,persistence:{passed:true},continuousGlobal:{passed:true,actualPersisted:72000,acknowledged200:72000,targetCounts:true,usage},drains:[{complete:true}],
+    errorCoverage:Array.from({length:5},()=>({available:true,complete:true,errorCount:0,sha256:digest})),databaseFailures:0};
+  assert.equal(validateRound(round,profile).passed,true); // Usage deadlines, not dark-release CPU/500ms criteria.
+  for(const key of ['reports','workers','correctness','workerDatabase']){const altered=structuredClone(round);delete altered.continuousGlobal.usage[key];assert.equal(validateRound(altered,profile).passed,false,key);}
+  const late=structuredClone(round);late.continuousGlobal.usage.workers[0].durationMs=48_001;assert.equal(validateRound(late,profile).passed,false);
+  const failure=structuredClone(round);failure.continuousGlobal.usage.workerDatabase.statements.rollup.failures=1;assert.equal(validateRound(failure,profile).passed,false);
+  const missed=structuredClone(round);missed.continuousGlobal.usage.workerStartedOffsetMs=630000;missed.continuousGlobal.usage.workers.forEach(row=>{row.startedAtMs=631000;row.finishedAtMs=678000;});assert.equal(validateRound(missed,profile).passed,false);
+  const noLog=structuredClone(round);noLog.errorCoverage.pop();assert.equal(validateRound(noLog,profile).passed,false);
+});
+
+
+test('worker loss overlap uses actual native worker intervals and real loss-wave request intervals',()=>{
+  const usage={startsAtMs:1000,workers:[0,1].map(schoolIndex=>({schoolIndex,startedAtMs:601003,finishedAtMs:630000})),reports:reportRows().map(row=>({...row,offeredOffsetMs:PROFILES.broader.reportWaveOffsetsMs[row.wave]+2,durationMs:40}))};
+  assert.equal(workerLossOverlap(usage,PROFILES.broader),true);
+  assert.equal(workerLossOverlap({...usage,workers:usage.workers.map(row=>({...row,startedAtMs:620000,finishedAtMs:630000}))},PROFILES.broader),false);
+  assert.equal(workerLossOverlap({...usage,workers:usage.workers.map(row=>({...row,finishedAtMs:601010}))},PROFILES.broader),false);
 });

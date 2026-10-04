@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
 import { pause } from './application.mjs';
+import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 
 export async function withCommonDatabase(options, docker, use) {
   const { run, outputDirectory, privateDirectory } = options;
@@ -50,7 +51,7 @@ export async function withCommonDatabase(options, docker, use) {
 DO $owned_fixture$ BEGIN IF to_regprocedure('public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)') IS NOT NULL THEN
 REVOKE EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text) TO ${app}; END IF; END $owned_fixture$;` });
-    const configuration = { pgContainerId: id, schemaSha256: options.schemaSha256,
+    const configuration = { pgContainerId: id, schemaInputSha256: options.schemaSha256, schemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')),
       adminUrl: `postgresql://${owner}:${password}@127.0.0.1:5437/${database}`, appUrl: `postgresql://${app}:${appPassword}@127.0.0.1:5437/${database}` };
     return await use(configuration, async () => {
       await docker(['exec', id, 'psql', '-p', '5437', '-U', owner, '-d', database, '-v', 'ON_ERROR_STOP=1', '-c', 'ANALYZE']);

@@ -12,7 +12,10 @@ export function validateLostReconnectEvidence(extra,profile){
   try{
     const evidence=extra.lostBindingEvidence,selected=lostReconnectBindings(evidence.observedSamples,profile,evidence.startsAtMs);
     assert.deepEqual(evidence,selected);const stage=profile.stages.find(row=>row.reconnectLostOnly);
-    assert.equal(extra.offered,stage.reconnectOffers);assert.deepEqual(extra.targetHistogram,{[stage.reconnectTarget]:stage.reconnectOffers});
+    const targets={};for(const samples of selected.schools)for(const sample of samples){
+      const target=stickyTarget(sample.schoolIndex*500+sample.deviceIndex,stage.active,stage.distribution);targets[target]=(targets[target]??0)+1;
+    }
+    assert.equal(extra.offered,stage.reconnectOffers);assert.deepEqual(extra.targetHistogram,targets);
     assert.deepEqual(Object.keys(extra.bindings).sort(),selected.schools.flatMap((samples,schoolIndex)=>samples.map(row=>`${schoolIndex}:${row.deviceIndex}`)).sort());
     return true;
   }catch{return false;}
@@ -43,12 +46,19 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
       && round.errorCoverage.every(row=>row.available===true && row.complete===true && row.errorCount===0 && /^[a-f0-9]{64}$/.test(row.sha256))
       && round.databaseFailures===0 };
   if(profile.broaderCapacityGate&&round.reconnect)checks.exactLostReconnects=validateLostReconnectEvidence(extra,profile);
-  if (profile.kind === 'usage') {
-    checks.reports = reportMatrix(round.traffic?.reports);
-    checks.workers = round.workers?.length === 2 && [0,1].every(index=>round.workers.filter(row=>row.schoolIndex===index && row.correct===true && row.durationMs<=48_000).length===1);
-    checks.correctness = round.correctness?.passed === true && round.correctness.audit?.passed===true && round.correctness.audit.auditRecords?.length===8;
-    checks.workerDatabase=round.workerDatabase?.acquisitions?.count>0 && round.workerDatabase.acquisitions.failures===0
-      && Object.keys(round.workerDatabase.statements??{}).length>0 && Object.values(round.workerDatabase.statements).every(row=>row.failures===0);
+  if (profile.usage) {
+    const usage=round.continuousGlobal?.usage??round;
+    checks.reports = reportMatrix(usage.traffic?.reports??usage.reports);
+    checks.workers = usage.workers?.length === 2 && [0,1].every(index=>usage.workers.filter(row=>row.schoolIndex===index && row.correct===true && row.durationMs<=48_000).length===1);
+    checks.correctness = usage.correctness?.passed === true && usage.correctness.audit?.passed===true && usage.correctness.audit.auditRecords?.length===8;
+    checks.workerDatabase=usage.workerDatabase?.acquisitions?.count>0 && usage.workerDatabase.acquisitions.failures===0
+      && Object.keys(usage.workerDatabase.statements??{}).length>0 && Object.values(usage.workerDatabase.statements).every(row=>row.failures===0);
+    if(profile.kind==='mixed'){
+      checks.scheduledUsageWaves=usage.reports?.every(row=>row.scheduledOffsetMs===profile.reportWaveOffsetsMs[row.wave]
+        &&row.offeredOffsetMs>=row.scheduledOffsetMs&&row.endpointIndex===stickyTarget(row.schoolIndex*500,stageForReport(profile,row.wave).active,stageForReport(profile,row.wave).distribution));
+      checks.lossConcurrentWorker=usage.workerStartAtMs===profile.workerStartAtMs&&usage.workerStartedOffsetMs>=profile.workerStartAtMs
+        &&usage.workerStartedOffsetMs<profile.workerStartAtMs+1000&&workerLossOverlap(usage,profile);
+    }
     // Usage capacity has unchanged deadlines, not the release CPU/500ms SLO.
     // These observations still travel in the receipt but do not redefine it.
     delete checks.cpuBound; delete checks.latency;
@@ -70,7 +80,8 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
   assert.deepEqual(records.map(row => row.arm), ['A', 'A', 'A', 'B', 'B', 'A', 'A', 'B']);
   assert.equal(new Set(records.map(row => row.fixtureLogicalSha256)).size, 1); assert.equal(new Set(records.map(row => row.nodeVersion)).size, 1);
   assert.equal(new Set(records.map(row=>row.harnessSource)).size,1);assert.ok(records.every(row=>/^[a-f0-9]{40}$/.test(row.harnessSource)));
-  for(const arm of ['A','B']){const sameArm=records.filter(row=>row.arm===arm);assert.equal(new Set(sameArm.map(row=>row.schemaSha256)).size,1);assert.ok(sameArm.every(row=>/^[a-f0-9]{64}$/.test(row.schemaSha256)));}
+  for(const arm of ['A','B']){const sameArm=records.filter(row=>row.arm===arm);assert.equal(new Set(sameArm.map(row=>row.schemaSha256)).size,1);assert.ok(sameArm.every(row=>/^[a-f0-9]{64}$/.test(row.schemaSha256)));
+    assert.equal(new Set(sameArm.map(row=>row.applicationImage)).size,1);assert.ok(sameArm.every(row=>/^(?:sha256:|[a-zA-Z0-9./:_-]+@sha256:)[a-f0-9]{64}$/.test(row.applicationImage)));}
   assert.equal(new Set(records.map(row=>row.clientAdvertisementSha256)).size,1);assert.ok(records.every(row=>/^[a-f0-9]{64}$/.test(row.clientAdvertisementSha256)&&row.clientAdvertisementVersion==='2.9.6'));
   const controls = records.slice(0, 2), pairs = [[records[2], records[3]], [records[5], records[4]], [records[6], records[7]]];
   const ratio = (a, b, key) => b[key] / a[key];
@@ -85,7 +96,7 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
 }
 // Avoid inferring the chosen contract from a result's rates.
 export function validateMixedRuns(runs) {
-  assert.equal(runs.length, 3); const profile = profileFor(runs[0].profile);assert.ok([PROFILES.mixed.name,PROFILES.broader.name].includes(profile.name));
+  assert.equal(runs.length, 3); const profile = profileFor(runs[0].profile);assert.ok([PROFILES.mixed.name,PROFILES.broader.name,PROFILES.broaderConcentrated.name].includes(profile.name));
   for (const run of runs) {
     assert.equal(run.profile, profile.name); assert.equal(run.rounds.length, profile.rounds); assert.equal(run.cleanupPassed, true);assert.equal(run.runPassed,true);assert.equal(run.failure,null);
     assert.equal(run.continuous?.passed,true);assert.equal(run.continuous.expected,profile.continuousOffering.expected);assert.equal(run.continuous.offered,profile.continuousOffering.expected);assert.equal(run.continuous.windowsContinuous,true);
@@ -95,8 +106,22 @@ export function validateMixedRuns(runs) {
     assert.equal(run.transitions.at(-1).lostRole, 'api0'); assert.equal(run.transitions.at(-1).cleanShutdown, true);
   }
   assert.equal(new Set(runs.map(row => row.source)).size, 1); assert.equal(new Set(runs.map(row => row.schemaSha256)).size, 1);
+  assert.equal(new Set(runs.map(row=>row.applicationImage)).size,1);
   assert.equal(new Set(runs.map(row=>row.harnessSource)).size,1);assert.ok(runs.every(row=>/^[a-f0-9]{40}$/.test(row.harnessSource)));
-  return { passed: true, currentSchoolOnly: !profile.broaderCapacityGate, broaderSyntheticCapacityGatePassed:profile.broaderCapacityGate===true,broaderCapacityClaimed:false };
+  return { passed: true, currentSchoolOnly: !profile.broaderCapacityGate,broaderVariant:profile.broaderVariant??null,
+    broaderVariantPassed:profile.broaderCapacityGate===true,broaderSyntheticCapacityGatePassed:false,broaderCapacityClaimed:false };
+}
+const stageForReport=(profile,wave)=>[...profile.stages].reverse().find(stage=>stage.fromRound*60_000<=profile.reportWaveOffsetsMs[wave]);
+export function workerLossOverlap(usage,profile){
+  if(!Number.isFinite(usage.startsAtMs)||!Array.isArray(usage.workers)||usage.workers.length!==2)return false;
+  const loss=profile.stages.find(stage=>stage.reconnectLostOnly),reconnectStart=loss.fromRound*60_000+loss.reconnectStartDelayMs,
+    reconnectEnd=reconnectStart+loss.reconnectWindowMs,lossWave=profile.reportWaveOffsetsMs.indexOf(profile.workerStartAtMs),reports=usage.reports?.filter(row=>row.wave===lossWave);
+  if(reports?.length!==16)return false;
+  return usage.workers.every(worker=>{
+    const start=worker.startedAtMs-usage.startsAtMs,end=worker.finishedAtMs-usage.startsAtMs;
+    return Number.isFinite(start)&&Number.isFinite(end)&&end>start&&start<reconnectEnd&&end>reconnectStart
+      &&reports.some(report=>Number.isFinite(report.offeredOffsetMs)&&Number.isFinite(report.durationMs)&&start<report.offeredOffsetMs+report.durationMs&&end>report.offeredOffsetMs);
+  });
 }
 export function reportMatrix(rows) {
   if (!Array.isArray(rows) || rows.length!==64 || !rows.every(row=>row.status===200 && row.correct===true && Number.isFinite(row.durationMs) && row.durationMs<20_000)) return false;

@@ -17,7 +17,8 @@ import { roleEnvironment, remapObservedEnvironment, validateBaselineAdvertisemen
 import { withCommonDatabase } from './common-database.mjs';
 import { withRestoredSnapshot } from '../roles/restore-snapshot.mjs';
 import { loadSnapshot } from '../roles/snapshot-contract.mjs';
-import { schoolDayOracle } from '../school-day-profile.mjs';
+import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
+import { runHeavyUsageWorkers, completeUsageChecks } from './usage-checks.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -40,6 +41,10 @@ export async function runV2(options) {
   const preparation = JSON.parse(prepBytes); assert.equal(preparation.applicationSource, options.source); assert.equal(preparation.applicationImage, binding.applicationImage);
   const envBytes = readFileSync(options.observedEnvironmentFile); assert.equal(hash(envBytes), options.observedEnvironmentSha256);
   const preparedSnapshot=profile.usage?loadSnapshot(options.snapshotDirectory,options.snapshotManifestSha256,{source:options.source,today:today()}):null;
+  if(preparedSnapshot){
+    const native=readFileSync(options.schemaFile);assert.equal(hash(native),options.schemaSha256);
+    assert.equal(canonicalSchemaFingerprint(native.toString('utf8')),preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256,'Native and populated schema identities differ');
+  }
   const remapped = remapObservedEnvironment(JSON.parse(envBytes), options.scopeBinding, today(),preparedSnapshot?.data['cold-fixture-state.json'].schools.map(row=>row.id));
   let clientCapabilities;
   if(['blackbox','diagnostic'].includes(profile.kind)){
@@ -86,6 +91,10 @@ export async function runV2(options) {
     nodeVersion: binding.nodeVersion, diagnosticOnly: profile.kind === 'diagnostic', limitations: ['Local4CPU/4GiBPostgreSQL is not production headroom.', 'Synthetic client ACKs do not prove packaged browser enforcement.', 'Host filesystem cache is not cleared.'] };
   let failure;
   async function measure(configuration, restart, initialFixture) {
+    const hostCapacity=(await dockerInput(['info','--format','{{.NCPU}} {{.MemTotal}}'])).trim().split(/\s+/).map(Number);
+    assert.equal(hostCapacity.length,2);assert.ok(hostCapacity.every(value=>Number.isSafeInteger(value)&&value>0));
+    metrics.quietHost={declaredNoOtherLoadOrBuilds:window.noOtherLoadOrBuilds===true,preparationOnly:options.preparationSmoke===true,
+      dockerCpuCount:hostCapacity[0],dockerMemoryBytes:hostCapacity[1],observedAt:new Date().toISOString(),hostInterferenceEstablished:false};
     const owners = [], active = new Map(), exits = []; let redisId; const secrets = { JWT_SECRET: randomBytes(32).toString('hex'), SESSION_SECRET: randomBytes(32).toString('hex'), STUDENT_TOKEN_SECRET: randomBytes(32).toString('hex'), RELEASE297_FIXTURE_PASSWORD: randomBytes(24).toString('hex') };
     const schemaReceipt = options.schemaReceiptFile ? read(options.schemaReceiptFile) : null;
     const tables = options.rlsTables ?? schemaReceipt?.rlsTables; assert.ok(Array.isArray(tables) && new Set(tables).size === tables.length);
@@ -102,7 +111,7 @@ export async function runV2(options) {
       fixture = initialFixture ? await seeder.rpc('initialize', { ...initialFixture, password: secrets.RELEASE297_FIXTURE_PASSWORD }) : await seeder.rpc('seed');
       const verification = await seeder.rpc('verify'); assert.equal(verification.passed, true);
       if (schemaReceipt) assert.deepEqual(verification.migrations, schemaReceipt.migrations);
-      metrics.databasePreparation = verification; metrics.schemaSha256 = configuration.schemaSha256;
+      metrics.databasePreparation = verification; metrics.schemaSha256 = configuration.schemaSha256; metrics.schemaInputSha256=configuration.schemaInputSha256??null;
       metrics.fixtureLogicalSha256 = fixture.logicalFixtureSha256 ?? hash(JSON.stringify({ today: fixture.today, schools: fixture.schools }));
       assert.equal((await stop(seeder)).clean, true);
       await restart();
@@ -137,9 +146,12 @@ export async function runV2(options) {
         save(output,'preparation-smoke.json',metrics.preparationSmokeResult);return;
       }
       if(profile.kind==='mixed') {
-        await runMixed({profile,active,startApi,stop,generator,observer,fixture,metrics,
+        const canary=monitorEventLoopDelay({resolution:20});canary.enable();const start=performance.now(),cpuStart=process.cpuUsage();
+        try{await runMixed({profile,active,startApi,stop,generator,observer,worker,fixture,metrics,
           save:(name,value)=>save(output,name,value),docker:dockerInput,readLog:name=>readFileSync(join(control,name+'-log.private'),'utf8'),
-          pgContainerId:configuration.pgContainerId,expiresAt:window.expiresAt});
+          pgContainerId:configuration.pgContainerId,expiresAt:window.expiresAt});}
+        finally{canary.disable();metrics.quietHost.coordinatorCanary={durationMs:performance.now()-start,p95Ms:canary.percentile(95)/1e6,
+          maxMs:canary.max/1e6,cpuMicroseconds:process.cpuUsage(cpuStart),memoryBytes:process.memoryUsage().rss,acceptanceCriterion:false};}
         assert.ok(metrics.continuous.passed && metrics.rounds.every(round=>round.acceptance.passed),'Continuous mixed acceptance failed');
         assert.equal(today(),fixture.today);return;
       }
@@ -158,17 +170,10 @@ export async function runV2(options) {
         const startsAtMs = Date.now() + 1000; canary.reset();
         const windowPromises = [...active.values()].map(owner => owner.rpc('measureWindow', { startsAtMs, durationMs: 60_000 }));
         const trafficPromise = generator.rpc('phase', { startsAtMs, offering: profile.offering, topology: stage, ingest: true, reports: profile.usage, lifecycle: !blackbox, reconnect: profile.kind === 'mixed' && index === 10 });
-        const heavyDate = fixture.heavyDate;
-        const workerPromises = worker ? fixture.schools.map(async school => {
-          const date = new Date(heavyDate + 'T12:00:00Z'); date.setUTCDate(date.getUTCDate() + 1);
-          // School-local midnight is provided by the prepared source fixture.
-          const cutoff = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', timeZoneName: 'longOffset', hour: '2-digit', hourCycle: 'h23' }).formatToParts(date).find(part => part.type === 'timeZoneName').value.replace('GMT', '');
-          const result = await worker.rpc('rollup', { schoolId: school.id, date: heavyDate, cutoff: `${date.toISOString().slice(0, 10)}T00:00:00${cutoff}` });
-          const oracle = schoolDayOracle('school'); return { schoolIndex: school.index, ...result, correct: result.seconds === oracle.monitored && result.heartbeatCount === oracle.heartbeats && result.rowCount === oracle.grains };
-        }) : [];
-        const results = await Promise.allSettled([trafficPromise, ...workerPromises]);
-        const traffic = results[0].status === 'fulfilled' ? results[0].value : { failed: true, error: 'GENERATOR_PHASE_FAILED' };
-        const workers = results.slice(1).map(result => result.status === 'fulfilled' ? result.value : { correct: false, error: 'WORKER_PHASE_FAILED' });
+        const workerOperation=worker?runHeavyUsageWorkers(worker,fixture):Promise.resolve([]);
+        const results=await Promise.allSettled([trafficPromise,workerOperation]);
+        const traffic=results[0].status==='fulfilled'?results[0].value:{failed:true,error:'GENERATOR_PHASE_FAILED'};
+        const workers=results[1].status==='fulfilled'?results[1].value:[{correct:false,error:'WORKER_PHASE_FAILED'}];
         const windows = await Promise.all(windowPromises);
         const drains = await Promise.all([...active.values()].map(owner => owner.rpc('drain'))); if (worker) drains.push(await worker.rpc('drain'));
         const api = await Promise.all([...active.values()].map(owner => owner.rpc('snapshot'))), after = await observer.rpc('snapshot', { since });
@@ -188,23 +193,8 @@ export async function runV2(options) {
           errorCoverage, databaseFailures: errorCoverage.reduce((sum,row) => sum + row.errorCount,0),
           rawBlackboxSqlFailureCountersAvailable: !blackbox, hostCanaryMaxMs: canary.max / 1e6 };
         if (profile.usage) {
-          const cutoff = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
-          const rawOracle = await observer.rpc('correctness', { cutoff }), currentWorkers = [];
-          for (const school of fixture.schools) { const expected = rawOracle.schools.find(row => row.schoolIndex === school.index); const result = await worker.rpc('rollup', { schoolId: school.id, date: fixture.today, cutoff }); currentWorkers.push({ ...result, correct: result.seconds === expected.expectedSeconds && result.durationMs <= 48_000 }); }
-          const exports = await generator.rpc('correctness'); let correct = currentWorkers.every(row => row.correct) && exports.length === 8;
-          for (const row of exports) {
-            const school = fixture.schools[row.schoolIndex], seconds = new Map(rawOracle.schools.find(result => result.schoolIndex === row.schoolIndex).secondsByStudent);
-            const ids = school.students.filter((_, n) => row.scope === 'school' || (row.scope === 'grade' ? n % 5 === 0 : row.scope === 'class' ? n < 5 : n === 0));
-            const current = ids.reduce((n, id) => n + (seconds.get(id) || 0), 0), expected = fixture.historyDays * 90 * ids.length + schoolDayOracle(row.scope).monitored + current;
-            correct &&= row.report.totals.monitoredBrowserSeconds === expected && row.report.byDay.find(day => day.date === fixture.today)?.monitoredBrowserSeconds === current && row.csv.includes(`"Total","","${(expected / 60).toFixed(1)}"`);
-            delete row.csv;
-          }
-          const audit = await observer.rpc('correctness',{audit:true,cutoff});
-          round.correctness = { passed: correct && audit.passed === true, rawOracle, currentWorkers, exports, audit };
-          round.drains.push(await worker.rpc('drain'));const finalWorker=await worker.rpc('snapshot');
-          assert.ok(finalWorker.database?.acquisitions?.count>0);assert.equal(finalWorker.database.acquisitions.failures,0);
-          assert.ok(Object.keys(finalWorker.database.statements).length>0);assert.ok(Object.values(finalWorker.database.statements).every(row=>row.failures===0));
-          round.workerDatabase=finalWorker.database;
+          const usage=await completeUsageChecks({worker,observer,generator,fixture});
+          round.correctness=usage.correctness;round.workerDatabase=usage.workerDatabase;round.drains.push(usage.drain);
           round.errorCoverage=await Promise.all([...active.values()].map(async owner=>({role:owner.role,...classifyLog(await owner.logs(),'api',{complete:true,expectedNegativeProbes:negativeProbes(traffic)})})));
           round.errorCoverage.push({role:'worker',...classifyLog(await worker.logs(),'api',{complete:true})},classifyLog(await dockerInput(['logs',configuration.pgContainerId]),'postgres',{complete:true}));
           round.databaseFailures=round.errorCoverage.reduce((sum,row)=>sum+row.errorCount,0);
@@ -266,6 +256,7 @@ export async function runV2(options) {
       await withRestoredSnapshot({ ...options, source: options.source, evidenceDirectory: output, privateDirectory: control,
         mode: 'diagnostic', planFile, planSha256, purpose: 'New v2 three-API synthetic campaign; original single-API contract is unchanged' }, async context => {
         const configuration = read(context.configurationFile); configuration.pgContainerId = context.ready.pgContainerId; configuration.schemaSha256 = snapshot.data['schema-fingerprint.json'].canonicalSha256;
+        configuration.schemaInputSha256=options.schemaSha256;
         await measure(configuration, () => context.restartAfterRelease({ run, source: options.source, releasedAt: new Date().toISOString() }), fixture);
       });
     } else {

@@ -54,7 +54,16 @@ export function reserveAttempt(options) {
   writeFileSync(join(directory,'journal.next'),JSON.stringify(journal,null,2)+'\n',{flag:'wx'});renameSync(join(directory,'journal.next'),join(directory,'journal.json'));
   return{reservationFile:file,reservationSha256,run:options.run,arm,source:reservation.source};
 }
-export function verifyPairedClosure(input,{profile,candidateSource,observedFlagsSha256}){
+export function assertCandidateBinding(records,{source,applicationImage,schemaSha256}){
+  assert.match(source,/^[a-f0-9]{40}$/);assert.match(applicationImage,/^(?:sha256:|[a-zA-Z0-9./:_-]+@sha256:)[a-f0-9]{64}$/);assert.match(schemaSha256,/^[a-f0-9]{64}$/);
+  const candidateRecords=records.filter(row=>row.arm!=='A');assert.ok(candidateRecords.length>0);
+  for(const record of candidateRecords){assert.equal(record.source,source);assert.equal(record.applicationImage,applicationImage);assert.equal(record.schemaSha256,schemaSha256);}
+}
+export function usageCandidateBinding(records,source){
+  assert.equal(records.length,3);assert.ok(records.every(record=>record.profile===PROFILES.usage.name&&record.runPassed&&record.cleanupPassed&&record.sourceUnchanged));
+  const binding={source,applicationImage:records[0].applicationImage,schemaSha256:records[0].schemaSha256};assertCandidateBinding(records,binding);return binding;
+}
+export function verifyPairedClosure(input,{profile,candidateSource,observedFlagsSha256,candidateBinding}){
   const directory=resolve(input.directory),closureBytes=readFileSync(join(directory,'closure.json'));
   assert.equal(hash(closureBytes),input.closureSha256);const closure=JSON.parse(closureBytes),contract=read(join(directory,'contract.json')),journal=read(join(directory,'journal.json'));
   assert.equal(contract.kind,'paired');assert.equal(contract.profile,profile.name);assert.equal(contract.candidateSource,candidateSource);
@@ -65,14 +74,15 @@ export function verifyPairedClosure(input,{profile,candidateSource,observedFlags
   const records=journal.attempts.map((attempt,index)=>{assert.equal(attempt.state,'recorded');assert.ok(!attempt.receipt.verificationFailure);
     return loadReceipt(attempt.receiptDirectory,attempt.receiptManifestSha256,input.privateDirectories[index]);});
   const result=validatePairs(records,{profile,baselineSource:contract.baselineSource,candidateSource,observedFlagsSha256});assert.equal(result.passed,true);
+  assertCandidateBinding(records,candidateBinding);
   assert.deepEqual(closure.checks,result.checks);
-  return{profile:profile.name,candidateSource,baselineSource:contract.baselineSource,closureSha256:input.closureSha256,passed:true};
+  return{profile:profile.name,candidateSource,baselineSource:contract.baselineSource,closureSha256:input.closureSha256,...candidateBinding,passed:true};
 }
-export function verifyUsageComparisons(options,contract){
+export function verifyUsageComparisons(options,contract,candidateBinding){
   assert.equal(options.pairedReleaseComparisons?.length,2);
   const comparisons=[PROFILES.sole,PROFILES.normal].map(profile=>{
     const matching=options.pairedReleaseComparisons.filter(input=>read(join(resolve(input.directory),'contract.json')).profile===profile.name);assert.equal(matching.length,1);
-    return verifyPairedClosure(matching[0],{profile,candidateSource:contract.candidateSource,observedFlagsSha256:contract.observedFlagsSha256});
+    return verifyPairedClosure(matching[0],{profile,candidateSource:contract.candidateSource,observedFlagsSha256:contract.observedFlagsSha256,candidateBinding});
   });
   assert.equal(new Set(comparisons.map(row=>row.baselineSource)).size,1);
   assert.equal(options.preservedDiagnosticJournalSha256,OLD_CLOSED_JOURNAL_SHA256);
@@ -92,8 +102,8 @@ export function closeCampaign(options) {
   else if(contract.kind==='paired'&&contract.profile!==PROFILES.overload.name) result=validatePairs(records,{profile:profileFor(contract.profile),baselineSource:contract.baselineSource,candidateSource:contract.candidateSource,observedFlagsSha256:contract.observedFlagsSha256});
   else if(contract.kind==='mixed') result=validateMixedRuns(records);
   else if(contract.kind==='usage') {
-    const evidence=verifyUsageComparisons(options,contract);
-    result={passed:records.every(record=>record.runPassed&&record.cleanupPassed&&record.sourceUnchanged)&&new Set(records.map(record=>record.schemaSha256)).size===1,
+    const binding=usageCandidateBinding(records,contract.candidateSource),evidence=verifyUsageComparisons(options,contract,binding);
+    result={passed:true,candidateBinding:binding,
       ...evidence,capacityAccepted:false};
   } else if(contract.kind==='paired') {
     result={passed:false,diagnosticOnly:true,recordsComplete:records.length===8,
@@ -102,4 +112,27 @@ export function closeCampaign(options) {
   journal.closed=true;journal.result=result;writeFileSync(join(directory,'journal.next'),JSON.stringify(journal,null,2)+'\n',{flag:'wx'});renameSync(join(directory,'journal.next'),join(directory,'journal.json'));
   writeFileSync(join(directory,'closure.json'),JSON.stringify({contractSha256:journal.contractSha256,journalSha256:hash(readFileSync(join(directory,'journal.json'))),...result,productionReadiness:false},null,2)+'\n',{flag:'wx'});return result;
 }
-if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url){try{const operations={declare:declareCampaign,reserve:reserveAttempt,register:registerAttempt,close:closeCampaign};assert.ok(operations[process.argv[2]]);const result=operations[process.argv[2]](read(process.argv[3]));process.stdout.write(JSON.stringify(result)+'\n');}catch{process.stderr.write('V2_CAMPAIGN_OPERATION_FAILED\n');process.exitCode=1;}}
+// A single routing variant never establishes the broader capacity claim.
+// Both hash-bound, independently revalidated three-run closures are needed.
+export function verifyBroaderGate(options){
+  assert.equal(options.campaigns?.length,2);const variants=[];let expected;
+  for(const profile of [PROFILES.broader,PROFILES.broaderConcentrated]){
+    const matching=options.campaigns.filter(input=>read(join(resolve(input.directory),'contract.json')).profile===profile.name);assert.equal(matching.length,1);
+    const input=matching[0],directory=resolve(input.directory),raw=readFileSync(join(directory,'closure.json'));
+    assert.equal(hash(raw),input.closureSha256);const closure=JSON.parse(raw),contract=read(join(directory,'contract.json')),journal=read(join(directory,'journal.json'));
+    assert.equal(contract.kind,'mixed');assert.equal(closure.passed,true);assert.equal(journal.closed,true);
+    assert.equal(closure.contractSha256,hash(readFileSync(join(directory,'contract.json'))));assert.equal(closure.journalSha256,hash(readFileSync(join(directory,'journal.json'))));
+    assert.equal(journal.contractSha256,closure.contractSha256);assert.equal(journal.attempts.length,3);assert.equal(input.privateDirectories?.length,3);
+    const records=journal.attempts.map((attempt,index)=>{assert.equal(attempt.state,'recorded');assert.ok(!attempt.receipt.verificationFailure);
+      assert.deepEqual(attempt,read(join(directory,`attempt-${index+1}.json`)));
+      const record=loadReceipt(attempt.receiptDirectory,attempt.receiptManifestSha256,input.privateDirectories[index]);
+      assert.equal(record.arm,'C');assert.equal(record.source,contract.candidateSource);assert.equal(record.observedFlagsSha256,contract.observedFlagsSha256);return record;});
+    const result=validateMixedRuns(records);assert.equal(result.broaderVariantPassed,true);assert.equal(result.broaderVariant,profile.broaderVariant);
+    const binding={source:records[0].source,applicationImage:records[0].applicationImage,schemaSha256:records[0].schemaSha256};assertCandidateBinding(records,binding);
+    const common={...binding,harnessSource:records[0].harnessSource,observedFlagsSha256:records[0].observedFlagsSha256};
+    if(expected)assert.deepEqual(common,expected);else expected=common;
+    variants.push({profile:profile.name,variant:profile.broaderVariant,closureSha256:input.closureSha256,passed:true});
+  }
+  return{passed:true,broaderSyntheticCapacityGatePassed:true,broaderCapacityClaimed:false,...expected,variants};
+}
+if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url){try{const operations={declare:declareCampaign,reserve:reserveAttempt,register:registerAttempt,close:closeCampaign,broader:verifyBroaderGate};assert.ok(operations[process.argv[2]]);const result=operations[process.argv[2]](read(process.argv[3]));process.stdout.write(JSON.stringify(result)+'\n');}catch{process.stderr.write('V2_CAMPAIGN_OPERATION_FAILED\n');process.exitCode=1;}}

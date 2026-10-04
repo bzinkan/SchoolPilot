@@ -17,6 +17,7 @@ export function lostReconnectBindings(samples,profile,startsAtMs){
   }
   for(const school of schools)school.sort((a,b)=>a.deviceIndex-b.deviceIndex);
   assert.deepEqual(schools.map(row=>row.length),loss.reconnectSchoolDevices);assert.equal(schools.flat().length,loss.reconnectOffers);
-  return{schools,observedSamples:samples,startsAtMs,observedBindings:expected,lostBindings:loss.reconnectOffers,lostTarget:loss.lost,reconnectTarget:loss.reconnectTarget,
+  return{schools,observedSamples:samples,startsAtMs,observedBindings:expected,lostBindings:loss.reconnectOffers,lostTarget:loss.lost,
+    reconnectTarget:loss.reconnectTarget??null,reconnectDistribution:loss.distribution,
     observedBindingSha256:hash(JSON.stringify([...samples].sort((a,b)=>a.schoolIndex-b.schoolIndex||a.deviceIndex-b.deviceIndex))),sameUnlostBindingsPreserved:true};
 }

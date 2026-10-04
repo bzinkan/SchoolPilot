@@ -10,6 +10,15 @@ const offering = (rate, schoolDevices, durationMs = 60_000) => frozen({ requests
   schoolDevices: frozen(schoolDevices), durationMs, deviceCadenceMs: 10_000,
   expected: rate * durationMs / 1000, maxInFlight: schoolDevices.reduce((a, b) => a + b, 0),
   requestTimeoutMs: 20_000, maxOfferLatenessMs: 100 });
+const broader = (variant, distribution) => frozen({name:`release297-usage-800-3-2-${variant}-v2`,kind:'mixed',offering:offering(80,[400,400]),usage:true,
+  apiTasks:3,initialApiTasks:3,rounds:15,repetitions:3,continuousOffering:offering(80,[400,400],900_000),broaderCapacityGate:true,
+  broaderVariant:variant,reports:64,rawPerSchool:1_000_000,workerAcceptanceMs:48_000,workerStartAtMs:600_000,
+  reportWaveOffsetsMs:frozen([0,300_000,600_000,720_000]),capacityDeadlinesOnly:true,stages:frozen([
+    frozen({fromRound:0,active:frozen([0,1,2]),distribution:'uniform'}),
+    frozen({fromRound:5,active:frozen([0,1,2]),distribution:'sticky80'}),
+    frozen({fromRound:10,active:frozen([1,2]),distribution,lost:0,reconnectOffers:640,reconnectSchoolDevices:frozen([320,320]),
+      reconnectWindowMs:8000,reconnectStartDelayMs:1000,reconnectLostOnly:true,...(distribution==='lostToOneSurvivor'?{reconnectTarget:1}:{})}),
+  ])});
 export const PROFILES = frozen({
   sole: frozen({ name: 'release297-blackbox-sole-133-v2', kind: 'blackbox', offering: offering(13.3, [133, 0]), usage: false, apiTasks: 1 }),
   normal: frozen({ name: 'release297-blackbox-normal-34-v2', kind: 'blackbox', offering: offering(34, [170, 170]), usage: false, apiTasks: 1 }),
@@ -24,12 +33,8 @@ export const PROFILES = frozen({
     ]) }),
   usage: frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
     apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, pairedReleaseComparisonRequired: true }),
-  broader: frozen({name:'release297-classroom-800-3-2-reconnect-v2',kind:'mixed',offering:offering(80,[400,400]),usage:false,
-    apiTasks:3,initialApiTasks:3,rounds:15,repetitions:3,continuousOffering:offering(80,[400,400],900_000),broaderCapacityGate:true,stages:frozen([
-      frozen({fromRound:0,active:frozen([0,1,2]),distribution:'uniform'}),
-      frozen({fromRound:5,active:frozen([0,1,2]),distribution:'sticky80'}),
-      frozen({fromRound:10,active:frozen([1,2]),distribution:'lostToOneSurvivor',lost:0,reconnectOffers:640,reconnectSchoolDevices:frozen([320,320]),reconnectWindowMs:8000,reconnectStartDelayMs:1000,reconnectLostOnly:true,reconnectTarget:1}),
-    ])}),
+  broader: broader('ordinary-survivors','survivors'),
+  broaderConcentrated: broader('concentrated-lost-reconnect','lostToOneSurvivor'),
 });
 export const NONREGRESSION = frozen({ controlRuns: 2, pairs: 3, medianCpuRatio: 1.05, medianP95Ratio: 1.10,
   medianP95IncreaseMs: 50, individualCpuRatio: 1.10, individualP95IncreaseMs: 100,
