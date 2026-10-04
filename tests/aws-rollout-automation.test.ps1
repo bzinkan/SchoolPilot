@@ -3680,15 +3680,23 @@ exit 0
         Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         Assert-Condition ($slowFreshCase.exitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 600 seconds old must remain fresh while one-minute metrics stay current."
 
+        # Runtime breach cases must reach their consecutive-observation gates
+        # before cumulative acceptance, even when one mocked AWS sweep exceeds
+        # ten seconds. The existing owned-child watchdog still bounds each case;
+        # this test-only acceptance fence adds no wait or production timeout.
+        $runtimeFailureMinimumSeconds = [int][Math]::Ceiling(
+            $script:MonitorCompletionWatchdogMilliseconds / 1000.0
+        )
         $slowStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $slowStaleConfig.runId = "five-minute-runtime-stale"
-        $slowStaleConfig.minimumWallClockSeconds = 10
+        $slowStaleConfig.minimumWallClockSeconds = $runtimeFailureMinimumSeconds
         $slowStaleConfig.maxIterations = 4
         $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "720"
         $slowStaleCase = Invoke-ChildMonitorCase "five-minute-runtime-stale" $slowStaleConfig
         Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         foreach ($slowMetric in @("rds_cpu_credit", "rds_surplus_credits_charged", "redis_cpu_credit")) {
-            Assert-Condition ($slowStaleCase.result.failures -contains "stale_metric:$slowMetric") "Five-minute metric '$slowMetric' older than 660 seconds must fail closed after three checks."
+            Assert-Condition ($slowStaleCase.exitCode -eq 2 -and $slowStaleCase.result.status -eq "failed" -and
+                $slowStaleCase.result.failures -contains "stale_metric:$slowMetric") "Five-minute metric '$slowMetric' older than 660 seconds must fail closed after three checks."
         }
 
         $rdsCpuLagConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -3740,12 +3748,13 @@ exit 0
 
         $fastStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $fastStaleConfig.runId = "one-minute-runtime-stale"
-        $fastStaleConfig.minimumWallClockSeconds = 10
+        $fastStaleConfig.minimumWallClockSeconds = $runtimeFailureMinimumSeconds
         $fastStaleConfig.maxIterations = 4
         $env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS = "330"
         $fastStaleCase = Invoke-ChildMonitorCase "one-minute-runtime-stale" $fastStaleConfig
         Remove-Item Env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
-        Assert-Condition (@($fastStaleCase.result.failures | Where-Object { $_ -like "stale_metric:ecs_*" }).Count -gt 0) "One-minute metrics must retain the 180-second fail-closed freshness gate."
+        Assert-Condition ($fastStaleCase.exitCode -eq 2 -and $fastStaleCase.result.status -eq "failed" -and
+            @($fastStaleCase.result.failures | Where-Object { $_ -like "stale_metric:ecs_*" }).Count -gt 0) "One-minute metrics must retain the 180-second fail-closed freshness gate."
 
         foreach ($wafSignal in @(
             [pscustomobject]@{ id="device-blocked-no-valid403"; env="SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK"; failure="waf_device_blocked" },
@@ -4096,31 +4105,34 @@ exit 0
 
         $auxConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $auxConfig.runId = "auxiliary-resource-gates"
-        $auxConfig.minimumWallClockSeconds = 10
+        $auxConfig.minimumWallClockSeconds = $runtimeFailureMinimumSeconds
         $auxConfig.maxIterations = 5
         $env:SCHOOLPILOT_TEST_AUX_BREACH = "1"
         $auxCase = Invoke-ChildMonitorCase "auxiliary-resource-gates" $auxConfig
         foreach ($expectedGate in @("rds_free_memory", "rds_cpu_credit", "rds_surplus_credits_charged", "redis_cpu_credit")) {
-            Assert-Condition ($auxCase.result.failures -contains $expectedGate) "Runtime monitoring must enforce three consecutive minutes for $expectedGate."
+            Assert-Condition ($auxCase.exitCode -eq 2 -and $auxCase.result.status -eq "failed" -and
+                $auxCase.result.failures -contains $expectedGate) "Runtime monitoring must enforce three consecutive minutes for $expectedGate."
         }
         Remove-Item Env:SCHOOLPILOT_TEST_AUX_BREACH -ErrorAction SilentlyContinue
 
         $swapConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $swapConfig.runId = "rds-swap-growth-gate"
-        $swapConfig.minimumWallClockSeconds = 10
+        $swapConfig.minimumWallClockSeconds = $runtimeFailureMinimumSeconds
         $swapConfig.maxIterations = 5
         $env:SCHOOLPILOT_TEST_SWAP_COUNTER = Join-Path $childRoot "swap-counter.txt"
         $swapCase = Invoke-ChildMonitorCase "rds-swap-growth-gate" $swapConfig
-        Assert-Condition ($swapCase.result.failures -contains "rds_swap_growing") "RDS SwapUsage growth must be a three-consecutive-datapoint runtime gate."
+        Assert-Condition ($swapCase.exitCode -eq 2 -and $swapCase.result.status -eq "failed" -and
+            $swapCase.result.failures -contains "rds_swap_growing") "RDS SwapUsage growth must be a three-consecutive-datapoint runtime gate."
         Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
 
         $freshnessConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $freshnessConfig.runId = "metric-freshness-gate"
-        $freshnessConfig.minimumWallClockSeconds = 10
+        $freshnessConfig.minimumWallClockSeconds = $runtimeFailureMinimumSeconds
         $freshnessConfig.maxIterations = 4
         $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString("o")
         $freshnessCase = Invoke-ChildMonitorCase "metric-freshness-gate" $freshnessConfig
-        Assert-Condition (@($freshnessCase.result.failures | Where-Object { $_ -like "stale_metric:*" }).Count -gt 0) "Runtime telemetry must fail closed after three stale one-minute checks."
+        Assert-Condition ($freshnessCase.exitCode -eq 2 -and $freshnessCase.result.status -eq "failed" -and
+            @($freshnessCase.result.failures | Where-Object { $_ -like "stale_metric:*" }).Count -gt 0) "Runtime telemetry must fail closed after three stale one-minute checks."
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO,Env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY,Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS,Env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS,Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DELAY -ErrorAction SilentlyContinue
