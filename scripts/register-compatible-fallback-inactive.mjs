@@ -7,6 +7,7 @@ import { createReadStream, readFileSync, writeFileSync, mkdirSync, existsSync } 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { archiveConfigDigest, scanCounts, SCANNER, runCommand, validateRegistryManifest } from './verify-legacy-deploy-image.mjs';
+import { addReviewedRlsTable, verifyLiveRlsEnablementSources, verifyEnabledRlsCandidates } from './enforce-deploy-rls-allowlist.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const registry = JSON.parse(readFileSync(path.join(repositoryRoot, 'src/config/rlsRegistry.json'), 'utf8'));
@@ -89,6 +90,58 @@ export function inventoryFor(count) {
   assert.ok(count === 128 || count === 129, 'EXACT_COMPATIBLE_FLOOR_REQUIRED');
   const value = registry.inventories[count === 128 ? 'passpilotAppointmentsPostExpand' : 'classpilotPrivateChatLifecyclePostExpand'];
   assert.ok(value.count === count && value.tables.length === count && new Set(value.tables).size === count, 'REGISTRY_INVENTORY_INVALID'); return [...value.tables];
+}
+export function anchor128Stages() {
+  const keys = ['importProcessingStagesPostExpand', 'passpilotRulesPostExpand', 'classpilotUsageRollupsPostExpand', 'classpilotUsageRollupDaysPostExpand', 'passpilotAppointmentsPostExpand'];
+  const counts = [121, 125, 126, 127, 128];
+  const stages = keys.map((key, index) => {
+    const value = registry.inventories[key];
+    assert.ok(value.count === counts[index] && value.tables.length === counts[index] && new Set(value.tables).size === counts[index], 'ANCHOR_INVENTORY_INVALID');
+    return [...value.tables];
+  });
+  for (let index = 1; index < stages.length; index++) equal(stages[index].slice(0, stages[index - 1].length), stages[index - 1], 'ANCHOR_INVENTORY_ORDER_CHANGED');
+  return stages;
+}
+function requestProjection(response) {
+  const request = Object.fromEntries(Object.entries(structuredClone(response.taskDefinition)).filter(([key]) => requestFields.has(key)));
+  if (response.tags !== undefined) { assert.ok(Array.isArray(response.tags), 'TASK_TAGS_INVALID'); request.tags = structuredClone(response.tags); }
+  return request;
+}
+export function renderAnchor128Pair(sources, source, image) {
+  checkString(source, /^[a-f0-9]{40}$/, 'ANCHOR_SOURCE_REQUIRED'); checkString(image, digestPattern, 'ANCHOR_IMAGE_REQUIRED');
+  assert.ok(source !== '7af9d0dd5bc2bd3e13b96d35a577725e07f8b678' && source !== FALLBACK.source, 'COMPATIBLE_CANDIDATE_ANCHOR_REQUIRED');
+  const stages = anchor128Stages(), roles = ['api', 'scheduler-worker'];
+  for (const role of roles) validateSourceResponse(sources[role], role, source, image, stages[0]);
+  const managed = role => Object.fromEntries(Object.entries(env(runtimeContainer(sources[role].taskDefinition, role))).filter(([key]) => key.startsWith('CLASSPILOT_CAP_') || key === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || key === 'CLASSPILOT_PROTOCOL_V3_ENABLED'));
+  equal(managed('api'), managed('scheduler-worker'), 'PAIR_CAPABILITY_MISMATCH');
+  const requests = Object.fromEntries(roles.map(role => [role, requestProjection(sources[role])]));
+  for (let index = 1; index < stages.length; index++) {
+    const table = stages[index].slice(stages[index - 1].length);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: requests.api, workerTaskDefinition: requests['scheduler-worker'], table });
+    for (const role of roles) addReviewedRlsTable(requests[role], { containerName: role, table });
+    verifyEnabledRlsCandidates({ taskDefinitions: roles.map(role => ({ taskDefinition: requests[role], containerName: role })), table, expectedPreviousTables: stages[index - 1] });
+  }
+  for (const role of roles) assertOnlyAnchorAdmissionChanged(sources[role], requests[role], role, source, image);
+  return requests;
+}
+export function assertOnlyAnchorAdmissionChanged(response, request, role, source, image) {
+  const { tags, ...task } = request;
+  validateSourceResponse({ taskDefinition: { ...task, ...Object.fromEntries(Object.entries(response.taskDefinition).filter(([key]) => providerFields.has(key))) }, tags }, role, source, image, inventoryFor(128));
+  const restored = structuredClone(request), original = runtimeContainer(response.taskDefinition, role);
+  runtimeContainer(restored, role).environment.find(entry => entry.name === 'RLS_ENABLED_TABLES').value = env(original).RLS_ENABLED_TABLES;
+  equal(restored, requestProjection(response), 'UNRELATED_ANCHOR_MUTATION');
+}
+function assertUnusedSources(sources, services) {
+  assert.ok(services?.services?.length === 2 && (services.failures ?? []).length === 0, 'CAPTURED_BASELINE_REQUIRED');
+  equal(services.services.map(value => value.serviceName).sort(), ['schoolpilot-production-api', 'schoolpilot-production-scheduler-worker'], 'CAPTURED_SERVICES_INVALID');
+  const arns = Object.values(sources).map(value => value.taskDefinition.taskDefinitionArn);
+  for (const service of services.services) {
+    const references = [service.taskDefinition, ...(service.deployments ?? []).map(value => value.taskDefinition), ...(service.taskSets ?? []).map(value => value.taskDefinition)];
+    assert.ok(references.every(value => !arns.includes(value)), 'ANCHOR_SOURCE_IS_SERVING');
+  }
+}
+function responseEnvironmentProjection(response) {
+  return { ...structuredClone(response), taskDefinition: registrationEnvironmentProjection(response.taskDefinition) };
 }
 export function renderRequest(response, role, source, sourceImage, targetImage, count) {
   checkString(source, /^[a-f0-9]{40}$/, 'SOURCE_SHA_INVALID'); checkString(sourceImage, digestPattern, 'SOURCE_DIGEST_INVALID'); checkString(targetImage, digestPattern, 'TARGET_DIGEST_INVALID');
@@ -283,12 +336,111 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
   finally { writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); }
   return { registered: result.registered, receiptPath, receiptSha256: hash(readFileSync(receiptPath)), servicesUpdated: 0, tasksLaunched: 0 };
 }
+const anchorHelperFiles = ['scripts/enforce-deploy-rls-allowlist.mjs', 'src/config/rlsRegistry.json', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/deploy-classpilot-runtime-config.ps1'];
+function anchorHelperHashes() { return Object.fromEntries(anchorHelperFiles.map(file => [file, hash(readFileSync(path.join(repositoryRoot, file)))])); }
+function anchorEvidence(input) {
+  const scan = pinnedJson(input.anchorScan), proof = pinnedJson(input.anchorRegistryProof);
+  validateAnchorEvidence(input, scan, proof, pinnedJson(input.anchorPublishedTag));
+  validateCleanupCustody(input.anchorScan.sha256, pinnedJson(input.anchorScanCleanup));
+  const stage = pinnedJson(input.syntheticStage); equal(input.syntheticStage.sha256, FALLBACK.stageSha256, 'STAGE_PROOF_CHANGED');
+  assert.ok(stage.passed === true && stage.servingSource === FALLBACK.application && stage.fallbackSource === FALLBACK.source && stage.retainedCompletedMigrationLedgerRows === 54 && stage.retainedScreenshotFunctionBodyAndAcl === true && stage.allDrainsExitZeroNoOomNoForceAndZeroNamedSqlConnections === true, 'SYNTHETIC_COMPATIBILITY_PROOF_INVALID');
+  return { scan, proof };
+}
+async function replayAnchor128Scan(plan) {
+  const { scan } = anchorEvidence(plan.input), directory = path.dirname(plan.input.anchorScan.path);
+  const custody = pinnedJson(plan.input.anchorScanCleanup), legacy = JSON.parse(readFileSync(path.join(directory, 'cleanup.json'), 'utf8'));
+  assert.ok(legacy.complete === true, 'ANCHOR_SCANNER_CLEANUP_UNCONFIRMED'); equal(legacy.ownedScanner, custody.ownedScanner, 'ANCHOR_SCANNER_OWNER_CHANGED');
+  const report = readFileSync(path.join(directory, 'reports/trivy.json')); equal(hash(report), scan.reportSha256, 'ANCHOR_REPORT_CHANGED'); equal(scanCounts(JSON.parse(report), scan.configDigest), scan.counts, 'ANCHOR_SCAN_COUNTS_CHANGED');
+  const archive = path.join(directory, 'input/image.tar'); equal(await hashFile(archive), scan.archiveSha256, 'ANCHOR_ARCHIVE_CHANGED'); equal(await archiveConfigDigest(archive, plan.input.anchorSource), scan.configDigest, 'ANCHOR_IMAGE_SOURCE_CHANGED');
+}
+export async function createAnchor128Plan(input, { run = runCommand, now = Date.now } = {}) {
+  assert.ok(input?.schemaVersion === 1 && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  for (const root of [repositoryRoot, input.anchorDirectory, input.fallbackDirectory]) {
+    assert.ok(path.isAbsolute(root), 'SOURCE_DIRECTORY_REQUIRED'); const relative = path.relative(root, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_STAY_OUTSIDE_SOURCE');
+  }
+  const { proof } = anchorEvidence(input), capabilities = await checkAnchorSource(input, run);
+  const toolSource = (await checked(run, 'git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'])).trim(); checkString(toolSource, /^[a-f0-9]{40}$/, 'TOOL_SOURCE_REQUIRED'); await sourceContract(repositoryRoot, toolSource, run);
+  const sources = { api: pinnedJson(input.api), 'scheduler-worker': pinnedJson(input.worker) }, live = pinnedJson(input.liveServices);
+  assertUnusedSources(sources, live);
+  const requests = renderAnchor128Pair(sources, input.anchorSource, input.anchorImage);
+  for (const [role, request] of Object.entries(requests)) assert.ok(Object.keys(JSON.parse(env(runtimeContainer(request, role)).CLASSPILOT_CAPABILITY_ROLLOUTS_JSON ?? '{}')).every(key => capabilities.includes(key)), 'UNKNOWN_CAPABILITY_KEY');
+  mkdirSync(input.outputDirectory, { recursive: false, mode: 0o700 });
+  await privatePermissions(input.outputDirectory, [input.api.path, input.worker.path], run, true);
+  const generated = {};
+  for (const [role, request] of Object.entries(requests)) {
+    const filename = path.join(input.outputDirectory, `${role}.private.json`); writeNew(filename, request);
+    generated[role] = { path: filename, sha256: hash(readFileSync(filename)), request, source: role === 'api' ? input.api : input.worker, sourceArn: sources[role].taskDefinition.taskDefinitionArn };
+  }
+  const plan = { schemaVersion: 1, kind: 'compatible_anchor128_inactive', createdAtUtc: new Date(now()).toISOString(), executableActions: ['RegisterInactiveAnchor128'], input, toolSource, toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes: anchorHelperHashes(), liveServicesSha256: hash(live.services), registryDigest: proof.digest, generated, admissionCounts: [121, 125, 126, 127, 128], cloudMutationsDuringPlan: 0, servicesMayChange: false };
+  const filename = path.join(input.outputDirectory, 'plan.private.json'); writeNew(filename, plan);
+  return { path: filename, sha256: hash(readFileSync(filename)), admissionCount: 128, registered: false };
+}
+export async function registerAnchor128Inactive(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyLocalScan = replayAnchor128Scan, verifyRegistry = (plan, command) => verifyRemoteRegistry(plan, command, 'anchor') } = {}) {
+  const plan = pinnedJson(planRecord), authorization = pinnedJson(authorizationRecord);
+  equal(plan.kind, 'compatible_anchor128_inactive', 'PLAN_KIND_INVALID'); equal(plan.executableActions, ['RegisterInactiveAnchor128'], 'PLAN_ACTION_CHANGED'); equal(plan.toolSha256, hash(readFileSync(fileURLToPath(import.meta.url))), 'TOOL_CHANGED'); equal(plan.helperHashes, anchorHelperHashes(), 'ANCHOR_HELPER_CHANGED');
+  equal(plan.admissionCounts, [121, 125, 126, 127, 128], 'ANCHOR_SEQUENCE_CHANGED');
+  assert.ok(authorization.schemaVersion === 1 && authorization.operation === 'RegisterInactiveAnchor128' && authorization.authorized === true && authorization.planSha256 === planRecord.sha256, 'EXACT_AUTHORIZATION_REQUIRED');
+  const start = Date.parse(authorization.startsAtUtc), end = Date.parse(authorization.expiresAtUtc); assert.ok(Number.isFinite(start) && Number.isFinite(end) && end > start && end - start <= 60 * 60_000, 'BOUNDED_WINDOW_REQUIRED');
+  const inWindow = () => assert.ok(now() >= start && now() < end, 'AUTHORIZED_WINDOW_EXPIRED'); inWindow();
+  assert.ok(now() - Date.parse(plan.createdAtUtc) >= 0 && now() - Date.parse(plan.createdAtUtc) <= 60 * 60_000, 'PLAN_EXPIRED');
+  const receiptPath = path.join(plan.input.outputDirectory, 'registration.private.json'); assert.ok(!existsSync(receiptPath), 'PLAN_ALREADY_USED');
+  const { scan, proof } = anchorEvidence(plan.input); equal(plan.registryDigest, proof.digest, 'ANCHOR_DIGEST_CHANGED');
+  await checkAnchorSource(plan.input, run); await sourceContract(repositoryRoot, plan.toolSource, run); await verifyLocalScan(plan);
+  await privatePermissions(plan.input.outputDirectory, [plan.input.api.path, plan.input.worker.path], run);
+  const sources = { api: pinnedJson(plan.input.api), 'scheduler-worker': pinnedJson(plan.input.worker) }, captured = pinnedJson(plan.input.liveServices);
+  const requests = renderAnchor128Pair(sources, plan.input.anchorSource, plan.input.anchorImage); assertUnusedSources(sources, captured); equal(hash(captured.services), plan.liveServicesSha256, 'CAPTURED_BASELINE_CHANGED');
+  for (const role of ['api', 'scheduler-worker']) {
+    const generated = plan.generated[role]; equal([generated.source, generated.sourceArn], [role === 'api' ? plan.input.api : plan.input.worker, sources[role].taskDefinition.taskDefinitionArn], 'ANCHOR_SOURCE_BINDING_CHANGED');
+    equal(hash(readFileSync(generated.path)), generated.sha256, 'GENERATED_REQUEST_CHANGED'); equal(JSON.parse(readFileSync(generated.path, 'utf8')), requests[role], 'PLANNED_REQUEST_CHANGED'); equal(generated.request, requests[role], 'PLANNED_REQUEST_CHANGED');
+  }
+  const originalRun = run; let commandIndex = 0, mutations = 0, registrationArmed = false;
+  run = async (executable, args, options) => {
+    const operation = `${args[0]}:${args[1]}`;
+    assert.ok(executable === 'aws' && ['sts:get-caller-identity', 'ecr:describe-images', 'ecr:batch-get-image', 'ecs:describe-services', 'ecs:describe-task-definition', 'ecs:register-task-definition'].includes(operation), 'UNEXPECTED_ANCHOR_COMMAND');
+    if (operation === 'ecs:register-task-definition') { assert.ok(registrationArmed && ++mutations <= 2, 'UNEXPECTED_ANCHOR_MUTATION'); registrationArmed = false; }
+    const filename = path.join(plan.input.outputDirectory, `${String(++commandIndex).padStart(2, '0')}-${args[0]}-${args[1]}.private.json`);
+    const response = await originalRun(executable, args, options); writeNew(filename, { executable, args, code: response.code, stdout: response.stdout, stderr: response.stderr }); return response;
+  };
+  const serviceArgs = ['ecs', 'describe-services', '--cluster', 'schoolpilot-production-cluster', '--services', 'schoolpilot-production-api', 'schoolpilot-production-scheduler-worker', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'];
+  const sourceArgs = arn => ['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'];
+  const identity = JSON.parse(await checked(run, 'aws', ['sts', 'get-caller-identity', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'])); equal(identity.Account, FALLBACK.account, 'AWS_ACCOUNT_CHANGED');
+  const tag = JSON.parse(await checked(run, 'aws', ['ecr', 'describe-images', '--repository-name', FALLBACK.repository, '--image-ids', `imageTag=${plan.input.anchorSource.slice(0, 12)}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'])); validatePublishedTag(tag, plan.registryDigest, plan.input.anchorSource);
+  const remote = await verifyRegistry(plan, run); equal([remote.digest, remote.configDigest, remote.platformDigest], [plan.registryDigest, scan.configDigest, proof.platformDigest], 'ANCHOR_REMOTE_IMAGE_CHANGED');
+  const live = JSON.parse(await checked(run, 'aws', serviceArgs)); equal(hash(live.services), plan.liveServicesSha256, 'LIVE_BASELINE_DRIFT'); assertUnusedSources(sources, live);
+  // Check both captured unused sources before the first mutation, then again immediately before each registration.
+  for (const role of ['api', 'scheduler-worker']) equal(responseEnvironmentProjection(JSON.parse(await checked(run, 'aws', sourceArgs(plan.generated[role].sourceArn)))), responseEnvironmentProjection(sources[role]), 'ANCHOR_DEFINITION_CHANGED');
+  inWindow();
+  const result = { schemaVersion: 1, kind: plan.kind, planSha256: planRecord.sha256, status: 'started', registered: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0, imagesPublished: 0, admissionCounts: plan.admissionCounts };
+  writeNew(receiptPath, result);
+  try {
+    for (const role of ['api', 'scheduler-worker']) {
+      inWindow(); const generated = plan.generated[role], source = JSON.parse(await checked(run, 'aws', sourceArgs(generated.sourceArn)));
+      equal(responseEnvironmentProjection(source), responseEnvironmentProjection(sources[role]), 'ANCHOR_DEFINITION_CHANGED');
+      equal(hash(readFileSync(generated.path)), generated.sha256, 'GENERATED_REQUEST_CHANGED'); const request = JSON.parse(readFileSync(generated.path, 'utf8')); assertOnlyAnchorAdmissionChanged(sources[role], request, role, plan.input.anchorSource, plan.registryDigest);
+      inWindow(); result.lastAttemptedRole = role; result.registrationOutcomeUncertain = true; writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); registrationArmed = true;
+      const registered = JSON.parse(await checked(run, 'aws', ['ecs', 'register-task-definition', '--cli-input-json', `file://${generated.path.replaceAll('\\', '/')}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+      const arn = registered.taskDefinition?.taskDefinitionArn; checkString(arn, new RegExp(`^arn:aws:ecs:${FALLBACK.region}:${FALLBACK.account}:task-definition/${request.family}:[1-9][0-9]*$`), 'REGISTERED_ARN_INVALID');
+      result.registered.push({ role, arn, requestSha256: generated.sha256 }); result.registrationOutcomeUncertain = false; writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); inWindow();
+      const actual = JSON.parse(await checked(run, 'aws', sourceArgs(arn))); validateSourceResponse(actual, role, plan.input.anchorSource, plan.registryDigest, inventoryFor(128));
+      equal(registrationEnvironmentProjection(requestProjection(actual)), registrationEnvironmentProjection(request), 'REGISTERED_DEFINITION_DRIFT');
+    }
+    const after = JSON.parse(await checked(run, 'aws', serviceArgs)); equal(after, live, 'SERVICES_CHANGED_DURING_INACTIVE_REGISTRATION'); inWindow();
+    assertUnusedSources(Object.fromEntries(result.registered.map(value => [value.role, { taskDefinition: { taskDefinitionArn: value.arn } }])), after);
+    result.status = 'registered_inactive'; result.servicesUnchanged = true;
+  } catch { result.status = 'failed_retained_inactive'; result.errorCode = 'COMPATIBLE_ANCHOR128_REGISTRATION_FAILED'; throw new Error(result.errorCode); }
+  finally { writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); }
+  return { registered: result.registered, receiptPath, receiptSha256: hash(readFileSync(receiptPath)), admissionCount: 128, servicesUpdated: 0, tasksLaunched: 0 };
+}
 async function main(args) {
   const [operation, inputPath, inputHash, authorizationPath, authorizationHash] = args;
   if (operation === 'Plan' && args.length === 3) {
     const result = await createPlan(pinnedJson({ path: inputPath, sha256: inputHash })); console.log(JSON.stringify(result));
   } else if (operation === 'RegisterInactive' && args.length === 5) {
     const result = await registerInactive({ path: inputPath, sha256: inputHash }, { path: authorizationPath, sha256: authorizationHash }); console.log(JSON.stringify(result));
+  } else if (operation === 'PlanAnchor128' && args.length === 3) {
+    const result = await createAnchor128Plan(pinnedJson({ path: inputPath, sha256: inputHash })); console.log(JSON.stringify(result));
+  } else if (operation === 'RegisterInactiveAnchor128' && args.length === 5) {
+    const result = await registerAnchor128Inactive({ path: inputPath, sha256: inputHash }, { path: authorizationPath, sha256: authorizationHash }); console.log(JSON.stringify(result));
   } else throw new Error('EXPECTED_PLAN_OR_REGISTER_INACTIVE');
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2)).catch(() => { console.error('COMPATIBLE_FALLBACK_PREPARATION_FAILED'); process.exitCode = 1; });
