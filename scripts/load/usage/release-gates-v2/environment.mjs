@@ -27,7 +27,7 @@ export function roleEnvironment({ base, source, run, appUrl, adminUrl, profile, 
   const newCaps = { preciseRestrictionResourcesV1: 'PRECISE_RESTRICTION_RESOURCES_V1', focusTabV1: 'FOCUS_TAB_V1', privateChatLifecycleV1: 'PRIVATE_CHAT_LIFECYCLE_V1' };
   if (arm !== 'A') for (const cap of Object.keys(newCaps)) maps[cap] = { mode: ['classroom', 'mixed', 'usage'].includes(profile.kind) ? 'on' : 'off' };
   const env = { ...base, DATABASE_URL: appUrl, DATABASE_URL_PRIVILEGED: appUrl, ADMIN_DATABASE_URL: adminUrl,
-    ...secrets, NODE_ENV: 'test', RLS_GUC_ENABLED: 'true', RLS_ENABLED_TABLES: tables.join(','),
+    ...secrets, NODE_ENV: 'test', GIT_SHA: source, RLS_GUC_ENABLED: 'true', RLS_ENABLED_TABLES: tables.join(','),
     REDIS_URL: 'redis://127.0.0.1:6387', SCHEDULER_ENABLED: role === 'worker' ? 'true' : 'false',
     DB_POOL_MAX: role === 'worker' ? '2' : '16', SESSION_DB_POOL_MAX: '2', SCHEDULER_DB_POOL_MAX: '5', SCHEDULER_LOCK_POOL_MAX: '8',
     CLASSPILOT_USAGE_ROLLUP_MODE: profile.usage ? 'on' : 'off', CLASSPILOT_DIGITAL_USAGE_MODE: profile.usage ? 'on' : 'off',
