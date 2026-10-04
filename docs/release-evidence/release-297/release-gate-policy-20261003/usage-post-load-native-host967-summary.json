@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "name": "release297-host-usage-native-post-verification",
+  "commit": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "helperHarnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+  "helperImage": "sha256:0efe4b7e82529ee285bb6a65b3a9ae37e87b2aa257df36e086f975578bb45ae7",
+  "changedFiles": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/usage-post-verification.mjs",
+      "sha256": "88422691078c7e660af3871297205e21f2048a3ca8bb8264eda27a7d85f37898"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/usage-post-verification.test.mjs",
+      "sha256": "24b58a4a4348d2c81986685e75ecef05bb060622627e7e7c854881bbee3c214a"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/campaign.mjs",
+      "sha256": "f42f1d4dcadbcd60617556569f3264728dd1a18e1cf724b12719421b4ff2d7c9"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/receipts.mjs",
+      "sha256": "7b26296ff1a83d9a25b761eec60ee75222690a56acd77739c0b9f94003e3dab8"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/run.mjs",
+      "sha256": "67b09595209d0b5181d1b52f19c483bb40b4b99a2fa4399fb8a5047030daef35"
+    },
+    {
+      "path": "tests/release297-gates-v2.test.mjs",
+      "sha256": "e961232dd9449625bcfd91b28bc020e301c51f29d128755117f46b16d8f41ae8"
+    }
+  ],
+  "validationReceiptSha256": "740fbe5e050f48e6d81cd2daf85eaa6d6f49d5ce7c9fa23c9903f4f4f2ac6456",
+  "validationLogSha256": "98fa25200f91ec6bfa89a7d56c081a57dc68e7bf662d51357566e58b466bae53",
+  "validationStartedAt": "2026-10-04T10:40:20.378Z",
+  "validationCompletedAt": "2026-10-04T10:40:22.865Z",
+  "nodeVersion": "v22.18.0",
+  "pureTests": 118,
+  "failed": 0,
+  "skipped": 0,
+  "originalUsageProfileSha256": "a9718adcfae27a856646c670720f13a8c36557009e78169e0905499a3f00d81f",
+  "usagePostVerificationContractSha256": "1746646523b6407476abdc466b748ec9cec95fbc44088ca213ce14d37dd28cec",
+  "mandatoryBinding": "Declaration, reservation, run, receipt, registration and closure must retain the declared side contract and actual host source.",
+  "nativePostcondition": "One existing observer correctness RPC after original Usage checks verifies the actual 8 commands and 4 private messages across both offered schools, without adding measured traffic.",
+  "custody": "Contained native rows and actual observer fixture are rehashed and the relational oracle is independently replayed.",
+  "historicalCompatibility": {
+    "archivedC34": {
+      "run": "c1f1fe1ee9d9",
+      "manifestSha256": "1fb0836611c7c07dd05d70e29f9411973dc9888cef033ecaa246ed8aec8f2f92",
+      "passed": true
+    },
+    "archivedThreeRun": {
+      "passed": true,
+      "currentSchoolOnly": true,
+      "broaderVariant": null,
+      "broaderVariantPassed": false,
+      "broaderSyntheticCapacityGatePassed": false,
+      "broaderCapacityClaimed": false
+    },
+    "actualNativeComponent": {
+      "sourceRun": "c1f1fe1ee9d9",
+      "sourceProfile": "release297-classroom-normal-34-native-v3",
+      "nativeRowsSha256": "a0bbff3aea9e7dc419aa52da30237fecb2b54ac3a4a34760155c87cc71a96ed1",
+      "fixtureRecordSha256": "4e1feb9a21ba84845d6b986918040c8ab79448771244f89144c273da9bd9fa6f",
+      "passed": true,
+      "declaredSchoolIndices": [
+        0,
+        1
+      ],
+      "repetitions": 1,
+      "observedCommands": 8,
+      "expectedCommands": 8,
+      "observedMessages": 4,
+      "expectedMessages": 4,
+      "commandTargetsChecked": 8,
+      "privateBindingsChecked": 4,
+      "attemptedExpiredMessages": 2,
+      "unattemptedExpiredMessages": 0,
+      "exactRecipientOnly": true,
+      "existingProducedRowsOnly": true,
+      "newDatabaseWork": false,
+      "newTraffic": false,
+      "coldUsageCapacityAcceptance": false
+    }
+  },
+  "preservation": {
+    "applicationBytesChanged": false,
+    "helperBytesChanged": false,
+    "schemaChanged": false,
+    "originalProfilesChanged": false,
+    "originalWorkloadChanged": false,
+    "productionPoolLimitsChanged": false,
+    "oldFailedEvidencePreserved": true,
+    "comparisonPolicyChanged": false
+  },
+  "nativeExecution": false,
+  "freshColdUsageRunsExecuted": 0,
+  "capacityAcceptance": false,
+  "deploymentReadinessClaimed": false,
+  "limitations": [
+    "Passing checks here are pure regressions and replay of retained actual classroom evidence.",
+    "Fresh source-bound cold Usage runs, distinct authenticated report acceptance and the applicable comparison prerequisite remain separate gates.",
+    "The new host source must be declared separately from the unchanged helper preparation source."
+  ]
+}
