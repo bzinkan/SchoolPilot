@@ -213,7 +213,77 @@ export type ClasspilotRealtimeMutationResult = {
   snapshot?: ClasspilotRealtimeStatus;
 };
 
-const WRITE_SCRIPT = `
+// Redis Lua cjson turns empty arrays into objects and rounds 16-digit revisions
+// when it regenerates a complete snapshot. Decode only for authority checks;
+// retain every untouched root value's original JSON bytes in the stored object.
+const SNAPSHOT_ROOT_FIELD_SCRIPT = `
+local function skipSpace(raw, cursor)
+  while cursor <= #raw do
+    local byte = string.byte(raw, cursor)
+    if byte ~= 32 and byte ~= 9 and byte ~= 10 and byte ~= 13 then break end
+    cursor = cursor + 1
+  end
+  return cursor
+end
+
+local function replaceRootFields(raw, removed, appended)
+  local cursor = skipSpace(raw, 1)
+  if string.byte(raw, cursor) ~= 123 then return nil end
+  cursor = cursor + 1
+  local fields = {}
+  while true do
+    cursor = skipSpace(raw, cursor)
+    if string.byte(raw, cursor) == 125 then
+      if skipSpace(raw, cursor + 1) <= #raw then return nil end
+      break
+    end
+    local fieldStart = cursor
+    if string.byte(raw, cursor) ~= 34 then return nil end
+    cursor = cursor + 1
+    while cursor <= #raw do
+      local byte = string.byte(raw, cursor)
+      if byte == 92 then cursor = cursor + 2
+      elseif byte == 34 then break
+      else cursor = cursor + 1 end
+    end
+    if cursor > #raw then return nil end
+    local key = cjson.decode(string.sub(raw, fieldStart, cursor))
+    cursor = skipSpace(raw, cursor + 1)
+    if string.byte(raw, cursor) ~= 58 then return nil end
+    cursor = skipSpace(raw, cursor + 1)
+    local depth = 0
+    local inString = false
+    while cursor <= #raw do
+      local byte = string.byte(raw, cursor)
+      if inString then
+        if byte == 92 then cursor = cursor + 1
+        elseif byte == 34 then inString = false end
+      elseif byte == 34 then inString = true
+      elseif byte == 123 or byte == 91 then depth = depth + 1
+      elseif byte == 125 or byte == 93 then
+        if depth == 0 then
+          if byte ~= 125 then return nil end
+          break
+        end
+        depth = depth - 1
+      elseif byte == 44 and depth == 0 then break end
+      cursor = cursor + 1
+    end
+    if cursor > #raw or inString or depth ~= 0 then return nil end
+    if not removed[key] then
+      fields[#fields + 1] = string.sub(raw, fieldStart, cursor - 1)
+    end
+    if string.byte(raw, cursor) == 44 then
+      cursor = skipSpace(raw, cursor + 1)
+      if string.byte(raw, cursor) == 125 then return nil end
+    end
+  end
+  for _, field in ipairs(appended) do fields[#fields + 1] = field end
+  return '{' .. table.concat(fields, ',') .. '}'
+end
+`;
+
+const WRITE_SCRIPT = `${SNAPSHOT_ROOT_FIELD_SCRIPT}
 local currentRaw = redis.call('GET', KEYS[1])
 local currentRevision = 0
 if currentRaw then
@@ -236,14 +306,15 @@ local nextRevision = proposedRevision
 if nextRevision <= currentRevision then
   nextRevision = currentRevision + 1
 end
-local snapshot = cjson.decode(ARGV[2])
-snapshot.revision = nextRevision
-local encoded = cjson.encode(snapshot)
+local encoded = replaceRootFields(ARGV[2], {revision = true}, {
+  '"revision":' .. string.format('%.0f', nextRevision)
+})
+if not encoded then return '' end
 redis.call('SET', KEYS[1], encoded, 'EX', tonumber(ARGV[3]))
 return encoded
 `;
 
-const PATCH_CLASSIFICATION_SCRIPT = `
+const PATCH_CLASSIFICATION_SCRIPT = `${SNAPSHOT_ROOT_FIELD_SCRIPT}
 local currentRaw = redis.call('GET', KEYS[1])
 if not currentRaw then return '' end
 local ok, current = pcall(cjson.decode, currentRaw)
@@ -262,19 +333,22 @@ if proposedRevision <= currentRevision then
   proposedRevision = currentRevision + 1
 end
 local classification = cjson.decode(ARGV[7])
-if classification == cjson.null then
-  current.aiClassification = nil
-else
-  current.aiClassification = classification
+local appended = {
+  '"revision":' .. string.format('%.0f', proposedRevision),
+  '"classificationPending":false'
+}
+if classification ~= cjson.null then
+  appended[#appended + 1] = '"aiClassification":' .. ARGV[7]
 end
-current.classificationPending = false
-current.revision = proposedRevision
-local encoded = cjson.encode(current)
+local encoded = replaceRootFields(currentRaw, {
+  revision = true, classificationPending = true, aiClassification = true
+}, appended)
+if not encoded then return '' end
 redis.call('SET', KEYS[1], encoded, 'EX', tonumber(ARGV[8]))
 return encoded
 `;
 
-const SIGN_OUT_SCRIPT = `
+const SIGN_OUT_SCRIPT = `${SNAPSHOT_ROOT_FIELD_SCRIPT}
 local currentRaw = redis.call('GET', KEYS[1])
 local currentRevision = 0
 if currentRaw then
@@ -293,9 +367,10 @@ local proposedRevision = tonumber(ARGV[5]) or 0
 if proposedRevision <= currentRevision then
   proposedRevision = currentRevision + 1
 end
-local snapshot = cjson.decode(ARGV[6])
-snapshot.revision = proposedRevision
-local encoded = cjson.encode(snapshot)
+local encoded = replaceRootFields(ARGV[6], {revision = true}, {
+  '"revision":' .. string.format('%.0f', proposedRevision)
+})
+if not encoded then return '' end
 redis.call('SET', KEYS[1], encoded, 'EX', tonumber(ARGV[7]))
 return encoded
 `;
