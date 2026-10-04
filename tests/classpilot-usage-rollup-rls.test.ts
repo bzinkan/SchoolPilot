@@ -18,6 +18,8 @@ process.env.REDIS_URL = "";
 process.env.NODE_ENV = "test";
 process.env.CLASSPILOT_USAGE_ROLLUP_MODE = "on";
 process.env.CLASSPILOT_DIGITAL_USAGE_MODE = "on";
+// Force reuse in this serial isolation test, without increasing a pool ceiling.
+process.env.DB_POOL_MAX = "1";
 
 const TIME_ZONE = "America/New_York";
 const TAG = `usage_rls_${Date.now()}`;
@@ -293,5 +295,82 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.deepEqual((await system!.query("SELECT id,ctid::text,xmin::text,computed_at FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY id", [b.schoolId])).rows, foreign);
     assert.deepEqual((await system!.query("SELECT * FROM classpilot_usage_rollup_days WHERE school_id=$1", [b.schoolId])).rows, foreignCoverage);
     assert.equal((await system!.query("SELECT count(*)::int AS count FROM heartbeats WHERE school_id=$1", [b.schoolId])).rows[0].count, 20);
+  });
+
+  it("holds an aborted cleanup's transaction through commit before second-school pooled reuse", async () => {
+    const a = await createTenant("Abort C", "abort-c.example.edu"), b = await createTenant("Abort D", "abort-d.example.edu");
+    await system!.query("UPDATE school_memberships SET role='admin' WHERE school_id=$1 AND user_id=$2", [a.schoolId, a.adminId]);
+    await rollupDay(a.schoolId); await rollupDay(b.schoolId);
+    const foreign = (await system!.query("SELECT * FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY id", [b.schoolId])).rows;
+    const blocker = await system!.connect();
+    const trace: Array<{ kind: "query" | "release"; statement?: string }> = [];
+    let observed: pg.PoolClient | undefined;
+    let originalQuery: pg.PoolClient["query"] | undefined;
+    const acquire = (client: pg.PoolClient) => {
+      if (observed) { assert.equal(client, observed, "the second school must reuse the actual cleanup connection"); return; }
+      observed = client; originalQuery = client.query;
+      Object.defineProperty(client, "query", { configurable: true, writable: true, value: function (...args: unknown[]) {
+        const first = args[0];
+        const statement = typeof first === "string" ? first : first && typeof first === "object" && "text" in first ? String(first.text) : "";
+        const pending: unknown = Reflect.apply(originalQuery!, client, args);
+        if (pending && typeof pending === "object" && "then" in pending && typeof pending.then === "function") {
+          return Promise.resolve(pending).then(result => { trace.push({ kind: "query", statement }); return result; });
+        }
+        // pool.query uses the callback overload, whose undefined return must
+        // remain untouched. The transaction statements use Promise queries.
+        return pending;
+      } });
+    };
+    const released = (_error: Error | undefined, client: pg.PoolClient) => {
+      if (client === observed) trace.push({ kind: "release" });
+    };
+    let closed!: () => void;
+    const responseClosed = new Promise<void>(resolve => { closed = resolve; });
+    const observeRequest = (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => {
+      // Express may already have stripped the mount path before this server
+      // listener runs. This unique fixture school identifies the request.
+      if (request.headers["x-school-id"] === a.schoolId) response.once("close", closed);
+    };
+    const abort = new AbortController();
+    let request: Promise<Response | undefined> | undefined;
+    let reuse: Promise<unknown> | undefined;
+    pool.on("acquire", acquire); pool.on("release", released); server!.on("request", observeRequest);
+    try {
+      await blocker.query("BEGIN"); await blocker.query(rollup.CLASSPILOT_USAGE_ROLLUP_LOCK_SQL, [a.schoolId]);
+      request = fetch(`${baseUrl}/admin/cleanup-students`, { method: "POST", signal: abort.signal, headers: {
+        authorization: `Bearer ${signUserToken({ userId: a.adminId, email: a.adminEmail, isSuperAdmin: false })}`, "x-school-id": a.schoolId,
+      } }).catch(error => { assert.equal(error.name, "AbortError"); return undefined; });
+      let blocked = false;
+      const deadline = Date.now() + 5000;
+      while (!blocked && Date.now() < deadline) {
+        blocked = (await system!.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND wait_event='advisory' AND query LIKE '%classpilot_usage_rollup%') AS blocked")).rows[0].blocked;
+        if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(blocked, true); assert.ok(observed); trace.length = 0;
+      abort.abort(); await request; await responseClosed;
+      reuse = inSchool(b.schoolId, async () => {
+        const scope = await db.execute(sql`SELECT current_setting('app.school_id') AS school, current_setting('app.is_super') AS is_super`);
+        assert.deepEqual(scope.rows, [{ school: b.schoolId, is_super: "off" }]);
+        assert.deepEqual(await readSchools([a.schoolId, b.schoolId]), [b.schoolId]);
+      });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(pool.waitingCount, 1, "the closed response must not give the still-running transaction's client away");
+      await blocker.query("COMMIT"); await reuse;
+      const firstRelease = trace.findIndex(event => event.kind === "release");
+      const committed = trace.findIndex(event => event.kind === "query" && event.statement?.trim().toUpperCase() === "COMMIT");
+      assert.ok(committed >= 0 && firstRelease > committed, "SQL and COMMIT settle before RESET/release, even after disconnect");
+      assert.equal(trace.filter(event => event.kind === "release").length, 2, "cleanup and second-school leases each release once");
+      assert.equal((await system!.query("SELECT 1 FROM heartbeats WHERE school_id=$1", [a.schoolId])).rowCount, 0);
+      assert.equal((await system!.query("SELECT 1 FROM classpilot_usage_rollup_days WHERE school_id=$1", [a.schoolId])).rowCount, 0);
+      assert.equal((await system!.query("SELECT count(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='students.cleanup'", [a.schoolId])).rows[0].count, 1);
+      assert.deepEqual((await system!.query("SELECT * FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY id", [b.schoolId])).rows, foreign);
+      const reset = await pool.query("SELECT current_setting('app.school_id') AS school,current_setting('app.is_super') AS is_super");
+      assert.deepEqual(reset.rows, [{ school: "", is_super: "off" }]);
+    } finally {
+      abort.abort(); await blocker.query("ROLLBACK"); blocker.release();
+      await Promise.allSettled([request, reuse]);
+      pool.off("acquire", acquire); pool.off("release", released); server!.off("request", observeRequest);
+      if (observed && originalQuery) Object.defineProperty(observed, "query", { configurable: true, writable: true, value: originalQuery });
+    }
   });
 });

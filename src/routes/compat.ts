@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/authenticate.js";
-import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
+import { requireSchoolContext, requireSchoolContextWithoutTenantBinding } from "../middleware/requireSchoolContext.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireProductLicense } from "../middleware/requireProductLicense.js";
@@ -720,10 +721,12 @@ router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async 
 });
 
 // POST /admin/cleanup-students - Clear all student devices and activity data
-router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.post("/admin/cleanup-students", authenticate, requireSchoolContextWithoutTenantBinding, requireActiveSchool, requireRole("admin"), async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    await db.transaction(async (tx) => {
+    // Own the lease through transaction completion. Response closure cannot
+    // RESET/release a borrowed client while its advisory wait or SQL is active.
+    await runWithTenantContext({ schoolId, isSuper: !!req.authUser?.isSuperAdmin }, () => db.transaction(async (tx) => {
       // Take the same school lock before deleting a rollup's raw inputs. A
       // paused unchanged recompute must not restore coverage after cleanup.
       await tx.execute(classpilotUsageSchoolWriteLock(schoolId));
@@ -743,7 +746,7 @@ router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), asyn
         entityType: "school",
         entityId: schoolId,
       });
-    });
+    }));
     return res.json({ ok: true });
   } catch (err) {
     next(err);
