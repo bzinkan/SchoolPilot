@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+
+// New contracts only. The failed single-API 100/s contract is immutable.
+export const OLD_CONTRACT_SHA256 = '10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92';
+export const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const frozen = value => Object.freeze(value);
+const offering = (rate, schoolDevices, durationMs = 60_000) => frozen({ requestsPerSecond: rate,
+  schoolDevices: frozen(schoolDevices), durationMs, deviceCadenceMs: 10_000,
+  expected: rate * durationMs / 1000, maxInFlight: schoolDevices.reduce((a, b) => a + b, 0),
+  requestTimeoutMs: 20_000, maxOfferLatenessMs: 100 });
+export const PROFILES = frozen({
+  sole: frozen({ name: 'release297-blackbox-sole-133-v2', kind: 'blackbox', offering: offering(13.3, [133, 0]), usage: false, apiTasks: 1 }),
+  normal: frozen({ name: 'release297-blackbox-normal-34-v2', kind: 'blackbox', offering: offering(34, [170, 170]), usage: false, apiTasks: 1 }),
+  overload: frozen({ name: 'release297-blackbox-overload-100-diagnostic-v2', kind: 'diagnostic', offering: offering(100, [500, 500]), usage: false, apiTasks: 1 }),
+  classroom: frozen({ name: 'release297-classroom-normal-34-v2', kind: 'classroom', offering: offering(34, [170, 170]), usage: false, apiTasks: 1 }),
+  mixed: frozen({ name: 'release297-classroom-133-1-3-2-v2', kind: 'mixed', offering: offering(13.3, [133, 0]), usage: false, apiTasks: 3,
+    rounds: 15, repetitions: 3, continuousOffering: offering(13.3,[133,0],900_000), warmNewApisAtMs:270_000, stages: frozen([
+      frozen({ fromRound: 0, active: frozen([0]), distribution: 'uniform' }),
+      frozen({ fromRound: 5, active: frozen([0, 1, 2]), distribution: 'uniform' }),
+      frozen({ fromRound: 7, active: frozen([0, 1, 2]), distribution: 'sticky80' }),
+      frozen({ fromRound: 10, active: frozen([1, 2]), distribution: 'survivors', lost: 0, reconnectOffers: 133, reconnectWindowMs: 10_000, reconnectStartDelayMs: 1000 }),
+    ]) }),
+  usage: frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
+    apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, originalComparison: null }),
+});
+export const NONREGRESSION = frozen({ controlRuns: 2, pairs: 3, medianCpuRatio: 1.05, medianP95Ratio: 1.10,
+  medianP95IncreaseMs: 50, individualCpuRatio: 1.10, individualP95IncreaseMs: 100,
+  p95Ms: 500, meanCpuFraction: .60 });
+export function profileFor(name) {
+  const value = Object.values(PROFILES).find(profile => profile.name === name);
+  assert.ok(value, 'Unknown v2 profile'); return value;
+}
+export function profileHash(profile) { assert.deepEqual(profile, profileFor(profile.name)); return hash(JSON.stringify(profile)); }
+export function assertOffering(config) {
+  assert.ok(Number.isFinite(config.requestsPerSecond) && config.requestsPerSecond > 0);
+  for (const key of ['durationMs', 'deviceCadenceMs', 'expected', 'maxInFlight', 'requestTimeoutMs']) assert.ok(Number.isSafeInteger(config[key]) && config[key] > 0, key);
+  assert.ok(Array.isArray(config.schoolDevices) && config.schoolDevices.length === 2 && config.schoolDevices.every(n => Number.isSafeInteger(n) && n >= 0 && n <= 500));
+  assert.equal(config.expected, Math.round(config.durationMs * config.requestsPerSecond / 1000));
+  assert.equal(config.schoolDevices.reduce((a, b) => a + b, 0) * config.durationMs / config.deviceCadenceMs, config.expected);
+  assert.ok(Number.isFinite(config.maxOfferLatenessMs) && config.maxOfferLatenessMs >= 0);
+}
+export function stickyTarget(studentOrdinal, active, distribution) {
+  assert.ok(Number.isSafeInteger(studentOrdinal) && studentOrdinal >= 0);
+  assert.ok(active.length > 0 && new Set(active).size === active.length);
+  if (distribution === 'sticky80' && active.length === 3) return studentOrdinal % 10 < 8 ? active[0] : active[1 + studentOrdinal % 2];
+  assert.ok(['uniform', 'sticky80', 'survivors'].includes(distribution));
+  return active[studentOrdinal % active.length];
+}
+export function stageForRound(round) {
+  assert.ok(Number.isSafeInteger(round) && round >= 0 && round < 15);
+  return [...PROFILES.mixed.stages].reverse().find(stage => round >= stage.fromRound);
+}
