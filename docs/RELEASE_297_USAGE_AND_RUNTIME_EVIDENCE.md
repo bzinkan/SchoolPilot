@@ -7,12 +7,20 @@ The canonical release checklist remains the operator's release authority.
 
 ## Current preparation checkpoint
 
+Current application source is `ddc5996b3b8645859fa51a9613486db52c481b7f`.
+The [Redis component suite](release-evidence/release-297/release-gate-policy-20261003/realtime-native-green-02.json) passes 24 checks, including four native regressions; [restricted-role health tests](release-evidence/release-297/release-gate-policy-20261003/health-native-green-03.json) pass six cases. The canonical backend type check passes. [Fresh serving/fallback scans](release-evidence/release-297/release-gate-policy-20261003/runtime-artifacts-ddc5996b-c578120d.json) have zero HIGH/CRITICAL findings. [Actual API/worker staged recovery](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json) and [independent review](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-independent-review.json) pass bridge, adoption, compatible fallback and return, with all 54 ledger entries/function ACL and expired chat history retained. All eight actual services drain gracefully. The fallback source is `c578120d`; both new Usage modes remain off.
+
+Final combined CI, final-source measured current-school/classroom acceptance and the separate Usage capacity campaign remain pending. The historical strict paired comparison is unaccepted; no host-interference cause or changed policy is claimed. Local synthetic service recovery does not establish production catalog, ECS/ALB drain, exact Focus/combined Classroom acceptance or live Chrome/SSO behavior. Store submission remains held.
+
+## Historical ed026 preparation checkpoint
+
 Application `ed0265133d4a87fd3d2477dd90884535b749ee7d` passes all 20 reported
 CI checks and 2,032 local unit tests with zero skips. The [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
 binds the fresh scanned API/worker candidate, rebuilt frontend, complete synthetic
 54-migration/129-table schema and source re-entry. The [CI and package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
-records exact successful runs and unchanged ClassPilot 2.9.7 bytes. Subsequent
-harness/documentation edits preserve application inputs but need review-head CI.
+records exact successful runs and unchanged ClassPilot 2.9.7 bytes. At that checkpoint,
+subsequent harness/documentation edits preserved application inputs. The later Redis
+and health corrections change application inputs and have the separate proofs above.
 
 Native regressions cover atomic cleanup audit, disconnect ownership, exactly-once
 lease release and tenant reset. Those fixes also exist in safe fallback source
