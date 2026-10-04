@@ -14,6 +14,7 @@ import { studentSignInDiagnostics } from "./services/classpilotStudentSignInDiag
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
+import { trackUsageCapacityMiddleware } from "./services/usageCapacityDiagnostics.js";
 import { safeCompare } from "./util/safeCompare.js";
 import routes from "./routes/index.js";
 import monitoringRoutes from "./routes/monitoring.js";
@@ -23,6 +24,7 @@ import {
   sessionCookieOptions,
 } from "./config/sessionCookie.js";
 import { isSensitiveNoStorePath } from "./util/noStorePath.js";
+import { beginClasspilotUsageIngress, guardClasspilotUsageIngressMiddleware } from "./services/classpilotUsageRequest.js";
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
@@ -162,6 +164,7 @@ export function createApp() {
     })
   );
 
+  app.use(beginClasspilotUsageIngress());
   app.use(cookieParser());
 
   // Container liveness. Keep this intentionally small and bounded so
@@ -240,12 +243,12 @@ export function createApp() {
   // not need web sessions. Bypassing the session store here keeps high-frequency
   // screenshot/device traffic from consuming Postgres pool connections before
   // the request reaches device auth.
-  app.use((req, res, next) => {
+  app.use(guardClasspilotUsageIngressMiddleware((req, res, next) => {
     if (skipsWebSession(req)) {
       return next();
     }
     return webSession(req, res, next);
-  });
+  }));
 
   // Browser runtime telemetry is intentionally narrow, CSRF-exempt, and capped
   // before the general 1mb JSON parser. It may use session cookies for optional
@@ -254,19 +257,19 @@ export function createApp() {
 
   // Capture raw body for Stripe webhooks
   app.use(
-    express.json({
+    guardClasspilotUsageIngressMiddleware(express.json({
       limit: "1mb",
       verify: (req, _res, buf) => {
         (req as express.Request).rawBody = buf;
       },
-    })
+    }))
   );
-  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+  app.use(guardClasspilotUsageIngressMiddleware(express.urlencoded({ extended: true, limit: "1mb" })));
 
   // Global API rate limit (Redis-backed, falls back to in-memory). The old
   // "CloudFront masks client IPs" false-429 problem is fixed by trust proxy = 2
   // above, so req.ip is the real viewer again.
-  app.use("/api", apiLimiter);
+  app.use("/api", guardClasspilotUsageIngressMiddleware(trackUsageCapacityMiddleware("api_limiter", apiLimiter)));
 
   // Client config for Chrome extension (public, no auth)
   app.get("/client-config.json", (_req, res) => {
@@ -283,11 +286,11 @@ export function createApp() {
   });
 
   // Enforce tighter idle timeout for elevated roles (admin/super_admin)
-  app.use("/api", sessionIdleTimeout);
+  app.use("/api", guardClasspilotUsageIngressMiddleware(sessionIdleTimeout));
 
   // CSRF protection on cookie-authenticated state-changing requests
   // (JWT bearer requests skip this — they have no CSRF vector)
-  app.use("/api", csrfProtection);
+  app.use("/api", guardClasspilotUsageIngressMiddleware(csrfProtection));
 
   // Routes
   app.use("/api", routes);

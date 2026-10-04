@@ -1,0 +1,1472 @@
+{
+  "schemaVersion": 1,
+  "scope": "Exact204 Linux per-role cgroup startup proof; zero workload and no capacity acceptance",
+  "applicationSource": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+  "imageId": "sha256:2e09eaac39f6b6a9eda8cf2d852eed7a5870a6bd447dc5dd08511c9aa01f4ea1",
+  "prototypeManifestSha256": "1c1ca65b8e13ba65edc618f3e2da45afa646d09b109b9b256a3c7f81db224de7",
+  "passed": true,
+  "resourceAcceptance": false,
+  "capacityAccepted": false,
+  "workload": {
+    "heartbeatOffers": 0,
+    "reportOffers": 0,
+    "workerRollups": 0
+  },
+  "validation": {
+    "pureMocks": 34,
+    "apiMainPrewarmed": 16,
+    "apiSessionPool": 2,
+    "workerPool": 5,
+    "apiCpu": 1,
+    "apiMemoryMiB": 2048,
+    "workerCpu": 0.5,
+    "workerMemoryMiB": 1024,
+    "generatorCpu": 1,
+    "generatorMemoryMiB": 1024,
+    "coordinatorCpu": 0.5,
+    "coordinatorMemoryMiB": 1024,
+    "heapsMiB": 512,
+    "ownedRoleExitCodes": [
+      {
+        "role": "coordinator",
+        "exit": 0,
+        "forced": false,
+        "oom": false
+      },
+      {
+        "role": "api",
+        "exit": 0,
+        "forced": false,
+        "oom": false
+      },
+      {
+        "role": "worker",
+        "exit": 0,
+        "forced": false,
+        "oom": false
+      },
+      {
+        "role": "generator",
+        "exit": 0,
+        "forced": false,
+        "oom": false
+      }
+    ],
+    "allOwnedFixturesRemoved": true
+  },
+  "failedPreparations": [
+    {
+      "attempt": 1,
+      "reason": "Base repo@digest without verified local tag caused local metadata resolution failure; no build completed"
+    },
+    {
+      "attempt": 2,
+      "reason": "Runtime source ownership check ran as root instead of node"
+    },
+    {
+      "attempt": 3,
+      "reason": "Inherited executed coordinator hash did not match reviewed overlay"
+    }
+  ],
+  "effectiveRecipeCorrections": [
+    "Use verified local tag@digest and explicit local builder",
+    "Run source/runtime verification as existing node user",
+    "Change only executedHarnessSha256.release-enabled-scale.mjs to reviewed overlay hash in new diagnostic binding; preserve original binding"
+  ],
+  "limitations": [
+    "No heartbeat/report traffic or daily rollups: this proves startup, cgroups, protocol, readiness, drain and shutdown only",
+    "No current or future resource-bound capacity acceptance",
+    "Zero-traffic startup only exercises small RPC responses; full fixture initialization/correctness payload bounds remain unverified",
+    "Abort/forced cleanup and transport faults covered by mocks, not induced in this successful native startup",
+    "Schema-only restoration from exact204 converged donor contains no populated fixture data; this is not a migration or production admission rehearsal",
+    "Shared evidence excludes private role secret directory; host daemon finalizers remove exact run containers"
+  ],
+  "files": [
+    {
+      "path": "reviewed-prototype/adapter-tests-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapter-tests-01.log",
+      "originalBytes": 5324,
+      "originalSha256": "9d392a18d8993a6a352c6e8c3a15968a81caf37e1fd4ec4f9a13d30f7e708c71",
+      "sanitizedSha256": "9d392a18d8993a6a352c6e8c3a15968a81caf37e1fd4ec4f9a13d30f7e708c71",
+      "gzipSha256": "402b1f455cce6085f0d0f08980cc17d2fe7d3671a686660cab6f3533e466c1cc",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/adapter-tests-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapter-tests-02.log",
+      "originalBytes": 5835,
+      "originalSha256": "496c7ec8defc9bc5f1e6851f090f1ef3d7f53f56eceaee2f70c0372c63a8be3a",
+      "sanitizedSha256": "496c7ec8defc9bc5f1e6851f090f1ef3d7f53f56eceaee2f70c0372c63a8be3a",
+      "gzipSha256": "e0393d11d5486260e2cf554d1824a67a7e87d2ff8486d3fc4189e2497351a2b7",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/adapter-tests-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapter-tests-03.log",
+      "originalBytes": 6360,
+      "originalSha256": "4597a06dceab8c914f9b33e430c345ac3c7231101d2c83771159806f6fdbb9fd",
+      "sanitizedSha256": "4597a06dceab8c914f9b33e430c345ac3c7231101d2c83771159806f6fdbb9fd",
+      "gzipSha256": "7c61df07ed8c3171a5b91a04559ea5563d648aeaded779be6d41761aec2e89b3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/adapter-tests-04.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapter-tests-04.log",
+      "originalBytes": 7308,
+      "originalSha256": "a5111edcfa124e0a0018736ea1f4795575d8b023b2ebd68885b45dbcab6e464c",
+      "sanitizedSha256": "a5111edcfa124e0a0018736ea1f4795575d8b023b2ebd68885b45dbcab6e464c",
+      "gzipSha256": "e756272e1a8ba8c630d000f7b45bc18dc500e15a8beab1f620e98d5725bc734a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/adapter-tests-05.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapter-tests-05.log",
+      "originalBytes": 7808,
+      "originalSha256": "f54dba3341b545b4eaeff41f77900fc2e6570c30af8dd31d29aac69f0488fc11",
+      "sanitizedSha256": "f54dba3341b545b4eaeff41f77900fc2e6570c30af8dd31d29aac69f0488fc11",
+      "gzipSha256": "59ca7ed30cd514d06e24bd1f96ffe1552e3b35aec7f99f9261c8e601d56607f4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/adapter-tests-06.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapter-tests-06.log",
+      "originalBytes": 8072,
+      "originalSha256": "38545129dfb6856ae719c8afc2bc0112ba14ca78bc4b3b4d89c6d90b9723f107",
+      "sanitizedSha256": "38545129dfb6856ae719c8afc2bc0112ba14ca78bc4b3b4d89c6d90b9723f107",
+      "gzipSha256": "6f92e574230b842e68ec8ffbf410bef0aa03b231f179413e4c3a8bb34e47035c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/adapters.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\adapters.test.mjs",
+      "originalBytes": 17837,
+      "originalSha256": "4808a01931a04ea05c4aec1b0fd95535f62d76813c49b0439a188de2949bbe88",
+      "sanitizedSha256": "b686ec234c04bc26e4c12ef5aee04d03884f89751d20afc144a5147b41a76dda",
+      "gzipSha256": "64e766389b8956f3f2f86dc07ff72a6c069ab52be6e7ba79721c78c9aa979818",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "3607793865f16df7f9a44011e8c6e83235499dbf4f4eed0e03516160674f098a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "5da913aea35edc07f8d9b2cf5459d92712afdc7a8b1bc6802030fa66ed099c7b",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "7e7e2dd86aaa9c1568385d95fedc37e47b574b6b8cea5e84dcaac117f01cff7a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/DESIGN.md.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\DESIGN.md",
+      "originalBytes": 12332,
+      "originalSha256": "0bb4aa80fa954d2287d5fb4b5242375822080196fcfce795aa3994152f5a736b",
+      "sanitizedSha256": "0bb4aa80fa954d2287d5fb4b5242375822080196fcfce795aa3994152f5a736b",
+      "gzipSha256": "77f27f52bbb9d3750d36091ca031e8bb90de676c631e2daf787f2b7db101d3fb",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "15e1d608466d72839a1da685522e86b978db49659e876bc3a6e1df3ae7f46bbf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/Dockerfile.prototype.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\Dockerfile.prototype",
+      "originalBytes": 626,
+      "originalSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "sanitizedSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "gzipSha256": "f8fb70fe08a8aaf5c80318b0aeb9d7b3996c16ad95d09e44c9243af5a05b3058",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/generate-review-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\generate-review-01.log",
+      "originalBytes": 156,
+      "originalSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "sanitizedSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "gzipSha256": "746ff6ec5e52d9c34cbd18d7c0416c57938899c3ab9ba4abeda9070c23c9e061",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/generate-review-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\generate-review-02.log",
+      "originalBytes": 156,
+      "originalSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "sanitizedSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "gzipSha256": "746ff6ec5e52d9c34cbd18d7c0416c57938899c3ab9ba4abeda9070c23c9e061",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/generate-review.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\generate-review.mjs",
+      "originalBytes": 4300,
+      "originalSha256": "80991f909b61539f0c5728abf97ff6ada66d72737868fdd000bec42327021763",
+      "sanitizedSha256": "f69019daf794b17a0b63d0f00f3d9f747d82e89189712dcebeffef298d1606f9",
+      "gzipSha256": "060f6f5b486acaca41a1308a3d08e836bc8856b7152df661af97e5b9db71302b",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/generated-docker-plan.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\generated-docker-plan.json",
+      "originalBytes": 20606,
+      "originalSha256": "521670780b414305f3fedda8dea0229fd1436087d0bf08f2374d4baa90cd3c13",
+      "sanitizedSha256": "521670780b414305f3fedda8dea0229fd1436087d0bf08f2374d4baa90cd3c13",
+      "gzipSha256": "2e1e97ba0919f76bb3a8876abc0b3a79b872dbff07aa21e3fa98a555bcfb2999",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "704d06a2ca5131d911ad74ffba5658e286ed20deebab0bea5e9f04ee060cc299",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\host-lifecycle.mjs",
+      "originalBytes": 4032,
+      "originalSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "sanitizedSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "gzipSha256": "d189352d48789567fe11e23cdcad55153fca0b34efba74681b09a5b4b5fd2f59",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\host-orchestrator.mjs",
+      "originalBytes": 4554,
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "6b4b169b45b81d10ef8e0f2c09874c8b435648aea2aac7cfee811da59b09c209",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/launch-role-preflight.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\launch-role-preflight.mjs",
+      "originalBytes": 4159,
+      "originalSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "sanitizedSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "gzipSha256": "0cc6a1d6f77ae9f332127755aa0264e6dd33eacad57e41fcdae970c8d4aa696d",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/manifest.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\manifest.json",
+      "originalBytes": 7032,
+      "originalSha256": "1c1ca65b8e13ba65edc618f3e2da45afa646d09b109b9b256a3c7f81db224de7",
+      "sanitizedSha256": "1c1ca65b8e13ba65edc618f3e2da45afa646d09b109b9b256a3c7f81db224de7",
+      "gzipSha256": "7829a29c6ef8dd474acfd723519236b9ea7ca56010e53a36f1d18d1386e6b13a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/observed-payload-sizes.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\observed-payload-sizes.json",
+      "originalBytes": 2025,
+      "originalSha256": "9672dc2395e5155370db8ee323aa32c62b9fd1c57b9d881656529c4b9d84d7cc",
+      "sanitizedSha256": "af612aa187615b51d7fd9b0880a41860bc5dbc935bb336aa511a1ef9cf133d75",
+      "gzipSha256": "15106e7f03f9070548d8a1093f7c39f8c9a827e2d5e06b1dfd52e4467beb3571",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/orchestrator.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\orchestrator.test.mjs",
+      "originalBytes": 8330,
+      "originalSha256": "83970b3e85e01e7af965c4bf1a85f9bc8706da0800f3b14db17b3ca932fdd0bb",
+      "sanitizedSha256": "83970b3e85e01e7af965c4bf1a85f9bc8706da0800f3b14db17b3ca932fdd0bb",
+      "gzipSha256": "83700c6e01556502caaae5b9c2a476e072fd3b809c482b62c2dae0cebaf21979",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/overlay-receipt.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\overlay-receipt.json",
+      "originalBytes": 702,
+      "originalSha256": "373848beac277702ec07466aff70345754fbbc00108b973810c3c4c3a80c21cd",
+      "sanitizedSha256": "6339b8439cbade2e21732ea9b6129adbe5e1c806657e598ee6d4b23fc836d55f",
+      "gzipSha256": "131cc33bfc3b93d6af26707c8a532fa6463bd9122948916a9eded072d3c23411",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "c99c947edb9fa36732ec98e52da349ced1a48bd5c7c6ec527917fce5057bb5bf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\patch-coordinator.mjs",
+      "originalBytes": 2448,
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "c8b6421ff56e80a33c7429c31d27b6f0371a6f4712eb8bbd3cee13ae346361e3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/prototype.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\prototype.test.mjs",
+      "originalBytes": 8537,
+      "originalSha256": "1751a9b687337fae3fa117c0bd9128b238f349038b4a67cf0323170e983f1874",
+      "sanitizedSha256": "1751a9b687337fae3fa117c0bd9128b238f349038b4a67cf0323170e983f1874",
+      "gzipSha256": "a3c0c7cb413f39861afc99492eb785cec6abec9fcfa95b0b320dcd266357dd94",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/pure-tests-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\pure-tests-01.log",
+      "originalBytes": 2611,
+      "originalSha256": "054a49a4e627554a3976f8d09037ae4c5b1f7039a1c086b374e4092f50946e04",
+      "sanitizedSha256": "054a49a4e627554a3976f8d09037ae4c5b1f7039a1c086b374e4092f50946e04",
+      "gzipSha256": "5788da058eec23fa47273696c09813d72c48129890c62d1616a84ae12a0cb368",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/pure-tests-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\pure-tests-02.log",
+      "originalBytes": 3052,
+      "originalSha256": "fafef8f1fae7409f75952c5b878d93713e73f17ff30d61483ed8aa999c023aaa",
+      "sanitizedSha256": "fafef8f1fae7409f75952c5b878d93713e73f17ff30d61483ed8aa999c023aaa",
+      "gzipSha256": "a79ea3bde26ad22a94edf8bd27539158d1a91a13ae16e309b27f12938f76a3bf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/pure-tests-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\pure-tests-03.log",
+      "originalBytes": 3053,
+      "originalSha256": "1de5a76cb4b13fbac93d86a456ab6c1191db88c3e0e206c170a79f90f3242261",
+      "sanitizedSha256": "1de5a76cb4b13fbac93d86a456ab6c1191db88c3e0e206c170a79f90f3242261",
+      "gzipSha256": "bd11df61848d5f11e3c9f55e0891c9d91cd393b5295b74d61286154c0ce4b5f0",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "e9c071aa368043e5f52c1b3278624c209d9247d9217caa2ece43cb17857a23f4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "3fc53ec89b1ba55a83bfa08b00176a3a1cf1a57e58e90ea5942f44e5da8b444c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "6dce84ffc077cb46ab294f960ec00dd5c7a7a1dc640a4c8f79af55793a5ddcf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\role-environment.mjs",
+      "originalBytes": 4460,
+      "originalSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "sanitizedSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "gzipSha256": "e682e728f7aa7fc80fe62b306093cefd86cadfa4060663224a892d1c63495cf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\role-plan.mjs",
+      "originalBytes": 6480,
+      "originalSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "sanitizedSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "gzipSha256": "649fb717f31d61568af21ca25c49bf3ce42d06a7d864be387ae7f0cfaa957a12",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "reviewed-prototype/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-01\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "dd60eb25de6d30de4d6af6769959b21599bd872395f4ed4b599209fd7df4f0ab",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/build-request.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\build-request.json",
+      "originalBytes": 949,
+      "originalSha256": "1583b27597e7925d745d0b439ceaaf69156344d9158b069c44158da7803830d0",
+      "sanitizedSha256": "b31352d827201bd6fd012c36aafffa6f6e07b64ad1c70c2c92d133c90a77fdee",
+      "gzipSha256": "56e2b4088e6b85191dd03b2b4edfb7a69288cd4ae899def71b67fa822b882076",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/build.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\build.log",
+      "originalBytes": 1534,
+      "originalSha256": "5650f831ea2f2f2ba4b16136dd9cbed29cf3aff1f69a228784cda08c291ff8cd",
+      "sanitizedSha256": "5650f831ea2f2f2ba4b16136dd9cbed29cf3aff1f69a228784cda08c291ff8cd",
+      "gzipSha256": "39e5bbd5104e075c32cdb767fb93ee407325ae91393b583d8b951caa3ffa2e41",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/Dockerfile.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\Dockerfile",
+      "originalBytes": 626,
+      "originalSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "sanitizedSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "gzipSha256": "f8fb70fe08a8aaf5c80318b0aeb9d7b3996c16ad95d09e44c9243af5a05b3058",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "3607793865f16df7f9a44011e8c6e83235499dbf4f4eed0e03516160674f098a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "5da913aea35edc07f8d9b2cf5459d92712afdc7a8b1bc6802030fa66ed099c7b",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "7e7e2dd86aaa9c1568385d95fedc37e47b574b6b8cea5e84dcaac117f01cff7a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "15e1d608466d72839a1da685522e86b978db49659e876bc3a6e1df3ae7f46bbf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "704d06a2ca5131d911ad74ffba5658e286ed20deebab0bea5e9f04ee060cc299",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\host-lifecycle.mjs",
+      "originalBytes": 4032,
+      "originalSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "sanitizedSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "gzipSha256": "d189352d48789567fe11e23cdcad55153fca0b34efba74681b09a5b4b5fd2f59",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\host-orchestrator.mjs",
+      "originalBytes": 4554,
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "6b4b169b45b81d10ef8e0f2c09874c8b435648aea2aac7cfee811da59b09c209",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/launch-role-preflight.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\launch-role-preflight.mjs",
+      "originalBytes": 4159,
+      "originalSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "sanitizedSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "gzipSha256": "0cc6a1d6f77ae9f332127755aa0264e6dd33eacad57e41fcdae970c8d4aa696d",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "c99c947edb9fa36732ec98e52da349ced1a48bd5c7c6ec527917fce5057bb5bf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\patch-coordinator.mjs",
+      "originalBytes": 2448,
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "c8b6421ff56e80a33c7429c31d27b6f0371a6f4712eb8bbd3cee13ae346361e3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "e9c071aa368043e5f52c1b3278624c209d9247d9217caa2ece43cb17857a23f4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "3fc53ec89b1ba55a83bfa08b00176a3a1cf1a57e58e90ea5942f44e5da8b444c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "6dce84ffc077cb46ab294f960ec00dd5c7a7a1dc640a4c8f79af55793a5ddcf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\role-environment.mjs",
+      "originalBytes": 4460,
+      "originalSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "sanitizedSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "gzipSha256": "e682e728f7aa7fc80fe62b306093cefd86cadfa4060663224a892d1c63495cf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\role-plan.mjs",
+      "originalBytes": 6480,
+      "originalSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "sanitizedSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "gzipSha256": "649fb717f31d61568af21ca25c49bf3ce42d06a7d864be387ae7f0cfaa957a12",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/prototype/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\prototype\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "dd60eb25de6d30de4d6af6769959b21599bd872395f4ed4b599209fd7df4f0ab",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-01/context/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01\\context\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "runners/build-01.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-01.mjs",
+      "originalBytes": 4591,
+      "originalSha256": "f9b71790f111e2018aee1309814bcb5cc274abdc7af9cc7793d4136b7334bcc1",
+      "sanitizedSha256": "3ade609ef1a251a9b5151b73e8f26ef85e54494719ff19aae467f1eafa1056ed",
+      "gzipSha256": "f3f376ab332a687d75425375cdaadef525391cfc24bef641d32c544e092bf740",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/build-request.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\build-request.json",
+      "originalBytes": 1050,
+      "originalSha256": "a50823d5e7b64a84a9f47a666ccea376725f9c4c1667d4abc2882e0abf68b02a",
+      "sanitizedSha256": "3efc3c01f8d7415730d5279d8d6131331eba4c8d638cacc1be4d318907119951",
+      "gzipSha256": "9da59aeeb3195f69c0238170483d62b6738dd45930e4b7d9249027e17fc1408f",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/build.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\build.log",
+      "originalBytes": 4694,
+      "originalSha256": "ab69ccbbede4918ae700d9fa9555d49ba343a6f39b62ff60b233c9566d28fb0f",
+      "sanitizedSha256": "ab69ccbbede4918ae700d9fa9555d49ba343a6f39b62ff60b233c9566d28fb0f",
+      "gzipSha256": "c8810c80d442e131dfb6bbec898ac96de12262491ae12d8689dcec862109fd47",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/Dockerfile.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\Dockerfile",
+      "originalBytes": 626,
+      "originalSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "sanitizedSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "gzipSha256": "f8fb70fe08a8aaf5c80318b0aeb9d7b3996c16ad95d09e44c9243af5a05b3058",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "3607793865f16df7f9a44011e8c6e83235499dbf4f4eed0e03516160674f098a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "5da913aea35edc07f8d9b2cf5459d92712afdc7a8b1bc6802030fa66ed099c7b",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "7e7e2dd86aaa9c1568385d95fedc37e47b574b6b8cea5e84dcaac117f01cff7a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "15e1d608466d72839a1da685522e86b978db49659e876bc3a6e1df3ae7f46bbf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "704d06a2ca5131d911ad74ffba5658e286ed20deebab0bea5e9f04ee060cc299",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\host-lifecycle.mjs",
+      "originalBytes": 4032,
+      "originalSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "sanitizedSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "gzipSha256": "d189352d48789567fe11e23cdcad55153fca0b34efba74681b09a5b4b5fd2f59",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\host-orchestrator.mjs",
+      "originalBytes": 4554,
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "6b4b169b45b81d10ef8e0f2c09874c8b435648aea2aac7cfee811da59b09c209",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/launch-role-preflight.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\launch-role-preflight.mjs",
+      "originalBytes": 4159,
+      "originalSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "sanitizedSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "gzipSha256": "0cc6a1d6f77ae9f332127755aa0264e6dd33eacad57e41fcdae970c8d4aa696d",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "c99c947edb9fa36732ec98e52da349ced1a48bd5c7c6ec527917fce5057bb5bf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\patch-coordinator.mjs",
+      "originalBytes": 2448,
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "c8b6421ff56e80a33c7429c31d27b6f0371a6f4712eb8bbd3cee13ae346361e3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "e9c071aa368043e5f52c1b3278624c209d9247d9217caa2ece43cb17857a23f4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "3fc53ec89b1ba55a83bfa08b00176a3a1cf1a57e58e90ea5942f44e5da8b444c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "6dce84ffc077cb46ab294f960ec00dd5c7a7a1dc640a4c8f79af55793a5ddcf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\role-environment.mjs",
+      "originalBytes": 4460,
+      "originalSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "sanitizedSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "gzipSha256": "e682e728f7aa7fc80fe62b306093cefd86cadfa4060663224a892d1c63495cf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\role-plan.mjs",
+      "originalBytes": 6480,
+      "originalSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "sanitizedSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "gzipSha256": "649fb717f31d61568af21ca25c49bf3ce42d06a7d864be387ae7f0cfaa957a12",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/prototype/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\prototype\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "dd60eb25de6d30de4d6af6769959b21599bd872395f4ed4b599209fd7df4f0ab",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-02/context/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02\\context\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "runners/build-02.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-02.mjs",
+      "originalBytes": 4675,
+      "originalSha256": "1b7d2d66e2db4a1df61f56005f3f78ecd3b73170439293afcee877dd99ffe582",
+      "sanitizedSha256": "661edef62cf49b362d06c8ceff837921ebc527796ca2b3815af9fb8cf110408c",
+      "gzipSha256": "a7058d4574b52f21f917d8b2c89d7f040adf91054391219b5b6e282b711cbb56",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/build-request.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\build-request.json",
+      "originalBytes": 1050,
+      "originalSha256": "f109ada70fcb1e23625eac0a5fb52bba96c998c114b5d660eb5907167763c78f",
+      "sanitizedSha256": "4538240b9b6c5dfab7daab312394219a83a73a1ecbedb174396bf432a14512ba",
+      "gzipSha256": "f55982d748f4f5ab4b577ce4f5d05380e48618184280140ace4f3a572b4d44a5",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/build.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\build.log",
+      "originalBytes": 3851,
+      "originalSha256": "604c5fc605ec327afbf4243fcac146650ccd534ef12aacb4f228e217793c3da0",
+      "sanitizedSha256": "604c5fc605ec327afbf4243fcac146650ccd534ef12aacb4f228e217793c3da0",
+      "gzipSha256": "035d85c3b29e9b0427df2cdd1da2272f2a9f2aabc67ce6aa81d35c2b227a4c26",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/Dockerfile.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\Dockerfile",
+      "originalBytes": 636,
+      "originalSha256": "cd4e31cd5173a6a29a994160d0df87b9f3534e87f08056da1abeba3c8a588d9c",
+      "sanitizedSha256": "cd4e31cd5173a6a29a994160d0df87b9f3534e87f08056da1abeba3c8a588d9c",
+      "gzipSha256": "eb492cc243419e1986056a69c1535a929aed1f459a2169039cfcd0889f2c6a66",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "3607793865f16df7f9a44011e8c6e83235499dbf4f4eed0e03516160674f098a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "5da913aea35edc07f8d9b2cf5459d92712afdc7a8b1bc6802030fa66ed099c7b",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "7e7e2dd86aaa9c1568385d95fedc37e47b574b6b8cea5e84dcaac117f01cff7a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "15e1d608466d72839a1da685522e86b978db49659e876bc3a6e1df3ae7f46bbf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "704d06a2ca5131d911ad74ffba5658e286ed20deebab0bea5e9f04ee060cc299",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\host-lifecycle.mjs",
+      "originalBytes": 4032,
+      "originalSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "sanitizedSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "gzipSha256": "d189352d48789567fe11e23cdcad55153fca0b34efba74681b09a5b4b5fd2f59",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\host-orchestrator.mjs",
+      "originalBytes": 4554,
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "6b4b169b45b81d10ef8e0f2c09874c8b435648aea2aac7cfee811da59b09c209",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/launch-role-preflight.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\launch-role-preflight.mjs",
+      "originalBytes": 4159,
+      "originalSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "sanitizedSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "gzipSha256": "0cc6a1d6f77ae9f332127755aa0264e6dd33eacad57e41fcdae970c8d4aa696d",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "c99c947edb9fa36732ec98e52da349ced1a48bd5c7c6ec527917fce5057bb5bf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\patch-coordinator.mjs",
+      "originalBytes": 2448,
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "c8b6421ff56e80a33c7429c31d27b6f0371a6f4712eb8bbd3cee13ae346361e3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "e9c071aa368043e5f52c1b3278624c209d9247d9217caa2ece43cb17857a23f4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "3fc53ec89b1ba55a83bfa08b00176a3a1cf1a57e58e90ea5942f44e5da8b444c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "6dce84ffc077cb46ab294f960ec00dd5c7a7a1dc640a4c8f79af55793a5ddcf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\role-environment.mjs",
+      "originalBytes": 4460,
+      "originalSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "sanitizedSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "gzipSha256": "e682e728f7aa7fc80fe62b306093cefd86cadfa4060663224a892d1c63495cf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\role-plan.mjs",
+      "originalBytes": 6480,
+      "originalSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "sanitizedSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "gzipSha256": "649fb717f31d61568af21ca25c49bf3ce42d06a7d864be387ae7f0cfaa957a12",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/prototype/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\prototype\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "dd60eb25de6d30de4d6af6769959b21599bd872395f4ed4b599209fd7df4f0ab",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-03/context/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03\\context\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "runners/build-03.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-03.mjs",
+      "originalBytes": 4813,
+      "originalSha256": "a75f623038c77b6ed8ea689d7bb032db4bf08727ad8bb275108db45b58d6297c",
+      "sanitizedSha256": "87575a0916765f6f326bd7e4e2fd66d206e7ff80d689338e9ef43d3174a77f3d",
+      "gzipSha256": "d6cf017f92f189e1fa2a7393da9df87cf0c32d4e61e21b366f8668279939db86",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/binding-update.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\binding-update.json",
+      "originalBytes": 279,
+      "originalSha256": "e2d48fee79522f3d9fe4b13e35765f041fb161dd4e4c9aacbb696946e8f6def0",
+      "sanitizedSha256": "e2d48fee79522f3d9fe4b13e35765f041fb161dd4e4c9aacbb696946e8f6def0",
+      "gzipSha256": "f3cb474cc6ba8aabfbc40aa8e203bcd03922951d1b2750a9a5530e8b699d8e99",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/build-request.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\build-request.json",
+      "originalBytes": 1050,
+      "originalSha256": "8d698af312f48cd324595894de521d5341395242018ef5b3a381bdef268f4f27",
+      "sanitizedSha256": "104ca46ae20d30b2deaabdda6cf795ee14e4296d57ed69d7e9ffdec1274b0d70",
+      "gzipSha256": "4bd7b80704f41512b2a2846ff703744e4cdb94f7fa9401d14e6443b188c88f80",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/build.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\build.log",
+      "originalBytes": 2422,
+      "originalSha256": "7fcd9f31f4b8dba6c2e95ef007c84cfe4444e1db0ad688240b5bd73a462b152e",
+      "sanitizedSha256": "7fcd9f31f4b8dba6c2e95ef007c84cfe4444e1db0ad688240b5bd73a462b152e",
+      "gzipSha256": "21262f7fab7f6a2c006e92d4466cd3e41bbf23022a0cc7534cd65287a578cd25",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/binding.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\binding.json",
+      "originalBytes": 6698,
+      "originalSha256": "963d27d972f151effff050ef1ee74007879b400c73c2c877a1ece24eeffc1a2d",
+      "sanitizedSha256": "963d27d972f151effff050ef1ee74007879b400c73c2c877a1ece24eeffc1a2d",
+      "gzipSha256": "3f3debbb1e3f3a554b4dab03b8cec7cbebbed074e22adf41fb0a6e072a54ad8a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/Dockerfile.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\Dockerfile",
+      "originalBytes": 697,
+      "originalSha256": "86294855834906345ba48fa122b97ba63a1dcf83ac92a669bd8cbd7f1a94cd97",
+      "sanitizedSha256": "86294855834906345ba48fa122b97ba63a1dcf83ac92a669bd8cbd7f1a94cd97",
+      "gzipSha256": "918930cc16f251739c3857a44742875d460b4fc8ec07764bd67c18b17be53554",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "3607793865f16df7f9a44011e8c6e83235499dbf4f4eed0e03516160674f098a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "5da913aea35edc07f8d9b2cf5459d92712afdc7a8b1bc6802030fa66ed099c7b",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "7e7e2dd86aaa9c1568385d95fedc37e47b574b6b8cea5e84dcaac117f01cff7a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "15e1d608466d72839a1da685522e86b978db49659e876bc3a6e1df3ae7f46bbf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "704d06a2ca5131d911ad74ffba5658e286ed20deebab0bea5e9f04ee060cc299",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\host-lifecycle.mjs",
+      "originalBytes": 4032,
+      "originalSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "sanitizedSha256": "b660d1b587ec0fbc0a15fc04634efb95325c3b6d9f3310e32c675fe456ca887e",
+      "gzipSha256": "d189352d48789567fe11e23cdcad55153fca0b34efba74681b09a5b4b5fd2f59",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\host-orchestrator.mjs",
+      "originalBytes": 4554,
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "6b4b169b45b81d10ef8e0f2c09874c8b435648aea2aac7cfee811da59b09c209",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/launch-role-preflight.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\launch-role-preflight.mjs",
+      "originalBytes": 4159,
+      "originalSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "sanitizedSha256": "cb7cc37d178dfa307fecbbba68c56e7f9d915bc0f64086a07e08052dbd2f1b43",
+      "gzipSha256": "0cc6a1d6f77ae9f332127755aa0264e6dd33eacad57e41fcdae970c8d4aa696d",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "c99c947edb9fa36732ec98e52da349ced1a48bd5c7c6ec527917fce5057bb5bf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\patch-coordinator.mjs",
+      "originalBytes": 2448,
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "c8b6421ff56e80a33c7429c31d27b6f0371a6f4712eb8bbd3cee13ae346361e3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "e9c071aa368043e5f52c1b3278624c209d9247d9217caa2ece43cb17857a23f4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "3fc53ec89b1ba55a83bfa08b00176a3a1cf1a57e58e90ea5942f44e5da8b444c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "6dce84ffc077cb46ab294f960ec00dd5c7a7a1dc640a4c8f79af55793a5ddcf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\role-environment.mjs",
+      "originalBytes": 4460,
+      "originalSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "sanitizedSha256": "9f70e6714fa2e9c8a1bbd20b731f619ff5fcfe0d776c6b4d04254914d28954d5",
+      "gzipSha256": "e682e728f7aa7fc80fe62b306093cefd86cadfa4060663224a892d1c63495cf2",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\role-plan.mjs",
+      "originalBytes": 6480,
+      "originalSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "sanitizedSha256": "a9669a1788c1774837bd7d199cc4a5f1c5b332e80cee8c1170037525bdce53ac",
+      "gzipSha256": "649fb717f31d61568af21ca25c49bf3ce42d06a7d864be387ae7f0cfaa957a12",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/prototype/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\prototype\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "dd60eb25de6d30de4d6af6769959b21599bd872395f4ed4b599209fd7df4f0ab",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/context/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\context\\release-enabled-scale.overlay.mjs",
+      "originalBytes": 25063,
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/image-id.txt.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\image-id.txt",
+      "originalBytes": 71,
+      "originalSha256": "b18126aa98aa21633dd680bceba0a2269cb05c792c019441cd4610141d0616cc",
+      "sanitizedSha256": "b18126aa98aa21633dd680bceba0a2269cb05c792c019441cd4610141d0616cc",
+      "gzipSha256": "85bd1ce3df9573b10061ec4eb9376985376b442c89794cd33da4e85318ef54a1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/image-inspect.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\image-inspect.json",
+      "originalBytes": 3563,
+      "originalSha256": "5ab422a59bfe16c73c3b3476d56f08d0f56c9b66268a177b832090dba6dbf1c7",
+      "sanitizedSha256": "5ab422a59bfe16c73c3b3476d56f08d0f56c9b66268a177b832090dba6dbf1c7",
+      "gzipSha256": "35d53f610fcc7d4913ebef10cd5cb153615c745fb67a798045ae8ac7f5b40015",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\result.json",
+      "originalBytes": 376,
+      "originalSha256": "71d1b82b679df2daf8b7059b88a5a946929e03613c3219d99303d0ee800903e1",
+      "sanitizedSha256": "71d1b82b679df2daf8b7059b88a5a946929e03613c3219d99303d0ee800903e1",
+      "gzipSha256": "be9657e0ec29a135c2e219c910662f553c4cf10cc0236a5725c5f0770a436328",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/runtime-probe-inspect.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\runtime-probe-inspect.json",
+      "originalBytes": 6741,
+      "originalSha256": "669ce2eccd23d3f53aa1d9bffbea3baf565420c81d87c830992bffd20a4baaa6",
+      "sanitizedSha256": "669ce2eccd23d3f53aa1d9bffbea3baf565420c81d87c830992bffd20a4baaa6",
+      "gzipSha256": "cdccd8a16e94953e792509e2ca270871b751ec4ea155830a525fca3a5d588b3a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/runtime-proof.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\runtime-proof.json",
+      "originalBytes": 112,
+      "originalSha256": "9f53b1cb8727932db9824078e3c2f52bcc64415b762954fd6060f5f2bf57ff68",
+      "sanitizedSha256": "9f53b1cb8727932db9824078e3c2f52bcc64415b762954fd6060f5f2bf57ff68",
+      "gzipSha256": "0ab48b8f2cb0ce207b048ccb39d58c303830b3466d6c778fb962365c53366d61",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "build-attempt-04/runtime-proof.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04\\runtime-proof.log",
+      "originalBytes": 103,
+      "originalSha256": "e30e97d12300874d8357ec1c4888cfb555e6676c699b46999312bc6b9a1287db",
+      "sanitizedSha256": "e30e97d12300874d8357ec1c4888cfb555e6676c699b46999312bc6b9a1287db",
+      "gzipSha256": "34b0424d35f3d3e897d1b1614bb3b6cf627c8fa9bc360b99fc147740281a36b3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "runners/build-04.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-helper-build-04.mjs",
+      "originalBytes": 5445,
+      "originalSha256": "3cf986422012f7bbefd4316f6ae7a239f067e2aca73cda70c669844e1a7f76af",
+      "sanitizedSha256": "6e15c833eaf3344abde222630ec22bc3e614de1c9cb49bfc31d60ff4229c0690",
+      "gzipSha256": "21077c959fdef28c48f2c01614fba85b239f639ec0c7d258f4db43c3925c69b8",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/all-owned-cleanup.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\all-owned-cleanup.json",
+      "originalBytes": 550,
+      "originalSha256": "66713d29cbe112790f007e94a5fa5e642411180defc393ac977b52e643e2313b",
+      "sanitizedSha256": "66713d29cbe112790f007e94a5fa5e642411180defc393ac977b52e643e2313b",
+      "gzipSha256": "b5b2e0fba11193b8987f0549497bf4f9f350081bf1c0dca11e5f996c552db9ef",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/api.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\api.log",
+      "originalBytes": 3318,
+      "originalSha256": "0233f8ef1cc8e9dd78c827fa092d666d85c0cf48f43f511ca3f98bcbe9b765b7",
+      "sanitizedSha256": "0233f8ef1cc8e9dd78c827fa092d666d85c0cf48f43f511ca3f98bcbe9b765b7",
+      "gzipSha256": "f341855b643f31682fe74723ee8db6ef6e28e67710f81fcdecdd5eb754b5f950",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/coordinator.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\coordinator.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/fixture-containers.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\fixture-containers.json",
+      "originalBytes": 1606,
+      "originalSha256": "b8d59d1e61828644c4c94505ae5f3c3d6088825ac374f6582213db8c8064ac60",
+      "sanitizedSha256": "b8d59d1e61828644c4c94505ae5f3c3d6088825ac374f6582213db8c8064ac60",
+      "gzipSha256": "73f069ea12dad2f5dee83f6c4a4d5d5f7d9f9ef6d4b92cf3664ce7d671e93bcb",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/generator.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\generator.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/launch-binding.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\launch-binding.json",
+      "originalBytes": 1613,
+      "originalSha256": "a8d9be20db7790bb49cbd21924fe783e1fe61df3ab3b02272dfcd4598ad4feac",
+      "sanitizedSha256": "3600582a4926e8569317e52509a2163ddef06b63489d0c0de882199604bf4666",
+      "gzipSha256": "05b9ec0e02bba9409b99667257b70f20cb3d82e3c54cdc2aca09d33fe36430a3",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/request.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\request.json",
+      "originalBytes": 499,
+      "originalSha256": "793939682db7aed71b98c47b2c5af1f5fd5c26cdc58fc19d682d09a55bb68904",
+      "sanitizedSha256": "793939682db7aed71b98c47b2c5af1f5fd5c26cdc58fc19d682d09a55bb68904",
+      "gzipSha256": "14668ee10ce9133f3aab9719d19e237b6d9d75769c76b0f8240fc7ce160e3d9a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\result.json",
+      "originalBytes": 194,
+      "originalSha256": "962b1a0f9e58a64b3f45881c12c6e9f15ad91673ac9089e4bda8b9bbb16f5b79",
+      "sanitizedSha256": "962b1a0f9e58a64b3f45881c12c6e9f15ad91673ac9089e4bda8b9bbb16f5b79",
+      "gzipSha256": "97444db2b94a98a040dabac4648ca9d96304f72275c6ad8a64a188c4fa103048",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/role-host-result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\role-host-result.json",
+      "originalBytes": 4090,
+      "originalSha256": "32ce71c07820ff29ec39e1c8014704dc36a63a29d579da558206b082c6655aea",
+      "sanitizedSha256": "32ce71c07820ff29ec39e1c8014704dc36a63a29d579da558206b082c6655aea",
+      "gzipSha256": "8ee4d3d7348029c9a4efe0daf578e48c5e1d353132526a292616c92ef945769c",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/role-runtime-plan.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\role-runtime-plan.json",
+      "originalBytes": 25082,
+      "originalSha256": "28abef5635ee8d6e5ba419b310caca855e92dcc443848e93c0a92dd6d004728f",
+      "sanitizedSha256": "d08ca259a0187fa13c7f1c04ebaa80792d1ceb07c759b248a1a48afb71deb028",
+      "gzipSha256": "80cf7edb786f20a9c728c3e5ad015478ddbc5be81f8c49d2d94201563842787a",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/role-setup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\role-setup.log",
+      "originalBytes": 36,
+      "originalSha256": "d4399e736dc290cbf3c3b70ec97096feb7e1e345641c470975e4cea16c00d0cc",
+      "sanitizedSha256": "d4399e736dc290cbf3c3b70ec97096feb7e1e345641c470975e4cea16c00d0cc",
+      "gzipSha256": "01b19a7fe657f12afd1a6071325047d279f9c19d3c28afe2431ed4184075efa4",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/schema-input.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\schema-input.json",
+      "originalBytes": 260,
+      "originalSha256": "f485626f4fa344728e14ac08cbf151b51701524f067760e0e339d192fc07ed5d",
+      "sanitizedSha256": "a02850f0939c88023cc570fab6e31ad80bc3245cf744c47f020c0205ebd2e03c",
+      "gzipSha256": "7456e64476cd1bb242a775c9b50e86c119ecdb3c500c0c2f8e1568e2c381a281",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/schema-restore.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\schema-restore.log",
+      "originalBytes": 19399,
+      "originalSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/usage-scale.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\usage-scale.json",
+      "originalBytes": 17217,
+      "originalSha256": "61eee508355968bdd0754dd0d45d0f55a6f9c479039e57264e1f380bf2d5d975",
+      "sanitizedSha256": "61eee508355968bdd0754dd0d45d0f55a6f9c479039e57264e1f380bf2d5d975",
+      "gzipSha256": "91f71ae58d292a6329b5c4de1b9db2983aa36c5c0e9b9d9ae063c5b72d54cfaf",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/worker.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01\\worker.log",
+      "originalBytes": 2610,
+      "originalSha256": "8ee7734097b4aa4cdead1eb166d34f2a64614e48ec23c3bf670fa3ad31146d1b",
+      "sanitizedSha256": "8ee7734097b4aa4cdead1eb166d34f2a64614e48ec23c3bf670fa3ad31146d1b",
+      "gzipSha256": "b034cacce8c692fec956dfb52f33f49d44964dbf9a1f28b5cb455ee9cc30a8ce",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/host-receipts/api.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-control-01\\host-receipts\\api.json",
+      "originalBytes": 382,
+      "originalSha256": "0282c0dc3f76e9d4c9f2d7e7c5070f9d060a551544c34ad74642b93d325eb923",
+      "sanitizedSha256": "0282c0dc3f76e9d4c9f2d7e7c5070f9d060a551544c34ad74642b93d325eb923",
+      "gzipSha256": "6423093c312f11f12dcf399570fe488bf69484c2a6bae5c7332071dc3c96cae5",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/host-receipts/coordinator.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-control-01\\host-receipts\\coordinator.json",
+      "originalBytes": 390,
+      "originalSha256": "512fca1f5e8ae450bacd39b9a75a97137b304b6cc8cbd7c1420b072f84709a31",
+      "sanitizedSha256": "512fca1f5e8ae450bacd39b9a75a97137b304b6cc8cbd7c1420b072f84709a31",
+      "gzipSha256": "8bff9b93bcf82158f443dccf2ae4aec5d8d8985f847576bc1ff2a9e7c270b2c1",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/host-receipts/generator.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-control-01\\host-receipts\\generator.json",
+      "originalBytes": 388,
+      "originalSha256": "6f743288e7a6a2726c9f763882947b92e8393fcfe5dd56e9bd15ec9afdbcc7ce",
+      "sanitizedSha256": "6f743288e7a6a2726c9f763882947b92e8393fcfe5dd56e9bd15ec9afdbcc7ce",
+      "gzipSha256": "62845b971cb12999ae90b238d381a6a7ec759ac5c617189c93698a9375c6c4d7",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "startup/host-receipts/worker.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-control-01\\host-receipts\\worker.json",
+      "originalBytes": 385,
+      "originalSha256": "e61885a022a03e204d4a25671a4b577bd3e194c58e8df0a9e55426da7c7bc8f7",
+      "sanitizedSha256": "e61885a022a03e204d4a25671a4b577bd3e194c58e8df0a9e55426da7c7bc8f7",
+      "gzipSha256": "62bcba1a2610d70e1087b41a78577600d9f42addf0e5a1dc12d221fe0a172627",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    },
+    {
+      "path": "runners/startup-01.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-startup-01.mjs",
+      "originalBytes": 9409,
+      "originalSha256": "0883beec843b17c7d9ac6b51b19c4fe8a3989a78e9fdf4c1e1ccb3549e8cce77",
+      "sanitizedSha256": "0870e17cd12556d6d2f8383352d18625077cc5a278e1df9e67b524058e2991e5",
+      "gzipSha256": "f68cf8b8270d1a4abf47af7365e83ed020938691e8d8dc6126870531c03a8d7d",
+      "sanitization": "Local temp prefix and synthetic URL credential examples redacted; private control secrets excluded"
+    }
+  ]
+}

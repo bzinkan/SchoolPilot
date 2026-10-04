@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "selection": "Only exact source-manifest-listed files plus those manifests and this archive script; no recursive fixture directory capture",
+  "privateDumpEnvironmentCredentialsIncluded": false,
+  "capturedRequestPayloadsIncluded": false,
+  "credentialLikeMaterialReview": [
+    "Source templates interpolate future generated local credentials but include no values.",
+    "Fixed synthetic:synthetic localhost URLs in two pure test files are fabricated fixtures.",
+    "not-forwarded marker in a test is not an AWS credential."
+  ],
+  "sourceOrEvidenceRedacted": false,
+  "highConfidenceCredentialPatternMatches": 0,
+  "gzipReadbackVerified": true,
+  "originalManifestsUnchanged": true
+}

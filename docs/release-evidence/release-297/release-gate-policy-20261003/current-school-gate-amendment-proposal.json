@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "kind": "owner_current_school_release_gate_amendment_proposal",
+  "recordedAtUtc": "2026-10-04T20:46:38.8527420+00:00",
+  "status": "NOT_APPROVED",
+  "scope": "St. Francis DeSales; 133 active clients; SchoolPilot and ClassPilot2.9.7; both new Usage modes off",
+  "sourceOfRequirement": "Owner-approved Finish release preparation plan, section2 normal-load and comparison rules",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "classpilotSource": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "classpilotVersion": "2.9.7",
+  "classpilotZipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "evidence": {
+    "comparison": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-02\\public-summary-02.json",
+      "sha256": "38cc45eddc4afd96e98672a1c1c8fafc78510274ab5cf5156faa6382e1cdadb3"
+    },
+    "canonicalReview": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default-independent-full8-02\\review.json",
+      "sha256": "d232c9ea2d4ca95ae4f84026d6f014e332d5e8193dca47f47d64ad8a869b4ffd"
+    },
+    "packetReview": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default-independent-full8-02\\packet-review.json",
+      "sha256": "43b38c6f4b472dfec92b59d0c7f253fde9d31e7ca0262c9ac25d467b060f9bd0"
+    }
+  },
+  "offering": {
+    "activeSchoolCount": 1,
+    "clients": 133,
+    "expected": 798,
+    "durationMs": 60000,
+    "perDeviceCadenceMs": 10000,
+    "apiTasks": 1,
+    "apiCpuCores": 1,
+    "apiMemoryBytes": 2147483648,
+    "usageEnabled": false,
+    "staffReadsAdded": false,
+    "detailedRecorder": false,
+    "profiler": false,
+    "clientAdvertisementVersion": "2.9.6"
+  },
+  "sourceAndSchemas": {
+    "A": {
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "canonicalSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "forcedRlsTables": 121,
+      "migrations": 43
+    },
+    "B": {
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "helperImage": "sha256:1393f3fe55dbe8afb198004def67a427f0a2111642a5c4d15ece8158840bbcca",
+      "rawSchemaSha256": "b66f708ae877283ec90fce1ebee26cb32e2a3ef21ae0571526e7917a8e07aabb",
+      "canonicalSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "forcedRlsTables": 129,
+      "migrations": 53
+    }
+  },
+  "candidateAbsolutePasses": 3,
+  "candidateMaxP95Ms": 47.6562959999992,
+  "candidateMaxFixedWindowCpuFraction": 0.21154976666666667,
+  "allEightSafetySourceCustodyAndGracefulCleanupPassed": true,
+  "pairedObservations": {
+    "comparisonAcceptance": false,
+    "pairs": [
+      {
+        "baselineIndex": 3,
+        "candidateIndex": 4,
+        "candidateToBaselineTotalCpuPerSuccessRatio": 0.28235460193870154,
+        "candidateToBaselineP95Ratio": 0.02431764184596467,
+        "candidateMinusBaselineP95Ms": -1527.2818250000055
+      },
+      {
+        "baselineIndex": 6,
+        "candidateIndex": 5,
+        "candidateToBaselineTotalCpuPerSuccessRatio": 0.29917557558773583,
+        "candidateToBaselineP95Ratio": 0.02658382877901706,
+        "candidateMinusBaselineP95Ms": -1485.1387980000018
+      },
+      {
+        "baselineIndex": 7,
+        "candidateIndex": 8,
+        "candidateToBaselineTotalCpuPerSuccessRatio": 0.2652269031684751,
+        "candidateToBaselineP95Ratio": 0.01665367904896375,
+        "candidateMinusBaselineP95Ms": -2813.951392000001
+      }
+    ],
+    "controlP95DifferenceMs": 1791.2547659999982,
+    "controlCpuPerSuccessMaxToMinRatio": 1.0347848519113432
+  },
+  "conservativeAllRunsComparison": {
+    "comparisonAcceptance": false,
+    "minBaselineTotalOwnedCpuMsPerSuccessfulHeartbeat": 53.210944862155394,
+    "maxCandidateTotalOwnedCpuMsPerSuccessfulHeartbeat": 15.973901002506267,
+    "candidateToBaselineCpuPerSuccessRatio": 0.3001995368412862,
+    "minBaselineP95Ms": 1445.8670309999998,
+    "maxCandidateP95Ms": 47.6562959999992,
+    "candidateToBaselineP95Ratio": 0.03296035871779914,
+    "usesAllFiveBaselineAndAllThreeCandidateRuns": true
+  },
+  "controls": {
+    "comparisonAcceptance": false,
+    "cpuPerSuccessMaxToMinRatio": 1.0347848519113432,
+    "p95DifferenceMs": 1791.2547659999982,
+    "originalCpuControlLimit": 1.05,
+    "originalP95ControlDifferenceLimitMs": 50,
+    "cpuControlNumericallyStable": true,
+    "p95ControlNumericallyStable": false,
+    "originalStrictClosureStillFailed": true,
+    "noHostAttribution": true
+  },
+  "requestedPolicy": {
+    "waiveBaselineAbsoluteLatencyOnlyForThisUpgradeDecision": true,
+    "replaceBaselineLatencyStabilityGuardWithConservativeAllRunsComparison": true,
+    "requireAllThreeCandidateAbsolutePasses": true,
+    "candidateP95LimitMs": 500,
+    "candidateFixedWindowCpuFractionMustBeBelow": 0.6,
+    "requireZeroFailedLateRefusedInvalidOrUnexplainedOffers": true,
+    "requireCompleteSourceTenancyAuthorityErrorCaptureAndUnforcedCleanup": true,
+    "preserveExistingCpuControlLimit": 1.05,
+    "requireEveryPairedCpuPerSuccessRatioAtMost": 1.1,
+    "requireMedianPairedCpuPerSuccessRatioAtMost": 1.05,
+    "requireEveryPairedLatencyIncreaseMsAtMost": 100,
+    "requireMedianPairedLatencyIncreaseMsAtMost": 50,
+    "requireMedianPairedP95RatioAtMost": 1.1,
+    "requireConservativeMaxCandidateToMinBaselineCpuRatioAtMost": 1.05,
+    "requireConservativeMaxCandidateToMinBaselineP95RatioAtMost": 1.1,
+    "requireFinalPreparationAndResultingMainCIAndSourceEquivalence": true,
+    "requireVerifiedPublishedServingAndPhaseCompatibleRecoveryArtifacts": true,
+    "requireFreshProductionChecksAndSeparateOperationalAuthorization": true
+  },
+  "historicalStrictComparisonRemainsFailed": true,
+  "originalFailuresReclassified": false,
+  "ownerPolicyAmendmentApproved": false,
+  "broaderCapacityAccepted": false,
+  "usageCapacityAccepted": false,
+  "productionReadiness": false,
+  "mergeAuthorized": false,
+  "deploymentAuthorized": false,
+  "storePublicationAuthorized": false,
+  "runtimeActivationAuthorized": false,
+  "managedChromebookGate": "waived_not_passed",
+  "liveValidationStillRequiredMinutes": 30
+}

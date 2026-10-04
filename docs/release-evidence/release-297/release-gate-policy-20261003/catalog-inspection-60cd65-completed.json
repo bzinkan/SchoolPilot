@@ -1,0 +1,388 @@
+{
+  "schemaVersion": 1,
+  "kind": "completed_bounded_read_only_production_catalog_inspection",
+  "recordedAtUtc": "2026-10-04T16:41:22.7840856+00:00",
+  "approval": {
+    "path": "release297-catalog-inspection-approval-20261004-02/approval.json",
+    "sha256": "aa06c0ac354d7c3eb13efe1cc95a136ce12c4df5b153091f6cfaa88b2a24c08c",
+    "planSha256": "60cd65f79bdab9dc41b6e7ac30796d2e817271535b98d513705093f1f07f8792",
+    "windowEastern": "2026-10-04 12:05–12:45"
+  },
+  "privateReceiptSha256": "5ef100072274aa3c89eba10562840a2811d29ace1a6dd5834ef779a91c2dadbc",
+  "status": "inventoried",
+  "observedAtUtc": "2026-10-04T16:35:11.86Z",
+  "readOnly": true,
+  "serverVersionNum": 160004,
+  "taskStopped": true,
+  "definitionDeregistered": true,
+  "databaseWrites": 0,
+  "servicesUpdated": 0,
+  "tableCounts": {
+    "total": 143,
+    "rls": 121,
+    "forced": 121
+  },
+  "migrationLedger": {
+    "records": 43,
+    "nonComplete": 0,
+    "rows": [
+      {
+        "id": "20260822_classpilot_2_7_expand",
+        "checksum": "c95caa534651c96c59b5688c9bb584e5bb02f5b1cdab68502ede558d13cb66e2",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "b288545dac1faf54040e16de0aafaa58f8292f68"
+      },
+      {
+        "id": "20260822_classpilot_evidence_authority_expand",
+        "checksum": "2008c810d222e4ed65952277040374d309349c380ea035a1ba0254545ef7ec2e",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "b288545dac1faf54040e16de0aafaa58f8292f68"
+      },
+      {
+        "id": "20260822_classpilot_safety_capture_expand",
+        "checksum": "2df4c662055a1fef32bc27233d8655aa2f9b52cbc4846a92741f2012c84dd880",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "b288545dac1faf54040e16de0aafaa58f8292f68"
+      },
+      {
+        "id": "20260824_staff_identity_auth_version_expand",
+        "checksum": "de5192a0a27e3253105d214a63322294d814111076fd3751716c4f46c72731f8",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "7e0ec9be92fed655cedaea0b330a4779c2095d56"
+      },
+      {
+        "id": "20260827_classpilot_student_session_recovery_expand",
+        "checksum": "efd67ff366977cfb386ce11b2419d70512bab9d15eefff236cccb8b17001b44d",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "3f015e37ae9fbeb514c316be2e08cbf1f350d234"
+      },
+      {
+        "id": "20260827_classpilot_student_session_recovery_indexes_online",
+        "checksum": "fb598bbd758e7eb62b440bd6ef1b1d31ec570066b2cc713bb1df8fbddd018e92",
+        "mode": "nontransactional",
+        "status": "complete",
+        "application_sha": "3f015e37ae9fbeb514c316be2e08cbf1f350d234"
+      },
+      {
+        "id": "20260827_classpilot_student_session_recovery_validate",
+        "checksum": "4b700391903be42fc91a378bd909ca074ae5855a332f58e6842906aaab9071a4",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "3f015e37ae9fbeb514c316be2e08cbf1f350d234"
+      },
+      {
+        "id": "20260828_classpilot_stale_legacy_student_session_cleanup",
+        "checksum": "5c5790c6df64a7dfeb09154c5f310758d82bbeb9bee84402347b4a77ceb9a4b7",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "06df5ce60e2dfe96359310af2748e8f72f26423a"
+      },
+      {
+        "id": "20260828_classpilot_student_data_top_activities_expand",
+        "checksum": "95b329113e3df1d5c7354b9972090db3e49ddd4574c563692458f731f094449b",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "16f773880c23296764e0cc7a34ccafab475aaa59"
+      },
+      {
+        "id": "20260901_classpilot_sso_policy_expand",
+        "checksum": "d310d3aafa87939d2b9964c1894f65344413f722b07d5114554a876c15defe1e",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "29173e7f29f9137e2bb1d91ede82807184976bb6"
+      },
+      {
+        "id": "20260902_schools_staff_password_login_expand",
+        "checksum": "b4582122c802128dcf0953b8334791679486c5f799a54d9660f2ac0124132b89",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "af510d6b172cc5ef552919b79d19fe4b66d7ea2c"
+      },
+      {
+        "id": "20260905-mailpilot-safety-durability-v1",
+        "checksum": "90a2c9371191bad4799ea3ec398e9e225f1cdc355085c14d1f8267a4f398cb2c",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "20260905-roster-integrations-v1",
+        "checksum": "99f284ef1287d85788fa5fba500ee5eb970d91d5e37a31169f2ae197cfe27636",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "20260928_import_processing_stages",
+        "checksum": "16a1499823c645fa5ab175f56adae9da066ecfebd85e6f24230252f1524d4d8b",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "cbb0166790ace8846a187121fb620330ea0ff08c"
+      },
+      {
+        "id": "20260929_microsoft_sign_in_expand",
+        "checksum": "1f330d7a1128f5c985ea50537e96618d1ceaa5c00aa3d2984970e6251471c908",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "71534647085fb7941303216c8a7b7add3278bf98"
+      },
+      {
+        "id": "classpilot-chat-channel-control-20260918",
+        "checksum": "b22bc274bacee23ed1fb25c848e9f1023db007770c32ca54ae6308c62605f631",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "3dc89ad3e73f055538d943dabe51a425e2f6cab2"
+      },
+      {
+        "id": "classpilot-chat-oversight-20260918",
+        "checksum": "bdd553b3287a162020044e744ecc7543c067b0df251cfafd7b4c82238893d6d0",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "3dc89ad3e73f055538d943dabe51a425e2f6cab2"
+      },
+      {
+        "id": "classpilot-chat-seen-state-20260918",
+        "checksum": "462730472fb38e56f41b8f43600b90f73d643dfabdccccd33034810606f3dbff",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "3dc89ad3e73f055538d943dabe51a425e2f6cab2"
+      },
+      {
+        "id": "classpilot-chat-transcript-index-online-20260918",
+        "checksum": "1ecc033f479ddb1331ce1219fa5c3d0d5f4cefbeed16014efdeb78f2b4c2c22d",
+        "mode": "nontransactional",
+        "status": "complete",
+        "application_sha": "3dc89ad3e73f055538d943dabe51a425e2f6cab2"
+      },
+      {
+        "id": "classpilot-class-tools-expand-20260922",
+        "checksum": "c9782b8ccf190193ca580759199c53b385d64176a319683741a0cb5030f7b07b",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "893dc62eef6bd7812e555c1b983af592dafa19c8"
+      },
+      {
+        "id": "classpilot-content-categories-20260905",
+        "checksum": "93e4d136ae9ae1a3be2926c8e2bbe6f5e906079c2720a61482a686fcea45f074",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "classpilot-coverage-categories-20260908",
+        "checksum": "977d4d61899418cecab947099105587c9b092fd8a0fb232690f70be276296a27",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "21104224eed9837c5ca514e94fa31ae32350727f"
+      },
+      {
+        "id": "classpilot-monitoring-interruptions-20260905",
+        "checksum": "8c2d4bca6bf94dfb50591dbb0048932bee4b1427c4e673afaf6d3dea9c7554c8",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "classpilot-safety-center-20260905",
+        "checksum": "6547e45a9867d05b0051402a29ec29be005d3fddaf98268cb45f70099c77d470",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "classpilot-schedule-boundaries-20260915",
+        "checksum": "5d3f49dcab3328c2af52e33b0a07fa930ba0a730aa5da08f9927db7e7ba6e0e0",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "381342ad92af42e21ed1079df7343d8223a90f6d"
+      },
+      {
+        "id": "classpilot-schedule-config-repair-20260916",
+        "checksum": "903439830083c18639f1fa65e344cc14b393e26ff5cc25efea848b6c857a6b8e",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "57d7959b3056f763af448d4215934b648d73ac7e"
+      },
+      {
+        "id": "classpilot-scheduled-classroom-20260915",
+        "checksum": "6a660578a41e58cab0b931963f2345a0013307908d7412901e2fb3bb9cef057e",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "381342ad92af42e21ed1079df7343d8223a90f6d"
+      },
+      {
+        "id": "classpilot-schedule-profile-supervision-20260905",
+        "checksum": "bcd6f3c6def43b35768f3e84434064cdbd442c76957bd022bc1b9e2c39df4d61",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "classpilot-scheduling-20260905",
+        "checksum": "a2bdcf861be6bd7899b43f13cb5e0027a470d09025a249642085d9e4dc2c69e8",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "classpilot-school-website-policy-20260905",
+        "checksum": "12d948a3712627604918bbea1ec88a49e16285caa9ba225a924debb2050416c7",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "5a2d365b3b3184248f43e75ff572d05cd50df51a"
+      },
+      {
+        "id": "classpilot-supervision-activity-reports-20260910",
+        "checksum": "af8503cd7bbbe1023fe8aef6a91205c8353809dad47d1a09f001283a92314124",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "e6cf64598dd4363750cc2e5553c05891b67d1c6a"
+      },
+      {
+        "id": "classpilot-teacher-preferences-20260927",
+        "checksum": "16f6b98348868ce93223e055ee526e0a33fc8c24d33876e6b7b67dd2e12cf369",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "4c5a859d624dac7c46e6b1901006d2bc7a3519b1"
+      },
+      {
+        "id": "mydesk-ai-imports-20260925",
+        "checksum": "5c84b762517199c61b635c0b044a554bd6a5cad576dddf4b374536279e2362a7",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "b013c65284354dfae932ff713b67d89023f92564"
+      },
+      {
+        "id": "mydesk-grade-filing-20260927",
+        "checksum": "80c364983576decdfdbaf6cce48ac753c0a51a90ba6cb0fe32d3fcc8a613999f",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9b3cabdf4ca7b40280b9598cc41ab51c3581a178"
+      },
+      {
+        "id": "mydesk-import-destination-20260928",
+        "checksum": "01fb875d1d7d94bdf89ff8de4224ea8ca34deaf61effa7813cd6e6bcc7a5edb2",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9b3cabdf4ca7b40280b9598cc41ab51c3581a178"
+      },
+      {
+        "id": "mydesk-measured-seating-20260926",
+        "checksum": "0abfa94953d706c683a08260b429e43c03a69f382013fc94c8328cc5f8daa7d9",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9573f0eb9ac2497894edd96eb6507462990f4de8"
+      },
+      {
+        "id": "mydesk-private-notebook-20260925",
+        "checksum": "752810f0b4a7f5ddd9e56c50b229794ea92d28e43b83da723643f75e5569e71f",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "b013c65284354dfae932ff713b67d89023f92564"
+      },
+      {
+        "id": "mydesk-private-seating-20260925",
+        "checksum": "8c33a451afda3b60712ee15ece6c79f6f5ca7a625ae1f9abc8b02c19fe4a1bce",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "b013c65284354dfae932ff713b67d89023f92564"
+      },
+      {
+        "id": "mydesk-workspace-expansion-20260926",
+        "checksum": "08818041d94669eaf7f9db3fd9cc3e44160a15122a8f510a2bb3878b5d89ea06",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9573f0eb9ac2497894edd96eb6507462990f4de8"
+      },
+      {
+        "id": "passpilot-kiosk-schedule-20260924",
+        "checksum": "997daca033bfff4e6722b77b8c4291ea4c2a87c8d65e1162f6782e1ef61732a1",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "6985f5884b527c599ccb8440aa6e9321c5bcc59b"
+      },
+      {
+        "id": "school-discipline-records-20260927",
+        "checksum": "24e234c8d2363c55aaad01baa42d7903dc478eb0bb849a1e038b3de212269f09",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9573f0eb9ac2497894edd96eb6507462990f4de8"
+      },
+      {
+        "id": "school-discipline-redesign-20260928",
+        "checksum": "9e42fed5b5dfb44f7fd3cc414577da47ae881f5bfddea63868e6c9ce0fc380f2",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9b3cabdf4ca7b40280b9598cc41ab51c3581a178"
+      },
+      {
+        "id": "student-information-redesign-20260928",
+        "checksum": "743fb8bf72607f3f083a3eb78479d7b842e405ab444d10ed8839546425a36533",
+        "mode": "transactional",
+        "status": "complete",
+        "application_sha": "9b3cabdf4ca7b40280b9598cc41ab51c3581a178"
+      }
+    ]
+  },
+  "approvedSchool": {
+    "matches": 1,
+    "classpilotEntitled": true,
+    "flags": {
+      "active_status": true,
+      "is_active": true,
+      "not_deleted": true,
+      "not_disabled": true,
+      "plan_not_canceled": true,
+      "within_paid_through": true
+    },
+    "licenses": [
+      {
+        "product": "CLASSPILOT",
+        "active_status": true,
+        "unexpired": true
+      },
+      {
+        "product": "PASSPILOT",
+        "active_status": true,
+        "unexpired": true
+      }
+    ]
+  },
+  "healthSentinel": {
+    "present": true,
+    "tableSupported": true,
+    "unfiltered": true,
+    "layoutSupported": true,
+    "canSelect": true,
+    "canInsert": true,
+    "canDelete": true,
+    "canUpdate": true,
+    "canTruncate": true,
+    "sequencePresent": true,
+    "sequenceUsage": true,
+    "sequenceSelect": true,
+    "sequenceUpdate": true,
+    "schemaCreate": true,
+    "schemaUsage": true,
+    "ownsTable": true,
+    "ownerMembership": true,
+    "runtimeRoleSha256": "84829ade5d8e360490f6c7aff6fb886d868f748aa170ede0e667b72d7afbf5d2",
+    "ownerRoleSha256": "84829ade5d8e360490f6c7aff6fb886d868f748aa170ede0e667b72d7afbf5d2",
+    "sequenceOwnerRoleSha256": "84829ade5d8e360490f6c7aff6fb886d868f748aa170ede0e667b72d7afbf5d2",
+    "ready": true
+  },
+  "independentClosureVerified": false,
+  "sourceCatalogReconciled": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Metadata-only inspection; no student, staff or message content queried",
+    "Synthetic baseline44 ledger differs from actual43; source effect requires reconciliation",
+    "Successful inspector does not establish complete production readiness",
+    "Release execution and activation remain separately authorized"
+  ]
+}

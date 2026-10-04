@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_completed_production_metadata_review",
+  "recordedAt": "2026-10-04T16:53:47.803Z",
+  "privateReceipt": {
+    "sha256": "5ef100072274aa3c89eba10562840a2811d29ace1a6dd5834ef779a91c2dadbc",
+    "bytes": 1328583
+  },
+  "planSha256": "60cd65f79bdab9dc41b6e7ac30796d2e817271535b98d513705093f1f07f8792",
+  "approvalSha256": "aa06c0ac354d7c3eb13efe1cc95a136ce12c4df5b153091f6cfaa88b2a24c08c",
+  "provisionalPublicSummary": {
+    "sha256": "7a2ed0b407e4b8a86fd7570481c0bf19bc66e7b08fa228f274428fcd3026659e",
+    "verified": true,
+    "preservedUnchanged": true
+  },
+  "productionSource": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "productionImageDigest": "sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+  "independentClosure": {
+    "boundedAwsGets": 2,
+    "taskStopped": true,
+    "containerExitCode": 0,
+    "definitionInactive": true,
+    "taskRoleAbsent": true,
+    "readonlyRoot": true,
+    "cpuUnits": 512,
+    "memoryMiB": 1024,
+    "startedAt": "2026-10-04T12:35:10.926000-04:00",
+    "stoppedAt": "2026-10-04T12:35:36.626000-04:00",
+    "elapsedSeconds": 25.7,
+    "withinApprovedWindow": true,
+    "taskGetSha256": "44eab79a140b5f6c4889e0b56509bd400a6e568434d5da9daae7691bf7636239",
+    "definitionGetSha256": "a611f434bca13fcdab1948bf6b0be9dd1f8a6f986f6732f447609ff3881a1040"
+  },
+  "catalog": {
+    "tables": 143,
+    "forcedRlsTables": 121,
+    "policies": 121,
+    "functions": 37,
+    "completedLedgerRows": 43,
+    "nonCompleteLedgerRows": 0,
+    "baselineForcedVectorExact": true,
+    "baselineSyntheticLedgerRows": 44,
+    "baselineExtraSyntheticRows": 1,
+    "sharedBaselineChecksumMismatches": 0,
+    "candidateAllFixtureLedgerRows": 54,
+    "candidateDefaultProductionManifestRows": 53,
+    "sharedCandidateChecksumMismatches": 0,
+    "missingDefaultExpansionRows": 10,
+    "deferredContractRows": 1,
+    "addedCandidateRlsTables": 8,
+    "newScreenshotEvidenceFunctionPresent": false,
+    "sourceLedgerSelectionReconciled": true,
+    "fullSourceCatalogEquivalenceClaimed": false,
+    "actualLedgerVectorSha256": "ee989eb31c8c6d8258e3de9ab76c467c29180d0cb08475285adc5b206080f6c9",
+    "privateReconciliationSha256": "225a3ba4fb4e4b426b4f32982130f3a78edc3ca6fa05c0165013424f7ee5ede4"
+  },
+  "approvedSchool": {
+    "matches": 1,
+    "activeEligibilityFlagsAllTrue": true,
+    "classpilotEntitled": true,
+    "activeUnexpiredClasspilotLicense": true,
+    "trackingHoursQueried": false,
+    "identifiersPublished": false
+  },
+  "healthSentinel": {
+    "metadataReady": true,
+    "present": true,
+    "supportedOriginalLayout": true,
+    "selectInsertDelete": true,
+    "sequenceUsage": true,
+    "currentRoleOwnsTable": true,
+    "currentRoleHasSchemaCreate": true,
+    "leastPrivilegeEquivalentToSyntheticFixture": false,
+    "nativeHealthRoundTripClaimed": false
+  },
+  "readOnly": true,
+  "databaseWrites": 0,
+  "servicesUpdated": 0,
+  "remoteCloudMutationsByReviewer": 0,
+  "testsOrNativeWorkByReviewer": 0,
+  "limitations": [
+    "The baseline44 fixture deliberately includes an unapplied optional staff-identity contract; it is not byte/catalog equivalent to production43.",
+    "Normal production selector excludes the deferred contract unless explicitly approved or already applied; ten additive expansion migrations remain missing.",
+    "The new screenshot-evidence function is absent; its future installation/body/ACL/adoption requires separate evidence.",
+    "The observed sentinel is ready by metadata, with ownership/schema-CREATE broader than the restricted synthetic fixture.",
+    "Inspection does not establish all-job health, restore readiness, capacity, deployment or activation approval."
+  ],
+  "capacityAccepted": false,
+  "policyAmendmentApproved": false,
+  "deploymentGreenLight": false
+}

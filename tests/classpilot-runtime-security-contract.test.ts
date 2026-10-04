@@ -75,7 +75,7 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(heartbeat, /req\.body\?\.requestFabState === true/);
     assert.match(
       heartbeat,
-      /withClasspilotStudentControlDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
+      /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
     );
     assert.match(
       heartbeat,
@@ -164,7 +164,10 @@ describe("ClassPilot tracking-window screenshot authority", () => {
   });
 
   it("never short-circuits a tracking-window transition heartbeat before issuing policy", async () => {
-    const devices = await source("src/routes/classpilot/devices.ts");
+    const [devices, storage] = await Promise.all([
+      source("src/routes/classpilot/devices.ts"),
+      source("src/services/storage.ts"),
+    ]);
     const heartbeat = devices.slice(
       devices.indexOf('router.post("/device/heartbeat"'),
       devices.indexOf('router.post("/device/screenshot"')
@@ -177,10 +180,30 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       heartbeat,
       /canShortCircuitAcceptedHeartbeat\(\{[\s\S]*?acceptedCapabilities: protocol\.acceptedCapabilities,[\s\S]*?\}\)/
     );
-    assert.match(
-      heartbeat,
-      /const screenshotTrackingAuthority = trackingWindowScreenshotLeaseNegotiated[\s\S]*?getClasspilotScreenshotAuthorityProjection/
+    assert.equal((heartbeat.match(/readScreenshotAuthority\(\)/g) ?? []).length, 1,
+      "negotiated heartbeat authority must be requested once from the owned delivery reader");
+    assert.doesNotMatch(heartbeat, /getClasspilotScreenshotAuthorityProjection\(/,
+      "the route must not compute negotiated authority in the earlier persistence lease");
+    assert.match(heartbeat, /const screenshotPolicyPromise = trackingWindowScreenshotLeaseNegotiated\s*\? Promise\.resolve\(undefined\)\s*:\s*resolveClasspilotScreenshotPolicy/);
+    const delivery = heartbeat.slice(heartbeat.indexOf("const finalDelivery ="));
+    assert.match(delivery, /withClasspilotHeartbeatDeliveryAuthority[\s\S]*freezeSsoPolicy: true[\s\S]*async \(transactionDb, readScreenshotAuthority\)[\s\S]*const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated[\s\S]*projection: await readScreenshotAuthority\(\)/);
+    const heartbeatAuthority = storage.slice(
+      storage.indexOf("export async function withClasspilotHeartbeatDeliveryAuthority"),
+      storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
     );
+    assert.equal((heartbeatAuthority.match(/getClasspilotScreenshotAuthorityProjection\(/g) ?? []).length, 1,
+      "the owned reader must compute the projection once on its exact delivery transaction");
+    assert.match(heartbeatAuthority, /withClasspilotStudentControlDeliveryAuthorityCore\(options,[\s\S]*async transactionDb =>[\s\S]*prepareAuthorized\(transactionDb, \(\) =>[\s\S]*getClasspilotScreenshotAuthorityProjection\(options, transactionDb\)/);
+    const authority = storage.slice(
+      storage.indexOf("async function withClasspilotStudentControlDeliveryAuthorityCore"),
+      storage.indexOf("async function assertClasspilotHeartbeatDeliveryCurrent")
+    );
+    assert.match(authority, /if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority\(options\.schoolId, transactionDb\);/);
+    const policyLock = authority.indexOf("await lockClasspilotSsoPolicyDeliveryAuthority(");
+    assert.ok(policyLock >= 0 && policyLock < authority.indexOf("await prepareAuthorized(transactionDb)"),
+      "shared delivery authority must freeze SSO policy before preparing the screenshot projection");
+    assert.match(delivery, /deliveredControlRevision: finalClassroomState\?\.revision \?\? 0/);
+    assert.match(delivery, /: screenshotPolicy/);
   });
 
   it("linearizes exact authority, uncached settings, and storage in one transaction", async () => {
@@ -295,7 +318,16 @@ describe("ClassPilot command authority envelopes", () => {
       dispatcher.indexOf("async function endStudentSessionsForSignOut")
     );
     assert.match(envelopes, /const bindingEnvelope = \{[\s\S]*studentId: target\.studentId,[\s\S]*studentSessionId: target\.studentSessionId/);
-    assert.equal(envelopes.match(/\.\.\.bindingEnvelope/g)?.length, 5);
+    assert.equal(envelopes.match(/\.\.\.bindingEnvelope/g)?.length, 7);
+    const focusFrames = envelopes.slice(envelopes.indexOf('if (commandType === "activate-tab"'),
+      envelopes.indexOf('if (commandType === "close-tabs"'));
+    assert.equal(focusFrames.match(/\.\.\.bindingEnvelope/g)?.length, 2,
+      "Focus and Bring Forward retain frozen binding on both outer frame and inner command");
+    assert.match(focusFrames, /!own[\s\S]*?exactBinding[\s\S]*?FOCUS_TAB_CAPABILITY/);
+    assert.match(focusFrames, /data: \{ tabRef: own\.tabRef, observedRevision: own\.observedRevision \}/);
+    const legacyFrames = envelopes.slice(envelopes.indexOf('if (commandType === "close-tabs"'));
+    assert.equal(legacyFrames.match(/\.\.\.bindingEnvelope/g)?.length, 5,
+      "exact close, teacher message, and ordinary outer/inner bindings remain intact");
     assert.match(chat, /studentSessionId: targetBinding\.id/);
     assert.match(chat, /studentSessionId: binding\.id/);
     assert.doesNotMatch(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);
@@ -587,10 +619,11 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
   });
 
   it("rechecks entitlement inside scheduled occurrence/start locks and login pickup", async () => {
-    const [scheduled, websocket, entitlement] = await Promise.all([
+    const [scheduled, websocket, entitlement, heartbeatQueries] = await Promise.all([
       source("src/services/classpilotScheduledStart.ts"),
       source("src/realtime/websocket.ts"),
       source("src/services/classpilotEntitlement.ts"),
+      source("src/services/classpilotHeartbeatReadQueries.ts"),
     ]);
     const preparation = scheduled.slice(
       scheduled.indexOf("async function prepareScheduledOccurrence"),
@@ -612,8 +645,18 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     );
     assert.match(scheduled, /startActiveScheduledClassesForTeacher[\s\S]*await assertClasspilotEntitled\(options\.schoolId\)/);
     assert.match(pickup, /assertClasspilotEntitled\(schoolId\)[\s\S]*startActiveScheduledClassesForTeacher/);
-    assert.match(entitlement, /options\.lock[\s\S]*schoolQuery\.for\("share"\)/);
-    assert.match(entitlement, /options\.lock[\s\S]*licenseQuery\.for\("share"\)/);
+    assert.match(entitlement, /await readHeartbeatSchool\(dbInstance, schoolId\)/);
+    assert.match(entitlement, /await readHeartbeatLicense\(dbInstance, schoolId\)/);
+    const schoolQuery = heartbeatQueries.slice(
+      heartbeatQueries.indexOf("export function heartbeatSchoolQuery"),
+      heartbeatQueries.indexOf("export function heartbeatLicenseQuery")
+    );
+    const licenseQuery = heartbeatQueries.slice(
+      heartbeatQueries.indexOf("export function heartbeatLicenseQuery"),
+      heartbeatQueries.indexOf("export function heartbeatSessionQuery")
+    );
+    assert.match(schoolQuery, /from\(schools\)[\s\S]*eq\(schools\.id, options\.schoolId\)[\s\S]*for\("share"\)/);
+    assert.match(licenseQuery, /from\(productLicenses\)[\s\S]*eq\(productLicenses\.schoolId, options\.schoolId\)[\s\S]*for\("share"\)/);
   });
 
   it("locks canonical entitlement inside command and FAB settings transactions", async () => {
@@ -693,7 +736,14 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       storage.indexOf("// ClassPilot - Check-ins")
     );
     assert.match(inbox, /inbox_target\.status IN \('unavailable', 'requested', 'sent', 'received'\)/);
-    assert.match(inbox, /inbox_command\.expires_at IS NULL OR inbox_command\.expires_at > now\(\)/);
+    assert.match(inbox, /inbox_command\.expires_at IS NULL OR inbox_command\.expires_at > \$\{classpilotAuthorityClockSql\(clock\)\}/);
+    assert.match(inbox, /return getPendingMessagesForStudentWithAuthorityLocked\(options, transactionDb, "transaction"\)/);
+    const heartbeatDelivery = storage.slice(
+      storage.indexOf("export async function withClasspilotHeartbeatDeliveryAuthority"),
+      storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
+    );
+    assert.match(heartbeatDelivery, /getPendingMessagesForStudentWithAuthorityLocked\(\s*\{ \.\.\.options, excludeMessageIds: inboxExclusions \}, transactionDb, "current",\s*\)/);
+    assert.match(storage, /function classpilotAuthorityClockSql\(clock: ClasspilotAuthorityClock\): SQL \{\s*return clock === "current" \? sql`clock_timestamp\(\)` : sql`now\(\)`;\s*\}/);
     assert.match(inbox, /durableAuthorityRevision[\s\S]*controlState\?\.revision/);
     assert.match(inbox, /hasCurrentClasspilotStudentControlAuthority/);
     assert.doesNotMatch(inbox, /inbox_target\.status IN \([^)]*'failed'/);
@@ -703,7 +753,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     );
     assert.match(heartbeat, /deliveryState\.hasUnacknowledgedCommandMessages/);
     assert.match(heartbeat, /recent\.some\([\s\S]*message\.commandId/);
-    assert.match(heartbeat, /filter\(\(message\) => !message\.commandId\)/);
+    assert.match(heartbeat, /const legacyDeliveredIds = recent\.filter\(message => !message\.commandId\)\.map\(message => message\.id\)/);
     assert.doesNotMatch(heartbeat, /pendingMessages\.map\(\(message\) => message\.id\)/);
 
     const ack = storage.slice(
@@ -755,10 +805,27 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       );
     }
     const devices = await source("src/routes/classpilot/devices.ts");
-    for (const route of ["command-acks", "heartbeat", "screenshot", "event", "runtime-error"]) {
-      const line = devices.split("\n").find((entry) => entry.includes(`/${route}`) && entry.includes("router."));
-      assert.match(line || "", /requireClasspilotEntitlement/);
+    for (const route of ["command-acks", "screenshot", "event", "runtime-error"]) {
+      // Inspect the middleware header up to the handler arrow, including
+      // multiline lifetime wrappers. An entitlement call in the body cannot
+      // substitute for installing the canonical middleware before the handler.
+      const header = devices.match(new RegExp(
+        `router\\.post\\("(?:/device|/extension)/${route}",([\\s\\S]*?)=>`
+      ));
+      assert.ok(header, `${route} route header must exist`);
+      assert.match(header[1]!, /requireClasspilotEntitlement/);
     }
+    // The heartbeat factory's uncached resolver has its own arrow. Inspect
+    // through the actual handler signature rather than stopping at that arrow.
+    const heartbeatHeader = devices.match(
+      /router\.post\("\/device\/heartbeat",([\s\S]*?)async\s*\(req,\s*res,\s*next\)\s*=>/
+    );
+    assert.ok(heartbeatHeader, "heartbeat route middleware header must exist");
+    assert.match(
+      heartbeatHeader[1]!,
+      /^\s*trackUsageCapacityMiddleware\("heartbeat_middleware", requireCryptographicDeviceAuth\),\s*withClasspilotHeartbeatAdmission\(\[\s*trackUsageCapacityMiddleware\("heartbeat_middleware", createRequireClasspilotEntitlement\(schoolId =>\s*runWithUsageCapacityOperation\("heartbeat_middleware", \(\) => resolveClasspilotEntitlement\(schoolId\)\)\)\),\s*trackUsageCapacityMiddleware\("heartbeat_middleware", deviceHeartbeatLimiter\),\s*$/,
+      "heartbeat must authenticate before admission, then use the uncached canonical entitlement gate before its limiter"
+    );
     const monitoringEvents = await source("src/routes/classpilot/monitoringEvents.ts");
     assert.match(
       monitoringEvents,

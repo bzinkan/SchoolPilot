@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T00:43:50.472Z",
+  "scope": "Measured device-JWT key parsing and absent optional Focus validation CPU reduction only.",
+  "source": {
+    "baseCommit": "3624196cff8ff4a8d5420f0474426aec669feed3",
+    "archiveTimeHead": "3624196cff8ff4a8d5420f0474426aec669feed3",
+    "state": "incremental shared worktree; application/test slice frozen before archive",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "src/services/deviceJwt.ts": "38c6490edbc8f25be8e2de3e3d2b333caf307a1ed7fa69878d103866ce6d6f50",
+      "src/services/classpilotRealtimeStatus.ts": "a3ad0f1ac1057dd21ce8505a9cf49f06a7ee99c2dc740d3ad11da432273ddf90",
+      "src/routes/classpilot/devices.ts": "5c20c56aba5e0bda3c3dd0f64e3736108bd0b6366a7184b37af0b44d3ae72277",
+      "tests/device-jwt.test.ts": "76d97892ebf0ad2c425367587d393e9639f8966f3bd2cbd520fac64cfa33ef93",
+      "tests/classpilot-focus-optional-status.test.ts": "9463874be50b1294cc46b22c47c35e1dd04fd7c393993b9380a232acc69f71a0"
+    },
+    "note": "Hashes identify final archive-time files, not pre-fix runs. Combined clean-source CI and capacity acceptance are separate."
+  },
+  "behavior": {
+    "jwt": "Only immutable process-start key material is reused. Preserve jsonwebtoken private/public PEM conversion, UTF-8 symmetric fallback, HS256 allowlist, all claims, seven-day expiry, error mapping and restart-based rotation; every verification still executes native cryptographic verification and time checks.",
+    "focus": "Skip union parsing only for undefined Focus at active snapshot, cache decoding and public projection. Null and every present malformed value still pass through the strict schema; valid lifecycle states preserve public output."
+  },
+  "commands": {
+    "red": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/device-jwt.test.ts tests/classpilot-focus-optional-status.test.ts",
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/device-jwt.test.ts tests/classpilot-focus-optional-status.test.ts tests/classpilot-realtime-status.test.ts tests/classpilot-websocket-auth-diagnostics.test.ts",
+    "sourceTypes": "npm run check",
+    "testTypes": "npm run check:tests",
+    "castRatchet": "npm run check:test-casts"
+  },
+  "coverage": [
+    "Real Node cryptography and installed jsonwebtoken interoperability",
+    "Wrong-key, tamper, none, HS384/512 and RS256 rejection",
+    "Public/private PEM key-confusion rejection",
+    "Expiry and not-before rechecked across repeated token verification",
+    "Process-start secret rotation and missing production secret",
+    "Absent Focus skips parser; malformed-present data rejected at all three boundaries",
+    "All valid Focus lifecycle states preserved",
+    "Existing realtime status and executable WebSocket authentication diagnostics"
+  ],
+  "limitations": [
+    "No database owner/restricted run was needed for this no-SQL change; existing authority/RLS paths are unchanged.",
+    "No capacity conclusion from these focused runs; final unprofiled workload and complete CI remain independent gates.",
+    "Source/type checks ran incrementally while other authorized slices were in the shared worktree."
+  ],
+  "sanitation": "Home paths, database URLs and JWT-shaped values redacted; all test key material synthetic; gzip files retain full sanitized logs, including failures.",
+  "files": [
+    {
+      "file": "red-01.log.gz",
+      "status": "failed_expected_old_source_and_fixture_count",
+      "note": "Before product fix: immutable-key and absent-Focus regressions fail as intended. A third failure was a test-count fixture error for primitive malformed Focus values; corrected to assert a per-boundary call-count delta. No product assertion removed.",
+      "sourceBytes": 5921,
+      "archivedBytes": 1476,
+      "originalSha256": "e4ec39f7776d4d7c93f170991138812a4dad049d77f0fe4ab1fe7d5320cf6222",
+      "sanitizedSha256": "5893485aae0011740491004c3cb46e02516ca001bdb41c82e37114e6302410f9",
+      "archiveSha256": "ae73d3a20a9d552e978deff9d88d10625be8606c2706adbb0a62ce8a07477c29",
+      "tap": {
+        "tests": 10,
+        "suites": 2,
+        "pass": 7,
+        "fail": 3,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "green-01.log.gz",
+      "status": "passed",
+      "note": "All 41 focused tests pass after product changes and fixture correction.",
+      "sourceBytes": 11240,
+      "archivedBytes": 2220,
+      "originalSha256": "e03bfee4eb6aa7523ac5b7fc6d158356c7319a646aa86ec00b96330d1cb4fb69",
+      "sanitizedSha256": "e03bfee4eb6aa7523ac5b7fc6d158356c7319a646aa86ec00b96330d1cb4fb69",
+      "archiveSha256": "25cd6b92e9351844b42bbb499cc8db534e7adae077443d3b18f65d5274532728",
+      "tap": {
+        "tests": 41,
+        "suites": 4,
+        "pass": 41,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "green-02.log.gz",
+      "status": "passed",
+      "note": "Final 41-test run additionally exercises an actually unset production key, alongside empty-key rejection.",
+      "sourceBytes": 11248,
+      "archivedBytes": 2227,
+      "originalSha256": "566504225a2ab9470ebda55088a168504a7c6e858d514398a8dc5622d30fead1",
+      "sanitizedSha256": "566504225a2ab9470ebda55088a168504a7c6e858d514398a8dc5622d30fead1",
+      "archiveSha256": "bc662a3353a0e3539da755acb0402ca8b1a1be801456bd62c09775474dcc76b5",
+      "tap": {
+        "tests": 41,
+        "suites": 4,
+        "pass": 41,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "green-03.log.gz",
+      "status": "passed",
+      "note": "Final 41-test run after type-only fixture corrections: explicitly narrow mock calls, signature segment and realtime read unions; assertions retained.",
+      "sourceBytes": 11239,
+      "archivedBytes": 2210,
+      "originalSha256": "8e847971bf7a3b2b3c0cbfefcb421a32f2d77943113961543227b1afc2c7f8e0",
+      "sanitizedSha256": "8e847971bf7a3b2b3c0cbfefcb421a32f2d77943113961543227b1afc2c7f8e0",
+      "archiveSha256": "4ba39826fa29a5d4a552672b23ec30712889be3a9d2e81e5d0144cf83a56e40c",
+      "tap": {
+        "tests": 41,
+        "suites": 4,
+        "pass": 41,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "source-types-01.log.gz",
+      "status": "passed",
+      "note": "npm run check; source TypeScript passes.",
+      "sourceBytes": 51,
+      "archivedBytes": 71,
+      "originalSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveSha256": "81cfb2d18cc731ab6728460c7fcb80525562667c06cf37456241345411477281"
+    },
+    {
+      "file": "test-types-01.log.gz",
+      "status": "failed_test_fixture_types",
+      "note": "New tests had mock-overload, unchecked indexing and read-union type errors. Application source was clean. The tests were corrected without unsafe casts or reduced assertions.",
+      "sourceBytes": 297,
+      "archivedBytes": 183,
+      "originalSha256": "c7214cca818c899624c65595e10102770792fe4b2ed9a7c2a16c77aacf003af7",
+      "sanitizedSha256": "c7214cca818c899624c65595e10102770792fe4b2ed9a7c2a16c77aacf003af7",
+      "archiveSha256": "450abaf980d9243fe6efc76ead0d2a16b68fd2e7860e7e87c1e2c08bf8698ee0"
+    },
+    {
+      "file": "test-types-02.log.gz",
+      "status": "passed",
+      "note": "npm run check:tests after test fixture correction; no new diagnostic debt.",
+      "sourceBytes": 204,
+      "archivedBytes": 180,
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveSha256": "0bf64296e5751c143f80893a2f454a42ec269e1202d49738f89ae97a654ceca4"
+    },
+    {
+      "file": "casts-01.log.gz",
+      "status": "passed",
+      "note": "npm run check:test-casts; unchanged unsafe-cast baseline.",
+      "sourceBytes": 181,
+      "archivedBytes": 166,
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "96234f629f0c609c1748143d79c04eb74c92a5a1252b4e0f00b64a2f3fac0df0"
+    },
+    {
+      "file": "casts-02.log.gz",
+      "status": "passed",
+      "note": "Final npm run check:test-casts after test fixture correction; unchanged unsafe-cast baseline.",
+      "sourceBytes": 181,
+      "archivedBytes": 166,
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "96234f629f0c609c1748143d79c04eb74c92a5a1252b4e0f00b64a2f3fac0df0"
+    }
+  ]
+}

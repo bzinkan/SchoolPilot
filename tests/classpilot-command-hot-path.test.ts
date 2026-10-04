@@ -171,8 +171,11 @@ describe("ClassPilot command and ACK hot path", () => {
 
     assert.match(devices, /PENDING_MESSAGE_RECONNECT_GAP_MS = 60_000/);
     assert.match(heartbeatSection, /pendingMessageRecoveryHeartbeat/);
-    assert.match(heartbeatSection, /getPendingMessagesForStudent\(\{[\s\S]*?schoolId,[\s\S]*?studentId,/);
-    assert.match(heartbeatSection, /res\.once\("finish", \(\) => \{[\s\S]*?current\.messageIds\.add\(messageId\)/);
+    assert.match(heartbeatSection, /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*?schoolId, studentId, studentSessionId, deviceId[\s\S]*?shouldCheckPendingMessages \? \{ excludeMessageIds:/);
+    assert.doesNotMatch(heartbeatSection, /getPendingMessagesForStudent\(/);
+    assert.match(heartbeatSection, /res\.once\("finish", \(\) => \{[\s\S]*?responseFinished = true; apply\(\)/);
+    assert.match(heartbeatSection, /if \(!released\) return[\s\S]*?if \(!responseFinished\) return[\s\S]*?current\.messageIds\.add\(messageId\)/);
+    assert.match(heartbeatSection, /if \(finalDelivery\.authorized\) commitPendingInbox\(\)/);
     assert.match(inboxSection, /eq\(messages\.schoolId, options\.schoolId\)/);
     assert.match(inboxSection, /eq\(messages\.toStudentId, options\.studentId\)/);
     assert.match(inboxSection, /CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS/);

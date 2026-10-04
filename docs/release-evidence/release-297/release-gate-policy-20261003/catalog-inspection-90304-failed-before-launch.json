@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "production_catalog_inspection_failed_before_launch",
+  "observedAtUtc": "2026-10-04T15:32:30.1199347+00:00",
+  "approvedPlanSha256": "90304b10360df6cc8d01b60cb1ccc9bcb29776e17d211d23243b14e741ea0d32",
+  "authorizationSha256": "7c3ab05893ecf0bfc478411666a5f81d822a70d55661cb40cd9f77b758fa5412",
+  "executionReceiptSha256": "0ea6037dd03e01145a9a12e2be16bc6948d7e4529a5b457d888503d86cba2d74",
+  "registeredDefinitionWithTagsSha256": "eac5c249c609bbdfc9bc027c3cd859ac3019d9baa82c30f0db87c3e75e113abb",
+  "ownedTaskInventorySha256": "97c8df30bd5dee0cd66a3c74327d2ca398bcabc8e81afe0293ecf467e8a617d8",
+  "status": "failed",
+  "taskLaunched": false,
+  "databaseConnections": 0,
+  "databaseWrites": 0,
+  "servicesUpdated": 0,
+  "temporaryDefinitionStatus": "INACTIVE",
+  "ownedRunningTaskCount": 0,
+  "catalogVerified": false,
+  "cause": "Exact registration comparison rejected reordered environment entries; a revised inspector remains pending review and exact authorization",
+  "historicalEvidencePreserved": true
+}

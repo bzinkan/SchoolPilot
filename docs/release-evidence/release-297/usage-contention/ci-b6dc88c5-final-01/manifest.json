@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T14:01:26.049Z",
+  "head": "b6dc88c5358a5339067d0b255c9cffabfd91fc52",
+  "applicationCommit": "6035239b2b504fb12a989e373b1aca1abae562dc",
+  "status": "SUPERSEDED_WITH_CANCELLED_CI",
+  "workflows": [
+    {
+      "id": 37126564512,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37126564512"
+    },
+    {
+      "id": 37126564672,
+      "name": "CodeQL",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37126564672"
+    },
+    {
+      "id": 37126564526,
+      "name": "Trivy Container Scan",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37126564526"
+    },
+    {
+      "id": 37126564568,
+      "name": "Gitleaks",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37126564568"
+    }
+  ],
+  "ciSuccessfulJobs": 16,
+  "ciOtherJobs": [
+    {
+      "name": "AWS rollout safety (PowerShell + Terraform)",
+      "conclusion": "cancelled",
+      "status": "completed"
+    }
+  ],
+  "limitation": "16 successful CI jobs and three successful security workflows do not establish all-green CI. AWS rollout safety was cancelled after the corrected source push. No cancelled or skipped result is relabelled.",
+  "commands": [
+    {
+      "file": "run-37126564512.json",
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37126564512",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "sha256": "79fda6ae5247121227167959122418f6568db457acde368f8d462705e243cd6f"
+    },
+    {
+      "file": "run-37126564672.json",
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37126564672",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "sha256": "54725ca946b09a899edd06a2b095bbff53cb285cf7f2d4d88a166d3a6c307b17"
+    },
+    {
+      "file": "run-37126564526.json",
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37126564526",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "sha256": "4908318767f7d9b85d266eb39d6011522e9dc64222a6452631c08d52b5155451"
+    },
+    {
+      "file": "run-37126564568.json",
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37126564568",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "sha256": "52f98f3ae5a0fc12a3a051ccbf0e7469ea988bc7f10bd3ddba32ab7920064d61"
+    },
+    {
+      "file": "cancelled-aws-job.log",
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37126564512",
+        "--job",
+        "111212971949",
+        "--log"
+      ],
+      "sha256": "29f3746dbf1b6fb7925f77984b7059610ad303cf0ae47826ceda0c108d480157"
+    }
+  ],
+  "records": [
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-b6dc88c5-final-01\\cancelled-aws-job.log",
+      "rawSha256": "29f3746dbf1b6fb7925f77984b7059610ad303cf0ae47826ceda0c108d480157",
+      "sanitizedSha256": "29f3746dbf1b6fb7925f77984b7059610ad303cf0ae47826ceda0c108d480157",
+      "archive": "cancelled-aws-job.log.gz",
+      "archiveSha256": "f0ed415a26c3ae466eae565a7960f480e1d79289420933b2ccaba860c9820ba7"
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-b6dc88c5-final-01\\run-37126564512.json",
+      "rawSha256": "79fda6ae5247121227167959122418f6568db457acde368f8d462705e243cd6f",
+      "sanitizedSha256": "79fda6ae5247121227167959122418f6568db457acde368f8d462705e243cd6f",
+      "archive": "run-37126564512.json.gz",
+      "archiveSha256": "1b66b490efe61ae2c3a59914af090bccd78f3148b000a00e4748d4ceeaa5f189"
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-b6dc88c5-final-01\\run-37126564526.json",
+      "rawSha256": "4908318767f7d9b85d266eb39d6011522e9dc64222a6452631c08d52b5155451",
+      "sanitizedSha256": "4908318767f7d9b85d266eb39d6011522e9dc64222a6452631c08d52b5155451",
+      "archive": "run-37126564526.json.gz",
+      "archiveSha256": "39fe96e2da0f4167fa5552b2b01e4c7b722061fea00d64e5a88c069f43d1c592"
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-b6dc88c5-final-01\\run-37126564568.json",
+      "rawSha256": "52f98f3ae5a0fc12a3a051ccbf0e7469ea988bc7f10bd3ddba32ab7920064d61",
+      "sanitizedSha256": "52f98f3ae5a0fc12a3a051ccbf0e7469ea988bc7f10bd3ddba32ab7920064d61",
+      "archive": "run-37126564568.json.gz",
+      "archiveSha256": "ed8cf74b47cc8144d7744a56cff93d093852658148bb18b78b7270ecbe2daec4"
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-b6dc88c5-final-01\\run-37126564672.json",
+      "rawSha256": "54725ca946b09a899edd06a2b095bbff53cb285cf7f2d4d88a166d3a6c307b17",
+      "sanitizedSha256": "54725ca946b09a899edd06a2b095bbff53cb285cf7f2d4d88a166d3a6c307b17",
+      "archive": "run-37126564672.json.gz",
+      "archiveSha256": "260038b8b90692d66794507bd52db9a43cbccec7e12c80b41985116b19ddf277"
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-b6dc88c5-final-01\\summary.json",
+      "rawSha256": "9dd277127caf7b5e6cd4bc0e5143a5b2796662ea5f8ebedadbbfba1caeca7752",
+      "sanitizedSha256": "9dd277127caf7b5e6cd4bc0e5143a5b2796662ea5f8ebedadbbfba1caeca7752",
+      "archive": "summary.json.gz",
+      "archiveSha256": "70ca4095e29e499e968ca0a7fc5b97ea1513a839a497323002e5db8d33fdab2e"
+    }
+  ]
+}

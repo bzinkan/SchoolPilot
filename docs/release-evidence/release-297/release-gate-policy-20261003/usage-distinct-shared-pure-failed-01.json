@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "distinct-shared-pure-failed-dependency-preparation",
+  "passed": false,
+  "head": "f0992a9f4b36744872ee60d32a6b88eac8c66542",
+  "packetSha256": "d8d6704930241acc66ba1b2424617e455befd121a6d23e15b257c65094a96fc4",
+  "syntaxPassed": 11,
+  "expectedPureCases": 48,
+  "actualTap": {
+    "tests": 39,
+    "pass": 38,
+    "fail": 1,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "failure": "ERR_MODULE_NOT_FOUND_PG",
+  "integrationCasesExecuted": 0,
+  "deadlineMs": 20000,
+  "exactChildAbsence": true,
+  "forced": false,
+  "nativeActions": 0,
+  "applicationEdits": 0,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "members": [
+    {
+      "name": "run-pure.mjs",
+      "sha256": "d71815275feac58172f6283b4cf1e291ddd9d9720bd9633f0f6a4cb8263a714e",
+      "bytes": 5763
+    },
+    {
+      "name": "execution.json",
+      "sha256": "f6c7bd91df790e91731b1c3867c0679c5bd968d3368c0cf9ddf290b14a915bfb",
+      "bytes": 12410
+    },
+    {
+      "name": "tests.tap",
+      "sha256": "67917574eececb0c57ace0cf9c91cf256e00e95b8c2b69656c4f7956fcc0d327",
+      "bytes": 11353
+    },
+    {
+      "name": "process-absence.json",
+      "sha256": "82bb6104e7645279789390405f0f447d22469cee34304e26bf58e784e498176f",
+      "bytes": 396
+    }
+  ]
+}

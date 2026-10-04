@@ -8,6 +8,22 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsRoot = join(root, "tests");
 
 const RLS_SERIAL = new Set([
+  "fair-main-pool.integration.test.mjs",
+  "classpilot-final-delivery-context.integration.test.ts",
+  "classpilot-heartbeat-foreground-authority.integration.test.ts",
+  "classpilot-heartbeat-screenshot-evidence.integration.test.ts",
+  "classpilot-heartbeat-screenshot-installation.integration.test.ts",
+  "classpilot-heartbeat-inbox-authority.integration.test.ts",
+  "classpilot-telemetry-owner-projection.integration.test.ts",
+  "classpilot-heartbeat-persistence-context.integration.test.ts",
+  "tenant-context-reuse.integration.test.ts",
+  "classpilot-usage-admission.integration.test.ts",
+  "classpilot-private-chat-lifecycle.integration.test.ts",
+  "classpilot-private-chat-lifecycle-rls.test.ts",
+  "classpilot-focus.integration.test.ts",
+  "classpilot-lesson-prerequisites.integration.test.ts",
+  "passpilot-reports-v2.integration.test.ts",
+  "passpilot-appointments-rls.test.ts",
   "classpilot-settings.test.ts",
   "student-information.integration.test.ts",
   "school-discipline.integration.test.ts",
@@ -30,10 +46,18 @@ const RLS_SERIAL = new Set([
   "passpilot-report-issuers.test.ts",
   "passpilot-rules-rls.test.ts",
   "classpilot-usage-rollup-rls.test.ts",
+  "classpilot-usage-domain-map.integration.test.ts",
   "rls-tenant-context.test.ts",
 ]);
 
 const DB_SERIAL = new Set([
+  "tenant-context-reuse.integration.test.ts",
+  "classpilot-usage-admission.integration.test.ts",
+  "classpilot-lesson-prerequisite-frame.test.ts",
+  "classpilot-stop-focus-frame.test.ts",
+  "passpilot-appointments.integration.test.ts",
+  "passpilot-appointment-eligibility-races.integration.test.ts",
+  "passpilot-school-year.integration.test.ts",
   "classpilot-teacher-preferences-schema.integration.test.ts",
   "mydesk-redesign-schema.integration.test.ts",
   "mydesk-workspace-schema.integration.test.ts",
@@ -47,6 +71,7 @@ const DB_SERIAL = new Set([
   "passpilot-rules.integration.test.ts",
   "classpilot-usage-rollup.test.ts",
   "api-pool-readiness.integration.test.ts",
+  "health-monitor-round-trip.integration.test.ts",
   "classpilot-class-tools.integration.test.ts",
   "classpilot-fab-sync-pending.integration.test.ts",
   "classpilot-coverage-directory.integration.test.ts",
@@ -62,6 +87,7 @@ const DB_SERIAL = new Set([
   "classpilot-schedule-config-repair.integration.test.ts",
   "classpilot-scheduled-classroom.integration.test.ts",
   "classpilot-chat-channel-control.integration.test.ts",
+  "classpilot-realtime-status-redis.integration.test.ts",
   "classpilot-chat-oversight.integration.test.ts",
   "classpilot-schedule-profiles.integration.test.ts",
   "safety-notification-bundling.integration.test.ts",
@@ -86,6 +112,7 @@ const DB_SERIAL = new Set([
   "classpilot-coverage-hydration.test.ts",
   "classpilot-coverage.test.ts",
   "classpilot-entitlement.test.ts",
+  "classpilot-entitlement-native.integration.test.ts",
   "classpilot-evidence-expiry-digest.test.ts",
   "classpilot-flight-path-import-contract.test.ts",
   "classpilot-heartbeat-presence.test.ts",
@@ -108,6 +135,7 @@ const DB_SERIAL = new Set([
   "classpilot-student-session-auth-kind-guard.test.ts",
   "classpilot-student-session-lease-clock.integration.test.ts",
   "classpilot-student-session-recovery.integration.test.ts",
+  "classpilot-device-upsert.integration.test.ts",
   "classpilot-student-data-contract.test.ts",
   "classpilot-teaching-sessions-recent.test.ts",
   "classpilot-tile-history-lateral.test.ts",
@@ -180,9 +208,14 @@ if (!["unit", "db", "rls", "infrastructure", "list"].includes(requested)) {
 }
 
 if (requested === "list") {
-  for (const path of all) {
-    process.stdout.write(`${primaryLane(path)}\t${relative(root, path).replaceAll("\\", "/")}\n`);
-  }
+  const listing = all.map((path) =>
+    `${primaryLane(path)}\t${relative(root, path).replaceAll("\\", "/")}\n`
+  ).join("");
+  // Piped stdout is asynchronous on some platforms. Do not exit while a
+  // caller's complete lane inventory is still buffered in this process.
+  await new Promise((resolve, reject) => {
+    process.stdout.write(listing, (error) => error ? reject(error) : resolve());
+  });
   process.exit(0);
 }
 

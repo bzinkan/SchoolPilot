@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:20:43.721Z",
+  "scope": "Correct independent current-day Usage oracle timestamp precision; preserve strict equality and production rollup semantics.",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "archiveTimeHead": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "uncommitted incremental shared worktree; not final acceptance",
+    "archiveTimeFiles": {
+      "scripts/load/usage/local-usage-scale.mjs": "3f9c0162c3006285f74b0dd7238e8e7b475834b072c4e429b811e38af7f1e37d",
+      "scripts/load/usage/local-usage-scale.test.mjs": "b1c8d75ef34f73c9e9c76c07f6e9531c4d1c952d45b2e861063ea10826807147",
+      "scripts/load/usage/local-school-day-scale.mjs": "9bb94199db7cfbff7ac897b4952ff14a1b3b79beb651c0d9eeda1d350ea0caf7",
+      "scripts/load/usage/release-enabled-scale.mjs": "87025f74ddc33154d3953e6e9cdc4630df10a0659ad91ec72c4d14b1f0d277f7"
+    },
+    "note": "Concurrent unrelated source changes were present; archive-time source hashes do not claim final-source capacity acceptance. release-enabled-scale.mjs fixture setup is separately maintained."
+  },
+  "finding": {
+    "before": "PostgreSQL observation timestamps retain microseconds; pg Date conversion truncated these to milliseconds before the old oracle used floating-point sums and Math.round. An observation 0.499999 seconds before cutoff wrongly became 0.500 seconds and rounded from0 to1.",
+    "after": "All raw-query callers select exact integer epoch microseconds as text. BigInt independently deduplicates by second, caps attribution at15seconds and cutoff, sums exactly, and rounds nonnegative half-up once per student for this fixed one-grain current-day fixture.",
+    "originalRun": {
+      "source": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+      "path": "<TEMP>/release297-enabled-combined-04/usage-scale.json",
+      "sha256": "a13383de369c3a8c9c9e1059eda0b1798dfc85813adaf523daa751fd91d99f52",
+      "status": "failed_original_unchanged",
+      "schoolIndex": 0,
+      "actualSeconds": 28628,
+      "oldExpectedSeconds": 28629,
+      "heartbeatCount": 2471,
+      "rollupRows": 500
+    }
+  },
+  "commands": {
+    "red": "node --test --test-name-pattern=\"preserves microseconds below a half-second\" scripts/load/usage/local-usage-scale.test.mjs (new regression, before oracle correction)",
+    "focused": "node --test scripts/load/usage/local-usage-scale.test.mjs scripts/load/usage/school-day-profile.test.mjs scripts/load/usage/release-enabled-profile.test.mjs",
+    "native": "node <TEMP>/release297-oracle-microseconds-validation-01/native-numeric-parity.mjs"
+  },
+  "results": {
+    "red": {
+      "pass": 0,
+      "fail": 1,
+      "expectedFailure": true
+    },
+    "focused": {
+      "pass": 33,
+      "fail": 0,
+      "skip": 0
+    },
+    "native": {
+      "timelines": 6,
+      "syntheticObservations": 10,
+      "pass": true,
+      "postgresReadOnlyValues": true,
+      "applicationTablesRead": 0,
+      "applicationWrites": 0
+    }
+  },
+  "diagnostics": "Fixed-size counts only: microsecond precision, included/deduplicated observations, submillisecond count, exact versus legacy rounded totals and number of rounding-sensitive students. No raw observation times, identifiers, URLs or user content.",
+  "limitations": [
+    "The original failing current-day raw observations were not retained before owned fixture cleanup. This synthetic proof confirms an oracle defect, not that the original aggregate was correct. A fresh corrected run must prove equality.",
+    "The current-day oracle assumes one class/session/domain/classification grain per student; known ixl.com educational classification and fixed current sessions support that fixture assumption. It is not a general multi-grain oracle.",
+    "No tolerance, timeout, infrastructure or production rollup semantics changed. This archive establishes neither capacity nor deployment readiness.",
+    "Native proof uses only local PostgreSQL numeric expressions over synthetic VALUES, not restricted-role application/RLS coverage."
+  ],
+  "sanitation": "User home paths, connection URLs and JWT-shaped values redacted; original and sanitized hashes retained.",
+  "files": [
+    {
+      "file": "red-before-oracle-fix.log.gz",
+      "status": "failed_expected_old_oracle",
+      "sourceBytes": 1335,
+      "archivedBytes": 658,
+      "originalSha256": "7b493bc7aa9ecc7059294b662daa13a954b761a39f6f4b7fd6a69c7e1057c0a2",
+      "sanitizedSha256": "338c845bf1ded2ba66993c432c32a5f96642583a292814b2a1115614984ab013",
+      "archiveSha256": "f641df2a6a5d8ba73a7999f5076f8cd59950d1456c0baaa4547a2289ddede0e4"
+    },
+    {
+      "file": "green-focused.log.gz",
+      "status": "33_pass_0_fail_0_skip",
+      "sourceBytes": 8391,
+      "archivedBytes": 2020,
+      "originalSha256": "575e62df972fd95d1c3635f8ff7aedaaf0e0229f73e404669f7ae983328d333f",
+      "sanitizedSha256": "575e62df972fd95d1c3635f8ff7aedaaf0e0229f73e404669f7ae983328d333f",
+      "archiveSha256": "76e1b49b4568f67a6d9166d90f654f9251c322595580294fa3cb97ea07c69b57"
+    },
+    {
+      "file": "native-numeric-parity.mjs.gz",
+      "status": "read_only_synthetic_repro",
+      "sourceBytes": 2914,
+      "archivedBytes": 1338,
+      "originalSha256": "47193b19526cf03ac50a4445e6ad8d140e32678f6c3ab5277af9fc2f2b987d2d",
+      "sanitizedSha256": "f6c87d7e196baab96cd74fee8f5391f77af5058743e831a8b813211b51f1326f",
+      "archiveSha256": "5b6f54a4ac4808ae2c9ff934bf9adbe2d289f2d07aaf9c45b051550b593bc70a"
+    },
+    {
+      "file": "native-numeric-parity.json.gz",
+      "status": "6_timelines_native_parity_pass",
+      "sourceBytes": 888,
+      "archivedBytes": 524,
+      "originalSha256": "e718320e3385a9e1f8c2ffc097fd7cfa17ad9c3ab829cc4e43ae98645357d112",
+      "sanitizedSha256": "e718320e3385a9e1f8c2ffc097fd7cfa17ad9c3ab829cc4e43ae98645357d112",
+      "archiveSha256": "71a82e0f9b305bd7122c67b3de3b3ca004654c668c8655169bc99f75c36007fc"
+    },
+    {
+      "file": "native-numeric-parity.log.gz",
+      "status": "6_timelines_native_parity_pass",
+      "sourceBytes": 758,
+      "archivedBytes": 499,
+      "originalSha256": "d14cf82cad93882bc7cc51ec3bedf7bf13e845f1433d22d79d10f5779e5fd880",
+      "sanitizedSha256": "d14cf82cad93882bc7cc51ec3bedf7bf13e845f1433d22d79d10f5779e5fd880",
+      "archiveSha256": "925d0749c332a27ce70b4ed5061f81dd10243155a584a6404df2f93e4b6874ca"
+    },
+    {
+      "file": "release297-oracle-microsecond-diagnosis-01.json.gz",
+      "status": "confirmed_oracle_defect_original_row_unavailable",
+      "sourceBytes": 2274,
+      "archivedBytes": 1195,
+      "originalSha256": "cb6f856b5844c24eb946113f75177b49b3d4c1c56bbba522c79379bd153cd2e1",
+      "sanitizedSha256": "9c76ec0953b07308ec310a80a15db19b6050f7965fe73c4195c8014996f5c10e",
+      "archiveSha256": "b2f6184cd73cb8586e6b6948c24241bc220b12e5a62ccebf3744744ec7faa972"
+    }
+  ]
+}

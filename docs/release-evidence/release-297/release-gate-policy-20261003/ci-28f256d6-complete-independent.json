@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 1,
+  "kind": "complete_exact_head_ci_and_native_independent_review",
+  "recordedAt": "2026-10-04T17:36:56.3064996Z",
+  "schoolPilotHead": "28f256d6a02f4c4d7da3b1e0a78008859eb0f19e",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "schoolPilot": {
+    "state": "OPEN",
+    "draft": true,
+    "expectedCheckNames": [
+      "Detect changed paths",
+      "Analyze (javascript-typescript)",
+      "Scan for secrets",
+      "Scan Docker image",
+      "Backend (TypeScript + Build)",
+      "Cross-tenant isolation tests",
+      "RLS-enabled cross-tenant tests",
+      "Frontend (Vite Build)",
+      "Frontend release-focused gates (shard 1)",
+      "Frontend release-focused gates (shard 2)",
+      "Frontend release-focused gates (shard 3)",
+      "Frontend release-focused gates (shard 4)",
+      "AWS rollout safety (PowerShell + Terraform)",
+      "SOC 2 privileged access evidence",
+      "SOC 2 deployment evidence",
+      "SOC 2 incident evidence",
+      "SOC 2 tenant isolation evidence",
+      "SOC 2 AI/privacy evidence",
+      "SOC 2 monitoring evidence",
+      "SOC 2 approval queue"
+    ],
+    "reportedChecks": 20,
+    "successfulChecks": 20,
+    "allExpectedGreen": true,
+    "workflows": [
+      {
+        "conclusion": "success",
+        "databaseId": 37218869974,
+        "event": "pull_request",
+        "headSha": "28f256d6a02f4c4d7da3b1e0a78008859eb0f19e",
+        "startedAt": "2026-10-04T17:00:29Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T17:26:10Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37218869974",
+        "workflowName": "CI"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37218870007,
+        "event": "pull_request",
+        "headSha": "28f256d6a02f4c4d7da3b1e0a78008859eb0f19e",
+        "startedAt": "2026-10-04T17:00:29Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T17:06:28Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37218870007",
+        "workflowName": "CodeQL"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37218869978,
+        "event": "pull_request",
+        "headSha": "28f256d6a02f4c4d7da3b1e0a78008859eb0f19e",
+        "startedAt": "2026-10-04T17:00:29Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T17:00:42Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37218869978",
+        "workflowName": "Gitleaks"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37218870014,
+        "event": "pull_request",
+        "headSha": "28f256d6a02f4c4d7da3b1e0a78008859eb0f19e",
+        "startedAt": "2026-10-04T17:00:29Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T17:02:16Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37218870014",
+        "workflowName": "Trivy Container Scan"
+      }
+    ]
+  },
+  "classPilot": {
+    "head": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "state": "OPEN",
+    "draft": true,
+    "reportedChecks": 10,
+    "successfulChecks": 10,
+    "allExpectedGreen": true,
+    "unchangedPackage": {
+      "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+      "packagedSourceAncestorOfHead": true,
+      "extensionTree": {
+        "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+        "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+      },
+      "documentationOnlyDiff": [
+        "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+        "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+      ],
+      "zip": {
+        "path": "C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip",
+        "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+        "bytes": 376052,
+        "rebuildPerformed": false
+      }
+    }
+  },
+  "productInputEquivalence": {
+    "passed": true,
+    "paths": [
+      {
+        "path": "src",
+        "blobOrTree": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "package.json",
+        "blobOrTree": "965f6d1e914114482774d8dff9dd497945aec4b0",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "package-lock.json",
+        "blobOrTree": "5079ee98d0b13431513a8a068621a3675e35c84e",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "Dockerfile",
+        "blobOrTree": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": ".dockerignore",
+        "blobOrTree": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "tsconfig.json",
+        "blobOrTree": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "tsconfig.build.json",
+        "absentInBoth": true
+      },
+      {
+        "path": "scripts/build.mjs",
+        "absentInBoth": true
+      },
+      {
+        "path": ".github",
+        "blobOrTree": "0a9bdf9d0bea5844768b48d0465f645b5fb86ebc",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "infra",
+        "blobOrTree": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "schoolpilot-app/src",
+        "blobOrTree": "e494c0a2b1f3b4d7930298a9c136e91980be9528",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "schoolpilot-app/public",
+        "blobOrTree": "dd72314bd52a003afcd18f7a716d0657eb501d00",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "schoolpilot-app/package.json",
+        "blobOrTree": "3f3bfa1f5368afb0351f60c4f72f7d7ff04e6060",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "schoolpilot-app/package-lock.json",
+        "blobOrTree": "e45186bfb3c96600696cc565cfe58f6cce0a90d1",
+        "identicalToApplicationSource": true
+      },
+      {
+        "path": "schoolpilot-app/vite.config.ts",
+        "absentInBoth": true
+      }
+    ],
+    "fullFrontendTestTreeEqualityClaimed": false
+  },
+  "nativeRegressionEvidence": {
+    "jobId": 111484927484,
+    "runId": 37218869974,
+    "head": "28f256d6a02f4c4d7da3b1e0a78008859eb0f19e",
+    "jobStatus": "completed",
+    "jobConclusion": "success",
+    "healthNamedCases": 6,
+    "redisNamedCases": 4,
+    "cases": [
+      {
+        "name": "health sentinel round trip preserves no-CREATE runtime permissions and qualified cleanup",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "restricted missing-table bootstrap still fails without granting CREATE",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "owner bootstrap retains the persistent public sentinel and removes its own row",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "existing sentinel works without CREATE despite the old IF NOT EXISTS rejection",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "round-trip cleanup removes only the probe and old sentinel rows",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "real DML permission failure remains a health failure",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis preserves empty tabs and nested policy arrays through every mutation",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis keeps exact increasing revisions for writes and patches in one current millisecond",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis preserves escaped and unknown root values and removes duplicate replaced keys",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis retains exact binding, stale-write and signout fences without refreshing stale keys",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      }
+    ],
+    "allTenPassedWithoutSkipOrTodo": true,
+    "completeLogSha256": "16ac3d69a66d3f6ee4c3ac06a1064f3c292d4528a98bfdcc9b0e6b5e03ba11cd",
+    "unrelatedSuiteSkipsNotCountedAsNamedPasses": true
+  },
+  "rawCustody": [
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\schoolpilot-pr603-observation-05.raw.json",
+      "bytes": 6073,
+      "sha256": "d367f43a63e0be66cbed80125e9b9de8766fbe4a23654386a36adaa4cb68a8fb"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\classpilot-pr123-completion.capture02.raw.json",
+      "bytes": 3066,
+      "sha256": "703122f0005879cf1f8a3c5cd9e9083fafcbde86588ced8f7046ad15fce73257"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\db-native-job-111484927484.capture02.raw.json",
+      "bytes": 4705,
+      "sha256": "2fe1ed402fe0a07524a9852546c3f319daa7591da5c799a164fb6af6e6f152be"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\db-native-job-111484927484.capture02.private.log",
+      "bytes": 2690632,
+      "sha256": "16ac3d69a66d3f6ee4c3ac06a1064f3c292d4528a98bfdcc9b0e6b5e03ba11cd"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\product-input-equivalence.json",
+      "bytes": 4101,
+      "sha256": "529c3ff56be834d575fd2f4ac9f54f5027699b85f5b8e35453ddcf101be348be"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\ci-run-37218869974.capture02.raw.json",
+      "bytes": 309,
+      "sha256": "4698e405fc37195f481a8e1e62ccdbef6aeb2bde7e68685b8ac0c68e251caa1d"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\ci-run-37218870007.completion.raw.json",
+      "bytes": 313,
+      "sha256": "3bb90ffd35d28691809b4fab9c34be794214f4589d038b03002c9ac0f35e6af8"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\ci-run-37218869978.completion.raw.json",
+      "bytes": 315,
+      "sha256": "3ec58ae20d39660102a6dda5bd17d4d9eb8a4a31c8775fa3c46fa69a744eab5a"
+    },
+    {
+      "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-28f256d6-independent-01\\ci-run-37218870014.completion.raw.json",
+      "bytes": 327,
+      "sha256": "d42ac94d3d62f7e89d52e0f7bb3138a7e54d1c21090732bbb9b577d51674d963"
+    }
+  ],
+  "invalidCaptureDraft": {
+    "preserved": true,
+    "files": [
+      "ci-run-37218869974.raw.json",
+      "db-native-job-111484927484.raw.json",
+      "db-native-job-111484927484.private.log",
+      "classpilot-pr123-completion.raw.json"
+    ],
+    "reason": "PowerShell automatic args parameter yielded gh help; no intended GET response and no evidence acceptance",
+    "rawSha256": "b46b9743a11a62781c23db2ac750b03ad342b5d6b1537232a90c990ea297ab62"
+  },
+  "earlierProgressObservationsPreserved": true,
+  "priorB6FailurePreserved": true,
+  "ciRerunTriggered": false,
+  "localTestsRun": 0,
+  "localNativeWorkloadExecuted": false,
+  "productionMutations": 0,
+  "capacityAccepted": false,
+  "policyApproved": false,
+  "merged": false,
+  "deployed": false,
+  "storeUploaded": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "CI success is exact28f only; resulting-main and fresh release operations remain separate",
+    "Old schema/capacity receipts retain their source and synthetic scope",
+    "Named native10 were verified; unrelated historical suite skips remain separate"
+  ]
+}

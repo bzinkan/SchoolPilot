@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_failed_stable_restore05_custody_review",
+  "reviewer": "task_posture_review",
+  "reviewedAtUtc": "2026-10-04T19:29:49.0915885Z",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "custodyVerified": true,
+  "executionAccepted": false,
+  "readyHandoffVerified": false,
+  "capacityAccepted": false,
+  "productionMutations": 0,
+  "references": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\execution.json",
+      "sha256": "ea66e2d8fd98a4a61a0c1c1b0816a0684e6db1d6eddd385e8c6dae5872371b8c",
+      "bytes": 13067
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\independent-owned-absence.json",
+      "sha256": "1b20584096be0f60d1ad8602c6296d7cb572e50e338f7a9ba7ec6ecb324a147a",
+      "bytes": 832
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\custody-manifest.json",
+      "sha256": "32b67bac6dd7ae908dd23adf01e65262cd9edbe0032c0074e3c2f8f90b835409",
+      "bytes": 5465
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\public-summary.json",
+      "sha256": "624fb522794009e663bb6412b683cf258bb8946f7dbddd0fd1169a6716370245",
+      "bytes": 3892
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\baseline-exact-three-check-equivalence.json",
+      "sha256": "08577263c3c34a150aa9ebd43a44e9f7b67fe6ee8b7cb28afe4084bd93658686",
+      "bytes": 665
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\baseline-round1-canonical-restoration-comparison.json",
+      "sha256": "f65b32c4b1e64126a84e65589ce7fc978d3ae244d3e006ebcbed48f9f7ec50d3",
+      "bytes": 1587
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\restored-baseline-round1-schema.sql",
+      "sha256": "5056a3a52d6aa512703b4d190e3cb02ac11248f013328aea7a4b4ec319475842",
+      "bytes": 430328
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\private-retained\\state\\default-restore-baseline-p1.json",
+      "sha256": "a4439f224488e0bec6421d4400734bb94c4e9a787256317b439c5bd1e54a44f2",
+      "bytes": 33134
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\private-retained\\postgres-final-owned.log",
+      "sha256": "5771f00f2b005896a22c05b3bbc267c83abf9c5159892b1de93e887b21c1fc12",
+      "bytes": 3633
+    }
+  ],
+  "custody": {
+    "members": 25,
+    "memberBytes": 702342,
+    "allContainedBytesAndHashesMatch": true,
+    "noReparseFilesOrParents": true,
+    "durablePrivateCopyVerified": true,
+    "publicSummaryReferencesMatch": true
+  },
+  "actualOutcome": {
+    "passed": false,
+    "firstBaselineExactThreeCheckFencePassed": true,
+    "baselineNativeCatalogReached": true,
+    "restrictedNativeFailureSqlstate": "42P08",
+    "specificFailure": "Same synthetic school parameter reused in varchar id assignment and text domain concatenation",
+    "retainedPgErrorDetail": "text versus character varying",
+    "clientEnded": true,
+    "restrictedTenantAcceptance": false,
+    "secondRestoreReached": false,
+    "candidateRestoreReached": false,
+    "readyHandoffEmitted": false
+  },
+  "preflight": {
+    "kind": "pure_syntax_only",
+    "sourcePlanSha256": "c06313c0f91cd6b162be832bf50c589f66ec7671705138c3e52038987d406395",
+    "syntax": 6,
+    "tests": 6,
+    "pass": 6,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "allLogsExact": true,
+    "allEightProcessesAbsentUnforced": true,
+    "execution": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\preflight-01\\execution.json",
+      "sha256": "6ddbe48e894afeea4d9a342d87491947abbd32b36e48e8ad8a63e3e401670aa1",
+      "bytes": 1824
+    },
+    "tap": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\preflight-01\\six-case-fence.log",
+      "sha256": "e862e868f61d417bde74be9b602bf9ae79a456fdb9e63423d900633e3999ab67",
+      "bytes": 1205
+    },
+    "absence": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\preflight-01\\process-absence.json",
+      "sha256": "aa2091f88efb139423449612a0aab8bd233d7ac5d92da133da93f1eaead7ff9b",
+      "bytes": 666
+    }
+  },
+  "cleanup": {
+    "owners": 2,
+    "anonymousVolumes": 1,
+    "probeExitCode": 1,
+    "postgresExitCode": 0,
+    "noOom": true,
+    "unforced": true,
+    "cleanupPassed": true,
+    "gracefulCleanupPassed": false,
+    "ownerPoolEnded": true,
+    "allContainersVolumesNetworkExecutorAbsent": true,
+    "completedInsideOriginalWindow": true,
+    "freshReviewerDockerCheck": false
+  },
+  "limitations": [
+    "05 remains FAILED; first serialization fence and native catalog fields do not establish restricted tenant restoration acceptance",
+    "Failed probe exit1 is contained by stopped unforced removal; gracefulCleanupPassed remains false",
+    "03 and04 remain separately FAILED; no ready handoff or policy/capacity/deployment acceptance exists",
+    "Consumed05 root window cannot be reused"
+  ],
+  "operationsPerformed": {
+    "retainedReadsAndHashes": true,
+    "externalReceiptWrite": true,
+    "tests": 0,
+    "nativeRuns": 0,
+    "sql": 0,
+    "builds": 0,
+    "awsCommands": 0,
+    "ciCalls": 0
+  }
+}

@@ -2,20 +2,25 @@
 
 This document describes the implemented protocol and the checks required before an operator enables it. It is not deployment or load-test evidence. The API/web deploy and Chrome Web Store release remain separate operations.
 
+The [2.9.7 operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) governs the coordinated release,
+exact artifact bindings, scoped `waived_not_passed` managed-device exception and live validation.
+
 ## Capability admission
 
 Negotiation requires a protocol-v3 client advertising the capability, `CLASSPILOT_PROTOCOL_V3_ENABLED=true`, `CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1=true`, and the corresponding feature flag below. `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` is authoritative when present: both the feature and `scopedAuthorityChecksV1` need active entries covering the school. An omitted entry stays off even when its flag is true; `off` and `observe` do not activate a capability. Without the rollout map, enabled flags apply globally, so use the guarded school-scoped profiles for admission.
 
 | Capability | Feature flag | Schema-v7 profile modes |
 | --- | --- | --- |
-| `afterHoursSafetyOnlyV1` | `CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1` | `after-hours-safety-only-pilot`, `after-hours-safety-only-off` |
-| `schoolWebsiteBlockEnforcementV1` | `CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1` | `school-website-block-pilot`, `school-website-block-off` |
+| `afterHoursSafetyOnlyV1` | `CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1` | `after-hours-safety-only-pilot`, `after-hours-safety-only-global-on`, `after-hours-safety-only-off` |
+| `schoolWebsiteBlockEnforcementV1` | `CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1` | `school-website-block-pilot`, `school-website-block-global-on`, `school-website-block-off` |
 | `screenshotReadOnlyObservationV1` | `CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1` | `read-only-observation-pilot`, `read-only-observation-off` |
-| `preciseRestrictionResourcesV1` | `CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1` | `precise-restriction-resources-pilot` (refused until the 2.10.0 evidence is bound), `precise-restriction-resources-off`; see [Precise restriction resources](#precise-restriction-resources-roadmap-pr-2) |
+| `preciseRestrictionResourcesV1` | `CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1` | `precise-restriction-resources-pilot`, `precise-restriction-resources-global-on`, `precise-restriction-resources-off`; exact 2.9.7 evidence required |
+| `focusTabV1` | `CLASSPILOT_CAP_FOCUS_TAB_V1` | `focus-tab-pilot`, `focus-tab-global-on`, `focus-tab-off`; exact 2.9.7 evidence required |
+| `privateChatLifecycleV1` | `CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1` | `private-chat-lifecycle-pilot`, `private-chat-lifecycle-global-on`, `private-chat-lifecycle-off`, `private-chat-lifecycle-global-off`; durable writer/admission floor required |
 
 Read-only observation additionally requires the existing tracking-window and active-preview capabilities to cover the pilot school. It changes screenshot cadence only; see [teacher-independent observation](CLASSPILOT_READ_ONLY_OBSERVATION.md) for authorization, older-extension compatibility and rollback.
 
-Each private pilot profile contains `schemaVersion: 7`, its `mode`, and one canonical UUID `pilotSchoolId`. Each off profile contains only the version and mode. These profiles require the completed global repaired-capability runtime, preserve every other capability/school scope and TURN wiring, and write identical API/worker controls through the existing hash-bound Plan/Apply/Rollback workflow. A pre-roadmap task with both the new flag and its rollout entry absent is recognized as off; the next source-preserving plan materializes both controls as explicitly off unless that capability is the selected pilot. A partially missing pair fails closed. There is no schema-v7 global or multiple-school activation profile; further expansion requires a reviewed admission contract. Existing screenshot/cadence profiles cannot silently disable active roadmap pilots: apply their individual off profiles first when a base-profile transition requires it. Overall protocol-off containment still disables all capabilities.
+Each private pilot profile contains `schemaVersion: 7`, its `mode`, and one canonical UUID `pilotSchoolId`. Each off profile contains only the version and mode. These profiles require the completed global repaired-capability runtime, preserve every other capability/school scope and TURN wiring, and write identical API/worker controls through the existing hash-bound Plan/Apply/Rollback workflow. A pre-roadmap task with both the new flag and its rollout entry absent is recognized as off; the next source-preserving plan materializes both controls as explicitly off unless that capability is the selected pilot. A partially missing pair fails closed. Global profiles for released capabilities require the exact current-school live-validation receipt and preserve licensing and negotiated support; read-only Observe has no new global profile and remains outside this release. Existing screenshot/cadence profiles cannot silently disable active roadmap pilots: apply their individual off profiles first when a base-profile transition requires it. Overall protocol-off containment still disables all capabilities.
 
 These client flags do not gate the core Safety Center/outbox, scheduling or history code. Apply the eight roadmap migrations (including reusable schedule-profile supervision) and complete the documented RLS admission before dependent API/worker deployment. The notification worker requires the normal scheduler, a valid shared `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY`, `SENDGRID_API_KEY`/sender configuration, and the correct frontend origin in `PUBLIC_APP_URL` or `APP_URL`. Validate delivery to a controlled pilot before broad exposure. Report v3 has its separate two-flag gate below.
 
@@ -73,7 +78,7 @@ Rollback capability flags before widening another cohort. A safety-only rollback
 
 ## Precise restriction resources (roadmap PR 2)
 
-`preciseRestrictionResourcesV1` adds "This resource only" Waypoints and Flight Path entries for one YouTube video, Google Doc, Slides deck, Sheet, Form or Drive file, or one section of a site. The extension contract, matcher and case-file hash are in [the ClassPilot 2.10.0 contract](CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md). The capability is off by default. While it is off for a school, teachers cannot author sections or resources (409 `PRECISE_RESTRICTION_RESOURCES_DISABLED`), a Flight Path that has them cannot be applied, and the dashboard hides the controls. An owner can still edit the websites of such a path; the stored entries stay untouched.
+`preciseRestrictionResourcesV1` adds "This resource only" Waypoints and Flight Path entries for one YouTube video, Google Doc, Slides deck, Sheet, Form or Drive file, or one section of a site. The extension contract, matcher and case-file hash are in [the ClassPilot 2.9.7 contract](CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md). The capability is off by default. While it is off for a school, teachers cannot author sections or resources (409 `PRECISE_RESTRICTION_RESOURCES_DISABLED`), a Flight Path that has them cannot be applied, and the dashboard hides the controls. An owner can still edit the websites of such a path; the stored entries stay untouched.
 
 Admission follows the schema-v7 pattern above. Profiles:
 
@@ -82,7 +87,7 @@ Admission follows the schema-v7 pattern above. Profiles:
 { "schemaVersion": 7, "mode": "precise-restriction-resources-off" }
 ```
 
-The pilot profile is refused until a reviewed follow-up binds the exact ClassPilot 2.10.0 package in `scripts/deploy-classpilot-runtime-config.ps1` (`PreciseRestrictionRequiredReleaseTag`, `PreciseRestrictionRequiredMergeSha`, `PreciseRestrictionRequiredZipSha256`). That package must be MANAGED-CHROMEBOOK VERIFIED on at least two Google Admin-managed Chromebooks. The off profile is always available.
+The pilot profile is refused until reviewed source binds the exact ClassPilot 2.9.7 package in `scripts/deploy-classpilot-runtime-config.ps1` (`PreciseRestrictionRequiredReleaseTag`, `PreciseRestrictionRequiredMergeSha`, `PreciseRestrictionRequiredZipSha256`). The owner waived the two-managed-Chromebook prerequisite; the exact-source/image/package receipt records `waived_not_passed`. Passing automated source/package gates precede current-school live validation; at least 30 minutes with nonzero required samples precede global promotion. The off profile is always available.
 
 ### Deployment order
 
@@ -94,11 +99,11 @@ The pilot profile is refused until a reviewed follow-up binds the exact ClassPil
    - It refuses a profile only when that profile would activate, or keep active, such a capability.
 
    Every Apply against an image with PR 2 writes the entry, as `{"mode":"off"}` unless the precise pilot is selected. Apply re-derives the projection and must reproduce the reviewed runtime byte for byte.
-4. ClassPilot 2.10.0 ships only after server PRs 2 to 5 are deployed with their capabilities off. Then comes the pilot profile, after the evidence binding above.
+4. ClassPilot 2.9.7 ships only after the coordinated server release and additive admission are deployed with new capabilities off. Then comes the pilot profile, after the evidence binding above.
 
 **Emergency use in the merge-to-deploy window.** While this tool is newer than the serving image, ordinary profiles simply omit the precise pair, and `-Operation Rollback` restores exact prior pairs as before. The global `off` containment skips the ECR tag check, so it does not trust the typed app SHA for the projection. It projects onto the keys of the serving task definition's own registry instead: the running image parsed every one of them at boot. A mistyped, newer or unreadable app SHA therefore cannot put an unknown key into the emergency runtime, and the emergency path needs neither ECR nor the app's commit in the local checkout.
 
-Saving a `forms.gle` link makes the API resolve it once, at save time: HTTPS `HEAD` requests with manual redirects, at most 3 hops, 3 seconds each, and `GET` only on a 405. Each hop must stay on `forms.gle` or `https://docs.google.com/forms/`. This is an outbound egress dependency of the API tasks (through the NAT). A failure returns 400 `RESOURCE_SHORT_LINK_UNRESOLVED` and nothing is stored. Only requests that need resolution count against `restrictionResourceResolutionLimiter`: 30 per user per 10 minutes, Redis-backed.
+Saving a `forms.gle` link makes the API resolve it once, at save time: HTTPS `HEAD` requests with manual redirects, at most 3 hops, 3 seconds each, and `GET` only on a 405. Each hop must stay on `forms.gle` or `https://docs.google.com/forms/`. This is an outbound HTTPS dependency of the API tasks; preserve the current public-ECS/no-NAT configuration. A failure returns 400 `RESOURCE_SHORT_LINK_UNRESOLVED` and nothing is stored. Only requests that need resolution count against `restrictionResourceResolutionLimiter`: 30 per user per 10 minutes, Redis-backed.
 
 ### Rollback runbook
 
@@ -150,7 +155,7 @@ Follow these steps in order. They end every stored precise restriction explicitl
 3. **Project the registry onto the target image.** Plan and Apply `precise-restriction-resources-off` again with `-RegistryTargetAppSha <the older image's full app SHA>`. The plan projects onto what both the serving image and the target register: it drops the precise entry and kill switch, which are already off, and preserves every other control. The plan records the target, and Apply re-derives the same projection. A target that would drop an active capability is refused; turn that capability off with its own off profile first. This works after ordinary `scripts/deploy.sh` deploys too, and needs no `-Operation Rollback` and no pre-PR-2 tool. Apply no other runtime profile between this step and step 4: a plan against the still-serving PR 2 image would write the entry again.
 4. **Only then revert the image**, and never below the PR 2-pre (#550) image. `scripts/deploy.sh` carries the live registry forward; it now names only capabilities the older image registers, so the older image boots. Later plans against it project onto its registry automatically.
 
-If step 2 is skipped, an older image still fails closed: the PR 2-pre fence withholds every stored precise state, so a 2.10.0 device keeps its last applied restriction until the revision changes or `hardExpiresAt` passes (at most 12 hours), and teachers see the student as unsupported. The clear is still required, because it ends those restrictions visibly and leaves nothing for a later image to interpret.
+If step 2 is skipped, an older image still fails closed: the PR 2-pre fence withholds every stored precise state, so a capable 2.9.7 device keeps its last applied restriction until the revision changes or `hardExpiresAt` passes (at most 12 hours), and teachers see the student as unsupported. The clear is still required, because it ends those restrictions visibly and leaves nothing for a later image to interpret.
 
 After a rollback, older images never read `flight_paths.resources`. A resource-only Flight Path is refused with 409 `FLIGHT_PATH_EMPTY`, and a mixed path applies its websites only, which is narrower. Re-deploying PR 2 later restores the stored entries unchanged.
 

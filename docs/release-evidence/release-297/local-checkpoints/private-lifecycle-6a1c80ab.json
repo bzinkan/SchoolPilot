@@ -1,0 +1,99 @@
+{
+  "frontendCommit": "5cc5a4f6061dcd55cb6b01e6dc9e0bbf334f979e",
+  "lifecycleMatrixCommit": "c91f485ef3224db759df810c3d79efb2b6a43f34",
+  "adoptionRegressionCommit": "6a1c80abad284f21bff8bba0e2f83c8eac3335a4",
+  "rootProductCheckpoint": "1ecec7da",
+  "localProductCheckpoint": "e56d5c9253b5e9c0c5b1b854a0f383af585fdb5d",
+  "sourceClean": true,
+  "database": "schoolpilot_redesign_private_chat_lifecycle_complete_20261002",
+  "fixtureConvergence": {
+    "productionMutations": 0,
+    "flightPathContentRevisionColumn": true,
+    "ledgerRows": 53,
+    "forcedTables": 129
+  },
+  "ordinary": {
+    "failed": 0,
+    "passed": 32,
+    "posture": "privileged synthetic application fixture plus hermetic actual nonowner FORCE-RLS sub-suite",
+    "skipped": 0
+  },
+  "restricted": {
+    "failed": 0,
+    "passed": 32,
+    "posture": "NOSUPERUSER/NOBYPASSRLS restricted application role plus hermetic actual nonowner FORCE-RLS sub-suite",
+    "skipped": 0
+  },
+  "build": "PASS",
+  "testTypes": {
+    "newDiagnostics": 0,
+    "existing": 438,
+    "applicationErrors": 0,
+    "baseline": 534
+  },
+  "casts": "PASS",
+  "laneRegistration": "Both new files run once in ordinary DB lane and once in restricted RLS lane, no duplicate within lane",
+  "review": "Independent precision source/test review: no actionable findings",
+  "ephemeralRolesRemoved": true,
+  "activeOwnProcesses": 0,
+  "pushes": 0,
+  "pullRequests": 0,
+  "merges": 0,
+  "deployments": 0,
+  "redProof": [
+    "Before a2ddb5e3, projectPrivateChatMessages emitted ANY(($2,$3)::varchar[]) and failed multi-message history SQL",
+    "Before 2fb0ac88, capoff/stickyfalse private sends wrote thread UUID plus epoch/generation1 instead of NULL fields",
+    "Bridge2fb claimed a pending unstamped private reply while school messaging was off; corrected by7f45d5ea",
+    "5cc28ceb settings INSERT omitted required school_name and failed23502 before ON CONFLICT; corrected by d2b4e52f"
+  ],
+  "logs": [
+    {
+      "sha256": "c67de3a17db9ab3c6eed30416a8f37e7e722a9a04e2dcbb8a5c2deb90f3ca9ca",
+      "file": "release297-private-lifecycle-native-third.log",
+      "sanitizedSha256": "5e6afac86d79dd27a9adc9bdd4a726e07d39910b67b53b4a6a885396afc6e23d"
+    },
+    {
+      "sha256": "874958559528521c0c3c8de95657af1a956bb2e484515f9142dab9bf7ea0ee0a",
+      "file": "release297-private-lifecycle-bridge-red.log",
+      "sanitizedSha256": "70f0cead4ce643a1dd3c27cac32c5fb1d4662a85975ce86d7d86428d1edea0a3"
+    },
+    {
+      "sha256": "6316d4d8e98e81d0add529b47b4384a7b3bf0ced535529f670f413ce08ebd5db",
+      "file": "release297-private-lifecycle-bridge-restricted.log",
+      "sanitizedSha256": "52205500f341569c020ee1965a4430d9892ed9e8773f3083fb096794c9931ee1"
+    },
+    {
+      "sha256": "75d5dc57a95e0a2c207a80ad7f0adef6281458aafd074eb372f6df6bf7db7406",
+      "file": "release297-private-lifecycle-bridge-restricted-corrected.log",
+      "sanitizedSha256": "8d40ed7b2aa44b536cfff87bc9c64696386fa1671fa1de72e3af7bb0f183b9db"
+    },
+    {
+      "sha256": "669ff6443c5b4d19b53600f2670176a7d2265dcaca8375b3bea8dade8df9094d",
+      "file": "release297-private-lifecycle-final-ordinary.log",
+      "sanitizedSha256": "669ff6443c5b4d19b53600f2670176a7d2265dcaca8375b3bea8dade8df9094d"
+    },
+    {
+      "sha256": "73e83b448467e8e4cfebbdf7ffa0c65cb276d0181804c51015ed240db4d9f8da",
+      "file": "release297-private-lifecycle-final-restricted.log",
+      "sanitizedSha256": "73e83b448467e8e4cfebbdf7ffa0c65cb276d0181804c51015ed240db4d9f8da"
+    },
+    {
+      "sha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "file": "release297-private-lifecycle-adoption-build.log",
+      "sanitizedSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48"
+    },
+    {
+      "sha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "file": "release297-private-lifecycle-adoption-types.log",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc"
+    },
+    {
+      "sha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "file": "release297-private-lifecycle-adoption-casts.log",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104"
+    }
+  ],
+  "archive": "private-lifecycle-6a1c80ab.logs.ndjson.gz",
+  "archiveSha256": "21b5e2266686a91b0703da2e81e1ea7df05c9b37a142bd19a51b7eaccf86712f",
+  "note": "Counts and clean-source status apply to the isolated lifecycle branch named above, not final combined CI or production."
+}

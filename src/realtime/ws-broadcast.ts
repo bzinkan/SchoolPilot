@@ -547,6 +547,10 @@ export function sendToStudentBindingLocal(
         ? [options.requiredCapability]
         : requiredStudentCapabilities(message))),
     ...(preciseRestriction ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY] : []),
+    // A caller's explicit capability list may narrow a private frame's audience,
+    // but cannot send a stamped lifecycle message to a legacy local socket.
+    ...(plainObject(message) && message.type === "teacher-message" && message.privateChatLifecycle != null
+      ? ["privateChatLifecycleV1"] : []),
   ])];
   const matchingSockets = [...sockets].filter((ws) => {
     const client = wsClients.get(ws);

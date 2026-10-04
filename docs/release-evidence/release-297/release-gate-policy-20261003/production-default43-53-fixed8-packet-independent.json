@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_matched133_fixed8_public_and_complete_custody_review",
+  "reviewedAtUtc": "2026-10-04T20:44:53.8364280+00:00",
+  "passed": true,
+  "canonicalReview": {
+    "sha256": "d232c9ea2d4ca95ae4f84026d6f014e332d5e8193dca47f47d64ad8a869b4ffd",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default-independent-full8-02\\review.json"
+  },
+  "publicSummary": {
+    "sha256": "38cc45eddc4afd96e98672a1c1c8fafc78510274ab5cf5156faa6382e1cdadb3",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-02\\public-summary-02.json"
+  },
+  "blockCustody": {
+    "sha256": "66befc933621e4176550d470b7ffbc9a5a5f25977aa004804a1c4b1a558271ef",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-02\\block-custody.json"
+  },
+  "containedOrdinaryMembers": 585,
+  "allBytesAndHashesVerified": true,
+  "completeRetainedFileSetVerified": true,
+  "totalBytes": 14962002,
+  "publicNestedReferencesVerified": 54,
+  "allEightCanonicalAndMetricSourceProjectionsVerified": true,
+  "allPairConservativeAndControlNumericsMatchIndependentReplay": true,
+  "allEightSafetyAndCleanupPassed": true,
+  "candidateAbsolutePasses": 3,
+  "baselineLatencyFailuresPreserved": 5,
+  "controlsStable": false,
+  "strictComparisonPassed": false,
+  "policyApproved": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "reviewOnlyRetainedReads": true,
+  "noNewNativeCloudOrTestActions": true
+}

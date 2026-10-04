@@ -2,7 +2,7 @@ import { parse as parseDomain } from "tldts";
 
 /**
  * Precise restriction resources: the wire contract shared with ClassPilot
- * 2.10.0 (capability `preciseRestrictionResourcesV1`).
+ * 2.9.7 (capability `preciseRestrictionResourcesV1`).
  *
  * Pure: no I/O, no clock, no environment. The extension ports
  * `isUrlAllowedByResource`, `extractRestrictionResourceIdentity` and
@@ -462,7 +462,7 @@ export function restrictionResourceIdentityKey(resource: AllowedResource): strin
   return `resource:${resource.provider}:${resource.resourceId}`;
 }
 
-/** Classroom DNR rules one entry needs in ClassPilot 2.10.0 (websites share rule 1). */
+/** Classroom DNR rules one entry needs in ClassPilot 2.9.7 (websites share rule 1). */
 export function restrictionResourceRuleCount(resource: AllowedResource): number {
   if (resource.type === "website") return 0;
   if (resource.type === "resource" && resource.provider === "youtube") return 2;

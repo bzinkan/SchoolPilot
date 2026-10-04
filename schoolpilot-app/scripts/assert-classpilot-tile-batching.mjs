@@ -1317,16 +1317,37 @@ assert.equal(
   2,
   'exactly the Flight Path and Block List menus must render as non-modal dropdowns',
 );
+// Toolbar Remove is a one-click action: it resolves the visible selection when
+// pressed and sends those students explicitly (a selection cleared
+// automatically is refused, never widened), while the command payload itself
+// stays strictly empty.
 assert.match(
   dashboardSource,
-  /onSelect=\{\(\) => removeFlightPathMutation\.mutate\(\{\}\)\}[^\n]*data-testid="button-remove-flight-path"/,
-  'toolbar Remove Flight Path must keep its strict empty payload beside its testid',
+  /onSelect=\{handleRemoveFlightPathFromTarget\}[^\n]*data-testid="button-remove-flight-path"/,
+  'toolbar Remove Flight Path must resolve its explicit students beside its testid',
 );
 assert.match(
   dashboardSource,
-  /onSelect=\{\(\) => removeBlockListMutation\.mutate\(\{\}\)\}[^\n]*data-testid="button-remove-block-list"/,
-  'toolbar Remove Block List must keep its strict empty payload beside its testid',
+  /onSelect=\{handleRemoveBlockList\}[^\n]*data-testid="button-remove-block-list"/,
+  'toolbar Remove Block List must resolve its explicit students beside its testid',
 );
+for (const [handler, commandType, mutation] of [
+  ['const handleRemoveFlightPathFromTarget = () => {', 'remove-flight-path', 'removeFlightPathMutation'],
+  ['const handleRemoveBlockList = () => {', 'remove-block-list', 'removeBlockListMutation'],
+]) {
+  const start = dashboardSource.indexOf(handler);
+  assert.ok(start >= 0, `missing ${handler}`);
+  assert.match(
+    dashboardSource.slice(start, dashboardSource.indexOf('\n  };', start)),
+    new RegExp(`const studentIds = clickRecipientIds\\('${commandType}'\\);\\s*if \\(studentIds\\) ${mutation}\\.mutate\\(\\{ studentIds \\}\\);`),
+    `${commandType} must send the students resolved when it was pressed`,
+  );
+  assert.match(
+    dashboardSource,
+    new RegExp(`postActiveCommand\\('${commandType}', \\{\\}, \\{ studentIds \\}\\)`),
+    `${commandType} must keep its strict empty payload`,
+  );
+}
 assert.match(
   dashboardSource,
   /data-testid="waypoint-domain-preservation-message"[\s\S]{0,120}\{waypointDomainRestrictionMessage\}/,
@@ -1339,8 +1360,8 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\{DOMAIN_RESTRICTION_URL_HELP\}/,
-  'the Waypoint URL field must use the shared honest landing-page help',
+  /DOMAIN_RESTRICTION_URL_HELP\}/,
+  'the website Waypoint URL field must retain the shared honest landing-page help, including conditional precise-resource copy',
 );
 assert.doesNotMatch(
   dashboardSource,

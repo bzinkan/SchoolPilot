@@ -24,6 +24,9 @@ import {
   type ResolvedClasspilotCommandTarget,
 } from "../../services/classpilotCommandDispatcher.js";
 import { publicClasspilotCommand } from "../../services/classpilotCommandPublic.js";
+import { withToolsStaff } from "../../services/classpilotToolsAuthority.js";
+import { assertExactFocusTargetScope, type ClasspilotExactTabTarget } from "../../services/classpilotFocus.js";
+import { validateClasspilotCommandPayload } from "../../services/classpilotCommandValidation.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import {
   classpilotRealtimeFresh,
@@ -216,6 +219,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
       // queued. Persistent controls remain fail-closed unless the exact device
       // is reachable or the signed-out target passed the school-scoped gate.
       stateAuthorized: available
+        || commandType === "stop-focus"
         || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
         || deferredAuthorized,
       lateSignInEligible: deferredAuthorized,
@@ -261,6 +265,11 @@ router.post("/commands", ...auth, async (req, res, next) => {
     // while still using the class resolver for staff/session authorization.
     const targetScope = isPollClose ? "class" : normalizeTargetScope(req.body.targetScope);
     if (!targetScope) return res.status(400).json({ error: "targetScope must be class, subgroup, or students" });
+    if (commandType === "activate-tab" || commandType === "focus-tab") {
+      const payload = validateClasspilotCommandPayload(commandType, req.body.commandPayload);
+      assertExactFocusTargetScope(commandType, targetScope, req.body.targetStudentIds,
+        payload.tabTargets as ClasspilotExactTabTarget[]);
+    }
     if (commandType === "student-sign-out" && targetScope !== "students") {
       return res.status(400).json({ error: "student-sign-out requires explicit targetStudentIds" });
     }
@@ -331,6 +340,27 @@ router.get("/commands/recent", ...auth, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+router.get("/commands/:id/status", ...auth, async (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const authority = parseClasspilotActivityAuthority(req.query);
+    const commandId = String(req.params.id || "").trim();
+    if (!authority || !commandId || commandId.length > 128) return res.status(400).json({ error: "Exact command and classroom authority are required" });
+    const command = await withToolsStaff({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, authority,
+      ...(authority.supervisionContextId ? { contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : {}) },
+      async database => {
+        const [source] = await database.select().from(classpilotCommands).where(and(eq(classpilotCommands.id, commandId),
+          eq(classpilotCommands.schoolId, res.locals.schoolId!), eq(classpilotCommands.teacherId, req.authUser!.id),
+          authority.teachingSessionId ? eq(classpilotCommands.teachingSessionId, authority.teachingSessionId) : eq(classpilotCommands.supervisionContextId, authority.supervisionContextId!))).limit(1);
+        if (!source) return null;
+        const targets = await database.select().from(classpilotCommandTargets).where(and(eq(classpilotCommandTargets.schoolId, source.schoolId), eq(classpilotCommandTargets.commandId, source.id)));
+        return publicClasspilotCommand({ ...source, targets });
+      }, false, true);
+    if (!command) return res.status(404).json({ error: "Command not found" });
+    return res.json({ command });
+  } catch (error) { next(error); }
 });
 
 router.get("/commands/active-state", ...auth, async (req, res, next) => {

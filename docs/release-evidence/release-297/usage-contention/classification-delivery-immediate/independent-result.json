@@ -1,0 +1,337 @@
+{
+  "passed": true,
+  "checks": 47,
+  "modelFetches": 20,
+  "scope": "Independent mocked-provider differential check versus unchanged59f0 classifier; no network/provider/database calls.",
+  "cases": [
+    {
+      "case": "https://www.ixl.com/math",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://docs.google.com/document/1",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://google.com/search?q=algebra",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://google.com/search?q=how+to+kill+myself",
+      "source": "search",
+      "category": "non-educational",
+      "safetyAlert": "self-harm",
+      "immediate": false
+    },
+    {
+      "case": "https://google.com/search?q=algebra",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://google.co.uk/search?q=how+to+make+a+bomb",
+      "source": "search",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://duckduckgo.com/#q=how%20to%20kill%20myself",
+      "source": "search",
+      "category": "non-educational",
+      "safetyAlert": "self-harm",
+      "immediate": false
+    },
+    {
+      "case": "https://gemini.google.com/app",
+      "source": "ai-tool",
+      "category": "non-educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://sub.school-immediate.test/home",
+      "source": "school-domain",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://sub.school-immediate.test/home",
+      "source": "unknown",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://sub.school-immediate.test/home",
+      "source": "school-domain",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://school-immediate.test.evil.test/",
+      "source": "unknown",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://youtube.com/watch?v=1",
+      "source": "known-list",
+      "category": "non-educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://draftkings.com/",
+      "source": "known-list",
+      "category": "non-educational",
+      "safetyAlert": "gambling",
+      "immediate": false
+    },
+    {
+      "case": "https://apnews.com/",
+      "source": "known-list",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://github.com/open-source",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "chrome://newtab",
+      "source": null,
+      "category": null,
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "chrome-extension://someid/options.html",
+      "source": null,
+      "category": null,
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "about:blank",
+      "source": null,
+      "category": null,
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "CHROME://newtab",
+      "source": "unknown",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://[broken",
+      "source": "unknown",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://google.com@unlisted-immediate.test/",
+      "source": "unknown",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "google.com",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "chrome://google.com",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://nwea.org/",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://student.desmos.com/activity",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://www.ixl.com/math",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://www.ixl.com/math",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://www.ixl.com/math",
+      "source": "known-list",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": true
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "http://independent-page-cache.test/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "http://independent-page-cache.test/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test:8443/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test:8443/lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/Lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/Lesson?a=1&a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?b=3&a=1&a=2#one",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?b=3&a=1&a=2#one",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=2&b=3#one",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=1&a=2&b=3#two",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/lesson?a=1&a=2&b=3#two",
+      "source": "ai",
+      "category": "non-educational",
+      "safetyAlert": "violence",
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/unknown",
+      "source": "unknown",
+      "category": "unknown",
+      "safetyAlert": null,
+      "immediate": false
+    },
+    {
+      "case": "https://independent-page-cache.test/unknown",
+      "source": "ai",
+      "category": "educational",
+      "safetyAlert": null,
+      "immediate": false
+    }
+  ]
+}

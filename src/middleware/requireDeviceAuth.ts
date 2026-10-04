@@ -78,7 +78,7 @@ function createRequireDeviceAuth(
       }
 
       const activeSession = await runWithTenantContext(
-        { schoolId: payload.schoolId },
+        { schoolId: payload.schoolId, operation: "auth" },
         () => resolveActiveStudentTokenSession(payload)
       );
       if (!activeSession) {

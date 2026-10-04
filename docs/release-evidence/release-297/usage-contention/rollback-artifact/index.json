@@ -1,0 +1,272 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T22:49:00.866Z",
+  "scope": "Durable sanitized copy of local rollback preparation evidence; no deployment approval or production-source verification.",
+  "sourceCommit": "08802d020a3c51beea504140f923126ab518aac6",
+  "originalArtifactManifest": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-compatible-rollback-20261002T222725Z/manifest.json",
+    "sha256": "d9c362a091aec7dad760bceedd58d8fe936beaa8fff3d037ef98d7dac26dbe2d",
+    "archivedFile": "manifest.json.gz"
+  },
+  "externalImageArchive": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-compatible-rollback-20261002T222725Z/image.tar",
+    "sha256": "ef6eceb2a48802d5759579c1a6f1850d60730c344fea8cb90f244cd45405c450",
+    "bytes": 151399936,
+    "retainedLocally": true,
+    "includedInRepository": false,
+    "identityBasis": "Original artifact manifest hash captured after the image export; original files have not been rewritten."
+  },
+  "image": {
+    "localTag": "schoolpilot-rollback-local:08802d020a3c",
+    "localImageIndexDigest": "sha256:029f519e19c96bcf587495680f5c195a4ec8e33f8b21d2df54c1277b4054edef",
+    "localRepoDigests": [
+      "schoolpilot-rollback-local@sha256:029f519e19c96bcf587495680f5c195a4ec8e33f8b21d2df54c1277b4054edef"
+    ],
+    "configDigest": "sha256:db99afef1485610694ff8c27457383a5cb6d250ddaad5a8045eca068b5ec567b",
+    "platform": "linux/amd64",
+    "revisionLabel": "08802d020a3c51beea504140f923126ab518aac6",
+    "archive": "image.tar",
+    "apiCommand": [
+      "node",
+      "dist/index.js"
+    ],
+    "workerCommand": [
+      "node",
+      "dist/worker.js"
+    ],
+    "registryPublished": false,
+    "productionDigestBindingVerified": false,
+    "platformManifestDigest": "sha256:e1a0fa9ab859372b738221c4304c0eaba77f3e1d1363e8bfcedc945877ea00a0"
+  },
+  "scanSummary": {
+    "scannerImage": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "allVulnerabilityCounts": {
+      "UNKNOWN": 1,
+      "MEDIUM": 6
+    },
+    "gate": "Existing workflow policy: fixed HIGH/CRITICAL findings fail (--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1).",
+    "gateFindings": 0,
+    "gatePassed": true,
+    "scanExit": 0,
+    "gateExit": 0,
+    "vulnerabilityDatabase": {
+      "Version": 2,
+      "NextUpdate": "2026-10-03T19:00:34.190885133Z",
+      "UpdatedAt": "2026-10-02T19:00:34.190885353Z",
+      "DownloadedAt": "2026-10-02T22:29:28.606378885Z",
+      "metadataSha256": "470691a76983c6285294e960877a46dda52ffba8a99ef627af5fa09343b4575d"
+    }
+  },
+  "compatibility": {
+    "embeddedMarkers": "embedded-compatibility.json",
+    "syntheticReleaseFloorProof": "synthetic-release-floor-proof.json",
+    "writerVersion": 1,
+    "bridgeVersion": 1,
+    "relayVersion": 1,
+    "admissionTableCount": 129
+  },
+  "usage": {
+    "rollupMode": "off",
+    "digitalUsageMode": "off",
+    "reason": "This exact source predates the contention fix. Do not activate either Usage mode on this rollback candidate."
+  },
+  "limitations": [
+    "Synthetic task definitions prove pure release-floor assertions only; they are not deployable, registered, or read from production.",
+    "Local image and source binding do not establish ECR publication or production API/worker rollback artifacts.",
+    "Migration re-entry on the adopted candidate schema is separate evidence owned by the release coordinator.",
+    "Rollback below this compatible lifecycle floor remains disallowed once private-chat lifecycle admission/state is adopted.",
+    "Deployment requires fresh production verification, exact registry digest binding and separately authorized execution."
+  ],
+  "productionMutations": 0,
+  "registryPushes": 0,
+  "taskRegistrations": 0,
+  "records": [
+    {
+      "file": "build.log.gz",
+      "sourceFile": "build.log",
+      "rawBytes": 3045,
+      "sanitizedBytes": 3045,
+      "rawSha256": "ab59069e13db8a238a4c7edc1d1243cbb2ea85de4593630af1fd4ad675a711e8",
+      "sanitizedSha256": "ab59069e13db8a238a4c7edc1d1243cbb2ea85de4593630af1fd4ad675a711e8",
+      "archiveSha256": "2bdcb16f8c1a64516b4eb3476084dd5dedb88574ae4c680273771319e150e3db",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "commands.json.gz",
+      "sourceFile": "commands.json",
+      "rawBytes": 3410,
+      "sanitizedBytes": 3410,
+      "rawSha256": "7ac05bb505f4458bd22ca05c4479062a4fdbe0028f83ef3953456a6f5cc89e91",
+      "sanitizedSha256": "7ac05bb505f4458bd22ca05c4479062a4fdbe0028f83ef3953456a6f5cc89e91",
+      "archiveSha256": "c9af18bf69ec9e9160a4cb88f4944eba2784d4e5b02915aba25dfedf6cd0ecf8",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "embedded-compatibility.json.gz",
+      "sourceFile": "embedded-compatibility.json",
+      "rawBytes": 666,
+      "sanitizedBytes": 666,
+      "rawSha256": "a88c7d3a91a603f168434994ea9107449b5fc538a13d66b00126974843fcc61e",
+      "sanitizedSha256": "a88c7d3a91a603f168434994ea9107449b5fc538a13d66b00126974843fcc61e",
+      "archiveSha256": "1ebdc935008aff8ad321c96ced905efc70aef8150da59691d7cc7380a0113204",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "image-id.txt.gz",
+      "sourceFile": "image-id.txt",
+      "rawBytes": 71,
+      "sanitizedBytes": 71,
+      "rawSha256": "c285e8572c17c44e9042bc1e7fd6ad050d73581a6b2310311ebf9ca0c106e661",
+      "sanitizedSha256": "c285e8572c17c44e9042bc1e7fd6ad050d73581a6b2310311ebf9ca0c106e661",
+      "archiveSha256": "4ab0b732a7ae97832097220e8c5e862c06f0f5551f3455e1130967991b12e1d6",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "image-inspect.json.gz",
+      "sourceFile": "image-inspect.json",
+      "rawBytes": 3250,
+      "sanitizedBytes": 3250,
+      "rawSha256": "4148068f0ddc1350fb6c36ce915b4d5bfcdaacb73685bd1cc6456ad46c31425f",
+      "sanitizedSha256": "4148068f0ddc1350fb6c36ce915b4d5bfcdaacb73685bd1cc6456ad46c31425f",
+      "archiveSha256": "7d15d0e277964025c07afe31ec0e5d72ca359a2bf7041bdf90e6b3fa75e02a32",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "inspect-compatibility.mjs.gz",
+      "sourceFile": "inspect-compatibility.mjs",
+      "rawBytes": 1524,
+      "sanitizedBytes": 1524,
+      "rawSha256": "87e9a8203ea084e2d791b708da3105effd4fbdb9b1d2d634bae565f6018ebfde",
+      "sanitizedSha256": "87e9a8203ea084e2d791b708da3105effd4fbdb9b1d2d634bae565f6018ebfde",
+      "archiveSha256": "6afe8923337e749306479d63c2f7ab8daede60daa257b2ddfa2c8fd5efbd4037",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "manifest.json.gz",
+      "sourceFile": "manifest.json",
+      "rawBytes": 5626,
+      "sanitizedBytes": 5626,
+      "rawSha256": "d9c362a091aec7dad760bceedd58d8fe936beaa8fff3d037ef98d7dac26dbe2d",
+      "sanitizedSha256": "d9c362a091aec7dad760bceedd58d8fe936beaa8fff3d037ef98d7dac26dbe2d",
+      "archiveSha256": "2040edcd7e99c13995691a9ec693d30eff725278deea68f56c020c9ac32c776d",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "preparation.json.gz",
+      "sourceFile": "preparation.json",
+      "rawBytes": 661,
+      "sanitizedBytes": 661,
+      "rawSha256": "c6652af83e64cff63d1a94b58a434cb49bfe53c1dde256f1cdbcd2081f77dc2f",
+      "sanitizedSha256": "c6652af83e64cff63d1a94b58a434cb49bfe53c1dde256f1cdbcd2081f77dc2f",
+      "archiveSha256": "39f1d0efcc651ea16b456efb2050f17e9c4bcb3010ac1dc329b24ab9e13cc090",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "save.log.gz",
+      "sourceFile": "save.log",
+      "rawBytes": 0,
+      "sanitizedBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "synthetic-api-task.json.gz",
+      "sourceFile": "synthetic-api-task.json",
+      "rawBytes": 4087,
+      "sanitizedBytes": 4087,
+      "rawSha256": "220ffed6ab5bb0aaf3f5430dbe6f0253a926576ca34ab1bc0428c535b2357cd5",
+      "sanitizedSha256": "220ffed6ab5bb0aaf3f5430dbe6f0253a926576ca34ab1bc0428c535b2357cd5",
+      "archiveSha256": "58a6992ea2815d004d97b94ff6c3d0ab095cf53a7070b75c1057fd107f6f3cf1",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "synthetic-release-floor-proof.json.gz",
+      "sourceFile": "synthetic-release-floor-proof.json",
+      "rawBytes": 1136,
+      "sanitizedBytes": 1136,
+      "rawSha256": "a11c6c5b877d9377861d311e1cb1ba13ed6d824ae2682db797224b34b44c8b14",
+      "sanitizedSha256": "a11c6c5b877d9377861d311e1cb1ba13ed6d824ae2682db797224b34b44c8b14",
+      "archiveSha256": "20936abe9be4764fec6709aa8c25623a4da51575a10c3ae52e4f556681a1863f",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "synthetic-worker-task.json.gz",
+      "sourceFile": "synthetic-worker-task.json",
+      "rawBytes": 4101,
+      "sanitizedBytes": 4101,
+      "rawSha256": "f565c4dae0f19f2b7f2913e874094c333bc1b66236b06ba193ddc4996dc2fd6b",
+      "sanitizedSha256": "f565c4dae0f19f2b7f2913e874094c333bc1b66236b06ba193ddc4996dc2fd6b",
+      "archiveSha256": "61e2d90da9ff775299d0def834ba83bc0a371321b96bb6d85df589e36710475d",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "trivy-all.json.gz",
+      "sourceFile": "trivy-all.json",
+      "rawBytes": 383015,
+      "sanitizedBytes": 383015,
+      "rawSha256": "28dd1b5fe28ae8a265e58f915fe7b1c78354497babe412492e6c1b43e3790709",
+      "sanitizedSha256": "28dd1b5fe28ae8a265e58f915fe7b1c78354497babe412492e6c1b43e3790709",
+      "archiveSha256": "fe4da1a91571aa5a09d214c185c079e5f39d76cdf86d2a0ba98d898d81ac34dc",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "trivy-all.log.gz",
+      "sourceFile": "trivy-all.log",
+      "rawBytes": 15800,
+      "sanitizedBytes": 15800,
+      "rawSha256": "5dc9995a8d828d180787eba052a9bbf39c9264c40e8d6bb469b445d9048569f7",
+      "sanitizedSha256": "5dc9995a8d828d180787eba052a9bbf39c9264c40e8d6bb469b445d9048569f7",
+      "archiveSha256": "64f2ba11d8152ea94ef1e5891f4e96bbd4d9a086ef1f01e3a7d72c92ca4c86ba",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "trivy-gate.json.gz",
+      "sourceFile": "trivy-gate.json",
+      "rawBytes": 356812,
+      "sanitizedBytes": 356812,
+      "rawSha256": "6d1d478e020ae0cbcbaaa4e47e1d874b83f8bed1307b12812e0a2d4910677b5e",
+      "sanitizedSha256": "6d1d478e020ae0cbcbaaa4e47e1d874b83f8bed1307b12812e0a2d4910677b5e",
+      "archiveSha256": "bc51988f761bd6c4a1c669f472673e6d88cc2945e54b787816acc68415d67141",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "trivy-gate.log.gz",
+      "sourceFile": "trivy-gate.log",
+      "rawBytes": 569,
+      "sanitizedBytes": 569,
+      "rawSha256": "c2fd5b5e88d7b29889bd8ddb082a239394ca7019148083cf934acde3c51c0f3b",
+      "sanitizedSha256": "c2fd5b5e88d7b29889bd8ddb082a239394ca7019148083cf934acde3c51c0f3b",
+      "archiveSha256": "1bf36641d6e040a6743db116352e790ee566711789ba017818134959b66d1f4a",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "trivy-database-metadata.json.gz",
+      "sourceFile": "trivy-cache/db/metadata.json",
+      "rawBytes": 153,
+      "sanitizedBytes": 153,
+      "rawSha256": "470691a76983c6285294e960877a46dda52ffba8a99ef627af5fa09343b4575d",
+      "sanitizedSha256": "470691a76983c6285294e960877a46dda52ffba8a99ef627af5fa09343b4575d",
+      "archiveSha256": "269ec1c4d31f91385eebfc2e72868084a5ac208b0e65e34a5adb33f1aff39028",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    }
+  ]
+}

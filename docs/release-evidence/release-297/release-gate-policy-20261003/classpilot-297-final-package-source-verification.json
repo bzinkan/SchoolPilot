@@ -1,0 +1,368 @@
+{
+  "kind": "read_only_classpilot_source_package_reverification",
+  "recordedAt": "2026-10-04T19:39:50.6260807Z",
+  "verified": true,
+  "sourceDirectory": "C:\\GitHub\\ClassPilot-release-297",
+  "head": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "cleanBeforeAndAfter": true,
+  "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+  "packagedSourceIsAncestor": true,
+  "extensionTree": {
+    "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "exactEqual": true
+  },
+  "ancestorDelta": [
+    "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+    "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+  ],
+  "version": "2.9.7",
+  "manifest": {
+    "name": "ClassPilot",
+    "manifestVersion": 3,
+    "minimumChromeVersion": "120",
+    "source": {
+      "path": "C:\\GitHub\\ClassPilot-release-297\\extension\\manifest.json",
+      "bytes": 1996,
+      "sha256": "ebdb2967cc17b6f854a3d89eb201d992bbdd5b0eded27f6bef32d13379505ea0"
+    },
+    "allPackageManifestsByteEqual": true,
+    "publicKeyPresent": false,
+    "stableStoreItemId": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "storeItemIdentitySource": "Retained candidate evidence listing URL; not inferred from unsigned ZIP and not a new Store observation"
+  },
+  "sourceBindingReceipt": {
+    "path": "C:\\GitHub\\ClassPilot-release-297\\docs\\release-evidence\\classpilot-2.9.7-candidate-20261002.json",
+    "bytes": 16074,
+    "sha256": "2eac6642ed6636a245d322bdb478094b03f0c858e57e56991b6f39fea841c661"
+  },
+  "sourceBindingGitBlob": "7f21f8bdd9838f3941cd14a0a387f7f5c037f845",
+  "allRetainedProductionRawSourcePinsMatch": true,
+  "archives": [
+    {
+      "archive": {
+        "path": "C:\\GitHub\\ClassPilot\\dist\\ClassPilot-v2.9.7.zip",
+        "bytes": 376052,
+        "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575"
+      },
+      "entryCount": 24,
+      "all24EntriesMatchCleanSource": true,
+      "manifestVersion": "2.9.7",
+      "manifestName": "ClassPilot",
+      "memberProof": [
+        {
+          "file": "auth-gate-bootstrap.js",
+          "bytes": 44040,
+          "sha256": "8dbfbe0a87655605703e8aa4406c24470206b44e2ca592e0633001b0a55dc437",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-frame.css",
+          "bytes": 11831,
+          "sha256": "31a41275480feb74c7d3f9deab7af92bcfb838726ba8d64ce871d96c06f3ac66",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-frame.html",
+          "bytes": 581,
+          "sha256": "11dd5cfe631f8f76cd393beaf744069d879651b155ba0f42367f4f297858e1a6",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-frame.js",
+          "bytes": 58751,
+          "sha256": "1f42106396046c6f1b13483dba79342135a1431983d4ce41847bd2d5d2cd43ab",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-transport.js",
+          "bytes": 4533,
+          "sha256": "09ba965896ecb5ff8def4ecdc6f6d4e868fd8c57d0a2f9bc9f2e9dfd06081965",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-recovery-diagnostics.js",
+          "bytes": 18169,
+          "sha256": "c24effee6fa540cbaf32415dcebcf89f1dec71aadce5c2eac7fb1fe49d56a17f",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "classroom-runtime-core.js",
+          "bytes": 102715,
+          "sha256": "ee67fb13107fc3f4d2c8af8aab4e75f327703d1bde1b6718c678cab0275154af",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "content-injection.js",
+          "bytes": 8969,
+          "sha256": "742ac3b09e1559eb7e8c7bf2a989d05f1694b06f4838a164633289ada4867db1",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "content.js",
+          "bytes": 171452,
+          "sha256": "4f42da8174b079095c61a088cce7a7b48e3a1f654dbfab4180ab08e3d78b9aa5",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon128.png",
+          "bytes": 2420,
+          "sha256": "a934e8177c8a024a7ac9b1a9011baaa2460ff542aca25787e0a40d37fd5279d6",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon16.png",
+          "bytes": 359,
+          "sha256": "088d264993ff092580e27173def190770ae5f4f95a3494b79417602d433cfa08",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon32.png",
+          "bytes": 698,
+          "sha256": "0b27297be93f5df048f046f642688243674495bcbe7e9b2ab1e44fafa2afe46b",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon48.png",
+          "bytes": 961,
+          "sha256": "756e11529385b13a2bdf9b2e5f4458c6ee06e452cd264589ed9695f156f6c6d2",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "managed_schema.json",
+          "bytes": 997,
+          "sha256": "e17df2f00b54fe49a5d0b2c2e4f870d2fb40f2763d1db941f97e3c7a4d28e461",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "manifest.json",
+          "bytes": 1996,
+          "sha256": "ebdb2967cc17b6f854a3d89eb201d992bbdd5b0eded27f6bef32d13379505ea0",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "offscreen.html",
+          "bytes": 173,
+          "sha256": "5d547fe6ffb5877dfe8090cd38f854a9ba578047eb55921699b79a5d684cfbed",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "offscreen.js",
+          "bytes": 49099,
+          "sha256": "6736b3644f99353f6c001bacf0693f4a0971e5e830dafd83e8efa018b657e2c2",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "page-lifecycle.js",
+          "bytes": 11886,
+          "sha256": "dbabde62e9722e304e481ec7e26c75077d214e04de77e20eb216265adaab18ec",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "popup.html",
+          "bytes": 14047,
+          "sha256": "81192845968ba1e705273ec038c7acd588bee7901bfad818ed87876905afad0e",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "popup.js",
+          "bytes": 26561,
+          "sha256": "7649115d0cdeb02983ecc86c579b5c0a6e0822d80ab0a5241e4738b0553c1681",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "private-recovery-store.js",
+          "bytes": 7103,
+          "sha256": "fe986923bde4db520768501441788eb9bbac3979618eca9387c37c4c67b7d7d8",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "school-website-policy.js",
+          "bytes": 1616,
+          "sha256": "58debc61211064d8282dc78441d9eca759e54ef91ae3653aeb74cd23c41e71a0",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "service-worker.js",
+          "bytes": 1186321,
+          "sha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "vendor/sentry.browser.min.js",
+          "bytes": 2695,
+          "sha256": "a2cdac2a3ef061a5f5dfbe37dc195b30f278132f90595600696fcf0ac0e64a77",
+          "matchesCleanSource": true
+        }
+      ]
+    },
+    {
+      "archive": {
+        "path": "C:\\GitHub\\ClassPilot-release-297\\dist\\ClassPilot-v2.9.7.zip",
+        "bytes": 376052,
+        "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575"
+      },
+      "entryCount": 24,
+      "all24EntriesMatchCleanSource": true,
+      "manifestVersion": "2.9.7",
+      "manifestName": "ClassPilot",
+      "memberProof": [
+        {
+          "file": "auth-gate-bootstrap.js",
+          "bytes": 44040,
+          "sha256": "8dbfbe0a87655605703e8aa4406c24470206b44e2ca592e0633001b0a55dc437",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-frame.css",
+          "bytes": 11831,
+          "sha256": "31a41275480feb74c7d3f9deab7af92bcfb838726ba8d64ce871d96c06f3ac66",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-frame.html",
+          "bytes": 581,
+          "sha256": "11dd5cfe631f8f76cd393beaf744069d879651b155ba0f42367f4f297858e1a6",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-frame.js",
+          "bytes": 58751,
+          "sha256": "1f42106396046c6f1b13483dba79342135a1431983d4ce41847bd2d5d2cd43ab",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-gate-transport.js",
+          "bytes": 4533,
+          "sha256": "09ba965896ecb5ff8def4ecdc6f6d4e868fd8c57d0a2f9bc9f2e9dfd06081965",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "auth-recovery-diagnostics.js",
+          "bytes": 18169,
+          "sha256": "c24effee6fa540cbaf32415dcebcf89f1dec71aadce5c2eac7fb1fe49d56a17f",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "classroom-runtime-core.js",
+          "bytes": 102715,
+          "sha256": "ee67fb13107fc3f4d2c8af8aab4e75f327703d1bde1b6718c678cab0275154af",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "content-injection.js",
+          "bytes": 8969,
+          "sha256": "742ac3b09e1559eb7e8c7bf2a989d05f1694b06f4838a164633289ada4867db1",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "content.js",
+          "bytes": 171452,
+          "sha256": "4f42da8174b079095c61a088cce7a7b48e3a1f654dbfab4180ab08e3d78b9aa5",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon128.png",
+          "bytes": 2420,
+          "sha256": "a934e8177c8a024a7ac9b1a9011baaa2460ff542aca25787e0a40d37fd5279d6",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon16.png",
+          "bytes": 359,
+          "sha256": "088d264993ff092580e27173def190770ae5f4f95a3494b79417602d433cfa08",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon32.png",
+          "bytes": 698,
+          "sha256": "0b27297be93f5df048f046f642688243674495bcbe7e9b2ab1e44fafa2afe46b",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "icons/icon48.png",
+          "bytes": 961,
+          "sha256": "756e11529385b13a2bdf9b2e5f4458c6ee06e452cd264589ed9695f156f6c6d2",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "managed_schema.json",
+          "bytes": 997,
+          "sha256": "e17df2f00b54fe49a5d0b2c2e4f870d2fb40f2763d1db941f97e3c7a4d28e461",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "manifest.json",
+          "bytes": 1996,
+          "sha256": "ebdb2967cc17b6f854a3d89eb201d992bbdd5b0eded27f6bef32d13379505ea0",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "offscreen.html",
+          "bytes": 173,
+          "sha256": "5d547fe6ffb5877dfe8090cd38f854a9ba578047eb55921699b79a5d684cfbed",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "offscreen.js",
+          "bytes": 49099,
+          "sha256": "6736b3644f99353f6c001bacf0693f4a0971e5e830dafd83e8efa018b657e2c2",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "page-lifecycle.js",
+          "bytes": 11886,
+          "sha256": "dbabde62e9722e304e481ec7e26c75077d214e04de77e20eb216265adaab18ec",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "popup.html",
+          "bytes": 14047,
+          "sha256": "81192845968ba1e705273ec038c7acd588bee7901bfad818ed87876905afad0e",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "popup.js",
+          "bytes": 26561,
+          "sha256": "7649115d0cdeb02983ecc86c579b5c0a6e0822d80ab0a5241e4738b0553c1681",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "private-recovery-store.js",
+          "bytes": 7103,
+          "sha256": "fe986923bde4db520768501441788eb9bbac3979618eca9387c37c4c67b7d7d8",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "school-website-policy.js",
+          "bytes": 1616,
+          "sha256": "58debc61211064d8282dc78441d9eca759e54ef91ae3653aeb74cd23c41e71a0",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "service-worker.js",
+          "bytes": 1186321,
+          "sha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+          "matchesCleanSource": true
+        },
+        {
+          "file": "vendor/sentry.browser.min.js",
+          "bytes": 2695,
+          "sha256": "a2cdac2a3ef061a5f5dfbe37dc195b30f278132f90595600696fcf0ac0e64a77",
+          "matchesCleanSource": true
+        }
+      ]
+    }
+  ],
+  "rebuilds": 0,
+  "testsRepeated": 0,
+  "browserOrStoreActions": 0,
+  "nativeWorkloads": 0,
+  "sourceChanges": 0,
+  "publicationAccepted": false,
+  "limitations": [
+    "Existing unsigned manifest contains no key; Store item ID is retained provenance rather than derivation from ZIP",
+    "No fresh Store state, upload, publication, managed Chromebook or performance acceptance",
+    "Original Observe checkout and both package files were only read"
+  ]
+}

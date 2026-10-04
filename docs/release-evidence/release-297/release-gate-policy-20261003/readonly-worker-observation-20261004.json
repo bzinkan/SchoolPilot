@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "kind": "bounded_get_only_worker_observation",
+  "planSha256": "68961196404617002074cb6fe584c83efb54c3b132965719850fd3ac2da1d436",
+  "startedAtUtc": "2026-10-04T16:59:58.787Z",
+  "awsCalls": 9,
+  "sqlPerformed": 0,
+  "cloudMutations": 0,
+  "status": "observed",
+  "proofs": [
+    {
+      "label": "01-identity",
+      "sha256": "77f6474cb296f20ccf71bc724acfa8cbd25ac18c020c037ab1b4fe83578503cb",
+      "bytes": 138,
+      "exitCode": 0
+    },
+    {
+      "label": "02-service",
+      "sha256": "f54dc8e2220f9272f103d520a5a3aa50daa3924903df43979e683f70e4a0545f",
+      "bytes": 35162,
+      "exitCode": 0
+    },
+    {
+      "label": "03-list",
+      "sha256": "23871f9c5159cf8d53b24541a5c4045a00eeda4adecf94636d69f9d4947d7e2c",
+      "bytes": 147,
+      "exitCode": 0
+    },
+    {
+      "label": "04-task",
+      "sha256": "512ca96454bf75a57e9313f6551dcdeb696cb08bf0984555dd95472357aa87e1",
+      "bytes": 4399,
+      "exitCode": 0
+    },
+    {
+      "label": "05-definition-projection",
+      "sha256": "b093ce77a7189e506e6001d3427a4f9b2cb77ca8b456d9bc9af3f23e0091c3da",
+      "bytes": 1147,
+      "exitCode": 0
+    },
+    {
+      "label": "06-heartbeat",
+      "sha256": "01c3b6ec6b5661b41ae0a167e7036bb091020e69c3310afc1493e9c33daa96fb",
+      "bytes": 6675,
+      "exitCode": 0
+    },
+    {
+      "label": "07-scan",
+      "sha256": "c294f2a9ea26fedaabd7835a5f0806e6d2a94d8fdada38925612b1e76b49d9f1",
+      "bytes": 2516,
+      "exitCode": 0
+    },
+    {
+      "label": "08-task",
+      "sha256": "512ca96454bf75a57e9313f6551dcdeb696cb08bf0984555dd95472357aa87e1",
+      "bytes": 4399,
+      "exitCode": 0
+    },
+    {
+      "label": "09-service",
+      "sha256": "f54dc8e2220f9272f103d520a5a3aa50daa3924903df43979e683f70e4a0545f",
+      "bytes": 35162,
+      "exitCode": 0
+    }
+  ],
+  "observedAtUtc": "2026-10-04T16:59:58.787Z",
+  "completedAtUtc": "2026-10-04T17:00:11.856Z",
+  "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "imageDigest": "sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+  "providerHealth": "UNKNOWN",
+  "healthCheckConfigured": false,
+  "taskIdentityUnchanged": true,
+  "serviceIdentityUnchanged": true,
+  "logStreamSha256": "2b9e631afc59438101afc0833a23fae86d8ae34bd88303f3fb0fcb69838577ba",
+  "heartbeat": {
+    "count": 10,
+    "truncated": true,
+    "observed": false,
+    "latestAtUtc": "2026-10-04T16:59:26.607Z"
+  },
+  "workerDatabaseJob": {
+    "observed": false,
+    "cadenceMinutes": 60,
+    "truncated": true,
+    "eventCount": 1,
+    "latestFreshAtUtc": "2026-10-04T16:33:27.038Z",
+    "metrics": {
+      "SchoolsInScope": 1,
+      "SchoolsScanned": 1,
+      "SchoolsWithIssues": 0,
+      "NormalizedEmailCollisionGroups": 0,
+      "UnscopedIssues": 0,
+      "ScanFailures": 0,
+      "TotalIntegrityIssues": 0,
+      "TotalIntegrityFindings": 0,
+      "ScanSkippedOverlap": 0,
+      "InvalidPrimaryAssignments": 0,
+      "InvalidCoTeacherAssignments": 0,
+      "InvalidClassRelationships": 0,
+      "PrimaryMirrorMismatches": 0,
+      "InvalidLiveAssignments": 0,
+      "InvalidLiveBlockers": 0,
+      "HomeroomPrimaryMirrorMismatches": 0,
+      "InvalidHomeroomRelationships": 0,
+      "InvalidTenantScopes": 0
+    }
+  },
+  "capacityAccepted": false,
+  "allWorkerJobsHealthy": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Heartbeat proves liveness only",
+    "Completed counts-only scan proves one existing database-backed operation",
+    "Provider health is retained verbatim",
+    "No SQL, probe task, broad content logs or service mutation"
+  ]
+}

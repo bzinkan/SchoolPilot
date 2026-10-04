@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T03:24:06.363Z",
+  "disposition": "incomplete-comparison-first-baseline-failed",
+  "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "harnessSource": "f8af7b0be7055bd2c2f8bb7d10ad4481066354af",
+  "run": "7e70601103cf",
+  "profile": "release297-blackbox-normal-34-v2",
+  "offers": {
+    "expected": 2040,
+    "offered": 2040,
+    "started": 1230,
+    "succeeded": 893,
+    "failed": 337,
+    "refused": 810,
+    "late": 0,
+    "p95Ms": 20001.308378
+  },
+  "apiCpuMeanFraction": 0.99848045,
+  "persisted": 1225,
+  "persistence": {
+    "passed": false,
+    "total": 1225,
+    "perBindingCompared": true,
+    "fixtureBindings": "exact school/student/device/active-session tuple",
+    "invalid": 0
+  },
+  "acceptance": {
+    "checks": {
+      "actualProfile": true,
+      "offering": false,
+      "reconnect": true,
+      "persistence": false,
+      "declaredStartAlignment": true,
+      "capabilityAcknowledgements": false,
+      "targetCounts": false,
+      "declaredDistribution": true,
+      "drains": false,
+      "cpuBound": true,
+      "latency": false,
+      "classroom": true,
+      "database": false
+    },
+    "passed": false,
+    "diagnosticOnly": false
+  },
+  "cleanupPassed": false,
+  "independentContainmentSha256": "1f774e3de74662843e77d966bb3882b6a3ddf40b6a17ab9a2be8432f2e4ed7ee",
+  "containment": "All exact-owned containers/volume absent; original forced137 exit retained",
+  "harnessDefect": "Historical aborted responses made complete=false after observed work was quiescent, preventing helper shutdown. New helper revision corrects teardown only; workload failures stay failed.",
+  "hostInterferenceEstablished": false,
+  "accepted": false,
+  "capacityAcceptance": false,
+  "remainingFixedOrderUnexecuted": true
+}

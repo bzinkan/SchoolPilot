@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T09:16:04.983Z",
+  "externalOnly": true,
+  "primaryRepositoryWrites": 0,
+  "status": "Phase-clipped interpretation of historical d649 failed ingest CPU diagnostic. Analysis01 superseded for harness-path category correction;02 authoritative.",
+  "source": "d6492333520608df1524c021999d9440a26149de",
+  "rawProfileSha256": "d07ed325ae27cc3f37e50609609540506c6c7dd403c40066fbf737bffffb9a82",
+  "authoritativeHashesSha256": "9c517309942309ad072fff7c138e4fc1ad2bcb55d868311d388c151f931daad5",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "sourceContentsUnmodified": true,
+  "files": [
+    {
+      "key": "superseded-analysis01/analysis.log",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-01\\analysis.log",
+      "bytes": 46026,
+      "rawSha256": "0df68796505513ba9b8a89b52dd26b67c2ffc6b769c938c08f3e8e96acc7a14c",
+      "sanitizedBytes": 46026,
+      "sanitizedSha256": "0df68796505513ba9b8a89b52dd26b67c2ffc6b769c938c08f3e8e96acc7a14c",
+      "gzipSha256": "89148262b86d96450cbc5819748bc9a31b31b275738e64ec10789138ec18de9f",
+      "archive": "superseded-analysis01/analysis.log.gz",
+      "redacted": false
+    },
+    {
+      "key": "superseded-analysis01/api-linux-clipped-analysis.json",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-01\\api-linux-clipped-analysis.json",
+      "bytes": 1155284,
+      "rawSha256": "0bb295f33fd2f5bcb43ba55add57133066180b408d555e6973099a3d14fcbdfb",
+      "sanitizedBytes": 1155284,
+      "sanitizedSha256": "0bb295f33fd2f5bcb43ba55add57133066180b408d555e6973099a3d14fcbdfb",
+      "gzipSha256": "9b3d38880b9e0414a41498e58f384cf766d99efb604a978998edace18a7f0068",
+      "archive": "superseded-analysis01/api-linux-clipped-analysis.json.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/analysis-hashes.json",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\analysis-hashes.json",
+      "bytes": 1054,
+      "rawSha256": "9c517309942309ad072fff7c138e4fc1ad2bcb55d868311d388c151f931daad5",
+      "sanitizedBytes": 1054,
+      "sanitizedSha256": "9c517309942309ad072fff7c138e4fc1ad2bcb55d868311d388c151f931daad5",
+      "gzipSha256": "5b23a8f12f2b7e7cb1336e44c30bca751993ec8e1c2bc749b677b5f3bd84bc56",
+      "archive": "authoritative-analysis02/analysis-hashes.json.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/analysis.log",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\analysis.log",
+      "bytes": 46196,
+      "rawSha256": "fa89a96d1166c15a676c719b0064dcbfa8fe934c434d3da0778d681374d9b689",
+      "sanitizedBytes": 46196,
+      "sanitizedSha256": "fa89a96d1166c15a676c719b0064dcbfa8fe934c434d3da0778d681374d9b689",
+      "gzipSha256": "41ca69b95699649adfe859a2c39e4008bb19fc5a81275f634f70236dad992f50",
+      "archive": "authoritative-analysis02/analysis.log.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/analyze-profile.mjs",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\analyze-profile.mjs",
+      "bytes": 6813,
+      "rawSha256": "a1b938999c0fdfadef1ff808ead10b33c28d4a400ddf1a0968adb6e1c34af0a5",
+      "sanitizedBytes": 6813,
+      "sanitizedSha256": "a1b938999c0fdfadef1ff808ead10b33c28d4a400ddf1a0968adb6e1c34af0a5",
+      "gzipSha256": "8fa4935bd45f6c99fc48f50e7b468245320a5e3e143b39ca2ea99b4dc7e8f54d",
+      "archive": "authoritative-analysis02/analyze-profile.mjs.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/analyze-target-callers.mjs",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\analyze-target-callers.mjs",
+      "bytes": 2126,
+      "rawSha256": "2770869b74bdc695ff61346d0cbc257638b32ccc8af0fdcac33e9bd3332b32d1",
+      "sanitizedBytes": 2126,
+      "sanitizedSha256": "2770869b74bdc695ff61346d0cbc257638b32ccc8af0fdcac33e9bd3332b32d1",
+      "gzipSha256": "d44997cf1b10dc033e21375ca20a4774f14588e37313350035b79f07af23c605",
+      "archive": "authoritative-analysis02/analyze-target-callers.mjs.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/api-linux-clipped-analysis.json",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\api-linux-clipped-analysis.json",
+      "bytes": 1155375,
+      "rawSha256": "2f7bbd6fe3e5fc63057a7330c5a53335196542b80b6c9b941b3596aee932c78c",
+      "sanitizedBytes": 1155375,
+      "sanitizedSha256": "2f7bbd6fe3e5fc63057a7330c5a53335196542b80b6c9b941b3596aee932c78c",
+      "gzipSha256": "67ddb7fb09b533fd593c2d768eada5f36f2c58474b2af8e21c60c99009772168",
+      "archive": "authoritative-analysis02/api-linux-clipped-analysis.json.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/README.md",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\README.md",
+      "bytes": 2798,
+      "rawSha256": "b66b9f7c714882c6aac9ca03198a9606e5185651809376eec150558dd18451ae",
+      "sanitizedBytes": 2798,
+      "sanitizedSha256": "b66b9f7c714882c6aac9ca03198a9606e5185651809376eec150558dd18451ae",
+      "gzipSha256": "6f8f414f822021cc5a2b3b8852a7bde52f5a37516a93505daabaf472698ef5a7",
+      "archive": "authoritative-analysis02/README.md.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/target-callers.json",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\target-callers.json",
+      "bytes": 27382,
+      "rawSha256": "a18c136c143862cb61b436541cbb90efd4e9c9fb93b4323543c88cfaaa9eb4b9",
+      "sanitizedBytes": 27382,
+      "sanitizedSha256": "a18c136c143862cb61b436541cbb90efd4e9c9fb93b4323543c88cfaaa9eb4b9",
+      "gzipSha256": "329effd5b099ddaaec35231dd506da146386d5f21e3b462d3375b42f3a551787",
+      "archive": "authoritative-analysis02/target-callers.json.gz",
+      "redacted": false
+    },
+    {
+      "key": "authoritative-analysis02/target-callers.log",
+      "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-analysis-02\\target-callers.log",
+      "bytes": 8821,
+      "rawSha256": "c665035b6fe0e12809aa3f0c0e6a951d8c26a8ea7b1da462f6a6fe0c21d9c6c3",
+      "sanitizedBytes": 8821,
+      "sanitizedSha256": "c665035b6fe0e12809aa3f0c0e6a951d8c26a8ea7b1da462f6a6fe0c21d9c6c3",
+      "gzipSha256": "b8e139c1e7e250d09191c61f8935946578e782bf188bf434403f52506c52cb36",
+      "archive": "authoritative-analysis02/target-callers.log.gz",
+      "redacted": false
+    }
+  ]
+}

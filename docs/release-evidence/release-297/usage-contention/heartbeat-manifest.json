@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T22:21:53.988Z",
+  "scope": "Incremental heartbeat and bounded diagnostics verification; not final release acceptance.",
+  "productionMutations": 0,
+  "applicationRebuildsDuringArchival": 0,
+  "source": {
+    "status": "uncommitted incremental working-tree checks; not frozen final source",
+    "baseCommit": "08802d020a3c51beea504140f923126ab518aac6",
+    "exactTestSourceCommit": null,
+    "notes": "The base commit is context only. Tests included local uncommitted edits; no exact commit or final acceptance is asserted. The corrected native run reused a fresh shared dist build completed by the harness owner; no build is claimed inside that rerun."
+  },
+  "limitations": [
+    "Native tests used native_owner on isolated local containers and do not prove restricted-role RLS.",
+    "Focused checks use an inert local database URL and mocked/source-contract assertions; they do not establish database capacity.",
+    "Initial native command completed all 44 behavioral assertions, but the aggregate run failed because the existing heartbeat-presence teardown attempted hard deletion forbidden by the current school lifecycle guard.",
+    "Only heartbeat-presence teardown was changed to canonical softDeleteSchool. Its fresh full-schema corrected rerun passed all five cases. The other two native suites were not rerun in that correction.",
+    "Original raw files remain outside the repository. Archived logs are sanitized; raw, sanitized and compressed hashes are recorded separately.",
+    "No performance acceptance, production load, deployment readiness, managed-device acceptance or release approval is inferred from these records."
+  ],
+  "commands": {
+    "file": "heartbeat-commands.json",
+    "sha256": "b4b0d18742df592be1a1a3a153a71029becb5ff8b4e8c810aa396beb1504203a"
+  },
+  "nativeFixture": {
+    "loopbackOnly": true,
+    "separateOwnedContainers": true,
+    "cpuLimit": 4,
+    "memoryLimitGiB": 4,
+    "schemaDonor": "Read-only schema-only export from a local existing fixture, with no owner or privileges.",
+    "schemaRawSha256": "5239ed124c766a23f03d30a6e277fae6b06313351b44138b839ae3830f371e78",
+    "migrations": "Legacy convergence followed by all current versioned migrations, with classpilotPrivateChatLifecyclePostExpand admission inventory (129).",
+    "restrictedRoleProof": false,
+    "cleanup": "Each container ownership label and exact generated name were verified before removal; cleanup output is archived. No shared database mutations.",
+    "containerNames": [
+      "schoolpilot-heartbeat-native-270222c9f52d",
+      "schoolpilot-heartbeat-native-4b52b531ff70"
+    ]
+  },
+  "runs": [
+    {
+      "id": "focused",
+      "status": "passed",
+      "passed": 98,
+      "failed": 0,
+      "skipped": 0,
+      "log": "heartbeat-focused-tests.log.gz"
+    },
+    {
+      "id": "nativeInitial",
+      "status": "failed",
+      "passed": 44,
+      "failed": 1,
+      "skipped": 0,
+      "behavioralAssertionsPassed": 44,
+      "failureKind": "after-hook school hard-delete guard",
+      "log": "heartbeat-native-initial-tests.log.gz"
+    },
+    {
+      "id": "nativeCorrected",
+      "status": "passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "log": "heartbeat-native-corrected-tests.log.gz"
+    }
+  ],
+  "logs": [
+    {
+      "file": "heartbeat-focused-tests.log.gz",
+      "status": "passed",
+      "rawBytes": 26960,
+      "sanitizedBytes": 26960,
+      "rawSha256": "3abc12ef46c75c53c990044a7cd9f8880e64828481e685dbba06ffdfde326624",
+      "sanitizedSha256": "3abc12ef46c75c53c990044a7cd9f8880e64828481e685dbba06ffdfde326624",
+      "archiveSha256": "e3e2fe3360cd0c02212c0346c44662d1f489092ecf60a91bf2f9465cb998c2cd",
+      "credentialRedactions": 0,
+      "pathRedactions": 0,
+      "passed": 98,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "heartbeat-native-initial-build.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 55,
+      "sanitizedBytes": 55,
+      "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "archiveSha256": "d43d4a1b006da9e98ce53118f88037f6a6a43365c8e71649a6e703487dba753f",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-initial-cleanup.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 43,
+      "sanitizedBytes": 43,
+      "rawSha256": "8ef14350404cd46ad3698da3e6b992f863e6b04b9ffb00cc044c68b1b79ece72",
+      "sanitizedSha256": "8ef14350404cd46ad3698da3e6b992f863e6b04b9ffb00cc044c68b1b79ece72",
+      "archiveSha256": "fca1e1c2e9c952bb7a09daf750ec66543aa230f7315a731ca8c434edd45b2977",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-initial-container.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "24bcd35cab2068ec5881d66a23ca6dc251b35e9ced512483b51f65ce5e615946",
+      "sanitizedSha256": "24bcd35cab2068ec5881d66a23ca6dc251b35e9ced512483b51f65ce5e615946",
+      "archiveSha256": "915a30f7d01932631dea454fd31f830836215c1617072606091d57c8985d91b5",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-initial-legacy.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 12556,
+      "sanitizedBytes": 12556,
+      "rawSha256": "c34bc885fe19b0dc9dad5f44f755a5269bf54127e43f135bddeda10006a74ce4",
+      "sanitizedSha256": "c34bc885fe19b0dc9dad5f44f755a5269bf54127e43f135bddeda10006a74ce4",
+      "archiveSha256": "113c15940e9dfe2e61b46610a6ef9a015dcb6d04e8ad53a4a2eef2175a89c885",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-initial-result.json.gz",
+      "status": "recorded_outcome",
+      "rawBytes": 346,
+      "sanitizedBytes": 314,
+      "rawSha256": "17acbd8f396194c93bfa310676799917f28881396aa46d3a6407d046d42ffe44",
+      "sanitizedSha256": "e9e5cdc7b2a47567b3d764b702793698e1f5924a4fa6ca816e56b85fada7a275",
+      "archiveSha256": "e61189bf8c56dde02c482619b3a12928bc608b11539d45f58e1583189065c6c1",
+      "credentialRedactions": 0,
+      "pathRedactions": 1
+    },
+    {
+      "file": "heartbeat-native-initial-schema-restore.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 18912,
+      "sanitizedBytes": 18912,
+      "rawSha256": "a2e83725f0c5d7343be4c64529a03eb95901b19a9a1e56bc0c6a33919443566a",
+      "sanitizedSha256": "a2e83725f0c5d7343be4c64529a03eb95901b19a9a1e56bc0c6a33919443566a",
+      "archiveSha256": "244452f56eeba48a80199d1726760a1d9454ee3902abfdc36ff8f488bde65d2b",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-initial-tests.log.gz",
+      "status": "failed",
+      "rawBytes": 29605,
+      "sanitizedBytes": 29180,
+      "rawSha256": "bb55ff3dfa505411b8ea06ca83136be07ad93ae5e516ac15adc8b9b640e15fc9",
+      "sanitizedSha256": "0bb1419abd256ab89443577468bea7c27dba6ef26d4dec175c155278faecbff3",
+      "archiveSha256": "07a1872420fb660d7c379977cf248cbe555ae199db382002cb210f6d3203e819",
+      "credentialRedactions": 0,
+      "pathRedactions": 7,
+      "passed": 44,
+      "failed": 1,
+      "skipped": 0
+    },
+    {
+      "file": "heartbeat-native-initial-versioned.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 3648,
+      "sanitizedBytes": 3648,
+      "rawSha256": "eb1840571b8a66a3ac188eb66543a131b2d944741f9029972c062f48201dbc15",
+      "sanitizedSha256": "eb1840571b8a66a3ac188eb66543a131b2d944741f9029972c062f48201dbc15",
+      "archiveSha256": "b4185e12a4b04913a3506ea674e7ce3865376897cc107de1b381d5008d53db06",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-corrected-cleanup.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 43,
+      "sanitizedBytes": 43,
+      "rawSha256": "f25da7daa47e3b5500f125d501c407b7e6f0bd1ff9ca54c635d48d34f9505f49",
+      "sanitizedSha256": "f25da7daa47e3b5500f125d501c407b7e6f0bd1ff9ca54c635d48d34f9505f49",
+      "archiveSha256": "380e6704fb9d572e12bbe295dffa3a8369a0fb3ad31b3c48e61759c80bfc571d",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-corrected-container.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "06ecc3c0ef59a7e8ce8d92ca3c5f9ca3bf6655e5f1647022e43eb636289e7a50",
+      "sanitizedSha256": "06ecc3c0ef59a7e8ce8d92ca3c5f9ca3bf6655e5f1647022e43eb636289e7a50",
+      "archiveSha256": "022ef5082f4f6cbdfde27b9342d1d01811801a4af0fac480caa24fb424573381",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-corrected-legacy.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 22612,
+      "sanitizedBytes": 22612,
+      "rawSha256": "11d4be1c2053e53721e982a29b30d8bf9238ecdefba0abc143bdf178f713c2b0",
+      "sanitizedSha256": "11d4be1c2053e53721e982a29b30d8bf9238ecdefba0abc143bdf178f713c2b0",
+      "archiveSha256": "b75a5afd6d3fa4f75117af2648a4efa0b028d748a9c6c99c13eac02fc6622206",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-corrected-result.json.gz",
+      "status": "recorded_outcome",
+      "rawBytes": 283,
+      "sanitizedBytes": 251,
+      "rawSha256": "39c48c469fbf28e378cfc4bcfe67570ebae40b5de48a4b768becd4315a9cd54a",
+      "sanitizedSha256": "61eab25a8cb2a7d6043587e22e6f30cc8775ead86e2835d0b60f86926a80f3d2",
+      "archiveSha256": "cf58fa3a617e3f4f147564845c8ceda15f733e92e4312ddbf0649784f125459c",
+      "credentialRedactions": 0,
+      "pathRedactions": 1
+    },
+    {
+      "file": "heartbeat-native-corrected-schema-restore.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 18912,
+      "sanitizedBytes": 18912,
+      "rawSha256": "a2e83725f0c5d7343be4c64529a03eb95901b19a9a1e56bc0c6a33919443566a",
+      "sanitizedSha256": "a2e83725f0c5d7343be4c64529a03eb95901b19a9a1e56bc0c6a33919443566a",
+      "archiveSha256": "244452f56eeba48a80199d1726760a1d9454ee3902abfdc36ff8f488bde65d2b",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    },
+    {
+      "file": "heartbeat-native-corrected-tests.log.gz",
+      "status": "passed",
+      "rawBytes": 1599,
+      "sanitizedBytes": 1599,
+      "rawSha256": "f50af835e8f8dd4e6e9b5ff6677ed2732513cfcf892ec904c0fb52d82c0a74ff",
+      "sanitizedSha256": "f50af835e8f8dd4e6e9b5ff6677ed2732513cfcf892ec904c0fb52d82c0a74ff",
+      "archiveSha256": "7d53e8505dbfa1f4c444378bada02cd1454bc9205ca56a68b2dcabab31c24599",
+      "credentialRedactions": 0,
+      "pathRedactions": 0,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "heartbeat-native-corrected-versioned.log.gz",
+      "status": "supporting_fixture_record",
+      "rawBytes": 3648,
+      "sanitizedBytes": 3648,
+      "rawSha256": "9bdaa47df831e494cb7832f3b3f10ecdaadab7c6b88ab99107c67662dee64d63",
+      "sanitizedSha256": "9bdaa47df831e494cb7832f3b3f10ecdaadab7c6b88ab99107c67662dee64d63",
+      "archiveSha256": "5bf8b5665e656e59a183d6c80b276b4bd8d39dd66837f9436bffbc822331e0ba",
+      "credentialRedactions": 0,
+      "pathRedactions": 0
+    }
+  ]
+}

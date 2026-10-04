@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T02:41:26.205Z",
+  "status": "unit_suite_and_load_guards_passed",
+  "scope": "Correct-environment full unit rerun; independent load guard suite; prove content equivalence with preceding successful install/build/type/audit checks.",
+  "source": {
+    "head": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "incremental uncommitted release tree; pending final clean-source CI/capacity",
+    "files": 1151,
+    "beforeAfterMatch": true,
+    "identicalToAttempt03After": true,
+    "beforeReceipt": "source-before.json.gz",
+    "afterReceipt": "source-after.json.gz",
+    "precedingReceipt": "../combined-checks-attempt-03/source-after.json.gz",
+    "equivalence": "All1151path/hash entries deeply equal across03after,04before and04after; no application/test change was required for this rerun."
+  },
+  "runner": {
+    "file": "release297-final-checks-04.ps1.gz",
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-04.ps1",
+    "exitCode": 0,
+    "command": "npm run test:unit",
+    "environment": {
+      "NODE_ENV": "test",
+      "SCHEDULER_ENABLED": "false",
+      "REDIS_URL": "empty",
+      "DATABASE_URL": "absent",
+      "DOTENV_CONFIG_PATH": "absent dotenv file in fresh external run directory"
+    }
+  },
+  "startedAt": "2026-10-03T02:38:01.4183754Z",
+  "finishedAt": "2026-10-03T02:39:22.5640855Z",
+  "unit": {
+    "tests": 1756,
+    "pass": 1752,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 4
+  },
+  "conditionalSkips": [
+    "ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected",
+    "delivers a duplicate message ID exactly once across two relay instances",
+    "parses inspected index key columns as a text array",
+    "retains the newest attempted revision across a subscriber reconnect"
+  ],
+  "loadGuards": {
+    "command": "node --test tests/private-load-usage-profiles.test.mjs",
+    "tests": 48,
+    "pass": 48,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "log": "release297-load-guards-03.log.gz"
+  },
+  "priorAttempt": {
+    "manifest": "../combined-checks-attempt-03/manifest.json",
+    "status": "remains_failed_environment_mistake",
+    "independentSuccessfulChecks": "clean install, build, test types, test-cast ratchet, production audit and full audit at unchanged source bytes"
+  },
+  "limits": [
+    "Four existing conditional Redis/native cases skipped in this no-external-services unit environment; no assertions removed. Native database/Redis evidence remains separate.",
+    "The optional index-inspection native proof is being handled independently and is not claimed by this record.",
+    "Passing source-local checks do not establish final remote CI, combined capacity, serving artifact identity or production readiness."
+  ],
+  "sanitation": "User home paths, database/Redis connection URLs and JWT-shaped values redacted; original, sanitized and archived hashes retained.",
+  "files": [
+    {
+      "file": "result.json.gz",
+      "originalSha256": "752ed2f15c59b6e95d07ccfce105d6be4f4b771e74b811d329dfb7f9759a039a",
+      "sanitizedSha256": "17ae09baca8087b950f2595afe85630c1f0f7182d9f31d68a59d71e11cf68000",
+      "archiveSha256": "deadf872a019d4d0a17e47c1fc8d6a358a139dbc68adbd2dda233111826e913d",
+      "sourceBytes": 597,
+      "archiveBytes": 412
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "sanitizedSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "archiveSha256": "67da2d83337f314f5339ddc0f8420ced9c8a224712a9689bbedc414797b548a5",
+      "sourceBytes": 173664,
+      "archiveBytes": 56214
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "sanitizedSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "archiveSha256": "67da2d83337f314f5339ddc0f8420ced9c8a224712a9689bbedc414797b548a5",
+      "sourceBytes": 173664,
+      "archiveBytes": 56214
+    },
+    {
+      "file": "unit.log.gz",
+      "originalSha256": "8c5252490decccf3a8f0f5cfaf3dd93c5965a277dd4df525872980f965344087",
+      "sanitizedSha256": "8c5252490decccf3a8f0f5cfaf3dd93c5965a277dd4df525872980f965344087",
+      "archiveSha256": "ce03badc274d8c9352902fc2989a7c52b8c3b74bd8cb6dfef311c325f208cb98",
+      "sourceBytes": 461065,
+      "archiveBytes": 78538
+    },
+    {
+      "file": "release297-final-checks-04.ps1.gz",
+      "originalSha256": "92edffd36230f180c72ebe25c8404265baa5f648b634e503fb0b6239c618f6b4",
+      "sanitizedSha256": "b3a1b88df463b27b22b702c242ce6514c34464dac33325994474b71c9f74e08d",
+      "archiveSha256": "89e15f8b5b7674ceeb480a7fb5fc6912085f1467f8110a245aedca7a4fea9fc0",
+      "sourceBytes": 2031,
+      "archiveBytes": 1035
+    },
+    {
+      "file": "release297-load-guards-03.log.gz",
+      "originalSha256": "afe644ff53f9559df00cae33929b6f438b053e831c2bf243827a521bdecfbf08",
+      "sanitizedSha256": "afe644ff53f9559df00cae33929b6f438b053e831c2bf243827a521bdecfbf08",
+      "archiveSha256": "11664daa90db8b31349f2d7e4389734ee37f34e60911745be76cc40909fd0ea7",
+      "sourceBytes": 12059,
+      "archiveBytes": 2774
+    }
+  ]
+}

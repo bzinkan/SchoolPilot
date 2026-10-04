@@ -1,0 +1,315 @@
+{
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "run": "3f815599d4e2",
+  "startedAt": "2026-10-03T19:15:49.220Z",
+  "finishedAt": "2026-10-03T19:17:17.881Z",
+  "cleanupFinishedAt": "2026-10-03T19:17:26.158Z",
+  "capacityAccepted": false,
+  "acceptedRunCount": 0,
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5706,
+    "succeeded": 4730,
+    "failed": 976,
+    "refusedAtInFlightLimit": 294,
+    "lateOffers": 7,
+    "maxOfferLatenessMs": 161.80560999999943,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2849,
+        "succeeded": 2364,
+        "failed": 485,
+        "refused": 151
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2857,
+        "succeeded": 2366,
+        "failed": 491,
+        "refused": 143
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 976
+    },
+    "offerWindowMs": 59990.291494000005,
+    "outstandingAtEndOfOffering": 1000,
+    "totalIncludingDrainMs": 68252.042992,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5706,
+      "minMs": 453.74815899999885,
+      "p50Ms": 9873.398083,
+      "p95Ms": 11044.742486000003,
+      "maxMs": 13977.130430000001
+    }
+  },
+  "reports": {
+    "offered": 64,
+    "success": 64
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 13987.02076,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 30615.56847,
+      "correct": true
+    }
+  ],
+  "api": {
+    "cpuMicroseconds": {
+      "user": 55727470,
+      "system": 11470466
+    },
+    "eventLoop": {
+      "p50Ms": 22.495231,
+      "p95Ms": 46.465023,
+      "maxMs": 222.560255,
+      "utilization": 0.9823432664295891
+    },
+    "acquisitions": {
+      "count": 16315,
+      "failures": 977,
+      "maxMs": 5088.085884999997
+    }
+  },
+  "insertedObservations": 4985,
+  "httpStatuses": {
+    "200": 4730
+  },
+  "correctness": {
+    "passed": true,
+    "csvAuditCount": 8
+  },
+  "preflightDrain": {
+    "complete": true,
+    "budgetMs": 20000,
+    "elapsedMs": 2.6713380000001052,
+    "passes": 2,
+    "gauges": {
+      "activeOperations": 0,
+      "pendingCheckouts": 0,
+      "activeCheckouts": 0,
+      "pendingAcquisitions": 0,
+      "activeQueries": 0,
+      "poolWaiting": 0,
+      "poolHeld": 0,
+      "httpResponses": 0,
+      "pendingTenantReleases": 0
+    },
+    "physicallyIdle": true,
+    "abortedResponses": 0
+  },
+  "serverDrain": {
+    "api": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.8904360000015004,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 2.647198999999091,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "lock-screen HTTP 500: {\"error\":\"Internal server error\",\"requestId\":\"49522a6b-1dae-4b13-9728-e1ebbad7aa16\"}\n\n500 !== 201\n"
+    }
+  },
+  "sourceAtFinish": {
+    "revision": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+    "clean": true
+  },
+  "roleExits": [
+    {
+      "role": "coordinator",
+      "containerId": "74a360f371ed6377c0729bef9b31c372c6827c2790f2d1223afa040d867cb554",
+      "imageId": "sha256:4493bed709fdff43ea1c9c9e7b3ef59ebbe4788db8e5517f3e277b03463781bd",
+      "run": "3f815599d4e2",
+      "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 1,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 1,
+      "clean": false
+    },
+    {
+      "role": "api",
+      "containerId": "e11e1653e5f4bf4933fdb000ef447408e4bd92c92b7a32474eb2cda2aa4b757a",
+      "imageId": "sha256:4493bed709fdff43ea1c9c9e7b3ef59ebbe4788db8e5517f3e277b03463781bd",
+      "run": "3f815599d4e2",
+      "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 0,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 0,
+      "clean": true
+    },
+    {
+      "role": "worker",
+      "containerId": "36a81fea79b0c052475dc3b48785b928e563f51cb8291e9786a2eae073695a7d",
+      "imageId": "sha256:4493bed709fdff43ea1c9c9e7b3ef59ebbe4788db8e5517f3e277b03463781bd",
+      "run": "3f815599d4e2",
+      "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 0,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 0,
+      "clean": true
+    },
+    {
+      "role": "generator",
+      "containerId": "ccebdb436a6b7e7a4d75ed7e2ffc89d9df48fefd6d65304a870d9df8cda74458",
+      "imageId": "sha256:4493bed709fdff43ea1c9c9e7b3ef59ebbe4788db8e5517f3e277b03463781bd",
+      "run": "3f815599d4e2",
+      "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 0,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 0,
+      "clean": true
+    }
+  ],
+  "cleanup": {
+    "schemaVersion": 1,
+    "run": "3f815599d4e2",
+    "finishedAt": "2026-10-03T19:17:26.158Z",
+    "roles": {
+      "cleanupPassed": true,
+      "roles": [
+        {
+          "role": "generator",
+          "cleanupPassed": true,
+          "id": "ccebdb436a6b7e7a4d75ed7e2ffc89d9df48fefd6d65304a870d9df8cda74458",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "worker",
+          "cleanupPassed": true,
+          "id": "36a81fea79b0c052475dc3b48785b928e563f51cb8291e9786a2eae073695a7d",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "api",
+          "cleanupPassed": true,
+          "id": "e11e1653e5f4bf4933fdb000ef447408e4bd92c92b7a32474eb2cda2aa4b757a",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "coordinator",
+          "cleanupPassed": true,
+          "id": "74a360f371ed6377c0729bef9b31c372c6827c2790f2d1223afa040d867cb554",
+          "forced": false,
+          "confirmedAbsent": true
+        }
+      ]
+    },
+    "fixtures": {
+      "resources": [
+        {
+          "id": "226656ca6f96a90776db042b435cd3a317c7b20618a2089310a11fcf3f2aa796",
+          "confirmedAbsent": true,
+          "cleanupPassed": true,
+          "volumes": [
+            {
+              "name": "baa040e15ba1fc9974c83574eefba5f34edc0a54b0e3288603b8df3caec80732",
+              "confirmedAbsent": true
+            }
+          ],
+          "role": "postgres"
+        },
+        {
+          "id": "b72d9d9a407a2269bf81aa502226d4ac42c9dff203aabf68f9879e14f064b6f7",
+          "confirmedAbsent": true,
+          "cleanupPassed": true,
+          "role": "redis"
+        }
+      ],
+      "cleanupPassed": true
+    },
+    "cleanupPassed": true,
+    "capacityAccepted": false
+  },
+  "receiptManifestSha256": "6e4f2904158091b950238a2c8dca46c155d5116d0ae54affbb50c2c48df8dd47",
+  "integration": {
+    "all13CustodyHashesVerified": true,
+    "actualRuntimeFacts": true,
+    "failedWorkloadExitPreserved": true,
+    "candidateContractPassed": false,
+    "knownValidatorMismatch": "Canonical preflightDrain is one API receipt; current candidate validator incorrectly assumes api/worker nesting. Historical raw receipts remain unchanged."
+  }
+}

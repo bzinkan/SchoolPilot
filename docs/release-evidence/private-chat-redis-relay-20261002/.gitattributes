@@ -1,0 +1,2 @@
+# Preserve the archived terminal bytes whose hashes are in manifest.json.
+*.gz binary

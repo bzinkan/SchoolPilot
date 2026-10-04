@@ -1,0 +1,74 @@
+{
+  "observedAt": "2026-10-03T13:17:08.4607939Z",
+  "source": "2378e04e927638b4bfa29a9ef67dabb0b5209f2b",
+  "applicationSource": "6035239b2b504fb12a989e373b1aca1abae562dc",
+  "workflowCount": 4,
+  "jobCount": 20,
+  "jobConclusions": [
+    {
+      "count": 20,
+      "conclusion": "success"
+    }
+  ],
+  "note": "Remote exact-head checks only; no capacity, deployment, activation or Store acceptance claim",
+  "schemaVersion": 1,
+  "commands": [
+    "gh run view <37123765108|37123765113|37123765125|37123765106> --json databaseId,headSha,workflowName,status,conclusion,jobs,url,attempt,createdAt,updatedAt",
+    "gh pr view 603 --json url,headRefOid,headRefName,statusCheckRollup"
+  ],
+  "assertions": [
+    "Each workflow is completed/success on exact head2378e04e.",
+    "All20returned jobs conclude success; no cancelled/skipped job relabelled.",
+    "These are GitHub check statuses; conditional individual test skips remain in their original evidence."
+  ],
+  "files": [
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-2378e04e-final-01\\37123765106.json",
+      "archive": "37123765106.json.gz",
+      "rawSha256": "9cadcdc6a925616107af403cefc9b85578d6f536f51e25c9acfd9254317f0ee8",
+      "sanitizedSha256": "9cadcdc6a925616107af403cefc9b85578d6f536f51e25c9acfd9254317f0ee8",
+      "gzipSha256": "318d74d0f927aaa42987a23eb001eff062b36425ea9705b67e5e3fbd0d63910b",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-2378e04e-final-01\\37123765108.json",
+      "archive": "37123765108.json.gz",
+      "rawSha256": "36bc3fea3b2ae94e11da805838116ba2961ed09960689d9d4c4362d3c3a58aaf",
+      "sanitizedSha256": "36bc3fea3b2ae94e11da805838116ba2961ed09960689d9d4c4362d3c3a58aaf",
+      "gzipSha256": "b3078d7f66f1c97750c9b7b6570cd891381a8d5c64962afd357ee09f38dc7080",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-2378e04e-final-01\\37123765113.json",
+      "archive": "37123765113.json.gz",
+      "rawSha256": "846aa8f1778d8c8de8ff9473368dfb412356c9faba21dbe90f495f15ee15e6e0",
+      "sanitizedSha256": "846aa8f1778d8c8de8ff9473368dfb412356c9faba21dbe90f495f15ee15e6e0",
+      "gzipSha256": "799697fedbc96861a64a31417298ebdce1c32783b7f7db4620a639bb57c2e644",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-2378e04e-final-01\\37123765125.json",
+      "archive": "37123765125.json.gz",
+      "rawSha256": "f95e921cdf1995c14c114f91f381a28785c392da7fb4801e26c26787bb29c555",
+      "sanitizedSha256": "f95e921cdf1995c14c114f91f381a28785c392da7fb4801e26c26787bb29c555",
+      "gzipSha256": "19cccccc37eabf88377d1bb8793814325ead0ff1cccd2ef6049226307da0ff61",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-2378e04e-final-01\\pr603.json",
+      "archive": "pr603.json.gz",
+      "rawSha256": "30d8d799b0951ed5fe17e5ea77fd435878bb27d8bde48b2ca66f2f45c045b5ab",
+      "sanitizedSha256": "30d8d799b0951ed5fe17e5ea77fd435878bb27d8bde48b2ca66f2f45c045b5ab",
+      "gzipSha256": "607a00a235e9b7febec0661e68079ed1c521cebba7725c7742d1cceadc5cc60c",
+      "redactions": 0
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-2378e04e-final-01\\summary.json",
+      "archive": "summary.json.gz",
+      "rawSha256": "d2bf03c55b304506380c2d860491537ee183cd4832e3dec1f0106d6c198d7469",
+      "sanitizedSha256": "d2bf03c55b304506380c2d860491537ee183cd4832e3dec1f0106d6c198d7469",
+      "gzipSha256": "ecc66cdb219f18c6d446ad51b9c53c6c17685cb535eb2fc6bcf349a430f5ae72",
+      "redactions": 0
+    }
+  ]
+}

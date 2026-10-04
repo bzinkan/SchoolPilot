@@ -1,0 +1,294 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T06:26:02.308Z",
+  "status": "combined_checks_failed",
+  "scope": "Root-run combined build, test type/cast ratchets, full unit lane and infrastructure lane following heartbeat foreground fusion. No rerun by archivist.",
+  "source": {
+    "head": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+    "state": "Uncommitted release changes included and byte-bound; clean checkpoint, remote CI and capacity remain separate.",
+    "files": 1165,
+    "beforeAfterDeepEqual": true,
+    "runnerReportedUnchanged": true,
+    "beforeReceipt": "source-before.json.gz",
+    "afterReceipt": "source-after.json.gz"
+  },
+  "runner": {
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-09.ps1",
+    "startedAt": "2026-10-03T06:00:20.6384242Z",
+    "finishedAt": "2026-10-03T06:19:01.3166179Z",
+    "checks": [
+      {
+        "command": "npm run build",
+        "startedAt": "2026-10-03T06:00:20.6431861Z",
+        "finishedAt": "2026-10-03T06:01:12.1407603Z",
+        "exitCode": 0,
+        "log": "build.log"
+      },
+      {
+        "command": "npm run check:tests",
+        "startedAt": "2026-10-03T06:01:12.1475718Z",
+        "finishedAt": "2026-10-03T06:02:17.7072145Z",
+        "exitCode": 1,
+        "log": "check-tests.log"
+      },
+      {
+        "command": "npm run check:test-casts",
+        "startedAt": "2026-10-03T06:02:17.7139344Z",
+        "finishedAt": "2026-10-03T06:02:18.2529686Z",
+        "exitCode": 0,
+        "log": "check-test-casts.log"
+      },
+      {
+        "command": "npm run test:unit",
+        "startedAt": "2026-10-03T06:02:18.2548870Z",
+        "finishedAt": "2026-10-03T06:03:43.7755496Z",
+        "exitCode": 1,
+        "log": "test-unit.log"
+      },
+      {
+        "command": "npm run test:infrastructure",
+        "startedAt": "2026-10-03T06:03:43.7771349Z",
+        "finishedAt": "2026-10-03T06:19:00.9089461Z",
+        "exitCode": 0,
+        "log": "test-infrastructure.log"
+      }
+    ],
+    "configuration": "DATABASE_URL absent, matching ordinary unit CI; individual unit fixtures configure their own imports"
+  },
+  "unit": {
+    "tests": 1805,
+    "pass": 1794,
+    "fail": 7,
+    "cancelled": 0,
+    "skipped": 4,
+    "todo": 0
+  },
+  "infrastructure": {
+    "tests": 672,
+    "pass": 672,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "conditionalSkips": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ],
+  "conditionalSkipDetails": [
+    {
+      "suite": "PIN retries through the production route, compatibility rewrite and real middleware",
+      "test": "ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected",
+      "file": "tests/classpilot-student-signin-route-diagnostics.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    },
+    {
+      "suite": "GoPilot Redis relay",
+      "test": "delivers a duplicate message ID exactly once across two relay instances",
+      "file": "tests/gopilot-redis-relay.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    },
+    {
+      "suite": "student-device teacher-tile index contract",
+      "test": "parses inspected index key columns as a text array",
+      "file": "tests/student-device-index-contract.test.ts",
+      "condition": "!process.env.DATABASE_URL"
+    },
+    {
+      "suite": "ordered WebSocket Redis publication",
+      "test": "retains the newest attempted revision across a subscriber reconnect",
+      "file": "tests/ws-redis-ordered-publish.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    }
+  ],
+  "failedTapEntries": [
+    "not ok 53 - heartbeat, transfer, class/Coverage persistence, and delivery share binding lock order",
+    "not ok 137 - mixed-version delivery and every unauthenticated fallback hide deferred revisions",
+    "not ok 139 - student login keeps legacy SSO omission and only stages portal authority for negotiated clients",
+    "not ok 140 - deferred command frames and WebSocket auth revalidate exact binding authority",
+    "not ok 314 - SSO-bearing bootstrap freezes policy before private chat settings without adding a fence to other deliveries",
+    "not ok 329 - manual student sessions use database-time leases and exact recovery capabilities",
+    "not ok 773 - actual heartbeat owner uses finally outside all post-response work and middleware coverage stays narrow"
+  ],
+  "testTypeReceipt": [
+    "> schoolpilot-api@1.0.0 check:tests",
+    "> node scripts/check-test-types.mjs",
+    "",
+    "Test TypeScript debt increased:",
+    "tests/classpilot-heartbeat-foreground-authority.integration.test.ts#TS2532: 0 -> 2"
+  ],
+  "testCastReceipt": [
+    "> schoolpilot-api@1.0.0 check:test-casts",
+    "> node scripts/check-test-cast-ratchet.mjs",
+    "",
+    "Unsafe test cast ratchet OK: {\"asAny\":689,\"asUnknownAs\":7,\"tsIgnore\":0,\"tsExpectError\":0}"
+  ],
+  "assessment": {
+    "failures": "Two TS2532 test-only accesses lacked explicit missing-diagnostics guards. Seven source-contract assertions still selected the old exported delivery body or earlier route layout after the reviewed private core extraction and barrier declaration. They failed; they are not relabeled passed.",
+    "successfulChecks": "Production build, unsafe-cast ratchet and all 672 infrastructure cases passed on the unchanged attempt09 source.",
+    "followup": "Root corrected five selector/layout contract files while retaining authority/order assertions; the native fixture added assert.ok narrowing for missing diagnostics. Full rerun attempt10 is separate and was still running at archive creation."
+  },
+  "focusedSelectorFollowups": {
+    "sourceBinding": "Supplemental root-run focused logs. No independent source-before/after receipts were captured for these two commands; do not treat them as final-source combined acceptance.",
+    "runs": [
+      {
+        "name": "release297-contract-selectors-10.log",
+        "totals": {
+          "tests": 40,
+          "pass": 39,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "failedTapEntries": [
+          "not ok 12 - deferred command frames and WebSocket auth revalidate exact binding authority"
+        ]
+      },
+      {
+        "name": "release297-contract-selectors-11.log",
+        "totals": {
+          "tests": 40,
+          "pass": 40,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "failedTapEntries": []
+      }
+    ]
+  },
+  "relatedEvidence": {
+    "nativeAndFocused": "../heartbeat-foreground-fusion/manifest.json",
+    "nativeScope": "23/23 owner and 23/23 restricted, with identical application bytes. The later native-test-only assert.ok guards do not change application semantics; exact pre/post hashes are in that manifest."
+  },
+  "limits": [
+    "Four conditional cases remain skipped and are named explicitly. Native and Redis integration proofs are separate.",
+    "Passing build/infrastructure/cast checks do not override this failed type/unit attempt.",
+    "No capacity, remote CI, managed-device, deployment or activation claim.",
+    "Raw originals and all failed follow-ups remain unchanged."
+  ],
+  "sanitization": "User-home paths, connection URLs and JWT-shaped values redacted; original, sanitized and archive hashes retained. Every gzip round trip verified.",
+  "files": [
+    {
+      "file": "build.log.gz",
+      "originalSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "archiveSha256": "693976655c901e7c8d546795a1e39065e7494fd594ca48bf13366ea14b1916de",
+      "sourceBytes": 42,
+      "archiveBytes": 62,
+      "gzipVerified": true
+    },
+    {
+      "file": "check-test-casts.log.gz",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f",
+      "sourceBytes": 181,
+      "archiveBytes": 166,
+      "gzipVerified": true
+    },
+    {
+      "file": "check-tests.log.gz",
+      "originalSha256": "2881ed2c64f442cf52d8be1fd7d7466eeae71a4060d584d4444ec965f5d17aa1",
+      "sanitizedSha256": "2881ed2c64f442cf52d8be1fd7d7466eeae71a4060d584d4444ec965f5d17aa1",
+      "archiveSha256": "0ea83af1a1845b3ce28c42f9945caa2c74d5f7b9a598dbfbaf1dc130024b4a4c",
+      "sourceBytes": 195,
+      "archiveBytes": 169,
+      "gzipVerified": true
+    },
+    {
+      "file": "checks.json.gz",
+      "originalSha256": "eefa1063be6fa2d8b044c14c63318a04afaea161e50f011fb31e6ac648a12ccc",
+      "sanitizedSha256": "eefa1063be6fa2d8b044c14c63318a04afaea161e50f011fb31e6ac648a12ccc",
+      "archiveSha256": "a6242b3f3e227ff9372c6c4150e04fab4791727cd8d3b1fc6cc670af47467085",
+      "sourceBytes": 1020,
+      "archiveBytes": 296,
+      "gzipVerified": true
+    },
+    {
+      "file": "result.json.gz",
+      "originalSha256": "2fe2ebbd89c2eac7491e4b42a98ff807a16cb2785beff68e98a4ee3c34636899",
+      "sanitizedSha256": "683a799b1bfd2d33bd13790f3d19bb1c830a5c93194741831a1e3c22f8a95d41",
+      "archiveSha256": "e383f159425d383007a4077031cccf1f121f65eb96ce9d214d4a45439523c4a1",
+      "sourceBytes": 1726,
+      "archiveBytes": 656,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "4f8ff245c651348af488f35ae0d128e23d35e87424da145e3926e097163fbf8b",
+      "sanitizedSha256": "4f8ff245c651348af488f35ae0d128e23d35e87424da145e3926e097163fbf8b",
+      "archiveSha256": "71234d120c0d31936704f7f27d1cf3d8814a118fb3c46fa2409bac3bc0eb42d6",
+      "sourceBytes": 175931,
+      "archiveBytes": 55765,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "4f8ff245c651348af488f35ae0d128e23d35e87424da145e3926e097163fbf8b",
+      "sanitizedSha256": "4f8ff245c651348af488f35ae0d128e23d35e87424da145e3926e097163fbf8b",
+      "archiveSha256": "71234d120c0d31936704f7f27d1cf3d8814a118fb3c46fa2409bac3bc0eb42d6",
+      "sourceBytes": 175931,
+      "archiveBytes": 55765,
+      "gzipVerified": true
+    },
+    {
+      "file": "test-infrastructure.log.gz",
+      "originalSha256": "ae9d1149b3c13ffeda53444e2cafe15f94dcfa19b25ce126ddefc53c34e3ffeb",
+      "sanitizedSha256": "ae9d1149b3c13ffeda53444e2cafe15f94dcfa19b25ce126ddefc53c34e3ffeb",
+      "archiveSha256": "a701637a01f56c8086490257103621a4bd07847950066433cbdb526a632e2edf",
+      "sourceBytes": 173961,
+      "archiveBytes": 29226,
+      "gzipVerified": true
+    },
+    {
+      "file": "test-unit.log.gz",
+      "originalSha256": "a51025a3f41a999fcf4ec543d3e1d3942bf4f2c00c3630e3d99ff32c2f9089a1",
+      "sanitizedSha256": "6fa15bb535850244e99f8d2732760925241ba8bab6a853b8d931cd510f899f10",
+      "archiveSha256": "34c1984dd3fc3a16d854ab9f4812bc0954ba05041c8fbbcf728f6f06605a76aa",
+      "sourceBytes": 574324,
+      "archiveBytes": 99894,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-final-checks-09.ps1.gz",
+      "originalSha256": "80dbc436c83eae02609aac1ab9a820e81538be705ae529183e585d2a14933d76",
+      "sanitizedSha256": "e89bf07348e4b9c3cb1fb0fe6614ccf2ccb3c8648ed5e7e33d72685703274036",
+      "archiveSha256": "a25cb62543e8466a124a3bbc64963a9741913d8afea9009decad0ec0fc57af49",
+      "sourceBytes": 2599,
+      "archiveBytes": 1223,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-final-checks-09.runner.log.gz",
+      "originalSha256": "2fe2ebbd89c2eac7491e4b42a98ff807a16cb2785beff68e98a4ee3c34636899",
+      "sanitizedSha256": "683a799b1bfd2d33bd13790f3d19bb1c830a5c93194741831a1e3c22f8a95d41",
+      "archiveSha256": "e383f159425d383007a4077031cccf1f121f65eb96ce9d214d4a45439523c4a1",
+      "sourceBytes": 1726,
+      "archiveBytes": 656,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-contract-selectors-10.log.gz",
+      "originalSha256": "89916038892a7ff68859a51deb273204a82e87ea5e9641d6bd85f6550fffaee6",
+      "sanitizedSha256": "62de2f7c2af3bbea1f180ebc872eef2ad6f95fce370583ee8d89c37cffd3abdd",
+      "archiveSha256": "08dbe65ad6ded4d88d5fabdef1e54cafb35e500dda0f90602be1a53b91f4e103",
+      "sourceBytes": 27160,
+      "archiveBytes": 5225,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-contract-selectors-11.log.gz",
+      "originalSha256": "53fd57a9c40a38d8f2422e55686428fed32da4571483b84a0d4bde3ab7caeac6",
+      "sanitizedSha256": "53fd57a9c40a38d8f2422e55686428fed32da4571483b84a0d4bde3ab7caeac6",
+      "archiveSha256": "7b063b64713b9ff193fed5d729cd012b66390a4d5b1361dc7639102e96215e82",
+      "sourceBytes": 9432,
+      "archiveBytes": 2198,
+      "gzipVerified": true
+    }
+  ]
+}

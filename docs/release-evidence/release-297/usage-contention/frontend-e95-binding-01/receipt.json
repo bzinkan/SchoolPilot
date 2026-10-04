@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T17:56:58.726Z",
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "frontendTree": "516888f56ed06ce4acd8a1af32ae92cb8cb391fb",
+  "sourceFiles": 632,
+  "allSourceBlobsMatch": true,
+  "priorReceipt": "docs/release-evidence/release-297/usage-contention/frontend-final-source.json",
+  "priorReceiptSha256": "469f84f47808213f70ea4010682768638bca07ab168cbd20ef893f16a84f859c",
+  "priorRecordedAt": "2026-10-02T23:10:11.564Z",
+  "priorNodeRunnerTotals": {
+    "tests": 739,
+    "pass": 739,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "priorDirectBrowserScripts": "Completed in the same exit-0 aggregate; they are not included in Node-runner totals.",
+  "frontendArchive": "C:/Users/zinka/.codex/artifacts/release297-usage-frontend-20261002/frontend.tar",
+  "frontendArchiveSha256": "7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f",
+  "artifactUnchanged": true,
+  "scope": "Source and retained frontend artifact equivalence only. This does not claim a new browser run, deployment, or backend/frontend live acceptance.",
+  "published": false
+}

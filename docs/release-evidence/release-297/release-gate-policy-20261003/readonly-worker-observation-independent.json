@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_bounded_worker_observation_review",
+  "recordedAt": "2026-10-04T17:06:20.390Z",
+  "publicSummarySha256": "7c0545e16d188cba53bb533f92cba3fdd91fe10db1067aafb284261de3c05119",
+  "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "imageDigest": "sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+  "actualAwsGets": 9,
+  "allEighteenRequestResponseBytesRehashed": true,
+  "onlyAllowlistedGets": true,
+  "twoExactStreamFilteredPages": true,
+  "additionalPagesRead": 0,
+  "elapsedSeconds": 13.069,
+  "sqlPerformed": 0,
+  "cloudMutations": 0,
+  "taskAndServiceUnchanged": true,
+  "providerHealth": "UNKNOWN",
+  "providerHealthRewritten": false,
+  "parsedHeartbeatEvents": 10,
+  "parsedStaffIdentityEvents": 1,
+  "positiveEvent": {
+    "fresh": true,
+    "schoolsInScope": 1,
+    "schoolsScanned": 1,
+    "issues": 0,
+    "failures": 0,
+    "skippedOverlap": 0,
+    "scope": "One existing completed database-backed scan on the exact active task; counts only."
+  },
+  "pagination": {
+    "heartbeatNextTokenPresent": true,
+    "staffIdentityNextTokenPresent": true,
+    "strictCompleteWindowOraclePassed": false,
+    "originalObservedFlagsPreservedFalse": true,
+    "completeWindowClaimed": false
+  },
+  "evidence": [
+    {
+      "name": "01-identity.response.private.json",
+      "sha256": "77f6474cb296f20ccf71bc724acfa8cbd25ac18c020c037ab1b4fe83578503cb",
+      "bytes": 138
+    },
+    {
+      "name": "01-identity.request.private.json",
+      "sha256": "48fbbef953aba6828c75996719b0141bff9139089bbc4c8dc617aef35c6db096",
+      "bytes": 156
+    },
+    {
+      "name": "02-service.response.private.json",
+      "sha256": "f54dc8e2220f9272f103d520a5a3aa50daa3924903df43979e683f70e4a0545f",
+      "bytes": 35162
+    },
+    {
+      "name": "02-service.request.private.json",
+      "sha256": "0bc4189cd3f143bf7c114abe8a83fef359babfaa7997922e5d9e7a13bbacc0ca",
+      "bytes": 254
+    },
+    {
+      "name": "03-list.response.private.json",
+      "sha256": "23871f9c5159cf8d53b24541a5c4045a00eeda4adecf94636d69f9d4947d7e2c",
+      "bytes": 147
+    },
+    {
+      "name": "03-list.request.private.json",
+      "sha256": "655ae08a5cfff8d9236db863b94a062a664b33e2bcfc85ab4516e387304ad647",
+      "bytes": 280
+    },
+    {
+      "name": "04-task.response.private.json",
+      "sha256": "512ca96454bf75a57e9313f6551dcdeb696cb08bf0984555dd95472357aa87e1",
+      "bytes": 4399
+    },
+    {
+      "name": "04-task.request.private.json",
+      "sha256": "6bfff22c1827466b839956cbbe9df545662b47d888c1bd271cffb0688608ef4c",
+      "bytes": 312
+    },
+    {
+      "name": "05-definition-projection.response.private.json",
+      "sha256": "b093ce77a7189e506e6001d3427a4f9b2cb77ca8b456d9bc9af3f23e0091c3da",
+      "bytes": 1147
+    },
+    {
+      "name": "05-definition-projection.request.private.json",
+      "sha256": "405f57068f027d4720d8bb486a104dd4b12d9e3324d8a7fbf5a3bf604fc7565c",
+      "bytes": 612
+    },
+    {
+      "name": "06-heartbeat.response.private.json",
+      "sha256": "01c3b6ec6b5661b41ae0a167e7036bb091020e69c3310afc1493e9c33daa96fb",
+      "bytes": 6675
+    },
+    {
+      "name": "06-heartbeat.request.private.json",
+      "sha256": "b18cff0e8ed18c026f6b65addc3eba15f00eabdb90e00dc653e36c4333f913b2",
+      "bytes": 457
+    },
+    {
+      "name": "07-scan.response.private.json",
+      "sha256": "c294f2a9ea26fedaabd7835a5f0806e6d2a94d8fdada38925612b1e76b49d9f1",
+      "bytes": 2516
+    },
+    {
+      "name": "07-scan.request.private.json",
+      "sha256": "ced53279da249fa6c3e6f5f1fdc9dd337d94a3dbe6bed29aa92d33d1285f5d5c",
+      "bytes": 480
+    },
+    {
+      "name": "08-task.response.private.json",
+      "sha256": "512ca96454bf75a57e9313f6551dcdeb696cb08bf0984555dd95472357aa87e1",
+      "bytes": 4399
+    },
+    {
+      "name": "08-task.request.private.json",
+      "sha256": "6bfff22c1827466b839956cbbe9df545662b47d888c1bd271cffb0688608ef4c",
+      "bytes": 312
+    },
+    {
+      "name": "09-service.response.private.json",
+      "sha256": "f54dc8e2220f9272f103d520a5a3aa50daa3924903df43979e683f70e4a0545f",
+      "bytes": 35162
+    },
+    {
+      "name": "09-service.request.private.json",
+      "sha256": "0bc4189cd3f143bf7c114abe8a83fef359babfaa7997922e5d9e7a13bbacc0ca",
+      "bytes": 254
+    }
+  ],
+  "captureProcessAbsenceReportedByParent": true,
+  "captureProcessAbsenceIndependentlyMeasured": false,
+  "allJobsHealthy": false,
+  "capacityAccepted": false,
+  "productionCatalogSubstituted": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Both filtered responses include nextToken; the complete-window oracle remains false.",
+    "A positive parsed event proves one completed existing operation, not all worker jobs or a complete error-free window.",
+    "Heartbeat events provide liveness only.",
+    "No extra page, SQL, retry, native workload or cloud mutation was performed by this reviewer."
+  ]
+}

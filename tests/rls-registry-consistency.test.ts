@@ -39,6 +39,9 @@ type Registry = {
     importProcessingStagesPostExpand: RegistryInventory;
     passpilotRulesPostExpand: RegistryInventory;
     classpilotUsageRollupsPostExpand: RegistryInventory;
+    classpilotUsageRollupDaysPostExpand: RegistryInventory;
+    passpilotAppointmentsPostExpand: RegistryInventory;
+    classpilotPrivateChatLifecyclePostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -90,6 +93,33 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("appends private chat threads after the immutable appointments inventory", () => {
+    const previous = registry.inventories.passpilotAppointmentsPostExpand;
+    const next = registry.inventories.classpilotPrivateChatLifecyclePostExpand;
+    assert.deepEqual(next.tables,[...previous.tables,"classpilot_private_chat_threads"]);
+    assert.equal(next.count,129);
+    assert.equal(next.sha256,sha256(next.tables));
+    assert.deepEqual(registry.reviewedEnablementRequests.classpilotPrivateChatLifecycle,["classpilot_private_chat_threads"]);
+    assert.equal(isReviewedRlsEnforcementRequest(["classpilot_private_chat_threads"]),true);
+  });
+  it("appends only appointments after the immutable computation-ledger inventory", () => {
+    const previous = registry.inventories.classpilotUsageRollupDaysPostExpand;
+    const next = registry.inventories.passpilotAppointmentsPostExpand;
+    assert.deepEqual(next.tables, [...previous.tables, "passpilot_appointments"]);
+    assert.equal(next.count, 128);
+    assert.equal(next.sha256, sha256(next.tables));
+    assert.deepEqual(registry.reviewedEnablementRequests.passpilotAppointments, ["passpilot_appointments"]);
+    assert.equal(isReviewedRlsEnforcementRequest(["passpilot_appointments"]), true);
+  });
+  it("adds only the computation ledger while preserving the reviewed 126-table target", () => {
+    const previous = registry.inventories.classpilotUsageRollupsPostExpand;
+    const next = registry.inventories.classpilotUsageRollupDaysPostExpand;
+    assert.deepEqual(next.tables, [...previous.tables, "classpilot_usage_rollup_days"]);
+    assert.equal(next.count, 127);
+    assert.equal(next.sha256, sha256(next.tables));
+    assert.deepEqual(registry.reviewedEnablementRequests.classpilotUsageRollupDays, ["classpilot_usage_rollup_days"]);
+    assert.equal(isReviewedRlsEnforcementRequest(["classpilot_usage_rollup_days"]), true);
+  });
   it("adds only the Monitored Browser Time rollup table to the PassPilot rules target", () => {
     const previous = registry.inventories.passpilotRulesPostExpand;
     const next = registry.inventories.classpilotUsageRollupsPostExpand;
@@ -223,7 +253,7 @@ describe("semantic RLS registry", () => {
     // CI admits the reviewed PassPilot rule bundle and the usage rollup table
     // ahead of production, which keeps the observed 121-table baseline until a
     // later adoption PR.
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotUsageRollupsPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotPrivateChatLifecyclePostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

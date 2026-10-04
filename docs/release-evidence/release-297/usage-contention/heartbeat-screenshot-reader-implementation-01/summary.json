@@ -1,0 +1,92 @@
+{
+  "scope": "Owned heartbeat screenshot reader and immutable invoker-function migration; local correctness/ownership proof only",
+  "baseApplicationCommit": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "applicationCommit": "Uncommitted reviewed source; exact complete source hashes recorded",
+  "capacityAccepted": false,
+  "productionMutations": 0,
+  "native": {
+    "owner": {
+      "tests": 95,
+      "pass": 95,
+      "fail": 0,
+      "skip": 0
+    },
+    "restricted": {
+      "tests": 95,
+      "pass": 95,
+      "fail": 0,
+      "skip": 0
+    },
+    "privateRecovery": {
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  "unitAttempt01": {
+    "tests": 2010,
+    "pass": 2009,
+    "fail": 1,
+    "skip": 0
+  },
+  "unitFinal": {
+    "tests": 2012,
+    "pass": 2012,
+    "fail": 0,
+    "skip": 0
+  },
+  "finalChecks": {
+    "build": {
+      "exit": 0,
+      "error": null
+    },
+    "test-types": {
+      "exit": 0,
+      "error": null
+    },
+    "casts": {
+      "exit": 0,
+      "error": null
+    },
+    "unit": {
+      "exit": 0,
+      "error": null
+    }
+  },
+  "fullSourceFiles": 1260,
+  "nativeSourceUnchanged": true,
+  "finalSourceUnchanged": true,
+  "nativeApplicationAndTestInputsByteIdentical": true,
+  "onlyInterAttemptChange": "tests/classpilot-final-delivery-context.test.mjs",
+  "selectorDelta": "Normalize CRLF to LF before unchanged source-slice assertions; reversing exactly reproduces original file hash",
+  "failedAttempts": [
+    "Decoder red61/63: permissive JS Date parsing fixed with PG syntax/calendar validation",
+    "VM cross-realm assertion failure79/80: test-only realm handling corrected",
+    "Preliminary native fixture type errors corrected without cast-budget increase",
+    "Canonical SQL drift attempt01 differed only by test generator terminal newline",
+    "Full unit attempt01 failed one LF-only VM selector before assertions;2009 other tests passed"
+  ],
+  "migration": {
+    "count": 54,
+    "reentrySkipped": 54,
+    "actualRestrictedExecute": true
+  },
+  "cleanup": {
+    "native": {
+      "postgres": true,
+      "anonymousVolumes": true,
+      "redis": true
+    },
+    "rerun": {
+      "postgres": true,
+      "anonymousVolumes": true,
+      "redis": true
+    }
+  },
+  "limitations": [
+    "Synthetic fresh local schema/roles; no live production catalog/data claim",
+    "Four internal READ COMMITTED statements and locks retained; one outer15-second cumulative deadline is stricter",
+    "No traffic/capacity benchmark in this implementation proof"
+  ]
+}

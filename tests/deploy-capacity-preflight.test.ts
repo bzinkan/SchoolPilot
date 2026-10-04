@@ -17,6 +17,11 @@ const libraryBoundary = deploySource.indexOf("# --- Preflight checks ---");
 assert.ok(libraryBoundary > 0, "deploy script should expose its helpers before preflight execution");
 const deployLibrarySource = deploySource.slice(0, libraryBoundary);
 
+function dockerMutationPattern(command: string): RegExp {
+  // Docker's pinned --host is a global option before the mutation verb.
+  return new RegExp(String.raw`\bdocker(?:[ \t]+--host[ \t]+(?:"[^"\r\n]+"|'[^'\r\n]+'|[^ \t\r\n]+))?[ \t]+${command}\b`, "g");
+}
+
 function bashExecutable(): string {
   if (process.platform !== "win32") return "bash";
 
@@ -450,23 +455,33 @@ assert_rendered_task_size_not_reduced "$TEST_FIXTURE_DIR/rendered.json" "$TEST_F
     }
   });
 
+  it("finds every plain and host-pinned Docker mutation without depending on build option order", () => {
+    for (const command of ["build", "login", "tag", "push"]) {
+      const plain = `docker ${command} --label synthetic`;
+      const pinned = `MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" ${command} synthetic`;
+      const source = `${plain}\n${pinned}\ndocker image inspect synthetic`;
+      const indexes = [...source.matchAll(dockerMutationPattern(command))].map((match) => match.index);
+      assert.deepEqual(indexes, [0, plain.length + 1 + pinned.indexOf("docker")]);
+      assert.equal([..."docker image inspect synthetic".matchAll(dockerMutationPattern(command))].length, 0);
+    }
+  });
+
   it("runs the initial preflight before every Docker, ECR, migration, and ECS mutation", () => {
     const execution = deploySource.slice(libraryBoundary);
     const windowInvocation = execution.indexOf("\nproduction_backend_deploy_window_preflight\n");
     const invocation = execution.indexOf("\nproduction_backend_capacity_preflight\n");
     const launchSafeInvocation = execution.indexOf("\nlaunch_safe_active_api_preflight\n");
-    const mutationIndexes = [
-      "docker build ",
-      "docker login ",
-      "docker tag ",
-      "docker push ",
-      "aws ecs register-task-definition",
-      "aws ecs run-task",
-      "aws ecs update-service",
-    ].map((needle) => {
-      const index = execution.indexOf(needle);
-      assert.ok(index >= 0, `expected deployment mutation ${needle}`);
-      return index;
+    const mutationPatterns: Array<[string, RegExp]> = [
+      ...["build", "login", "tag", "push"].map((command): [string, RegExp] =>
+        [`docker ${command}`, dockerMutationPattern(command)]),
+      ["aws ecs register-task-definition", /aws ecs register-task-definition\b/g],
+      ["aws ecs run-task", /aws ecs run-task\b/g],
+      ["aws ecs update-service", /aws ecs update-service\b/g],
+    ];
+    const mutationIndexes = mutationPatterns.flatMap(([label, pattern]) => {
+      const matches = [...execution.matchAll(pattern)];
+      assert.ok(matches.length > 0, `expected deployment mutation ${label}`);
+      return matches.map((match) => match.index);
     });
 
     assert.ok(windowInvocation >= 0, "deployment-window preflight should be invoked");

@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T00:49:32.473Z",
+  "status": "passed_local_reconstructed_baseline_rehearsal",
+  "baselineSha": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "candidateSha": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+  "compatibleRollbackSha": "faf5275ccf422dda602b2238c247a306c28ba508",
+  "rawDirectory": "C:/Users/zinka/AppData/Local/Temp/release297-local-rehearsal-0431-faf5275c-01",
+  "rawRehearsalManifestSha256": "622ea427fdaaf5147361dcbc849240c28525fda41bac38e7dde168c7519d9f71",
+  "command": "node scripts/release/rehearse-local-upgrade.mjs C:/Users/zinka/.codex/worktrees/release297-baseline-rehearsal/SchoolPilot 7af9d0dd5bc2bd3e13b96d35a577725e07f8b678 C:/Users/zinka/AppData/Local/Temp/release297-local-rehearsal-0431-faf5275c-01 C:/Users/zinka/.codex/worktrees/release297-compatible-rollback/SchoolPilot faf5275ccf422dda602b2238c247a306c28ba508 *> $env:TEMP/release297-local-rehearsal-0431-faf5275c-01.log; exit $LASTEXITCODE",
+  "workingDirectory": "SchoolPilot release worktree at0431f043",
+  "shell": "PowerShell",
+  "exitCode": 0,
+  "baselineMigrations": 44,
+  "candidateExpandMigrations": 53,
+  "candidateAdoptedMigrations": 53,
+  "retainedTenantTables": 129,
+  "compatibleRollbackMigrationReentry": true,
+  "candidateReentry": true,
+  "ledgerAndRelationRlsSnapshotsUnchangedAcrossRollback": true,
+  "ownedContainerRemoved": true,
+  "restrictedRoleCheck": "Empty-fixture catalog/permission smoke only; populated cross-school isolation requires the separate RLS test suite.",
+  "productionMutations": 0,
+  "liveCatalogProven": false,
+  "limitations": [
+    "This is a source-reconstructed synthetic empty baseline, not actual production schema/ledger export or a backup restore.",
+    "Legacy baseline bootstrap had already applied staff-identity contract migrations; the explicit flag step proves idempotent re-entry, not unadopted-to-adopted transition.",
+    "Stored catalog snapshots cover relations and RLS flags. Canonical tenant policies were checked by the helper; this does not claim a byte-for-byte full DDL export comparison.",
+    "The restricted-role pass reads empty tables; separate populated tenant-isolation tests are required.",
+    "The patched rollback still requires both Usage modes off. Local migration compatibility is not registry publication or live API/worker task binding."
+  ],
+  "sanitation": "Complete logs and metadata retained after UTF8/LF normalization and credential/path/synthetic identity redaction. Raw inputs unchanged; hashes retained.",
+  "files": [
+    {
+      "file": "baseline-aliases.log.gz",
+      "originalFile": "baseline-aliases.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveBytes": 20,
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "baseline-contract.json.gz",
+      "originalFile": "baseline-contract.json",
+      "rawBytes": 27646,
+      "rawSha256": "fedb873b1c81ede8c4efa6f3070a4684d2aa852054274ccce5fa3db4f5b3a26e",
+      "sanitizedBytes": 27646,
+      "sanitizedSha256": "fedb873b1c81ede8c4efa6f3070a4684d2aa852054274ccce5fa3db4f5b3a26e",
+      "archiveBytes": 3751,
+      "archiveSha256": "b62d317d9fef6fbf2ad334907e17a60c462fd64021e24ec5569f79a12e4cbcb9"
+    },
+    {
+      "file": "baseline-legacy.log.gz",
+      "originalFile": "baseline-legacy.log",
+      "rawBytes": 11640,
+      "rawSha256": "582c6b1c58057be5f32ea7cffea2f12ebc5f9d8daa53b38da103694dd5c3f5cf",
+      "sanitizedBytes": 11620,
+      "sanitizedSha256": "141efe527138bd216a5800c354bd1ee157aa3dfc2035c7f328e3aab44b845694",
+      "archiveBytes": 2927,
+      "archiveSha256": "7e24a32f814b1c7c35056ad32cd9174d245389e1b66514debd3e4af3586f62cc"
+    },
+    {
+      "file": "baseline-schema.log.gz",
+      "originalFile": "baseline-schema.log",
+      "rawBytes": 319,
+      "rawSha256": "435fce1d11ca76bd54e958c8b009b071fad06730a3ac30167d02e57f58fc5f69",
+      "sanitizedBytes": 318,
+      "sanitizedSha256": "5a41596a586e23a54b9995e984968e095c6b0986cf6af662eaa755adcf5d0945",
+      "archiveBytes": 238,
+      "archiveSha256": "d89f2d8ccdf1e4f040ebcb1ce92310d87f0027755ab53fa5941d6777f4778963"
+    },
+    {
+      "file": "baseline-typescript.log.gz",
+      "originalFile": "baseline-typescript.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveBytes": 20,
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "baseline-versioned.log.gz",
+      "originalFile": "baseline-versioned.log",
+      "rawBytes": 3015,
+      "rawSha256": "d1f8cbc06ad812e586fffae80a3452ad6dc2550b1efc1884a7ae0f310bc2f8a6",
+      "sanitizedBytes": 3015,
+      "sanitizedSha256": "d1f8cbc06ad812e586fffae80a3452ad6dc2550b1efc1884a7ae0f310bc2f8a6",
+      "archiveBytes": 727,
+      "archiveSha256": "bfffde59642f826fc5d350a604e3b2858bcab89d70e06012853fd6de5346a671"
+    },
+    {
+      "file": "candidate-adopted-contract.json.gz",
+      "originalFile": "candidate-adopted-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "archiveBytes": 4366,
+      "archiveSha256": "9133ea490abc0ceb4ddab15bcc5e877de2a67856c9223c3766d6448edf654130"
+    },
+    {
+      "file": "candidate-after-rollback-contract.json.gz",
+      "originalFile": "candidate-after-rollback-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "archiveBytes": 4366,
+      "archiveSha256": "9133ea490abc0ceb4ddab15bcc5e877de2a67856c9223c3766d6448edf654130"
+    },
+    {
+      "file": "candidate-after-rollback.log.gz",
+      "originalFile": "candidate-after-rollback.log",
+      "rawBytes": 3593,
+      "rawSha256": "d24e0a156c53764b3a55854d47eb65aefad2ffd584c4836672d39dd6a99e466e",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "d24e0a156c53764b3a55854d47eb65aefad2ffd584c4836672d39dd6a99e466e",
+      "archiveBytes": 840,
+      "archiveSha256": "d65dee6cefba3474e10b0e5a830911bfacf6d8b32391280bc20433c22dd3f366"
+    },
+    {
+      "file": "candidate-aliases.log.gz",
+      "originalFile": "candidate-aliases.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveBytes": 20,
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "candidate-contract-adoption.log.gz",
+      "originalFile": "candidate-contract-adoption.log",
+      "rawBytes": 3593,
+      "rawSha256": "874a0ec5efc5991636dbe40ff6bb31c4a2815c0fca999b44bf86f0336aba1c2e",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "874a0ec5efc5991636dbe40ff6bb31c4a2815c0fca999b44bf86f0336aba1c2e",
+      "archiveBytes": 838,
+      "archiveSha256": "b219bdba94e6b9e5d53eb0a7fda9281ae5e793aa2f6667b57f585e2b110b1318"
+    },
+    {
+      "file": "candidate-contract.json.gz",
+      "originalFile": "candidate-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "archiveBytes": 4366,
+      "archiveSha256": "9133ea490abc0ceb4ddab15bcc5e877de2a67856c9223c3766d6448edf654130"
+    },
+    {
+      "file": "candidate-repeat-contract.json.gz",
+      "originalFile": "candidate-repeat-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "archiveBytes": 4366,
+      "archiveSha256": "9133ea490abc0ceb4ddab15bcc5e877de2a67856c9223c3766d6448edf654130"
+    },
+    {
+      "file": "candidate-repeat.log.gz",
+      "originalFile": "candidate-repeat.log",
+      "rawBytes": 3593,
+      "rawSha256": "8fb61786cf05f630f6cae3ad54e171c954556c9993b1f9952b89bf44de9f2488",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "8fb61786cf05f630f6cae3ad54e171c954556c9993b1f9952b89bf44de9f2488",
+      "archiveBytes": 840,
+      "archiveSha256": "a3b443b70ee74028b34187792c676a9d40c973e1c59ac020fbe3c743d51f8af5"
+    },
+    {
+      "file": "candidate-retained-contract.json.gz",
+      "originalFile": "candidate-retained-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "archiveBytes": 4366,
+      "archiveSha256": "9133ea490abc0ceb4ddab15bcc5e877de2a67856c9223c3766d6448edf654130"
+    },
+    {
+      "file": "candidate-retained-contract.log.gz",
+      "originalFile": "candidate-retained-contract.log",
+      "rawBytes": 3593,
+      "rawSha256": "bb12b73ef9b36fb76e85de1b4b83cef07e9f4ff9da92e6f535abe7c1180e3007",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "bb12b73ef9b36fb76e85de1b4b83cef07e9f4ff9da92e6f535abe7c1180e3007",
+      "archiveBytes": 840,
+      "archiveSha256": "d0dd6befb32028af27701e9cfb9bbaf5c6b203e136f735ab30ebb5715e390b83"
+    },
+    {
+      "file": "candidate-typescript.log.gz",
+      "originalFile": "candidate-typescript.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveBytes": 20,
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "candidate-versioned.log.gz",
+      "originalFile": "candidate-versioned.log",
+      "rawBytes": 3601,
+      "rawSha256": "685c096cf77d35931a3c72f45e285660e3bc2b8b7c4d6acd98d39c46b51b2d50",
+      "sanitizedBytes": 3601,
+      "sanitizedSha256": "685c096cf77d35931a3c72f45e285660e3bc2b8b7c4d6acd98d39c46b51b2d50",
+      "archiveBytes": 867,
+      "archiveSha256": "7f81f5bd370eb9589792560777b6a36a526498a2aae1ce62df5955c4588c5d85"
+    },
+    {
+      "file": "compatible-rollback-contract.json.gz",
+      "originalFile": "compatible-rollback-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "55b2a75358886f3dce84c9ce33deacfcf859a84c2a206ee5097b5019bb8cae04",
+      "archiveBytes": 4366,
+      "archiveSha256": "9133ea490abc0ceb4ddab15bcc5e877de2a67856c9223c3766d6448edf654130"
+    },
+    {
+      "file": "compatible-rollback-migrations.log.gz",
+      "originalFile": "compatible-rollback-migrations.log",
+      "rawBytes": 3593,
+      "rawSha256": "74372fb5df9582e675724754e27b142be888ca1ea1d4ba4f32d83aa9a1a5381b",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "74372fb5df9582e675724754e27b142be888ca1ea1d4ba4f32d83aa9a1a5381b",
+      "archiveBytes": 840,
+      "archiveSha256": "9071aae7f30862a88e3e0c62699ed9dac114e120d5b2a1038a37fc785293d3e5"
+    },
+    {
+      "file": "rehearsal.json.gz",
+      "originalFile": "rehearsal.json",
+      "rawBytes": 4572,
+      "rawSha256": "622ea427fdaaf5147361dcbc849240c28525fda41bac38e7dde168c7519d9f71",
+      "sanitizedBytes": 4572,
+      "sanitizedSha256": "622ea427fdaaf5147361dcbc849240c28525fda41bac38e7dde168c7519d9f71",
+      "archiveBytes": 1384,
+      "archiveSha256": "125ddf05f73cf87535d4c628a4511c8f55c47a583c9807823ce68e2d6e557432"
+    },
+    {
+      "file": "rollback-aliases.log.gz",
+      "originalFile": "rollback-aliases.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveBytes": 20,
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "rollback-typescript.log.gz",
+      "originalFile": "rollback-typescript.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveBytes": 20,
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "wrapper.log.gz",
+      "originalFile": "release297-local-rehearsal-0431-faf5275c-01.log",
+      "rawBytes": 3772,
+      "rawSha256": "b054b3ae44a0e89177a063e231169a212c9810de72308b53bf53defa8e6e9a31",
+      "sanitizedBytes": 3771,
+      "sanitizedSha256": "d28ec8750da5655009a2a1de18214bfbb2ce3c2c480ee18cd54bf4e65c476c04",
+      "archiveBytes": 1346,
+      "archiveSha256": "f1cf9b006be4d3732b6fe4ad6b6c682e564e3f1a5c9ceaf2fd5d4fbc701ddb18"
+    }
+  ]
+}

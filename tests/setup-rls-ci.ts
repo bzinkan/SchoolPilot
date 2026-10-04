@@ -1,4 +1,5 @@
 import pg from "pg";
+import { grantClasspilotHeartbeatScreenshotEvidence } from "../dist/db/classpilotHeartbeatScreenshotEvidenceInstallation.js";
 import {
   findMissingRlsAllowlistEntries,
   findUnknownRlsAllowlistEntries,
@@ -42,6 +43,7 @@ async function main() {
     await client.query(`GRANT USAGE ON SCHEMA public TO ${roleIdent}`);
     await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${roleIdent}`);
     await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${roleIdent}`);
+    await grantClasspilotHeartbeatScreenshotEvidence(client, ROLE);
 
     await client.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'live'`);
     await client.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);

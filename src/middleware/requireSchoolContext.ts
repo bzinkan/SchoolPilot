@@ -1,6 +1,7 @@
 import type { RequestHandler, Response } from "express";
 import { bindTenantContext } from "./tenantContext.js";
 import { createSingleFlight } from "../util/singleFlight.js";
+import { runWithUsageCapacityOperation } from "../services/usageCapacityDiagnostics.js";
 import {
   loadVerifiedSchoolIdentities,
   type VerifiedSchoolIdentity,
@@ -14,7 +15,7 @@ const loadIdentitySingleFlight = createSingleFlight<
 function loadIdentities(userId: string, schoolId?: string) {
   const key = `${userId}\u0000${schoolId ?? "*"}`;
   return loadIdentitySingleFlight(key, () =>
-    loadVerifiedSchoolIdentities(userId, schoolId)
+    runWithUsageCapacityOperation("user_identity", () => loadVerifiedSchoolIdentities(userId, schoolId))
   );
 }
 

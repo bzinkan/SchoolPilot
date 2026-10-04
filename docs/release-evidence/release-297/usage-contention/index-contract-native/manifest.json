@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:41:21.244Z",
+  "scope": "Separate real PostgreSQL execution of existing student-device index-contract test; no application/source changes.",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "Incremental shared worktree during parent CI-environment fullunit rerun; this slice made no source changes.",
+    "testSha256Before": "9df53e3003fa578108a810f75233e8e7cbd0b2548c1becd3f3d2089b7c76c245",
+    "testSha256After": "9df53e3003fa578108a810f75233e8e7cbd0b2548c1becd3f3d2089b7c76c245"
+  },
+  "originalFailure": {
+    "status": "Failed and retained",
+    "reason": "Parent fullunit setup supplied dummy DATABASE_URL, which activated this test native branch against a nonexistent endpoint. The separate native result does not relabel the original fullsuite."
+  },
+  "native": {
+    "tests": 3,
+    "pass": 3,
+    "fail": 0,
+    "skipped": 0,
+    "fixture": "Owned empty local PostgreSQL; random loopback port; TEMP table/index only; no project schema import",
+    "role": "Fixture owner, no restricted-role/RLS claim",
+    "poolsClosed": true,
+    "containerRemoved": true,
+    "productionMutations": 0
+  },
+  "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/student-device-index-contract.test.ts",
+  "limitations": [
+    "This proves index introspection returns text[] through the actual PostgreSQL driver; it does not independently exercise a production concurrent index migration.",
+    "Final combined fullunit rerun remains separately recorded by parent."
+  ],
+  "sanitation": "Database URL credentials, JWT-shaped strings and user-home paths redacted; random fixture secrets not recorded.",
+  "files": [
+    {
+      "file": "original-fullunit-failed-setup.log.gz",
+      "status": "failed_setup_preserved",
+      "originalSha256": "2cc1a9bb1a83c819cde0cea22ee6eb4618147f6e2247f5f0604a81ac42b039a5",
+      "sanitizedSha256": "8d6a17443e32ce36285cba9fadf1b050073a6b475f1201464f03972e284ee5ed",
+      "archiveSha256": "a07638929c5d596546a4b141dc1c527e21872e438203697b7f0ebb1794b20f04"
+    },
+    {
+      "file": "original-fullunit-failed-setup-result.json.gz",
+      "status": "failed_setup_preserved",
+      "originalSha256": "1fdd8c95cc67373a77e4af5571af76e1e9b11cdaa2b570b104466cb0b7a6128a",
+      "sanitizedSha256": "e4dc888be89d211b07849c85d5d35d6bb222c160871714957a7b653ddd493ae6",
+      "archiveSha256": "a19ea7e311b66e0a556880bb6cf3d91df516c8809b4368aa9d4d79d9d2f0d57f"
+    },
+    {
+      "file": "native-test.log.gz",
+      "status": "passed",
+      "originalSha256": "310e2d9310963a4df09256ca172cebb6100b7936a2b7902373d88bd84f13bb7b",
+      "sanitizedSha256": "310e2d9310963a4df09256ca172cebb6100b7936a2b7902373d88bd84f13bb7b",
+      "archiveSha256": "cd622a46c626b18daac383deb511cb0307fe927bc4bd2d734baf3fced38c3761"
+    },
+    {
+      "file": "execution.json.gz",
+      "status": "passed",
+      "originalSha256": "27f75e7b7ed49ceff6d4486c26a79d21e408ea827c0d3c72abf1bede5721bbe6",
+      "sanitizedSha256": "27f75e7b7ed49ceff6d4486c26a79d21e408ea827c0d3c72abf1bede5721bbe6",
+      "archiveSha256": "905002f2ee9f18bc3ede0fd03de190a0a070cc5496b3259c853f8268b9d10b43"
+    },
+    {
+      "file": "cleanup.log.gz",
+      "status": "passed",
+      "originalSha256": "c55f23a6298dace4afa321ad249c202d034d9fc384a4b671ddce3ee393e30236",
+      "sanitizedSha256": "c55f23a6298dace4afa321ad249c202d034d9fc384a4b671ddce3ee393e30236",
+      "archiveSha256": "50723df0569b2ced278540a481a219b82fb3ae5e922e1c23aabb717e6e51d540"
+    },
+    {
+      "file": "native-runner.ps1.gz",
+      "status": "reproduction_source",
+      "originalSha256": "a08fee2a3a4481fff58d69d76c1ed609d198f41ddb5a76fb41323c0a68972de3",
+      "sanitizedSha256": "9e50e48451e6e46571a2c5d028be4c2f740a0654b2eef1a04594181cc57b6275",
+      "archiveSha256": "2c8305122164f3b8519d948c87a3513080b94949bba2227376c21f408abe477d"
+    }
+  ]
+}

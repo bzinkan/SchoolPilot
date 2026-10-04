@@ -1,0 +1,800 @@
+{
+  "schemaVersion": 1,
+  "disposition": "FAILED; two unchanged attempts retained and third held before reservation",
+  "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "harnessSource": "6afc8f09cedbc634c481d9882e49d2d491d4921d",
+  "campaignContractSha256": "e671826703dbd1a630e55a26da581bb2d0c53a5fe65ed774b8fa2d3bf8ee4f72",
+  "journalSha256": "2378b652273dca40f2ae1db0575962924992878297d17862b21c1ffd07d9d0a2",
+  "profile": "release297-classroom-133-1-3-2-v2",
+  "attempts": [
+    {
+      "index": 1,
+      "run": "52c09e4b0976",
+      "startedAtUtc": "2026-10-04T04:22:20.129Z",
+      "finishedAtUtc": "2026-10-04T04:38:18.153Z",
+      "receiptManifestSha256": "000479fa33e3a31cda67ba111cd517104b2bd599bcb075d5d12fd79912c1411e",
+      "manifestRecordCount": 12,
+      "allManifestRecordsVerified": true,
+      "applicationImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+      "helperImage": "sha256:bda6e4735a9680028f69df3bae827acc2d0d61e1ce3fb4bfd3151d3f541d6b5e",
+      "helperBindingSha256": "60a64e390e13ea8be4c26dd335af21ffc557ef2b2123bf42543078771c7f13ff",
+      "profileContractSha256": "88761bee68b47020ebcddfe9ab0310ff7d3a32c5620af22bb7f2cfc3ee4b1d9d",
+      "canonicalSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+      "rawSchemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+      "quietWindowSha256": "ea023615a9b6273942edc05c0e2ae4032758a3a61a23a7f1f3dc4b7278f05942",
+      "frozenOverallResult": {
+        "runPassed": false,
+        "failure": "ERR_ASSERTION",
+        "savedRoundCount": 0,
+        "continuousGlobalSaved": false
+      },
+      "additionalCompletedTransportEvidence": {
+        "receiptSha256": "aa19b0f1f3ed8ff6be5795f1493cd1a155b380ea00af5a40fd317b17627dd616",
+        "expectedBase": 11970,
+        "offeredBase": 11970,
+        "startedBase": 11970,
+        "successfulBase": 11970,
+        "failedBase": 0,
+        "refusedBase": 0,
+        "lateBase": 0,
+        "baseStatusHistogram": {
+          "200": 11970
+        },
+        "baseP95Ms": 54.67619399999967,
+        "reconnectOffered": 133,
+        "reconnectSucceeded": 133,
+        "reconnectStatusHistogram": {
+          "200": 133
+        },
+        "retrospectiveTupleComparison": {
+          "passed": true,
+          "total": 12103,
+          "perBindingCompared": true,
+          "fixtureBindings": "exact school/student/device/active-session tuple",
+          "invalid": 0
+        },
+        "retroactiveAcceptance": false
+      },
+      "classroom": {
+        "passed": false,
+        "recordedRounds": 15,
+        "perRound": [
+          {
+            "minute": 0,
+            "passed": true,
+            "completedEventCount": 26,
+            "intentionalNegativeProbeCount": 2,
+            "error": null
+          },
+          {
+            "minute": 1,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 2,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 3,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 4,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 5,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 6,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 7,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 8,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 9,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 10,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 11,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 12,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 13,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 14,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          }
+        ]
+      },
+      "originalErrorCoverage": [
+        {
+          "role": "api2",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "7d185be1c7a7449521ce844b27765dd7b7019cb81a15d07af1b92a27383cf809",
+          "bytes": 165710
+        },
+        {
+          "role": "api1",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 5,
+          "categories": {
+            "unknown-foreground": 5
+          },
+          "sha256": "37ea1eea1ea6270183ee922b75fcb9743bfc8c2f072ae197f4a7c3d7cd1e7561",
+          "bytes": 177039
+        },
+        {
+          "role": "generator",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "role": "api0",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 11,
+          "categories": {
+            "unknown-foreground": 11
+          },
+          "sha256": "30bf448f38cfc7206918e48e870bc3cef7cc34e469dccead19835f3d25d919d0",
+          "bytes": 196086
+        },
+        {
+          "role": "observer",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "7ab3e3cb5be30c9a9c5a2a371ebcc84c5a8b1bda279b8a66b8046d859f3c5db4",
+          "bytes": 2632
+        },
+        {
+          "role": "seeder",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "269a03e12584adf8819e31aa6472a791e7299e512b93bc11ce5fdc33fba68afa",
+          "bytes": 2694
+        },
+        {
+          "kind": "postgres",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "6253522c88257b5bf7c02a7c1dcfd6e7296ef70a8c9a5062b0c30bd5d5a0ab86",
+          "bytes": 5450
+        }
+      ],
+      "transitions": [
+        {
+          "round": 0,
+          "active": [
+            0
+          ],
+          "distribution": "uniform"
+        },
+        {
+          "round": 5,
+          "active": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform"
+        },
+        {
+          "round": 7,
+          "active": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80"
+        },
+        {
+          "round": 10,
+          "active": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "cleanShutdown": true
+        }
+      ],
+      "recovery": {
+        "sourceUnchanged": true,
+        "cleanupPassed": true,
+        "redisCleanStop": true,
+        "roles": [
+          {
+            "role": "seeder",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "api0",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "api2",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "api1",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "generator",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "observer",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          }
+        ],
+        "rolesConfirmedAbsent": true,
+        "postgresConfirmedAbsent": true,
+        "postgresExitCode": 0,
+        "postgresForced": false,
+        "volumesConfirmedAbsent": true
+      }
+    },
+    {
+      "index": 2,
+      "run": "e628b6b5fd5d",
+      "startedAtUtc": "2026-10-04T04:38:18.889Z",
+      "finishedAtUtc": "2026-10-04T04:54:19.665Z",
+      "receiptManifestSha256": "80edb4190ba5150058eb809ddb70a60f5119fc66286770094e502f0a3925183d",
+      "manifestRecordCount": 12,
+      "allManifestRecordsVerified": true,
+      "applicationImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+      "helperImage": "sha256:bda6e4735a9680028f69df3bae827acc2d0d61e1ce3fb4bfd3151d3f541d6b5e",
+      "helperBindingSha256": "60a64e390e13ea8be4c26dd335af21ffc557ef2b2123bf42543078771c7f13ff",
+      "profileContractSha256": "88761bee68b47020ebcddfe9ab0310ff7d3a32c5620af22bb7f2cfc3ee4b1d9d",
+      "canonicalSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+      "rawSchemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+      "quietWindowSha256": "a63436b1f7608b5192f2f97e1558c33785ef9af401ab9d1149e6af2d47b68256",
+      "frozenOverallResult": {
+        "runPassed": false,
+        "failure": "ERR_ASSERTION",
+        "savedRoundCount": 0,
+        "continuousGlobalSaved": false
+      },
+      "additionalCompletedTransportEvidence": {
+        "receiptSha256": "2106a3aa82dfddafd781c25e79abd7fef9bd07baaa38e239133913678e4efe03",
+        "expectedBase": 11970,
+        "offeredBase": 11970,
+        "startedBase": 11970,
+        "successfulBase": 11970,
+        "failedBase": 0,
+        "refusedBase": 0,
+        "lateBase": 0,
+        "baseStatusHistogram": {
+          "200": 11970
+        },
+        "baseP95Ms": 53.27600499999244,
+        "reconnectOffered": 133,
+        "reconnectSucceeded": 133,
+        "reconnectStatusHistogram": {
+          "200": 133
+        },
+        "retrospectiveTupleComparison": {
+          "passed": true,
+          "total": 12103,
+          "perBindingCompared": true,
+          "fixtureBindings": "exact school/student/device/active-session tuple",
+          "invalid": 0
+        },
+        "retroactiveAcceptance": false
+      },
+      "classroom": {
+        "passed": false,
+        "recordedRounds": 15,
+        "perRound": [
+          {
+            "minute": 0,
+            "passed": true,
+            "completedEventCount": 26,
+            "intentionalNegativeProbeCount": 2,
+            "error": null
+          },
+          {
+            "minute": 1,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 2,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 3,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 4,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 5,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 6,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 7,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 8,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 9,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 10,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 11,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 12,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 13,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          },
+          {
+            "minute": 14,
+            "passed": false,
+            "completedEventCount": 14,
+            "intentionalNegativeProbeCount": 1,
+            "error": {
+              "name": "AssertionError",
+              "code": "ERR_ASSERTION",
+              "message": "lock-screen unavailable: Student signal is unavailable; restriction was not changed"
+            }
+          }
+        ]
+      },
+      "originalErrorCoverage": [
+        {
+          "role": "api2",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "236253794a24ae5f6b417710aa83785a5f4974925ba75f9d6ecb1f25a061c99c",
+          "bytes": 165601
+        },
+        {
+          "role": "api1",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 5,
+          "categories": {
+            "unknown-foreground": 5
+          },
+          "sha256": "0234d8e3f17914340439eaaaaa20f89b6cb4e97b891945992d7e452d1411ce69",
+          "bytes": 176971
+        },
+        {
+          "role": "generator",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "role": "api0",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 11,
+          "categories": {
+            "unknown-foreground": 11
+          },
+          "sha256": "c3d6ad35a2c47bf6b087797845b7cc44081fad60a654ade42479f78214061bbd",
+          "bytes": 188617
+        },
+        {
+          "role": "observer",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "5da322e9e48fafc4425406a9995dc7d5d7b896b1997009681a99f5931039fb80",
+          "bytes": 2632
+        },
+        {
+          "role": "seeder",
+          "kind": "api",
+          "complete": true,
+          "available": true,
+          "errorCount": 0,
+          "categories": {},
+          "sha256": "e2d5d85a4b67945587e76dbb7f4744f1c6e7ac72c85c1325fe1ce8ce34fee881",
+          "bytes": 2694
+        },
+        {
+          "kind": "postgres",
+          "complete": true,
+          "available": true,
+          "errorCount": 1,
+          "categories": {
+            "statement": 1
+          },
+          "sha256": "5970e0f9828d1cbe0011ba36b23196001ea289a3a40908f7b365d9f86717f3f3",
+          "bytes": 5526
+        }
+      ],
+      "transitions": [
+        {
+          "round": 0,
+          "active": [
+            0
+          ],
+          "distribution": "uniform"
+        },
+        {
+          "round": 5,
+          "active": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "uniform"
+        },
+        {
+          "round": 7,
+          "active": [
+            0,
+            1,
+            2
+          ],
+          "distribution": "sticky80"
+        },
+        {
+          "round": 10,
+          "active": [
+            1,
+            2
+          ],
+          "distribution": "survivors",
+          "cleanShutdown": true
+        }
+      ],
+      "recovery": {
+        "sourceUnchanged": true,
+        "cleanupPassed": true,
+        "redisCleanStop": true,
+        "roles": [
+          {
+            "role": "seeder",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "api0",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "api2",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "api1",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "generator",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          },
+          {
+            "role": "observer",
+            "exitCode": 0,
+            "forced": false,
+            "oomKilled": false,
+            "unsettledAtExit": 0,
+            "clean": true
+          }
+        ],
+        "rolesConfirmedAbsent": true,
+        "postgresConfirmedAbsent": true,
+        "postgresExitCode": 0,
+        "postgresForced": false,
+        "volumesConfirmedAbsent": true
+      }
+    }
+  ],
+  "acceptedCampaign": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "thirdAttemptReserved": false,
+  "thirdAttemptExecuted": false,
+  "holdRecordSha256": "9d9c9d31b7028b7a7cebedc79c82a29362c2ded2aaf94448b78e0d10928f6113",
+  "rootCauseAssessment": "Positive lifecycle iterated both synthetic schools while the declared133-client workload offered only school0. School1 preflight signal expired and the server refused further lock-screen actions as unavailable. Exact first observer assertion is not recorded by this frozen revision; target status and cardinality are possible predicates.",
+  "limitations": [
+    "Completed traffic and retrospective exact tuple evidence cannot turn failed mandatory classroom lifecycles into accepted capacity.",
+    "Original unknown-foreground classifications and all failed receipts remain unchanged.",
+    "Independent review correlated16 stale private-chat logs per attempt1 to captured intentional409 request IDs; failure before continuous evidence adoption prevented original final classification from using them.",
+    "No production, deployment, runtime activation, browser enforcement or host-interference claim."
+  ]
+}

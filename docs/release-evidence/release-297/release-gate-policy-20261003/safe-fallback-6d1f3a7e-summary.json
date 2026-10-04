@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "source": "6d1f3a7e737ebd2e3e266f2f571cdea811db5e27",
+  "historicalSourcePreserved": "6e251f2d1eece2b98fa2325e1fa46bd2b8553420",
+  "preparedAt": "2026-10-04T01:55:31.479773+00:00",
+  "scope": "Local compatible fallback preparation and focused source correctness only. No production, deployment, capacity or completed image recovery claim.",
+  "usageModesRequired": "both off",
+  "native": {
+    "tests": 5,
+    "pass": 5,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "units": {
+    "tests": 15,
+    "pass": 15,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "build": {
+    "exitCode": 0
+  },
+  "typecheck": {
+    "exitCode": 0
+  },
+  "testTypeRatchet": {
+    "passed": true,
+    "existingDiagnostics": 438,
+    "allowedBaseline": 534,
+    "sourceAndSyntaxErrors": 0
+  },
+  "castRatchet": {
+    "passed": true,
+    "asAny": 689,
+    "asUnknownAs": 7,
+    "tsIgnore": 0,
+    "tsExpectError": 0
+  },
+  "scan": {
+    "passed": true,
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa"
+  },
+  "floor": {
+    "passed": true,
+    "syntheticOnly": true,
+    "inventoryCount": 129,
+    "writerVersion": 1,
+    "bridgeVersion": 1,
+    "relayVersion": 1
+  },
+  "ownedCleanup": {
+    "nativeContainerAndVolumeAbsent": true,
+    "nativeStoppedGracefully": true,
+    "scannerAbsent": true,
+    "inspectorAbsent": true
+  },
+  "image": {
+    "imageId": "sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387",
+    "imageIdKind": "index",
+    "indexDigest": "sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387",
+    "platformManifestDigest": "sha256:e9980ae29fab107c2be86386059d35f180449cf85901ea832d911b9aef543114",
+    "configDigest": "sha256:ea2220acee348dc6f112e34ee8535c2858264790a2a92af3998627a66f5db57c",
+    "exportIndexSha256": "ef607b3d8d6c5fa6c5423527d29ee68ec7af8b98240a7edb915d9bb4aba5b680",
+    "verifiedBlobDigests": [
+      "sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387",
+      "sha256:e9980ae29fab107c2be86386059d35f180449cf85901ea832d911b9aef543114",
+      "sha256:a0b59f747d3f137d271f277ac689188cdbe6e1b913d3d81046c98116d40a16a7"
+    ]
+  },
+  "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+  "runtimeBaseProofPassed": true,
+  "archiveSha256": "df3527bac8051d0c9032ea1d2e7d2648299d83ca6f45beaa706ad9353b3d9184",
+  "sourceCleanAtPreparationFinish": true,
+  "originalSourceRegressionsFailedAsExpected": [
+    "atomic required audit",
+    "disconnect while raw-input row lock waits"
+  ],
+  "failedAttemptsRetained": true,
+  "evidence": {
+    "native": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\native-green-03.log",
+      "sha256": "3df1624c751ccd4b707d02b68010dd4c17bf86e29d2d16f36b806b7973cee2f9"
+    },
+    "units": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\focused-unit-final.log",
+      "sha256": "a3d72db7bbc0dc38e4bba17c5e6c648d9aed4be280b69d15efbd759f9738f770"
+    },
+    "build": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\build.log",
+      "sha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48"
+    },
+    "typecheck": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\check.log",
+      "sha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58"
+    },
+    "testTypeRatchet": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\test-types-final.log",
+      "sha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc"
+    },
+    "castRatchet": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\test-casts.log",
+      "sha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104"
+    },
+    "originalAuditFailure": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\native-red-original-audit.log",
+      "sha256": "1dc2fb621f0d7a4691243737ca1c0e2213eb0172040d7a385a6786a1038ead6f"
+    },
+    "originalDisconnectFailure": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\native-red-original-disconnect.log",
+      "sha256": "9d7b98df9a610a7c66271b276710dd129dfb3b93aaa130c88949b12b463a4917"
+    },
+    "nativeOwnedCleanup": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\fixture-cleanup.json",
+      "sha256": "19ee24e0d68f9d25dd0bd7302ed920bc9ae62d262d7ec5ef287af54b297bf3f7"
+    },
+    "nativeCustody": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-native-6d1f3a7e-01\\artifact-manifest.json",
+      "sha256": "f723bb741146619a00abfa33ebd623858db89225f7c29a61a3fb1ced332438a2"
+    },
+    "preparation": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-6d1f3a7e-01\\candidate-preparation.json",
+      "sha256": "a27559cb618807fe7218ebabc55655babcaca01c509ebe79a1a6fbe50de2f792"
+    },
+    "scan": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-6d1f3a7e-01\\scan-receipt.json",
+      "sha256": "5229c66a4429a996ac3cff573448dda4e521c5885aacd8286da572f7cd55d1e3"
+    },
+    "floor": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-6d1f3a7e-01\\synthetic-release-floor-proof.json",
+      "sha256": "cb52160a2c706d7d9923c5eb1ca51b3f37c3485049d086035fbc9fc1d853589b"
+    },
+    "imageCustody": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-6d1f3a7e-01\\artifact-manifest.json",
+      "sha256": "25428823801e3e72aff308a31284f77616945297f1f87266aa8770b4b76fcd04"
+    },
+    "imageOwnedCleanup": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-6d1f3a7e-01\\cleanup.json",
+      "sha256": "5b15491a20cdfbc4cd4d07fb6b7006d18822212f45daa5f052cb3153541e55ce"
+    },
+    "runtimeBaseProof": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-6d1f3a7e-01\\runtime-base-proof.json",
+      "sha256": "613b725a7c1c318751a44c0cc09c630adc8fb865a95f4a0be682cd969258c341"
+    }
+  },
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "imageRecoveryAcceptance": false,
+  "productionMutations": 0,
+  "registryPushes": 0,
+  "taskRegistrations": 0
+}

@@ -61,9 +61,16 @@ export async function getClasspilotMonitoringPolicy(
 ) {
   // Dynamic import keeps the pure policy usable by storage and protocol code.
   const { getHeartbeatTrackingSettingsForSchool } = await import("./storage.js");
-  const { runWithTenantContext } = await import("../middleware/tenantContext.js");
-  return runWithTenantContext({ schoolId }, async () =>
-    resolveClasspilotMonitoringPolicy(await getHeartbeatTrackingSettingsForSchool(schoolId, undefined, { bypassCache: true }), options));
+  const { getOwnedTenantStore, runWithTenantContext } = await import("../middleware/tenantContext.js");
+  const { rlsGucEnabled } = await import("../db/tenantContext.js");
+  const readFreshPolicy = async () => resolveClasspilotMonitoringPolicy(
+    await getHeartbeatTrackingSettingsForSchool(schoolId, undefined, { bypassCache: true }), options);
+  const owned = getOwnedTenantStore();
+  // Classroom HTTP routes already own a tenant lease. A second checkout can
+  // starve while that first client waits; reuse only its active exact-school,
+  // non-super scope, retaining the uncached authority read.
+  if (rlsGucEnabled() && owned?.schoolId === schoolId && !owned.isSuper) return readFreshPolicy();
+  return runWithTenantContext({ schoolId }, readFreshPolicy);
 }
 
 /** Bound a short-lived stream lease by the same timezone predicate as collection. */

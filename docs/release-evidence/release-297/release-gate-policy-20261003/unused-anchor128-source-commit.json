@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "commit": "add281b158fba5ea2305e82e0d70fead6006018d",
+  "parent": "30b874753943ff357cd0f013d4239d22f627afaf",
+  "isolatedWorktree": "C:\\GitHub\\SP297-distinct-reports",
+  "branch": "codex/release297-unused-anchor128",
+  "clean": true,
+  "selectedFiles": [
+    {
+      "path": "scripts/register-compatible-fallback-inactive.mjs",
+      "rawSha256": "c89dcae67b84b74e7f82acbddbb6554b5a76b8f9b9e4181ec2b8f1832670d334",
+      "gitBlob": "d48e05d3915b45cdcea2a28ed37f723475bbedb1"
+    },
+    {
+      "path": "tests/release297-compatible-fallback-inactive.test.mjs",
+      "rawSha256": "e04d35da381e5a1c81c3d31714b657597f1866b260ac73730486e97a6b7be876",
+      "gitBlob": "758bcd9407709fc0e3a5a0a7d138c2f0c46b0a64"
+    },
+    {
+      "path": "docs/RELEASE_297_UNUSED_ANCHOR128_PREPARATION.md",
+      "rawSha256": "a21d44dc28b595b26347ea2daf41c60183b7c16149c9c553c6101b2ae812f4c5",
+      "gitBlob": "fc44dcc4e5bbbd9fe80b71e9db1ecf208eca79b7"
+    }
+  ],
+  "onlyThreeSelectedFiles": true,
+  "publicPureSummarySha256": "f2a663254f12654f34282ebb94abd7959d094fd498f18a9c47fe5b6332778c09",
+  "activeCommitHooksAbsent": true,
+  "hookDirectory": "C:/GitHub/SchoolPilot/.git/hooks",
+  "hooksChecked": [
+    "pre-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit"
+  ],
+  "nativeExecuted": false,
+  "awsExecuted": false,
+  "buildExecuted": false,
+  "actualRegistrationAccepted": false,
+  "capacityAccepted": false,
+  "deploymentAccepted": false
+}

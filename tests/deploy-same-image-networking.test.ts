@@ -17,6 +17,7 @@ const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.ur
 const libraryBoundary = deploySource.indexOf("# --- Preflight checks ---");
 assert.ok(libraryBoundary > 0);
 const deployLibrary = deploySource.slice(0, libraryBoundary);
+const dockerMutation = /\bdocker(?:[ \t]+--host[ \t]+(?:"[^"\r\n]+"|'[^'\r\n]+'|[^ \t\r\n]+))?[ \t]+(?:build|tag|push|login)\b/;
 
 const account = "135775632425";
 const region = "us-east-1";
@@ -222,11 +223,20 @@ if validate_same_image_networking_mode; then exit 42; fi
     assert.match(result.stderr, /requires --expected-network-config-sha256/);
   });
 
+  it("rejects image mutations with or without the pinned Docker host", () => {
+    for (const command of ["build", "login", "tag", "push"]) {
+      for (const prefix of ["docker", 'MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST"']) {
+        assert.throws(() => assert.doesNotMatch(`${prefix} ${command} synthetic`, dockerMutation));
+      }
+    }
+    assert.doesNotMatch('docker --host "$LEGACY_DOCKER_HOST" image inspect synthetic', dockerMutation);
+  });
+
   it("has a backend-only branch that exits before every image publication path", () => {
     const functionStart = deploySource.indexOf("same_image_networking_redeploy() {");
     const functionEnd = deploySource.indexOf("# --- Preflight checks ---", functionStart);
     const sameImageFunction = deploySource.slice(functionStart, functionEnd);
-    assert.doesNotMatch(sameImageFunction, /\bdocker\s+(?:build|tag|push|login)\b/);
+    assert.doesNotMatch(sameImageFunction, dockerMutation);
     assert.doesNotMatch(sameImageFunction, /\b(?:put-image|batch-delete-image|create-repository)\b/);
 
     const execution = deploySource.slice(libraryBoundary);
@@ -234,7 +244,7 @@ if validate_same_image_networking_mode; then exit 42; fi
     const exit = execution.indexOf("exit 0", dispatch);
     const build = execution.indexOf("docker build", dispatch);
     assert.ok(dispatch > 0 && dispatch < exit && exit < build);
-    assert.doesNotMatch(execution.slice(0, dispatch), /\bdocker\s+(?:build|tag|push|login)\b/);
+    assert.doesNotMatch(execution.slice(0, dispatch), dockerMutation);
   });
 
   it("rejects mutable references and a digest mismatch before registration", () => {

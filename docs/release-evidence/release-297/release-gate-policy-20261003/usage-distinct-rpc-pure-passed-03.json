@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "kind": "distinct report RPC pure acceptance and narrow commit",
+  "passed": true,
+  "commit": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+  "parent": "cbe0638480fe86301a9491a58d3b60b1720b04f5",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "branch": "codex/release297-distinct-reports",
+  "trackedTreeClean": true,
+  "selectedCommitFiles": 3,
+  "syntax": {
+    "tests": 3,
+    "pass": 3
+  },
+  "pure": {
+    "tests": 38,
+    "pass": 38,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "configuredDeadlineMs": 20000,
+  "startedAt": "2026-10-04T10:41:27.684Z",
+  "finishedAt": "2026-10-04T10:41:29.341Z",
+  "all38ExactCaseNamesVerified": true,
+  "sourceHashesStableBeforeAfterAndCommit": true,
+  "allHistoricalFailureEvidencePreserved": true,
+  "decisiveRedPublicSummary": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-rpc-firstcase-breadcrumb-preparation-01\\public-summary.json",
+  "decisiveRedPublicSummarySha256": "eab098ae323aaeb53d94f6db47d6e6ee87b45fd0317cb82f269642b77ef33f7f",
+  "fix": "Equivalent Boolean duplicate-state guard preserves rejection while avoiding large private-state AssertionError rendering",
+  "regression": "False error.actual, exact bounded message, no synthetic cookie/CSRF or expected-state fields",
+  "exactOwnedNodeProcessesAbsent": true,
+  "forceUsed": false,
+  "nativeActions": 0,
+  "applicationEdits": 0,
+  "sharedHarnessEdits": 0,
+  "primaryGitChanges": 0,
+  "realEndpointAcceptance": false,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "remaining": [
+    "shared opt-in RPC/profile/helper/CI integration by protocol owner",
+    "fresh final-source snapshot and restricted native restore",
+    "real authenticated endpoint, coverage, audit and graceful drain evidence",
+    "separate original Usage cold capacity and distinct-operation acceptance"
+  ],
+  "sourceFiles": [
+    {
+      "file": "scripts/load/usage/release-gates-v2/distinct-report-rpc.mjs",
+      "bytes": 17589,
+      "sha256": "f0acbc8fdd62b072362b297d137f1fe44520166b57f148a99e6d4276c8264693"
+    },
+    {
+      "file": "scripts/load/usage/release-gates-v2/distinct-report-rpc-overlay.mjs",
+      "bytes": 2416,
+      "sha256": "bf7cf3dfa8a3c3f41f03e3f3b2c30ae43bdc2ae9b5ae7823623454f9995bb655"
+    },
+    {
+      "file": "scripts/load/usage/release-gates-v2/distinct-report-rpc.test.mjs",
+      "bytes": 24249,
+      "sha256": "215eb860ad4c446b24ef8cee16757cd2ef16e824964b3bb6f799fc29b3a7d83b"
+    }
+  ],
+  "records": [
+    {
+      "file": "run-pure.mjs",
+      "bytes": 7244,
+      "sha256": "21ef26ea3e7e990c3f0ed48d482999c560a1be2b4e047d4db8777900789e61b9"
+    },
+    {
+      "file": "execution.json",
+      "bytes": 5873,
+      "sha256": "234e117b66809b23824caa69c07d2cde13f4176e40c5fc8fdd9d89830ed0cc71"
+    },
+    {
+      "file": "tests.tap",
+      "bytes": 9872,
+      "sha256": "616b2d16431ec52279ae7faaf3bed4547422e1972ae8b4f55462feda694af0b8"
+    },
+    {
+      "file": "process-containment.json",
+      "bytes": 242,
+      "sha256": "10dc6ca5d9b99f5e8695e5001f9c71f8cdd30de2d10a479eac23d0e002ea752c"
+    },
+    {
+      "file": "guard-correction.diff",
+      "bytes": 3386,
+      "sha256": "5b9e5d212b3e3fa27d94be5a8d57e5aceaad5569d4d153724b487d0244591c54"
+    },
+    {
+      "file": "distinct-report-rpc.mjs.syntax.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "distinct-report-rpc-overlay.mjs.syntax.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "distinct-report-rpc.test.mjs.syntax.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

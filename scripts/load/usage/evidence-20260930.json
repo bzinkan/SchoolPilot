@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "sourceRevision": "50fd8dad1601ca9af54e0fefe90793676170d61a",
+  "startedAt": "2026-09-30T18:31:57.504Z",
+  "finishedAt": "2026-09-30T18:34:27.344Z",
+  "passed": true,
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "3eb0261850745bcf021121b66c2d92bac47ea8c05f7ace38a3acd52aeda9cd96",
+    "src/services/classpilotUsageRead.ts": "1137559a6b2d79272af2c6b3a58cad5ba939b6fae59a20e0b646bed147fc7059",
+    "src/services/scheduler.ts": "5b14228b644e9e2bcdd41b0033ea924514a60aba530fbea9ca82c34f94e27892",
+    "src/db/classpilotUsageRollupDaysMigration.ts": "d4bf09add0b53201da9988901253c196b181a48540968d22b4af5dde60baf214",
+    "scripts/load/usage/local-usage-benchmark.mjs": "bd1d2d960faed59afe0a1583a9bbd2dbc3657fde52f1a3dc871112b39d3b8250"
+  },
+  "schemaSha256": "bf4de4ed0875a613a7696a646f01a58aa1ec50a129ea493e11af5037c1edfdf1",
+  "topology": "Local Windows Node driver and actual createApp HTTP server in one process; separate role-capped API/scheduler pools; local Docker PostgreSQL",
+  "limits": [
+    "No production traffic, student data or cloud mutations.",
+    "Shared local process/DB has no production CPU/memory quota or RDS I/O guarantee.",
+    "This measures the actual one-day writer, HTTP read/export route and bounded retention SQL, not the whole hourly scheduler fleet, Redis or production capacity."
+  ],
+  "productionReadiness": false,
+  "capacityGate": "open",
+  "dataset": {
+    "schools": 2,
+    "students": 500,
+    "rawHeartbeats": 1000000,
+    "uniqueObservations": 500000,
+    "samplesPerStudent": 1000,
+    "duplicateFactor": 2,
+    "expiredHeartbeats": 50000,
+    "aiDecisions": 10000,
+    "officialClasses": 2
+  },
+  "seedMs": 40673.121,
+  "liveRewrite": {
+    "durationMs": 30572.21020000001,
+    "rowCount": 2000,
+    "seconds": 7500000,
+    "heartbeatCount": 500000
+  },
+  "finalRewriteWithReads": {
+    "durationMs": 28413.62019999999,
+    "rowCount": 2000,
+    "seconds": 7500000,
+    "heartbeatCount": 500000,
+    "concurrentReads": {
+      "count": 32,
+      "minMs": 190.16359999999986,
+      "p50Ms": 313.28719999999157,
+      "p95Ms": 367.07480000000214,
+      "maxMs": 367.0820999999996
+    }
+  },
+  "reads": {
+    "school": {
+      "count": 8,
+      "minMs": 29.292400000005728,
+      "p50Ms": 36.491600000008475,
+      "p95Ms": 54.99659999999858,
+      "maxMs": 54.99659999999858
+    },
+    "grade": {
+      "count": 8,
+      "minMs": 35.300900000002,
+      "p50Ms": 38.25100000000384,
+      "p95Ms": 55.54760000000533,
+      "maxMs": 55.54760000000533
+    },
+    "class": {
+      "count": 8,
+      "minMs": 25.517500000001746,
+      "p50Ms": 25.69079999999667,
+      "p95Ms": 31.32589999999618,
+      "maxMs": 31.32589999999618
+    },
+    "student": {
+      "count": 8,
+      "minMs": 20.111900000003516,
+      "p50Ms": 22.914899999988847,
+      "p95Ms": 52.139100000000326,
+      "maxMs": 52.139100000000326
+    }
+  },
+  "export": {
+    "durationMs": 36.85709999999381,
+    "bytes": 993,
+    "strictAuditRecorded": true
+  },
+  "correctness": {
+    "exactIndependentTotals": true,
+    "deterministicDedup": true,
+    "teacherIntentExemption": true,
+    "frozenOfficialClassAttribution": true,
+    "newestAiDecision": true,
+    "successfulEmptyDay": true,
+    "internalGapWithheld": true,
+    "crossSchoolDenied": true,
+    "snapshotReadsDuringAtomicRewrite": true
+  },
+  "retention": {
+    "durationMs": 1414.1826,
+    "expiredHeartbeatsRemoved": 50000,
+    "batches": 11,
+    "aggregateAndEmptyLedgerCleared": true,
+    "sqlMatchesScheduler": true
+  },
+  "poolMax": {
+    "api": 16,
+    "scheduler": 5,
+    "mainWaiting": 16,
+    "schedulerWaiting": 0
+  },
+  "peakNodeProcessRssBytes": 251756544,
+  "nodeProcessCpuMicroseconds": {
+    "user": 2078000,
+    "system": 297000
+  },
+  "database": {
+    "version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "max_connections": "100"
+  },
+  "dockerQuota": {
+    "NanoCpus": 0,
+    "Memory": 0
+  },
+  "databaseCountersDeltaApproximate": {
+    "blks_read": 158200,
+    "blks_hit": 6719733,
+    "temp_files": 24,
+    "temp_bytes": 2184004464,
+    "tup_returned": 4506328,
+    "tup_fetched": 3497982,
+    "tup_inserted": 6357,
+    "tup_updated": 416,
+    "tup_deleted": 44015
+  },
+  "databaseBytes": 739310615,
+  "rollupInsertExplain": {
+    "planningMs": 1.75,
+    "executionMs": 43557.853,
+    "sharedHitBlocks": 2003192,
+    "sharedReadBlocks": 37669,
+    "tempReadBlocks": 104060,
+    "tempWrittenBlocks": 138337,
+    "externalMergeSorts": [
+      {
+        "rows": 1000000,
+        "diskKiB": 137048
+      },
+      {
+        "rows": 500000,
+        "diskKiB": 75792
+      },
+      {
+        "rows": 500000,
+        "diskKiB": 92032
+      },
+      {
+        "rows": 500000,
+        "diskKiB": 60408
+      }
+    ]
+  },
+  "representativeDayGroupingExplain": {
+    "planningMs": 0.459,
+    "executionMs": 2.116
+  },
+  "deadlinesMs": {
+    "schedulerStatement": 60000,
+    "apiStatement": 15000,
+    "apiConnectionAcquisition": 5000
+  },
+  "cleanup": {
+    "generatedDatabaseAndRolesRemoved": true
+  },
+  "externalEvidenceDirectory": "C:/Users/zinka/AppData/Local/Temp/schoolpilot-usage-benchmark-20260930-run2/"
+}

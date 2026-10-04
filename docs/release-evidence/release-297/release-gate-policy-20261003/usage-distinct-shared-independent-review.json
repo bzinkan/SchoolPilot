@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent-distinct-shared-pure-and-commit-review",
+  "recordedAt": "2026-10-04T11:57:32.4498034Z",
+  "commit": "e330c39ab2eb16fde5c45f74fd817edb21c1a463",
+  "base": "f0992a9f4b36744872ee60d32a6b88eac8c66542",
+  "staticReviewSha256": "b93c4af245cc1144946b5063db38bd6cd430b131924d03963cf3a00e20054685",
+  "publicSummarySha256": "0d85b8536fb59d12fb887ebf8e2f0652ba5cb3310598ad9e352b5ec3c33800c3",
+  "executionSha256": "71c532cfa636c2d692a6d6fdba2c04c1304a7eb4ac56f6bdba204bd5d4b2f087",
+  "tapSha256": "71ff9b613f51dc1798decc2d6b17926f11012fcd905d7409c3c5fbe33e4a5b5a",
+  "dependencyBindingSha256": "265db08bce775a1e4e33a2f3a3f3aa4235b4ad0c57602e1ffa2ccff635580142",
+  "verified": {
+    "syntaxCount": 11,
+    "pureNamedUniqueCount": 48,
+    "purePass": 48,
+    "fail": 0,
+    "cancel": 0,
+    "skip": 0,
+    "todo": 0,
+    "configuredDeadlineMs": 20000,
+    "allLogsRehashed": true,
+    "sourceWorkingHashesMatch": true,
+    "commitPaths": 11,
+    "applicationSchemaFrontendPackageDockerInfraDiffEmpty": true,
+    "worktreeClean": true,
+    "childAbsenceRecorded": true,
+    "forcedCleanup": false,
+    "originalMissingDependencyFailurePreserved": true
+  },
+  "remaining": [
+    "Full133-case aggregate was statically named but not executed in this component proof.",
+    "A new source-bound opt-in helper and future native distinct proof remain pending.",
+    "Zero original cold Usage passes; distinct prerequisites prevent execution.",
+    "No capacity,deployment,activation,or changed comparison policy accepted."
+  ],
+  "reviewerExecutedTests": false,
+  "reviewerNativeActions": 0,
+  "findings": []
+}

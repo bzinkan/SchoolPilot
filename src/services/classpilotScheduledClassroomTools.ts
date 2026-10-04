@@ -1,3 +1,4 @@
+import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle } from "./classpilotPrivateChatLifecycle.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db.js";
@@ -132,16 +133,18 @@ export async function mutateScheduledStudentHand(options: ScheduledStudentAction
   });
 }
 
-export async function createScheduledStudentMessage(options: ScheduledStudentAction & { content: string; clientMessageId: string }) {
+export async function createScheduledStudentMessage(options: ScheduledStudentAction & { content: string; clientMessageId: string; expectedPrivateChatLifecycle?: unknown }) {
   if (!options.content.trim() || options.content.length > 500 || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(options.clientMessageId)) {
     throw activityError("A message of 1–500 characters and clientMessageId are required", "MESSAGE_INVALID", 400);
   }
+  await latchPrivateChatLifecycle(options.schoolId);
   return withScheduledStudentAction(options, async (database, context) => {
     const toggles = await scheduledClassroomToggles(options.schoolId, context, database);
     if (!toggles.messagingChannelEnabled) throw activityError("Messaging is disabled", "FAB_FEATURE_DISABLED", 403);
     if (toggles.messagesPaused) {
       throw Object.assign(activityError("Messaging is paused", "CHAT_PAUSED", 403), { pauseReason: toggles.pauseReason });
     }
+    const lifecycle = await preparePrivateChatMessage(options,options.expectedPrivateChatLifecycle,database);
     const [existing] = await database.select().from(chatMessages).where(and(eq(chatMessages.schoolId, options.schoolId),
       eq(chatMessages.studentId, options.studentId), eq(chatMessages.studentSessionId, options.studentSessionId),
       eq(chatMessages.clientMessageId, options.clientMessageId))).limit(1);
@@ -150,7 +153,7 @@ export async function createScheduledStudentMessage(options: ScheduledStudentAct
         || existing.senderType !== "student") throw activityError("Message id was already used", "CLIENT_MESSAGE_CONFLICT");
       return { context, message: existing, created: false };
     }
-    const [message] = await database.insert(chatMessages).values({ schoolId: options.schoolId, sessionId: null,
+    const [message] = await database.insert(chatMessages).values({ ...lifecycle, schoolId: options.schoolId, sessionId: null,
       supervisionContextId: context.id, studentId: options.studentId, studentSessionId: options.studentSessionId,
       deviceId: options.deviceId, clientMessageId: options.clientMessageId, senderId: options.studentId, senderType: "student",
       content: options.content, messageType: "message", deliveryStatus: "delivered", deliveredAt: new Date() }).returning();
@@ -158,8 +161,9 @@ export async function createScheduledStudentMessage(options: ScheduledStudentAct
   });
 }
 
-export async function createScheduledTeacherReply(options: { schoolId: string; contextId: string; actorId: string; studentId: string; content: string; contextAuthorityRevision?: string }) {
+export async function createScheduledTeacherReply(options: { schoolId: string; contextId: string; actorId: string; studentId: string; content: string; contextAuthorityRevision?: string; expectedPrivateChatLifecycle?: unknown }) {
   if (!options.content.trim() || options.content.length > 500) throw activityError("Message must contain 1–500 characters", "MESSAGE_INVALID", 400);
+  await latchPrivateChatLifecycle(options.schoolId);
   return db.transaction(async (tx) => {
     const database = tx as unknown as typeof db;
     await assertClasspilotEntitled(options.schoolId, database, { lock: true });
@@ -170,9 +174,11 @@ export async function createScheduledTeacherReply(options: { schoolId: string; c
       .where(and(eq(classpilotSupervisionStudents.schoolId, options.schoolId), eq(classpilotSupervisionStudents.contextId, context.id),
         eq(classpilotSupervisionStudents.studentId, options.studentId), isNull(classpilotSupervisionStudents.releasedAt))).limit(1).for("share");
     if (!assignment) throw activityError("Student is no longer in this classroom activity");
+    if (!(await hasCurrentClasspilotStudentControlAuthority({schoolId:options.schoolId,studentId:options.studentId,supervisionContextId:context.id},database))) throw activityError("Student classroom authority changed");
     // Teachers may still reach a paused class; only the hard channel switch stops replies.
     if (!(await scheduledClassroomToggles(options.schoolId, context, database)).messagingChannelEnabled) throw activityError("Messaging is disabled", "FAB_FEATURE_DISABLED", 403);
-    const [message] = await tx.insert(chatMessages).values({ schoolId: options.schoolId, sessionId: null, supervisionContextId: context.id,
+    const lifecycle = await preparePrivateChatMessage({...options,supervisionContextId:context.id},options.expectedPrivateChatLifecycle,database);
+    const [message] = await tx.insert(chatMessages).values({ ...lifecycle, schoolId: options.schoolId, sessionId: null, supervisionContextId: context.id,
       studentId: options.studentId, senderId: options.actorId, senderType: "teacher", content: options.content,
       messageType: "message", deliveryStatus: "sent" }).returning();
     const [delivery] = await tx.insert(classpilotChatDeliveries).values({ schoolId: options.schoolId, chatMessageId: message!.id,
@@ -191,8 +197,9 @@ export async function publishScheduledClassroomEvent(context: ClasspilotSupervis
 }
 
 export async function authorizeScheduledTeacherStudentAction(options: {
-  schoolId: string; contextId: string; actorId: string; studentId: string; dismissHand?: boolean; contextAuthorityRevision?: string;
+  schoolId: string; contextId: string; actorId: string; studentId: string; dismissHand?: boolean; closeChat?: boolean; expectedPrivateChatLifecycle?: unknown; contextAuthorityRevision?: string;
 }) {
+  if (options.closeChat) await latchPrivateChatLifecycle(options.schoolId);
   return db.transaction(async (tx) => {
     const database = tx as unknown as typeof db;
     await assertClasspilotEntitled(options.schoolId, database, { lock: true });
@@ -207,7 +214,8 @@ export async function authorizeScheduledTeacherStudentAction(options: {
     if (options.dismissHand) await tx.update(classpilotActiveHands).set({ clearedAt: new Date(), updatedAt: new Date(), status: "helped", revision: sql`${classpilotActiveHands.revision}+1` })
       .where(and(eq(classpilotActiveHands.schoolId, options.schoolId), eq(classpilotActiveHands.supervisionContextId, context.id),
         eq(classpilotActiveHands.studentId, options.studentId), isNull(classpilotActiveHands.clearedAt)));
-    return { context, binding, controlRevision: control!.revision };
+    const privateChatLifecycle = options.closeChat ? await closePrivateChatLifecycle({...options,supervisionContextId:context.id},options.expectedPrivateChatLifecycle,options.actorId,database) : undefined;
+    return { context, binding, controlRevision: control!.revision, privateChatLifecycle };
   });
 }
 

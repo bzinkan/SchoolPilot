@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_failed_restore04_custody_review",
+  "reviewer": "task_posture_review",
+  "reviewedAtUtc": "2026-10-04T19:05:50.1398055Z",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "custodyVerified": true,
+  "executionAccepted": false,
+  "readyHandoffVerified": false,
+  "capacityAccepted": false,
+  "productionMutations": 0,
+  "references": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\execution.json",
+      "sha256": "72d284a8741480a196786b55c34835d307702b4060e2b6556fbd9e84bc694719",
+      "bytes": 9133
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\independent-owned-absence.json",
+      "sha256": "9b23319a64e5807dfa459f1234cb6df6ed74dce656e71aa0c4892346fe8bc41b",
+      "bytes": 656
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\custody-manifest.json",
+      "sha256": "32c771d36af8d497c5f0af903014c16be74491051dcf028c385d9d3bf42db885",
+      "bytes": 3747
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\public-summary.json",
+      "sha256": "4c75ded7d3aa770ba6899e4fa7a5310cfaf1be927d198782ce0e89a4caab0b5d",
+      "bytes": 3792
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\baseline-canonical-restoration-comparison.json",
+      "sha256": "1461739a84191cafdf55683d39bbae0cab146b5ea65a1504d77857b37f34a81d",
+      "bytes": 1552
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\restored-baseline-schema.sql",
+      "sha256": "2bcd5293d4c8f17d2ce2c032bc90937381cc04c772f87446ae54b453f4af2859",
+      "bytes": 430328
+    }
+  ],
+  "custody": {
+    "members": 17,
+    "memberBytes": 650195,
+    "allContainedBytesAndHashesMatch": true,
+    "noReparseFilesOrParents": true,
+    "durablePrivateCopyVerified": true,
+    "publicSummaryReferencesMatch": true
+  },
+  "actualOutcome": {
+    "passed": false,
+    "failurePhase": "restricted schema restoration baseline",
+    "failureName": "AssertionError",
+    "failureCode": "ERR_ASSERTION",
+    "sourceCanonicalSha256": "35339c1f2684f48ad89ccfcc0dbec5eb3b65955ae16fdb76901ac164c2e4b58c",
+    "restoredCanonicalSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+    "exactCanonicalChangedLines": 3,
+    "allOtherCanonicalBytesEqual": true,
+    "restrictedNativeChecks": 0,
+    "candidateRestoreReached": false,
+    "readyHandoffEmitted": false
+  },
+  "ownerEvidence": {
+    "retainedPublicObjectRows": 166,
+    "allOwnedByDeclaredNonSuperNoBypassRole": true,
+    "completeOriginalOwnerMapAvailable": false,
+    "originalOwnerCommentCauseRejected": true
+  },
+  "cleanup": {
+    "retainedExactOwners": 1,
+    "exitCode": 0,
+    "oomKilled": false,
+    "forced": false,
+    "ownerPoolEnded": true,
+    "containerAbsent": true,
+    "anonymousVolumeAbsent": true,
+    "networkAbsent": true,
+    "executorAbsent": true,
+    "allInsideOriginalWindow": true,
+    "retainedPostgresErrorOrFatalLines": 0,
+    "independentAbsenceRecordVerified": true,
+    "freshReviewerDockerCheck": false
+  },
+  "exactDiffReview": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-independent-failed04-01\\exact-diff-classification.json",
+    "sha256": "a6755817a6605cbba082410a163909395135d04c12f69323ca63755eafd1a021"
+  },
+  "limitations": [
+    "04 remains FAILED at the unchanged strict canonical assertion; no successful restricted native or candidate restoration scope is available",
+    "Semantic equivalence of the exact three redundant AND grouping changes does not relabel the failed fingerprint comparison",
+    "03 also remains FAILED; no composed ready handoff or capacity/deployment authorization exists",
+    "Any future stable source-derived export must carry explicit lineage and exact whitelist proof plus a fresh strict second roundtrip/native restricted verification",
+    "Owner-role pattern is verified for the new fixture; the complete original source owner map was unavailable"
+  ],
+  "operationsPerformed": {
+    "retainedReadsAndHashes": true,
+    "externalReviewReceiptWrite": true,
+    "dockerCommands": 0,
+    "sql": 0,
+    "nativeRuns": 0,
+    "tests": 0,
+    "builds": 0,
+    "awsCommands": 0,
+    "ciCalls": 0
+  }
+}

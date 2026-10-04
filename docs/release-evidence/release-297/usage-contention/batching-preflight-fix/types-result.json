@@ -1,0 +1,11 @@
+{
+  "toolChunk": "382492",
+  "exitCode": 0,
+  "toolSession": 90622,
+  "diagnostics": [],
+  "output": [
+    "> schoolpilot-api@1.0.0 check",
+    "> tsc --noEmit"
+  ],
+  "command": "npm run check"
+}

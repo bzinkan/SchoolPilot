@@ -1,0 +1,32 @@
+{
+  "kind": "release297_failed_ci_mock_duration_diagnosis",
+  "createdAtUtc": "2026-10-04T22:04:13.285Z",
+  "headSha": "caacdf5f15b2044420c27dedab90e93848d712a6",
+  "runId": 37235213540,
+  "jobId": 111532897509,
+  "check": "AWS rollout safety",
+  "step": "Rollout monitor and rollback tests",
+  "failedCiPreserved": true,
+  "retainedMockSha256": "b04004e3e2cc4d12a4de375b80b6ad77148f1961dbd65bb067c4c4b1d31ce843",
+  "retainedResultTruncated": false,
+  "retainedSampleTruncated": false,
+  "actualResult": {
+    "status": "completed",
+    "iterations": 1,
+    "elapsedSeconds": 13.4,
+    "minimumWallClockSeconds": 10,
+    "failuresPropertyPresent": false
+  },
+  "runtimeBreachRequiredObservations": 3,
+  "retainedSample": {
+    "triggered": false,
+    "immediateFailures": 0,
+    "consecutiveFailures": 0
+  },
+  "cause": "The ten-second mock acceptance duration elapsed during the first 13.4-second sweep; cumulative acceptance correctly completed before the third stale observation. The test then accessed the absent failures property.",
+  "productionDefectEstablished": false,
+  "fixScope": "Five negative runtime test configs use the unchanged 90-second owned-child watchdog as their acceptance fence; original iteration limits, metric ages, failure codes and runtime thresholds are retained. Exit/status assertions are strengthened.",
+  "runtimeModified": false,
+  "productionTimeoutsModified": false,
+  "failedZipDigestIndependentlyVerified": false
+}

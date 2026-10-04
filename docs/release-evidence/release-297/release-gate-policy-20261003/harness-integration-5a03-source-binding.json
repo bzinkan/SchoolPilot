@@ -1,0 +1,109 @@
+{
+  "recordedAt": "2026-10-04T11:08:15.8218086+00:00",
+  "integrationHead": "5a03c9000f63b366f6fde6a2480cbcd4e77c4ee3",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "applicationBuildSchemaInputsUnchanged": true,
+  "reviewedSourceGitBlobsMatch": true,
+  "reviewedHostWorkingRawBytesMatch": false,
+  "sixHostFilesOnlyCRLFDifference": true,
+  "nativeRunsRemainBoundToFrozenHost967": true,
+  "primaryPureExecutionCount": 150,
+  "duplicateExecutionCount": 27,
+  "uniqueTestCaseCount": 123,
+  "finalCIAndDistinctIntegrationPending": true,
+  "nativeCapacityAcceptance": false,
+  "productionReadiness": false,
+  "files": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/usage-post-verification.mjs",
+      "reviewedSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+      "gitBlob": "f9763331b1c3090b5b0b5b611bf5f4655acc245d",
+      "workingFileSha256": "624ee517a7f3e08d3df2f423358e88608f8a486c68941e35847d983433eedd10",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/usage-post-verification.test.mjs",
+      "reviewedSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+      "gitBlob": "416b0dc114732e35377825cc870e08a43876d116",
+      "workingFileSha256": "cd817afd4052231f294b1cfc50f9239c0354aed07b42d7e20200dbff02c2a6c0",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/campaign.mjs",
+      "reviewedSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+      "gitBlob": "71e5cce700dd038dbe3a4844d017f20e186605b6",
+      "workingFileSha256": "6cb6385e810f7a8253aed6deab15e2cbac74b04d69d3efb4bbf66a7b84e0e136",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/receipts.mjs",
+      "reviewedSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+      "gitBlob": "4e06a4bcf1283f2c98b4ff790bc9f98e057572c9",
+      "workingFileSha256": "605314f596d5e78a66e671bf80463e11ef62f8423ed0192ac78c84fff5a10a87",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/run.mjs",
+      "reviewedSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+      "gitBlob": "ede2a6053cef39d2d472a3765a98d0856341a023",
+      "workingFileSha256": "dd978852ff8bc88953f6a58d83f7fbcf8acdb42a2499412410de51ebeffb1591",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "tests/release297-gates-v2.test.mjs",
+      "reviewedSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+      "gitBlob": "d4b520ab2a85dbe67b20e4cdbf36f53b0e042f7f",
+      "workingFileSha256": "46c0cf001baa02427ade75b33cb0017fb8e4189d7cc8496d3f1b7dece10b9408",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-reports.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "07969295fda1968541944530a2133c8d0aaa4250",
+      "workingFileSha256": "5ad795d11b125d5a725eb52285c435fa397d68322010120af2ec4026c9c38c2f",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-reports.test.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "2f62030fce66930fe576218107b4bb5f27eb1b6d",
+      "workingFileSha256": "ea58411d43789750872c848190b01084fb7bf5c559480d6fc9ada95f8eca3826",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-operation.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "a8c05bff140646b3ee09664a1cc9117eba6b4cf6",
+      "workingFileSha256": "9f2c22fba10816953735286db79b0b8b4e9e68dbe7adeb4c2a73fc40e3517c7f",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-operation.test.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "d3efdbb0558658a644c61b45be08fd86c1d02216",
+      "workingFileSha256": "7d4eaed31d685f9873ac9bc0b8c56ade4d94520f6fa82f5d086cf3fd7a693122",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-rpc.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "42ad6215c954f752550bf397096543b5294b0be3",
+      "workingFileSha256": "1746b674af12459dd0086a32dc9505c330d1bb29241a54adfb7f19d13d116bfa",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-rpc-overlay.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "041df23871d06484442f4268bf3922683d2166e3",
+      "workingFileSha256": "af6bad3068895ca5ec98e60708c265cddb4102169a3bae454fedcdb573061e7b",
+      "exactGitBlobMatch": true
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-rpc.test.mjs",
+      "reviewedSource": "3b3f56de5b670a2b9169786117e3e51d4d608e77",
+      "gitBlob": "a3b8f10956250180ee0e863a08b45c36d9e23132",
+      "workingFileSha256": "c3ce6463c0d8e1492b6cbfd98b649fc4da096debbe4e38eb7064fee2f8d7497f",
+      "exactGitBlobMatch": true
+    }
+  ]
+}

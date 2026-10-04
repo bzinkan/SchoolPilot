@@ -27,7 +27,7 @@ describe("ClassPilot school-arrival capacity controls", () => {
     );
     assert.match(
       heartbeatRoute,
-      /router\.post\("\/device\/heartbeat", requireCryptographicDeviceAuth/
+      /router\.post\("\/device\/heartbeat",\s*trackUsageCapacityMiddleware\("heartbeat_middleware", requireCryptographicDeviceAuth\),\s*withClasspilotHeartbeatAdmission\(\[\s*trackUsageCapacityMiddleware\("heartbeat_middleware", createRequireClasspilotEntitlement\(schoolId =>\s*runWithUsageCapacityOperation\("heartbeat_middleware", \(\) => resolveClasspilotEntitlement\(schoolId\)\)\)\),\s*trackUsageCapacityMiddleware\("heartbeat_middleware", deviceHeartbeatLimiter\), async/
     );
     assert.doesNotMatch(heartbeatRoute, /activeStudentSession/);
     const databaseSection = heartbeatRoute.slice(

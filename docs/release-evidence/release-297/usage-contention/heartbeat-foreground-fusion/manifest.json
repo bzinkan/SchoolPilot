@@ -1,0 +1,992 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T06:19:49.117Z",
+  "scope": "Heartbeat teaching-only foreground publication fusion and mandatory final entitlement correctness fence. No production mutations, no capacity claim.",
+  "baselineCommit": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+  "worktreeDirty": true,
+  "topology": "Each native attempt used a separately owned loopback PostgreSQL container on a pinned local Docker named-pipe endpoint, restored from Combined07 schema-only dump. Source executed through tsx; no shared dist build. All six exact-owned containers were removed.",
+  "sourceBinding": {
+    "finalNativeBefore": [
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105"
+      },
+      {
+        "file": "src/routes/classpilot/devices.ts",
+        "sha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-foreground-authority.integration.test.ts",
+        "sha256": "79ec7ff4d68b0272f506162ffa41e8ac7ba060167e64689bcc8b0868f4827f3a"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-foreground-authority.test.ts",
+        "sha256": "8c19a147641de46f7523a4c6b00cc899d8c92992b59a5a620d38316d92ca5aa4"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+        "sha256": "cfb5122a4629ebbcd86175035a0aef00741ef35ca74d57ab0c11a5ba65929bdf"
+      },
+      {
+        "file": "scripts/run-test-lane.mjs",
+        "sha256": "749cf797623147b381e04bfcfe0052de6a076729c411c16ba8a2ffb287b8f81a"
+      }
+    ],
+    "finalNativeAfter": [
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105"
+      },
+      {
+        "file": "src/routes/classpilot/devices.ts",
+        "sha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-foreground-authority.integration.test.ts",
+        "sha256": "79ec7ff4d68b0272f506162ffa41e8ac7ba060167e64689bcc8b0868f4827f3a"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-foreground-authority.test.ts",
+        "sha256": "8c19a147641de46f7523a4c6b00cc899d8c92992b59a5a620d38316d92ca5aa4"
+      },
+      {
+        "file": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+        "sha256": "cfb5122a4629ebbcd86175035a0aef00741ef35ca74d57ab0c11a5ba65929bdf"
+      },
+      {
+        "file": "scripts/run-test-lane.mjs",
+        "sha256": "749cf797623147b381e04bfcfe0052de6a076729c411c16ba8a2ffb287b8f81a"
+      }
+    ],
+    "unchanged": true,
+    "postNativeTestOnlyChange": "After combined-check09 TS2532 diagnostics, two explicit assert.ok(operation) guards replaced direct possibly-undefined snapshot accesses. They preserve strict failure when metrics are absent, add no casts, and do not change app source or workload. Final type/unit checks belong to root combined-check10.",
+    "postGuardNativeTestSha256": "2b30ba94c749eb2b2edde276d7eaa3a52e6c672dbb482b997f99479d0b071268",
+    "note": "Final native source/test/lane bytes were unchanged across both23-case lanes. Focused02 ran after final application edits; only additional native tests were added afterward. Root combined-source run supplies complete release-source binding."
+  },
+  "nativeAttempts": [
+    {
+      "attempt": 1,
+      "owner": {
+        "pass": 0,
+        "fail": 17
+      },
+      "restricted": {
+        "pass": 0,
+        "fail": 17
+      },
+      "reason": "Fixture reset used unsupported/immutable auth kind; product path not exercised. The outer shell printed inner failures but returned0; ownerExit/restrictedExit each1 remain authoritative."
+    },
+    {
+      "attempt": 2,
+      "owner": {
+        "pass": 0,
+        "fail": 17
+      },
+      "restricted": {
+        "pass": 0,
+        "fail": 17
+      },
+      "reason": "Fixture reset still attempted to change immutable existing session authentication kind; product path not exercised."
+    },
+    {
+      "attempt": 3,
+      "owner": {
+        "pass": 0,
+        "fail": 17
+      },
+      "restricted": {
+        "pass": 0,
+        "fail": 17
+      },
+      "reason": "Clearing the recovery token did not permit changing immutable authentication kind. Fixture subsequently creates a valid separate manual session and preserves its kind."
+    },
+    {
+      "attempt": 4,
+      "owner": {
+        "pass": 17,
+        "fail": 2
+      },
+      "restricted": {
+        "pass": 17,
+        "fail": 2
+      },
+      "reason": "One scheduled teaching fixture omitted required companion metadata. TAP counts include the failed enclosing parent. All other cases passed."
+    },
+    {
+      "attempt": 5,
+      "owner": {
+        "pass": 19,
+        "fail": 0,
+        "skip": 0
+      },
+      "restricted": {
+        "pass": 19,
+        "fail": 0,
+        "skip": 0
+      }
+    },
+    {
+      "attempt": 6,
+      "owner": {
+        "pass": 23,
+        "fail": 0,
+        "skip": 0
+      },
+      "restricted": {
+        "pass": 23,
+        "fail": 0,
+        "skip": 0
+      },
+      "restrictedPosture": "Asserted non-super/non-BYPASSRLS and enabled+forcedRLS for seven exercised tenant relations."
+    }
+  ],
+  "focusedAttempts": [
+    {
+      "attempt": 1,
+      "pass": 37,
+      "fail": 1,
+      "reason": "Existing projection source-extraction test was sensitive to CRLF and the changed private wrapper name; product assertions were retained while restoring LF and updating the explicit final callback match."
+    },
+    {
+      "attempt": 2,
+      "pass": 40,
+      "fail": 0,
+      "skip": 0
+    }
+  ],
+  "independentProof": {
+    "routeInitialPass": 7,
+    "routeFinalPass": 9,
+    "proofPass": 2,
+    "note": "release297-foreground-proof-red.log actually records a green run after the reader fix; it is not a red baseline. Initial inline core smoke had an extraction-boundary failure before the wrapper was colocated with its private core; that terminal-only output is not reconstructed here."
+  },
+  "measuredOperation": {
+    "oldStatements": 25,
+    "newStatements": 19,
+    "oldPhysicalCheckouts": 2,
+    "newPhysicalCheckouts": 1,
+    "lanes": [
+      "owner",
+      "restricted"
+    ],
+    "capacityAccepted": false,
+    "note": "Counts compare the same valid teaching proof and required final control/screenshot reads with separate old publisher versus the fused final transaction, including physical checkout/GUC/cleanup queries. No throughput extrapolation."
+  },
+  "securityChanges": [
+    "Raw screenshot grant is obtained and copied by the owning transaction; mutable caller arguments/projection cannot retarget it. Initiated unawaited readers are owned until settlement and cannot supply an outlived grant.",
+    "Fresh publication statement covers the exact manual-session clock predicate, school/license eligibility, original teaching/control revision and deadlines, and pre-existing future supervision becoming active.",
+    "Optional predicate/transport work is isolated after required preparation. Failed rollback/release and mandatory final SQL propagate; partial transport never triggers fallback.",
+    "Heartbeat-only final mandatory DB-clock school/license plus exact-binding check preserves canonical403 CLASSPILOT_NOT_ENTITLED and binding-loss409 outside optional handling. Generic/WS entrypoints remain unchanged.",
+    "Unsupported proof falls back only after actual tenant release; denial or any attempted transport never retries. Outer finally settles the full-foreground-to-classification barrier on errors, preserving historical work.",
+    "Independent packaged-client review confirmed existing absolute classroom/screenshot deadlines; no extension change or new device acceptance is claimed."
+  ],
+  "limitations": [
+    "Native transport is a controlled callback, not a managed Chromebook or production Redis observation. Actual ordered Redis/local helper is unchanged and route assertions cover audience/order.",
+    "Final full6000-offer/64-report capacity acceptance is still required. Failed Combined07 remains failed and unaffected by these focused results."
+  ],
+  "artifacts": [
+    {
+      "name": "native-01-cleanup.log.gz",
+      "rawName": "native-01-cleanup.log",
+      "rawSha256": "c28212091558c96930f7b1ef18e683e754397e092bf06a1a37b864dc57b7fdd2",
+      "rawBytes": 44,
+      "sanitizedSha256": "c28212091558c96930f7b1ef18e683e754397e092bf06a1a37b864dc57b7fdd2",
+      "sanitizedBytes": 44,
+      "gzipSha256": "ecccd05804d2360922ff5a504df907170701778aa7dcbc58aea2c473cb346054",
+      "gzipBytes": 64,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-container-create.log.gz",
+      "rawName": "native-01-container-create.log",
+      "rawSha256": "8574ccb0b40722fb440640f0f2a2bbeeaa5e66f110f45c9195143acae4e6abe0",
+      "rawBytes": 66,
+      "sanitizedSha256": "8574ccb0b40722fb440640f0f2a2bbeeaa5e66f110f45c9195143acae4e6abe0",
+      "sanitizedBytes": 66,
+      "gzipSha256": "f336a796eacaf846a0971fd0f8a3eb4a24a9a205e08459533285961e46433804",
+      "gzipBytes": 75,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-execution.json.gz",
+      "rawName": "native-01-execution.json",
+      "rawSha256": "44727dfec09a721354dc0a6a5050fabc8cad8e45ab71f7fe7473836b9f5fe25f",
+      "rawBytes": 494,
+      "sanitizedSha256": "44727dfec09a721354dc0a6a5050fabc8cad8e45ab71f7fe7473836b9f5fe25f",
+      "sanitizedBytes": 494,
+      "gzipSha256": "e04ba86aaa0fdaa0480f80f7ee4d40ec9da4209ffe90776948d8492381172439",
+      "gzipBytes": 330,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-owner.log.gz",
+      "rawName": "native-01-owner.log",
+      "rawSha256": "219b1db798f063d16b72889a8d77a9701b5eb641d2ee3d1b76375b62d66851b7",
+      "rawBytes": 35040,
+      "sanitizedSha256": "8951ac8417a8e8b1acc580f56477f9fcfbbea2a7c7c9cddf9dd551aa61226391",
+      "sanitizedBytes": 27007,
+      "gzipSha256": "10ca5a202b6d9e5c59cd3a5ceca4262609f4f3e7770916dd7a49053e791d271d",
+      "gzipBytes": 1727,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-restore.log.gz",
+      "rawName": "native-01-restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "rawBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "gzipBytes": 236,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-restricted-role.log.gz",
+      "rawName": "native-01-restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "rawBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "gzipBytes": 39,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-restricted.log.gz",
+      "rawName": "native-01-restricted.log",
+      "rawSha256": "35f6b7d1f9a13b57fe01887dc40abcb42a73d54e0ba4814b8d8ccf59ada8e5c4",
+      "rawBytes": 35023,
+      "sanitizedSha256": "d93602687b98c054f90fe57ebfbf62d8a7d0f774bb268193d525af1685c08a2b",
+      "sanitizedBytes": 26990,
+      "gzipSha256": "3e0be74c3420f7ac7cec776e0e34f8812b3d0ee3c8ab75b74b9afbe838b2ebc4",
+      "gzipBytes": 1715,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-source-after.json.gz",
+      "rawName": "native-01-source-after.json",
+      "rawSha256": "18012d9bd1e190ae642bb601a9acb32a4f823c905f279d6992a463a53c8f1db9",
+      "rawBytes": 919,
+      "sanitizedSha256": "18012d9bd1e190ae642bb601a9acb32a4f823c905f279d6992a463a53c8f1db9",
+      "sanitizedBytes": 919,
+      "gzipSha256": "164d56c2c21c2ff585c781a6f19bb451a48f5e0b7b21e48232c7207b22d36a43",
+      "gzipBytes": 440,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-source-before.json.gz",
+      "rawName": "native-01-source-before.json",
+      "rawSha256": "18012d9bd1e190ae642bb601a9acb32a4f823c905f279d6992a463a53c8f1db9",
+      "rawBytes": 919,
+      "sanitizedSha256": "18012d9bd1e190ae642bb601a9acb32a4f823c905f279d6992a463a53c8f1db9",
+      "sanitizedBytes": 919,
+      "gzipSha256": "164d56c2c21c2ff585c781a6f19bb451a48f5e0b7b21e48232c7207b22d36a43",
+      "gzipBytes": 440,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-runner.ps1.gz",
+      "rawName": "native-01-runner.ps1",
+      "rawSha256": "02b88ace8c51d6fcd72a76e73c6ae8c8e4d72960b8f9d6dee19dd56e90a6223e",
+      "rawBytes": 5579,
+      "sanitizedSha256": "afde0ec452084e77dc0a340c9b8bdd13f3d4064ca3ae2272f8c73c7d47eea671",
+      "sanitizedBytes": 5425,
+      "gzipSha256": "510c8ea5f38d23d669b8aa47d44583b94aca37ad700f608992f4b74fc4b500cc",
+      "gzipBytes": 2089,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-01-runner.log.gz",
+      "rawName": "native-01-runner.log",
+      "rawSha256": "5d9bbc4009ad5b81867e738cb9c395b2edd9023e6cae8d276204763af9d334c4",
+      "rawBytes": 138,
+      "sanitizedSha256": "a9ce603db33f2308e5cc96524585b85a022942f23376136941f5e7b3db1c3b46",
+      "sanitizedBytes": 106,
+      "gzipSha256": "4ce930eee0ac931cc68ebdce81c7c5cd19215384c9e5f96efc292b77c7b0b5bc",
+      "gzipBytes": 121,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-cleanup.log.gz",
+      "rawName": "native-02-cleanup.log",
+      "rawSha256": "bf45b2198fb836746fd8bde56b980c10ece9c5e2a2aecd44f3aabe32cb624f2c",
+      "rawBytes": 44,
+      "sanitizedSha256": "bf45b2198fb836746fd8bde56b980c10ece9c5e2a2aecd44f3aabe32cb624f2c",
+      "sanitizedBytes": 44,
+      "gzipSha256": "d646819c23b63f843fa1437f0a331710cd63b18a0ae47fa60548de9c5df16ca1",
+      "gzipBytes": 64,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-container-create.log.gz",
+      "rawName": "native-02-container-create.log",
+      "rawSha256": "ec685f04aa92f4565cc9e764c89e34e8766b5747e72621f03e4373291eff5102",
+      "rawBytes": 66,
+      "sanitizedSha256": "ec685f04aa92f4565cc9e764c89e34e8766b5747e72621f03e4373291eff5102",
+      "sanitizedBytes": 66,
+      "gzipSha256": "e69699264f64e3f0c8cdf4f9fa100034b45afdbb86261fd1668727804b7b3bd8",
+      "gzipBytes": 75,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-execution.json.gz",
+      "rawName": "native-02-execution.json",
+      "rawSha256": "255a4f8275d1fdea8cf8cd718453aa5c67d9e5a0a928941c8cda7e29993e36e7",
+      "rawBytes": 494,
+      "sanitizedSha256": "255a4f8275d1fdea8cf8cd718453aa5c67d9e5a0a928941c8cda7e29993e36e7",
+      "sanitizedBytes": 494,
+      "gzipSha256": "0df83be019d1466f2737e0d7a47bd3723bf5332e173df5076c9d866a0cc79f72",
+      "gzipBytes": 330,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-owner.log.gz",
+      "rawName": "native-02-owner.log",
+      "rawSha256": "1c711874d80828ee494b3269578aa857af32b6507e122e10f773e3287f2ec6a0",
+      "rawBytes": 35042,
+      "sanitizedSha256": "0aad1b000fabfad44e4d5be17a000f648fed06db2ff04d8b6d8327c6543ddb48",
+      "sanitizedBytes": 27009,
+      "gzipSha256": "b92d3375c5aa12b170f4b4fc60f9b438122c9d7dd4d1982dcaf516c73bf88b75",
+      "gzipBytes": 1734,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-restore.log.gz",
+      "rawName": "native-02-restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "rawBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "gzipBytes": 236,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-restricted-role.log.gz",
+      "rawName": "native-02-restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "rawBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "gzipBytes": 39,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-restricted.log.gz",
+      "rawName": "native-02-restricted.log",
+      "rawSha256": "11b490970eba3f3760cdf9fb5535de6de6cbabec5312f5ec9853e9e1eb60ec95",
+      "rawBytes": 35024,
+      "sanitizedSha256": "2aa39473eaa4bec07ffd6bc95a2cd7d89f14b9e5eba63d8883e61d5616a2ac85",
+      "sanitizedBytes": 26991,
+      "gzipSha256": "ddb7b5ccf5a7284a2cb18d5dba643aa5b699a3b61e8a8a3e98c8184d196b20b9",
+      "gzipBytes": 1724,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-source-after.json.gz",
+      "rawName": "native-02-source-after.json",
+      "rawSha256": "d0502d766eb4b55ce72b9dbd171874fbc89ffcddeba45a199db136aa9437c2bd",
+      "rawBytes": 919,
+      "sanitizedSha256": "d0502d766eb4b55ce72b9dbd171874fbc89ffcddeba45a199db136aa9437c2bd",
+      "sanitizedBytes": 919,
+      "gzipSha256": "39d520fee3762303f827487564b5b465db426cbe95d2e26ea7fe8d40cc8b7253",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-source-before.json.gz",
+      "rawName": "native-02-source-before.json",
+      "rawSha256": "d0502d766eb4b55ce72b9dbd171874fbc89ffcddeba45a199db136aa9437c2bd",
+      "rawBytes": 919,
+      "sanitizedSha256": "d0502d766eb4b55ce72b9dbd171874fbc89ffcddeba45a199db136aa9437c2bd",
+      "sanitizedBytes": 919,
+      "gzipSha256": "39d520fee3762303f827487564b5b465db426cbe95d2e26ea7fe8d40cc8b7253",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-runner.ps1.gz",
+      "rawName": "native-02-runner.ps1",
+      "rawSha256": "02b88ace8c51d6fcd72a76e73c6ae8c8e4d72960b8f9d6dee19dd56e90a6223e",
+      "rawBytes": 5579,
+      "sanitizedSha256": "afde0ec452084e77dc0a340c9b8bdd13f3d4064ca3ae2272f8c73c7d47eea671",
+      "sanitizedBytes": 5425,
+      "gzipSha256": "510c8ea5f38d23d669b8aa47d44583b94aca37ad700f608992f4b74fc4b500cc",
+      "gzipBytes": 2089,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-02-runner.log.gz",
+      "rawName": "native-02-runner.log",
+      "rawSha256": "2aa3c9637d085fbd90c5b9e153cf947166f2af2b091f00218e34a4375572b79b",
+      "rawBytes": 138,
+      "sanitizedSha256": "14eaaa82b29f8d40c126a4d2d755c4fd43d3a12026561a4d84f8b874ea17f8f4",
+      "sanitizedBytes": 106,
+      "gzipSha256": "1489adf19e0d7c7c14dda08a37a351ffa5346ff9177afb137700d4436afd7046",
+      "gzipBytes": 121,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-cleanup.log.gz",
+      "rawName": "native-03-cleanup.log",
+      "rawSha256": "4dc12ae669a77b4ee602adddc347319114f258cdf83ee949897d1e8b143d0e34",
+      "rawBytes": 44,
+      "sanitizedSha256": "4dc12ae669a77b4ee602adddc347319114f258cdf83ee949897d1e8b143d0e34",
+      "sanitizedBytes": 44,
+      "gzipSha256": "11ac58d96b7fbce40ef014b8e1774a17b5ae1fbc88bb16e2c5c5f68b83f86dfd",
+      "gzipBytes": 64,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-container-create.log.gz",
+      "rawName": "native-03-container-create.log",
+      "rawSha256": "a3bb2ce7e12505532b1e686db2cd1d30dfd6862b0768f279ca80cf040ba747f9",
+      "rawBytes": 66,
+      "sanitizedSha256": "a3bb2ce7e12505532b1e686db2cd1d30dfd6862b0768f279ca80cf040ba747f9",
+      "sanitizedBytes": 66,
+      "gzipSha256": "e6338248aa700e1b6ccd8888e18f9e67763588f9b71b73190c74ebe16db49749",
+      "gzipBytes": 75,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-execution.json.gz",
+      "rawName": "native-03-execution.json",
+      "rawSha256": "733694c0a758ee970b1cf3fa678755ca4c62663190053c0e41494e6d922eaf13",
+      "rawBytes": 494,
+      "sanitizedSha256": "733694c0a758ee970b1cf3fa678755ca4c62663190053c0e41494e6d922eaf13",
+      "sanitizedBytes": 494,
+      "gzipSha256": "cc9761ffa0af6f93a57f202d6e45e8e3f8a49829ad4a107d802b1ac2bc11b8c7",
+      "gzipBytes": 330,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-owner.log.gz",
+      "rawName": "native-03-owner.log",
+      "rawSha256": "fdee3399ca543d1b036cc4e0e6bfe5bfe759a96d8ab13814fedb181cb37e2d96",
+      "rawBytes": 35571,
+      "sanitizedSha256": "13d11b8073790a995bc81bb94b31d33ce90f48b7cbf4b9d119289d5336e50705",
+      "sanitizedBytes": 27538,
+      "gzipSha256": "85d51a477ee1f0654c1ba0f933fab11107f01d3de71166f84f68e0047c2ee7b6",
+      "gzipBytes": 1747,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-restore.log.gz",
+      "rawName": "native-03-restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "rawBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "gzipBytes": 236,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-restricted-role.log.gz",
+      "rawName": "native-03-restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "rawBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "gzipBytes": 39,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-restricted.log.gz",
+      "rawName": "native-03-restricted.log",
+      "rawSha256": "ab1a3431b59875ea4b70a3bcdcd6d23ef86a865d03dae168b4b278a42fcd72d2",
+      "rawBytes": 35552,
+      "sanitizedSha256": "21eb30579a0f8324ce360921531aa8de4891e9b5d741cf0a4928e76f81d3ca39",
+      "sanitizedBytes": 27519,
+      "gzipSha256": "ab9dcec2552a9fabd505fd13f03a468bb79817b983f57cf8508043f4fc8ee4db",
+      "gzipBytes": 1729,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-source-after.json.gz",
+      "rawName": "native-03-source-after.json",
+      "rawSha256": "ffc887bb3fed931aaefe96de396c5ec06b686c02804d4e73cca933458b2267f4",
+      "rawBytes": 919,
+      "sanitizedSha256": "ffc887bb3fed931aaefe96de396c5ec06b686c02804d4e73cca933458b2267f4",
+      "sanitizedBytes": 919,
+      "gzipSha256": "285f819b65767ff2da7088a31a47a08b88194aabf964cc1fab88fe6922a2b7e2",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-source-before.json.gz",
+      "rawName": "native-03-source-before.json",
+      "rawSha256": "ffc887bb3fed931aaefe96de396c5ec06b686c02804d4e73cca933458b2267f4",
+      "rawBytes": 919,
+      "sanitizedSha256": "ffc887bb3fed931aaefe96de396c5ec06b686c02804d4e73cca933458b2267f4",
+      "sanitizedBytes": 919,
+      "gzipSha256": "285f819b65767ff2da7088a31a47a08b88194aabf964cc1fab88fe6922a2b7e2",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-runner.ps1.gz",
+      "rawName": "native-03-runner.ps1",
+      "rawSha256": "f751e6aaaed8e3c551a0a0ff2bb5f2703b0f34a43feeb88f76c96955c78460eb",
+      "rawBytes": 5636,
+      "sanitizedSha256": "5c13138c31ccf09663c40ba28e4fa614e9aa2f07c2478d95c5ddd2cf66c3e691",
+      "sanitizedBytes": 5482,
+      "gzipSha256": "075b9f9a9d6992a5bbcf5bcbcb4a154e08534cf29b5bf5d45d99b4aae13f248e",
+      "gzipBytes": 2106,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-03-runner.log.gz",
+      "rawName": "native-03-runner.log",
+      "rawSha256": "707db26911d2c247150422da561c12960e68108f6d6b15a64c472821b20bf6a8",
+      "rawBytes": 138,
+      "sanitizedSha256": "da70483aef03ee9966fe580a7984acdb7fde1adfd5c3bcde944f9b3d1d29ac65",
+      "sanitizedBytes": 106,
+      "gzipSha256": "debc2c22fada3d0532c5f2e62c62fd02ec3cb7d2eb05c0a429643fe7c273c507",
+      "gzipBytes": 121,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-cleanup.log.gz",
+      "rawName": "native-04-cleanup.log",
+      "rawSha256": "d0450898098aa933dd56988328bd83c2b14b1378d4ed2e8210915b53128ed7bb",
+      "rawBytes": 44,
+      "sanitizedSha256": "d0450898098aa933dd56988328bd83c2b14b1378d4ed2e8210915b53128ed7bb",
+      "sanitizedBytes": 44,
+      "gzipSha256": "625116fa5764fdbe643470315e4d9897b7b51e6cdac168c6d173025b035ad585",
+      "gzipBytes": 64,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-container-create.log.gz",
+      "rawName": "native-04-container-create.log",
+      "rawSha256": "8ce4cc33342faae4dd7c66b839b07c6b07a156188a212960c3f1db40549902c5",
+      "rawBytes": 66,
+      "sanitizedSha256": "8ce4cc33342faae4dd7c66b839b07c6b07a156188a212960c3f1db40549902c5",
+      "sanitizedBytes": 66,
+      "gzipSha256": "88b05bc981e728077911324fbb629509b69da957c980b7e764d425c0152fb41d",
+      "gzipBytes": 74,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-execution.json.gz",
+      "rawName": "native-04-execution.json",
+      "rawSha256": "1194a22e39394c11f651a8b2763b47ba8933106e88364f67c2e73ebb7ed00b43",
+      "rawBytes": 494,
+      "sanitizedSha256": "1194a22e39394c11f651a8b2763b47ba8933106e88364f67c2e73ebb7ed00b43",
+      "sanitizedBytes": 494,
+      "gzipSha256": "8269dea05344c686a3464c07d5ef05259ffa0433d6151abe310f8afe1af87501",
+      "gzipBytes": 330,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-owner.log.gz",
+      "rawName": "native-04-owner.log",
+      "rawSha256": "4e2acb97b4b6e82f618ab39f924786abdfe684676daaf07d2fdbdcb8865c3565",
+      "rawBytes": 8209,
+      "sanitizedSha256": "73a7c4f67a4658e924ebda920032ea6e7c116e185a34d64d696c021db854261e",
+      "sanitizedBytes": 7528,
+      "gzipSha256": "aebe18e97509448bc974b763bce16de8caa69ae07db578fa5945b59c4ba6947c",
+      "gzipBytes": 1643,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-restore.log.gz",
+      "rawName": "native-04-restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "rawBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "gzipBytes": 236,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-restricted-role.log.gz",
+      "rawName": "native-04-restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "rawBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "gzipBytes": 39,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-restricted.log.gz",
+      "rawName": "native-04-restricted.log",
+      "rawSha256": "6b94e61b5497fa2746dadc09d3c105da36386b66d3c88891c075dce0241dfcd2",
+      "rawBytes": 8190,
+      "sanitizedSha256": "ab53c053eb87b6e95709df21179d5483b0549e7d47f80aef1b3f6dd4eb3cb891",
+      "sanitizedBytes": 7509,
+      "gzipSha256": "090519cf86521ddcec3ea890632fd61e03f43442d245349c56ffd5128d7e105c",
+      "gzipBytes": 1636,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-source-after.json.gz",
+      "rawName": "native-04-source-after.json",
+      "rawSha256": "7710c54c229d6770b99900795becb2e059489276c79da51f7235bc78aeb15c6b",
+      "rawBytes": 919,
+      "sanitizedSha256": "7710c54c229d6770b99900795becb2e059489276c79da51f7235bc78aeb15c6b",
+      "sanitizedBytes": 919,
+      "gzipSha256": "6040f9ee89da6a434a5c7c1bfb849a47ee46a748c488168fc92dccdb44805b5b",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-source-before.json.gz",
+      "rawName": "native-04-source-before.json",
+      "rawSha256": "7710c54c229d6770b99900795becb2e059489276c79da51f7235bc78aeb15c6b",
+      "rawBytes": 919,
+      "sanitizedSha256": "7710c54c229d6770b99900795becb2e059489276c79da51f7235bc78aeb15c6b",
+      "sanitizedBytes": 919,
+      "gzipSha256": "6040f9ee89da6a434a5c7c1bfb849a47ee46a748c488168fc92dccdb44805b5b",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-runner.ps1.gz",
+      "rawName": "native-04-runner.ps1",
+      "rawSha256": "f751e6aaaed8e3c551a0a0ff2bb5f2703b0f34a43feeb88f76c96955c78460eb",
+      "rawBytes": 5636,
+      "sanitizedSha256": "5c13138c31ccf09663c40ba28e4fa614e9aa2f07c2478d95c5ddd2cf66c3e691",
+      "sanitizedBytes": 5482,
+      "gzipSha256": "075b9f9a9d6992a5bbcf5bcbcb4a154e08534cf29b5bf5d45d99b4aae13f248e",
+      "gzipBytes": 2106,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-04-runner.log.gz",
+      "rawName": "native-04-runner.log",
+      "rawSha256": "b291a6e1edaabd87fe2854a84e18a138465dc388ea824689c067887e093c3fa1",
+      "rawBytes": 138,
+      "sanitizedSha256": "eaf9d58c8a716f5e9a8de86d3b98c818cba15c4153270b842e0b68358eefc21a",
+      "sanitizedBytes": 106,
+      "gzipSha256": "0d93e0dc75ec36e073a62af6ceb2a09ffbde70479bb3d53e21cac99431f5bc82",
+      "gzipBytes": 121,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-cleanup.log.gz",
+      "rawName": "native-05-cleanup.log",
+      "rawSha256": "77b1686670635390c029fc16f1efb5abfa8b6bc5c8b5207f6e831680eea445e6",
+      "rawBytes": 44,
+      "sanitizedSha256": "77b1686670635390c029fc16f1efb5abfa8b6bc5c8b5207f6e831680eea445e6",
+      "sanitizedBytes": 44,
+      "gzipSha256": "284b1dda18ad2d7d218d322987a68beb2771475bbb984ae5bb845699e0cdf5cd",
+      "gzipBytes": 64,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-container-create.log.gz",
+      "rawName": "native-05-container-create.log",
+      "rawSha256": "8fcfa93fa82fb048cb9e0e005c69642323178f7637f2a357a3c89358ff5f1b93",
+      "rawBytes": 66,
+      "sanitizedSha256": "8fcfa93fa82fb048cb9e0e005c69642323178f7637f2a357a3c89358ff5f1b93",
+      "sanitizedBytes": 66,
+      "gzipSha256": "458938cc78991551f24c26f9b332ec210f277d580059ff93523d8807a18e77aa",
+      "gzipBytes": 75,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-execution.json.gz",
+      "rawName": "native-05-execution.json",
+      "rawSha256": "f9f6d47088e55c4cbe8dcd301653ca1116aa973370c6ac0ad22b0d924b688242",
+      "rawBytes": 494,
+      "sanitizedSha256": "f9f6d47088e55c4cbe8dcd301653ca1116aa973370c6ac0ad22b0d924b688242",
+      "sanitizedBytes": 494,
+      "gzipSha256": "b940cda9eb17b2d737c1b4fb2afe323bda678db489f0c2954dda43351b8b5d06",
+      "gzipBytes": 327,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-owner.log.gz",
+      "rawName": "native-05-owner.log",
+      "rawSha256": "9561a6e0099c2ce9544352e873a5fe7ef996b8232d64247c5d9d72a31180de20",
+      "rawBytes": 13709,
+      "sanitizedSha256": "0be2f386271a25723d7be71129974813541d90041c6e55929199f20642cea7d3",
+      "sanitizedBytes": 13689,
+      "gzipSha256": "8fda2362dcb9fc7f1cfee514911178ac991b4823405284c5100c0048a86f06dd",
+      "gzipBytes": 2710,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-restore.log.gz",
+      "rawName": "native-05-restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "rawBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "gzipBytes": 236,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-restricted-role.log.gz",
+      "rawName": "native-05-restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "rawBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "gzipBytes": 39,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-restricted.log.gz",
+      "rawName": "native-05-restricted.log",
+      "rawSha256": "0edc9c302a68a3a3980bdf70a69c33f2db0cb90fb5261565a4423e50e627e6fc",
+      "rawBytes": 5942,
+      "sanitizedSha256": "0edc9c302a68a3a3980bdf70a69c33f2db0cb90fb5261565a4423e50e627e6fc",
+      "sanitizedBytes": 5942,
+      "gzipSha256": "f5600ac4b4101afc29530abfeeb69041a8fc6d883b071fdb3b6252552f6a46ba",
+      "gzipBytes": 1082,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-source-after.json.gz",
+      "rawName": "native-05-source-after.json",
+      "rawSha256": "de9cf0088d389cfcfe753d70be1d0af449e95d4fb36ba02fa03ee7edca8ceb67",
+      "rawBytes": 919,
+      "sanitizedSha256": "de9cf0088d389cfcfe753d70be1d0af449e95d4fb36ba02fa03ee7edca8ceb67",
+      "sanitizedBytes": 919,
+      "gzipSha256": "289de5580e4a61ff57c5bf49662c3e8feba5f88e8db50dbc3cb0c826016e1711",
+      "gzipBytes": 440,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-source-before.json.gz",
+      "rawName": "native-05-source-before.json",
+      "rawSha256": "de9cf0088d389cfcfe753d70be1d0af449e95d4fb36ba02fa03ee7edca8ceb67",
+      "rawBytes": 919,
+      "sanitizedSha256": "de9cf0088d389cfcfe753d70be1d0af449e95d4fb36ba02fa03ee7edca8ceb67",
+      "sanitizedBytes": 919,
+      "gzipSha256": "289de5580e4a61ff57c5bf49662c3e8feba5f88e8db50dbc3cb0c826016e1711",
+      "gzipBytes": 440,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-runner.ps1.gz",
+      "rawName": "native-05-runner.ps1",
+      "rawSha256": "f751e6aaaed8e3c551a0a0ff2bb5f2703b0f34a43feeb88f76c96955c78460eb",
+      "rawBytes": 5636,
+      "sanitizedSha256": "5c13138c31ccf09663c40ba28e4fa614e9aa2f07c2478d95c5ddd2cf66c3e691",
+      "sanitizedBytes": 5482,
+      "gzipSha256": "075b9f9a9d6992a5bbcf5bcbcb4a154e08534cf29b5bf5d45d99b4aae13f248e",
+      "gzipBytes": 2106,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-05-runner.log.gz",
+      "rawName": "native-05-runner.log",
+      "rawSha256": "bb4555405d1dab791eb04b082dc0bbfcd49b9cc6adf33c5fcf11a21826d3f61a",
+      "rawBytes": 138,
+      "sanitizedSha256": "8e1ceabd9abf89dc2f8c90e0f49495872acff3270ec3712e2f9910bb4418ec77",
+      "sanitizedBytes": 106,
+      "gzipSha256": "eba851b53f689f67996c1117cdcfefa5ddc305daa7bcf873fd8f089dda11feac",
+      "gzipBytes": 121,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-cleanup.log.gz",
+      "rawName": "native-06-cleanup.log",
+      "rawSha256": "8def830e41c4e601584f85dc698fb011d0638ef145682cc9311cfff8013e1644",
+      "rawBytes": 44,
+      "sanitizedSha256": "8def830e41c4e601584f85dc698fb011d0638ef145682cc9311cfff8013e1644",
+      "sanitizedBytes": 44,
+      "gzipSha256": "9934679f9ed02cdc24b3097d4cd9b60a9b9e5c094359f6fd3f4c2fafe08e6693",
+      "gzipBytes": 64,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-container-create.log.gz",
+      "rawName": "native-06-container-create.log",
+      "rawSha256": "6a209c6d2afe9ac664141b78cc676946d396e6e3dee6dd5db0c1b6850776ff57",
+      "rawBytes": 66,
+      "sanitizedSha256": "6a209c6d2afe9ac664141b78cc676946d396e6e3dee6dd5db0c1b6850776ff57",
+      "sanitizedBytes": 66,
+      "gzipSha256": "c9aea0183c988058cabf288aa538b4906cc0490eefe72d2edba8ecd4c55255ce",
+      "gzipBytes": 74,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-execution.json.gz",
+      "rawName": "native-06-execution.json",
+      "rawSha256": "2683b101afadd80b83caef3e314501fe8cccbd5bef09455240d356a09ba2b77a",
+      "rawBytes": 494,
+      "sanitizedSha256": "2683b101afadd80b83caef3e314501fe8cccbd5bef09455240d356a09ba2b77a",
+      "sanitizedBytes": 494,
+      "gzipSha256": "dd2c2ad07cc88bd33d2287b3910c14ab0256263861fede9e45b91749fed5a0ca",
+      "gzipBytes": 327,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-owner.log.gz",
+      "rawName": "native-06-owner.log",
+      "rawSha256": "f963b7c98538901fda1e83422f4f3cda3376c2a7cfd3a24de8b380823247258e",
+      "rawBytes": 6987,
+      "sanitizedSha256": "f963b7c98538901fda1e83422f4f3cda3376c2a7cfd3a24de8b380823247258e",
+      "sanitizedBytes": 6987,
+      "gzipSha256": "0f985bf5fe498ab821d71ef58f08eb51ef5ae9499db90c55c7a7aa39f9ddbb51",
+      "gzipBytes": 1247,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-restore.log.gz",
+      "rawName": "native-06-restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "rawBytes": 20912,
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 20912,
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "gzipBytes": 236,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-restricted-role.log.gz",
+      "rawName": "native-06-restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "rawBytes": 34,
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 34,
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "gzipBytes": 39,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-restricted.log.gz",
+      "rawName": "native-06-restricted.log",
+      "rawSha256": "9cb1d6e794bf19d1c74bc60ce22c68a70a1ea8f8e7c49bb906b8f8e9c40cfb81",
+      "rawBytes": 14720,
+      "sanitizedSha256": "3cc06694165358d14e1c1f520d156f92e03cca76a189d15595fcfc3b61cb3cf6",
+      "sanitizedBytes": 14700,
+      "gzipSha256": "07abb1b42fa75a2968ef847b92fcf293164597d50e0a9d8cb85d78f17c2cc66f",
+      "gzipBytes": 2830,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-source-after.json.gz",
+      "rawName": "native-06-source-after.json",
+      "rawSha256": "1fa300f774bc35e6670bcd056a9c4cc29459e47f17bcb1d60cb7a7f855d4bd4d",
+      "rawBytes": 919,
+      "sanitizedSha256": "1fa300f774bc35e6670bcd056a9c4cc29459e47f17bcb1d60cb7a7f855d4bd4d",
+      "sanitizedBytes": 919,
+      "gzipSha256": "00d586288aea0dd4b4cb340e640b430d245254888b31b06d98536c5b76f83d8a",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-source-before.json.gz",
+      "rawName": "native-06-source-before.json",
+      "rawSha256": "1fa300f774bc35e6670bcd056a9c4cc29459e47f17bcb1d60cb7a7f855d4bd4d",
+      "rawBytes": 919,
+      "sanitizedSha256": "1fa300f774bc35e6670bcd056a9c4cc29459e47f17bcb1d60cb7a7f855d4bd4d",
+      "sanitizedBytes": 919,
+      "gzipSha256": "00d586288aea0dd4b4cb340e640b430d245254888b31b06d98536c5b76f83d8a",
+      "gzipBytes": 441,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-runner.ps1.gz",
+      "rawName": "native-06-runner.ps1",
+      "rawSha256": "f751e6aaaed8e3c551a0a0ff2bb5f2703b0f34a43feeb88f76c96955c78460eb",
+      "rawBytes": 5636,
+      "sanitizedSha256": "5c13138c31ccf09663c40ba28e4fa614e9aa2f07c2478d95c5ddd2cf66c3e691",
+      "sanitizedBytes": 5482,
+      "gzipSha256": "075b9f9a9d6992a5bbcf5bcbcb4a154e08534cf29b5bf5d45d99b4aae13f248e",
+      "gzipBytes": 2106,
+      "roundTripVerified": true
+    },
+    {
+      "name": "native-06-runner.log.gz",
+      "rawName": "native-06-runner.log",
+      "rawSha256": "185a16c4224e83e0671f418b3fde52e5e48dfb02061e45b6c2b24d30df88ec4a",
+      "rawBytes": 138,
+      "sanitizedSha256": "dfabc613216531d71c99ec8636fc61d7fa852f95a27807c963728beb499c866e",
+      "sanitizedBytes": 106,
+      "gzipSha256": "be6ce7a9c667cf986966b66309e9d4aeeba028e9132a402b29be3595089193cf",
+      "gzipBytes": 121,
+      "roundTripVerified": true
+    },
+    {
+      "name": "focused-01-focused.log.gz",
+      "rawName": "focused-01-focused.log",
+      "rawSha256": "d70384a62527ae084b3a391a45d291fdf5fbd9566a7b544c11fa9678481e5c18",
+      "rawBytes": 10281,
+      "sanitizedSha256": "f1b13fbe44a54ed177d96df202f1b1290622bb95178387f906b291645c451728",
+      "sanitizedBytes": 10157,
+      "gzipSha256": "bab3591e510ff3ff86c9fb3ffd89e922fa3b0c805e802ffb298b0646a4f1ce78",
+      "gzipBytes": 2251,
+      "roundTripVerified": true
+    },
+    {
+      "name": "focused-01-result.json.gz",
+      "rawName": "focused-01-result.json",
+      "rawSha256": "1a7771d0dfca052eab8fd69835d6ddfe972d5d31b09552534090e41e93e93e2c",
+      "rawBytes": 51,
+      "sanitizedSha256": "1a7771d0dfca052eab8fd69835d6ddfe972d5d31b09552534090e41e93e93e2c",
+      "sanitizedBytes": 51,
+      "gzipSha256": "c7ada006fdb6e5ebc7b115dce38eb08c1eac3309d11446701fec3b8c6567b563",
+      "gzipBytes": 68,
+      "roundTripVerified": true
+    },
+    {
+      "name": "focused-01-source-after.json.gz",
+      "rawName": "focused-01-source-after.json",
+      "rawSha256": "54af4f1b4338943ec4042931de956acbf9f950b6e574c4b61577bb2ad1a0a8ad",
+      "rawBytes": 1410,
+      "sanitizedSha256": "54af4f1b4338943ec4042931de956acbf9f950b6e574c4b61577bb2ad1a0a8ad",
+      "sanitizedBytes": 1410,
+      "gzipSha256": "c943294fcc0b27df8234279597d3e68dc0e46f6a196bc828f708b39a512f2671",
+      "gzipBytes": 579,
+      "roundTripVerified": true
+    },
+    {
+      "name": "focused-01-source-before.json.gz",
+      "rawName": "focused-01-source-before.json",
+      "rawSha256": "54af4f1b4338943ec4042931de956acbf9f950b6e574c4b61577bb2ad1a0a8ad",
+      "rawBytes": 1410,
+      "sanitizedSha256": "54af4f1b4338943ec4042931de956acbf9f950b6e574c4b61577bb2ad1a0a8ad",
+      "sanitizedBytes": 1410,
+      "gzipSha256": "c943294fcc0b27df8234279597d3e68dc0e46f6a196bc828f708b39a512f2671",
+      "gzipBytes": 579,
+      "roundTripVerified": true
+    },
+    {
+      "name": "focused-02-focused.log.gz",
+      "rawName": "focused-02-focused.log",
+      "rawSha256": "971fb6a60034f181292f4dad8e11a2715c1d0a92da9778fab537311ae1d1e82c",
+      "rawBytes": 11592,
+      "sanitizedSha256": "971fb6a60034f181292f4dad8e11a2715c1d0a92da9778fab537311ae1d1e82c",
+      "sanitizedBytes": 11592,
+      "gzipSha256": "b9a34db0ec65734c4cf6154df3d977edcda71fff91c7ed71c903f4359113b6ca",
+      "gzipBytes": 2540,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-foreground-route-01.log.gz",
+      "rawName": "release297-foreground-route-01.log",
+      "rawSha256": "f3efd38584d69f7148ddb3573c524770fc050ae7b323dbd2d5791c548d06f594",
+      "rawBytes": 1624,
+      "sanitizedSha256": "f3efd38584d69f7148ddb3573c524770fc050ae7b323dbd2d5791c548d06f594",
+      "sanitizedBytes": 1624,
+      "gzipSha256": "7309036f80d1439da7c842c7ae5f5407322d38e6e2ec71d32cb62aa4a06e0299",
+      "gzipBytes": 457,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-foreground-proof-red.log.gz",
+      "rawName": "release297-foreground-proof-red.log",
+      "rawSha256": "5ceb5f56b154a09e6812e73eb4cf09a0e1f85a9e26cea302213e8770b8a8d64b",
+      "rawBytes": 630,
+      "sanitizedSha256": "5ceb5f56b154a09e6812e73eb4cf09a0e1f85a9e26cea302213e8770b8a8d64b",
+      "sanitizedBytes": 630,
+      "gzipSha256": "4350648b6975ef2882179c15ddeb95b42bc04ab755d082ce89115b1bb863b133",
+      "gzipBytes": 283,
+      "roundTripVerified": true
+    }
+  ]
+}

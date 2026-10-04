@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T02:40:00.845Z",
+  "status": "failed_optional_native_test_activated_by_runner_environment",
+  "scope": "Complete third combined local verification attempt, including original environment mistake and successful independent checks.",
+  "source": {
+    "head": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "uncommitted incremental release tree; not final-source acceptance",
+    "files": 1151,
+    "beforeAfterMatch": true,
+    "beforeReceipt": "source-before.json.gz",
+    "afterReceipt": "source-after.json.gz"
+  },
+  "runner": {
+    "file": "release297-final-checks-03.ps1.gz",
+    "originalExternalPath": "<TEMP>/release297-final-checks-03.ps1",
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-03.ps1",
+    "exitCode": 1,
+    "environment": {
+      "NODE_ENV": "test",
+      "SCHEDULER_ENABLED": "false",
+      "REDIS_URL": "empty",
+      "DATABASE_URL": "Synthetic deliberately unreachable loopback endpoint127.0.0.1:1, database schoolpilot_unused; mistakenly present for the full unit lane",
+      "DOTENV_CONFIG_PATH": "Absent dotenv file in this new external run directory",
+      "secrets": "Synthetic test-only values redacted from archived runner"
+    }
+  },
+  "startedAt": "2026-10-03T02:32:34.6425004Z",
+  "finishedAt": "2026-10-03T02:36:41.0274778Z",
+  "commands": [
+    {
+      "name": "clean-install",
+      "arguments": [
+        "ci",
+        "--no-audit",
+        "--no-fund"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-10-03T02:32:34.6583510Z",
+      "finishedAt": "2026-10-03T02:33:06.9087196Z",
+      "command": "npm ci --no-audit --no-fund"
+    },
+    {
+      "name": "build",
+      "arguments": [
+        "run",
+        "build"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-10-03T02:33:06.9209346Z",
+      "finishedAt": "2026-10-03T02:33:57.7384625Z",
+      "command": "npm run build"
+    },
+    {
+      "name": "test-types",
+      "arguments": [
+        "run",
+        "check:tests"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-10-03T02:33:57.7391389Z",
+      "finishedAt": "2026-10-03T02:35:01.5179316Z",
+      "command": "npm run check:tests"
+    },
+    {
+      "name": "test-casts",
+      "arguments": [
+        "run",
+        "check:test-casts"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-10-03T02:35:01.5184369Z",
+      "finishedAt": "2026-10-03T02:35:02.0249086Z",
+      "command": "npm run check:test-casts"
+    },
+    {
+      "name": "unit",
+      "arguments": [
+        "run",
+        "test:unit"
+      ],
+      "exitCode": 1,
+      "startedAt": "2026-10-03T02:35:02.0252679Z",
+      "finishedAt": "2026-10-03T02:36:37.4549650Z",
+      "command": "npm run test:unit"
+    },
+    {
+      "name": "production-audit",
+      "arguments": [
+        "audit",
+        "--omit=dev",
+        "--audit-level=high",
+        "--json"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-10-03T02:36:37.4552978Z",
+      "finishedAt": "2026-10-03T02:36:39.2349888Z",
+      "command": "npm audit --omit=dev --audit-level=high --json"
+    },
+    {
+      "name": "full-audit",
+      "arguments": [
+        "audit",
+        "--audit-level=high",
+        "--json"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-10-03T02:36:39.2354578Z",
+      "finishedAt": "2026-10-03T02:36:40.7555330Z",
+      "command": "npm audit --audit-level=high --json"
+    }
+  ],
+  "unit": {
+    "total": 1756,
+    "passed": 1752,
+    "failed": 1,
+    "skipped": 3,
+    "cancelled": 0,
+    "soleFailure": "student-device teacher-tile index contract / parses inspected index key columns as a text array",
+    "failureCode": "ECONNREFUSED",
+    "cause": "DATABASE_URL presence enabled an optional native index-inspection test, which then tried the deliberately unreachable port1. The runner environment was wrong for this unit lane.",
+    "interpretation": "Retain the full run as failed. This failure does not demonstrate an application regression; a correct-environment unit rerun must establish the passing result."
+  },
+  "audits": {
+    "production": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "allDependencies": {
+      "info": 0,
+      "low": 0,
+      "moderate": 4,
+      "high": 0,
+      "critical": 0,
+      "total": 4
+    },
+    "threshold": "high; unchanged"
+  },
+  "passedIndependentChecks": [
+    "clean install",
+    "build",
+    "test types",
+    "test cast ratchet",
+    "production dependency high-severity audit (zero findings)",
+    "full dependency high-severity audit (four moderate findings)"
+  ],
+  "limits": [
+    "No fourth-attempt files were inspected or read for this archive.",
+    "This run remains failed despite its known runner mistake. No test was skipped or removed as a fix in this record.",
+    "Source content remained identical for1151files during the run, but the tree was incremental/uncommitted and later source/final capacity evidence remain separate."
+  ],
+  "sanitation": "User home paths, database/Redis URLs, synthetic runner secret assignments and JWT-shaped values redacted; complete original/sanitized/archive hashes retained.",
+  "files": [
+    {
+      "file": "build.log.gz",
+      "originalSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "archiveSha256": "a84b35aca284be9332bd5e7c138548f86a642453956f76c2cdd4726f09440d88",
+      "sourceBytes": 42,
+      "archiveBytes": 62
+    },
+    {
+      "file": "clean-install.log.gz",
+      "originalSha256": "78e5f2b24e02f47a2b76d456cd419670b852a874b4d2de7811d832cacad4fe87",
+      "sanitizedSha256": "78e5f2b24e02f47a2b76d456cd419670b852a874b4d2de7811d832cacad4fe87",
+      "archiveSha256": "7a49943db99bf00bd2c69aadea220720f0d7c1b719879b9258e7bd053ac38fe5",
+      "sourceBytes": 1096,
+      "archiveBytes": 576
+    },
+    {
+      "file": "full-audit.log.gz",
+      "originalSha256": "6456c0287a04a072115b0ab4d454b3d717b23e05f3ebaa1752c5be54e6c1ad87",
+      "sanitizedSha256": "6456c0287a04a072115b0ab4d454b3d717b23e05f3ebaa1752c5be54e6c1ad87",
+      "archiveSha256": "5d89c87ed969ebc8211f18582d88fa878c640e233a4ee2cf6f62adf6c808e8f2",
+      "sourceBytes": 2769,
+      "archiveBytes": 720
+    },
+    {
+      "file": "production-audit.log.gz",
+      "originalSha256": "c53777ecabcece7a5206fd51134dd541d508f6e40a30c50ef5b97fd4e5bb71e1",
+      "sanitizedSha256": "c53777ecabcece7a5206fd51134dd541d508f6e40a30c50ef5b97fd4e5bb71e1",
+      "archiveSha256": "8c5ecaa5df8f939d6679c69e1492f27b35324918363fb4985bb6af482407ba4c",
+      "sourceBytes": 388,
+      "archiveBytes": 196
+    },
+    {
+      "file": "result.json.gz",
+      "originalSha256": "1fdd8c95cc67373a77e4af5571af76e1e9b11cdaa2b570b104466cb0b7a6128a",
+      "sanitizedSha256": "1c76f2b218f268c7f1d6074344c6d87c01e4210f284e914c6579aba3e8532915",
+      "archiveSha256": "2d0633ce590caeb1b51488a25965b31b464d021fbedf46cbd0f480dc351309f1",
+      "sourceBytes": 2116,
+      "archiveBytes": 570
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "sanitizedSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "archiveSha256": "67da2d83337f314f5339ddc0f8420ced9c8a224712a9689bbedc414797b548a5",
+      "sourceBytes": 173664,
+      "archiveBytes": 56214
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "sanitizedSha256": "a663ad33ad5dff79fbd3795e571ce58b9113e9d80abecfe555127a535afffd40",
+      "archiveSha256": "67da2d83337f314f5339ddc0f8420ced9c8a224712a9689bbedc414797b548a5",
+      "sourceBytes": 173664,
+      "archiveBytes": 56214
+    },
+    {
+      "file": "test-casts.log.gz",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "96234f629f0c609c1748143d79c04eb74c92a5a1252b4e0f00b64a2f3fac0df0",
+      "sourceBytes": 181,
+      "archiveBytes": 166
+    },
+    {
+      "file": "test-types.log.gz",
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveSha256": "0bf64296e5751c143f80893a2f454a42ec269e1202d49738f89ae97a654ceca4",
+      "sourceBytes": 204,
+      "archiveBytes": 180
+    },
+    {
+      "file": "unit.log.gz",
+      "originalSha256": "2cc1a9bb1a83c819cde0cea22ee6eb4618147f6e2247f5f0604a81ac42b039a5",
+      "sanitizedSha256": "22ae9d6034f88992c97a7f4e50fe97e22025c27cc019e66325fac4942d381706",
+      "archiveSha256": "ae238dc8318f2af33242e815a9a2a20aafa3184ea6e005abe7eb7d1b68a1ab99",
+      "sourceBytes": 462054,
+      "archiveBytes": 78871
+    },
+    {
+      "file": "release297-final-checks-03.ps1.gz",
+      "originalSha256": "3f45c5fcab95c8206a112d6b83e05000191aa3fe742939602cce6535552b51a3",
+      "sanitizedSha256": "dbb44302be1b670e7187bb876864485741c8c0f9fabcb809400f111390327a5b",
+      "archiveSha256": "ea815a851927b7ecb40c8ffe6368513c13ffea2bce7ed458aa3eb1b02963bb6a",
+      "sourceBytes": 2924,
+      "archiveBytes": 1221
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "sourceCommit": "1091eaeb94264cd9c6d2416f434653f7d8e847b6",
+  "runtimeVersion": "v22.18.0",
+  "command": [
+    "node",
+    "--test",
+    "--test-timeout=20000",
+    "tests/release297-gates-v2.test.mjs",
+    "tests/release297-report-cost.test.mjs"
+  ],
+  "perFileTimeoutMs": 20000,
+  "startedAt": "2026-10-04T12:04:26.1470676Z",
+  "endedAt": "2026-10-04T12:04:40.8230349Z",
+  "exitCode": 0,
+  "tapSha256": "aa2eba7dd03ceb2d7d6c71c1398f37ca33779e15e69a3a026135058fbaae4551",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "summary": [
+    "# tests 139",
+    "# suites 0",
+    "# pass 139",
+    "# fail 0",
+    "# cancelled 0",
+    "# skipped 0",
+    "# todo 0",
+    "# duration_ms 14496.2292"
+  ],
+  "processId": 88952,
+  "processAbsent": true,
+  "forcedTermination": false,
+  "nativeDatabaseExecuted": false,
+  "capacityAccepted": false
+}

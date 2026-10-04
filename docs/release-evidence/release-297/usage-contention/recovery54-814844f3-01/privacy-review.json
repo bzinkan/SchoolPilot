@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "passed": true,
+  "method": "Safe allowlisted source/JSON/schema only; all environment/state/raw logs hash-only. Each included uncompressed file checked for generated runtime credentials, private token values and credential patterns.",
+  "safeFiles": 41,
+  "hashOnlyRecords": 34,
+  "knownSecretValuesChecked": 5,
+  "originalBytesUnchanged": true,
+  "primaryRepositoryWrites": false
+}

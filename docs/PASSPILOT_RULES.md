@@ -58,6 +58,12 @@ Day and window bounds are school-local (`schools.school_timezone`) and compared 
   daily and period limits. For an encounter restriction they receive only
   `PASSPILOT_RULE_NOT_AVAILABLE` with a generic message; nobody but an administrator
   learns that a restriction exists.
+- Pass lists, history (including the data used by report CSV exports), return and
+  cancellation responses, and ClassPilot pass timeline metadata omit an encounter
+  `ruleOverrideCode` for teachers, office staff and kiosks. Only the verified
+  administrator request role may receive that code. This read-side protection
+  also applies to retained overrides after Rules is turned off; persisted pass,
+  denial and audit records are unchanged.
 - The kiosk is student facing. Capacity reads `Bathroom is full right now. Please try
   again in a few minutes.`; every other rule reads `Please see your teacher before
   leaving.` with the generic `PASSPILOT_RULE_NOT_AVAILABLE` code. Kiosk routes answer
@@ -133,8 +139,9 @@ stays off unless `RLS_GUC_ENABLED=true` and `RLS_ENABLED_TABLES` contains all fo
 rule tables. With the mode off the helper returns before any query, the rules router
 404s and the Rules tab is hidden. The observable differences from the release
 before this feature are the one admin-only `GET /api/passpilot/admin/rules` probe in
-School Setup (which 404s) and nothing else: pass responses include
-`ruleOverrideCode` only for an overridden pass.
+School Setup (which 404s) and nothing else for passes without an override:
+`ruleOverrideCode` is omitted when null, and an encounter override is visible only
+to a verified administrator regardless of the mode.
 
 This release adds no production setter. The mode is changed only through the governed
 product runtime tool, `scripts/deploy-product-runtime-config.ps1`

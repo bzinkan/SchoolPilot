@@ -1,6 +1,22 @@
 import { createHash } from "node:crypto";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { parseRlsEnabledTables } from "../db/rlsPolicies.js";
+
+// Parse configuration only when its exact bytes change. Never cache a school
+// or client authorization decision; rollout and dependency checks remain live.
+let privateChatAdmissionSource = "";
+let privateChatAdmissionPresent = false;
+function hasPrivateChatAdmission(raw: string | undefined): boolean {
+  // Match parseRlsEnabledTables' existing default for callers supplying an
+  // alternate environment without this property, including later env changes.
+  const source = raw ?? process.env.RLS_ENABLED_TABLES ?? "";
+  if (source !== privateChatAdmissionSource) {
+    privateChatAdmissionSource = source;
+    privateChatAdmissionPresent = parseRlsEnabledTables(source).has("classpilot_private_chat_threads");
+  }
+  return privateChatAdmissionPresent;
+}
 
 export const CLASSPILOT_SERVER_PROTOCOL_VERSION = 3 as const;
 
@@ -33,6 +49,8 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   // Roadmap PR 2: This-resource-only Waypoints and section/resource Flight
   // Path entries. Index 25, inside the 32-name realtime capability cache.
   "preciseRestrictionResourcesV1",
+  "focusTabV1",
+  "privateChatLifecycleV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -73,6 +91,8 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   lessonActivitiesV1: "CLASSPILOT_CAP_LESSON_ACTIVITIES_V1",
   exitTicketsV1: "CLASSPILOT_CAP_EXIT_TICKETS_V1",
   preciseRestrictionResourcesV1: "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1",
+  focusTabV1: "CLASSPILOT_CAP_FOCUS_TAB_V1",
+  privateChatLifecycleV1: "CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -100,6 +120,8 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "lessonActivitiesV1",
   "exitTicketsV1",
   "preciseRestrictionResourcesV1",
+  "focusTabV1",
+  "privateChatLifecycleV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -213,6 +235,10 @@ function parseCapabilityRollouts(source: string | undefined): ParsedRollouts {
  * silent extension regression. Refuse to start instead.
  */
 export function assertClasspilotCapabilityRolloutsEnv(env: NodeJS.ProcessEnv = process.env): void {
+  if (enabled(env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1) &&
+    (!enabled(env.RLS_GUC_ENABLED) || !hasPrivateChatAdmission(env.RLS_ENABLED_TABLES))) {
+    throw new Error("FATAL: privateChatLifecycleV1 requires tenant GUC and the reviewed classpilotPrivateChatLifecycle RLS admission on API and worker.");
+  }
   const parsed = parseCapabilityRollouts(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON);
   if (parsed.configured && !parsed.valid) {
     throw new Error(
@@ -307,6 +333,10 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "privateChatLifecycleV1" &&
+    (!enabled(env.RLS_GUC_ENABLED) || !hasPrivateChatAdmission(env.RLS_ENABLED_TABLES)
+      || !isClasspilotCapabilityActive("scopedAuthorityChecksV1",scope,env)
+      || !isClasspilotCapabilityActive("studentChatIdempotencyV1",scope,env))) return false;
   if (capability === "scheduledClassroomV1"
     && !isScheduledClassroomEnabled(scope.schoolId ?? "", env)
     && !classpilotSupervisionPreviewObserved(scope.schoolId ?? "", env)) return false;
@@ -388,6 +418,7 @@ export function negotiateClasspilotProtocol(options: {
           || trackingWindowLeaseAccepted
         )
         && (capability !== "restrictionPortalFirstV1" || restrictionAuthAccepted)
+        && (capability !== "privateChatLifecycleV1" || advertised.has("studentChatIdempotencyV1") && serverEnabled.has("studentChatIdempotencyV1"))
         && (capability !== "screenshotReadOnlyObservationV1" || activeCadenceAccepted)
     ),
   };

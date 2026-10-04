@@ -1,0 +1,52 @@
+{
+  "custody": {
+    "sha256": "b6493f5ee1594991f3f022ba20daea778484ec25671a41ce781f1fd5f032848d",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-02\\execution-64d53ee70791\\custody-manifest.json"
+  },
+  "accepted": false,
+  "cleanup": {
+    "constructorAndExecutorAbsent": true,
+    "allOwnedAbsent": true,
+    "allExit0NoOom": true,
+    "forced": false
+  },
+  "attempt": "02",
+  "windowSha256": "cc44b6ac10021df0033d634a2c20b9329546d71b402eecfbe511d4fe427bdd20",
+  "productionMutations": 0,
+  "absence": {
+    "sha256": "60f2d03cf3a7348e17bd24199575f186d3be90f7d3a3eea47bec21e63729ed0f",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-02\\execution-64d53ee70791\\independent-owned-absence.json"
+  },
+  "sourceDrizzleExitCode": 0,
+  "capacityAccepted": false,
+  "execution": {
+    "sha256": "203ef3b0d49b3d03358eab9bded6a1e413779122cad8d34b8f17f3958c322e0b",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-02\\execution-64d53ee70791\\execution.json"
+  },
+  "candidateCliExecutions": 0,
+  "actualServiceProcesses": 0,
+  "limitations": [
+    "Failed preparation, no accepted A43/B53 fixture",
+    "Actual43 CLI completion is retained, but required native comparison/121 export/restricted restore were not reached",
+    "No candidate or service recovery acceptance",
+    "No retry under the consumed window"
+  ],
+  "failure": {
+    "phase": "subsequent baseline policy-probe environment allocation",
+    "deterministicDuplicateEnvPath": true,
+    "code": "EEXIST",
+    "applicationDefect": false
+  },
+  "kind": "failed_local_production_default_fixture_preparation",
+  "boundPlanSha256": "f19dab8ca9c77cba86f66fe225365590e1fb175b93c11ea4941465488da4178a",
+  "actualBaselineCli": {
+    "logSha256": "5940e45e014c56ecb3b227fb817894aabc2e34bff63d73117aa8769620d0b7c1",
+    "optionalStaffDeferred": true,
+    "separatePostReplayNativeVectorNotYetCaptured": true,
+    "exitCode": 0,
+    "oomKilled": false,
+    "selected43CallbacksReportedApplied": true,
+    "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+    "versionedMigrationsComplete": true
+  }
+}

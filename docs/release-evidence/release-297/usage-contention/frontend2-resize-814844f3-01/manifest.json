@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "baseSource": "814844f344a45159152415b0fb6d7027f05b093e",
+  "scope": "Test-only responsive-layout synchronization; original CI failure, controlled red/green, real targeted pass and unrelated local shard transport failure preserved",
+  "files": [
+    {
+      "path": "ci/job.json.gz",
+      "originalRelativePath": "ci/job.json",
+      "originalBytes": 2956,
+      "originalSha256": "b0a772d4482af40d70f92180d79d321ddee09851441c65875cf67449ea71a636",
+      "sanitizedSha256": "b0a772d4482af40d70f92180d79d321ddee09851441c65875cf67449ea71a636",
+      "gzipSha256": "81bf1c7c1f9e5db4dc21c07a91802acac1f3c485087a11eedb920f2cf49b606d"
+    },
+    {
+      "path": "ci/job.log.gz",
+      "originalRelativePath": "ci/job.log",
+      "originalBytes": 111035,
+      "originalSha256": "ad900776b07a724457594f5140b3a6e6ecd0f78deabded0dbf91a21413f98b28",
+      "sanitizedSha256": "ad900776b07a724457594f5140b3a6e6ecd0f78deabded0dbf91a21413f98b28",
+      "gzipSha256": "fd4383e840c2d3089f7b616703bcba1345a761df1590ee7ffab88a365a8c7723"
+    },
+    {
+      "path": "ci/manifest.json.gz",
+      "originalRelativePath": "ci/manifest.json",
+      "originalBytes": 849,
+      "originalSha256": "b7e62198c681e44d6fbe92208152cc3eda0fed0c68ba1832f3bc314743fc029c",
+      "sanitizedSha256": "b7e62198c681e44d6fbe92208152cc3eda0fed0c68ba1832f3bc314743fc029c",
+      "gzipSha256": "dbab319c7a11b4e2af845c6131ea6b9eb38628e37bca31ff123450f5637d1688"
+    },
+    {
+      "path": "ci/run.json.gz",
+      "originalRelativePath": "ci/run.json",
+      "originalBytes": 12521,
+      "originalSha256": "fdb48741eabb123cc390394ff8f0acebc889b8b4e011f7a82fdc1a295b4d7105",
+      "sanitizedSha256": "fdb48741eabb123cc390394ff8f0acebc889b8b4e011f7a82fdc1a295b4d7105",
+      "gzipSha256": "a1dce52754e5de5acd0241dca11949d833dd18fadc311b4f8e3a06d738521ee6"
+    },
+    {
+      "path": "proof/green.json.gz",
+      "originalRelativePath": "proof/green.json",
+      "originalBytes": 659,
+      "originalSha256": "ed26ed573ac8bcc45c547ad009d9f8c5a7e939b9c6bb1c01cdf3b08fa21fda08",
+      "sanitizedSha256": "ed26ed573ac8bcc45c547ad009d9f8c5a7e939b9c6bb1c01cdf3b08fa21fda08",
+      "gzipSha256": "dae45f88bb1bf248da9bfedef00e361bf7a4a4cb9341fe667fc0b4c97a810d48"
+    },
+    {
+      "path": "proof/green.log.gz",
+      "originalRelativePath": "proof/green.log",
+      "originalBytes": 638,
+      "originalSha256": "ced44185ae2abbb903f692eef3cac288054607b74975f81f6cddd0a2499a3bf2",
+      "sanitizedSha256": "ced44185ae2abbb903f692eef3cac288054607b74975f81f6cddd0a2499a3bf2",
+      "gzipSha256": "856917acd69a6fbd28907de6ded0fba3cf15a6ac3d4071d557484644ecc746e3"
+    },
+    {
+      "path": "proof/green.test.mjs.gz",
+      "originalRelativePath": "proof/green.test.mjs",
+      "originalBytes": 39355,
+      "originalSha256": "a2391a926d9a2d7ba4bb0878c0e5dc3e34dc9604be43df28372ec6c63eefe844",
+      "sanitizedSha256": "a2391a926d9a2d7ba4bb0878c0e5dc3e34dc9604be43df28372ec6c63eefe844",
+      "gzipSha256": "366b4dad8d256c00f4cc86de04d68a88f499fa263ac4f7c81ee292eb5afd5671"
+    },
+    {
+      "path": "proof/host-quiet-01.json.gz",
+      "originalRelativePath": "proof/host-quiet-01.json",
+      "originalBytes": 4516,
+      "originalSha256": "04f7e6bd9edb2c4d4b6d5d91f6808fa7f63bda376e374e10b355b3b3e9346c08",
+      "sanitizedSha256": "20ffdf52e43d930f2951149faf630ea1267f1f6369037ae033fdfba53a80660e",
+      "gzipSha256": "35f1523401be9a1b196f6acf48de15b06d9b1649b48c3c372568dad73506a4d2"
+    },
+    {
+      "path": "proof/original-committed.test.mjs.gz",
+      "originalRelativePath": "proof/original-committed.test.mjs",
+      "originalBytes": 37450,
+      "originalSha256": "fe331f5f8d1b377c42446e1607ba9eee11ad2b250828566b12bf363c5223b148",
+      "sanitizedSha256": "fe331f5f8d1b377c42446e1607ba9eee11ad2b250828566b12bf363c5223b148",
+      "gzipSha256": "da1a240c96e860eff5a157f94156793ea6e6cc864bd875a8e1dadd59f406bc7a"
+    },
+    {
+      "path": "proof/patched.test.mjs.gz",
+      "originalRelativePath": "proof/patched.test.mjs",
+      "originalBytes": 38302,
+      "originalSha256": "458f680b43b4a8baf867a3cb905e29acfa2103eb9b536e81651a02006bf475da",
+      "sanitizedSha256": "458f680b43b4a8baf867a3cb905e29acfa2103eb9b536e81651a02006bf475da",
+      "gzipSha256": "c71d1c435ee4ee42d4f4942ff4f672f995216f5ae769caf02069c84ab1f12b3d"
+    },
+    {
+      "path": "proof/red.json.gz",
+      "originalRelativePath": "proof/red.json",
+      "originalBytes": 656,
+      "originalSha256": "cbe46039bb75f02a2562aa4563a10821f24eca6e3d9dd6e0520ae415e54a2dcd",
+      "sanitizedSha256": "cbe46039bb75f02a2562aa4563a10821f24eca6e3d9dd6e0520ae415e54a2dcd",
+      "gzipSha256": "f6801a599f0b42bdb9a2fc2ea96b8ba370f5ff75755d95e915c47fa0c50467b6"
+    },
+    {
+      "path": "proof/red.log.gz",
+      "originalRelativePath": "proof/red.log",
+      "originalBytes": 1233,
+      "originalSha256": "58418f88f9b2447287cf3c6d8c2fab63ae1bbb446dcc3ccdc4098dff3852550c",
+      "sanitizedSha256": "819b082ad134e47618eb6381f3ad2f3bd5983c125ba82445c513c55d57fd6dea",
+      "gzipSha256": "a9eb87d2050551bd0815b8fdb4db57b0a34020cc7c2e873016d1af4988a4a640"
+    },
+    {
+      "path": "proof/red.test.mjs.gz",
+      "originalRelativePath": "proof/red.test.mjs",
+      "originalBytes": 39148,
+      "originalSha256": "abf287e848ab37184310551ae7b043fbbf96a23ab7918020436b1800bc9c8b5a",
+      "sanitizedSha256": "abf287e848ab37184310551ae7b043fbbf96a23ab7918020436b1800bc9c8b5a",
+      "gzipSha256": "8abf7254d3b255d9c52c25ce8e84553a59345cfe2fc0617b9371a45bc8e4dd63"
+    },
+    {
+      "path": "proof/shard2.json.gz",
+      "originalRelativePath": "proof/shard2.json",
+      "originalBytes": 628,
+      "originalSha256": "632f89d55dbd00d32bf9afe849c3f0fb4e14d9f05e0cbb5001fdbdbda0929463",
+      "sanitizedSha256": "632f89d55dbd00d32bf9afe849c3f0fb4e14d9f05e0cbb5001fdbdbda0929463",
+      "gzipSha256": "50123698f3b4ac186475d607359d82530b12b5da6fc6cd7c32c601f1820312eb"
+    },
+    {
+      "path": "proof/shard2.stderr.log.gz",
+      "originalRelativePath": "proof/shard2.stderr.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "proof/shard2.stdout.log.gz",
+      "originalRelativePath": "proof/shard2.stdout.log",
+      "originalBytes": 23222,
+      "originalSha256": "ef254be852f401cd69092494c006f19642c08002dac37b590750c44bbd234e96",
+      "sanitizedSha256": "ef254be852f401cd69092494c006f19642c08002dac37b590750c44bbd234e96",
+      "gzipSha256": "847d427772e79a94273f16359e2fa5c4585c2c630cf236ba8efba12bb22ef564"
+    },
+    {
+      "path": "proof/targeted.json.gz",
+      "originalRelativePath": "proof/targeted.json",
+      "originalBytes": 593,
+      "originalSha256": "3c8b112d257887dff9e1918ace1ad337a36b107fb44c6c4169e22fc4fb29ac42",
+      "sanitizedSha256": "3c8b112d257887dff9e1918ace1ad337a36b107fb44c6c4169e22fc4fb29ac42",
+      "gzipSha256": "03d0e45b9be44d61abee62962eea15a6b4f67b9a4b8ecdfc7708d03e86f2037f"
+    },
+    {
+      "path": "proof/targeted.stderr.log.gz",
+      "originalRelativePath": "proof/targeted.stderr.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "proof/targeted.stdout.log.gz",
+      "originalRelativePath": "proof/targeted.stdout.log",
+      "originalBytes": 1170,
+      "originalSha256": "7944348d55576ab5c10799cc039376ee8d01b14b2c8b0c6263815ae3075613e2",
+      "sanitizedSha256": "7944348d55576ab5c10799cc039376ee8d01b14b2c8b0c6263815ae3075613e2",
+      "gzipSha256": "ccc175532138021f972dc732b93b91545d3b8f8f1f774c75ebd8b23b014761be"
+    },
+    {
+      "path": "proof/test-only.patch.gz",
+      "originalRelativePath": "proof/test-only.patch",
+      "originalBytes": 962,
+      "originalSha256": "26e5df5a7faa599e614c3f1d4e212466eb3cf4620efa3b7ac1fcb0118f508b84",
+      "sanitizedSha256": "26e5df5a7faa599e614c3f1d4e212466eb3cf4620efa3b7ac1fcb0118f508b84",
+      "gzipSha256": "bcd23566712515b9de0d72cbc031265210f95f937fafca145c9399c40c87795b"
+    },
+    {
+      "path": "tools/release297-fetch-ci-8148-frontend2.mjs.gz",
+      "originalRelativePath": "tools/release297-fetch-ci-8148-frontend2.mjs",
+      "originalBytes": 1618,
+      "originalSha256": "6cea58270f163eda5b18adb9f60e102a904aa83a4e18c311c93d5ffb6cb2a0c7",
+      "sanitizedSha256": "1de9fced6ff84bb50bef78569fd48c2a7f926f3a6c091315e94ccec9b34d2357",
+      "gzipSha256": "045548fe157062772fc9781d4e699d54c4c5afcc48f7b9c940f88d3494fc77f6"
+    },
+    {
+      "path": "tools/release297-frontend2-resize-proof.mjs.gz",
+      "originalRelativePath": "tools/release297-frontend2-resize-proof.mjs",
+      "originalBytes": 3469,
+      "originalSha256": "d5dde3ebbfda558e1f531c67be9168102ee328e2b84b962ff7994996d9105df2",
+      "sanitizedSha256": "1aba6f22be4e29474652c369eeb19b1d1cdd122518fd0ea93ccfc290f2695585",
+      "gzipSha256": "817fb2445a21f96235397928ef22095acfde8e77d1769533c2893fc97ba92e68"
+    },
+    {
+      "path": "tools/release297-frontend2-check.mjs.gz",
+      "originalRelativePath": "tools/release297-frontend2-check.mjs",
+      "originalBytes": 1997,
+      "originalSha256": "9605961d9c8cb1ed208cb8a6cbbd1223df8ea9c33a1747354f7f4b57f5d37334",
+      "sanitizedSha256": "ca22ccbf892b6a51cd2cbc78bfbec04b61be8d4b56cf33d690e928a6f6390c0c",
+      "gzipSha256": "353998845adfeb87690f40461fd103080a17a8ff055121d6767555f184fe64f0"
+    },
+    {
+      "path": "tools/release297-archive-frontend2-resize-01.mjs.gz",
+      "originalRelativePath": "tools/release297-archive-frontend2-resize-01.mjs",
+      "originalBytes": 7283,
+      "originalSha256": "dc473866f559f7e6f54cd69098a1529492297bcc3384ecd7632b070d7544362c",
+      "sanitizedSha256": "7546f621ed4e1434e6d7f97e3d0c732b815764508aee1bdcc8c43c20354bd6c3",
+      "gzipSha256": "a61e432e7adb0854c84cd5ce27b06ea11a147b51a0ffca63dbcbab1cd2d57a5d"
+    }
+  ],
+  "summarySha256": "076527fcaf2e47f595419fc014a4c69c7e62a45089d54ad821a7a28567a01deb",
+  "privacyReviewSha256": "94590db99e7811dc153ad5d42e836c4ec5b827d362107982fff726f64b7ea141",
+  "capacityAccepted": false,
+  "productionChanges": 0
+}

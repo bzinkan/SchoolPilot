@@ -1,5 +1,13 @@
+import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, sealHeartbeatPreparedReads,
+  assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
+} from "./classpilotHeartbeatPreparedReads.js";
+import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
+import type { HeartbeatScreenshotOwnerRow } from "./classpilotHeartbeatScreenshotEvidence.js";
+import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
 import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
+import { focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
+  readFocusRestriction, withoutClasspilotFocus } from "./classpilotFocus.js";
 import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
@@ -10,6 +18,9 @@ import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle, lockPrivateChatChannel, lockPrivateChatAdoption,
+  privateChatMessageLifecycle, samePrivateChatLifecycle, parsePrivateChatLifecycle, privateChatLifecycleRequired, privateChatBindingSupported, isPrivateChatMessageCurrent, isPrivateChatMessageExpired,
+  type PrivateChatLifecycle } from "./classpilotPrivateChatLifecycle.js";
 import {
   dispatchCacheInvalidation,
   invalidateUserCredentialConnections,
@@ -44,7 +55,7 @@ import {
   isClasspilotReportAuthorizedStaff,
 } from "./classpilotReportAuthorization.js";
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
-import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import { assertClasspilotEntitled, classpilotEntitledSchoolPredicate } from "./classpilotEntitlement.js";
 import {
   assertClasspilotSynchronousAuthorityResult,
   type ClasspilotSynchronousAuthorityResult,
@@ -699,6 +710,96 @@ export async function getSchoolById(
     .where(eq(schools.id, id))
     .limit(1);
   return school;
+}
+
+type HeartbeatControlTimestamp = "scheduledEndAt" | "hardExpiresAt"
+  | "lastAcknowledgedAt" | "createdAt" | "updatedAt";
+type HeartbeatPersistenceContextRow = Omit<ClasspilotStudentControlState,
+  HeartbeatControlTimestamp | "id"> & {
+  id: string | null;
+  scheduledEndAt: string | null;
+  hardExpiresAt: string | null;
+  lastAcknowledgedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  heartbeatSchoolStatus: School["status"];
+  heartbeatSchoolPlanStatus: School["planStatus"];
+  heartbeatSchoolDomain: School["domain"];
+  classpilotSsoPolicy: unknown;
+  classpilotSsoPolicyRevision: number | null;
+};
+
+function decodeHeartbeatControlTimestamp(
+  column: { mapFromDriverValue(value: string): unknown },
+  value: string,
+): Date {
+  const decoded = column.mapFromDriverValue(value);
+  if (!(decoded instanceof Date)) throw new TypeError("Control timestamp decoder did not return a Date");
+  return decoded;
+}
+
+/**
+ * Fresh initial heartbeat navigation/privacy projection on the caller's DB.
+ * The joined rows are unique within this school/student scope. This read does
+ * not replace persistence or final-delivery authority checks and caches no
+ * school, policy, control state, transaction, or connection.
+ */
+export async function getClasspilotHeartbeatPersistenceContext(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute"> = db
+): Promise<{
+  school: Pick<School, "status" | "planStatus" | "domain"> | undefined;
+  ssoPolicy: ClasspilotSsoPolicyRecord;
+  privacyControlState: ClasspilotStudentControlState | undefined;
+}> {
+  const result = await dbInstance.execute<HeartbeatPersistenceContextRow>(sql`
+    SELECT school.status AS "heartbeatSchoolStatus",
+      school.plan_status AS "heartbeatSchoolPlanStatus",
+      school.domain AS "heartbeatSchoolDomain",
+      policy.classpilot_sso_policy AS "classpilotSsoPolicy",
+      policy.classpilot_sso_policy_revision AS "classpilotSsoPolicyRevision",
+      control.id, control.school_id AS "schoolId", control.student_id AS "studentId",
+      control.teaching_session_id AS "teachingSessionId",
+      control.supervision_context_id AS "supervisionContextId", control.revision,
+      control.desired_state AS "desiredState", control.source_command_id AS "sourceCommandId",
+      control.scheduled_end_at AS "scheduledEndAt", control.hard_expires_at AS "hardExpiresAt",
+      control.enforcement_health AS "enforcementHealth", control.applied_revision AS "appliedRevision",
+      control.last_outcome AS "lastOutcome", control.last_error AS "lastError",
+      control.last_acknowledged_at AS "lastAcknowledgedAt",
+      control.created_at AS "createdAt", control.updated_at AS "updatedAt"
+    FROM schools AS school
+    LEFT JOIN settings AS policy ON policy.school_id = school.id
+    LEFT JOIN classpilot_student_control_states AS control
+      ON control.school_id = school.id AND control.student_id = ${studentId}
+    WHERE school.id = ${schoolId}
+    LIMIT 1
+  `);
+  const row = result.rows[0];
+  // Drizzle's raw execute path returns timestamps as strings. Reuse the
+  // schema's decoders so this is identical to the ordinary select() result.
+  const control = classpilotStudentControlStates;
+  const privacyControlState = row && row.id !== null ? {
+    id: row.id, schoolId: row.schoolId, studentId: row.studentId,
+    teachingSessionId: row.teachingSessionId, supervisionContextId: row.supervisionContextId,
+    revision: row.revision, desiredState: row.desiredState, sourceCommandId: row.sourceCommandId,
+    scheduledEndAt: row.scheduledEndAt === null ? null : decodeHeartbeatControlTimestamp(control.scheduledEndAt, row.scheduledEndAt),
+    hardExpiresAt: row.hardExpiresAt === null ? null : decodeHeartbeatControlTimestamp(control.hardExpiresAt, row.hardExpiresAt),
+    enforcementHealth: row.enforcementHealth, appliedRevision: row.appliedRevision,
+    lastOutcome: row.lastOutcome, lastError: row.lastError,
+    lastAcknowledgedAt: row.lastAcknowledgedAt === null ? null : decodeHeartbeatControlTimestamp(control.lastAcknowledgedAt, row.lastAcknowledgedAt),
+    createdAt: decodeHeartbeatControlTimestamp(control.createdAt, row.createdAt),
+    updatedAt: decodeHeartbeatControlTimestamp(control.updatedAt, row.updatedAt),
+  } : undefined;
+  return {
+    school: row ? {
+      status: row.heartbeatSchoolStatus,
+      planStatus: row.heartbeatSchoolPlanStatus,
+      domain: row.heartbeatSchoolDomain,
+    } : undefined,
+    ssoPolicy: classpilotSsoPolicyFromSettings(row),
+    privacyControlState,
+  };
 }
 
 /**
@@ -4470,12 +4571,13 @@ async function assertLegacyPasspilotClassAuthorization(
 
 export async function createLegacyPass(
   data: InsertPass,
-  authorization: LegacyPasspilotClassAuthorization
+  authorization: LegacyPasspilotClassAuthorization,
+  transaction?: PasspilotClassTransaction
 ): Promise<Pass> {
   // One evaluation instant, taken before any lock wait (issued_at defaults to
   // the transaction start, so both land on the same school-local day).
   const ruleEvaluatedAt = new Date();
-  return db.transaction(async (tx) => {
+  return (transaction ?? db).transaction(async (tx) => {
     let lockedKioskSchool: { kioskGradeId: string | null } | undefined;
     if (authorization?.kiosk && !authorization.kioskSessionId) {
       [lockedKioskSchool] = await tx
@@ -10396,6 +10498,10 @@ export async function createHeartbeatAndRefreshPresence(
       id: string;
       studentEmail: string;
       timestamp: Date;
+      aiCategory?: string | null;
+      contentCategory?: string | null;
+      teacherIntentSource?: string | null;
+      safetyAlert?: string | null;
       authKind: StudentSessionAuthKind;
       authorityExpiresAt: Date | null;
       leaseRenewed: boolean;
@@ -10469,7 +10575,11 @@ export async function createHeartbeatAndRefreshPresence(
         camera_active,
         extension_version,
         chrome_version,
-        screenshot_health
+        screenshot_health,
+        ai_category,
+        content_category,
+        teacher_intent_source,
+        safety_alert
       )
       SELECT
         ${data.deviceId},
@@ -10486,9 +10596,13 @@ export async function createHeartbeatAndRefreshPresence(
         ${data.cameraActive ?? false},
         ${data.extensionVersion ?? null},
         ${data.chromeVersion ?? null},
-        ${screenshotHealthJson}::jsonb
+        ${screenshotHealthJson}::jsonb,
+        ${data.aiCategory ?? null},
+        ${data.contentCategory ?? null},
+        ${data.teacherIntentSource ?? null},
+        ${data.safetyAlert ?? null}
       FROM eligible_session
-      RETURNING id, student_email, timestamp
+      RETURNING id, student_email, timestamp, ai_category, content_category, teacher_intent_source, safety_alert
     ),
     refreshed_device AS (
       UPDATE devices
@@ -10535,6 +10649,10 @@ export async function createHeartbeatAndRefreshPresence(
       id,
       student_email,
       timestamp,
+      ai_category,
+      content_category,
+      teacher_intent_source,
+      safety_alert,
       (SELECT auth_kind FROM eligible_session LIMIT 1) AS auth_kind,
       COALESCE(
         (SELECT manual_lease_expires_at FROM refreshed_session LIMIT 1),
@@ -10565,6 +10683,10 @@ export async function createHeartbeatAndRefreshPresence(
       NULL::varchar AS id,
       NULL::text AS student_email,
       NULL::timestamp AS timestamp,
+      NULL::text AS ai_category,
+      NULL::text AS content_category,
+      NULL::text AS teacher_intent_source,
+      NULL::text AS safety_alert,
       NULL::text AS auth_kind,
       NULL::timestamptz AS authority_expires_at,
       false AS lease_renewed
@@ -10576,6 +10698,10 @@ export async function createHeartbeatAndRefreshPresence(
     id?: unknown;
     student_email?: unknown;
     timestamp?: unknown;
+    ai_category?: unknown;
+    content_category?: unknown;
+    teacher_intent_source?: unknown;
+    safety_alert?: unknown;
     auth_kind?: unknown;
     authority_expires_at?: unknown;
     lease_renewed?: unknown;
@@ -10600,6 +10726,18 @@ export async function createHeartbeatAndRefreshPresence(
   if (Number.isNaN(timestamp.getTime())) {
     throw new Error("Heartbeat insert returned an invalid timestamp");
   }
+  const classification: Record<"aiCategory" | "contentCategory" | "teacherIntentSource" | "safetyAlert", string | null> = {
+    aiCategory: null, contentCategory: null, teacherIntentSource: null, safetyAlert: null,
+  };
+  for (const [key, value] of [
+    ["aiCategory", row.ai_category], ["contentCategory", row.content_category],
+    ["teacherIntentSource", row.teacher_intent_source], ["safetyAlert", row.safety_alert],
+  ] as const) {
+    if (value !== null && typeof value !== "string") {
+      throw new Error("Heartbeat insert returned invalid classification metadata");
+    }
+    classification[key] = value;
+  }
   if (!(["legacy", "managed_profile", "manual_shared"] as const).includes(
     row.auth_kind as StudentSessionAuthKind
   )) {
@@ -10623,6 +10761,7 @@ export async function createHeartbeatAndRefreshPresence(
     // Realtime payloads historically normalize that optional value to "".
     studentEmail: row.student_email || "",
     timestamp,
+    ...classification,
     authKind: row.auth_kind as StudentSessionAuthKind,
     authorityExpiresAt,
     leaseRenewed: row.lease_renewed === true,
@@ -11434,6 +11573,12 @@ export async function startStudentSessionWithReplacements(
       )
       .returning();
 
+    if (replacedSessions.length) {
+      const { retireClasspilotFocusForBinding } = await import("./classpilotFocusPersistence.js");
+      for (const replaced of replacedSessions) await retireClasspilotFocusForBinding(transactionDb, schoolId,
+        replaced.studentId, { studentSessionId: replaced.id, deviceId: replaced.deviceId });
+    }
+
     const [session] = await tx
       .insert(studentSessions)
       .values({
@@ -11480,6 +11625,7 @@ export async function endStudentSessionExact(options: {
   scheduledClassroom?: { contextId: string; actorId: string; controlRevision: number };
 }): Promise<StudentSession | undefined> {
   const result = await db.transaction(async (tx) => {
+    await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], tx as unknown as typeof db);
     if (options.scheduledClassroom) {
       const transactionDb = tx as unknown as typeof db;
       await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
@@ -11515,6 +11661,11 @@ export async function endStudentSessionExact(options: {
         isNull(studentSessions.endedAt)
       ))
       .returning();
+    if (session) {
+      const { retireClasspilotFocusForBinding } = await import("./classpilotFocusPersistence.js");
+      await retireClasspilotFocusForBinding(tx as unknown as typeof db, options.schoolId, options.studentId,
+        { studentSessionId: options.studentSessionId, deviceId: options.deviceId });
+    }
     return session;
   });
   if (result) {
@@ -11542,9 +11693,11 @@ export async function endStudentSessionByRecoveryTokenHash(options: {
         eq(studentSessions.isActive, true),
         isNull(studentSessions.endedAt)
       ))
-      .limit(1)
-      .for("update", { of: studentSessions });
+      .limit(1);
     if (!binding) return undefined;
+    // The guarded update rechecks the recovery token after acquiring the same
+    // authority-first lock used by transfer and command acknowledgement.
+    await lockClasspilotStudentControlAuthorities(options.schoolId, [binding.session.studentId], tx as unknown as typeof db);
     const [ended] = await tx
       .update(studentSessions)
       .set({ isActive: false, endedAt: sql`now()`, sessionRecoveryTokenHash: null })
@@ -11555,6 +11708,11 @@ export async function endStudentSessionByRecoveryTokenHash(options: {
         isNull(studentSessions.endedAt)
       ))
       .returning();
+    if (ended) {
+      const { retireClasspilotFocusForBinding } = await import("./classpilotFocusPersistence.js");
+      await retireClasspilotFocusForBinding(tx as unknown as typeof db, options.schoolId, ended.studentId,
+        { studentSessionId: ended.id, deviceId: ended.deviceId });
+    }
     return ended;
   });
   if (result) await invalidateClasspilotPassiveAuthorization(options.schoolId);
@@ -15475,7 +15633,7 @@ export async function upsertScheduledClassConflictForOccurrence(
   });
 }
 
-const LIVE_TEACHING_SESSION_MODE = "live";
+
 const SCHEDULED_REPORT_SESSION_MODE = "scheduled_report";
 
 export async function getScheduledClassConflictByIdAndSchool(
@@ -16063,6 +16221,62 @@ export async function getActiveClassOwnerForStudent(
 ): Promise<ActiveClassOwner | undefined> {
   const [owner] = await getActiveClassOwnersForStudents(schoolId, [studentId], dbInstance);
   return owner;
+}
+
+/**
+ * Fresh discovery for callers that already hold their authority locks. Keep
+ * those locks in earlier statements: a projection started before a lock wait
+ * would retain the earlier statement snapshot. This is not an authority cache.
+ * The ordinary helpers remain the reference for the exact legacy/frozen roster
+ * predicates and JS timestamp/id ranking; neither path applies time windows.
+ */
+export async function getClasspilotTelemetryOwnerProjection(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute"> = db,
+): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
+  return getClasspilotTelemetryOwnerProjectionAtClock(schoolId, studentId, dbInstance, "transaction");
+}
+
+async function getClasspilotTelemetryOwnerProjectionAtClock(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute">,
+  clock: ClasspilotAuthorityClock,
+): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
+  const result = await dbInstance.execute<HeartbeatScreenshotOwnerRow>(
+    heartbeatTelemetryOwnerQuery(schoolId, studentId, clock)
+  );
+  return classpilotTelemetryOwnerFromRows(result.rows);
+}
+
+function classpilotTelemetryOwnerFromRows(rows: HeartbeatScreenshotOwnerRow[]): {
+  hasActiveSupervision: boolean; teachingSessionId: string | undefined;
+} {
+  const candidates = rows.flatMap(row => {
+    if (row.id === null) return [];
+    if (row.startTime === null || row.createdAt === null) {
+      throw new TypeError("Telemetry owner candidate is missing required timestamps");
+    }
+    // Raw execute returns timestamp strings; use the same schema decoders as
+    // the existing select() helpers, including their millisecond precision.
+    return [{
+      id: row.id,
+      controlUpdatedAt: row.controlUpdatedAt === null ? null
+        : decodeHeartbeatControlTimestamp(teachingSessions.controlUpdatedAt, row.controlUpdatedAt),
+      startTime: decodeHeartbeatControlTimestamp(teachingSessions.startTime, row.startTime),
+      createdAt: decodeHeartbeatControlTimestamp(teachingSessions.createdAt, row.createdAt),
+    }];
+  }).sort((a, b) =>
+    (b.controlUpdatedAt || b.startTime).getTime() - (a.controlUpdatedAt || a.startTime).getTime()
+    || b.startTime.getTime() - a.startTime.getTime()
+    || b.createdAt.getTime() - a.createdAt.getTime()
+    || b.id.localeCompare(a.id)
+  );
+  return {
+    hasActiveSupervision: rows[0]?.hasActiveSupervision === true,
+    teachingSessionId: candidates[0]?.id,
+  };
 }
 
 export async function getTeachingSessionForStudent(
@@ -18355,6 +18569,29 @@ export async function createFlightPath(
   });
 }
 
+/** Quick Classroom lessons reuse only the caller's exact private reviewed source. */
+export async function createOrReuseReviewedClassroomFlightPath(data: InsertFlightPath): Promise<{ flightPath: FlightPath; reused: boolean }> {
+  return db.transaction(async tx => {
+    const database = tx as unknown as typeof db;
+    if (!data.teacherId || data.sourceType !== "google_classroom" || !data.sourceCourseId || (data.blockedDomains || []).length)
+      throw Object.assign(new Error("Reviewed Classroom imports require a personal source and empty block list"), { status: 400 });
+    if (!await lockStaffAssignmentLifecycleSchool(tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0], data.schoolId)) throw new Error("School not found");
+    await assertActiveClasspilotTeacherMembership(data.teacherId, data.schoolId, database);
+    const { reviewedClassroomSourceKey } = await import("./classpilotLessonPrerequisites.js");
+    const key = reviewedClassroomSourceKey({ ...data, sourceCourseId: data.sourceCourseId,
+      sourceResourceIds: data.sourceResourceIds || [], allowedDomains: data.allowedDomains || [], resources: data.resources || [], blockedDomains: [] });
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([data.schoolId, data.teacherId, key])}, 0))`);
+    const candidates = await tx.select().from(flightPaths).where(and(eq(flightPaths.schoolId, data.schoolId),
+      eq(flightPaths.teacherId, data.teacherId), eq(flightPaths.sourceType, "google_classroom"),
+      eq(flightPaths.sourceCourseId, data.sourceCourseId), eq(flightPaths.visibility, "private"), eq(flightPaths.official, false)))
+      .orderBy(flightPaths.createdAt, flightPaths.id).for("update");
+    const existing = candidates.find(path => reviewedClassroomSourceKey(path) === key);
+    if (existing) return { flightPath: existing, reused: true };
+    const [created] = await tx.insert(flightPaths).values({ ...data, visibility: "private", official: false }).returning();
+    return { flightPath: created!, reused: false };
+  });
+}
+
 /**
  * With an actor (the Flight Path and Block List routes), authorization is
  * re-checked on the locked row and privileged changes are audited in the same
@@ -19156,6 +19393,8 @@ export async function withAuthorizedStudentFabMutation<T>(options: {
     ) {
       throw classpilotFabMutationError(409, "fab_authority_stale", "Student classroom authority changed");
     }
+    if (options.feature === "chat") await lockPrivateChatAdoption(options.schoolId,transactionDb);
+    await tx.select({id:teachingSessions.id}).from(teachingSessions).where(and(eq(teachingSessions.schoolId,options.schoolId),eq(teachingSessions.id,owner.session.id))).for("key share");
     const [schoolSettings] = await tx
       .select({
         studentMessagingEnabled: settings.studentMessagingEnabled,
@@ -19209,7 +19448,9 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
   content: string;
   clientMessageId?: string | null;
   teachingSessionId?: string | null;
+  expectedPrivateChatLifecycle?: unknown;
 }): Promise<{ student: Student; teachingSession: TeachingSession; message: ChatMessage; created: boolean }> {
+  await latchPrivateChatLifecycle(options.schoolId);
   return withAuthorizedStudentFabMutation({ ...options, feature: "chat" }, async (transactionDb, authority) => {
     if (!isCurrentClasspilotStudentMessageSession(
       options.teachingSessionId,
@@ -19221,7 +19462,9 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
         "Student message belongs to a teaching session that is no longer active"
       );
     }
+    const lifecycle = await preparePrivateChatMessage({...options,teachingSessionId:authority.teachingSession.id},options.expectedPrivateChatLifecycle,transactionDb);
     const [message] = await transactionDb.insert(chatMessages).values({
+      ...lifecycle,
       schoolId: options.schoolId,
       sessionId: authority.teachingSession.id,
       studentId: options.studentId,
@@ -19467,8 +19710,11 @@ export async function authorizeClasspilotTeacherCloseChat(options: {
   teachingSessionId: string;
   studentId: string;
   actorId: string;
-}): Promise<AuthorizedClasspilotTeacherStudentAction> {
-  return withAuthorizedClasspilotTeacherStudentAction(options, async (_transactionDb, authority) => authority);
+  expectedPrivateChatLifecycle?: unknown;
+}): Promise<AuthorizedClasspilotTeacherStudentAction & {privateChatLifecycle:PrivateChatLifecycle | undefined}> {
+  await latchPrivateChatLifecycle(options.schoolId);
+  return withAuthorizedClasspilotTeacherStudentAction(options, async (transactionDb, authority) => ({...authority,
+    privateChatLifecycle:await closePrivateChatLifecycle(options,options.expectedPrivateChatLifecycle,options.actorId,transactionDb)}));
 }
 
 export async function getChatMessages(
@@ -19583,11 +19829,13 @@ export async function createTeacherChatReplyWithDelivery(options: {
   studentId: string;
   teacherId: string;
   content: string;
+  expectedPrivateChatLifecycle?: unknown;
 }): Promise<{ message: ChatMessage; delivery: ClasspilotChatDelivery }> {
   const content = String(options.content || "").trim();
   if (!content || content.length > 500) {
     throw classpilotFabMutationError(400, "teacher_reply_invalid", "Message must contain 1 to 500 characters");
   }
+  await latchPrivateChatLifecycle(options.schoolId);
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
@@ -19649,7 +19897,41 @@ export async function createTeacherChatReplyWithDelivery(options: {
     }, transactionDb))) {
       throw classpilotFabMutationError(409, "chat_authority_stale", "Student classroom authority changed");
     }
+    // Teachers may still reach a paused class; only the hard switches (the
+    // school-wide one and this class's own) stop replies. Locks follow the
+    // class switch writer's order (teaching session, then its settings row);
+    // the inserts below take this same key-share lock on their parent.
+    await lockPrivateChatAdoption(options.schoolId,transactionDb);
+    await tx
+      .select({ id: teachingSessions.id })
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.schoolId, options.schoolId),
+        eq(teachingSessions.id, options.teachingSessionId)
+      ))
+      .limit(1)
+      .for("key share");
+    const [schoolSettings] = await tx
+      .select({ studentMessagingEnabled: settings.studentMessagingEnabled })
+      .from(settings)
+      .where(eq(settings.schoolId, options.schoolId))
+      .limit(1)
+      .for("share");
+    const [classSettings] = await tx
+      .select({ chatEnabled: sessionSettings.chatEnabled })
+      .from(sessionSettings)
+      .where(and(
+        eq(sessionSettings.schoolId, options.schoolId),
+        eq(sessionSettings.sessionId, options.teachingSessionId)
+      ))
+      .limit(1)
+      .for("share");
+    if (schoolSettings?.studentMessagingEnabled === false || classSettings?.chatEnabled === false) {
+      throw classpilotFabMutationError(403, "FAB_FEATURE_DISABLED", "Messaging is turned off");
+    }
+    const lifecycle = await preparePrivateChatMessage(options,options.expectedPrivateChatLifecycle,transactionDb);
     const [message] = await tx.insert(chatMessages).values({
+      ...lifecycle,
       schoolId: options.schoolId,
       sessionId: options.teachingSessionId,
       studentId: options.studentId,
@@ -19693,7 +19975,7 @@ export async function markTeacherChatDeliveryAttempt(options: {
     );
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
     const [deliveryAuthority] = await tx
-      .select({ teachingSessionId: classpilotChatDeliveries.teachingSessionId })
+      .select({ teachingSessionId: classpilotChatDeliveries.teachingSessionId, supervisionContextId: classpilotChatDeliveries.supervisionContextId })
       .from(classpilotChatDeliveries)
       .where(and(
         eq(classpilotChatDeliveries.schoolId, options.schoolId),
@@ -19707,7 +19989,10 @@ export async function markTeacherChatDeliveryAttempt(options: {
       schoolId: options.schoolId,
       studentId: options.studentId,
       teachingSessionId: deliveryAuthority.teachingSessionId,
+      supervisionContextId: deliveryAuthority.supervisionContextId,
     }, transactionDb))) return undefined;
+    const [pending] = await tx.select().from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.id,options.chatMessageId))).limit(1);
+    if (!pending || !(await isPrivateChatMessageCurrent(pending,transactionDb))) return undefined;
     const now = new Date();
     const [delivery] = await tx
       .update(classpilotChatDeliveries)
@@ -19755,6 +20040,7 @@ export async function acknowledgeTeacherChatDelivery(options: {
   status: TeacherChatAckStatus;
   errorMessage?: string | null;
   studentControlRevision?: number;
+  privateChatLifecycle?: unknown;
 }): Promise<{ message: ChatMessage; delivery: ClasspilotChatDelivery } | undefined> {
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
@@ -19794,6 +20080,9 @@ export async function acknowledgeTeacherChatDelivery(options: {
       eq(chatMessages.studentId, options.studentId)
     )).limit(1);
     if (!existingMessage) return undefined;
+    if (delivery.state === "expired" || delivery.expiresAt <= new Date() || !(await isPrivateChatMessageCurrent(existingMessage,transactionDb))) return undefined;
+    if (!delivery.supervisionContextId && !(await hasCurrentClasspilotStudentControlAuthority({...options,teachingSessionId:delivery.teachingSessionId},transactionDb))) return undefined;
+    if (await privateChatLifecycleRequired(options.schoolId,transactionDb) && !samePrivateChatLifecycle(parsePrivateChatLifecycle(options.privateChatLifecycle),privateChatMessageLifecycle(existingMessage))) return undefined;
     const now = new Date();
     const transition = nextTeacherChatDeliveryState(existingMessage, { status: options.status, at: now, errorMessage: options.errorMessage });
     if (!transition.changed) return { message: existingMessage, delivery };
@@ -19838,9 +20127,9 @@ export async function classpilotTeacherChatAckRejection(options: {
   schoolId: string;
   chatMessageId: string;
   studentId: string;
-}): Promise<"CHAT_MESSAGE_NOT_FOUND" | "CHAT_ACK_STALE"> {
+}): Promise<"CHAT_MESSAGE_NOT_FOUND" | "CHAT_ACK_STALE" | "PRIVATE_CHAT_EXPIRED"> {
   const [delivery] = await db
-    .select({ id: classpilotChatDeliveries.id })
+    .select({ id: classpilotChatDeliveries.id, state:classpilotChatDeliveries.state, expiresAt:classpilotChatDeliveries.expiresAt })
     .from(classpilotChatDeliveries)
     .where(and(
       eq(classpilotChatDeliveries.schoolId, options.schoolId),
@@ -19848,7 +20137,9 @@ export async function classpilotTeacherChatAckRejection(options: {
       eq(classpilotChatDeliveries.studentId, options.studentId)
     ))
     .limit(1);
-  return delivery ? "CHAT_ACK_STALE" : "CHAT_MESSAGE_NOT_FOUND";
+  if (!delivery) return "CHAT_MESSAGE_NOT_FOUND";
+  return delivery.state === "expired" || delivery.expiresAt <= new Date() || await isPrivateChatMessageExpired(options.chatMessageId,options.schoolId)
+    ? "PRIVATE_CHAT_EXPIRED" : "CHAT_ACK_STALE";
 }
 
 type ClasspilotTeacherChatBinding = {
@@ -19858,6 +20149,8 @@ type ClasspilotTeacherChatBinding = {
   deviceId: string;
   limit?: number;
   claimTeacherChatDeliveries?: boolean;
+  /** SSO-bearing bootstrap must fence policy before private settings locks. */
+  freezeSsoPolicy?: boolean;
 };
 
 type ClasspilotClaimedTeacherChatDelivery = {
@@ -19865,7 +20158,188 @@ type ClasspilotClaimedTeacherChatDelivery = {
   delivery: ClasspilotChatDelivery;
 };
 
+/** Receiving a delayed Redis frame is another delivery attempt. The caller
+ * holds the exact student-binding lock and must send synchronously before its
+ * transaction ends, keeping these channel/thread/outbox locks authoritative. */
+export async function classpilotStudentRelayMessageAllowed(
+  binding: ClasspilotTeacherChatBinding,
+  value: unknown,
+  database: typeof db,
+): Promise<{ expiresAt: number | null } | null> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const frame = value as Record<string, unknown>;
+  if (frame.type !== "teacher-message") return { expiresAt: null };
+  // Announcements use the durable command contract. A commandId or a claimed
+  // messageKind cannot exempt a frame that carries private delivery fields.
+  if (typeof frame.commandId === "string" && frame.commandId.length > 0
+    && frame.messageKind !== "private" && !("chatMessageId" in frame)
+    && !("privateChatLifecycle" in frame)) return { expiresAt: null };
+  if (typeof frame.chatMessageId !== "string" || !frame.chatMessageId
+    || frame.studentId !== binding.studentId || frame.studentSessionId !== binding.studentSessionId
+    || (frame._msgId !== undefined && frame._msgId !== frame.chatMessageId)
+    || (frame.messageId !== undefined && frame.messageId !== frame.chatMessageId)) return null;
+  const [message] = await database.select().from(chatMessages).where(and(
+    eq(chatMessages.schoolId,binding.schoolId), eq(chatMessages.studentId,binding.studentId),
+    eq(chatMessages.id,frame.chatMessageId), eq(chatMessages.senderType,"teacher"),
+  )).limit(1);
+  if (!message || message.deletedAt || frame.message !== message.content
+    || (frame.sessionId ?? frame.teachingSessionId ?? null) !== message.sessionId
+    || (frame.teachingSessionId !== undefined && frame.teachingSessionId !== message.sessionId)
+    || (frame.supervisionContextId ?? null) !== message.supervisionContextId) return null;
+  const scope = {schoolId:binding.schoolId,studentId:binding.studentId,
+    teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId};
+  if (!(await hasCurrentClasspilotStudentControlAuthority({ ...scope,
+    ...(message.supervisionContextId ? {ownershipRevision:Number(frame.studentControlRevision)} : {}),
+  },database))) return null;
+  if (message.supervisionContextId && !Number.isSafeInteger(frame.studentControlRevision)) return null;
+  // This acquires school/activity/thread locks before the outbox row, matching
+  // ordinary claims. It also withholds legacy delivery during a reversible off.
+  if (!(await isPrivateChatMessageCurrent(message,database))) return null;
+  const storedToken = privateChatMessageLifecycle(message);
+  if (storedToken) {
+    if (!samePrivateChatLifecycle(parsePrivateChatLifecycle(frame.privateChatLifecycle),storedToken)
+      || !(await privateChatBindingSupported(binding,database))) return null;
+  } else if (frame.privateChatLifecycle != null || await privateChatLifecycleRequired(binding.schoolId,database)) return null;
+  const [delivery] = await database.select().from(classpilotChatDeliveries).where(and(
+    eq(classpilotChatDeliveries.schoolId,binding.schoolId),eq(classpilotChatDeliveries.studentId,binding.studentId),
+    eq(classpilotChatDeliveries.chatMessageId,message.id),
+  )).limit(1).for("update");
+  const allowed = !!delivery && delivery.teachingSessionId === message.sessionId
+    && delivery.supervisionContextId === message.supervisionContextId
+    && delivery.lastAttemptStudentSessionId === binding.studentSessionId
+    && delivery.lastAttemptDeviceId === binding.deviceId
+    && ["attempted","retry"].includes(delivery.state) && delivery.expiresAt > new Date();
+  // The wrapper performs one final binding read. Retain the deadline so the
+  // synchronous send can reject a frame that expires during that read.
+  return allowed ? { expiresAt: delivery.expiresAt.getTime() } : null;
+}
+
 class ClasspilotTeacherChatBindingLostError extends Error {}
+
+async function claimTeacherChatDeliveriesWithAuthorityLocked(
+  options: ClasspilotTeacherChatBinding,
+  transactionDb: typeof db,
+): Promise<ClasspilotClaimedTeacherChatDelivery[]> {
+  const limit = Math.max(1, Math.min(20, options.limit ?? 10));
+  // Canonical reply enqueue takes this same student-control lock. While it
+  // is held, an empty exact-student outbox cannot gain a racing reply.
+  // Include every pending state regardless of due time or expiry so the
+  // existing path still performs expiration and retry handling.
+  const [pendingPrivateDelivery] = await transactionDb.select({ id: classpilotChatDeliveries.id })
+      .from(classpilotChatDeliveries)
+      .where(and(
+        eq(classpilotChatDeliveries.schoolId, options.schoolId),
+        eq(classpilotChatDeliveries.studentId, options.studentId),
+        inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"])
+      ))
+      .limit(1);
+  const owner = pendingPrivateDelivery
+    ? await getActiveClassOwnerForStudent(
+        options.schoolId,
+        options.studentId,
+        transactionDb
+      )
+    : undefined;
+  const supervision = pendingPrivateDelivery
+    ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
+  const classroomContext = scheduledContextHasClassroomTools(supervision?.context) && await scheduledClassroomBindingCapable(options)
+    ? supervision.context : undefined;
+  const authority = classroomContext ? { supervisionContextId: classroomContext.id }
+    : owner ? { teachingSessionId: owner.session.id } : undefined;
+  const parentCondition = classroomContext
+    ? eq(classpilotChatDeliveries.supervisionContextId, classroomContext.id)
+    : owner ? eq(classpilotChatDeliveries.teachingSessionId, owner.session.id) : sql`false`;
+  const claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
+  if (
+    authority
+    && await hasCurrentClasspilotStudentControlAuthority({
+      schoolId: options.schoolId,
+      studentId: options.studentId,
+      ...authority,
+    }, transactionDb)
+  ) {
+    const channel = await lockPrivateChatChannel({...options,...authority},transactionDb);
+    const lifecycleRequired = channel.required;
+    const [stamped] = await transactionDb.select({id:chatMessages.id}).from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.studentId,options.studentId),authority.teachingSessionId ? eq(chatMessages.sessionId,authority.teachingSessionId) : eq(chatMessages.supervisionContextId,authority.supervisionContextId!),isNotNull(chatMessages.privateChatThreadId))).limit(1);
+    const lifecycle = lifecycleRequired || stamped ? await lockPrivateChatLifecycle({...options,...authority},transactionDb) : null;
+    const capable = channel.enabled && (!lifecycle?.required || await privateChatBindingSupported(options,transactionDb));
+    const now = new Date();
+    await transactionDb
+      .update(classpilotChatDeliveries)
+      .set({ state: "expired", updatedAt: now, lastError: "Class session or delivery window ended" })
+      .where(and(
+        eq(classpilotChatDeliveries.schoolId, options.schoolId),
+        eq(classpilotChatDeliveries.studentId, options.studentId),
+        parentCondition,
+        inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
+        sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
+      ));
+    const due = await transactionDb
+      .select({ delivery: classpilotChatDeliveries, message: chatMessages })
+      .from(classpilotChatDeliveries)
+      .innerJoin(chatMessages, and(
+        eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
+        eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
+        eq(chatMessages.studentId, classpilotChatDeliveries.studentId),
+        sql`${chatMessages.sessionId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.teachingSessionId}`,
+        sql`${chatMessages.supervisionContextId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.supervisionContextId}`
+      ))
+      .where(and(
+        eq(classpilotChatDeliveries.schoolId, options.schoolId),
+        eq(classpilotChatDeliveries.studentId, options.studentId),
+        parentCondition,
+        inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
+        sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
+        gt(classpilotChatDeliveries.expiresAt, now)
+      ))
+      .orderBy(classpilotChatDeliveries.createdAt)
+      .limit(limit)
+      .for("update", { skipLocked: true });
+    for (const row of due) {
+      const messageToken = privateChatMessageLifecycle(row.message);
+      const current = !(await isPrivateChatMessageExpired(row.message.id,options.schoolId,transactionDb)) && (!lifecycle || lifecycle.enabled && (messageToken ? samePrivateChatLifecycle(messageToken,lifecycle.token) : !lifecycle.required && lifecycle.token.threadGeneration === 1 && lifecycle.token.schoolEpoch === 1 && lifecycle.token.activityEpoch === 1));
+      if (!current) {
+        await transactionDb.update(classpilotChatDeliveries).set({state:"expired",updatedAt:now,lastError:"Private chat ended or messaging was switched off"}).where(eq(classpilotChatDeliveries.id,row.delivery.id));
+        continue;
+      }
+      if (!capable) continue;
+      const [delivery] = await transactionDb
+        .update(classpilotChatDeliveries)
+        .set({
+          state: "attempted",
+          attemptCount: sql<number>`${classpilotChatDeliveries.attemptCount} + 1`,
+          lastAttemptAt: now,
+          lastAttemptStudentSessionId: options.studentSessionId,
+          lastAttemptDeviceId: options.deviceId,
+          nextAttemptAt: new Date(now.getTime() + Math.min(5 * 60_000, 30_000 * Math.max(1, row.delivery.attemptCount + 1))),
+          updatedAt: now,
+        })
+        .where(eq(classpilotChatDeliveries.id, row.delivery.id))
+        .returning();
+      await transactionDb.update(chatMessages).set({
+        deviceId: options.deviceId,
+        recipientId: options.deviceId,
+        deliveryStatus: "sent",
+        errorMessage: null,
+      }).where(and(
+        eq(chatMessages.id, row.message.id),
+        ne(chatMessages.deliveryStatus, "delivered")
+      ));
+      if (delivery) {
+        claimed.push({
+          message: {
+            ...row.message,
+            deviceId: options.deviceId,
+            recipientId: options.deviceId,
+          },
+          delivery,
+        });
+      }
+    }
+  }
+
+  return claimed;
+}
 
 /**
  * Linearize an exact-bound student response against student-session transfer.
@@ -19875,7 +20349,13 @@ class ClasspilotTeacherChatBindingLostError extends Error {}
  * materialization and deterministic concurrency tests; delivery is type-bound
  * to remain synchronous while this transaction remains authoritative.
  */
-export async function withClasspilotStudentControlDeliveryAuthority<
+async function runClasspilotControlDeliveryTransaction<T>(
+  heartbeat: boolean, schoolId: string, work: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
+): Promise<T> {
+  return heartbeat ? withHeartbeatPreparedReadTransaction(db, schoolId, work) : db.transaction(work);
+}
+
+async function withClasspilotStudentControlDeliveryAuthorityCore<
   Prepared,
   T extends ClasspilotSynchronousAuthorityResult,
 >(
@@ -19884,11 +20364,25 @@ export async function withClasspilotStudentControlDeliveryAuthority<
   onAuthorized: (
     claimed: ClasspilotClaimedTeacherChatDelivery[],
     prepared: Prepared
-  ) => T
+  ) => T,
+  // Heartbeat-only recovery: failures in optional claim/local delivery must not
+  // fail a valid HTTP response. Presence of this callback requests a best-effort
+  // claim, including when claimTeacherChatDeliveries is also true. Default/WS
+  // callers without it retain their original mandatory claim path.
+  recoverTeacherReplies?: (
+    claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared,
+  ) => ClasspilotSynchronousAuthorityResult,
+  beforeDelivery?: (transactionDb: typeof db, prepared: Prepared) => Promise<boolean>,
 ): Promise<{ authorized: true; value: T } | { authorized: false }> {
-  const limit = Math.max(1, Math.min(20, options.limit ?? 10));
+  let claimReplies = options.claimTeacherChatDeliveries === true || !!recoverTeacherReplies;
+  if (claimReplies) {
+    if (recoverTeacherReplies) {
+      try { await latchPrivateChatLifecycle(options.schoolId); }
+      catch { claimReplies = false; }
+    } else await latchPrivateChatLifecycle(options.schoolId);
+  }
   try {
-    return await db.transaction(async (tx) => {
+    return await runClasspilotControlDeliveryTransaction(!!beforeDelivery, options.schoolId, async (tx) => {
       const transactionDb = tx as unknown as typeof db;
       await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
       await lockClasspilotStudentControlAuthorities(
@@ -19899,97 +20393,50 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         return { authorized: false as const };
       }
-      const owner = options.claimTeacherChatDeliveries
-        ? await getActiveClassOwnerForStudent(
-            options.schoolId,
-            options.studentId,
-            transactionDb
-          )
-        : undefined;
-      const supervision = options.claimTeacherChatDeliveries
-        ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
-      const classroomContext = scheduledContextHasClassroomTools(supervision?.context) && await scheduledClassroomBindingCapable(options)
-        ? supervision.context : undefined;
-      const authority = classroomContext ? { supervisionContextId: classroomContext.id }
-        : owner ? { teachingSessionId: owner.session.id } : undefined;
-      const parentCondition = classroomContext
-        ? eq(classpilotChatDeliveries.supervisionContextId, classroomContext.id)
-        : owner ? eq(classpilotChatDeliveries.teachingSessionId, owner.session.id) : sql`false`;
-      const claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
-      if (
-        authority
-        && await hasCurrentClasspilotStudentControlAuthority({
-          schoolId: options.schoolId,
-          studentId: options.studentId,
-          ...authority,
-        }, transactionDb)
-      ) {
-        const now = new Date();
-        await tx
-          .update(classpilotChatDeliveries)
-          .set({ state: "expired", updatedAt: now, lastError: "Class session or delivery window ended" })
-          .where(and(
-            eq(classpilotChatDeliveries.schoolId, options.schoolId),
-            eq(classpilotChatDeliveries.studentId, options.studentId),
-            parentCondition,
-            inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
-            sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
-          ));
-        const due = await tx
-          .select({ delivery: classpilotChatDeliveries, message: chatMessages })
-          .from(classpilotChatDeliveries)
-          .innerJoin(chatMessages, and(
-            eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
-            eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
-            eq(chatMessages.studentId, classpilotChatDeliveries.studentId),
-            sql`${chatMessages.sessionId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.teachingSessionId}`,
-            sql`${chatMessages.supervisionContextId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.supervisionContextId}`
-          ))
-          .where(and(
-            eq(classpilotChatDeliveries.schoolId, options.schoolId),
-            eq(classpilotChatDeliveries.studentId, options.studentId),
-            parentCondition,
-            inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
-            sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
-            gt(classpilotChatDeliveries.expiresAt, now)
-          ))
-          .orderBy(classpilotChatDeliveries.createdAt)
-          .limit(limit)
-          .for("update", { skipLocked: true });
-        for (const row of due) {
-          const [delivery] = await tx
-            .update(classpilotChatDeliveries)
-            .set({
-              state: "attempted",
-              attemptCount: sql<number>`${classpilotChatDeliveries.attemptCount} + 1`,
-              lastAttemptAt: now,
-              lastAttemptStudentSessionId: options.studentSessionId,
-              lastAttemptDeviceId: options.deviceId,
-              nextAttemptAt: new Date(now.getTime() + Math.min(5 * 60_000, 30_000 * Math.max(1, row.delivery.attemptCount + 1))),
-              updatedAt: now,
-            })
-            .where(eq(classpilotChatDeliveries.id, row.delivery.id))
-            .returning();
-          await tx.update(chatMessages).set({
-            deviceId: options.deviceId,
-            recipientId: options.deviceId,
-            deliveryStatus: "sent",
-            errorMessage: null,
-          }).where(and(
-            eq(chatMessages.id, row.message.id),
-            ne(chatMessages.deliveryStatus, "delivered")
-          ));
-          if (delivery) {
-            claimed.push({
-              message: {
-                ...row.message,
-                deviceId: options.deviceId,
-                recipientId: options.deviceId,
-              },
-              delivery,
-            });
+      // The SSO writer takes its exclusive policy lock before settings FOR
+      // UPDATE. Bootstrap must take the matching shared lock before private
+      // chat takes settings FOR SHARE, or the two transactions can deadlock.
+      // Opt in only on surfaces that already freeze SSO policy for delivery.
+      if (options.freezeSsoPolicy || recoverTeacherReplies) {
+        await lockClasspilotSsoPolicyDeliveryAuthority(options.schoolId, transactionDb);
+      }
+      let claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
+      let prepared: Prepared;
+      if (recoverTeacherReplies) {
+        // Required preparation may perform Focus cleanup. Keep it outside the
+        // optional savepoint so a chat SQL/socket failure cannot undo it.
+        prepared = await prepareAuthorized(transactionDb);
+        if (beforeDelivery) await sealHeartbeatPreparedReads(transactionDb);
+        if (claimReplies) {
+          await tx.execute(sql`SAVEPOINT classpilot_optional_chat_recovery`);
+          let requiredFenceFailed = false;
+          try {
+            claimed = await claimTeacherChatDeliveriesWithAuthorityLocked(options, transactionDb);
+            if (claimed.length > 0) {
+              try {
+                if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
+                  throw new ClasspilotTeacherChatBindingLostError();
+                }
+                if (beforeDelivery) assertHeartbeatPreparedReadsSettled(transactionDb);
+              } catch (error) {
+                requiredFenceFailed = true;
+                throw error;
+              }
+              assertClasspilotSynchronousAuthorityResult(recoverTeacherReplies(claimed, prepared));
+            }
+          } catch (error) {
+            if (requiredFenceFailed) throw error;
+            // PostgreSQL errors abort their subtransaction. Restore it before
+            // any mandatory query; a failed rollback/release must propagate.
+            await tx.execute(sql`ROLLBACK TO SAVEPOINT classpilot_optional_chat_recovery`);
+            claimed = [];
           }
+          await tx.execute(sql`RELEASE SAVEPOINT classpilot_optional_chat_recovery`);
         }
+      } else {
+        if (claimReplies) claimed = await claimTeacherChatDeliveriesWithAuthorityLocked(options, transactionDb);
+        prepared = await prepareAuthorized(transactionDb);
+        if (beforeDelivery) await sealHeartbeatPreparedReads(transactionDb);
       }
 
       // The xact-scoped student-control lock prevents a transfer from
@@ -19997,10 +20444,18 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       // bootstrap callback. If the manual lease expired while chat was being
       // claimed, roll the claim back instead of committing it for a stale
       // binding.
-      const prepared = await prepareAuthorized(transactionDb);
       if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         throw new ClasspilotTeacherChatBindingLostError();
       }
+      // Only the heartbeat wrapper supplies this hook. A publication awaits
+      // transport while these same locks remain held; passage of time still
+      // requires another exact database-clock binding fence before HTTP.
+      if (beforeDelivery) {
+        assertHeartbeatPreparedReadsSettled(transactionDb);
+        await beforeDelivery(transactionDb, prepared);
+        await assertClasspilotHeartbeatDeliveryCurrent(options, transactionDb);
+      }
+      if (beforeDelivery) assertHeartbeatPreparedReadsSettled(transactionDb);
       const value = onAuthorized(claimed, prepared);
       assertClasspilotSynchronousAuthorityResult(value);
       return {
@@ -20014,6 +20469,198 @@ export async function withClasspilotStudentControlDeliveryAuthority<
     }
     throw error;
   }
+}
+
+/** Final heartbeat-only clock fence. Locks already linearize row mutations,
+ * but school/license and manual-session expiry can cross during preparation or
+ * transport. Keep this mandatory check outside every optional savepoint. */
+async function assertClasspilotHeartbeatDeliveryCurrent(
+  options: ClasspilotTeacherChatBinding, transactionDb: typeof db,
+): Promise<void> {
+  const result = await transactionDb.execute<{
+    entitled: boolean; bound: boolean;
+    denialReason: "school_missing" | "school_inactive" | "license_inactive";
+  }>(sql`
+    SELECT ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)} AS entitled,
+      EXISTS (SELECT 1 FROM ${studentSessions}
+        INNER JOIN ${students} ON ${students.id}=${studentSessions.studentId}
+          AND ${students.schoolId}=${options.schoolId} AND ${students.status}='active'
+        INNER JOIN ${devices} ON ${devices.deviceId}=${studentSessions.deviceId}
+          AND ${devices.schoolId}=${options.schoolId}
+        WHERE ${studentSessions.id}=${options.studentSessionId}
+          AND ${studentSessions.studentId}=${options.studentId}
+          AND ${studentSessions.deviceId}=${options.deviceId}
+          AND ${currentStudentSessionAuthorityPredicate()}
+        LIMIT 1 FOR SHARE) AS bound,
+      CASE WHEN NOT EXISTS (SELECT 1 FROM ${schools} WHERE ${schools.id}=${options.schoolId}) THEN 'school_missing'
+        WHEN EXISTS (SELECT 1 FROM ${schools} WHERE ${schools.id}=${options.schoolId}
+          AND ${schools.status}='active' AND ${schools.isActive}=true
+          AND ${schools.disabledAt} IS NULL AND ${schools.deletedAt} IS NULL
+          AND ${schools.planStatus}<>'canceled'
+          AND (${schools.activeUntil} IS NULL OR ${schools.activeUntil}>clock_timestamp())) THEN 'license_inactive'
+        ELSE 'school_inactive' END AS "denialReason"
+  `);
+  const current = result.rows[0];
+  if (!current || current.entitled !== true) {
+    throw Object.assign(new Error("School is not entitled to ClassPilot"), {
+      status: 403, code: "CLASSPILOT_NOT_ENTITLED", reason: current?.denialReason ?? "school_missing",
+    });
+  }
+  if (current.bound !== true) throw new ClasspilotTeacherChatBindingLostError();
+}
+
+export async function withClasspilotStudentControlDeliveryAuthority<
+  Prepared, T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db) => Prepared | Promise<Prepared>,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => T,
+  recoverTeacherReplies?: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => ClasspilotSynchronousAuthorityResult,
+): Promise<{ authorized: true; value: T } | { authorized: false }> {
+  return withClasspilotStudentControlDeliveryAuthorityCore(options, prepareAuthorized, onAuthorized, recoverTeacherReplies);
+}
+
+export type ClasspilotHeartbeatInboxOutcome =
+  | { checked: false }
+  | { checked: true; messages: MessageRecord[] };
+
+export type ClasspilotHeartbeatForegroundOutcome =
+  | { status: "fallback" }
+  | { status: "suppressed" }
+  | { status: "settled"; succeeded: boolean };
+
+/** Heartbeat-only reuse of a raw authority proof read by this transaction.
+ * No caller-supplied projection or public serialized state can grant access.
+ * The route may use the supplied reader for its required screenshot policy;
+ * unsupported/legacy proofs retain the old publisher after the lease ends. */
+export async function withClasspilotHeartbeatDeliveryAuthority<
+  Prepared, T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db, readScreenshotAuthority: () => Promise<ClasspilotScreenshotAuthorityProjection | undefined>) => Prepared | Promise<Prepared>,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared, inbox: ClasspilotHeartbeatInboxOutcome) => T,
+  recoverTeacherReplies?: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => ClasspilotSynchronousAuthorityResult,
+  foreground?: {
+    teachingSessionId: string;
+    controlRevision: number;
+    publish: () => Promise<void>;
+    onFailure: () => void;
+  },
+  inboxRequest?: { excludeMessageIds?: string[] },
+): Promise<({ authorized: true; value: T } | { authorized: false }) & { foreground: ClasspilotHeartbeatForegroundOutcome }> {
+  options = { ...options };
+  foreground = foreground ? { ...foreground } : undefined;
+  const inboxExclusions = inboxRequest
+    ? normalizeClasspilotPendingMessageExclusions(inboxRequest.excludeMessageIds) : undefined;
+  let inbox: ClasspilotHeartbeatInboxOutcome = { checked: false };
+  let projection: ClasspilotScreenshotAuthorityProjection | undefined;
+  let outcome: ClasspilotHeartbeatForegroundOutcome = { status: "fallback" };
+  const result = await withClasspilotStudentControlDeliveryAuthorityCore(options,
+    async transactionDb => {
+      let preparing = true;
+      const pendingReads = new Set<Promise<ClasspilotScreenshotAuthorityProjection | undefined>>();
+      try {
+        return await prepareAuthorized(transactionDb, () => {
+          const read = trackHeartbeatPreparedReadTask(transactionDb, async () => {
+            if (!preparing) throw new Error("Heartbeat authority reader used after preparation");
+            const current = await getClasspilotScreenshotAuthorityProjection(options, transactionDb);
+            if (!preparing) throw new Error("Heartbeat authority read outlived preparation");
+            // Copy just the internal grant. The caller receives the original projection
+            // for policy materialization and cannot mutate the retained grant.
+            projection = current ? { ...current, authority: { ...current.authority } } : undefined;
+            return current;
+          });
+          pendingReads.add(read);
+          void read.then(() => pendingReads.delete(read), () => pendingReads.delete(read));
+          return read;
+        });
+      } finally {
+        preparing = false;
+        // Own even a mistakenly unawaited reader through all of its SQL. It
+        // cannot grant publication or outlive this transaction's cleanup.
+        await Promise.allSettled(pendingReads);
+      }
+    }, (claimed, prepared) => onAuthorized(claimed, prepared, inbox), recoverTeacherReplies, async transactionDb => {
+      const publishForeground = async (): Promise<boolean> => {
+        if (!foreground || !Number.isSafeInteger(foreground.controlRevision)
+          || projection?.authority.kind !== "teaching_session"
+          || projection.authority.teachingSessionId !== foreground.teachingSessionId
+          || projection.authority.controlRevision !== foreground.controlRevision) return false;
+
+        // Required Focus preparation and private recovery are already complete.
+        // An optional SQL failure must restore its subtransaction before the core
+        // performs the mandatory final binding check; cleanup failures propagate.
+        outcome = { status: "settled", succeeded: false };
+        await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_foreground`);
+        try {
+          const current = await transactionDb.execute(sql`
+            SELECT 1 AS allowed
+            FROM ${classpilotStudentControlStates} control
+            INNER JOIN ${teachingSessions} teaching ON teaching.id=control.teaching_session_id
+              AND teaching.school_id=${options.schoolId}
+            WHERE control.school_id=${options.schoolId} AND control.student_id=${options.studentId}
+              AND control.teaching_session_id=${foreground.teachingSessionId}
+              AND control.revision=${foreground.controlRevision} AND control.supervision_context_id IS NULL
+              AND control.hard_expires_at>clock_timestamp()
+              AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>clock_timestamp())
+              AND teaching.session_mode='live' AND teaching.end_time IS NULL
+              AND teaching.roster_snapshot_completed_at IS NOT NULL
+              AND (teaching.scheduled_end_at IS NULL OR teaching.scheduled_end_at>clock_timestamp())
+              AND ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)}
+              AND EXISTS (
+                SELECT 1 FROM ${studentSessions}
+                WHERE ${studentSessions.id}=${options.studentSessionId}
+                  AND ${studentSessions.studentId}=${options.studentId}
+                  AND ${studentSessions.deviceId}=${options.deviceId}
+                  AND ${currentStudentSessionAuthorityPredicate()}
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM ${classpilotSupervisionStudents} assigned
+                INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assigned.context_id
+                  AND context.school_id=${options.schoolId} AND context.status='active'
+                  AND context.starts_at<=clock_timestamp() AND context.ends_at>clock_timestamp()
+                WHERE assigned.school_id=${options.schoolId} AND assigned.student_id=${options.studentId}
+                  AND assigned.released_at IS NULL
+              ) LIMIT 1
+          `);
+          if (current.rows.length !== 1) outcome = { status: "suppressed" };
+          else {
+            // Redis and local delivery keep their existing bounded ordered path.
+            // A partial send is terminal: no later fallback can duplicate it.
+            assertHeartbeatPreparedReadsSettled(transactionDb);
+            await foreground.publish();
+            outcome = { status: "settled", succeeded: true };
+          }
+        } catch {
+          await transactionDb.execute(sql`ROLLBACK TO SAVEPOINT classpilot_heartbeat_foreground`);
+          foreground.onFailure();
+        }
+        await transactionDb.execute(sql`RELEASE SAVEPOINT classpilot_heartbeat_foreground`);
+        return true;
+      };
+      const attemptedForeground = await publishForeground();
+      // Inbox eligibility is read after all awaited foreground transport. The
+      // heartbeat-only clock sees supervision/expiry changes since BEGIN.
+      if (inboxExclusions !== undefined) {
+        recordUsageCapacityCounter("heartbeatInboxChecks", "heartbeat_final_delivery");
+        await transactionDb.execute(sql`SAVEPOINT classpilot_heartbeat_inbox`);
+        try {
+          const messages = await getPendingMessagesForStudentWithAuthorityLocked(
+            { ...options, excludeMessageIds: inboxExclusions }, transactionDb, "current",
+          );
+          inbox = { checked: true, messages };
+        } catch {
+          recordUsageCapacityCounter("heartbeatOptionalInboxFailures", "heartbeat_final_delivery");
+          await transactionDb.execute(sql`ROLLBACK TO SAVEPOINT classpilot_heartbeat_inbox`);
+          inbox = { checked: false };
+        }
+        await transactionDb.execute(sql`RELEASE SAVEPOINT classpilot_heartbeat_inbox`);
+      }
+      // The private core now performs its mandatory school/license and exact
+      // binding clock fence before synchronously delivering the HTTP payload.
+      return attemptedForeground;
+    });
+  return { ...result, foreground: result.authorized ? outcome : { status: "suppressed" } };
 }
 
 export async function withClasspilotStudentWebSocketBootstrapAuthority<
@@ -20576,15 +21223,21 @@ function frozenClasspilotCommandTargetResult(
     : {};
   const freezesExactTabAuthority = commandData.commandType === "close-tabs"
     && Array.isArray(commandPayload.tabsToClose);
+  const freezesFocusAuthority = ["activate-tab", "focus-tab"].includes(commandData.commandType)
+    || (commandData.commandType === "open-tab" && commandPayload.focusAfterOpen === true);
   const freezesDurableMessageAuthority = commandData.commandType === "teacher-message";
   const freezesScheduledAuthority = !!commandData.supervisionContextId && ["timer", "poll", "lesson-activity", "student-sign-out"].includes(commandData.commandType);
   const freezesCurrentPageAuthority = commandData.commandType === "lock-screen"
     && commandPayload.currentPage === true;
+  const freezesLessonAuthority = (commandData.commandType === "apply-flight-path" && typeof commandPayload.expectedFlightPathUpdatedAt === "string")
+    || (commandData.commandType === "open-tab" && typeof commandPayload.afterRestrictionCommandId === "string");
   if (
     !freezesExactTabAuthority
+    && !freezesFocusAuthority
     && !freezesDurableMessageAuthority
     && !freezesCurrentPageAuthority
     && !freezesScheduledAuthority
+    && !freezesLessonAuthority
   ) return target.result;
   return {
     ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
@@ -20595,9 +21248,11 @@ function frozenClasspilotCommandTargetResult(
       : {}),
     ...(freezesScheduledAuthority ? { scheduledAuthorityRevision: controlRevision,
       ...(classroomAuthorityRevision !== undefined ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}) } : {}),
-    ...(freezesExactTabAuthority || freezesCurrentPageAuthority
+    ...(freezesExactTabAuthority || freezesCurrentPageAuthority || freezesFocusAuthority || freezesLessonAuthority
       ? { frozenControlRevision: controlRevision }
       : {}),
+    ...((freezesFocusAuthority || freezesLessonAuthority) && classroomAuthorityRevision !== undefined
+      ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}),
   };
 }
 
@@ -20607,6 +21262,11 @@ const classpilotCommandAuthorityResultKeys = [
   "durableAuthorityRevision",
   "scheduledAuthorityRevision",
   "scheduledContextAuthorityRevision",
+  "focusOpenIntentV1",
+  "focusExactAuthorityV1",
+  "focusAssignmentV1",
+  "focusStatusV1",
+  "focusCleanupV1",
 ] as const;
 
 /**
@@ -20639,6 +21299,9 @@ function classpilotCommandAckResult(
   const hasFrozenAuthority = Object.keys(frozenAuthority).length > 0;
   if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
     const sanitized = { ...(candidate as Record<string, unknown>) };
+    // This public status is reserved for server projection of the immutable
+    // continuation intent; extension ACKs cannot invent a child receipt.
+    delete sanitized.followUp;
     for (const key of classpilotCommandAuthorityResultKeys) delete sanitized[key];
     return hasFrozenAuthority ? { ...sanitized, ...frozenAuthority } : sanitized;
   }
@@ -20942,6 +21605,30 @@ export async function createClasspilotCommandWithTargets(
       };
     }
 
+    const lessonPayload = commandData.commandPayload as Record<string, unknown>;
+    if (commandData.commandType === "apply-flight-path" && typeof lessonPayload.expectedFlightPathUpdatedAt === "string") {
+      const [path] = await tx.select().from(flightPaths).where(and(eq(flightPaths.id, String(lessonPayload.flightPathId)),
+        eq(flightPaths.schoolId, commandData.schoolId))).limit(1).for("update");
+      const { flightPathReviewedInstantMatches } = await import("./classpilotLessonPrerequisites.js");
+      const { isSharedTeachingResourcesEnabled } = await import("../config/sharedTeachingResources.js");
+      if (!path || (path.teacherId !== commandData.teacherId && !(isSharedTeachingResourcesEnabled(commandData.schoolId)
+        && (path.visibility === "school" || path.official)))) throw Object.assign(new Error("Flight Path not found"), { status: 404 });
+      if (!flightPathReviewedInstantMatches(path.updatedAt, lessonPayload.expectedFlightPathUpdatedAt))
+        throw Object.assign(new Error("Flight Path changed since review; review its boundaries again"), { status: 409, code: "FLIGHT_PATH_REVIEW_STALE", expose: true });
+      const { classpilotFlightPathApplyPayload } = await import("./classpilotPreciseRestrictions.js");
+      commandData = { ...commandData, commandPayload: { ...classpilotFlightPathApplyPayload({ schoolId: commandData.schoolId, flightPath: path }),
+        expectedFlightPathUpdatedAt: lessonPayload.expectedFlightPathUpdatedAt } };
+    }
+    if (commandData.commandType === "open-tab" && typeof lessonPayload.afterRestrictionCommandId === "string") {
+      const { classpilotRestrictionPrerequisiteCurrent } = await import("./classpilotLessonPrerequisites.js");
+      const checked: InsertClasspilotCommandTarget[] = [];
+      for (const target of authoritativeTargets) checked.push(await classpilotRestrictionPrerequisiteCurrent(tx as unknown as typeof db,
+        commandData, target, lessonPayload.afterRestrictionCommandId, classroomContext ? String(classroomContext.classroomAuthorityRevision) : undefined)
+        ? target : { ...target, status: "unavailable", errorMessage: "LESSON_RESTRICTION_PREREQUISITE_STALE" });
+      authoritativeTargets = checked;
+      commandData = { ...commandData, unavailableCount: checked.filter(target => target.status === "unavailable").length };
+    }
+
     if (options.routineReservation) {
       const { prepareRoutineCommand } = await import("./classpilotToolsRoutines.js");
       commandData = await prepareRoutineCommand(tx as unknown as typeof db, commandData, options.routineReservation, authoritativeTargets);
@@ -20986,12 +21673,18 @@ export async function createClasspilotCommandWithTargets(
       .returning();
     if (!command) throw new Error("Failed to create ClassPilot command");
 
-    const targets = authoritativeTargets.length > 0
+    let targets = authoritativeTargets.length > 0
       ? await tx
           .insert(classpilotCommandTargets)
           .values(authoritativeTargets.map((target) => ({ ...target, commandId: command.id })))
           .returning()
       : [];
+
+    if (["activate-tab", "focus-tab", "stop-focus"].includes(command.commandType)
+      || (command.commandType === "open-tab" && (command.commandPayload as Record<string, unknown>).focusAfterOpen === true)) {
+      const { persistClasspilotFocusCommand } = await import("./classpilotFocusPersistence.js");
+      targets = await persistClasspilotFocusCommand(tx as unknown as typeof db, command, targets);
+    }
 
     if (!options.routineReservation?.replayCommandId) await persistToolsCommand(tx as unknown as typeof db, command);
     if (options.routineReservation) {
@@ -21383,11 +22076,28 @@ export async function expireClasspilotTransientCommandTargets(
   const now = options.now || new Date();
   const commandConditions: SQL[] = [
     isNotNull(classpilotCommands.expiresAt),
-    sql`${classpilotCommands.expiresAt} <= ${now}`,
+    lte(classpilotCommands.expiresAt, now),
   ];
   if (options.commandId) commandConditions.push(eq(classpilotCommands.id, options.commandId));
   if (options.schoolId) commandConditions.push(eq(classpilotCommands.schoolId, options.schoolId));
   if (options.teacherId) commandConditions.push(eq(classpilotCommands.teacherId, options.teacherId));
+
+  // Receipt milestones do not extend the server-owned continuation deadline.
+  // This conditional update rechecks pending after any competing target-row
+  // lock, preserving a child assignment already committed by the ACK path.
+  await dbInstance.update(classpilotCommandTargets).set({
+    result: sql`jsonb_set(jsonb_set(${classpilotCommandTargets.result},
+      '{focusOpenIntentV1,state}', '"expired"'::jsonb),
+      '{focusOpenIntentV1,errorCode}', '"FOCUS_RECEIPT_EXPIRED"'::jsonb)`,
+    updatedAt: now,
+  }).where(and(
+    sql`${classpilotCommandTargets.result}->'focusOpenIntentV1'->>'state' = 'pending'`,
+    exists(dbInstance.select({ one: sql`1` }).from(classpilotCommands).where(and(
+      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
+      eq(classpilotCommands.schoolId, classpilotCommandTargets.schoolId),
+      ...commandConditions,
+    ))),
+  ));
 
   const dueCommands = await dbInstance
     .selectDistinct({ id: classpilotCommands.id })
@@ -21463,6 +22173,7 @@ export type ClasspilotCommandAckOptions = {
   errorMessage?: string | null;
   controlRevision?: number;
   appliedAuthPolicyRevision?: number;
+  acceptedCapabilities?: readonly string[];
   now?: Date;
 };
 
@@ -21481,6 +22192,7 @@ export async function persistClasspilotCommandTargetAck(
     const [binding] = await tx
       .select({
         target: getTableColumns(classpilotCommandTargets),
+        command: getTableColumns(classpilotCommands),
         commandExpiresAt: classpilotCommands.expiresAt,
         commandType: classpilotCommands.commandType,
         commandPayload: classpilotCommands.commandPayload,
@@ -21544,6 +22256,7 @@ export async function persistClasspilotCommandTargetAck(
       : {};
     const transientCurrentPage = binding.commandType === "lock-screen"
       && commandPayload.currentPage === true;
+    const focusExactCommand = ["activate-tab", "focus-tab", "stop-focus"].includes(binding.commandType);
     const frozenControlRevision = Number.isSafeInteger(frozenResult.frozenControlRevision)
       ? Number(frozenResult.frozenControlRevision)
       : undefined;
@@ -21624,6 +22337,14 @@ export async function persistClasspilotCommandTargetAck(
           target,
         };
       }
+    }
+    if (focusExactCommand && (frozenControlRevision === undefined
+      || options.controlRevision !== frozenControlRevision
+      || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId,
+        studentId: options.studentId, teachingSessionId: binding.commandTeachingSessionId,
+        supervisionContextId: binding.commandSupervisionContextId, ownershipRevision: frozenControlRevision }, transactionDb)))) {
+      return { disposition: "terminal_rejected" as const, retryable: false as const,
+        code: "COMMAND_ACK_BINDING_MISMATCH" as const, target };
     }
     if (target.status === "unavailable") {
       return {
@@ -21863,12 +22584,37 @@ export async function persistClasspilotCommandTargetAck(
     }
     if (options.ackState === "failed") update.failedAt = now;
 
+    if (binding.commandType === "open-tab" && options.ackState === "completed") {
+      const { consumeClasspilotFocusOpenReceipt } = await import("./classpilotFocusPersistence.js");
+      const continuation = await consumeClasspilotFocusOpenReceipt(transactionDb, binding.command, target, {
+        result: options.result, controlRevision: options.controlRevision,
+        acceptedCapabilities: options.acceptedCapabilities ?? [], now: options.now || new Date(),
+      });
+      if (continuation) update.result = { ...(update.result as Record<string, unknown>),
+        focusOpenIntentV1: continuation.focusOpenIntentV1 };
+    } else if (binding.commandType === "open-tab" && options.ackState === "failed") {
+      const intent = readFocusOpenIntent(target.result);
+      if (intent?.state === "pending") update.result = { ...focusRecord(update.result), focusOpenIntentV1: { ...intent,
+        state: "refused", errorCode: "FOCUS_OPEN_FAILED" } };
+    }
+
     const [updatedTarget] = await tx
       .update(classpilotCommandTargets)
       .set(update)
       .where(eq(classpilotCommandTargets.id, target.id))
       .returning();
     if (!updatedTarget) throw new Error("Failed to persist ClassPilot command ACK");
+    if (binding.commandType === "stop-focus" && options.ackState === "completed") {
+      // A bare cleanup ACK reports only Focus. It must not mark the withheld
+      // non-Focus snapshot applied or change its independent enforcement health.
+      await tx.update(classpilotStudentControlStates).set({
+        desiredState: sql`jsonb_set(${classpilotStudentControlStates.desiredState},
+          '{focusStatusV1}', '{"state":"inactive"}'::jsonb)`, updatedAt: now,
+      }).where(and(eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        eq(classpilotStudentControlStates.studentId, options.studentId),
+        eq(classpilotStudentControlStates.revision, options.controlRevision!),
+        sql`coalesce(${classpilotStudentControlStates.desiredState}->'restrictions'->'focus'->>'active','false') <> 'true'`));
+    }
     return {
       disposition: "applied" as const,
       retryable: false as const,
@@ -22007,7 +22753,7 @@ export type ClasspilotControlEnforcementHealth =
 export async function lockClasspilotStudentControlAuthorities(
   schoolId: string,
   studentIds: readonly string[],
-  dbInstance: typeof db = db
+  dbInstance: Pick<typeof db, "execute"> = db
 ): Promise<string[]> {
   const normalized = [...new Set(studentIds.map(String).map((id) => id.trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
@@ -22028,6 +22774,16 @@ export async function hasCurrentClasspilotStudentControlAuthority(options: {
   supervisionContextId?: string | null;
   ownershipRevision?: number;
 }, dbInstance: typeof db = db): Promise<boolean> {
+  return hasCurrentClasspilotStudentControlAuthorityAtClock(options, dbInstance, "transaction");
+}
+
+async function hasCurrentClasspilotStudentControlAuthorityAtClock(options: {
+  schoolId: string;
+  studentId: string;
+  teachingSessionId?: string | null;
+  supervisionContextId?: string | null;
+  ownershipRevision?: number;
+}, dbInstance: typeof db, clock: ClasspilotAuthorityClock): Promise<boolean> {
   const hasTeachingAuthority = !!options.teachingSessionId;
   const hasSupervisionAuthority = !!options.supervisionContextId;
   if (hasTeachingAuthority === hasSupervisionAuthority) return false;
@@ -22054,10 +22810,11 @@ export async function hasCurrentClasspilotStudentControlAuthority(options: {
       controlState.teachingSessionId !== options.teachingSessionId
       || controlState.supervisionContextId !== null
     ) return false;
-    const supervision = await getActiveSupervisionForStudents(
+    const supervision = await getActiveSupervisionForStudentsAtClock(
       options.schoolId,
       [options.studentId],
-      dbInstance
+      dbInstance,
+      clock
     );
     if (supervision.length > 0) return false;
     const owner = await getActiveClassOwnerForStudent(
@@ -22071,10 +22828,11 @@ export async function hasCurrentClasspilotStudentControlAuthority(options: {
     controlState.supervisionContextId !== options.supervisionContextId
     || controlState.teachingSessionId !== null
   ) return false;
-  const supervision = await getActiveSupervisionForStudents(
+  const supervision = await getActiveSupervisionForStudentsAtClock(
     options.schoolId,
     [options.studentId],
-    dbInstance
+    dbInstance,
+    clock
   );
   return supervision.some((entry) => entry.context.id === options.supervisionContextId);
 }
@@ -22433,7 +23191,7 @@ export async function replaceClasspilotStudentControlSnapshots(
 
     const rows: ClasspilotStudentControlState[] = [];
     for (const studentId of authorizedStudentIds) {
-      const desiredState = assertDesiredControlState(
+      let desiredState = assertDesiredControlState(
         typeof options.desiredState === "function"
           ? options.desiredState(
               studentId,
@@ -22446,6 +23204,12 @@ export async function replaceClasspilotStudentControlSnapshots(
       // stored command id, but only while the row already belongs to this
       // class, so an ownership change never inherits another session's origin.
       const currentSnapshot = currentByStudent.get(studentId);
+      if (currentSnapshot?.teachingSessionId !== options.teachingSessionId
+        || currentSnapshot.supervisionContextId !== null) {
+        desiredState = withoutClasspilotFocus(desiredState);
+        const { cancelClasspilotFocusOpenIntents } = await import("./classpilotFocusPersistence.js");
+        await cancelClasspilotFocusOpenIntents(transactionDb, options.schoolId, [studentId]);
+      }
       const sourceCommandId = options.preserveSourceCommandId
         && currentSnapshot?.teachingSessionId === options.teachingSessionId
         ? currentSnapshot.sourceCommandId
@@ -22708,11 +23472,20 @@ export async function replaceClasspilotSupervisionControlSnapshots(
     const currentByStudent = new Map(currentStates.map((state) => [state.studentId, state]));
     const rows: ClasspilotStudentControlState[] = [];
     for (const studentId of studentIds) {
-      const desiredState = assertDesiredControlState(
+      let desiredState = assertDesiredControlState(
         typeof options.desiredState === "function"
           ? options.desiredState(studentId, currentByStudent.get(studentId) || null)
           : options.desiredState
       );
+      const currentSnapshot = currentByStudent.get(studentId);
+      const focusAssignment = readFocusAssignment(desiredState) || readFocusCleanup(desiredState);
+      if (currentSnapshot?.supervisionContextId !== options.supervisionContextId
+        || currentSnapshot.teachingSessionId !== null
+        || (focusAssignment && focusAssignment.contextAuthorityRevision !== String(context.classroomAuthorityRevision))) {
+        desiredState = withoutClasspilotFocus(desiredState);
+        const { cancelClasspilotFocusOpenIntents } = await import("./classpilotFocusPersistence.js");
+        await cancelClasspilotFocusOpenIntents(transactionDb, options.schoolId, [studentId]);
+      }
       const [row] = await tx
         .insert(classpilotStudentControlStates)
         .values({
@@ -22791,7 +23564,7 @@ export async function initializeClasspilotSupervisionControlStates(
         ? {
             restorableClassState: {
               teachingSessionId: current.teachingSessionId,
-              desiredState: current.desiredState,
+              desiredState: withoutClasspilotFocus(current.desiredState),
               sourceCommandId: current.sourceCommandId,
             },
           }
@@ -22877,7 +23650,7 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
           schoolId: options.schoolId,
           teachingSessionId: owner.session.id,
           studentIds: [studentId],
-          desiredState: restoredDesiredState,
+          desiredState: withoutClasspilotFocus(restoredDesiredState),
           sourceCommandId: restorable?.sourceCommandId || null,
           scheduledEndAt,
           hardExpiresAt,
@@ -22939,6 +23712,9 @@ export async function clearClasspilotStudentControlStatesForSession(
 
     const studentIds = roster.map((row) => row.studentId);
     await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const { cancelClasspilotFocusOpenIntents } = await import("./classpilotFocusPersistence.js");
+    await cancelClasspilotFocusOpenIntents(transactionDb, options.schoolId, studentIds,
+      { teachingSessionId: options.teachingSessionId, supervisionContextId: null });
     const cleared = await tx
       .update(classpilotStudentControlStates)
       .set({
@@ -23005,6 +23781,57 @@ export async function getClasspilotStudentControlState(
     ))
     .limit(1);
   return state;
+}
+
+
+/**
+ * Fresh final-delivery read after the caller has acquired student-control and
+ * SSO authority locks. Those earlier lock statements must remain separate so
+ * this projection sees changes committed while acquisition was waiting.
+ * Missing control/settings rows retain their independent existing defaults.
+ */
+export async function getClasspilotStudentControlDeliveryContext(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute"> = db,
+): Promise<{
+  controlState: ClasspilotStudentControlState | undefined;
+  ssoPolicy: ClasspilotSsoPolicyRecord;
+}> {
+  const result = await dbInstance.execute<Omit<HeartbeatPersistenceContextRow,
+    "heartbeatSchoolStatus" | "heartbeatSchoolPlanStatus" | "heartbeatSchoolDomain">>(sql`
+    SELECT control.id, control.school_id AS "schoolId", control.student_id AS "studentId",
+      control.teaching_session_id AS "teachingSessionId",
+      control.supervision_context_id AS "supervisionContextId", control.revision,
+      control.desired_state AS "desiredState", control.source_command_id AS "sourceCommandId",
+      control.scheduled_end_at AS "scheduledEndAt", control.hard_expires_at AS "hardExpiresAt",
+      control.enforcement_health AS "enforcementHealth", control.applied_revision AS "appliedRevision",
+      control.last_outcome AS "lastOutcome", control.last_error AS "lastError",
+      control.last_acknowledged_at AS "lastAcknowledgedAt",
+      control.created_at AS "createdAt", control.updated_at AS "updatedAt",
+      policy.classpilot_sso_policy AS "classpilotSsoPolicy",
+      policy.classpilot_sso_policy_revision AS "classpilotSsoPolicyRevision"
+    FROM (SELECT 1) anchor
+    LEFT JOIN classpilot_student_control_states AS control
+      ON control.school_id = ${schoolId} AND control.student_id = ${studentId}
+    LEFT JOIN settings AS policy ON policy.school_id = ${schoolId}
+    LIMIT 1
+  `);
+  const row = result.rows[0];
+  const control = classpilotStudentControlStates;
+  const controlState = row && row.id !== null ? {
+    id: row.id, schoolId: row.schoolId, studentId: row.studentId,
+    teachingSessionId: row.teachingSessionId, supervisionContextId: row.supervisionContextId,
+    revision: row.revision, desiredState: row.desiredState, sourceCommandId: row.sourceCommandId,
+    scheduledEndAt: row.scheduledEndAt === null ? null : decodeHeartbeatControlTimestamp(control.scheduledEndAt, row.scheduledEndAt),
+    hardExpiresAt: row.hardExpiresAt === null ? null : decodeHeartbeatControlTimestamp(control.hardExpiresAt, row.hardExpiresAt),
+    enforcementHealth: row.enforcementHealth, appliedRevision: row.appliedRevision,
+    lastOutcome: row.lastOutcome, lastError: row.lastError,
+    lastAcknowledgedAt: row.lastAcknowledgedAt === null ? null : decodeHeartbeatControlTimestamp(control.lastAcknowledgedAt, row.lastAcknowledgedAt),
+    createdAt: decodeHeartbeatControlTimestamp(control.createdAt, row.createdAt),
+    updatedAt: decodeHeartbeatControlTimestamp(control.updatedAt, row.updatedAt),
+  } : undefined;
+  return { controlState, ssoPolicy: classpilotSsoPolicyFromSettings(row) };
 }
 
 export async function getClasspilotStudentControlStates(
@@ -23081,6 +23908,7 @@ export async function acknowledgeClasspilotStudentControlState(
     error?: string | null;
     acknowledgedAt?: Date;
     acceptedCapabilities?: readonly string[];
+    focusStatus?: unknown;
   },
   dbInstance: typeof db = db
 ): Promise<ClasspilotStudentControlState | undefined> {
@@ -23107,6 +23935,30 @@ export async function acknowledgeClasspilotStudentControlState(
       .limit(1)
       .for("update");
     if (!current) return undefined;
+    const focus = readFocusRestriction(focusRecord(current.desiredState).restrictions);
+    const focusAssignment = readFocusAssignment(current.desiredState);
+    const focusStatus = focusStatusSchema.safeParse(options.focusStatus);
+    if (focus?.active) {
+      if (!focusAssignment || !focusAssignmentMatches({ assignment: focusAssignment,
+        schoolId: options.schoolId, studentId: options.studentId,
+        studentSessionId: options.studentSessionId, deviceId: options.deviceId,
+        teachingSessionId: current.teachingSessionId, supervisionContextId: current.supervisionContextId })
+        || !(await hasExactClasspilotTelemetryBinding(options, transactionDb))
+        || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId,
+          studentId: options.studentId, teachingSessionId: current.teachingSessionId,
+          supervisionContextId: current.supervisionContextId }, transactionDb))
+        || !focusStatus.success || focusStatus.data.state === "inactive"
+        || focusStatus.data.assignmentId !== focus.assignmentId) return undefined;
+      if (focusStatus.data.state === "invalidated") {
+        const cleaned = withoutClasspilotFocus(current.desiredState);
+        const [retired] = await tx.update(classpilotStudentControlStates).set({ desiredState: cleaned,
+          revision: current.revision + 1, appliedRevision: null, enforcementHealth: "pending",
+          lastOutcome: null, lastError: null, lastAcknowledgedAt: null, updatedAt: acknowledgedAt,
+        }).where(and(eq(classpilotStudentControlStates.id, current.id),
+          eq(classpilotStudentControlStates.revision, options.appliedRevision))).returning();
+        return retired;
+      }
+    } else if (focusStatus.success && focusStatus.data.state !== "inactive") return undefined;
     const deferred = readClasspilotLateSignInDeliveryProvenance(current.desiredState);
     if (
       deferred
@@ -23173,7 +24025,7 @@ export async function acknowledgeClasspilotStudentControlState(
         return undefined;
       }
     }
-    const desiredState = deferred && options.outcome === "applied"
+    let desiredState = deferred && options.outcome === "applied"
       ? recordClasspilotLateSignInAppliedBinding({
           desiredState: current.desiredState,
           binding: {
@@ -23186,6 +24038,7 @@ export async function acknowledgeClasspilotStudentControlState(
           appliedAt: acknowledgedAt,
         })
       : current.desiredState;
+    if (focusStatus.success) desiredState = { ...focusRecord(desiredState), focusStatusV1: focusStatus.data };
     const [state] = await tx
       .update(classpilotStudentControlStates)
       .set({
@@ -23261,11 +24114,11 @@ export async function acknowledgeClasspilotStudentControlState(
         receivedAt: sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${acknowledgedAt})`,
         ...(applied ? { completedAt: acknowledgedAt } : {}),
         ...(!applied && !expired ? { failedAt: acknowledgedAt } : {}),
-        result: {
+        result: classpilotCommandAckResult(origin.target.result, {
           classroomStateRevision: state.revision,
           outcome: options.outcome,
           reconciliation: true,
-        },
+        }, false),
         errorMessage: applied ? null : options.error?.slice(0, 500) || `Classroom state ${options.outcome}`,
         updatedAt: acknowledgedAt,
       })
@@ -23590,14 +24443,20 @@ export type CoverageScopeGroupWithMembers = ClasspilotCoverageScopeGroup & {
   members: (ClasspilotCoverageScopeGroupMember & { student: Student })[];
 };
 
-function activeSupervisionCondition(schoolId: string) {
+type ClasspilotAuthorityClock = "transaction" | "current";
+
+function classpilotAuthorityClockSql(clock: ClasspilotAuthorityClock): SQL {
+  return clock === "current" ? sql`clock_timestamp()` : sql`now()`;
+}
+
+function activeSupervisionCondition(schoolId: string, clock: ClasspilotAuthorityClock = "transaction") {
   return and(
     eq(classpilotSupervisionStudents.schoolId, schoolId),
     isNull(classpilotSupervisionStudents.releasedAt),
     eq(classpilotSupervisionContexts.schoolId, schoolId),
     eq(classpilotSupervisionContexts.status, "active"),
-    sql`${classpilotSupervisionContexts.startsAt} <= now()`,
-    sql`${classpilotSupervisionContexts.endsAt} > now()`
+    sql`${classpilotSupervisionContexts.startsAt} <= ${classpilotAuthorityClockSql(clock)}`,
+    sql`${classpilotSupervisionContexts.endsAt} > ${classpilotAuthorityClockSql(clock)}`
   );
 }
 
@@ -24121,6 +24980,15 @@ export async function getActiveSupervisionForStudents(
   studentIds: string[],
   dbInstance: typeof db = db
 ): Promise<ActiveStudentSupervision[]> {
+  return getActiveSupervisionForStudentsAtClock(schoolId, studentIds, dbInstance, "transaction");
+}
+
+async function getActiveSupervisionForStudentsAtClock(
+  schoolId: string,
+  studentIds: string[],
+  dbInstance: typeof db,
+  clock: ClasspilotAuthorityClock
+): Promise<ActiveStudentSupervision[]> {
   if (studentIds.length === 0) return [];
   const rows = await dbInstance
     .select({
@@ -24142,7 +25010,7 @@ export async function getActiveSupervisionForStudents(
     )
     .where(
       and(
-        activeSupervisionCondition(schoolId),
+        activeSupervisionCondition(schoolId, clock),
         inArray(classpilotSupervisionStudents.studentId, studentIds)
       )
     );
@@ -24214,21 +25082,21 @@ async function hasExactClasspilotTelemetryBinding(
       .where(and(...bindingConditions))
       .limit(1)
       .for("share")
-    : await dbInstance
-      .select({ id: studentSessions.id })
-      .from(studentSessions)
-      .innerJoin(students, and(
-        eq(students.id, studentSessions.studentId),
-        eq(students.schoolId, options.schoolId),
-        eq(students.status, "active")
-      ))
-      .innerJoin(devices, and(
-        eq(devices.deviceId, studentSessions.deviceId),
-        eq(devices.schoolId, options.schoolId)
-      ))
-      .where(and(...bindingConditions))
-      .limit(1)
-      .for("share");
+    : (await dbInstance.execute<{ id: string }>(sql`
+      SELECT "student_sessions"."id"
+      FROM "student_sessions"
+      INNER JOIN "students" ON (
+        "students"."id" = "student_sessions"."student_id"
+        AND "students"."school_id" = ${options.schoolId}
+        AND "students"."status" = ${"active"}
+      )
+      INNER JOIN "devices" ON (
+        "devices"."device_id" = "student_sessions"."device_id"
+        AND "devices"."school_id" = ${options.schoolId}
+      )
+      WHERE ${and(...bindingConditions)}
+      LIMIT ${1} FOR SHARE
+    `)).rows;
   if (!binding) return false;
   if (!options.allowEndedBinding) return true;
 
@@ -24434,49 +25302,26 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
   studentSessionId: string;
   deviceId: string;
 }, dbInstance: typeof db = db): Promise<ClasspilotScreenshotAuthorityProjection | undefined> {
-  const [session] = await dbInstance
-    .select({
-      id: studentSessions.id,
-      startedAt: studentSessions.startedAt,
-      authKind: studentSessions.authKind,
-      manualLeaseExpiresAt: studentSessions.manualLeaseExpiresAt,
-    })
-    .from(studentSessions)
-    .innerJoin(students, and(
-      eq(students.id, studentSessions.studentId),
-      eq(students.schoolId, options.schoolId),
-      eq(students.status, "active")
-    ))
-    .innerJoin(devices, and(
-      eq(devices.deviceId, studentSessions.deviceId),
-      eq(devices.schoolId, options.schoolId)
-    ))
-    .where(and(
-      eq(studentSessions.id, options.studentSessionId),
-      eq(studentSessions.studentId, options.studentId),
-      eq(studentSessions.deviceId, options.deviceId),
-      currentStudentSessionAuthorityPredicate()
-    ))
-    .limit(1)
-    .for("share");
+  return trackHeartbeatPreparedReadTask(dbInstance, () => getClasspilotScreenshotAuthorityProjectionWithReads(options, dbInstance));
+}
+
+async function getClasspilotScreenshotAuthorityProjectionWithReads(options: {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+}, dbInstance: typeof db = db): Promise<ClasspilotScreenshotAuthorityProjection | undefined> {
+  // Only the private owned heartbeat root offers this reader. Its four internal
+  // VOLATILE statements retain their fresh snapshots and lock order; every JS
+  // authority/retention decision below remains in its original branch.
+  const evidenceRead = readHeartbeatScreenshotEvidenceIfOwned(dbInstance, options);
+  const evidence = evidenceRead === undefined ? undefined : await evidenceRead;
+  const session = evidence ? (evidence.stage === "session_missing" ? undefined : evidence.session)
+    : (await readHeartbeatSession(dbInstance, options))[0];
   if (!session) return undefined;
 
-  const [controlState] = await dbInstance
-    .select({
-      teachingSessionId: classpilotStudentControlStates.teachingSessionId,
-      supervisionContextId: classpilotStudentControlStates.supervisionContextId,
-      revision: classpilotStudentControlStates.revision,
-      scheduledEndAt: classpilotStudentControlStates.scheduledEndAt,
-      hardExpiresAt: classpilotStudentControlStates.hardExpiresAt,
-      updatedAt: classpilotStudentControlStates.updatedAt,
-    })
-    .from(classpilotStudentControlStates)
-    .where(and(
-      eq(classpilotStudentControlStates.schoolId, options.schoolId),
-      eq(classpilotStudentControlStates.studentId, options.studentId)
-    ))
-    .limit(1)
-    .for("share");
+  const controlState = evidence && evidence.stage !== "session_missing" ? evidence.control ?? undefined
+    : (await readHeartbeatControl(dbInstance, options))[0];
 
   const controlRevision = controlState?.revision ?? 0;
   const studentAuthorityStart = latestLabeledClasspilotAuthorityStart(
@@ -24558,66 +25403,16 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
       teachingSessionId: !controlState?.supervisionContextId ? controlState?.teachingSessionId : null }, studentAuthority, dbInstance);
   }
 
-  const [candidate] = await dbInstance
-    .select({
-      teachingSessionId: teachingSessions.id,
-      startTime: teachingSessions.startTime,
-      rosterSnapshotCompletedAt: teachingSessions.rosterSnapshotCompletedAt,
-      teachingScheduledEndAt: teachingSessions.scheduledEndAt,
-      controlRevision: classpilotStudentControlStates.revision,
-      controlUpdatedAt: classpilotStudentControlStates.updatedAt,
-      controlScheduledEndAt: classpilotStudentControlStates.scheduledEndAt,
-      controlHardExpiresAt: classpilotStudentControlStates.hardExpiresAt,
-    })
-    .from(classpilotStudentControlStates)
-    .innerJoin(teachingSessions, and(
-      eq(teachingSessions.id, classpilotStudentControlStates.teachingSessionId),
-      eq(teachingSessions.schoolId, options.schoolId),
-      eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
-      isNull(teachingSessions.endTime),
-      isNotNull(teachingSessions.rosterSnapshotCompletedAt)
-    ))
-    .innerJoin(classpilotSessionStudents, and(
-      eq(classpilotSessionStudents.schoolId, options.schoolId),
-      eq(classpilotSessionStudents.teachingSessionId, teachingSessions.id),
-      eq(classpilotSessionStudents.studentId, options.studentId)
-    ))
-    .where(and(
-      eq(classpilotStudentControlStates.schoolId, options.schoolId),
-      eq(classpilotStudentControlStates.studentId, options.studentId),
-      eq(classpilotStudentControlStates.teachingSessionId, controlState.teachingSessionId),
-      isNull(classpilotStudentControlStates.supervisionContextId),
-      isNotNull(classpilotStudentControlStates.hardExpiresAt),
-      sql`${classpilotStudentControlStates.hardExpiresAt} > now()`,
-      or(
-        isNull(classpilotStudentControlStates.scheduledEndAt),
-        sql`${classpilotStudentControlStates.scheduledEndAt} > now()`
-      ),
-      or(
-        isNull(teachingSessions.scheduledEndAt),
-        sql`${teachingSessions.scheduledEndAt} > now()`
-      )
-    ))
-    .limit(1)
-    .for("share");
+  const candidate = evidence ? (evidence.stage === "owner" ? evidence.candidate : undefined)
+    : (await readHeartbeatCandidate(dbInstance, { ...options, teachingSessionId: controlState.teachingSessionId }))[0];
   if (!candidate) return withReportingObservationRetention({ ...options,
     teachingSessionId: controlState.teachingSessionId }, studentAuthority, dbInstance);
 
-  // Drizzle transactions share one pg client. Keep these checks sequential so
-  // the authority projection remains compatible with pg@9's single-query rule.
-  const supervision = await getActiveSupervisionForStudents(
-    options.schoolId,
-    [options.studentId],
-    dbInstance
-  );
-  const owner = await getActiveClassOwnerForStudent(
-    options.schoolId,
-    options.studentId,
-    dbInstance
-  );
+  const owner = evidence?.stage === "owner" ? classpilotTelemetryOwnerFromRows(evidence.owners)
+    : await getClasspilotTelemetryOwnerProjection(options.schoolId, options.studentId, dbInstance);
   if (
-    supervision.length > 0
-    || owner?.session.id !== candidate.teachingSessionId
+    owner.hasActiveSupervision
+    || owner.teachingSessionId !== candidate.teachingSessionId
     || !candidate.rosterSnapshotCompletedAt
   ) {
     return studentAuthority;
@@ -24766,19 +25561,14 @@ export async function withClasspilotTeachingTelemetryAuthority<T>(options: {
     ) return undefined;
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
 
-    const [supervision] = await getActiveSupervisionForStudents(
-      options.schoolId,
-      [options.studentId],
-      transactionDb
-    );
-    if (supervision) return undefined;
-    const owner = await getActiveClassOwnerForStudent(
+    const owner = await getClasspilotTelemetryOwnerProjection(
       options.schoolId,
       options.studentId,
       transactionDb
     );
-    if (owner?.session.id !== options.teachingSessionId) {
-      if (owner || !options.allowReportingObservation || options.actorId) return undefined;
+    if (owner.hasActiveSupervision) return undefined;
+    if (owner.teachingSessionId !== options.teachingSessionId) {
+      if (owner.teachingSessionId || !options.allowReportingObservation || options.actorId) return undefined;
       const observation = await withReportingObservationRetention(options, {
         authority: { kind: "student_session", controlRevision: controlState.revision },
         authorityStartedAt: new Date(0), authorityExpiresAt: null,
@@ -26416,122 +27206,142 @@ export async function getPendingMessagesForStudent(options: {
     );
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return [];
 
-    const [controlState] = await tx
-      .select({
-        teachingSessionId: classpilotStudentControlStates.teachingSessionId,
-        supervisionContextId: classpilotStudentControlStates.supervisionContextId,
-        revision: classpilotStudentControlStates.revision,
-      })
-      .from(classpilotStudentControlStates)
-      .where(and(
-        eq(classpilotStudentControlStates.schoolId, options.schoolId),
-        eq(classpilotStudentControlStates.studentId, options.studentId)
-      ))
-      .limit(1)
-      .for("share");
-    const currentTeachingSessionId = controlState?.teachingSessionId
-      && await hasCurrentClasspilotStudentControlAuthority({
-        schoolId: options.schoolId,
-        studentId: options.studentId,
-        teachingSessionId: controlState.teachingSessionId,
-      }, transactionDb)
-      ? controlState.teachingSessionId
-      : null;
-    const currentSupervisionContextId = controlState?.supervisionContextId
-      && await hasCurrentClasspilotStudentControlAuthority({
-        schoolId: options.schoolId,
-        studentId: options.studentId,
-        supervisionContextId: controlState.supervisionContextId,
-      }, transactionDb)
-      ? controlState.supervisionContextId
-      : null;
-
-    const since = new Date(
-      Date.now() - CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000
-    );
-    const excludedIds = [...new Set(
-      (options.excludeMessageIds || [])
-        .map((id) => String(id || "").trim())
-        .filter(Boolean)
-    )].slice(0, CLASSPILOT_PENDING_MESSAGE_EXCLUSION_LIMIT);
-    const conditions: SQL[] = [
-      eq(messages.schoolId, options.schoolId),
-      eq(messages.toStudentId, options.studentId),
-      sql`${messages.timestamp} >= ${since}`,
-      // Legacy rows retain the compatibility inbox. Command-linked rows are
-      // due only while their immutable authority is the student's current
-      // control scope and the exact target has not reached a terminal state.
-      sql`(
-        (${messages.commandId} IS NULL
-          AND ${messages.timestamp} >= now() - interval '5 minutes')
-        OR EXISTS (
-          SELECT 1
-          FROM ${classpilotCommandTargets} AS inbox_target
-          JOIN ${classpilotCommands} AS inbox_command
-            ON inbox_command.id = inbox_target.command_id
-           AND inbox_command.school_id = inbox_target.school_id
-          WHERE inbox_target.school_id = ${options.schoolId}
-            AND inbox_target.command_id = ${messages.commandId}
-            AND inbox_target.student_id = ${options.studentId}
-            AND inbox_target.status IN ('unavailable', 'requested', 'sent', 'received')
-            AND inbox_command.command_type = 'teacher-message'
-            AND (inbox_command.expires_at IS NULL OR inbox_command.expires_at > now())
-            AND (
-              (inbox_target.student_session_id = ${options.studentSessionId}
-                AND inbox_target.device_id = ${options.deviceId})
-              OR (inbox_target.status = 'unavailable'
-                AND inbox_target.student_session_id IS NULL
-                AND inbox_target.device_id IS NULL)
-            )
-            AND (inbox_target.result ->> 'durableAuthorityRevision')::integer
-              = ${controlState?.revision ?? -1}
-            AND inbox_command.teaching_session_id IS NOT DISTINCT FROM ${messages.teachingSessionId}
-            AND inbox_command.supervision_context_id IS NOT DISTINCT FROM ${messages.supervisionContextId}
-            AND (
-              (${messages.teachingSessionId} IS NOT NULL
-                AND ${messages.teachingSessionId} = ${currentTeachingSessionId})
-              OR (${messages.supervisionContextId} IS NOT NULL
-                AND ${messages.supervisionContextId} = ${currentSupervisionContextId})
-            )
-        )
-      )`,
-    ];
-    if (excludedIds.length > 0) {
-      conditions.push(notInArray(messages.id, excludedIds));
-    }
-    const pending = await tx
-      .select()
-      .from(messages)
-      .where(and(...conditions))
-      .orderBy(desc(messages.timestamp))
-      .limit(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT);
-
-    const commandIds = [...new Set(
-      pending.map((message) => message.commandId).filter((id): id is string => !!id)
-    )];
-    if (commandIds.length > 0) {
-      const claimedAt = new Date();
-      await tx
-        .update(classpilotCommandTargets)
-        .set({
-          studentSessionId: options.studentSessionId,
-          deviceId: options.deviceId,
-          status: "sent",
-          sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${claimedAt})`,
-          errorMessage: null,
-          updatedAt: claimedAt,
-        })
-        .where(and(
-          eq(classpilotCommandTargets.schoolId, options.schoolId),
-          eq(classpilotCommandTargets.studentId, options.studentId),
-          inArray(classpilotCommandTargets.commandId, commandIds),
-          eq(classpilotCommandTargets.status, "unavailable"),
-          isNull(classpilotCommandTargets.studentSessionId),
-          isNull(classpilotCommandTargets.deviceId)
-        ));
-    }
-    return pending;
+    return getPendingMessagesForStudentWithAuthorityLocked(options, transactionDb, "transaction");
   });
+}
+
+function normalizeClasspilotPendingMessageExclusions(ids: string[] | undefined): string[] {
+  return [...new Set((ids || []).map(id => String(id || "").trim()).filter(Boolean))]
+    .slice(0, CLASSPILOT_PENDING_MESSAGE_EXCLUSION_LIMIT);
+}
+
+async function getPendingMessagesForStudentWithAuthorityLocked(
+  options: Parameters<typeof getPendingMessagesForStudent>[0],
+  transactionDb: typeof db,
+  clock: ClasspilotAuthorityClock,
+): Promise<MessageRecord[]> {
+  const [controlState] = await transactionDb
+    .select({
+      teachingSessionId: classpilotStudentControlStates.teachingSessionId,
+      supervisionContextId: classpilotStudentControlStates.supervisionContextId,
+      revision: classpilotStudentControlStates.revision,
+    })
+    .from(classpilotStudentControlStates)
+    .where(and(
+      eq(classpilotStudentControlStates.schoolId, options.schoolId),
+      eq(classpilotStudentControlStates.studentId, options.studentId)
+    ))
+    .limit(1)
+    .for("share");
+  // The heartbeat already holds the student's advisory lock. Keep this fresh
+  // control row lock after foreground transport, then discover current owner
+  // and supervision together. Never reuse an earlier screenshot grant across
+  // the awaited work or accept a caller-supplied authority projection.
+  const currentTeachingOwner = clock === "current" && controlState?.teachingSessionId
+    && controlState.supervisionContextId === null
+    ? await getClasspilotTelemetryOwnerProjectionAtClock(options.schoolId, options.studentId, transactionDb, clock)
+    : undefined;
+  const currentTeachingSessionId = controlState?.teachingSessionId
+    && (currentTeachingOwner
+      ? !currentTeachingOwner.hasActiveSupervision && currentTeachingOwner.teachingSessionId === controlState.teachingSessionId
+      : await hasCurrentClasspilotStudentControlAuthorityAtClock({
+      schoolId: options.schoolId,
+      studentId: options.studentId,
+      teachingSessionId: controlState.teachingSessionId,
+    }, transactionDb, clock))
+    ? controlState.teachingSessionId
+    : null;
+  const currentSupervisionContextId = controlState?.supervisionContextId
+    && await hasCurrentClasspilotStudentControlAuthorityAtClock({
+      schoolId: options.schoolId,
+      studentId: options.studentId,
+      supervisionContextId: controlState.supervisionContextId,
+    }, transactionDb, clock)
+    ? controlState.supervisionContextId
+    : null;
+
+  const since = new Date(
+    Date.now() - CLASSPILOT_PENDING_MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  );
+  const excludedIds = normalizeClasspilotPendingMessageExclusions(options.excludeMessageIds);
+  const conditions: SQL[] = [
+    eq(messages.schoolId, options.schoolId),
+    eq(messages.toStudentId, options.studentId),
+    sql`${messages.timestamp} >= ${since}`,
+    // Legacy rows retain the compatibility inbox. Command-linked rows are
+    // due only while their immutable authority is the student's current
+    // control scope and the exact target has not reached a terminal state.
+    sql`(
+      (${messages.commandId} IS NULL
+        AND NOT EXISTS (SELECT 1 FROM settings legacy_guard WHERE legacy_guard.school_id=${options.schoolId} AND legacy_guard.private_chat_lifecycle_required)
+        AND ${messages.timestamp} >= ${classpilotAuthorityClockSql(clock)} - interval '5 minutes')
+      OR EXISTS (
+        SELECT 1
+        FROM ${classpilotCommandTargets} AS inbox_target
+        JOIN ${classpilotCommands} AS inbox_command
+          ON inbox_command.id = inbox_target.command_id
+         AND inbox_command.school_id = inbox_target.school_id
+        WHERE inbox_target.school_id = ${options.schoolId}
+          AND inbox_target.command_id = ${messages.commandId}
+          AND inbox_target.student_id = ${options.studentId}
+          AND inbox_target.status IN ('unavailable', 'requested', 'sent', 'received')
+          AND inbox_command.command_type = 'teacher-message'
+          AND (inbox_command.expires_at IS NULL OR inbox_command.expires_at > ${classpilotAuthorityClockSql(clock)})
+          AND (
+            (inbox_target.student_session_id = ${options.studentSessionId}
+              AND inbox_target.device_id = ${options.deviceId})
+            OR (inbox_target.status = 'unavailable'
+              AND inbox_target.student_session_id IS NULL
+              AND inbox_target.device_id IS NULL)
+          )
+          AND (inbox_target.result ->> 'durableAuthorityRevision')::integer
+            = ${controlState?.revision ?? -1}
+          AND inbox_command.teaching_session_id IS NOT DISTINCT FROM ${messages.teachingSessionId}
+          AND inbox_command.supervision_context_id IS NOT DISTINCT FROM ${messages.supervisionContextId}
+          AND (
+            (${messages.teachingSessionId} IS NOT NULL
+              AND ${messages.teachingSessionId} = ${currentTeachingSessionId})
+            OR (${messages.supervisionContextId} IS NOT NULL
+              AND ${messages.supervisionContextId} = ${currentSupervisionContextId})
+          )
+      )
+    )`,
+  ];
+  if (excludedIds.length > 0) {
+    conditions.push(notInArray(messages.id, excludedIds));
+  }
+  const pending = await transactionDb
+    .select()
+    .from(messages)
+    .where(and(...conditions))
+    .orderBy(desc(messages.timestamp))
+    .limit(CLASSPILOT_PENDING_MESSAGE_BATCH_LIMIT);
+
+  const commandIds = [...new Set(
+    pending.map((message) => message.commandId).filter((id): id is string => !!id)
+  )];
+  if (commandIds.length > 0) {
+    const claimedAt = new Date();
+    await transactionDb
+      .update(classpilotCommandTargets)
+      .set({
+        studentSessionId: options.studentSessionId,
+        deviceId: options.deviceId,
+        status: "sent",
+        sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${claimedAt})`,
+        errorMessage: null,
+        updatedAt: claimedAt,
+      })
+      .where(and(
+        eq(classpilotCommandTargets.schoolId, options.schoolId),
+        eq(classpilotCommandTargets.studentId, options.studentId),
+        inArray(classpilotCommandTargets.commandId, commandIds),
+        eq(classpilotCommandTargets.status, "unavailable"),
+        isNull(classpilotCommandTargets.studentSessionId),
+        isNull(classpilotCommandTargets.deviceId)
+      ));
+  }
+  return pending;
 }
 
 // ============================================================================
@@ -26972,11 +27782,12 @@ export async function createCanonicalPass(
     // Per-device kiosk session: when set (with kiosk: true), the checkout is
     // validated against the session row instead of the school-global slot.
     kioskSessionId?: string | null;
-  } = {}
+  } = {},
+  transaction?: PasspilotClassTransaction
 ): Promise<Pass> {
   // One evaluation instant, taken before any lock wait (see createLegacyPass).
   const ruleEvaluatedAt = new Date();
-  return db.transaction(async (tx) => {
+  return (transaction ?? db).transaction(async (tx) => {
     let lockedKioskSchool: { kioskClasspilotGroupId: string | null } | undefined;
     if (authorization.kiosk && !authorization.kioskSessionId) {
       [lockedKioskSchool] = await tx
@@ -27328,7 +28139,7 @@ function sameStringSet(left: string[], right: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-async function takePasspilotClassLock(
+export async function takePasspilotClassLock(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   schoolId: string
 ): Promise<void> {
@@ -29042,6 +29853,16 @@ export async function getAttendanceRecordById(
   return row;
 }
 
+/** Serialize attendance facts with appointment activation and GoPilot movement. */
+async function lockAttendanceStudentRows(tx: PasspilotClassTransaction, schoolId: string, studentIds: string[]) {
+  const ids = [...new Set(studentIds)].sort();
+  if (!ids.length) return;
+  const found = await tx.select({ id: students.id }).from(students)
+    .where(and(eq(students.schoolId, schoolId), inArray(students.id, ids)))
+    .orderBy(students.id).for("update");
+  if (found.length !== ids.length) throw passpilotClassError("STUDENT_NOT_FOUND", "Student not found.", 404);
+}
+
 /** Mark a student absent (upsert — updates if already marked for that date) */
 export async function markStudentAbsent(data: {
   schoolId: string;
@@ -29053,31 +29874,34 @@ export async function markStudentAbsent(data: {
   markedBy: string;
   source?: string;
 }) {
-  const [row] = await db
-    .insert(studentAttendance)
-    .values({
-      schoolId: data.schoolId,
-      studentId: data.studentId,
-      date: data.date,
-      status: data.status,
-      reason: data.reason || null,
-      notes: data.notes || null,
-      markedBy: data.markedBy,
-      source: data.source || "manual",
-    })
-    .onConflictDoUpdate({
-      target: [studentAttendance.studentId, studentAttendance.date],
-      set: {
-        status: sql`EXCLUDED.status`,
-        reason: sql`EXCLUDED.reason`,
-        notes: sql`EXCLUDED.notes`,
-        markedBy: sql`EXCLUDED.marked_by`,
-        source: sql`EXCLUDED.source`,
-        updatedAt: sql`now()`,
-      },
-    })
-    .returning();
-  return row;
+  return db.transaction(async (tx) => {
+    await lockAttendanceStudentRows(tx, data.schoolId, [data.studentId]);
+    const [row] = await tx
+      .insert(studentAttendance)
+      .values({
+        schoolId: data.schoolId,
+        studentId: data.studentId,
+        date: data.date,
+        status: data.status,
+        reason: data.reason || null,
+        notes: data.notes || null,
+        markedBy: data.markedBy,
+        source: data.source || "manual",
+      })
+      .onConflictDoUpdate({
+        target: [studentAttendance.studentId, studentAttendance.date],
+        set: {
+          status: sql`EXCLUDED.status`,
+          reason: sql`EXCLUDED.reason`,
+          notes: sql`EXCLUDED.notes`,
+          markedBy: sql`EXCLUDED.marked_by`,
+          source: sql`EXCLUDED.source`,
+          updatedAt: sql`now()`,
+        },
+      })
+      .returning();
+    return row;
+  });
 }
 
 /** Bulk mark students absent for a given date (atomic transaction) */
@@ -29094,6 +29918,7 @@ export async function markStudentsAbsentBulk(
   }
 ) {
   return await db.transaction(async (tx) => {
+    await lockAttendanceStudentRows(tx, schoolId, studentIds);
     const results: StudentAttendance[] = [];
     for (const studentId of studentIds) {
       const [row] = await tx
@@ -29128,10 +29953,16 @@ export async function markStudentsAbsentBulk(
 
 /** Remove an absence record (student showed up) */
 export async function removeAbsence(id: string, schoolId: string): Promise<boolean> {
-  const result = await db
-    .delete(studentAttendance)
-    .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId)));
-  return (result.rowCount ?? 0) > 0;
+  return db.transaction(async (tx) => {
+    const [record] = await tx.select({ studentId: studentAttendance.studentId }).from(studentAttendance)
+      .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId))).limit(1);
+    if (!record) return false;
+    await lockAttendanceStudentRows(tx, schoolId, [record.studentId]);
+    const result = await tx
+      .delete(studentAttendance)
+      .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 /** Attendance stats for a school over a date range */

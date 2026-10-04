@@ -25,6 +25,8 @@ $script:TestApiArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolp
 $script:TestWorkerArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:177'
 $script:BaselineTables = 'students,passes,classpilot_ai_decisions,flight_paths,block_lists'
 $script:RulesTables = @('passpilot_destination_policies', 'passpilot_pass_limits', 'passpilot_encounter_restrictions', 'passpilot_pass_denials')
+$script:AppointmentRegistry = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../src/config/rlsRegistry.json'))
+$script:AppointmentTables = @((($script:AppointmentRegistry | ConvertFrom-Json -Depth 30 -DateKind String).inventories.passpilotAppointmentsPostExpand.tables))
 $script:SchoolA = '0f1e2d3c-4b5a-4c6d-8e7f-a1b2c3d4e5f6'
 $script:SchoolB = '9a8b7c6d-5e4f-4a3b-9c2d-e1f0a9b8c7d6'
 
@@ -65,6 +67,26 @@ function Get-ServingState([string]$Role) {
     $container = if ($Role -ceq 'Api') { 'api' } else { 'scheduler-worker' }
     return Get-ProductManagedState (Get-ProductEnvironment -Task $response.taskDefinition -ContainerName $container)
 }
+function Invoke-GitText {
+    param([string[]]$Arguments, [string]$RepositoryRoot)
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotReportsMode.ts') {
+        if ($script:Mock.CompatibleReportsWriter) {
+            if ($script:Mock.CompatibleReportAuthority) { return 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2; export const PASSPILOT_REPORTS_AUTHORITY_FENCE_VERSION = 1;' }
+            return 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;'
+        }
+        return '// earlier report projection'
+    }
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotAppointmentsMode.ts') {
+        if ($script:Mock.CompatibleAppointmentWriter) { return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 2;' }
+        return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;'
+    }
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/rlsRegistry.json') { return $script:AppointmentRegistry }
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/classpilotUsageModes.ts') {
+        if ($script:Mock.CompatibleUsageWriter) { return 'export const CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1;' }
+        return '// pre-ledger release'
+    }
+    throw "Unexpected git source query: $($Arguments -join ' ')"
+}
 function Reset-ProductMock {
     $envs = @(
         [pscustomobject]@{ name = 'RLS_GUC_ENABLED'; value = 'true' },
@@ -83,7 +105,7 @@ function Reset-ProductMock {
         Services = [pscustomobject]@{ Api = (New-TestService api $script:TestApiArn 3); Worker = (New-TestService worker $script:TestWorkerArn 1) }
         Scaling = [pscustomobject]@{ Min = 3; Max = 6; DynamicIn = $false; DynamicOut = $false; Scheduled = $false }
         Calls = [Collections.Generic.List[string]]::new(); Requests = [Collections.Generic.List[object]]::new()
-        Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
+        CompatibleUsageWriter = $true; CompatibleAppointmentWriter = $true; CompatibleReportsWriter = $true; CompatibleReportAuthority = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
     }
     $script:CurrentToolSha = $script:TestSha
     $script:ApiServiceMutationStarted = $false; $script:WorkerServiceMutationStarted = $false
@@ -165,10 +187,10 @@ function Wait-ExactServicePairConvergence {
 }
 
 function New-TestConfig([hashtable]$Environment) { return [pscustomobject]@{ schemaVersion = 1; environment = [pscustomobject]$Environment } }
-function New-TestProductPlan($Config, $EvidencePath = $null) {
+function New-TestProductPlan($Config, $EvidencePath = $null, $UsageEvidencePath = $null) {
     # Plan against whatever pair is serving now, as an operator would.
     return New-ProductPlan $Config $script:TestDirectory $script:Mock.Services.Api.taskDefinition $script:Mock.Services.Worker.taskDefinition `
-        $script:TestDigest $script:TestSha $EvidencePath
+        $script:TestDigest $script:TestSha $EvidencePath $UsageEvidencePath
 }
 function Assert-NoMutation([string]$Message) {
     $mutations = @($script:Mock.Calls | Where-Object { $_ -cin @('ecs register-task-definition', 'ecs update-service', 'lock', 'hold') })
@@ -189,6 +211,20 @@ function New-TestEvidence {
     return [pscustomobject]@{ schemaVersion = 1; reviewedAt = [DateTimeOffset]::UtcNow.ToString('o'); reviewReference = 'logs-insights/daily-usage-shadow-review'
         imageDigest = $script:TestDigest; schoolDays = (Get-TestSchoolDays 3) }
 }
+function New-TestUsageObservation {
+    $date = (Get-EasternNow).Date.AddDays(-2)
+    while ($date.DayOfWeek -in @([DayOfWeek]::Saturday, [DayOfWeek]::Sunday)) { $date = $date.AddDays(-1) }
+    $zone = [TimeZoneInfo]::FindSystemTimeZoneById('America/New_York')
+    $start = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date, [DateTimeKind]::Unspecified), $zone)
+    $end = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date.AddDays(1), [DateTimeKind]::Unspecified), $zone).AddHours(2)
+    return [pscustomobject]@{ schemaVersion = 1; reviewedAt = [DateTimeOffset]::UtcNow.ToString('o'); reviewReference = 'usage/observed-ledger-review'
+        appSha = $script:TestSha; imageDigest = $script:TestDigest; schoolDays = @([pscustomobject]@{
+            schoolId = $script:SchoolA; date = $date.ToString('yyyy-MM-dd'); timeZone = 'America/New_York'
+            startedAt = $start.ToString('o'); endedAt = $end.ToString('o'); coverageCheckedAt = $end.ToString('o')
+            observedRuns = 25; failedSchools = 0; deferredDays = 0; budgetExhausted = $false; maxRunDurationMs = 10000
+            finalDayComplete = $true; currentDayComplete = $true; logSha256 = ('c' * 64); coverageSha256 = ('d' * 64)
+        }) }
+}
 function Write-TestEvidence($Evidence) {
     $path = Join-Path $script:TestDirectory ('evidence-' + [Guid]::NewGuid().ToString('N') + '.json')
     Write-SanitizedJson $path $Evidence
@@ -196,13 +232,18 @@ function Write-TestEvidence($Evidence) {
 }
 function Invoke-TestRollback($Plan) {
     $script:Action = 'Rollback'; $script:Execute = $true; $script:ManifestPath = $Plan.path; $script:ManifestHash = $Plan.sha256; $script:DailyUsageEvidencePath = $null
+    $script:UsageObservationEvidencePath = $null
     Invoke-ProductMain
 }
 
 try {
-    # --- Configuration: only the seven managed names, exact values only ---
+    # --- Configuration: only the eight managed names, exact values only ---
     Reset-ProductMock
     Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_RULES_MODE = 'on' }))['PASSPILOT_RULES_MODE'] -ceq 'on') 'An exact managed value must parse.'
+    Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'v2' }))['PASSPILOT_REPORTS_MODE'] -ceq 'v2') 'Reports must parse the exact reviewed v2 value.'
+    foreach ($value in @('on', 'V2', ' v2', 'v2 ')) {
+        Assert-Throws { ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_REPORTS_MODE = $value }) } 'Report mode aliases must be refused.'
+    }
     foreach ($name in @('NODE_ENV', 'CLIENT_URL', 'DATABASE_URL', 'CLASSPILOT_SCHEDULED_CLASSROOM_MODE', 'CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED', 'PASSPILOT_RULES_MODE ')) {
         Assert-ThrowsMatch { ConvertTo-ProductChanges (New-TestConfig @{ $name = 'on' }) } 'not a wave-1 product flag' "Unmanaged name '$name' must be refused."
     }
@@ -342,12 +383,13 @@ try {
     foreach ($gate in @(
             @{ Name = 'PASSPILOT_RULES_MODE'; Config = @{ PASSPILOT_RULES_MODE = 'on' }; Tables = $script:RulesTables; Live = @{} },
             @{ Name = 'PASSPILOT_APPOINTMENTS_MODE'; Config = @{ PASSPILOT_APPOINTMENTS_MODE = 'on' }; Tables = @('passpilot_appointments'); Live = @{} },
-            @{ Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Config = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }; Tables = @('classpilot_usage_rollups'); Live = @{} },
-            @{ Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Config = @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }; Tables = @('classpilot_usage_rollups'); Live = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' } })) {
+            @{ Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Config = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Live = @{} },
+            @{ Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Config = @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Live = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' } })) {
         $prepare = {
             Reset-ProductMock
             foreach ($live in $gate.Live.GetEnumerator()) { Set-BothEnvironment $live.Key $live.Value }
             Add-BothTables $gate.Tables
+            if ($gate.Name -ceq 'PASSPILOT_APPOINTMENTS_MODE') { Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',') }
         }
         foreach ($table in $gate.Tables) {
             foreach ($role in @('api', 'worker')) {
@@ -362,29 +404,117 @@ try {
         & $prepare; Set-TestEnvironment (Get-TestTask 'api') 'RLS_ENABLED_TABLES' $null
         Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig $gate.Config) } 'RLS_ENABLED_TABLES allowlist' "$($gate.Name) must require an allowlist."
         & $prepare
-        $admitted = New-TestProductPlan (New-TestConfig $gate.Config)
+        $usageEvidence = if ($gate.Name -ceq 'CLASSPILOT_DIGITAL_USAGE_MODE') { Write-TestEvidence (New-TestUsageObservation) } else { $null }
+        $admitted = New-TestProductPlan (New-TestConfig $gate.Config) $null $usageEvidence
         Assert-Condition (@($admitted.plan.activations).Count -eq 1) "$($gate.Name) must plan once its bundle is admitted on both services."
         Assert-NoMutation 'Precondition checks must be read-only.'
     }
     # Preconditions are re-checked at Apply against the live task definitions.
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',')
+    $appointmentConfig = New-TestConfig @{ PASSPILOT_APPOINTMENTS_MODE = 'on' }
+    $appointmentPlan = New-TestProductPlan $appointmentConfig
+    $script:Mock.CompatibleAppointmentWriter = $false
+    Assert-ThrowsMatch { New-TestProductPlan $appointmentConfig } 'atomic writer contract version 2' 'Admitted tables cannot enable a pre-eligibility-lock serving image.'
+    Assert-ThrowsMatch { Invoke-ProductApply $appointmentPlan.plan $appointmentPlan.sha256 $script:TestDirectory } 'atomic writer contract version 2' 'Apply must recheck atomic compatibility before any mutation.'
+    Assert-NoMutation 'Incompatible appointment image must fail before registration or service mutation.'
+    Set-BothEnvironment 'PASSPILOT_APPOINTMENTS_MODE' 'on'
+    Assert-Condition ($null -ne (New-TestProductPlan (New-TestConfig @{ PASSPILOT_APPOINTMENTS_MODE = 'off' }))) 'Emergency appointment turn-off must remain possible on an older image.'
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',')
+    Set-BothEnvironment 'PASSPILOT_APPOINTMENTS_MODE' 'on'; Remove-TestTable 'worker' 'classpilot_usage_rollup_days'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = 'on' }) } '128-table admission' 'Continuing appointment activation requires every preserved admission on the worker.'
     Reset-ProductMock; Add-BothTables $script:RulesTables
     $plan = New-TestProductPlan $rulesConfig
     Remove-TestTable 'worker' 'passpilot_pass_denials'
     Assert-ThrowsMatch { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'PASSPILOT_RULES_MODE=on requires' 'Apply must re-check RLS admission.'
     Assert-NoMutation 'A failed Apply precondition must not mutate.'
 
+    # Reports require the serving confidentiality/aggregate contract and full
+    # admission at both Plan and Apply, even when v2 is already active.
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',')
+    $reportsConfig = New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'v2' }
+    $reportsPlan = New-TestProductPlan $reportsConfig
+    Assert-Condition ('passpilotReports' -cin @($reportsPlan.plan.activations)) 'Reports must be an explicit governed activation.'
+    $script:Mock.CompatibleReportsWriter = $false
+    Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } 'report contract version 2' 'Plan must reject a pre-contract report projection.'
+    Assert-ThrowsMatch { Invoke-ProductApply $reportsPlan.plan $reportsPlan.sha256 $script:TestDirectory } 'report contract version 2' 'Apply must recheck report compatibility.'
+    Assert-NoMutation 'An incompatible report image cannot mutate task definitions.'
+    $script:Mock.CompatibleReportsWriter = $true; $script:Mock.CompatibleReportAuthority = $false
+    Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } 'authority-fence version 1' 'Plan must reject pre-fix 7c/d01 report source with only the v2 wire marker.'
+    Assert-ThrowsMatch { Invoke-ProductApply $reportsPlan.plan $reportsPlan.sha256 $script:TestDirectory } 'authority-fence version 1' 'Apply must reject loss of the verified authority fence.'
+    Assert-NoMutation 'A pre-fix v2 report image cannot mutate task definitions.'
+    Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = 'on' }) } 'authority-fence version 1' 'Continuing v2 must reject pre-fix source as well as first activation.'
+    Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'; Set-BothEnvironment 'RLS_GUC_ENABLED' 'false'
+    Assert-Condition ($null -ne (New-TestProductPlan (New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'off' }))) 'Reports emergency turn-off must remain available.'
+    foreach ($role in @('api', 'worker')) {
+        foreach ($table in @('passes', 'passpilot_pass_denials', 'passpilot_appointments', 'classpilot_usage_rollup_days')) {
+            Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ','); Remove-TestTable $role $table
+            Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } '128-table admission' "Reports must preserve $table admission on $role."
+        }
+    }
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ','); Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'
+    Remove-TestTable 'worker' 'students'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = 'on' }) } '128-table admission' 'Keeping v2 on must recheck admission.'
+
     # --- Digital usage requires the usage rollup ---
-    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups')
+    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days')
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'Digital usage alone must be refused.'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on'; CLASSPILOT_USAGE_ROLLUP_MODE = 'off' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'Digital usage with the rollup off must be refused.'
-    $both = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; CLASSPILOT_DIGITAL_USAGE_MODE = 'on' })
-    Assert-Condition ('usageRollup' -cin @($both.plan.activations) -and 'digitalUsage' -cin @($both.plan.activations)) 'Both usage features may activate together.'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'worker first' 'Digital Usage cannot activate in the same operation as its unobserved worker.'
+    Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'UsageObservationEvidencePath' 'Digital Usage activation requires operating evidence even with the worker on.'
+    $usageObservationPath = Write-TestEvidence (New-TestUsageObservation)
+    $both = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) $null $usageObservationPath
+    Assert-Condition ('digitalUsage' -cin @($both.plan.activations) -and $null -ne $both.plan.usageObservationEvidence) 'Digital Usage must bind operating evidence separately from daily shadow promotion.'
+    $script:Mock.CompatibleUsageWriter = $false
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'coverage contract version 1' 'Plan must reject a pre-ledger serving SHA even with both admissions.'
+    Assert-ThrowsMatch { Invoke-ProductApply $both.plan $both.sha256 $script:TestDirectory } 'coverage contract version 1' 'Apply must re-check source compatibility before mutation.'
+    Assert-NoMutation 'An incompatible serving release must not mutate.'
+    $script:Mock.CompatibleUsageWriter = $true
     Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'; Set-BothEnvironment 'CLASSPILOT_DIGITAL_USAGE_MODE' 'on'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'The rollup cannot turn off under live digital usage.'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = $null }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'The rollup cannot be unset under live digital usage.'
     Remove-TestTable 'api' 'classpilot_usage_rollups'
     $offBoth = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off'; CLASSPILOT_DIGITAL_USAGE_MODE = 'off' })
     Assert-Condition (@($offBoth.plan.activations).Count -eq 0) 'Turning both off must plan without preconditions.'
+
+    # A complete, source-matched observed day is mandatory; empty measured days
+    # still require successful ledger coverage and hourly worker samples.
+    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'
+    $usageConfig = New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }
+    foreach ($case in @(
+            @{ Property = 'appSha'; Value = ('f' * 40); Pattern = 'exact serving' },
+            @{ Property = 'imageDigest'; Value = ('sha256:' + ('f' * 64)); Pattern = 'exact serving' },
+            @{ Property = 'schoolDays'; Value = @(); Pattern = 'complete school day' },
+            @{ Property = 'reviewedAt'; Value = [DateTimeOffset]::UtcNow.AddDays(-2).ToString('o'); Pattern = 'hours old' })) {
+        $invalid = New-TestUsageObservation; $invalid.($case.Property) = $case.Value
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } $case.Pattern 'Invalid observation source or review must fail before mutation.'
+    }
+    foreach ($case in @(
+            @{ Property = 'observedRuns'; Value = 0 }, @{ Property = 'failedSchools'; Value = 1 }, @{ Property = 'deferredDays'; Value = 1 },
+            @{ Property = 'budgetExhausted'; Value = $true }, @{ Property = 'maxRunDurationMs'; Value = 1500000 },
+            @{ Property = 'finalDayComplete'; Value = $false }, @{ Property = 'currentDayComplete'; Value = $false },
+            @{ Property = 'logSha256'; Value = '' }, @{ Property = 'coverageSha256'; Value = '' })) {
+        $invalid = New-TestUsageObservation; $invalid.schoolDays[0].($case.Property) = $case.Value
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'hourly samples' 'Failed, deferred or unverified days must not become accepted observations.'
+    }
+    $invalid = New-TestUsageObservation; $invalid.schoolDays += $invalid.schoolDays[0]
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'distinct canonical' 'Duplicate observation dates cannot supply additional acceptance.'
+    $invalid = New-TestUsageObservation; $invalid.schoolDays[0].startedAt = $invalid.schoolDays[0].endedAt
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'full recent' 'A partial-day observation must be rejected.'
+    Assert-NoMutation 'Rejected operating observations must not register or update services.'
+    $validUsage = New-TestUsageObservation; $usageObservationPath = Write-TestEvidence $validUsage
+    $usagePlan = New-TestProductPlan $usageConfig $null $usageObservationPath
+    $validUsage.schoolDays[0].maxRunDurationMs = 11000; Write-SanitizedJson $usageObservationPath $validUsage
+    Assert-ThrowsMatch { Invoke-ProductApply $usagePlan.plan $usagePlan.sha256 $script:TestDirectory } 'changed after planning' 'Apply must rehash the operating evidence before any mutation.'
+    Assert-NoMutation 'Changed operating evidence must fail before registration.'
+    $usageObservationPath = Write-TestEvidence (New-TestUsageObservation)
+    $usagePlan = New-TestProductPlan $usageConfig $null $usageObservationPath
+    Assert-Condition ((Invoke-ProductApply $usagePlan.plan $usagePlan.sha256 $script:TestDirectory).status -ceq 'applied') 'A complete clean observed day must permit governed reporting activation.'
+    Invoke-TestRollback $usagePlan
+    Assert-Condition ($null -eq (Get-ServingState 'Api')['CLASSPILOT_DIGITAL_USAGE_MODE']) 'Observation-gated activation rollback must restore reporting off.'
+    Reset-ProductMock
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ PASSPILOT_RULES_MODE = 'off' }) $null $usageObservationPath } 'only to Digital Usage' 'Unrelated plans must refuse observation evidence.'
 
     # --- Daily usage rollup promotion requires clean shadow evidence ---
     Reset-ProductMock
@@ -548,6 +678,7 @@ try {
     $configPath = Join-Path $script:TestDirectory 'product-config.json'
     [IO.File]::WriteAllText($configPath, '{"schemaVersion":1,"environment":{"PASSPILOT_RULES_MODE":"on"}}')
     $script:Action = 'Plan'; $script:ConfigPath = $configPath; $script:OutDir = $script:TestDirectory; $script:DailyUsageEvidencePath = $null
+    $script:UsageObservationEvidencePath = $null
     $script:ApiArn = $script:TestApiArn; $script:WorkerArn = $script:TestWorkerArn; $script:ImageDigest = $script:TestDigest; $script:AppSha = $script:TestSha
     Invoke-ProductMain
     Assert-NoMutation 'The Plan entry point must be read-only.'

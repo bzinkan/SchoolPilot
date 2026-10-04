@@ -6,6 +6,10 @@ import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPrefer
 import { importProcessingStagesMigration } from "./importProcessingStagesMigration.js";
 import { passpilotRulesMigration, passpilotRulesIndexesMigration } from "./passpilotRulesMigration.js";
 import { classpilotUsageRollupsMigration } from "./classpilotUsageRollupsMigration.js";
+import { classpilotUsageRollupDaysMigration } from "./classpilotUsageRollupDaysMigration.js";
+import { classpilotHeartbeatScreenshotEvidenceMigration } from "./classpilotHeartbeatScreenshotEvidenceMigration.js";
+import { classpilotPrivateChatLifecycleMigration } from "./classpilotPrivateChatLifecycleMigration.js";
+import { passpilotAppointmentsMigration } from "./passpilotAppointmentsMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -16,6 +20,7 @@ import { staffIdentityIntegrityMigration } from "./staffIdentityIntegrityMigrati
 import { microsoftSignInMigration } from "./microsoftSignInMigration.js";
 import { sharedTeachingResourcesMigration } from "./sharedTeachingResourcesMigration.js";
 import { flightPathResourcesMigration } from "./flightPathResourcesMigration.js";
+import { flightPathContentRevisionMigration } from "./flightPathContentRevisionMigration.js";
 import { safetyCenterMigration } from "./safetyCenterMigration.js";
 import { mailpilotSafetyDurabilityMigration } from "./mailpilotSafetyDurabilityMigration.js";
 import { classpilotSchedulingMigration } from "./classpilotSchedulingMigration.js";
@@ -527,8 +532,13 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   passpilotRulesMigration,
   passpilotRulesIndexesMigration,
   classpilotUsageRollupsMigration,
+  classpilotUsageRollupDaysMigration,
+  passpilotAppointmentsMigration,
   flightPathResourcesMigration,
   staffIdentityIntegrityMigration,
+  flightPathContentRevisionMigration,
+  classpilotPrivateChatLifecycleMigration,
+  classpilotHeartbeatScreenshotEvidenceMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [
@@ -549,7 +559,9 @@ if (firstStaffIdentityContractIndex < 0) {
  * email index and ownership backstops commit or roll back together.
  */
 export const schoolPilot27ExpandMigrations: readonly SchoolPilotMigration[] =
-  schoolPilot27Migrations.slice(0, firstStaffIdentityContractIndex);
+  schoolPilot27Migrations.filter((migration) => !STAFF_IDENTITY_CONTRACT_MIGRATION_IDS.some(
+    (contractId) => contractId === migration.id
+  ));
 
 export function selectSchoolPilot27MigrationPlan(options: {
   contractRolloutRequested: boolean;

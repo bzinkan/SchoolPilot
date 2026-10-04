@@ -1,0 +1,246 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T04:43:47.619Z",
+  "source": {
+    "baseCommit": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+    "state": "Uncommitted narrow live-binding query optimization; not final release acceptance",
+    "files": [
+      {
+        "file": "src/services/storage.ts",
+        "sha256": "81ae2e4dec777dbb8b8e9ab11317fd043d969805b99088f060bd8a833e770648"
+      },
+      {
+        "file": "tests/classpilot-live-binding-query.test.mjs",
+        "sha256": "6a346eda418ea2bf65e02373029ba6480e76afe00cb43a59a0f73b94b36b44c0"
+      },
+      {
+        "file": "tests/classpilot-telemetry-owner-projection.integration.test.ts",
+        "sha256": "abb7c3374d994082c86428993f7c1bd0d11ab6eab8ad0bad94dcd2c6c0e22d53"
+      },
+      {
+        "file": "scripts/run-test-lane.mjs",
+        "sha256": "8d320d61f1ac5dc1eb47bcef8e84392335177abddaad5c1c0e8aa3665324f202"
+      }
+    ],
+    "ownedSourceUnchangedDuringNative": true
+  },
+  "change": "Only the live branch of hasExactClasspilotTelemetryBinding uses fixed parameterized SELECT. Binding conditions, database clock, LIMIT1, all joined FOR SHARE locks, both final-delivery calls, and ended-session/replacement branches remain unchanged.",
+  "commands": {
+    "unit": "node --import ./tests/test-environment.mjs --import tsx --test tests/classpilot-live-binding-query.test.mjs",
+    "source": "npm run check",
+    "types": "npm run check:tests",
+    "casts": "npm run check:test-casts",
+    "native": "pwsh -NoProfile -File $env:TEMP/release297-live-binding-native-01.ps1",
+    "benchmark": "node --import tsx $env:TEMP/release297-live-binding-compile-01.mjs"
+  },
+  "results": {
+    "unit": {
+      "pass": 2,
+      "fail": 0
+    },
+    "owner": {
+      "pass": 15,
+      "fail": 0,
+      "skip": 0
+    },
+    "restricted": {
+      "pass": 15,
+      "fail": 0,
+      "skip": 0
+    },
+    "sourceCheck": 0,
+    "testTypes": 0,
+    "casts": 0,
+    "cleanup": "Owned fixture removed, no shared fixture changes",
+    "generatedSqlAndNineParametersEquivalent": true,
+    "benchmark": {
+      "mode": "compile-only, no database or production activity",
+      "iterationsPerRound": 3000,
+      "rounds": 6,
+      "warmup": 1000,
+      "results": [
+        {
+          "round": 0,
+          "previousMs": 310.62649999999985,
+          "rawMs": 136.18640000000005
+        },
+        {
+          "round": 1,
+          "rawMs": 135.25659999999993,
+          "previousMs": 292.7388000000003
+        },
+        {
+          "round": 2,
+          "previousMs": 293.73799999999983,
+          "rawMs": 135.22850000000017
+        },
+        {
+          "round": 3,
+          "rawMs": 133.4303,
+          "previousMs": 326.0428999999999
+        },
+        {
+          "round": 4,
+          "previousMs": 452.69990000000007,
+          "rawMs": 195.99969999999985
+        },
+        {
+          "round": 5,
+          "rawMs": 216.9281000000001,
+          "previousMs": 407.2572
+        }
+      ],
+      "previousMedianMs": 318.3346999999999,
+      "rawMedianMs": 135.7215,
+      "ratio": 2.3454994234517,
+      "queryCountBefore": 1,
+      "queryCountAfter": 1,
+      "authorityCaching": false,
+      "capacityAcceptance": false
+    }
+  },
+  "benchmarkNotes": [
+    "Attempt01 ran concurrently with local checks/native preparation; preserved and not the preferred comparison.",
+    "Attempt02 ran after those processes completed. Six alternating3000-iteration rounds after1000warmup; both paths compile the actual equivalent query, raw includes helper async overhead; diagnostic only."
+  ],
+  "schema": {
+    "source": "Synthetic post-convergence combined04 fixture schema",
+    "rawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+    "contentsArchived": false,
+    "actualProductionSchema": false
+  },
+  "limits": [
+    "Owner lane does not prove RLS; separate NOSUPERUSER/NOBYPASSRLS lane ran with the129-table admission inventory and forced-RLS fixture.",
+    "Compilation microbenchmark is not database throughput or release capacity acceptance. Query count remains one and no pools,timeouts or authority caches changed.",
+    "No full build/unit,final-source CI,container image or repeated capacity acceptance is claimed here.",
+    "No production deployment,Store publication,activation or cloud mutation occurred."
+  ],
+  "records": [
+    {
+      "file": "native-cleanup.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\cleanup.log",
+      "rawSha256": "d2b7dc09b4cd08c54aefe6abb13493baedf89808caffb56177ee8721cf1138e4",
+      "sanitizedSha256": "d2b7dc09b4cd08c54aefe6abb13493baedf89808caffb56177ee8721cf1138e4",
+      "gzipSha256": "595665ccdf8b35e8e12f365d54f7ada192107a0d0ba616f4f77038324583fa2f"
+    },
+    {
+      "file": "native-container-create.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\container-create.log",
+      "rawSha256": "0dd9807568bf0608562d27ed28657bc7abb90b7f55dd5b1efcf8153dcbf64779",
+      "sanitizedSha256": "0dd9807568bf0608562d27ed28657bc7abb90b7f55dd5b1efcf8153dcbf64779",
+      "gzipSha256": "fd295e911e341311e3f69ad8a78430fc2cad09b71465a4acb37a1e181a44bd05"
+    },
+    {
+      "file": "native-execution.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\execution.json",
+      "rawSha256": "36276bd6cabaeddca184ca4c70b7bd39f688c0adf11279f78d67f5f3c5050b0d",
+      "sanitizedSha256": "36276bd6cabaeddca184ca4c70b7bd39f688c0adf11279f78d67f5f3c5050b0d",
+      "gzipSha256": "2f7b15df0f5908e6a895c20e051cd9eab0fc027213401c799a5319dda2f752b4"
+    },
+    {
+      "file": "native-owner.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\owner.log",
+      "rawSha256": "fc72a88f4e7f66ebb1cd15508ce71fea1ad94b6039cebcabbbba57fd8d768180",
+      "sanitizedSha256": "fc72a88f4e7f66ebb1cd15508ce71fea1ad94b6039cebcabbbba57fd8d768180",
+      "gzipSha256": "508ab2b8cd9ef365b748aeafb55a843ecdafdb1ee55b9928908a77ecedb41544"
+    },
+    {
+      "file": "native-restore.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\restore.log",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0"
+    },
+    {
+      "file": "native-restricted-role.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\restricted-role.log",
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d"
+    },
+    {
+      "file": "native-restricted.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\restricted.log",
+      "rawSha256": "0330f54b44d7be0db4afce1a486ffd8297893ff43df87e0a6d8450bae67b2c64",
+      "sanitizedSha256": "0330f54b44d7be0db4afce1a486ffd8297893ff43df87e0a6d8450bae67b2c64",
+      "gzipSha256": "0ae1f0f2c78cac6e24e5cede2d43c974d792084171be4ae6c8a1f6dc81e82fb0"
+    },
+    {
+      "file": "native-source-after.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\source-after.json",
+      "rawSha256": "fd7d63e7d882637bd802acf7e698eb57b8c8b701dfabdfed2564060e6db537fb",
+      "sanitizedSha256": "fd7d63e7d882637bd802acf7e698eb57b8c8b701dfabdfed2564060e6db537fb",
+      "gzipSha256": "ef550a93363f16f4bf58a6470660a2ddc7e92f400c8d56ba9871c692a35579dd"
+    },
+    {
+      "file": "native-source-before.json.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-telemetry-projection-native-d0650a69ee7a\\source-before.json",
+      "rawSha256": "fd7d63e7d882637bd802acf7e698eb57b8c8b701dfabdfed2564060e6db537fb",
+      "sanitizedSha256": "fd7d63e7d882637bd802acf7e698eb57b8c8b701dfabdfed2564060e6db537fb",
+      "gzipSha256": "ef550a93363f16f4bf58a6470660a2ddc7e92f400c8d56ba9871c692a35579dd"
+    },
+    {
+      "file": "release297-live-binding-query-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-query-01.log",
+      "rawSha256": "a2017bccd0dd1d2e76118f807381a8646ef78f629d0373ae46462560caeb3de4",
+      "sanitizedSha256": "a2017bccd0dd1d2e76118f807381a8646ef78f629d0373ae46462560caeb3de4",
+      "gzipSha256": "dddd0adda0305eb537d8ebe0f372d3a8c335faa470a2556bb2db6ad4087127c7"
+    },
+    {
+      "file": "release297-live-binding-check-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-check-01.log",
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "gzipSha256": "6459468e740490899bd8ae976788dcab3cf3aed6fbb9f4e79bc4a6e1042454be"
+    },
+    {
+      "file": "release297-live-binding-check-tests-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-check-tests-01.log",
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350"
+    },
+    {
+      "file": "release297-live-binding-check-test-casts-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-check-test-casts-01.log",
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "gzipSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f"
+    },
+    {
+      "file": "release297-live-binding-native-01-runner.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-native-01-runner.log",
+      "rawSha256": "545660203ff61de07aa8acb360b7d0d9e98ea514ff11efe0e2ea44f867f47151",
+      "sanitizedSha256": "545660203ff61de07aa8acb360b7d0d9e98ea514ff11efe0e2ea44f867f47151",
+      "gzipSha256": "afcd59213adbe3d633c218d7a407abc87093152e87c82f2cac9864a9ed90e8e1"
+    },
+    {
+      "file": "release297-live-binding-native-01.ps1.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-native-01.ps1",
+      "rawSha256": "f82936d1750862a073caa5ca05499a61f7e72cdc7f874cd07e5e9ed019c16835",
+      "sanitizedSha256": "cf3c680e81031588a90721f51614e5a9012c2bab2131db07adf84c0196ccdddd",
+      "gzipSha256": "47166aeccfe9aebd04f5f6679b25ef81430862a593000713a406f60ef8561bd5"
+    },
+    {
+      "file": "release297-live-binding-compile-01.mjs.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-compile-01.mjs",
+      "rawSha256": "0f0ef6988e0187df5bfac5906d1faa0237f93d85ef47ec3215d35ab07f2213e5",
+      "sanitizedSha256": "0f0ef6988e0187df5bfac5906d1faa0237f93d85ef47ec3215d35ab07f2213e5",
+      "gzipSha256": "a4c15f0e630e5eec78340e6faacad643a88d082fa2f49c0e7ee96e6a7872b21e"
+    },
+    {
+      "file": "release297-live-binding-compile-01.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-compile-01.log",
+      "rawSha256": "a4cee4259acbf262db4ca217ad2753263eb75d402fd113120dcfb189b7a36d23",
+      "sanitizedSha256": "a4cee4259acbf262db4ca217ad2753263eb75d402fd113120dcfb189b7a36d23",
+      "gzipSha256": "8a0bc219c08a2dba6bcb13c6c752a0ea5bd4f8907172d7ce28dddf0176e6e2b8"
+    },
+    {
+      "file": "release297-live-binding-compile-02.log.gz",
+      "sourcePath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-live-binding-compile-02.log",
+      "rawSha256": "9d7ef81f47496965389eca579b66e6aa9388c3dc479f9b36515f18bba80acda8",
+      "sanitizedSha256": "9d7ef81f47496965389eca579b66e6aa9388c3dc479f9b36515f18bba80acda8",
+      "gzipSha256": "d515dd2630e4d281e5482d1c10a3908f938317b8d191697069dc9ebaf7d13b1a"
+    }
+  ]
+}

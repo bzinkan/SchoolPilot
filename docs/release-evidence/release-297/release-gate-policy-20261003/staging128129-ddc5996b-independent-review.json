@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "kind": "Independent actual-image local staged-service evidence review",
+  "passedWithinScope": true,
+  "recordedAtUtc": "2026-10-04T06:51:49.786Z",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "fallbackSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+  "servingImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "fallbackImage": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+  "startedAtUtc": "2026-10-04T06:43:14.742Z",
+  "completedAtUtc": "2026-10-04T06:46:16.899Z",
+  "withinAuthorizedLocalWindow": true,
+  "actualServicePairs": 4,
+  "actualApiProcesses": 4,
+  "actualSchedulerWorkerProcesses": 4,
+  "initialFullHealthMonitorCyclesPassed": 4,
+  "gracefulActualServiceSqlDrains": 8,
+  "ledgerEntriesRetained": 54,
+  "fallbackSourceMigrationCount": 53,
+  "screenshotFunction": {
+    "signature": "public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)",
+    "bodySha256": "e198ab4901f23dd31aa286e90e3c7401302cd5220510af9b5facf306cf80c30b",
+    "attributes": {
+      "volatile": true,
+      "invoker": true,
+      "parallelUnsafe": true,
+      "searchPath": "pg_catalog",
+      "strict": false,
+      "leakproof": false
+    },
+    "runtimeExecute": true,
+    "publicExecute": false,
+    "exactFunctionAndAclRetained": true
+  },
+  "stagedAdmission": {
+    "bridge": 128,
+    "adopted": 129,
+    "oldWritersDrainedBeforeAdoption": true,
+    "productionAdmission": false
+  },
+  "authenticatedHeartbeatAndExactPersistedSupportCheckedPerServicePhase": true,
+  "lifecycleChecks": {
+    "prepare": {
+      "seededAppointment": true,
+      "unstampedReplyQueued": true
+    },
+    "bridge": {
+      "actualSchedulerMaintenance": true,
+      "unstampedPrivateBootstrapAndAck": true,
+      "announcementDuringPrivateHardOff": true,
+      "zeroAdoptionWrites": true
+    },
+    "adopt": {
+      "firstAdoption": true,
+      "legacyPendingExpired": true,
+      "stampedCloseExpired": true,
+      "deliveredHistoryPreserved": true,
+      "foreignSchoolUnadopted": true
+    },
+    "fallback": {
+      "disabledIssuancePreservesExpiry": true,
+      "exactThreadHistoryPreserved": true,
+      "deliveredHistoryPreserved": true,
+      "foreignSchoolUnadopted": true
+    },
+    "return": {
+      "disabledIssuancePreservesExpiry": true,
+      "exactThreadHistoryPreserved": true,
+      "deliveredHistoryPreserved": true,
+      "foreignSchoolUnadopted": true
+    }
+  },
+  "operationalSentinel": {
+    "originalDdlSha256": "41cb2cd4ad12d4cb94953e0df7ef33de49015e14101a09f32e9abf377b164fe6",
+    "outsideTenantInventory": true,
+    "runtimeSchemaCreate": false,
+    "onlyRuntimeSelectInsertDeleteAndSequenceUsage": true
+  },
+  "bothUsageModesOff": true,
+  "syntheticSchemaOnly": true,
+  "originalFailedAttemptsPreserved": true,
+  "exactOwnedCleanup": {
+    "containers": 16,
+    "volumes": 2,
+    "allGracefulExitZero": true,
+    "noOom": true,
+    "forced": false,
+    "absent": true,
+    "networkAbsent": true,
+    "separateAbsenceReceiptVerified": true
+  },
+  "inputBindings": [
+    {
+      "file": "execution.json",
+      "sha256": "e69fd739a1632debee331e7560e33da422a330dfe7283d9d33efc4a6d5d70161"
+    },
+    {
+      "file": "bound-stage-plan.json",
+      "sha256": "29fa2b27cd8e5ae55561a5a8302338ac148b39c7046ea161d5759d17f1ba76df"
+    },
+    {
+      "file": "probe-prepare-result.json",
+      "sha256": "27db38ac3d15c60cbd21232d639a9b02a51c5701bd9771868f680889f4a17db6"
+    },
+    {
+      "file": "probe-bridge-result.json",
+      "sha256": "581d6a6229903ad8627c8531b4a90cdfc7d8cc56c46109400fac48118e36afe6"
+    },
+    {
+      "file": "probe-adopt-result.json",
+      "sha256": "28218ac36f1de048783d72a67aef59db2c3984ac4cbc3c19bf6e92c30846a9b3"
+    },
+    {
+      "file": "probe-fallback-result.json",
+      "sha256": "55e1ca49a40614da2215b4ff0308b0d2a168e5033d7b66939c295373f55ba98f"
+    },
+    {
+      "file": "probe-return-result.json",
+      "sha256": "43aaea521702710ce1bcb99f2adc389cd5f6cfbf557d2f2723c7eb02e4263d2d"
+    },
+    {
+      "file": "probe-grant-result.json",
+      "sha256": "a90625c6c58e6c9d6e2f093c5804cecf0e5ef6d5976deecfbcbf734c75a489ea"
+    },
+    {
+      "file": "independent-cleanup-verification.json",
+      "sha256": "eb77965923fdfc08f8361fa73655cc27901687aff4f00f1ce5052a988ceda75f"
+    }
+  ],
+  "privateServiceLogBindings": [
+    {
+      "phase": "bridge128",
+      "service": "api",
+      "sha256": "1b3bc79b0c4e6781c64f1447e7d89f478ab5081e88d1e38686f5940916774b3f",
+      "bytes": 20534
+    },
+    {
+      "phase": "bridge128",
+      "service": "worker",
+      "sha256": "4d2975ecb1a5e4b4c4bbc4db861eebf02e686c3556851fd03b222c96171295b5",
+      "bytes": 12769
+    },
+    {
+      "phase": "adopt129",
+      "service": "api",
+      "sha256": "2d82b27834e5ea2bed6411ffe1100f93d11db5302bee9bd44fec353ceb5b96a3",
+      "bytes": 13093
+    },
+    {
+      "phase": "adopt129",
+      "service": "worker",
+      "sha256": "a1bb2c521275166df95cee1e7512aa89b92b7ed295365e965eb1809de06b1fd1",
+      "bytes": 5314
+    },
+    {
+      "phase": "fallback129",
+      "service": "api",
+      "sha256": "59f9940014483ec6c889375506891c2b6305854eed1be575443820c2d591b80e",
+      "bytes": 20817
+    },
+    {
+      "phase": "fallback129",
+      "service": "worker",
+      "sha256": "5d858ed52f5e1873793aa6b62d83ed4777a9501c5be8b85e68b7678071e09496",
+      "bytes": 5314
+    },
+    {
+      "phase": "return129",
+      "service": "api",
+      "sha256": "425f4a6ee1f265117961a721204ca150fba04a45b9a444fdae3d633132ca7408",
+      "bytes": 13086
+    },
+    {
+      "phase": "return129",
+      "service": "worker",
+      "sha256": "21a3b702f87e87a702a2dfcdf92ce5a6ce48266a6672ff8ab0b26a8b1ef0d236",
+      "bytes": 12769
+    }
+  ],
+  "nativeExecutionByReviewer": false,
+  "capacityAccepted": false,
+  "productionCatalogVerified": false,
+  "productionDeploymentPerformed": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "This is isolated synthetic correctness/recovery evidence, not capacity, production admission, ECS/ALB drain or live-device acceptance.",
+    "One-shot probes explicitly exit after awaited tenant/SQL/socket/background cleanup; the residual eager rate-limiter Redis client is recorded as not disposed. Actual API/worker graceful shutdown was separately verified.",
+    "Source schema/native provenance remains ed026; fresh native metadata proves exact serving54 and fallback53 subset. Raw emitted bytes differ only as separately recorded CRLF continuity and two runtime fixes plus one helper.",
+    "Exact Focus cleanup and combined classroom acceptance remain in their distinct acceptance suites; this stage does not claim those tests passed."
+  ]
+}

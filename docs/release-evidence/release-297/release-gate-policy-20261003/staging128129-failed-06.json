@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Retained failed staged-service rehearsal06; partial preparation evidence only",
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "startedAt": "2026-10-04T04:56:45.176Z",
+  "overall": "FAILED",
+  "phaseReached": "candidate128 bridge actual heartbeat support lookup",
+  "full129AdoptionFallbackAccepted": false,
+  "capacityAccepted": false,
+  "productionMutations": 0,
+  "actual128Evidence": {
+    "apiReadyz": true,
+    "workerStartup": true,
+    "appointmentMaintenance": true,
+    "httpHeartbeatSuccessAndExactBinding": "Established by assertion/control-flow order before shared read failure; raw HTTP body was not retained",
+    "websocketNegotiation": "Established by assertion/control-flow order",
+    "acceptedCapabilityCount": 3,
+    "sharedRead": "mismatch instead of hit"
+  },
+  "limits": [
+    "No raw Redis value was retained; empty-array serialization causality remains unconfirmed pending separate native proof",
+    "The full128 bridge,129 adoption and safe fallback phases did not pass",
+    "Actual service shutdown had exit0/noOOM containment; named full phase drain assertions were not reached",
+    "Private raw synthetic logs and state are retained outside public/git"
+  ],
+  "cleanup": {
+    "passed": true,
+    "gracefulAllOwners": false,
+    "failedProbeExit": 1,
+    "allOwnedContainersVolumesNetworkAbsent": true,
+    "forced": false
+  },
+  "boundRecords": [
+    {
+      "name": "execution.json",
+      "sha256": "d1a5c0227655cf833359ae75a1bad6fb67bfdc112f018bc1298b723502e70c75"
+    },
+    {
+      "name": "private-stage-bridge-result.json",
+      "sha256": "81bf0d5cdba2adbe012b1aeb69b62b04e7037bc48ad3a8268516c81b63c0b615"
+    },
+    {
+      "name": "bound-stage-plan.json",
+      "sha256": "3675ab30d5473efa52f442986a51089639ae442e0228af804005768b88faf3f5"
+    },
+    {
+      "name": "local-window-06.json",
+      "sha256": "0bebb5b4f691cc91032cb5355d9a608104f332d003bff9e4ac36d29921d17a25"
+    }
+  ]
+}

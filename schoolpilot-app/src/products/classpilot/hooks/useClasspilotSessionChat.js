@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../../../lib/queryClient';
 import { mergeDeliveryStatus } from '../lib/chatThreads';
+import { privateChatLifecycleToken, privateChatLifecycleCanAdvance, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 
 let nextGeneration = 0;
 const DENIED_STATUSES = new Set([401, 403, 404]);
@@ -16,6 +17,7 @@ function newChatScope(key, schoolId, viewerId, sessionId, authority, contextAuth
   return {
     key, schoolId, viewerId, sessionId, authority, contextAuthorityRevision, generation: ++nextGeneration,
     sequence: 0, requestSequence: 0, reconnectSequence: 0, appliedRequest: 0, denied: false, historyApplied: false,
+    privateMessagingEnabled: true, privateChatLifecycleRequired: false, lifecycles: new Map(), endingThreads: new Set(), replyFences: new Map(),
     messages: new Map(), deliveries: new Map(), dismissed: new Set(), closedThreads: new Map(), pendingReplies: new Set(),
   };
 }
@@ -31,6 +33,23 @@ function historyMessage(row, sessionId, schoolId, authority) {
     // Server-side trust signals (absent until the backend that writes them ships).
     readAt: row.readAt ?? null, seenAt: row.seenAt ?? null,
   };
+}
+
+function applyPrivateLifecycles(scope, data, request) {
+  if (request.id < scope.appliedRequest) return;
+  scope.privateChatLifecycleRequired ||= data.privateChatLifecycleRequired === true;
+  if (!scope.privateChatLifecycleRequired) return;
+  if (!Array.isArray(data.privateChatLifecycles)) { scope.lifecycles.clear(); return; }
+  const present = new Set();
+  for (const row of data.privateChatLifecycles) {
+    if (!row?.studentId || !matchesActivityAuthority(row, scope.authority)) continue;
+    present.add(row.studentId);
+    const token = privateChatLifecycleToken(row.privateChatLifecycle);
+    const previous = scope.lifecycles.get(row.studentId);
+    if (privateChatLifecycleCanAdvance(previous?.token, token)) scope.lifecycles.set(row.studentId, { token, supported: row.supported === true });
+    else if (!token) scope.lifecycles.delete(row.studentId);
+  }
+  for (const studentId of scope.lifecycles.keys()) if (!present.has(studentId)) scope.lifecycles.delete(studentId);
 }
 
 function applyHistory(scope, rows, request, dismissedIds) {
@@ -86,7 +105,7 @@ function applyHistory(scope, rows, request, dismissedIds) {
 // History, live events, and teacher replies share one authority-scoped store.
 // Student telemetry only supplies display names; it never replays a snapshot.
 export function useClasspilotSessionChat({
-  schoolId, viewerId, sessionId: teachingSessionId, supervisionContextId, contextAuthorityRevision, enabled, wsAuthenticated, students, dismissedMessageIds,
+  schoolId, viewerId, sessionId: teachingSessionId, supervisionContextId, contextAuthorityRevision, enabled, wsAuthenticated, students, dismissedMessageIds, privateMessagingEnabled = true,
 }) {
   const queryClient = useQueryClient();
   const authority = activityAuthority({ teachingSessionId, supervisionContextId });
@@ -118,27 +137,46 @@ export function useClasspilotSessionChat({
       scope.dismissed.clear();
       scope.closedThreads.clear();
       scope.pendingReplies.clear();
+      scope.lifecycles.clear(); scope.endingThreads.clear(); scope.replyFences.clear();
     };
   }, [queryClient, queryKey, scope]);
+
+  useLayoutEffect(() => {
+    const current = currentScope();
+    if (current !== scope || current.privateMessagingEnabled === privateMessagingEnabled) return;
+    current.privateMessagingEnabled = privateMessagingEnabled;
+    if (!privateMessagingEnabled) {
+      // Known hard-off retires in-flight responses immediately. History and
+      // the separate announcement channel remain available.
+      for (const request of current.pendingReplies) current.replyFences.set(request.studentId, ++current.sequence);
+      if (current.privateChatLifecycleRequired) current.lifecycles.clear();
+    }
+    const frame = requestAnimationFrame(notify);
+    void queryClient.invalidateQueries({ queryKey, exact: true });
+    return () => cancelAnimationFrame(frame);
+  }, [currentScope, notify, privateMessagingEnabled, queryClient, queryKey, scope]);
 
   useQuery({
     queryKey,
     queryFn: async ({ signal }) => {
-      const request = { id: ++scope.requestSequence, version: scope.sequence };
+      const requestScope = currentScope();
+      if (requestScope !== scope) throw new DOMException('Chat scope changed', 'AbortError');
+      const request = { id: ++requestScope.requestSequence, version: requestScope.sequence };
       try {
         const data = await apiRequest('GET', `/teacher/messages?${activityAuthorityQuery(scope.authority, true)}`,
           undefined, { signal, headers: activityRequestHeaders(scope.schoolId, scope.contextAuthorityRevision) });
         if (!Array.isArray(data?.messages)) throw new Error('Class chat history is unavailable.');
         if (!signal.aborted && currentScope() === scope) {
-          applyHistory(scope, data.messages, request, dismissedMessageIds.current);
+          applyPrivateLifecycles(requestScope, data, request);
+          applyHistory(requestScope, data.messages, request, dismissedMessageIds.current);
           notify();
         }
         return data;
       } catch (error) {
         if (!signal.aborted && currentScope() === scope && DENIED_STATUSES.has(error?.response?.status)) {
-          scope.denied = true;
-          scope.messages.clear();
-          scope.deliveries.clear();
+          requestScope.denied = true;
+          requestScope.messages.clear();
+          requestScope.deliveries.clear();
           notify();
         }
         throw error;
@@ -158,13 +196,14 @@ export function useClasspilotSessionChat({
       authenticated: wsAuthenticated,
       hasAuthenticated: previous.hasAuthenticated || wsAuthenticated,
     };
-    if (wsAuthenticated && !previous.authenticated && previous.hasAuthenticated && currentScope() === scope) {
+    const active = currentScope();
+    if (wsAuthenticated && !previous.authenticated && previous.hasAuthenticated && active === scope) {
       // A read begun before disconnect may predate messages missed offline.
       // Abort that read, then ensure one read starts after reauthentication.
-      const reconnect = ++scope.reconnectSequence;
+      const reconnect = ++active.reconnectSequence;
       void queryClient.cancelQueries({ queryKey, exact: true }).then(() => {
         if (currentScope() !== scope || !connection.current.authenticated
-          || scope.reconnectSequence !== reconnect) return;
+          || active.reconnectSequence !== reconnect) return;
         return queryClient.refetchQueries({ queryKey, exact: true, type: 'active' }, { cancelRefetch: false });
       });
     }
@@ -214,8 +253,10 @@ export function useClasspilotSessionChat({
 
   const beginReply = useCallback((studentId) => {
     const current = currentScope();
-    if (!current) return null;
+    if (!current || !current.privateMessagingEnabled || current.endingThreads.has(studentId)
+      || (current.privateChatLifecycleRequired && (!current.lifecycles.get(studentId)?.token || !current.lifecycles.get(studentId)?.supported))) return null;
     const request = {
+      expectedPrivateChatLifecycle: current.privateChatLifecycleRequired ? current.lifecycles.get(studentId)?.token : null,
       generation: current.generation, schoolId: current.schoolId, contextAuthorityRevision: current.contextAuthorityRevision,
       sessionId: current.sessionId, authority: current.authority, studentId, version: ++current.sequence,
     };
@@ -226,7 +267,9 @@ export function useClasspilotSessionChat({
   const isCurrentReply = useCallback((request) => {
     const current = currentScope();
     return Boolean(request && current?.generation === request.generation
-      && (current.closedThreads.get(request.studentId)?.sequence || 0) < request.version);
+      && (current.closedThreads.get(request.studentId)?.sequence || 0) < request.version
+      && (current.replyFences.get(request.studentId) || 0) < request.version
+      && (!request.expectedPrivateChatLifecycle || samePrivateChatLifecycle(request.expectedPrivateChatLifecycle, current.lifecycles.get(request.studentId)?.token)));
   }, [currentScope]);
   const receiveReply = useCallback((request, reply, text) => {
     const current = currentScope();
@@ -237,6 +280,7 @@ export function useClasspilotSessionChat({
     if (!isCurrentReply(request)) {
       // The server may have committed a reply whose POST was still pending
       // when Close Chat was pressed. Its newly known ID stays closed too.
+      if (request.expectedPrivateChatLifecycle) return false;
       current.dismissed.add(reply.id);
       current.messages.delete(reply.id);
       current.deliveries.delete(reply.id);
@@ -256,6 +300,28 @@ export function useClasspilotSessionChat({
   const finishReply = useCallback((request) => {
     const current = currentScope();
     if (request && current?.generation === request.generation && current.pendingReplies.delete(request)) notify();
+  }, [currentScope, notify]);
+
+  const refreshLifecycle = useCallback(() => queryClient.invalidateQueries({ queryKey, exact: true }), [queryClient, queryKey]);
+  const beginEnd = useCallback((studentId) => {
+    const current = currentScope();
+    const token = current?.lifecycles.get(studentId)?.token;
+    if (!current || current.endingThreads.has(studentId) || (current.privateChatLifecycleRequired && !token)) return null;
+    const request = { generation: current.generation, schoolId: current.schoolId, authority: current.authority,
+      contextAuthorityRevision: current.contextAuthorityRevision, studentId, expectedPrivateChatLifecycle: token || null };
+    current.replyFences.set(studentId, ++current.sequence);
+    current.endingThreads.add(studentId); notify(); return request;
+  }, [currentScope, notify]);
+  const finishEnd = useCallback((request, response) => {
+    const current = currentScope();
+    if (!request || current?.generation !== request.generation) return false;
+    if (request.expectedPrivateChatLifecycle) {
+      const token = privateChatLifecycleToken(response?.privateChatLifecycle);
+      const previous = current.lifecycles.get(request.studentId);
+      if (privateChatLifecycleCanAdvance(previous?.token, token)) current.lifecycles.set(request.studentId, { ...previous, token });
+      else current.lifecycles.delete(request.studentId);
+    }
+    current.endingThreads.delete(request.studentId); notify(); return true;
   }, [currentScope, notify]);
 
   // Both return the ids that still need a server read receipt.
@@ -307,11 +373,14 @@ export function useClasspilotSessionChat({
     return true;
   }, [currentScope, notify]);
 
+  // Only a current, undenied scope can send: while this is false beginReply
+  // returns null, so the dashboard offers no way to start a conversation.
+  const available = Boolean(scopeKey && scope.key === scopeKey && !scope.denied);
   const studentLookup = new Map(students.map((student) => [student.studentId || student.id, student]));
   const studentMessages = [];
   const chatReplies = {};
   const pendingReplyStudentIds = new Set();
-  if (scopeKey && scope.key === scopeKey && !scope.denied) {
+  if (available) {
     for (const reply of scope.pendingReplies) pendingReplyStudentIds.add(reply.studentId);
     for (const message of scope.messages.values()) {
       if (message.senderType === 'teacher') {
@@ -329,6 +398,16 @@ export function useClasspilotSessionChat({
     }
   }
   studentMessages.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
-  return { generation: scope.generation, studentMessages, chatReplies, pendingReplyStudentIds, receiveStudentMessage, receiveDelivery,
+  const canReplyTo = studentId => available && scope.privateMessagingEnabled && !scope.endingThreads.has(studentId)
+    && (!scope.privateChatLifecycleRequired || Boolean(scope.lifecycles.get(studentId)?.token && scope.lifecycles.get(studentId)?.supported));
+  const replyUnavailableReason = studentId => scope.endingThreads.has(studentId) ? 'Ending this chat…'
+    : !scope.privateMessagingEnabled ? ''
+    : scope.privateChatLifecycleRequired && scope.lifecycles.get(studentId)?.supported === false
+      ? "Update ClassPilot on this student's Chromebook to use private chat."
+      : !canReplyTo(studentId) ? 'Private chat is syncing. Refresh messages before replying.' : '';
+  const canEndChat = studentId => available && !scope.endingThreads.has(studentId)
+    && (!scope.privateChatLifecycleRequired || Boolean(scope.lifecycles.get(studentId)?.token));
+  return { available, canReplyTo, canEndChat, replyUnavailableReason, privateChatLifecycleRequired: scope.privateChatLifecycleRequired,
+    beginEnd, finishEnd, refreshLifecycle, generation: scope.generation, studentMessages, chatReplies, pendingReplyStudentIds, receiveStudentMessage, receiveDelivery,
     receiveReadReceipt, beginReply, isCurrentReply, receiveReply, finishReply, markRead, markThreadRead, dismiss, closeThread };
 }

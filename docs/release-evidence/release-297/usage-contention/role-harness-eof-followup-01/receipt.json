@@ -1,0 +1,26 @@
+{
+  "sourceBefore": "0650decf4dfdf0ad563a043b18b563ac5e19700c",
+  "applicationSource": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "files": [
+    {
+      "path": "scripts/load/usage/roles/host-lifecycle.mjs",
+      "beforeSha256": "a1274952a49391c86f2f4504b4ab25b16f174ac922cf61573ebd4d2cc987056a",
+      "afterSha256": "6be82db028949abe1c5dd29a0229342a60108d1af921eece739a1b4365fb6523",
+      "trailingNewlinesOnly": true
+    },
+    {
+      "path": "scripts/load/usage/roles/owned-ipc-core.mjs",
+      "beforeSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "afterSha256": "7c5706ef43f00d8b65ef7175ef189608f8317ae9f8bc41c69d4139e842cfb894",
+      "trailingNewlinesOnly": true
+    },
+    {
+      "path": "scripts/load/usage/roles/role-plan.mjs",
+      "beforeSha256": "2f575de27663e3edef3bd209acbc7bf308d7221b82383e64a81f0356222855f2",
+      "afterSha256": "0bfced524c9fcbf2a98c2cadae12985e9fd1069f6f95515a041517eacb86656a",
+      "trailingNewlinesOnly": true
+    }
+  ],
+  "applicationChanged": false,
+  "capacityAccepted": false
+}

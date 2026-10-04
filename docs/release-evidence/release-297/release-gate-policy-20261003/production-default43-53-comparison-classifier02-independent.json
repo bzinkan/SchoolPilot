@@ -1,0 +1,33 @@
+{
+  "kind": "independent_matched133_classifier02_review",
+  "passed": true,
+  "recordedAt": "2026-10-04T20:08:03.2477006+00:00",
+  "driverSha256": "211c410d6f4d4f991178aacddc3a963272221bc6c81338bbb03db840469e3194",
+  "testSha256": "7978259f1ee346caf3d44ca592b227cb37807f02d008102d09c7b4942460ceb1",
+  "exactTwoLineRuntimeDiffVerifiedByReverseHash": true,
+  "onlyCanonicalNumericalMarkerAllowedAfterStrictSafeClassification": true,
+  "passingRecordStillRequiresNullFailure": true,
+  "allOtherFailureCodesFatal": true,
+  "originalA1FailurePreserved": true,
+  "retainedA1CanonicalLoaderAndValidateRoundExercised": true,
+  "tests": 7,
+  "uniqueTests": 7,
+  "syntaxChecks": 2,
+  "failCancelSkipTodo": 0,
+  "wholeDeadlineMs": 20000,
+  "emptyStderr": true,
+  "sourceAndNineSupportHashesMatch": true,
+  "exactFourPidsAbsentUnforced": true,
+  "evidenceDirectory": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default-classifier-pure-02",
+  "evidenceHashes": {
+    "execution.json": "78b78ef4ae6275eaa8a72530439c5de89a2b9521421c7e670cdd14e2680f13e7",
+    "source-bindings.json": "71583f313f3aa6a1859c2a9bd7e3c4331bbdb8ec937178d44122c2dc4f72e224",
+    "tests.tap": "273121714e2cd2acef40565c51be878f92b0ff91a7a435afa35d73ee515a3592",
+    "owned-absence.json": "ae44e61e2fbe18b7efc668d07ac5b85dd3ae652629d947e080e9971074aaad63"
+  },
+  "nativeActions": 0,
+  "applicationHelperSchemaProfileChanged": false,
+  "comparisonPolicyChanged": false,
+  "capacityAccepted": false,
+  "freshFixed8PacketWindowRootGoRequired": true
+}

@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_failed03_completed_component_custody_review",
+  "recordedAt": "2026-10-04T18:46:07.3033585Z",
+  "reviewer": "task_posture_review",
+  "execution": {
+    "sha256": "299ce57509e9f55d59d8fc3d0925c52fd152287d0eab2b4d5846e4c4d781e9bd",
+    "passed": false,
+    "completedInsideAuthorizedWindow": true,
+    "readyHandoffExists": false
+  },
+  "custody": {
+    "sha256": "635ef75499aa477247aae6497217ac30bf856394e5c617c66ab7786b240a4630",
+    "declaredMembersRehashed": 165,
+    "bytesRehashed": 2211042,
+    "allContainedBytesAndHashesMatch": true,
+    "publicSummarySha256": "bb83b5c88a0eaebe4809ef60e71d861da6517bbb60f5bfc74aa8c077e0634482",
+    "absenceSha256": "17fc0a7e3c3048e0b7b9b436f1b670ce857f96879471dfc0d37bd4feeccf75d0"
+  },
+  "completedNativeComponents": {
+    "baselineSelectedAndCompleted": 43,
+    "candidateSelectedAndCompleted": 53,
+    "fallbackSelected": 52,
+    "fallbackAndReturnCompletedRetained": 53,
+    "independentIdChecksumModeStatusVectorsMatched": true,
+    "candidateRepeatMatched": true,
+    "forcedRlsTablesBaseline": 121,
+    "forcedRlsTablesCandidateAndFallback": 129,
+    "optionalContractLedgerFunctionsTriggersAbsent": true,
+    "sourceDeclaredNormalizedEmailIndexPresent": true,
+    "screenshotFunctionAbsentOnBaseline": true,
+    "screenshotFunctionBodySha256": "e198ab4901f23dd31aa286e90e3c7401302cd5220510af9b5facf306cf80c30b",
+    "screenshotFunctionPublicExecuteFalse": true,
+    "screenshotFunctionNativeRuntimeExecuteTrue": true
+  },
+  "exports": [
+    {
+      "arm": "baseline",
+      "rawSha256": "bfe05d7194f6a35e5c47693ce0ee46b6cfcd35139e9e79e44ac64c0a166c5693",
+      "canonicalSha256": "35339c1f2684f48ad89ccfcc0dbec5eb3b65955ae16fdb76901ac164c2e4b58c",
+      "independentlyRecomputed": true,
+      "sentinelExcluded": true
+    },
+    {
+      "arm": "candidate",
+      "rawSha256": "b425cdefba55debd440f1e0b6284468c9296416d683037b89d47efbc07ff1f79",
+      "canonicalSha256": "61fe0293d184fa23393497d5dce26032b9723d34ff0791d66e4163f937acd6fa",
+      "independentlyRecomputed": true,
+      "sentinelExcluded": true
+    }
+  ],
+  "completedServiceComponents": {
+    "phases": [
+      "bridge128",
+      "adopt129",
+      "fallback129",
+      "return129"
+    ],
+    "actualServices": 8,
+    "serviceOraclesPassed": 4,
+    "actualAuthenticatedHeartbeatBindingPersistence": true,
+    "restrictedTenantIsolation": true,
+    "privateAdoptionExpiryAndDeliveredHistory": true,
+    "preExistingSyntheticFocusCleanupAndReentry": true,
+    "newFocusIssuanceProven": false,
+    "healthFullPassesInFinalLogs": 4,
+    "finalApiLogSha256": [
+      "697e55cc4337a0a263e9720435693333aecdd6278b91eb3f6aa2cdb274a8ca93",
+      "9a61ccd7e1c79dfc5b9fa3745a33217cb53632107b05cdfbc4e5384b674317d1",
+      "0ef298e188b1ee47607393880889b892e31d910826bfeb39ada45b7281bb0d8b",
+      "9eb6b30f638e4aaefaf0242769894d9fd183fd00967ef11eb664894184d7450c"
+    ],
+    "initialHealthSnapshotRawMembersAvailable": false,
+    "completeFinalServiceLogsChecked": 8,
+    "failureGuardsAbsent": true,
+    "serviceDrainsExit0NoOomUnforcedSql0": 8
+  },
+  "cleanup": {
+    "containers": 27,
+    "volumes": 2,
+    "allExit0NoOomUnforcedAndRetainedAbsent": true,
+    "networkAbsent": true,
+    "constructorAndExecutorAbsent": true,
+    "freshReviewerDockerQueries": 0
+  },
+  "failure": {
+    "stage": "first restricted baseline restore after psql success",
+    "code": "ERR_ASSERTION",
+    "restoredRawDumpRetained": false,
+    "restrictedNativeProofsProduced": 0,
+    "exactAssertionCauseProven": false,
+    "sourceDumpOwnerMarkersAllDash": true,
+    "ownerCommentMismatchHypothesis": "ruled_out",
+    "unchangedCanonicalNormalizer": true
+  },
+  "compositionDisposition": "Completed03 components may be bound into a new explicitly composed handoff only after separate exact-export restricted restoration succeeds with its own complete custody and cleanup. Original03 remains FAILED.",
+  "scope": {
+    "sourceDerivedSynthetic": true,
+    "productionRawSchemaEquivalence": false,
+    "productionMutations": 0,
+    "capacityAcceptance": false,
+    "deploymentAcceptance": false,
+    "policyAmendmentAccepted": false
+  },
+  "limitations": [
+    "No complete fixture or accepted ready handoff exists yet.",
+    "Native screenshot runtime-execute fields are read under the native probe role; actual restricted service source checks are separately passed.",
+    "Initial health snapshot hashes were not retained as standalone files; actual health passes are independently established in the final manifest-bound logs.",
+    "One-shot service probes explicitly exited with an unexported residual Redis rate-limiter handle; actual API/worker drains are separately normal and SQL-zero.",
+    "Restricted restored canonical equality, native nonowner positive/negative proofs and exact restored raw differences remain unverified.",
+    "All resource absence observations here are retained independently captured records, not new reviewer Docker commands."
+  ]
+}

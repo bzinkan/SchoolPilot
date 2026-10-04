@@ -6,6 +6,7 @@ export * from "./students.js";
 
 // PassPilot tables
 export * from "./passpilot.js";
+export * from "./passpilotAppointments.js";
 
 // GoPilot tables
 export * from "./gopilot.js";

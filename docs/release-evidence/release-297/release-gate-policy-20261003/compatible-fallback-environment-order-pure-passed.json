@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "kind": "compatible-fallback-environment-order-public-pure-summary",
+  "commit": "dde0b9e83f032129d18db43b38069777cf0bc088",
+  "parent": "4287d78a785e41a52c530bc6fb9b5562db8a55dd",
+  "sourceSha256": "5bf2a4110fd4fa1d7e6fd373da2e3e6a8fadd1ad00400fa4749e07ad47a861f7",
+  "testSha256": "f8497ecf11a16d42d79f23504b451d2d1c744ec5a90db05917e06d4ee627fd54",
+  "sourceScope": [
+    "scripts/register-compatible-fallback-inactive.mjs",
+    "tests/release297-compatible-fallback-inactive.test.mjs"
+  ],
+  "clean": true,
+  "tests": {
+    "tests": 28,
+    "pass": 28,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "syntaxChecks": 2,
+    "configuredWholeDeadlineMs": 20000,
+    "actualElapsedMs": 985.7428,
+    "exitCode": 0
+  },
+  "independentReview": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-independent-01\\independent-review.json",
+    "sha256": "a5ccd19264cc41a7894c46ab6acd5d16a48a9af256d2306818098382abd64b09",
+    "bytes": 3302
+  },
+  "evidence": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\preparation.json",
+      "sha256": "69269254db758977319b4f48e2c17a413675aeef3175f0a3b2bcfa191e39dd4f",
+      "bytes": 2789
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\run-pure.mjs",
+      "sha256": "7b5f5455317eb3158ac6897ff962b5b882c5289e0b77bff020ec53992593ddca",
+      "bytes": 6096
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\execution.json",
+      "sha256": "f53b04b67e3ba321b565f39e658d52fbd6dd10e22b6eac0d435e08b887cf971b",
+      "bytes": 8652
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\tests.tap",
+      "sha256": "d6a0fe3345afc6f11c66c5337a0a966927b1b4dfa14092615b17b982d195d2d3",
+      "bytes": 5792
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\process-absence.json",
+      "sha256": "266cfb40031750158c14b6addf6114e211d81cbcbb58d740163e461a6ed2cebd",
+      "bytes": 582
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\commit-verification.json",
+      "sha256": "b61e7bdd2c47aa36b7b73efb62d771aa0ae64b5e07e09a93ff51ed0f52790b4a",
+      "bytes": 2124
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\register-compatible-fallback-inactive.mjs.syntax.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\release297-compatible-fallback-inactive.test.mjs.syntax.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "preservedHistoricalProof": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-compatible-inactive-pure-evidence-01/public-summary.json",
+    "sha256": "48da5a28fc25c09b51cfa359bb9c103c3606d0fc78d4d0a4fe01845309886ff9",
+    "tests": 24,
+    "commit": "4287d78a785e41a52c530bc6fb9b5562db8a55dd"
+  },
+  "exactOwnedProcessesAbsent": true,
+  "ownedChildCount": 9,
+  "forcedCleanup": false,
+  "testedBehavior": [
+    "post-registration exact environment-name/value equality permits provider permutation only",
+    "request and all sidecar fields copied without mutation",
+    "changed or missing or duplicate environment bindings reject and preserve returned ARN",
+    "tags, commands, secrets and all other ordered fields remain strict"
+  ],
+  "ciDiscovery": "Automatically discovered in the ordinary unit lane",
+  "nativeActions": 0,
+  "cloudCommands": 0,
+  "cloudMutations": 0,
+  "actualRegistryPublished": false,
+  "actualDefinitionsRegistered": false,
+  "actualPlanCreated": false,
+  "applicationEdits": 0,
+  "schemaEdits": 0,
+  "packageEdits": 0,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "pending": [
+    "fresh authorized fallback publication and independent anchor scan/source-tag/registry proofs",
+    "actual compatible 128 or 129 source API and worker captures with new issuance and Usage off",
+    "new exact hash-bound inactive-registration plan and separate authorization/window"
+  ]
+}

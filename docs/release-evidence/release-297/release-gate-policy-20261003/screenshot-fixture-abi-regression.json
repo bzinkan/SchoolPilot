@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "scope": "Actual test-fixture function extracted via TypeScript AST; no application imports, SQL, Redis or browser processes",
+  "baselineHead": "72578c05014297d3e00dbecd269e8e9670180456",
+  "source": {
+    "file": "tests/classpilot-screenshot-publish-gate.test.ts",
+    "baselineSha256": "752ac444afb30179f33df0ee6b4889b632e421b79d2a2a74d1d2e064a25b8e1d",
+    "currentSha256": "a579c9d4fa798f2abff2c88bfac69147358e92f9a40a6f3324698b3a36f6c98d",
+    "runtimeSha256": "9f9df60cf0ee78c1bd4d5ec26bb19963f8f3e7a480439ea671857ab64efb3f22"
+  },
+  "proof": {
+    "originalDispatchRejectedCorrectedClassification": true,
+    "exactClassificationAbiStored": true,
+    "nullClassificationRemoved": true,
+    "bindingMismatchesRejected": 5,
+    "signedOutAndMissingRejected": true,
+    "revisionsMonotonic": true,
+    "writeAndReadPreserved": true,
+    "unsupportedAbiRejected": true,
+    "realLuaExecutionClaim": false,
+    "wholeCiPassedClaim": false
+  },
+  "completedAt": "2026-10-04T06:27:39.657Z"
+}

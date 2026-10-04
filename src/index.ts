@@ -16,7 +16,12 @@ import {
   PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL,
 } from "./db/passpilotRulesMigration.js";
 import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigration.js";
+import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL } from "./db/classpilotUsageRollupDaysMigration.js";
+import { assertClasspilotHeartbeatScreenshotEvidence, installClasspilotHeartbeatScreenshotEvidence } from "./db/classpilotHeartbeatScreenshotEvidenceInstallation.js";
+import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "./db/classpilotPrivateChatLifecycleMigration.js";
+import { PASSPILOT_APPOINTMENTS_SQL } from "./db/passpilotAppointmentsMigration.js";
 import { FLIGHT_PATH_RESOURCES_EXPAND_SQL } from "./db/flightPathResourcesMigration.js";
+import { FLIGHT_PATH_CONTENT_REVISION_SQL } from "./db/flightPathContentRevisionMigration.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
 import { SHARED_TEACHING_RESOURCES_EXPAND_SQL } from "./db/sharedTeachingResourcesMigration.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
@@ -4986,7 +4991,18 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL);
   await pool.query(PASSPILOT_RULES_ACTIVE_DESTINATION_INDEX_SQL);
   await pool.query(CLASSPILOT_USAGE_ROLLUPS_SQL);
+  await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
+  await pool.query(PASSPILOT_APPOINTMENTS_SQL);
+  await pool.query(CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL);
   await pool.query(FLIGHT_PATH_RESOURCES_EXPAND_SQL);
+  await pool.query(FLIGHT_PATH_CONTENT_REVISION_SQL);
+  const screenshotInstaller = await pool.connect();
+  try {
+    await screenshotInstaller.query("BEGIN");
+    await installClasspilotHeartbeatScreenshotEvidence(screenshotInstaller);
+    await screenshotInstaller.query("COMMIT");
+  } catch (error) { await screenshotInstaller.query("ROLLBACK"); throw error; }
+  finally { screenshotInstaller.release(); }
 
 }
 
@@ -5006,6 +5022,9 @@ async function startServer(): Promise<void> {
   } else {
     console.log("[startup] RUN_MIGRATIONS_ON_STARTUP=false; skipping startup migrations");
   }
+
+  // Check the actual runtime credential before any HTTP/WebSocket service starts.
+  await assertClasspilotHeartbeatScreenshotEvidence(pool);
 
   // node-postgres does not proactively create its configured minimum. Verify
   // the full API main-pool cohort before accepting traffic; worker-role and
@@ -5062,6 +5081,7 @@ async function runMigrationsAndExit(): Promise<void> {
   // Verify even when every ledger entry was already complete. Deploy admission
   // must reject catalog drift before any API or worker service is updated.
   await assertRequiredRlsEnforcement(pool);
+  await assertClasspilotHeartbeatScreenshotEvidence(pool);
   errorMonitor.dispose();
   await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   console.log("[migration] versioned migrations complete");

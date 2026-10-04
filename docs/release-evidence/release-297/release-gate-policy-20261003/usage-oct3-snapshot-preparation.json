@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "phase": "Synthetic snapshot construction and restricted-role native restoration only",
+  "result": "passed",
+  "preparedSchoolLocalDate": "2026-10-03",
+  "snapshotDirectory": "C:/Users/zinka/.codex/artifacts/release297-usage-v2-snapshot-ed026-01",
+  "snapshotManifestSha256": "847d5c8cd9812d5fb174ef4e39c696663de211af90015f68369d794717927c95",
+  "sameLocalDateRequired": true,
+  "evidenceDisposition": "October3 preparation only; full Usage campaign uses a freshly prepared October4 fixture. Old dates or authority TTLs are never rewritten.",
+  "applicationImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+  "preparationHelperImage": "sha256:3e3e98af17f897c5a405a3a9bc6ddf0403575053942d9ce396a5d1630ff53441",
+  "preparationHelperSeparateFromMeasuredHelper": true,
+  "runtimeSourceUnchanged": true,
+  "compiledImageDistFilesVerified": 1613,
+  "schema": {
+    "rawInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+    "nativeRawSha256": "3629d018337c51ccc7a619c0dc7c6661ae7569934f0b584ac9b5bf7dfa2136e7",
+    "canonicalSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+    "referenceCanonicalSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+    "restoredCanonicalSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+    "trimmedNormalizedSha256": "41da5e237efa6c56ab6869f974b5f00cf6190b0e0e89308e694bb633de7d483a",
+    "canonicalAndTrimmedHashesKeptSeparate": true,
+    "actualRestrictedRole": true,
+    "forcedRlsTables": 129,
+    "completeMigrationRows": 54,
+    "screenshotFunctionBodyAndAclVerified": true
+  },
+  "fixture": {
+    "schools": 2,
+    "observations": 2000002,
+    "observationsPerSchool": 1000001,
+    "historicalAggregateRows": 1083000,
+    "studentsPerSchool": 500,
+    "exactLiveBindingsPerSchool": 500,
+    "visibleStudentsPerTenant": 500,
+    "foreignStudentsPerTenant": 0,
+    "neutralControls": 1000,
+    "staffBindings": 200,
+    "invalidRawBindings": 0,
+    "laterRunAuditRows": 0,
+    "commandRows": 0,
+    "deliveryRows": 0,
+    "privateChatThreads": 0,
+    "earliestControlExpiry": "2026-10-04T13:25:27.503+00:00"
+  },
+  "timing": {
+    "seedPreparationStartedAt": "2026-10-04T02:24:34.384Z",
+    "seedPreparationFinishedAt": "2026-10-04T02:29:32.493Z",
+    "rawSeedDurationMs": 240690,
+    "completeSeedPreparationDurationMs": 298109,
+    "nativeRestorationFinishedAt": "2026-10-04T02:39:35.604Z",
+    "scope": "Preparation timing; no heartbeat, report, worker or capacity acceptance measurement"
+  },
+  "cleanup": {
+    "seedContainersAndVolumesAbsent": true,
+    "extractionContainersAbsent": true,
+    "restoredPgContainerAndVolumeAbsent": true,
+    "allActualClientsDrained": true,
+    "temporaryBuildTagRemoved": true,
+    "actualPostgresExitCode": 0,
+    "forcedRemoval": false
+  },
+  "failedAttemptsRetained": [
+    {
+      "attempt": 1,
+      "classification": "Preparation failure",
+      "reason": "Windows Git checkout long-path failure",
+      "restoredDatabaseStarted": false,
+      "archived": true
+    },
+    {
+      "attempt": 2,
+      "classification": "Preparation failure",
+      "reason": "Host validator dependency root absent",
+      "restoredDatabaseStarted": false,
+      "extractionContainerRemoved": true,
+      "archived": true
+    }
+  ],
+  "limitations": [
+    "No workload acceptance, performance, fleet-survival, production catalog, deployment or activation claim.",
+    "Native correctness validator ran on host Node22.18 with the semantically identical locked pg8.23 dependency; actual compiled image bytes were independently verified. Measured roles use their separately bound final image helper.",
+    "Private dump, roles, credentials, sessions and synthetic identifiers remain outside Git and public summaries."
+  ],
+  "measuredTrafficOffers": 0,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "productionActions": 0,
+  "evidence": [
+    {
+      "name": "seedResult",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\execution-result.json",
+      "sha256": "4d5b71ce23273d7c6925e64a03bbef0584b063403c9052aff7c8273efa08be1c",
+      "bytes": 2721
+    },
+    {
+      "name": "seedHelperBinding",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\seed-helper-binding.json",
+      "sha256": "d739b6db1b3d79817a8454f0d4a4855382db5136d6f4f7dbbebb7d7dd92ad26d",
+      "bytes": 1742
+    },
+    {
+      "name": "temporaryBuildTagCustody",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\build-base-custody.json",
+      "sha256": "30d0785f3ca8d60aab7c7bf157531ab25e1d31f1cfecfc0a3bc7295066d1ef7b",
+      "bytes": 346
+    },
+    {
+      "name": "seedCleanup",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\owned-cleanup.json",
+      "sha256": "bdde3fdb6d5e4763aa2348c03a16425ed3944890839bf5e74967cfb48b5ac2f4",
+      "bytes": 1138
+    },
+    {
+      "name": "independentFixtureCounts",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\independent-fixture-counts.json",
+      "sha256": "50fe3f5985deba3a6b97a355489852b5358a4e1d77b6f1bb134fa9238c9f0c30",
+      "bytes": 670
+    },
+    {
+      "name": "nativeRestorationComplete",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\native-restoration-complete.json",
+      "sha256": "a572b4f13fa68dee493c962895a546649a393196bf26afce3c612e77252e6e6d",
+      "bytes": 1136
+    },
+    {
+      "name": "actualRestrictedValidation",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\native-restoration\\database-validation.json",
+      "sha256": "82822dfc23158d8615a15990f955f86a814bc13d2ad6f22bc42cfedc9994b829",
+      "bytes": 13257
+    },
+    {
+      "name": "nativeSchemaComparison",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\native-restoration\\schema-comparison.json",
+      "sha256": "3e5457fca432133a7c4b004fd8ff21dc45cd44db5eabc488f05186b442e93725",
+      "bytes": 908
+    },
+    {
+      "name": "nativeFunctionBodyAndAcl",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\native-restoration\\function-grant.json",
+      "sha256": "e1a575eeb03b7d9b143ed62c702a0010b7a6519a0096fc0be8b17b5e01e39cdf",
+      "bytes": 289
+    },
+    {
+      "name": "restorationCleanup",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\native-restoration\\cleanup.json",
+      "sha256": "fc9dcc8d415a2241c831a90ada0b003cf73bdf0d36b922565ecea51a19847912",
+      "bytes": 422
+    },
+    {
+      "name": "gracefulStop",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\native-restoration\\graceful-stop.json",
+      "sha256": "2b0c090139fef4459a35f7a1cacc003fbd7c1569d2e1a5402842518ce0703fcf",
+      "bytes": 492
+    },
+    {
+      "name": "exactRuntimeSourceBinding",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\validation-source-binding.json",
+      "sha256": "81fb5e6e60678760a8e0157ea4bccb9b5294382e92b01a2cc0feeef42e96ac72",
+      "bytes": 1112
+    },
+    {
+      "name": "restorationAbiExactDerivation",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-03\\restoration-abi-derivation.json",
+      "sha256": "5ba6f5c079cdf45f3c2d539ba6de2b614475bb18d43401a5fb37ec97ffff9150",
+      "bytes": 2031
+    },
+    {
+      "name": "failedRestorationAttempt1",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-01-failure.json",
+      "sha256": "23713d65f12f17c372f671c7104af3691581f100a32935e0a420f2396bc293db",
+      "bytes": 495
+    },
+    {
+      "name": "failedRestorationAttempt2",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-01\\restoration-attempt-02-failure.json",
+      "sha256": "749635c6b3616e2626b23cdde00de9984e8ee950991d5c3b6e4ccc9d2ef6cc8d",
+      "bytes": 490
+    }
+  ]
+}

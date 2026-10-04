@@ -1,0 +1,3168 @@
+{
+  "schemaVersion": 1,
+  "profile": {
+    "name": "release-enabled-isolated-100rps-v1",
+    "students": 500,
+    "classes": 100,
+    "studentsPerClass": 5,
+    "periods": 6,
+    "lessonMinutes": 50,
+    "passingMinutes": 10,
+    "observationsPerStudent": 2000,
+    "cadenceSeconds": 10,
+    "domainDwellSeconds": 200,
+    "domainsPerStudent": 8,
+    "domainsSchoolWide": 200,
+    "rawPerSchool": 1000000,
+    "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+    "aiDecisionRowsPerSchool": 10000,
+    "aiDecisionsPerStudent": 20,
+    "aiDecisionEveryObservations": 100,
+    "aiDecisionCadenceSeconds": 1000,
+    "aiDecisionCategory": "matches the selected heartbeat",
+    "httpOffering": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "fullWorkerAcceptanceMs": 48000,
+    "classPilot": {
+      "extensionVersion": "2.9.7",
+      "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+      "sourceFile": "extension/service-worker.js",
+      "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+      "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad",
+      "capabilities": [
+        "helpRequestsV1",
+        "questionParkingV1",
+        "timerControlsV1",
+        "lessonActivitiesV1",
+        "exitTicketsV1",
+        "classroomStateV1",
+        "fabStateRevisionV1",
+        "exactTabCloseV1",
+        "scopedAuthorityChecksV1",
+        "scheduledClassroomV1",
+        "authBoundTelemetryV1",
+        "exactBindingAckV2",
+        "exactTabCloseV2",
+        "studentAuthGatePresenceV1",
+        "lateSignInRestrictionSsoV1",
+        "restrictionAuthPassThroughV1",
+        "preciseRestrictionResourcesV1",
+        "restrictionPortalFirstV1",
+        "afterHoursSafetyOnlyV1",
+        "schoolWebsiteBlockEnforcementV1",
+        "studentChatIdempotencyV1",
+        "screenshotTrackingWindowLeaseV1",
+        "screenshotActiveObservationCadenceV1",
+        "screenshotObservationLeaseV1",
+        "safetyEvidenceCaptureV1",
+        "liveViewIceServersV1",
+        "kioskLaunchTicketV1",
+        "kioskLaunchTicketV2",
+        "managedDeviceContinuityV1",
+        "screenOnlyUnlockV1",
+        "durableChatAckV1",
+        "commandAckReceiptV1",
+        "classroomOverlayRestoreV1",
+        "liveViewNegotiationV1",
+        "domainPreservingRestrictionsV1",
+        "chatPauseV1",
+        "chatSeenAckV1",
+        "focusTabV1",
+        "privateChatLifecycleV1"
+      ]
+    },
+    "coldDefinition": "Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed.",
+    "apiTasks": 1,
+    "apiMainPool": 16,
+    "apiSessionPool": 2,
+    "workerPool": 5,
+    "observerPool": 2,
+    "staffAuthentication": "real-password-login-and-session-cookie",
+    "capabilityModes": {
+      "preciseRestrictionResourcesV1": "on",
+      "focusTabV1": "on",
+      "privateChatLifecycleV1": "on"
+    },
+    "reportOffers": {
+      "waves": 4,
+      "maximumParallel": 16,
+      "total": 64,
+      "csvAfterConcurrent": 8
+    },
+    "publicRequestDeadlineMs": 20000,
+    "preflightDevicesPerSchool": 5,
+    "reporting": "100% offered heartbeats and reports; errors, overload rejections, aborted requests and late offers fail acceptance"
+  },
+  "sourceRevision": "08802d020a3c51beea504140f923126ab518aac6",
+  "sourceClean": false,
+  "sourceHashes": {
+    "release-enabled-generator.mjs": "508d1b075d54c8358ea7994da96eff2a5c09d72f7d1e97dcb33c32093012f785",
+    "release-enabled-process.mjs": "8008bff728e2a4095ea37d86b7edad4f8adc33b2eaa8bc33150fc07274e1f192",
+    "release-enabled-profile.mjs": "fbb72f4980999c96471260a1d6ae1a865c925d6fdaba05a42aea7328b2c84573",
+    "release-enabled-profile.test.mjs": "11b685d4b753c557310c30dce0d6b2f4b3535136477626548d389de9f8fe5429",
+    "release-enabled-scale.mjs": "7eac60c627366eed7a2b82b2c861d990e3bcdc96f7048ec5475e4a28b83567c5",
+    "run-release-enabled-scale.ps1": "29c88e93a8a7cdb45a1a0868ea93229bf6da4a82d1b04e549586072b7059d48e"
+  },
+  "startedAt": "2026-10-02T22:34:24.338Z",
+  "productionReadiness": false,
+  "capacityAccepted": false,
+  "diagnosticOnly": true,
+  "phases": [
+    {
+      "name": "preflight",
+      "startedAt": "2026-10-02T22:34:34.833Z",
+      "pgWaitSamples": [
+        {
+          "elapsedMs": 722.4036000000015,
+          "rows": [
+            {
+              "state": "idle",
+              "wait_type": "Client",
+              "wait_event": "ClientRead",
+              "count": 18
+            }
+          ]
+        },
+        {
+          "elapsedMs": 985.5955000000013,
+          "rows": [
+            {
+              "state": "idle",
+              "wait_type": "Client",
+              "wait_event": "ClientRead",
+              "count": 18
+            }
+          ]
+        },
+        {
+          "elapsedMs": 1249.177600000001,
+          "rows": [
+            {
+              "state": "idle",
+              "wait_type": "Client",
+              "wait_event": "ClientRead",
+              "count": 18
+            }
+          ]
+        },
+        {
+          "elapsedMs": 1515.6144000000004,
+          "rows": [
+            {
+              "state": "idle",
+              "wait_type": "Client",
+              "wait_event": "ClientRead",
+              "count": 18
+            }
+          ]
+        },
+        {
+          "elapsedMs": 1772.4733000000015,
+          "rows": [
+            {
+              "state": "active",
+              "wait_type": "IO",
+              "wait_event": "WALSync",
+              "count": 1
+            },
+            {
+              "state": "idle",
+              "wait_type": "Client",
+              "wait_event": "ClientRead",
+              "count": 17
+            }
+          ]
+        }
+      ],
+      "workers": [],
+      "persistedBefore": [
+        {
+          "school_id": "synthetic-school-0",
+          "count": 6
+        },
+        {
+          "school_id": "synthetic-school-1",
+          "count": 6
+        }
+      ],
+      "traffic": {
+        "heartbeats": null,
+        "heartbeatStatuses": {},
+        "heartbeat204Reason": "The route emits an empty204 for a throttled exact binding; persistence is checked independently and cannot be replaced by HTTP acceptance.",
+        "reports": [],
+        "lifecycle": {
+          "passed": false,
+          "events": [
+            "websocket_authenticated"
+          ],
+          "error": {
+            "name": "AssertionError",
+            "code": "ERR_ASSERTION",
+            "message": "Expected \"actual\" to be strictly unequal to:\n\n'unavailable'"
+          },
+          "simulatedClientAcknowledgements": true,
+          "browserEnforcementClaimed": false
+        },
+        "cpuMicroseconds": {
+          "user": 16000,
+          "system": 0
+        },
+        "eventLoop": {
+          "p95Ms": 32.161791,
+          "maxMs": 32.718847,
+          "utilization": 0.01189603433161793
+        }
+      },
+      "durationMs": 1775.5070000000014,
+      "api": {
+        "database": {
+          "acquisitions": {
+            "count": 12,
+            "failures": 0,
+            "maxMs": 0.0988999999990483
+          },
+          "statements": {
+            "tenant_background/transaction": {
+              "count": 10,
+              "failures": 0,
+              "maxMs": 1.9211000000013883
+            },
+            "tenant_background/studentDirectory": {
+              "count": 6,
+              "failures": 0,
+              "maxMs": 4.761199999999008
+            },
+            "tenant_background/school": {
+              "count": 3,
+              "failures": 0,
+              "maxMs": 2.962499999999636
+            },
+            "tenant_background/settings": {
+              "count": 10,
+              "failures": 0,
+              "maxMs": 2.890900000000329
+            },
+            "tenant_background/other": {
+              "count": 12,
+              "failures": 0,
+              "maxMs": 1.2857000000003609
+            },
+            "unclassified/other": {
+              "count": 19,
+              "failures": 0,
+              "maxMs": 3.7075999999997293
+            },
+            "auth/other": {
+              "count": 2,
+              "failures": 0,
+              "maxMs": 1.3778000000002066
+            },
+            "unclassified/settings": {
+              "count": 3,
+              "failures": 0,
+              "maxMs": 2.1010999999998603
+            },
+            "unclassified/transaction": {
+              "count": 8,
+              "failures": 0,
+              "maxMs": 2.4897000000000844
+            },
+            "auth/school": {
+              "count": 2,
+              "failures": 0,
+              "maxMs": 1.5031999999991967
+            },
+            "unclassified/teachingSession": {
+              "count": 7,
+              "failures": 0,
+              "maxMs": 36.96520000000055
+            },
+            "unclassified/studentDirectory": {
+              "count": 6,
+              "failures": 0,
+              "maxMs": 7.395599999999831
+            },
+            "unclassified/school": {
+              "count": 2,
+              "failures": 0,
+              "maxMs": 0.8971999999994296
+            },
+            "unclassified/membership": {
+              "count": 1,
+              "failures": 0,
+              "maxMs": 0.8167000000012195
+            }
+          },
+          "peakWaiting": 0,
+          "peakHeld": 2
+        },
+        "operations": {
+          "schemaVersion": 1,
+          "durationBoundsMs": [
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            5000,
+            15000
+          ],
+          "operations": {
+            "auth": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 4,
+                  "totalMs": 7.4078000000008615,
+                  "maxMs": 1.9443000000010215,
+                  "buckets": [
+                    0,
+                    4,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 4,
+                  "totalMs": 5.64049999999952,
+                  "maxMs": 1.5031999999991967,
+                  "buckets": [
+                    0,
+                    4,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "heartbeat_persistence": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "heartbeat_final_delivery": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "heartbeat_background": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "usage_report_admission": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "usage_report": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "usage_worker": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "tenant_request": {
+              "counters": {
+                "checkoutAttempts": 2,
+                "checkoutSuccess": 2,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 2,
+                  "totalMs": 0.20859999999993306,
+                  "maxMs": 0.12100000000100408,
+                  "buckets": [
+                    2,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 2,
+                  "totalMs": 0.17779999999947904,
+                  "maxMs": 0.10319999999956053,
+                  "buckets": [
+                    2,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 2,
+                  "totalMs": 165.4496999999992,
+                  "maxMs": 134.1892000000007,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 1
+            },
+            "tenant_background": {
+              "counters": {
+                "checkoutAttempts": 4,
+                "checkoutSuccess": 4,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 4,
+                  "totalMs": 77.43579999999929,
+                  "maxMs": 52.53450000000157,
+                  "buckets": [
+                    0,
+                    0,
+                    3,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 4,
+                  "totalMs": 0.30240000000048894,
+                  "maxMs": 0.10390000000006694,
+                  "buckets": [
+                    4,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 4,
+                  "totalMs": 77.07560000000194,
+                  "maxMs": 52.41969999999856,
+                  "buckets": [
+                    0,
+                    0,
+                    3,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 41,
+                  "totalMs": 52.615099999999074,
+                  "maxMs": 4.761199999999008,
+                  "buckets": [
+                    22,
+                    19,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 1
+            },
+            "unclassified": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 46,
+                  "totalMs": 113.20250000000487,
+                  "maxMs": 36.96520000000055,
+                  "buckets": [
+                    15,
+                    29,
+                    1,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            }
+          }
+        },
+        "reportAdmission": {
+          "active": 0,
+          "queued": 0,
+          "peakActive": 0,
+          "peakQueued": 0,
+          "admitted": 0,
+          "denied": 0,
+          "cancelled": 0
+        },
+        "cpuMicroseconds": {
+          "user": 156000,
+          "system": 46000
+        },
+        "eventLoop": {
+          "p50Ms": 30.687231,
+          "p95Ms": 32.079871,
+          "maxMs": 32.522239,
+          "utilization": 0.07373283653059742
+        },
+        "rssBytes": 250855424
+      },
+      "worker": {
+        "database": {
+          "acquisitions": {
+            "count": 0,
+            "failures": 0,
+            "maxMs": 0
+          },
+          "statements": {},
+          "peakWaiting": 0,
+          "peakHeld": 0
+        },
+        "operations": {
+          "schemaVersion": 1,
+          "durationBoundsMs": [
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            5000,
+            15000
+          ],
+          "operations": {
+            "auth": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "heartbeat_persistence": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "heartbeat_final_delivery": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "heartbeat_background": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "usage_report_admission": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "usage_report": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "usage_worker": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "tenant_request": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "tenant_background": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            },
+            "unclassified": {
+              "counters": {
+                "checkoutAttempts": 0,
+                "checkoutSuccess": 0,
+                "checkoutFailure": 0,
+                "sqlFailure": 0,
+                "admissionAdmitted": 0,
+                "admissionDenied": 0,
+                "admissionCancelled": 0
+              },
+              "timings": {
+                "operationMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "checkoutMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "holdMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                "sqlMs": {
+                  "count": 0,
+                  "totalMs": 0,
+                  "maxMs": 0,
+                  "buckets": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              },
+              "activeCheckouts": 0,
+              "peakActiveCheckouts": 0
+            }
+          }
+        },
+        "cpuMicroseconds": {
+          "user": 157000,
+          "system": 31000
+        },
+        "eventLoop": {
+          "p50Ms": 30.752767,
+          "p95Ms": 31.850495,
+          "maxMs": 32.555007,
+          "utilization": 0.025045228334480994
+        },
+        "rssBytes": 86843392
+      },
+      "persistedAfter": [
+        {
+          "school_id": "synthetic-school-0",
+          "count": 6
+        },
+        {
+          "school_id": "synthetic-school-1",
+          "count": 6
+        }
+      ],
+      "insertedObservations": 0
+    }
+  ],
+  "limitations": [
+    "Local PostgreSQL quotas are not RDS I/O proof.",
+    "Generator, API and worker use separate Node processes with512MiB heap caps; Windows process CPU and RSS are not hard-limited.",
+    "Managed-browser enforcement is not simulated-client ACK evidence.",
+    "Cold PostgreSQL shared buffers; host filesystem caches are not flushed. Real login/capability/report preflights happen before the measured traffic.",
+    "The scheduler fleet and all other hourly jobs are outside this bounded two-school operation test."
+  ],
+  "catalog": [
+    {
+      "relname": "activity_log",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "audit_logs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "authorized_pickups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "block_lists",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "bus_routes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "chat_messages",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_active_hands",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_ai_decisions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_chat_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_classroom_states",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_command_targets",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_commands",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_coverage_assignments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_coverage_group_categories",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_coverage_scope_group_members",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_coverage_scope_groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_evidence_capture_requests",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_lesson_activities",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_lesson_progress",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_monitoring_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_monitoring_expectations",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_monitoring_interruption_digests",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_monitoring_interruption_settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_monitoring_interruptions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_picker_rounds",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_private_chat_threads",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_questions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_routine_runs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_schedule_change_legs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_schedule_change_pairs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_schedule_changes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_scheduled_conflicts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_school_schedules",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_school_website_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_school_website_policies",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_session_reports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_session_staff",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_session_student_reports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_session_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_session_summary_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_session_usage",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_student_control_states",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_supervision_contexts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_supervision_report_segments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_supervision_student_reports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_supervision_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_supervision_summary_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_teacher_preferences",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_timers",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_tool_history",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_tool_templates",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classroom_course_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "classroom_courses",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "custody_alerts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "daily_usage",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "dashboard_tabs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "devices",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "dismissal_changes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "dismissal_overrides",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "dismissal_queue",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "dismissal_sessions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "email_alerts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "email_scan_log",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "error_logs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "evidence_artifacts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "family_group_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "family_groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "flight_paths",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "google_roster_connectors",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "grades",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "homeroom_teachers",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "homerooms",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "import_processing_stages",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "import_runs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mailpilot_watches",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "messages",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_attachments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_import_assets",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_import_items",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_imports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_notes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_preferences",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "mydesk_seating_charts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "parent_student",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_appointments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_destination_policies",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_encounter_restrictions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_grade_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_kiosk_devices",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_kiosk_sessions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_pass_denials",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_pass_limits",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "passpilot_teacher_kiosk_settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "poll_responses",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "polls",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "roster_integration_connections",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "roster_integration_identities",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "roster_integration_memberships",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "roster_integration_runs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "safety_notification_outbox",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "safety_url_exceptions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "school_discipline_access",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "school_discipline_attachments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "school_discipline_records",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "school_discipline_versions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "security_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "session_settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_attendance",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_contact_profile_versions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_contact_profiles",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_information_import_assets",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_information_import_items",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_information_imports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_safety_alerts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_safety_case_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_safety_cases",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "student_timeline_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "subgroups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "teacher_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "teaching_sessions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    },
+    {
+      "relname": "walker_zones",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true
+    }
+  ],
+  "migrations": [
+    {
+      "id": "20260822_classpilot_2_7_expand",
+      "checksum": "c95caa534651c96c59b5688c9bb584e5bb02f5b1cdab68502ede558d13cb66e2",
+      "status": "complete"
+    },
+    {
+      "id": "20260822_classpilot_evidence_authority_expand",
+      "checksum": "2008c810d222e4ed65952277040374d309349c380ea035a1ba0254545ef7ec2e",
+      "status": "complete"
+    },
+    {
+      "id": "20260822_classpilot_safety_capture_expand",
+      "checksum": "2df4c662055a1fef32bc27233d8655aa2f9b52cbc4846a92741f2012c84dd880",
+      "status": "complete"
+    },
+    {
+      "id": "20260824_staff_identity_auth_version_expand",
+      "checksum": "de5192a0a27e3253105d214a63322294d814111076fd3751716c4f46c72731f8",
+      "status": "complete"
+    },
+    {
+      "id": "20260824_staff_identity_integrity_contract",
+      "checksum": "03a9e138e4fa0e6bbacdff374730d7c848fa6e08e5b7a52286cfdcf5ca6133ab",
+      "status": "complete"
+    },
+    {
+      "id": "20260827_classpilot_student_session_recovery_expand",
+      "checksum": "efd67ff366977cfb386ce11b2419d70512bab9d15eefff236cccb8b17001b44d",
+      "status": "complete"
+    },
+    {
+      "id": "20260827_classpilot_student_session_recovery_indexes_online",
+      "checksum": "fb598bbd758e7eb62b440bd6ef1b1d31ec570066b2cc713bb1df8fbddd018e92",
+      "status": "complete"
+    },
+    {
+      "id": "20260827_classpilot_student_session_recovery_validate",
+      "checksum": "4b700391903be42fc91a378bd909ca074ae5855a332f58e6842906aaab9071a4",
+      "status": "complete"
+    },
+    {
+      "id": "20260828_classpilot_stale_legacy_student_session_cleanup",
+      "checksum": "5c5790c6df64a7dfeb09154c5f310758d82bbeb9bee84402347b4a77ceb9a4b7",
+      "status": "complete"
+    },
+    {
+      "id": "20260828_classpilot_student_data_top_activities_expand",
+      "checksum": "95b329113e3df1d5c7354b9972090db3e49ddd4574c563692458f731f094449b",
+      "status": "complete"
+    },
+    {
+      "id": "20260901_classpilot_sso_policy_expand",
+      "checksum": "d310d3aafa87939d2b9964c1894f65344413f722b07d5114554a876c15defe1e",
+      "status": "complete"
+    },
+    {
+      "id": "20260902_schools_staff_password_login_expand",
+      "checksum": "b4582122c802128dcf0953b8334791679486c5f799a54d9660f2ac0124132b89",
+      "status": "complete"
+    },
+    {
+      "id": "20260905-mailpilot-safety-durability-v1",
+      "checksum": "90a2c9371191bad4799ea3ec398e9e225f1cdc355085c14d1f8267a4f398cb2c",
+      "status": "complete"
+    },
+    {
+      "id": "20260905-roster-integrations-v1",
+      "checksum": "99f284ef1287d85788fa5fba500ee5eb970d91d5e37a31169f2ae197cfe27636",
+      "status": "complete"
+    },
+    {
+      "id": "20260928_import_processing_stages",
+      "checksum": "16a1499823c645fa5ab175f56adae9da066ecfebd85e6f24230252f1524d4d8b",
+      "status": "complete"
+    },
+    {
+      "id": "20260929_flight_path_resources_expand",
+      "checksum": "6c0013db090a91b7950a1a156c0ccf88c8567a58bf460ab8a261c019a8cc9067",
+      "status": "complete"
+    },
+    {
+      "id": "20260929_microsoft_sign_in_expand",
+      "checksum": "1f330d7a1128f5c985ea50537e96618d1ceaa5c00aa3d2984970e6251471c908",
+      "status": "complete"
+    },
+    {
+      "id": "20260929_shared_teaching_resources_expand",
+      "checksum": "e139825f273842f861fa8fbdd8a9281abc7adc5a0c21a0364d7191c980f8c5b2",
+      "status": "complete"
+    },
+    {
+      "id": "20260930_flight_path_content_revision_expand",
+      "checksum": "97737e5dc30f95509469007589b180f12883b9a58f1d71d2c172645c722665f0",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-channel-control-20260918",
+      "checksum": "b22bc274bacee23ed1fb25c848e9f1023db007770c32ca54ae6308c62605f631",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-oversight-20260918",
+      "checksum": "bdd553b3287a162020044e744ecc7543c067b0df251cfafd7b4c82238893d6d0",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-seen-state-20260918",
+      "checksum": "462730472fb38e56f41b8f43600b90f73d643dfabdccccd33034810606f3dbff",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-transcript-index-online-20260918",
+      "checksum": "1ecc033f479ddb1331ce1219fa5c3d0d5f4cefbeed16014efdeb78f2b4c2c22d",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-class-tools-expand-20260922",
+      "checksum": "c9782b8ccf190193ca580759199c53b385d64176a319683741a0cb5030f7b07b",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-content-categories-20260905",
+      "checksum": "93e4d136ae9ae1a3be2926c8e2bbe6f5e906079c2720a61482a686fcea45f074",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-coverage-categories-20260908",
+      "checksum": "977d4d61899418cecab947099105587c9b092fd8a0fb232690f70be276296a27",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-monitoring-interruptions-20260905",
+      "checksum": "8c2d4bca6bf94dfb50591dbb0048932bee4b1427c4e673afaf6d3dea9c7554c8",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-private-chat-lifecycle-20261002",
+      "checksum": "69af4266b22ce3bc2729034e3d580f53caadbd101f6f2fed4ab234eaf1b88dfd",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-safety-center-20260905",
+      "checksum": "6547e45a9867d05b0051402a29ec29be005d3fddaf98268cb45f70099c77d470",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-schedule-boundaries-20260915",
+      "checksum": "5d3f49dcab3328c2af52e33b0a07fa930ba0a730aa5da08f9927db7e7ba6e0e0",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-schedule-config-repair-20260916",
+      "checksum": "903439830083c18639f1fa65e344cc14b393e26ff5cc25efea848b6c857a6b8e",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-schedule-profile-supervision-20260905",
+      "checksum": "bcd6f3c6def43b35768f3e84434064cdbd442c76957bd022bc1b9e2c39df4d61",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-scheduled-classroom-20260915",
+      "checksum": "6a660578a41e58cab0b931963f2345a0013307908d7412901e2fb3bb9cef057e",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-scheduling-20260905",
+      "checksum": "a2bdcf861be6bd7899b43f13cb5e0027a470d09025a249642085d9e4dc2c69e8",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-school-website-policy-20260905",
+      "checksum": "12d948a3712627604918bbea1ec88a49e16285caa9ba225a924debb2050416c7",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-supervision-activity-reports-20260910",
+      "checksum": "af8503cd7bbbe1023fe8aef6a91205c8353809dad47d1a09f001283a92314124",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-teacher-preferences-20260927",
+      "checksum": "16f6b98348868ce93223e055ee526e0a33fc8c24d33876e6b7b67dd2e12cf369",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-usage-rollup-days-20260930",
+      "checksum": "b1f5c28252b4f65697012429428fdeb6712235a3a540243bb31fdeb47f4d6479",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-usage-rollups-20260929",
+      "checksum": "5a9a063460509afe46bb420b35fc3683c3b8fec6553b3bab0e60b4ac77ff79aa",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-ai-imports-20260925",
+      "checksum": "5c84b762517199c61b635c0b044a554bd6a5cad576dddf4b374536279e2362a7",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-grade-filing-20260927",
+      "checksum": "80c364983576decdfdbaf6cce48ac753c0a51a90ba6cb0fe32d3fcc8a613999f",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-import-destination-20260928",
+      "checksum": "01fb875d1d7d94bdf89ff8de4224ea8ca34deaf61effa7813cd6e6bcc7a5edb2",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-measured-seating-20260926",
+      "checksum": "0abfa94953d706c683a08260b429e43c03a69f382013fc94c8328cc5f8daa7d9",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-private-notebook-20260925",
+      "checksum": "752810f0b4a7f5ddd9e56c50b229794ea92d28e43b83da723643f75e5569e71f",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-private-seating-20260925",
+      "checksum": "8c33a451afda3b60712ee15ece6c79f6f5ca7a625ae1f9abc8b02c19fe4a1bce",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-workspace-expansion-20260926",
+      "checksum": "08818041d94669eaf7f9db3fd9cc3e44160a15122a8f510a2bb3878b5d89ea06",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-appointments-expand-20260930",
+      "checksum": "7b5df3374af276f436af30b5fb009b06c8589407fceebd728e2997e0a1895f33",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-kiosk-schedule-20260924",
+      "checksum": "997daca033bfff4e6722b77b8c4291ea4c2a87c8d65e1162f6782e1ef61732a1",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-rules-20260929",
+      "checksum": "f1aaf39b92b5ba09eecd437dfd955c7c88ab4255ba62fa7a36238642846d4681",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-rules-indexes-online-20260929",
+      "checksum": "998633be1f430071a2752f06d2199387b4f861db3241a232be33a6ffdc6f3fac",
+      "status": "complete"
+    },
+    {
+      "id": "school-discipline-records-20260927",
+      "checksum": "24e234c8d2363c55aaad01baa42d7903dc478eb0bb849a1e038b3de212269f09",
+      "status": "complete"
+    },
+    {
+      "id": "school-discipline-redesign-20260928",
+      "checksum": "9e42fed5b5dfb44f7fd3cc414577da47ae881f5bfddea63868e6c9ce0fc380f2",
+      "status": "complete"
+    },
+    {
+      "id": "student-information-redesign-20260928",
+      "checksum": "743fb8bf72607f3f083a3eb78479d7b842e405ab444d10ed8839546425a36533",
+      "status": "complete"
+    }
+  ],
+  "processes": {
+    "api": 93028,
+    "worker": 91180,
+    "generator": 86740
+  },
+  "pools": {
+    "api": 16,
+    "session": 2,
+    "worker": 5,
+    "observer": 2
+  },
+  "prewarmed": 16,
+  "readiness": true,
+  "redisReady": true,
+  "staffAuthenticationVerified": true,
+  "enabledCapabilitiesVerified": true,
+  "sourceAtFinish": {
+    "revision": "08802d020a3c51beea504140f923126ab518aac6",
+    "clean": false
+  },
+  "sourceUnchangedAtFinish": false,
+  "finishedAt": "2026-10-02T22:34:36.744Z",
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Diagnostic lifecycle preflight failed\n\nfalse !== true\n"
+  }
+}

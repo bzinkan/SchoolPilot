@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_artifact_preparation_independent_final_review",
+  "reviewer": "usage_delta_writer",
+  "reviewedAtUtc": "2026-10-04T22:11:08.3280275+00:00",
+  "verdict": "CLEAR",
+  "commit": "28ec1e4a088d939013368242bcbec27e69a51f56",
+  "sourceHashes": {
+    "module": "60d29d647f0277901abc5b501c920f8cd3893a8dd150b0b90fad34f0ceac7f76",
+    "test": "a60373ccc1b1df674993ae27aef0c48813c4f1e9f623860140d86c5e4a32d375",
+    "doc": "ba6b8de63414d982f10e969bf90e5d19781b7ab75f5ee98029205f6f0c9c9176"
+  },
+  "correction": "Only destructure request-level tags out of taskDefinition before unchanged source validator; exact inverse reproduces prior module SHA2dc0331e3b342957de3b6d9bb1ffa82e77206a3e6423ce98bb9bde60f936f241.",
+  "oldSourceCopyProvenance": "Explicit post-run reconstruction matching the immutable failed01 source hash; not a claim of pre-run copy.",
+  "publicProof": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-artifact-preparation-pure-02/public-proof.json",
+    "sha256": "738a04592797fd2495545b902385c5dbbfe383e15a0a19bda83dd811e5cbfcc0",
+    "allTenReferencesHashMatch": true
+  },
+  "pure": {
+    "exactDeclaredOrderedUniqueNames": 24,
+    "tests": 24,
+    "pass": 24,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "syntaxChecks": 2,
+    "durationMs": 5306.9985,
+    "wholeBudgetMs": 20000
+  },
+  "ownedCleanup": {
+    "pids": [
+      84800,
+      64828,
+      86116,
+      93244
+    ],
+    "allRecordedAbsent": true,
+    "forced": false,
+    "receiptSha256": "4425b0c698c9469a3b277ebda9ac7c7cad722ace5ec5b7bceefb7766e9a2ed17"
+  },
+  "failed01": {
+    "preserved": true,
+    "passed": false,
+    "publicProofSha256": "6254ab10d54acbc11d8981b5a3365906ec915ce79a5a1ad7b9b759240805b4e4"
+  },
+  "boundaries": {
+    "reviewerRanTests": false,
+    "cloudCalls": 0,
+    "nativeLoads": 0,
+    "sourceEdits": 0,
+    "publicationAcceptance": false,
+    "registrationAcceptance": false,
+    "futureAuthorizationRequired": true
+  },
+  "findings": []
+}

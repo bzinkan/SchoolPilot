@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "corrected_catalog_inspector03_preparation",
+  "sourceSha256": "0d6d94ced775f780b4d47d0437f374842d303c5c71aff580eabe48c5731cae5a",
+  "wrapperSha256": "af59212299e2bd16e9b62cc1ef94274d9c93dd9d5a3cc62837008d5c210c78cc",
+  "bundleSha256": "69f7e77500d94ce2a36dec8fd82bcf8a698db2547790906b281ce20a85adf392",
+  "planSha256": "60cd65f79bdab9dc41b6e7ac30796d2e817271535b98d513705093f1f07f8792",
+  "priorFailedPlanSha256": "90304b10360df6cc8d01b60cb1ccc9bcb29776e17d211d23243b14e741ea0d32",
+  "originalSqlAndAllRepositoryHelpersUnchanged": true,
+  "change": "Compare unique environment bindings by exact ordinal name; preserve values and all other task-definition fields",
+  "localFunctionChecks": 15,
+  "localFunctionProofIndependentReviewSha256": "befc561fd8aac3f704f539adf14f7acd216ca13cd9fde5e92f29f29b3ca12eac",
+  "sealedPlanIndependentReviewSha256": "ccd7d561df26e6f7653c4e77ecfe64b9338dce8dd76a24216d235ba9f19b202b",
+  "requestedWindow": {
+    "expiresAt": "2026-10-04T12:45:00-04:00",
+    "startsAt": "2026-10-04T12:05:00-04:00",
+    "timeZone": "America/New_York"
+  },
+  "limits": {
+    "databaseConnections": 1,
+    "readOnlyTransaction": true,
+    "temporaryTaskMinutes": 4,
+    "databaseProcessSeconds": 45
+  },
+  "executionApproval": "pending",
+  "executed": false,
+  "catalogVerified": false,
+  "schoolEligibilityVerified": false,
+  "servicesUpdated": 0,
+  "databaseWrites": 0
+}

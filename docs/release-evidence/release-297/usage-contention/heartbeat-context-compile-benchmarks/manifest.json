@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T02:24:00.833Z",
+  "status": "diagnostic_compile_only",
+  "databaseQueries": 0,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "command": "node <TEMP>/release297-hot-helper-build-benchmark.mjs <WORKTREE>; node <TEMP>/release297-query-build-benchmark.mjs <WORKTREE>",
+  "semantics": [
+    "Benchmarks construct/prepare Drizzle queries without any database execution. Three10000iteration rounds compare school58columns/narrow3columns, SSO2columns and control17columns; five10000iteration rounds compare exact-binding queries.",
+    "These are diagnostic wall-clock construction measurements, not complete request timing or capacity proof. Raw benchmark omits result mapping; timestamp fields require schema decoder parity. No connection, tenant or authority result is cached.",
+    "Existing compiled schema/predicate modules were used before the joined helper implementation. This is not a fresh final-build source acceptance record. Inclusive V8 buckets overlap and are never summed as independent savings."
+  ],
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "hot-helper-build-benchmark.mjs.gz",
+      "originalFile": "release297-hot-helper-build-benchmark.mjs",
+      "rawBytes": 3037,
+      "rawSha256": "0b0625f21b539933b245862009dbeac3cf0275c07072140bb0e81b6b2182bc2a",
+      "sanitizedBytes": 3034,
+      "sanitizedSha256": "5713255543c7e817fd4dd02389e6b2ee2df3376bdf412c531c1af08f9b22bbb9",
+      "gzipSha256": "9d898f4592b6b074789cccce6b76baad92882ac3d3b8444565d1c040ccffdf79"
+    },
+    {
+      "file": "hot-helper-build-benchmark.json.gz",
+      "originalFile": "release297-hot-helper-build-benchmark.json",
+      "rawBytes": 976,
+      "rawSha256": "17c90c88ab68d197bc8b0189ae4be54f497d49fabc6d8d1b5894e1f9bd374754",
+      "sanitizedBytes": 976,
+      "sanitizedSha256": "17c90c88ab68d197bc8b0189ae4be54f497d49fabc6d8d1b5894e1f9bd374754",
+      "gzipSha256": "73eaeb740d1f7eebd92c461929f383d36902337d28077451fffee0bdd7933331"
+    },
+    {
+      "file": "binding-build-benchmark.mjs.gz",
+      "originalFile": "release297-query-build-benchmark.mjs",
+      "rawBytes": 2226,
+      "rawSha256": "369e13063ececb4289d473996e832f782dc227a62ade696855584342077ae4ab",
+      "sanitizedBytes": 2225,
+      "sanitizedSha256": "fa2b842ce845821b0cacb11cd110502b10d027eb06383ecdc58807d64eff4a45",
+      "gzipSha256": "d3269cf4e75e2776e501b055d7a228854fb85f88ba36da77ba0769f4b75effee"
+    },
+    {
+      "file": "binding-build-benchmark.json.gz",
+      "originalFile": "release297-binding-query-build-followup.json",
+      "rawBytes": 1884,
+      "rawSha256": "bf0d72fa6b6f102b76777741c508792ce1ab65296bc4e915147ff3715eb78a9a",
+      "sanitizedBytes": 1884,
+      "sanitizedSha256": "bf0d72fa6b6f102b76777741c508792ce1ab65296bc4e915147ff3715eb78a9a",
+      "gzipSha256": "9331128ebe4aea8632bfcb7498bbfeffe839eca884524de108ff8dc6a0967eee"
+    }
+  ],
+  "sanitation": "UTF8/LF; workstation paths, URLs, tokens, cookies, emails, UUIDs and SQL passwords redacted; original raw files unchanged."
+}

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "applicationSource": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+  "applicationFilesUnchanged": true,
+  "failedCiHead": "4d0ae92fee244f71c63d2d0cd33755eba60e41f9",
+  "failedJob": "https://github.com/bzinkan/SchoolPilot/actions/runs/37135295585/job/111238489807",
+  "prior": {
+    "pass": 1492,
+    "fail": 1,
+    "skipped": 8,
+    "reason": "Source assertion still required the pre-extraction schoolQuery/licenseQuery variable names."
+  },
+  "correction": "Follow the extracted canonical school/license builders and retain same-school FOR SHARE assertions. No application change.",
+  "focused": {
+    "tests": 27,
+    "pass": 27,
+    "fail": 0,
+    "skipped": 0
+  },
+  "rawFailure": {
+    "location": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-4d-runtime-contract-01\\ci-serial-original.log",
+    "sha256": "10f1b5110046ae852a4c1b3a7b6129524cf7d57c7b03fe02daad463a9edf24e2",
+    "unchanged": true
+  },
+  "files": [
+    {
+      "path": "failed-assertion-excerpt.log.gz",
+      "sha256": "fdbeb1f4f6825c3ce59a4eaebdde1b0aea299be40f56a16e8183f69e4608fe70",
+      "rawSha256": "f02dd5304f225b88ad79e41465946251c396792bbfc01d14c7c98ea867c6b2be",
+      "rawBytes": 1355
+    },
+    {
+      "path": "failed-totals.log.gz",
+      "sha256": "5ed36bc1ae5b49a54ae729cc1bea98c421852d92d02dd5077a00fce6f4a0d59e",
+      "rawSha256": "f2a8314513d22027dc8f75702dba2e0cd85b3995721d361ea913de84bd45c6ce",
+      "rawBytes": 416
+    },
+    {
+      "path": "focused-green.log.gz",
+      "sha256": "731d4fcf5e0974eaef3d84a5458fba38dffb3d37ecf6feff3625ffd8a3ca4d24",
+      "rawSha256": "829f9fbaff5f52576a5acb065de915cad2d439a37a5a9c30694ed38a4f709a1f",
+      "rawBytes": 7801
+    },
+    {
+      "path": "test-source.ts.gz",
+      "sha256": "32b2e712ec81742fa21c742ec054c3778b7de265b0f8717272380ebeaadaccf7",
+      "rawSha256": "eacc6e04e7a3941c77b36de2a15c2bb40115c596bb04372665455bd05d6843a0",
+      "rawBytes": 54552
+    }
+  ],
+  "capacityAccepted": false,
+  "newCiRequired": true
+}

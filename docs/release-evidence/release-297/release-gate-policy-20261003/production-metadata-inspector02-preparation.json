@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "kind": "prepared-reviewed-production-metadata-inspector02-plan-only",
+  "recordedAt": "2026-10-04T08:15:55.497Z",
+  "observedAt": "2026-10-04T08:08:51.0619571+00:00",
+  "planSha256": "90304b10360df6cc8d01b60cb1ccc9bcb29776e17d211d23243b14e741ea0d32",
+  "sourceSha256": "0d6d94ced775f780b4d47d0437f374842d303c5c71aff580eabe48c5731cae5a",
+  "wrapperSha256": "ace7cc42886839b870b7b2a31ce7f50443e6e11cfd44fddad9818bf9264701e0",
+  "bundleSha256": "03d8a6207187138f0497da52bd3674a89de9551d70132db8414cf3a8fc937f25",
+  "servingSource": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "servingImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+  "apiTaskDefinition": "schoolpilot-production-api-emergency:163",
+  "workerTaskDefinition": "schoolpilot-production-scheduler-worker:179",
+  "pairedConfiguredAdmission": 121,
+  "configuredDatabaseSecretReferenceEqualityChecked": true,
+  "liveResolvedCredentialsVerified": false,
+  "localChecks": {
+    "nodeMocks": 18,
+    "powershellFunctionChecks": 23,
+    "fullOrchestrationScenarios": 9,
+    "nativePostgresCases": 13,
+    "exactServingImageOfflineCases": 2,
+    "independentReviewFile": "independent-review-02.json",
+    "inspectorSourceSha256": "0d6d94ced775f780b4d47d0437f374842d303c5c71aff580eabe48c5731cae5a",
+    "wrapperSha256": "ace7cc42886839b870b7b2a31ce7f50443e6e11cfd44fddad9818bf9264701e0"
+  },
+  "limits": {
+    "statementSeconds": 15,
+    "connections": 1,
+    "connectSeconds": 10,
+    "taskMinutes": 4,
+    "processSeconds": 45,
+    "lockSeconds": 2,
+    "outputBytes": 2097152
+  },
+  "healthSentinelMetadata": [
+    "exact original layout/serial ownership",
+    "effective public schema USAGE",
+    "table SELECT/INSERT/DELETE",
+    "sequence USAGE",
+    "reported additional privileges/ownership"
+  ],
+  "productionExecutions": 0,
+  "taskRegistrations": 0,
+  "serviceChanges": 0,
+  "credentialFetches": 0,
+  "actualDatabaseCatalogVerified": false,
+  "actualRolePrivilegesVerified": false,
+  "restorableSchemaDump": false,
+  "releaseApproval": false,
+  "requiredNext": "Separate authorization for the exact bounded inspector plan and operational window; no Execute occurred. Fresh execution still rejects source/context/bundle drift.",
+  "remainingReleaseEvidence": [
+    "Full final-source current-school/classroom acceptance",
+    "Explicit comparison policy decision and its accepted prospective evidence",
+    "Separate Usage synthetic/deployed activation gates",
+    "Authorized merges then resulting-main CI/source equivalence and final compatible artifacts",
+    "Actual production catalog/admission/ledger/role/health permissions",
+    "Current health/headroom/backup and approved operational window",
+    "Store publication and pending-submission check before authorized upload",
+    "Installed capability and at least 30-minute live acceptance"
+  ],
+  "historicalPlanPreserved": "release297-production-metadata-plan-01/b883e407163ec798fb7ae6cdf58ab2aaf20a8751e03a9d60d7fda4a13431c604"
+}

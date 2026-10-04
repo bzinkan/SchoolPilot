@@ -1,0 +1,8 @@
+{
+  "file": "src/services/classpilotHeartbeatReadQueries.ts",
+  "change": "Remove one trailing blank line only",
+  "compiledJsBefore": "4f52923e25676bccd8c1bc8f84140fbca825f40e157d3174c43c251fbe2a243d",
+  "compiledJsAfter": "4f52923e25676bccd8c1bc8f84140fbca825f40e157d3174c43c251fbe2a243d",
+  "equal": true,
+  "buildExitCode": 0
+}

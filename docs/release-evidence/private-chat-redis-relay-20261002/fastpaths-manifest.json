@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "recordedOn": "2026-10-02",
+  "scope": "Final combined empty-outbox and unlocked entitlement fastpath native regressions; integrated CI and capacity evidence remain separate",
+  "database": "schoolpilot_redesign_private_chat_lifecycle_complete_20261002",
+  "inventory": "classpilotPrivateChatLifecyclePostExpand",
+  "localCheckpoint": "e5b51d625095791b1e5631959a6714bdfd791793",
+  "productRootCheckpoint": "b07953db7a0b6e7ac92b7971a4004b742137a65d",
+  "cleanupCheckpoint": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+  "productionMutations": 0,
+  "productBlobs": {
+    "src/services/storage.ts": "19ce553e4f60c4e816923120f80116d1352177e1",
+    "src/services/classpilotEntitlement.ts": "ca2663a95ac12ad296df2ded52ac089a9447ec79",
+    "src/realtime/websocket.ts": "05705faa5a913ea94c237e443994637b77b4ef5b",
+    "src/realtime/ws-broadcast.ts": "ee9451708c2494ffe3cfc71c0ee10cbf87481afd"
+  },
+  "testBlobs": {
+    "tests/classpilot-private-chat-lifecycle.integration.test.ts": "571e67dd045291503d81756d924abd2dabcd77e5",
+    "tests/classpilot-private-chat-lifecycle-rls.test.ts": "dd236f66d3bbd223c27f0bf61bf448befccfc593",
+    "tests/classpilot-entitlement-native.integration.test.ts": "0de5fe513e5fa4b6b342ec04c70fecfb5c2378f5"
+  },
+  "records": [
+    {
+      "file": "fastpaths-final-ordinary-green.log.gz",
+      "status": "passed",
+      "exitCode": 0,
+      "passed": 75,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "durationMs": 35705.3114,
+      "command": "& .\\scripts\\run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle-rls.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts','tests/classpilot-entitlement-native.integration.test.ts') *> C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fastpaths-final-ordinary-green.log",
+      "notes": "Privileged synthetic application fixture: 56 native private-chat cases, 6 hermetic RLS cases, and 13 privileged ADMIN entitlement cases. The entitlement cases are not restricted-role proof.",
+      "hooksAndRoleCleanupCompleted": true,
+      "rawSha256": "0322c60dc0c620cdc52337c6899be8098d6d2b520f40c654d27a4a77c48c71fd",
+      "sanitizedSha256": "0322c60dc0c620cdc52337c6899be8098d6d2b520f40c654d27a4a77c48c71fd",
+      "archiveSha256": "a9b0b6442f6a1a0fad1048a621ac45576286690ae97265654897490993dee070",
+      "credentialPatternMatches": 0,
+      "credentialRedactions": 0
+    },
+    {
+      "file": "fastpaths-final-restricted-green.log.gz",
+      "status": "passed",
+      "exitCode": 0,
+      "passed": 62,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "durationMs": 28407.9121,
+      "command": "& .\\scripts\\run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle-rls.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts') -Restricted *> C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fastpaths-final-restricted-green.log",
+      "notes": "NOSUPERUSER/NOBYPASSRLS non-owner application fixture: 56 native private-chat cases plus 6 hermetic RLS cases; entitlement suite is excluded from this lane.",
+      "hooksAndRoleCleanupCompleted": true,
+      "rawSha256": "18906929bd138ef9b5ee7c8d6e70007b5cefb422f054bbe6f6a1454d26d1bd30",
+      "sanitizedSha256": "18906929bd138ef9b5ee7c8d6e70007b5cefb422f054bbe6f6a1454d26d1bd30",
+      "archiveSha256": "e29bbecc5b0f5ae4db5ee8b7f2c0c4823da5942edba798302551da6a0b778466",
+      "credentialPatternMatches": 0,
+      "credentialRedactions": 0
+    }
+  ],
+  "notes": [
+    "The four product files match the root b07953db checkpoint byte for byte.",
+    "These runs include canonical owned-school retirement and complete disposable-role cleanup.",
+    "No build, type check, browser suite or capacity run was repeated for this evidence record.",
+    "The original relay failure and earlier correction evidence remain preserved in manifest.json."
+  ],
+  "configuredTenantTableCount": 129
+}

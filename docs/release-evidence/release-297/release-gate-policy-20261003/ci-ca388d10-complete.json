@@ -1,0 +1,629 @@
+{
+  "schemaVersion": 1,
+  "kind": "fresh-read-only-review-head-ci-and-input-binding",
+  "recordedAtUtc": "2026-10-04T04:56:52.176Z",
+  "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "schoolPilotReviewHead": "ca388d105c01fc27104add5e547306a457e7e92d",
+  "classPilotReviewHead": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "applicationInputsUnchanged": true,
+  "schoolPilot": {
+    "baseRefName": "main",
+    "baseRefOid": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
+    "headRefName": "codex/release-stabilization-297",
+    "headRefOid": "ca388d105c01fc27104add5e547306a457e7e92d",
+    "isDraft": true,
+    "number": 603,
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:09:26Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085243",
+        "name": "Detect changed paths",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:14:44Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162863/job/111359085090",
+        "name": "Analyze (javascript-typescript)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CodeQL"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:09:26Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162866/job/111359085086",
+        "name": "Scan for secrets",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "Gitleaks"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:10:36Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162862/job/111359085114",
+        "name": "Scan Docker image",
+        "startedAt": "2026-10-04T04:09:11Z",
+        "status": "COMPLETED",
+        "workflowName": "Trivy Container Scan"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:16:22Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085379",
+        "name": "Backend (TypeScript + Build)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:25:41Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085391",
+        "name": "Cross-tenant isolation tests",
+        "startedAt": "2026-10-04T04:09:11Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:15:20Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085315",
+        "name": "RLS-enabled cross-tenant tests",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:16:53Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085317",
+        "name": "Frontend (Vite Build)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:18:13Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085365",
+        "name": "Frontend release-focused gates (shard 1)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:20:45Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085366",
+        "name": "Frontend release-focused gates (shard 2)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:13:44Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085404",
+        "name": "Frontend release-focused gates (shard 3)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:17:53Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359085311",
+        "name": "Frontend release-focused gates (shard 4)",
+        "startedAt": "2026-10-04T04:09:12Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:38:46Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111359127432",
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "startedAt": "2026-10-04T04:09:29Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:16:33Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111360149169",
+        "name": "SOC 2 privileged access evidence",
+        "startedAt": "2026-10-04T04:16:25Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:25:52Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111361492281",
+        "name": "SOC 2 deployment evidence",
+        "startedAt": "2026-10-04T04:25:43Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:25:54Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111361492324",
+        "name": "SOC 2 incident evidence",
+        "startedAt": "2026-10-04T04:25:43Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:26:39Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111361492316",
+        "name": "SOC 2 tenant isolation evidence",
+        "startedAt": "2026-10-04T04:26:31Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:20:56Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111360801323",
+        "name": "SOC 2 AI/privacy evidence",
+        "startedAt": "2026-10-04T04:20:47Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:20:57Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111360801371",
+        "name": "SOC 2 monitoring evidence",
+        "startedAt": "2026-10-04T04:20:48Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T04:27:31Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850/job/111361624840",
+        "name": "SOC 2 approval queue",
+        "startedAt": "2026-10-04T04:26:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      }
+    ],
+    "title": "Stabilize coordinated roadmap release for ClassPilot 2.9.7",
+    "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
+    "reportedSuccessfulChecks": 20,
+    "allReportedChecksSuccess": true,
+    "runs": [
+      {
+        "conclusion": "success",
+        "databaseId": 37176162850,
+        "event": "pull_request",
+        "headSha": "ca388d105c01fc27104add5e547306a457e7e92d",
+        "startedAt": "2026-10-04T04:09:08Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T04:38:46Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162850",
+        "workflowName": "CI"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37176162863,
+        "event": "pull_request",
+        "headSha": "ca388d105c01fc27104add5e547306a457e7e92d",
+        "startedAt": "2026-10-04T04:09:08Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T04:14:45Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162863",
+        "workflowName": "CodeQL"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37176162866,
+        "event": "pull_request",
+        "headSha": "ca388d105c01fc27104add5e547306a457e7e92d",
+        "startedAt": "2026-10-04T04:09:08Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T04:09:27Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162866",
+        "workflowName": "Gitleaks"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37176162862,
+        "event": "pull_request",
+        "headSha": "ca388d105c01fc27104add5e547306a457e7e92d",
+        "startedAt": "2026-10-04T04:09:08Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T04:10:36Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37176162862",
+        "workflowName": "Trivy Container Scan"
+      }
+    ]
+  },
+  "classPilot": {
+    "baseRefName": "main",
+    "baseRefOid": "55bb531cb5f130cebec9d994daa957e82e87a13b",
+    "headRefName": "codex/release-stabilization-297",
+    "headRefOid": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "isDraft": true,
+    "number": 123,
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T19:04:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697682",
+        "name": "test",
+        "startedAt": "2026-10-02T18:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T01:04:11Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424496",
+        "name": "test",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:56:32Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698145",
+        "name": "chrome-compatibility (120.0.6099.109)",
+        "startedAt": "2026-10-02T18:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:55:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424609",
+        "name": "chrome-compatibility (120.0.6099.109)",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:56:49Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697900",
+        "name": "chrome-compatibility (133.0.6943.141)",
+        "startedAt": "2026-10-02T18:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:54:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424685",
+        "name": "chrome-compatibility (133.0.6943.141)",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:56:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697831",
+        "name": "chrome-compatibility (152.0.7977.82)",
+        "startedAt": "2026-10-02T18:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:56:26Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424815",
+        "name": "chrome-compatibility (152.0.7977.82)",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:57:11Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698242",
+        "name": "chrome-compatibility (stable)",
+        "startedAt": "2026-10-02T18:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:56:35Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424822",
+        "name": "chrome-compatibility (stable)",
+        "startedAt": "2026-10-03T00:35:18Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      }
+    ],
+    "title": "Prepare consolidated ClassPilot 2.9.7 release candidate",
+    "url": "https://github.com/bzinkan/ClassPilot/pull/123",
+    "reportedSuccessfulChecks": 10,
+    "allReportedChecksSuccess": true,
+    "runs": [
+      {
+        "conclusion": "success",
+        "databaseId": 37048485018,
+        "event": "pull_request",
+        "headSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+        "startedAt": "2026-10-02T18:35:38Z",
+        "status": "completed",
+        "updatedAt": "2026-10-02T19:04:59Z",
+        "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018",
+        "workflowName": "CI"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37048477885,
+        "event": "push",
+        "headSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+        "startedAt": "2026-10-03T00:35:12Z",
+        "status": "completed",
+        "updatedAt": "2026-10-03T01:04:12Z",
+        "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885",
+        "workflowName": "CI"
+      }
+    ]
+  },
+  "schoolPilotEquivalence": {
+    "backendInputs": [
+      {
+        "path": "src",
+        "applicationGitObject": "87754e8794fdcec712f2438e52540e32ad30107b",
+        "reviewHeadGitObject": "87754e8794fdcec712f2438e52540e32ad30107b",
+        "equal": true
+      },
+      {
+        "path": "package.json",
+        "applicationGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+        "reviewHeadGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+        "equal": true,
+        "canonicalBlobSha256": "aeaed4880f66abbe48d9bb39533db1a2012c80c596b455aeb6e67a33bd04b2e7",
+        "localFileSha256": "9dd31abf3f1927a8c086e86787925e3f097d9c54fc4d208d0af985a520fa1be6"
+      },
+      {
+        "path": "package-lock.json",
+        "applicationGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+        "reviewHeadGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+        "equal": true,
+        "canonicalBlobSha256": "6e7382f6c5af5bbd535e2eb2ca72d1dc4050a32899e3c555e4f58d0050793d50",
+        "localFileSha256": "dc099eaee2b1089c2ca5bb3e0960138bf542d34e7841da6fa7a82d7c665ae6c2"
+      },
+      {
+        "path": "Dockerfile",
+        "applicationGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "reviewHeadGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "equal": true,
+        "canonicalBlobSha256": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+        "localFileSha256": "7e10cb13fc77041337de89dba67ec1af5d5ef47b35fc2cc2bf10fb2e08c16708"
+      },
+      {
+        "path": ".dockerignore",
+        "applicationGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "reviewHeadGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "equal": true,
+        "canonicalBlobSha256": "9ad33cbd4e864927c646e16fbfdc8539d8c4f7a06dc508f38503273e54fc23a7",
+        "localFileSha256": "ada8fa67706c73838a7407618870ada73ab0f2a2bcbe10a0e27f01da63611706"
+      },
+      {
+        "path": "tsconfig.json",
+        "applicationGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "reviewHeadGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "equal": true,
+        "canonicalBlobSha256": "c28ec22c90b1764ee378181a77610cc812e1cbee33fc8502c3adde790b1fbf3c",
+        "localFileSha256": "8f5e764158b8e02f7f170fa008a09a3fa0431aefe43d87395e0278007cea0032"
+      },
+      {
+        "path": "drizzle.config.ts",
+        "applicationGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+        "reviewHeadGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+        "equal": true,
+        "canonicalBlobSha256": "3feb50ea763be2f4e3f82029510863d0c069a2bf7b2b67f6feaa8cefa18cb214",
+        "localFileSha256": "cdca394dc2e03d6a4e7925735f8486422fc49cb5e5353ace79f094ecc3d71c86"
+      }
+    ],
+    "frontend": {
+      "path": "schoolpilot-app",
+      "applicationGitTree": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "reviewHeadGitTree": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "equal": true
+    },
+    "additionalTrees": [
+      {
+        "path": "infra",
+        "applicationGitTree": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+        "reviewHeadGitTree": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+        "equal": true,
+        "localPathsClean": true
+      },
+      {
+        "path": "docs/soc2",
+        "applicationGitTree": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+        "reviewHeadGitTree": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+        "equal": true,
+        "localPathsClean": true
+      }
+    ],
+    "localApplicationPathsClean": true
+  },
+  "classPilotPackageBinding": {
+    "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "packagedSourceAncestorOfHead": true,
+    "extensionTree": {
+      "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+      "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+    },
+    "headDiffDocumentationOnly": [
+      "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+      "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+    ],
+    "localPackageInputsClean": true,
+    "zip": {
+      "path": "C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip",
+      "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+      "bytes": 376052,
+      "rebuildPerformed": false,
+      "archiveContentsReexecuted": false
+    }
+  },
+  "rawGhEvidence": [
+    {
+      "name": "attempt-01-schoolPilot-pr.raw.json",
+      "sha256": "f17db06c74c62a656de09b982956d242f94926acf016b5e76aa4456d8edc4dca",
+      "bytes": 6336,
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "603",
+        "--json",
+        "number,title,url,state,isDraft,headRefOid,baseRefOid,headRefName,baseRefName,statusCheckRollup"
+      ]
+    },
+    {
+      "name": "attempt-01-schoolPilot-run-37176162850.raw.json",
+      "sha256": "0558ac3a59d69781bac77797a25ced9166e98b8ce8b48127268ba37f1193d176",
+      "bytes": 309,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37176162850",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "name": "attempt-01-schoolPilot-run-37176162863.raw.json",
+      "sha256": "668053675f02a4f6f6c2bd9e976c8b49c9f68dbeb0f4bec37c582d872ec18598",
+      "bytes": 313,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37176162863",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "name": "attempt-01-schoolPilot-run-37176162866.raw.json",
+      "sha256": "e4118ee21580cc4fe4024f3cf4c6611ba2588d7df7af0a416bbeb3ad07a346bf",
+      "bytes": 315,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37176162866",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "name": "attempt-01-schoolPilot-run-37176162862.raw.json",
+      "sha256": "90b5f682c495c7608090f6d8ca38f3787f9ede0030c6e65016e5bd7845e76304",
+      "bytes": 327,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37176162862",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "name": "attempt-01-classPilot-pr.raw.json",
+      "sha256": "b1dc102a4376f2d13f88573f536d40c5717a432090a9da77f9699ed21db8598a",
+      "bytes": 3325,
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "123",
+        "--json",
+        "number,title,url,state,isDraft,headRefOid,baseRefOid,headRefName,baseRefName,statusCheckRollup"
+      ]
+    },
+    {
+      "name": "attempt-01-classPilot-run-37048485018.raw.json",
+      "sha256": "365bbed639513a543c3e83c1e40bf63899728b0659f11ac01500cee9c9e3802f",
+      "bytes": 308,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37048485018",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "name": "attempt-01-classPilot-run-37048477885.raw.json",
+      "sha256": "2f6bac87b7efce17b7f75fb99c1912b21881102e3aa6571381c8be41f18110ef",
+      "bytes": 300,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37048477885",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    }
+  ],
+  "productionMutations": 0,
+  "mergePerformed": false,
+  "deployed": false,
+  "published": false,
+  "activated": false,
+  "capacityAccepted": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "GitHub reported checks verified on exact review heads; resulting-main CI remains required after separately authorized merge",
+    "Source-equivalent existing application images/package retained; no image rebuild or native tests performed",
+    "PRs remain open drafts",
+    "No new capacity, production catalog, Store pending submission or live-client validation claim"
+  ]
+}

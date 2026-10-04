@@ -1,6 +1,6 @@
 // Dashboard copy of the precise restriction matcher (roadmap PR 2). The
 // normative implementation is src/services/restrictionResources.ts on the
-// server and ClassPilot 2.10.0 enforces its own port; this copy only keeps the
+// server and ClassPilot 2.9.7 enforces its own port; this copy only keeps the
 // teacher's off-task display honest for a student on an allowed video, page or
 // document. It follows the same shared case file
 // (tests/fixtures/restriction-resource-matcher-cases.json), except the

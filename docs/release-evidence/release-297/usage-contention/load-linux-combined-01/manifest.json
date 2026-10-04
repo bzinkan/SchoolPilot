@@ -1,0 +1,870 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T08:47:59.920Z",
+  "status": "failed_linux_shared_namespace_diagnostic",
+  "sourceRevision": "d6492333520608df1524c021999d9440a26149de",
+  "sourceCleanAtStart": true,
+  "normalFinishSourceReceiptPresent": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "diagnosticOnly": true,
+  "exitCode": 1,
+  "topology": {
+    "profile": "release-enabled-linux-shared-namespace-diagnostic-100rps-v1",
+    "diagnosticOnly": true,
+    "capacityAccepted": false,
+    "applicationSource": "d6492333520608df1524c021999d9440a26149de",
+    "imageId": "sha256:eeca91c130ddcda195f9317805ae39c4e56c3d08918fde79aadf60725a9a86f0",
+    "pgContainerId": "14b52ea265058fa0e9fbf65856dcf608525db4746fe37ecb349560a6874c29bb",
+    "heapMiB": 512,
+    "hardPerRoleCpuLimit": null,
+    "hardPerRoleRssLimit": null,
+    "evidenceStorage": "Windows external bind mount; filesystem crossing remains",
+    "environmentKeys": [
+      "ADMIN_DATABASE_URL",
+      "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE",
+      "CLASSPILOT_DIGITAL_USAGE_MODE",
+      "CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE",
+      "CLASSPILOT_USAGE_ROLLUP_MODE",
+      "DATABASE_URL",
+      "DATABASE_URL_PRIVILEGED",
+      "DOTENV_CONFIG_PATH",
+      "DOTENV_CONFIG_QUIET",
+      "GIT_OPTIONAL_LOCKS",
+      "JWT_SECRET",
+      "NODE_ENV",
+      "PASSPILOT_APPOINTMENTS_MODE",
+      "PASSPILOT_REPORTS_MODE",
+      "PASSPILOT_RULES_MODE",
+      "REDIS_URL",
+      "RLS_ENABLED_TABLES",
+      "RLS_GUC_ENABLED",
+      "RUN_LEGACY_MIGRATIONS_ONLY",
+      "RUN_MIGRATIONS_ONLY",
+      "SCHEDULER_ENABLED",
+      "SESSION_SECRET",
+      "STUDENT_TOKEN_SECRET",
+      "USAGE_LOCAL_SCALE",
+      "USAGE_RELEASE_CPU_PROFILE",
+      "USAGE_RELEASE_DIAGNOSTIC",
+      "USAGE_RELEASE_LINUX_DIAGNOSTIC",
+      "USAGE_RELEASE_PHASE",
+      "USAGE_SCALE_CAPS",
+      "USAGE_SCALE_COLD_STATE",
+      "USAGE_SCALE_COLD_STATE_SHA256",
+      "USAGE_SCALE_CONTAINER",
+      "USAGE_SCALE_OUTPUT",
+      "USAGE_SCALE_RLS_INVENTORY",
+      "USAGE_SOURCE_REVISION"
+    ]
+  },
+  "execution": {
+    "sourceRevision": "d6492333520608df1524c021999d9440a26149de",
+    "workloadProfile": "release-enabled-linux-shared-namespace-diagnostic-100rps-v1",
+    "candidateImageId": "sha256:d4df2a07f1f92568f44de2d774b64f138d030d53af1c8055729eb79f53773c36",
+    "diagnosticImageId": "sha256:eeca91c130ddcda195f9317805ae39c4e56c3d08918fde79aadf60725a9a86f0",
+    "capacityAccepted": false,
+    "phase": "combined",
+    "diagnosticOnly": true,
+    "collectApiCpuProfile": false,
+    "redisImageDigest": "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2",
+    "redisContainer": "schoolpilot-usage-redis-90bce96c45ef",
+    "rlsInventory": "classpilotPrivateChatLifecyclePostExpand",
+    "registrySha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+    "admittedTables": 129,
+    "currentFixtureMigrations": true,
+    "coldPostgresRestart": true,
+    "hostFilesystemCachesFlushed": false,
+    "preparedStateSha256": "cc870c2cb9f316dfb47330a7fa732f619803f0815d166263a16119237813ef89",
+    "schemaSource": "schoolpilot_redesign_usage_release297_20261002",
+    "schemaOnly": true,
+    "schemaSha256": "6d15c19c1414396ea05a8f18feab78fa0df551b8f9c4e2584025e287fa36c3e0",
+    "inputSchemaSha256": "6d15c19c1414396ea05a8f18feab78fa0df551b8f9c4e2584025e287fa36c3e0",
+    "postConvergenceSchemaSha256": "9fe607cffbc9895011b385615961aa640b0bb31a705c36ad5eaba85988d51ce9",
+    "postConvergenceSchemaNormalization": "UTF8/LF; no owner/grants; pg_dump nonce retained",
+    "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6",
+    "container": "schoolpilot-usage-scale-90bce96c45ef",
+    "database": "schoolpilot_redesign_usage_scale_90bce96c45ef",
+    "restrictedNonOwnerRole": true,
+    "postgresCpu": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeOldSpaceMiB": 512,
+    "productionMutations": 0,
+    "exitCode": 1
+  },
+  "sourceHashes": {
+    "local-usage-scale.mjs": "e1aef37dcbff5478f901d6742b627409250d8190743ef24fd2a27df7adba283b",
+    "prepare-release-control-ownership.mjs": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+    "release-enabled-drain.mjs": "e94a394a1fc16458fe3d6f81933ab8cd5f996439c36ef83cbbb4f7dc831dadba",
+    "release-enabled-drain.test.mjs": "02c2456ffa3190d368be6b04145e06a27dfdb3f751b8bb15c37a50b0945cc39c",
+    "release-enabled-generator.mjs": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0",
+    "release-enabled-instrumentation.mjs": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+    "release-enabled-postgres-pressure.mjs": "7d92147636572e5cf484fd2fba32e538e0bec3ce21d951d7ad21a24576a60f83",
+    "release-enabled-process.mjs": "14a722546625d88af200334af250cadaaec565428cde7e7de091d952068acd35",
+    "release-enabled-profile.mjs": "7e94fa74440a1af012f1a3b44e6bd668d5d78bad800d629bcc127cd3adc291c8",
+    "release-enabled-profile.test.mjs": "0da9a707e59dd5280c475d401605563e3e0d1dc124345c3463103b6324363833",
+    "release-enabled-protocol.mjs": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf",
+    "release-enabled-scale.mjs": "70c7da34cb8b19d95e4f6e9399cddc76a5a0a144bddf9331236235174d2178eb",
+    "run-release-enabled-scale.ps1": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384"
+  },
+  "current": {
+    "sourceRevision": "d6492333520608df1524c021999d9440a26149de",
+    "durationMs": 69510.383983,
+    "heartbeat": {
+      "configured": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "expected": 6000,
+      "offered": 6000,
+      "started": 5652,
+      "succeeded": 5652,
+      "failed": 0,
+      "refusedAtInFlightLimit": 348,
+      "lateOffers": 5,
+      "maxOfferLatenessMs": 142.663615999998,
+      "peakInFlight": 1000,
+      "bySchool": {
+        "0": {
+          "offered": 3000,
+          "started": 2825,
+          "succeeded": 2825,
+          "failed": 0,
+          "refused": 175
+        },
+        "1": {
+          "offered": 3000,
+          "started": 2827,
+          "succeeded": 2827,
+          "failed": 0,
+          "refused": 173
+        }
+      },
+      "offerWindowMs": 59989.715172000004,
+      "outstandingAtEndOfOffering": 989,
+      "totalIncludingDrainMs": 67419.790265,
+      "outstandingAfterDrain": 0,
+      "accepted": false,
+      "timings": {
+        "count": 5652,
+        "minMs": 411.9608909999997,
+        "p50Ms": 10120.143379000001,
+        "p95Ms": 11935.925760999999,
+        "maxMs": 12074.650740000001
+      }
+    },
+    "reportStatuses": {
+      "0": 26,
+      "200": 38
+    },
+    "apiCpuSeconds": 82.221205,
+    "eventLoop": {
+      "p50Ms": 22.020095,
+      "p95Ms": 28.098559,
+      "maxMs": 92.864511,
+      "utilization": 0.9605959913992419
+    },
+    "acquisitions": {
+      "count": 17254,
+      "failures": 0,
+      "maxMs": 4882.397294000002
+    },
+    "peakWaiting": 999,
+    "operations": {
+      "heartbeat_persistence": {
+        "leases": 5652,
+        "holdTotalMs": 166956.33653300034,
+        "meanHoldMs": 29.539337673920798,
+        "holdMaxMs": 661.8351849999999,
+        "checkoutTotalMs": 17696812.062632,
+        "sqlCount": 24562,
+        "sqlTotalMs": 176046.97520600096,
+        "sqlMaxMs": 647.8438170000009,
+        "operationTotalMs": 17863832.599584036
+      },
+      "heartbeat_final_delivery": {
+        "leases": 5652,
+        "holdTotalMs": 855913.4996239989,
+        "meanHoldMs": 151.4355094876148,
+        "holdMaxMs": 757.7587089999979,
+        "checkoutTotalMs": 17578664.87574207,
+        "sqlCount": 125060,
+        "sqlTotalMs": 786307.1948359939,
+        "sqlMaxMs": 645.2843130000037,
+        "operationTotalMs": 18434653.39859493
+      },
+      "usage_report_admission": {
+        "leases": 0,
+        "holdTotalMs": 0,
+        "meanHoldMs": null,
+        "holdMaxMs": 0,
+        "checkoutTotalMs": 0,
+        "sqlCount": 0,
+        "sqlTotalMs": 0,
+        "sqlMaxMs": 0,
+        "operationTotalMs": 455211.9532800001
+      },
+      "usage_report": {
+        "leases": 44,
+        "holdTotalMs": 10214.249095999981,
+        "meanHoldMs": 232.14202490909048,
+        "holdMaxMs": 1752.7963210000016,
+        "checkoutTotalMs": 90420.16705099998,
+        "sqlCount": 440,
+        "sqlTotalMs": 10156.06855799999,
+        "sqlMaxMs": 1695.1444429999974,
+        "operationTotalMs": 100636.19824600004
+      },
+      "tenant_request": {
+        "leases": 40,
+        "holdTotalMs": 9690.51296600002,
+        "meanHoldMs": 242.2628241500005,
+        "holdMaxMs": 4091.608370999995,
+        "checkoutTotalMs": 23053.39000800003,
+        "sqlCount": 0,
+        "sqlTotalMs": 0,
+        "sqlMaxMs": 0,
+        "operationTotalMs": 23054.475115999965
+      },
+      "tenant_background": {
+        "leases": 44,
+        "holdTotalMs": 2013.2565570000042,
+        "meanHoldMs": 45.75583084090919,
+        "holdMaxMs": 497.34860300000037,
+        "checkoutTotalMs": 51486.41903999998,
+        "sqlCount": 549,
+        "sqlTotalMs": 1939.326692000157,
+        "sqlMaxMs": 56.80538399999932,
+        "operationTotalMs": 53500.422734999906
+      }
+    },
+    "waitSampleCount": 274,
+    "apiWaiterSampleSums": {
+      "idle/Client/ClientRead": 1618,
+      "idle in transaction/Client/ClientRead": 2541,
+      "active/none/none": 380,
+      "active/Client/ClientRead": 36,
+      "active/IO/WALSync": 66,
+      "active/LWLock/WALWrite": 85,
+      "idle in transaction/none/none": 38,
+      "active/IO/WALWrite": 3,
+      "active/IO/DataFileRead": 7,
+      "idle/none/none": 13,
+      "active/IO/BufFileWrite": 1,
+      "active/IPC/MessageQueueSend": 15,
+      "active/IPC/MessageQueueReceive": 1
+    },
+    "wal": {
+      "valid": true,
+      "resetConsistent": true,
+      "countersMonotonic": true,
+      "timingsMonotonic": true,
+      "timingAvailable": false,
+      "counters": {
+        "wal_records": "1209117",
+        "wal_fpi": "17201",
+        "wal_bytes": "321865038",
+        "wal_buffers_full": "0",
+        "wal_write": "10130",
+        "wal_sync": "10075"
+      },
+      "timingsMs": null
+    },
+    "reportAdmission": {
+      "active": 0,
+      "queued": 0,
+      "peakActive": 2,
+      "peakQueued": 14,
+      "admitted": 44,
+      "denied": 0,
+      "cancelled": 20
+    }
+  },
+  "comparisonWindows09": {
+    "sourceRevision": "d6492333520608df1524c021999d9440a26149de",
+    "durationMs": 69101.9574,
+    "heartbeat": {
+      "configured": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "expected": 6000,
+      "offered": 6000,
+      "started": 5588,
+      "succeeded": 3677,
+      "failed": 1911,
+      "refusedAtInFlightLimit": 412,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 38.45999999999913,
+      "peakInFlight": 1000,
+      "bySchool": {
+        "0": {
+          "offered": 3000,
+          "started": 2788,
+          "succeeded": 1835,
+          "failed": 953,
+          "refused": 212
+        },
+        "1": {
+          "offered": 3000,
+          "started": 2800,
+          "succeeded": 1842,
+          "failed": 958,
+          "refused": 200
+        }
+      },
+      "failureCodes": {
+        "ERR_ASSERTION": 1911
+      },
+      "offerWindowMs": 60001.3342,
+      "outstandingAtEndOfOffering": 718,
+      "totalIncludingDrainMs": 69095.863,
+      "outstandingAfterDrain": 0,
+      "accepted": false,
+      "timings": {
+        "count": 5588,
+        "minMs": 352.646999999999,
+        "p50Ms": 8705.389899999998,
+        "p95Ms": 12744.919999999998,
+        "maxMs": 14761.241199999997
+      }
+    },
+    "reportStatuses": {
+      "0": 28,
+      "200": 30,
+      "500": 6
+    },
+    "apiCpuSeconds": 66.531,
+    "eventLoop": {
+      "p50Ms": 22.249471,
+      "p95Ms": 30.883839,
+      "maxMs": 397.148159,
+      "utilization": 0.8083201018970723
+    },
+    "acquisitions": {
+      "count": 15111,
+      "failures": 1957,
+      "maxMs": 5376.7559
+    },
+    "peakWaiting": 1038,
+    "operations": {
+      "heartbeat_persistence": {
+        "leases": 4205,
+        "holdTotalMs": 255853.6480000002,
+        "meanHoldMs": 60.845100594530365,
+        "holdMaxMs": 1284.0347999999994,
+        "checkoutTotalMs": 15323942.924500007,
+        "sqlCount": 17971,
+        "sqlTotalMs": 261945.95820000066,
+        "sqlMaxMs": 1250.642600000001,
+        "operationTotalMs": 15580382.619800007
+      },
+      "heartbeat_final_delivery": {
+        "leases": 3677,
+        "holdTotalMs": 788217.3087000017,
+        "meanHoldMs": 214.36423951591016,
+        "holdMaxMs": 3796.4857000000047,
+        "checkoutTotalMs": 13998839.71330002,
+        "sqlCount": 85633,
+        "sqlTotalMs": 754286.7705000045,
+        "sqlMaxMs": 3722.8184000000037,
+        "operationTotalMs": 14787515.15809999
+      },
+      "usage_report_admission": {
+        "leases": 0,
+        "holdTotalMs": 0,
+        "meanHoldMs": null,
+        "holdMaxMs": 0,
+        "checkoutTotalMs": 0,
+        "sqlCount": 0,
+        "sqlTotalMs": 0,
+        "sqlMaxMs": 0,
+        "operationTotalMs": 506458.04929999996
+      },
+      "usage_report": {
+        "leases": 36,
+        "holdTotalMs": 8280.088499999998,
+        "meanHoldMs": 230.00245833333327,
+        "holdMaxMs": 2240.484099999994,
+        "checkoutTotalMs": 94723.38900000002,
+        "sqlCount": 337,
+        "sqlTotalMs": 8170.27759999994,
+        "sqlMaxMs": 2138.885900000001,
+        "operationTotalMs": 103008.6149
+      },
+      "tenant_request": {
+        "leases": 3,
+        "holdTotalMs": 5635.027300000005,
+        "meanHoldMs": 1878.342433333335,
+        "holdMaxMs": 5425.771199999999,
+        "checkoutTotalMs": 14070.757299999997,
+        "sqlCount": 0,
+        "sqlTotalMs": 0,
+        "sqlMaxMs": 0,
+        "operationTotalMs": 14071.532
+      },
+      "tenant_background": {
+        "leases": 213,
+        "holdTotalMs": 12993.793800000014,
+        "meanHoldMs": 61.003726760563445,
+        "holdMaxMs": 466.067500000001,
+        "checkoutTotalMs": 832223.8819000004,
+        "sqlCount": 864,
+        "sqlTotalMs": 13396.818300000052,
+        "sqlMaxMs": 242.40519999999378,
+        "operationTotalMs": 845250.8990999996
+      }
+    },
+    "waitSampleCount": 264,
+    "apiWaiterSampleSums": {
+      "active/none/none": 354,
+      "idle/Client/ClientRead": 1162,
+      "idle in transaction/Client/ClientRead": 1622,
+      "idle/none/none": 14,
+      "active/IO/WALSync": 160,
+      "active/LWLock/WALWrite": 1171,
+      "idle in transaction/none/none": 20,
+      "active/IO/WALWrite": 4,
+      "active/Client/ClientRead": 11,
+      "active/LWLock/WALInsert": 10,
+      "active/LWLock/BufferContent": 7,
+      "active/IO/DataFileExtend": 1,
+      "active/IO/DataFileRead": 6,
+      "active/IO/BufFileWrite": 1,
+      "active/IPC/MessageQueueSend": 8
+    },
+    "wal": {
+      "valid": true,
+      "resetConsistent": true,
+      "countersMonotonic": true,
+      "timingsMonotonic": true,
+      "timingAvailable": false,
+      "counters": {
+        "wal_records": "1141878",
+        "wal_fpi": "17164",
+        "wal_bytes": "316017094",
+        "wal_buffers_full": "27",
+        "wal_write": "4741",
+        "wal_sync": "4657"
+      },
+      "timingsMs": null
+    },
+    "reportAdmission": {
+      "active": 0,
+      "queued": 0,
+      "peakActive": 2,
+      "peakQueued": 14,
+      "admitted": 42,
+      "denied": 0,
+      "cancelled": 22
+    }
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 15581.959165,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 36344.339791000006,
+      "correct": true
+    }
+  ],
+  "lifecycle": {
+    "passed": true,
+    "events": [
+      "websocket_authenticated",
+      "precise_command_ack",
+      "focus_command_ack",
+      "private_reply_ack",
+      "private_chat_closed",
+      "stale_private_reply_rejected",
+      "expired_reply_ack_and_projection_verified",
+      "expired_reply_absent_after_reconnect",
+      "stop_focus_ack",
+      "precise_cleanup_ack",
+      "websocket_authenticated",
+      "precise_command_ack",
+      "focus_command_ack",
+      "private_reply_ack",
+      "private_chat_closed",
+      "stale_private_reply_rejected",
+      "expired_reply_ack_and_projection_verified",
+      "expired_reply_absent_after_reconnect",
+      "stop_focus_ack",
+      "precise_cleanup_ack"
+    ],
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "serverDrain": {
+    "api": {
+      "complete": false,
+      "budgetMs": 20000,
+      "elapsedMs": 1.7424430000100983,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 23,
+      "failure": "DRAIN_UNVERIFIABLE_ABORT",
+      "stage": "verification"
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 2.106302999993204,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "childShutdownClean": false,
+  "childCleanupFailure": true,
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Server work remained active after bounded drain; metrics preserved"
+  },
+  "cleanup": {
+    "cleanupPassed": true,
+    "resources": [
+      {
+        "role": "harness",
+        "removed": false,
+        "cleanupPassed": true,
+        "confirmedAbsent": true
+      },
+      {
+        "role": "redis",
+        "removed": true,
+        "cleanupPassed": true
+      },
+      {
+        "role": "postgres",
+        "removed": true,
+        "cleanupPassed": true
+      }
+    ]
+  },
+  "correctness": {
+    "executed": false,
+    "passed": null,
+    "reason": "Drain certification failed before current-day oracle and CSV verification; physical zero does not certify aborted callbacks."
+  },
+  "limits": [
+    "No individual API/worker CPU/RSS ceiling was enforced in this diagnostic.",
+    "Windows versus Linux comparison also changes network/runtime topology; successful operation counts and lifecycle progress differ, so total CPU/SQL/WAL cannot establish causal per-query savings.",
+    "WAL wait samples are observations, not durations; WAL timing remains disabled.",
+    "All 6000 offers,64 reports and original pools/deadlines remain required; the failed result is not release acceptance.",
+    "Ordinary source finish receipt is absent if execution failed before that point; do not infer source verification from cleanup."
+  ],
+  "interpretation": [
+    "Linux completed5652started heartbeats without acquisition or request failure, but348offered heartbeats were refused and5offers were late.",
+    "38of64reports succeeded;26timed out. API pool peaked999waiters; final-delivery mean lease151.44ms versus214.36ms on Windows09.",
+    "API82.221CPU seconds over69.510wall with0.9606event-loop utilization supports remaining CPU/roundtrip pressure; no V8 profile was collected for this run.",
+    "Both school lifecycles passed using simulated client acknowledgements; this is not browser enforcement evidence.",
+    "All instrumented owners drained tozero, but23aborted responses make drain unverifiable; forced child shutdown remains failure. Separate owned-resource cleanup passed.",
+    "Proposed next query change is only heartbeat teaching inbox authority discovery5to2reads, retaining its first fresh control row lock, current DB clock and canonical roster ranking. Actual inbox frequency was not separately instrumented, so no aggregate speed forecast is claimed."
+  ],
+  "schema": {
+    "inputRawSha256": "6d15c19c1414396ea05a8f18feab78fa0df551b8f9c4e2584025e287fa36c3e0",
+    "postConvergenceRawSha256": "9fe607cffbc9895011b385615961aa640b0bb31a705c36ad5eaba85988d51ce9",
+    "fingerprint": {
+      "rawSha256": "9fe607cffbc9895011b385615961aa640b0bb31a705c36ad5eaba85988d51ce9",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "UTF8/LF; remove only pg_dump restrict/unrestrict security nonce lines; preserve all DDL"
+    }
+  },
+  "omitted": [
+    {
+      "file": "cold-fixture-state.json",
+      "rawBytes": 183029,
+      "rawSha256": "cc870c2cb9f316dfb47330a7fa732f619803f0815d166263a16119237813ef89",
+      "reason": "Populated synthetic identities/credentials excluded; original retained unchanged."
+    }
+  ],
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "all-owned-linux-fixtures-cleanup.json.gz",
+      "rawBytes": 347,
+      "rawSha256": "0b60c9c5f384ee5c086796ed509db2ea64397f12a81572a514a45e48f935f205",
+      "sanitizedBytes": 347,
+      "sanitizedSha256": "0b60c9c5f384ee5c086796ed509db2ea64397f12a81572a514a45e48f935f205",
+      "gzipSha256": "efe80e15cc41aacd5b8f7d93e7f49336bacee10ed95ef17199e13f1927c59a40"
+    },
+    {
+      "file": "api.log.gz",
+      "rawBytes": 19661,
+      "rawSha256": "ba6b48b4e5d2c769c703fc4c7ef25cc8d4ba555c5c728f83783af30f6b206682",
+      "sanitizedBytes": 19529,
+      "sanitizedSha256": "c1cd70ee2a1ddaec169c97e423bc1a0b2782cf5c28fbbc00c43c8248342462d0",
+      "gzipSha256": "6695b5d6b84dded49a5caeaa4383ebe8171421f225ba8ec8d36b4b19b7ec4092"
+    },
+    {
+      "file": "build.log.gz",
+      "rawBytes": 42,
+      "rawSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedBytes": 38,
+      "sanitizedSha256": "293f3ae59b47b581fac6b4817aa1422d14ff3d4d21a6581e67ddbc35f5aaa98f",
+      "gzipSha256": "d8ff3c6e74dba5899df769a43ec409aba515dc83b0d5f2b988e9907c86bd50d0"
+    },
+    {
+      "file": "cold-restart.log.gz",
+      "rawBytes": 38,
+      "rawSha256": "68acb8ae1c82e9c453cc3bb73b0521ec7adbce2824364c4eb2bc6bf1ba29e52e",
+      "sanitizedBytes": 37,
+      "sanitizedSha256": "7ed5848eda3ee011d32f9aa897d91943a52baffb3f37bb9d35b92f9ff1334dae",
+      "gzipSha256": "c7942cdefcc576aedb5bf79c6689d5a59820425636c4f66a857a99eb1cfce479"
+    },
+    {
+      "file": "cold-restarted-state.json.gz",
+      "rawBytes": 229,
+      "rawSha256": "476abb7ee4ab43b532796a5b23913e291888da4a9fb52d73e179636db3c177ab",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "0235a4098a5e6937cc6f94be482fee6204e1e3936c8a9ded410e927ffd16e643",
+      "gzipSha256": "0a91cb4d564b92ba82184ec66e225a80f6dd8ea288f3f822470b609efa985529"
+    },
+    {
+      "file": "container-create.log.gz",
+      "rawBytes": 66,
+      "rawSha256": "88de8c919606118d47f8d8fa26b34a1d7a96491024179a8839620283f7107771",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "0bb67d3ae28fe9ef56723cf00c58645adccce55843f3067b2ddb7e897c0274c2",
+      "gzipSha256": "dead9530b5108e46439af4c9caf3f984f683550cf5b0fa241315ee11ee1db28a"
+    },
+    {
+      "file": "execution.json.gz",
+      "rawBytes": 1855,
+      "rawSha256": "202617dbcffe9b723b4b7c640674e46c4df678db649e2b1e34c25b0bf536bdf1",
+      "sanitizedBytes": 1821,
+      "sanitizedSha256": "775dad8f0beae83566e296638152d45ffe6181e631deb5721186aa6de1057d06",
+      "gzipSha256": "181a31be4ffa77395246085fd34442f004cfbb33d6fbbd21681f690ad3e9526f"
+    },
+    {
+      "file": "fixture-legacy-convergence.log.gz",
+      "rawBytes": 12557,
+      "rawSha256": "a910d892fe9e502f41f745d79224a8cb38991569ada18f02f9725254f31e9bb1",
+      "sanitizedBytes": 12421,
+      "sanitizedSha256": "a10e27d34470d8c4d4a0989522ec5f19c6b4f1d1339ddb6c05086888bca0c78f",
+      "gzipSha256": "a81773a5a9edc7ab9acd05f948252c4170583db9966b6b27b707e2f8bb7282cd"
+    },
+    {
+      "file": "fixture-versioned-migrations.log.gz",
+      "rawBytes": 3648,
+      "rawSha256": "7a1c65ae823daeb51ce3ba3a9549627dfc44a67f5ccebb8d8e8a293034dafe74",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "208fafcfe1696540c9f0b9f86e42d82e38061414805403605646628efb74c502",
+      "gzipSha256": "a71ce788f20d2445ec845126bcba4c9b4a00086fc4e7335000ddd2465e5468f2"
+    },
+    {
+      "file": "generator.log.gz",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "linux-container-cleanup.json.gz",
+      "rawBytes": 119,
+      "rawSha256": "2297a49f5bfc1e6e66b867fa758e6cb18afc117380a91a1322bb492c9dff3d7b",
+      "sanitizedBytes": 119,
+      "sanitizedSha256": "2297a49f5bfc1e6e66b867fa758e6cb18afc117380a91a1322bb492c9dff3d7b",
+      "gzipSha256": "77e2241abcd0e323266ce86290ce6cd2d385c264545aca1e376cdd797623495a"
+    },
+    {
+      "file": "linux-launch-failure.json.gz",
+      "rawBytes": 60,
+      "rawSha256": "1c2a1bf10495b419f536fb92d32f8a1335349c64aba7016d10f3db83947fd388",
+      "sanitizedBytes": 60,
+      "sanitizedSha256": "1c2a1bf10495b419f536fb92d32f8a1335349c64aba7016d10f3db83947fd388",
+      "gzipSha256": "ad2cf891584b2d02fef741b88cae1875c799602514035b2ad52566979538ad11"
+    },
+    {
+      "file": "linux-launcher.log.gz",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "linux-runtime-plan.json.gz",
+      "rawBytes": 1576,
+      "rawSha256": "03cb118b905b4c581508c8bf148d1eceaad90f41bc3689b80b80d3802d69c653",
+      "sanitizedBytes": 1576,
+      "sanitizedSha256": "03cb118b905b4c581508c8bf148d1eceaad90f41bc3689b80b80d3802d69c653",
+      "gzipSha256": "97ea9c3e0b182ff23469ad94e6f006a11f9250dfe14aa1314fa6cd1fda111cfc"
+    },
+    {
+      "file": "local-docker-daemon.json.gz",
+      "rawBytes": 129,
+      "rawSha256": "ac3977cb203506418ab4960e2b6b0bf0244f421a2ae742abe2d8dba053345ee8",
+      "sanitizedBytes": 124,
+      "sanitizedSha256": "763840f55872b4f8c1d68d00fdce7ca2b03f5b484264e9f08872d374623d3835",
+      "gzipSha256": "ae7cb55d7931725a1398691ecaeec37411c554bdaf9a1c1fbf2a20132547b355"
+    },
+    {
+      "file": "post-convergence-schema.sql.gz",
+      "rawBytes": 575957,
+      "rawSha256": "9fe607cffbc9895011b385615961aa640b0bb31a705c36ad5eaba85988d51ce9",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "9fe607cffbc9895011b385615961aa640b0bb31a705c36ad5eaba85988d51ce9",
+      "gzipSha256": "588997f46b95df8f04651d2ba9c511a49f244f894cd6d846253a281d6cf90786"
+    },
+    {
+      "file": "preparation-fixture-contract.json.gz",
+      "rawBytes": 35903,
+      "rawSha256": "41bf076955380f4bcdd5b5ed6625eb623b762a724f7ac9af817fb2bc824a6209",
+      "sanitizedBytes": 35903,
+      "sanitizedSha256": "41bf076955380f4bcdd5b5ed6625eb623b762a724f7ac9af817fb2bc824a6209",
+      "gzipSha256": "9830e6a23292f125c71ce623f7fdfd40d88c7afc06791c0d341f3e370d6f9ccc"
+    },
+    {
+      "file": "preparation-metrics.json.gz",
+      "rawBytes": 45025,
+      "rawSha256": "b9ede93ffb6ca6109a6fb52f64693d1bc4bb2dcb3ba1ab252be4bde577b3641d",
+      "sanitizedBytes": 44981,
+      "sanitizedSha256": "bf07f219986b343e4c93226c917872fc05449dc8d9ac2ab00b0c572e2725a96f",
+      "gzipSha256": "f6d2410c76fd416873371344d33dfa79b642232368dc09bdeadf4aa6daa5be48"
+    },
+    {
+      "file": "preparation.log.gz",
+      "rawBytes": 65325,
+      "rawSha256": "49b88c86e3dc3b6dc4f1bc6edc930ccc36e5885e66ec04f629b37b6596f1bd0e",
+      "sanitizedBytes": 65037,
+      "sanitizedSha256": "aac78f4518f8a9c6f375bea40e83fd591b15ef516c795dad738970e703d202d6",
+      "gzipSha256": "53da749f2d538992670127bc43e7fc1c01c08d76b4582234e04a0db0f7f89ef7"
+    },
+    {
+      "file": "redis-create.log.gz",
+      "rawBytes": 66,
+      "rawSha256": "d1d0f388c944934a44ec94f2fae8d792d4d76792cfeb8699b6b2ef02576ed803",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "3d4431f411f4fb00ea612b7122e898d13f605b48e6553a31ac20fe1d3256a462",
+      "gzipSha256": "3332f4939faa131e8a6ebcd522033768aafc8cd380de5563f6a35a1062e86d24"
+    },
+    {
+      "file": "release-control-preparation.json.gz",
+      "rawBytes": 804,
+      "rawSha256": "9286e8ddcb8ee84570297e803e612c8e84bbb9cb10f110362310ac8c61443ea5",
+      "sanitizedBytes": 804,
+      "sanitizedSha256": "9286e8ddcb8ee84570297e803e612c8e84bbb9cb10f110362310ac8c61443ea5",
+      "gzipSha256": "76bb7fab6ee6d9c1d11f51aab4d0a5a3771adfa705f96591f0df5e78ab3b3487"
+    },
+    {
+      "file": "release-control-preparation.log.gz",
+      "rawBytes": 3334,
+      "rawSha256": "bf9ca24f40183546e3a7361e86f95af042d278d1343f20d06bea7a9abde26053",
+      "sanitizedBytes": 3309,
+      "sanitizedSha256": "03a54b01d5390cebb545781d83cfdfc54e714efac0da0884430f547d3717be74",
+      "gzipSha256": "75fa26aa3c2a00e5ce4034662941738b6f570d08a174c9cd8adb7d5f0a5d258b"
+    },
+    {
+      "file": "resource-caps.json.gz",
+      "rawBytes": 1560,
+      "rawSha256": "97849143889676f52971099453206fd945d7136b4ec4e477559ed8870097fb96",
+      "sanitizedBytes": 1559,
+      "sanitizedSha256": "4dff3bb133065015a497685fb57960e5adb8ff22e9dd439f0b805ab2e8c7a0f9",
+      "gzipSha256": "bd1c6f5d1b879f23f42613a18177a9d40be3dc23f6bf09e075767154b16b9c5e"
+    },
+    {
+      "file": "scale.log.gz",
+      "rawBytes": 188,
+      "rawSha256": "41ca55dacb0ebe278c4bd4a05ecc6e9f8bde5beadc559d753214a89174337d1f",
+      "sanitizedBytes": 188,
+      "sanitizedSha256": "41ca55dacb0ebe278c4bd4a05ecc6e9f8bde5beadc559d753214a89174337d1f",
+      "gzipSha256": "7072f2adef4ddc6ad44eb2c035a102f0e3a11813e3fc3e5ed5587b9979130adf"
+    },
+    {
+      "file": "schema-fingerprint.json.gz",
+      "rawBytes": 290,
+      "rawSha256": "92c8039a0fc7099f964dfea14bf10578c1efbcf53e65fe2124660d9aaa4ddadb",
+      "sanitizedBytes": 285,
+      "sanitizedSha256": "f0babbfe3d7ac19a477d3e64afc1c4db079ce75157d3ec988e8ed7d8c1c93238",
+      "gzipSha256": "f87aa9c58d7567b1415cd36188b9592c1beaa5baeb6b9f5627bbf279c0fa2ed0"
+    },
+    {
+      "file": "schema-only.sql.gz",
+      "rawBytes": 591139,
+      "rawSha256": "6d15c19c1414396ea05a8f18feab78fa0df551b8f9c4e2584025e287fa36c3e0",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "52c48081c5b3303ec42a4e12e15aa55879dd454472f99191b3910edb212cf4e1",
+      "gzipSha256": "17e4e05f7feefe0f568ad99fbfb686541a7412dcb153450544adb488f0a83ddc"
+    },
+    {
+      "file": "schema-restore.log.gz",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "usage-scale.json.gz",
+      "rawBytes": 589487,
+      "rawSha256": "d8fb1b7e30318ec0af0627598d39c38eb697a50a8d3aee675eca28e719fcba77",
+      "sanitizedBytes": 589399,
+      "sanitizedSha256": "3f5d3cdaf9c40a0996101ccd3ddcd3dbbf2a603e40f1d84d774f913691b335fe",
+      "gzipSha256": "a3444bd06001859e084f311ef6625feb19dd331bb1031c2a1f8955f455925ad4"
+    },
+    {
+      "file": "worker.log.gz",
+      "rawBytes": 5220,
+      "rawSha256": "2ef5fc047c7329dc235486077f378829fff13dfd4334e302324a15b876d513e8",
+      "sanitizedBytes": 5176,
+      "sanitizedSha256": "96282bced4bdeaef7608022558afedad60635af3dcf850f4580774b09e520647",
+      "gzipSha256": "541fe7d110e31a69c3974faf09b58d2c15ce3f9e4c62ac072ef3c0ae1af17382"
+    },
+    {
+      "file": "archive-and-analysis.mjs.gz",
+      "rawBytes": 8192,
+      "rawSha256": "b2b5e004020c8abc8cc957c089dd406c49a53186829625d3c6a225453d18af65",
+      "sanitizedBytes": 8192,
+      "sanitizedSha256": "b2b5e004020c8abc8cc957c089dd406c49a53186829625d3c6a225453d18af65",
+      "gzipSha256": "f681de6a099b17d5bf0eb3f0f77cab1b4a055e11d0776e3a7bb894c6db7788a1"
+    }
+  ],
+  "sanitization": "UTF8/LF; local paths, connection URLs,JWTs,cookies,emails,synthetic UUIDs and SQL passwords redacted. Every raw original hashed unchanged; every gzip decompression verified."
+}

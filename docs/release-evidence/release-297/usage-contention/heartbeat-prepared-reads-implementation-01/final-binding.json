@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+  "testManifestSha256": "50fce997e15658ca0475931c621166a42762166f66577463caf28456b8361dc3",
+  "change": "Trailing whitespace only after tests; rebuilt JavaScript hash is identical",
+  "files": [
+    {
+      "path": "whitespace-binding-addendum.json",
+      "sha256": "f0dc027f6105bb0a20bf29af1d3f68bbc467920c7b562a28fe7122be0fd90e0b",
+      "bytes": 761
+    },
+    {
+      "path": "compiled-javascript-equivalence.json",
+      "sha256": "ab4acf83eb19a8e6c8c3abbfd5a9639db47453aa39d38fc295df5ea322a209dd",
+      "bytes": 340
+    },
+    {
+      "path": "whitespace-build.log",
+      "sha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "bytes": 42
+    }
+  ],
+  "capacityAccepted": false
+}

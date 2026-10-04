@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T11:52:29.174Z",
+  "source": "9630c00928aa391efb964eee0847965a967d33eb",
+  "scope": "Exact local candidate build, security scan and embedded compatibility proof; not capacity or production evidence",
+  "artifactDirectory": "C:/Users/zinka/.codex/artifacts/release297-candidate-9630c009-01",
+  "artifactManifestSha256": "1afd8c43cb29934e9cd4bc05925e3e466f8c3cf56b981b2525fa81339e79299e",
+  "image": {
+    "imageId": "sha256:c8abac48dc32c79ff88d2388bf1039d8b2d64065b764d622105a510090a300ac",
+    "imageIdKind": "index",
+    "indexDigest": "sha256:c8abac48dc32c79ff88d2388bf1039d8b2d64065b764d622105a510090a300ac",
+    "platformManifestDigest": "sha256:c3759c8b69acb47feb5dc1dc5416b77f9d5e1a2eccb76bbf1646c96d966a67c5",
+    "configDigest": "sha256:acb86e615068547a3553930b21412871f5839d505eabc3412e629bc1aefd3415",
+    "exportIndexSha256": "b4bbdf3bffa50cd03e16f6ccf7d72dbf07feb6ae82d790c9125e5d46024270c8",
+    "verifiedBlobDigests": [
+      "sha256:c8abac48dc32c79ff88d2388bf1039d8b2d64065b764d622105a510090a300ac",
+      "sha256:c3759c8b69acb47feb5dc1dc5416b77f9d5e1a2eccb76bbf1646c96d966a67c5",
+      "sha256:4aef508fc10e9a32ad54bb9bba57863a7fc0b0cf45948b6bed60f82857e7c005"
+    ]
+  },
+  "imageArchiveSha256": "0c87d73aae62c026bb7a7fb05259fec5325d3865b682e14d0241c3a2884c53f3",
+  "scan": {
+    "passed": true,
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "fullReport": {
+      "path": "reports/trivy.json",
+      "sha256": "63e8bc1b6af4b2c500e98ce42c107719ed05a069f2f99a30162789fcc38b4595"
+    },
+    "receipt": {
+      "path": "scan-receipt.json",
+      "sha256": "5761708834f14b57bc8e8951bfc705ea5fd4281eba6e214723a7dcb3867a9769"
+    }
+  },
+  "productionMutations": 0,
+  "registryPushes": 0,
+  "taskRegistrations": 0,
+  "capacityAccepted": false,
+  "sourceInitiallyClean": true,
+  "sourceUnchangedAtBuildFinish": true,
+  "rawReceiptsUnchanged": true,
+  "files": [
+    {
+      "path": "archive-identities.mjs",
+      "archive": "payload/423da04d4f739caa8a79d6b2.gz",
+      "rawSha256": "b0b70e11029c4a5c46c438f3396774b536ed8138c108186cc0a84ed8d7e64037",
+      "gzipSha256": "e43026071e29f6084f41775f36abe7071ba844dd862d5a8e843169c8462258a1",
+      "bytes": 2551
+    },
+    {
+      "path": "build-image-id.txt",
+      "archive": "payload/8ca4c295ed91dbd3fb0d7a06.gz",
+      "rawSha256": "d51e289d91061cdc408cc7e1460e4e704261e4c417bf114b8eb03e2832e8b377",
+      "gzipSha256": "d37796c52f97e90944ff54c868bc1d01bc7411a1d836b85bef09a404ca482cf1",
+      "bytes": 71
+    },
+    {
+      "path": "build.log",
+      "archive": "payload/906be301a25b186e911bc2e6.gz",
+      "rawSha256": "e622492eb613a2a28405dc1df78d02753138e078e7c02818b6e0b3594dd41ce6",
+      "gzipSha256": "d8cea44535d9c2a3d7e230ec3631f5ac61ec58e3aa70019b41d8f0040964bc45",
+      "bytes": 10462
+    },
+    {
+      "path": "candidate-preparation.json",
+      "archive": "payload/e12f67c81e4aff325dd26d13.gz",
+      "rawSha256": "437dfce6c207f4c881a4b87c6ca7160323e015a3862dc22f42db49d5acc700b1",
+      "gzipSha256": "1a90a3c295854bef53b7d3ab98c10e3e8a17631be298e1ce49924262cd5e6011",
+      "bytes": 3539
+    },
+    {
+      "path": "cleanup.json",
+      "archive": "payload/f0b48976318ade5ef196ff75.gz",
+      "rawSha256": "7c95fe2d8771c404be46ce4fb6af3af945f9a618fc9d2598f26ef34e9f82bc25",
+      "gzipSha256": "a3c8053855b2a4d0c317ff039197152027d094c0d9c22bc3a0c83a0cd609b5aa",
+      "bytes": 104
+    },
+    {
+      "path": "embedded-compatibility.json",
+      "archive": "payload/abab6bc77d78a2ede2f146cf.gz",
+      "rawSha256": "a88dd32d643a791f08095e5603d55bc05b8222634ca3e01d15e69a1ec6cbff25",
+      "gzipSha256": "0ec87810b3e2d1326987bb87a7cad299d87d9a67fd9e2a5933826879f0c76c0a",
+      "bytes": 811
+    },
+    {
+      "path": "embedded-compatibility.log",
+      "archive": "payload/e8e705f6c711026afb9e23bf.gz",
+      "rawSha256": "35eab949693987b37901bae25080152fe72be189fd6ab14afd0670cce0987255",
+      "gzipSha256": "54babd358bc0e6fdb9eb8ed3103238ef87e9894746807351d8a81c7cefd27221",
+      "bytes": 812
+    },
+    {
+      "path": "image-inspect.json",
+      "archive": "payload/3d10b8c1128fdb3d7af4ffdf.gz",
+      "rawSha256": "6b03681d8510f156bc7eaf918ec83b2b94c45edaa864fc300a982ec25664ceb4",
+      "gzipSha256": "086c3cff94f8ba848bdf507218175be2ae87f244fcfe8bf7e3ad8035871e1da1",
+      "bytes": 2735
+    },
+    {
+      "path": "input/image.tar",
+      "externalPath": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-9630c009-01\\input\\image.tar",
+      "sha256": "0c87d73aae62c026bb7a7fb05259fec5325d3865b682e14d0241c3a2884c53f3",
+      "bytes": 153940480,
+      "storage": "verified permanent artifact; image not duplicated in Git"
+    },
+    {
+      "path": "inspect-compatibility.mjs",
+      "archive": "payload/55910ae189d0213c9a08125c.gz",
+      "rawSha256": "1220d472317b07b817dd405eaa30054ef596c902fa9ce4fe5909c92d040cdc7b",
+      "gzipSha256": "e136981a80633687c564c8008d252d3d57c86489c6906fad5f168d1fb1feed3d",
+      "bytes": 2315
+    },
+    {
+      "path": "prepare-candidate-v3.mjs",
+      "archive": "payload/1b372513c050137b299cbc6b.gz",
+      "rawSha256": "7fadfdeb99014362f21ebac5de5a0bfd80d5282ff86761257e82d0431d28e050",
+      "gzipSha256": "28557ad1d7635ef54db0b63876eb81fbf0500e87ec864058cbfb1a9114023eca",
+      "bytes": 7169
+    },
+    {
+      "path": "prove-synthetic-floor.mjs",
+      "archive": "payload/77590f0fa985c9df05ae35e3.gz",
+      "rawSha256": "c1d0b02e678c80533910098de5994ca28d1ad9c5ef3798aefe5c0b823eca50ff",
+      "gzipSha256": "4869fbc0a2053491d8b3aa55be2f0ef352f47101574dca9e507f858bda5fb819",
+      "bytes": 3500
+    },
+    {
+      "path": "reports/scanner.stderr.log",
+      "archive": "payload/8654888a7799c5a5fee2b022.gz",
+      "rawSha256": "b3e54d34aff22c79486b8e3a5f342cd2734f6c7abe8e4662013d096651fcbafe",
+      "gzipSha256": "ca55dd886d9b84a5799e771b2608473b3e5b9e7f920d45ebee669441cae92db8",
+      "bytes": 28908
+    },
+    {
+      "path": "reports/scanner.stdout.log",
+      "archive": "payload/726b045c27fcc015a694fa8b.gz",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63",
+      "bytes": 0
+    },
+    {
+      "path": "reports/trivy.json",
+      "archive": "payload/a4f688c00a147872636c21b3.gz",
+      "rawSha256": "63e8bc1b6af4b2c500e98ce42c107719ed05a069f2f99a30162789fcc38b4595",
+      "gzipSha256": "62ec70dba8bcf135dad8c9f17d496b028700e89ab0c1b179c90c97a11099a65c",
+      "bytes": 356672
+    },
+    {
+      "path": "reviewed-legacy-image-gate.mjs",
+      "archive": "payload/978eb195bdec90d8882dd239.gz",
+      "rawSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "gzipSha256": "673ab3dd7b30b7a4cbfbf1121850ca814a3d6404fd6e274edce6b9f34048b047",
+      "bytes": 18565
+    },
+    {
+      "path": "scan-receipt.json",
+      "archive": "payload/bc380ceacec3f51e7e333a33.gz",
+      "rawSha256": "5761708834f14b57bc8e8951bfc705ea5fd4281eba6e214723a7dcb3867a9769",
+      "gzipSha256": "4d247669286a2d8a3f279c811ee087e430b02491968beec5da13515aa3f18f62",
+      "bytes": 888
+    },
+    {
+      "path": "source.json",
+      "archive": "payload/5c3708bb1944130f425a5e92.gz",
+      "rawSha256": "add5122556e9aeeefb89c80c3360c4155211f253e39aa50a8915263f8bd49f03",
+      "gzipSha256": "e6e8e6d1b7bbb0db2a0c89e2816451c671268d835ed3c8276bbe7c6ead9abdbe",
+      "bytes": 127
+    },
+    {
+      "path": "synthetic-api-task.json",
+      "archive": "payload/9e1324b574ddb2c6fb03f07c.gz",
+      "rawSha256": "10164b53a1c06542fd1127d01eb88d7ee46febf3e6c7d2560b237a720f5d2c67",
+      "gzipSha256": "90f7a1ee932f895d3e4082f5817114f2a967031af0d0a9630c9c603f8e22b300",
+      "bytes": 4088
+    },
+    {
+      "path": "synthetic-release-floor-proof.json",
+      "archive": "payload/c3b00a5414cea22bcead8194.gz",
+      "rawSha256": "a0f8e0d9fef380151b2b1eb508c729f1e4ecc93858a878113c584d20f6960463",
+      "gzipSha256": "d61343b9c6c1c0c0a5b92ee8ff40179eac966c42288c92b2f798eea2cea87a54",
+      "bytes": 1035
+    },
+    {
+      "path": "synthetic-worker-task.json",
+      "archive": "payload/3d96e8e68d70211ec55c5539.gz",
+      "rawSha256": "af4280051d25ae027ebb56ab59606d8fe09293abace6750b3f8a724a6ec974f9",
+      "gzipSha256": "e189543e3c61b01ce496660ea9eebad48e518197eef3663a00192895ba242f77",
+      "bytes": 4102
+    },
+    {
+      "path": "artifact-manifest.json",
+      "archive": "payload/dbe675def4b9580d70057b86.gz",
+      "rawSha256": "1afd8c43cb29934e9cd4bc05925e3e466f8c3cf56b981b2525fa81339e79299e",
+      "gzipSha256": "c8eb9e37026d6969d77245f236aa928777d9b6d0401bb5ebd22bb8a3d7bf34b6",
+      "bytes": 9741
+    }
+  ]
+}

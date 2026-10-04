@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T01:20:40.961Z",
+  "status": "focused_instrumentation_checks_passed",
+  "baseRevision": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+  "sourceDirty": true,
+  "tests": {
+    "command": "node --test scripts/load/usage/release-enabled-profile.test.mjs",
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0
+  },
+  "localPostgresReadOnlySmoke": {
+    "recordedAt": "2026-10-03T01:18:35.774Z",
+    "databaseMutations": 0,
+    "databaseSettingsChanged": false,
+    "firstAttempt": {
+      "status": "authentication_failed",
+      "code": "28P01",
+      "source": "container environment credential was stale; no database change"
+    },
+    "target": "existing local Docker PostgreSQL only",
+    "sourceSha256": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+    "results": [
+      {
+        "role": "api",
+        "applicationName": "usage_release_api",
+        "pressureSnapshotValidated": true,
+        "waitRows": 0,
+        "timingAvailable": {
+          "wal": false,
+          "database": false,
+          "bgwriter": true
+        },
+        "serverMajor": 16
+      },
+      {
+        "role": "worker",
+        "applicationName": "usage_release_worker",
+        "pressureSnapshotValidated": true,
+        "waitRows": 0,
+        "timingAvailable": {
+          "wal": false,
+          "database": false,
+          "bgwriter": true
+        },
+        "serverMajor": 16
+      }
+    ]
+  },
+  "capacityEvidence": false,
+  "sourceHashes": {
+    "scripts/load/usage/release-enabled-postgres-pressure.mjs": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+    "scripts/load/usage/release-enabled-profile.test.mjs": "4fe983eee8aa55069bed7e46eae1f9b68453c1b58e70482534ecabcddc0b6477",
+    "scripts/load/usage/release-enabled-scale.mjs": "203147d06a7387483724de927e0afe58cdf8ccacd5eaf0072a7ba3273ca6ccaa",
+    "scripts/load/usage/release-enabled-process.mjs": "30cbe37ee514d729fe89a7a13cb7d815804b26ba1c1c6d3fd8915e82a963d478"
+  },
+  "files": [
+    {
+      "file": "release297-wal-pressure-focused.log.gz",
+      "originalFile": "release297-wal-pressure-focused.log",
+      "rawBytes": 3279,
+      "rawSha256": "be92d4db55e6b98aa963bee98ffb32b36443cb3b1fa03390bb8e6bf82f6836e8",
+      "sanitizedBytes": 3191,
+      "sanitizedSha256": "8ba12d81e71f1e1d7b64e9b2067c1ce6d565c2f94616f7e7c4629ed8d533ac78",
+      "gzipSha256": "420bdcac3e78755d4efad0bc4fcbcdfc5fdbf33886f1cac274565f04bf231cb1"
+    },
+    {
+      "file": "release297-wal-pressure-smoke.json.gz",
+      "originalFile": "release297-wal-pressure-smoke.json",
+      "rawBytes": 989,
+      "rawSha256": "8ff59920f2f67e462a615c74984186f47e929c9c4559a11ae3c61169c872ad8a",
+      "sanitizedBytes": 989,
+      "sanitizedSha256": "8ff59920f2f67e462a615c74984186f47e929c9c4559a11ae3c61169c872ad8a",
+      "gzipSha256": "41c15e2a6641c83e817f6126e6b59b0eea841e0c1bb269cb7b899634f15e3469"
+    }
+  ]
+}

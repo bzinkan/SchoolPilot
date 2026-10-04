@@ -1,0 +1,137 @@
+{
+  "kind": "classpilot_resulting_main_source_and_ci_final_summary",
+  "recordedAtUtc": "2026-10-04T21:46:24.0734697Z",
+  "verified": true,
+  "resultingMain": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+  "releaseSource": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "packagedAncestor": "065be165b5df704d84eb716e3fb914c1fed17f98",
+  "extensionTree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+  "exactAllThreeExtensionGitTreesIdentical": true,
+  "fullReleaseToMergedGitDiffEmpty": true,
+  "manifest": {
+    "name": "ClassPilot",
+    "version": "2.9.7"
+  },
+  "retainedPackageSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "retainedPackageCopiesReverified": 2,
+  "retainedPackageBytesEach": 376052,
+  "sourcePullRequests": [
+    {
+      "number": 119,
+      "state": "MERGED",
+      "headRefOid": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+      "baseRefName": "main",
+      "baseRefOid": "55bb531cb5f130cebec9d994daa957e82e87a13b",
+      "disposition": "already_merged"
+    },
+    {
+      "number": 120,
+      "state": "CLOSED",
+      "headRefOid": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+      "baseRefName": "codex/precise-focus-candidate",
+      "baseRefOid": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+      "disposition": "included_exact_ancestor_closed"
+    },
+    {
+      "number": 121,
+      "state": "CLOSED",
+      "headRefOid": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+      "baseRefName": "codex/focus-enforcement",
+      "baseRefOid": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+      "disposition": "included_exact_ancestor_closed"
+    },
+    {
+      "number": 122,
+      "state": "CLOSED",
+      "headRefOid": "2aa6df988a78cb5860cef2c0866cab46566ffec5",
+      "baseRefName": "codex/precise-focus-release",
+      "baseRefOid": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+      "disposition": "included_exact_ancestor_closed"
+    }
+  ],
+  "ci": {
+    "run": 37235318355,
+    "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37235318355",
+    "source": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+    "status": "completed",
+    "conclusion": "success",
+    "expectedJobs": 5,
+    "successfulJobs": 5,
+    "allFiveExactJobsSuccessful": true,
+    "jobs": [
+      {
+        "id": 111533143032,
+        "name": "test",
+        "head_sha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-10-04T21:44:01Z"
+      },
+      {
+        "id": 111533143148,
+        "name": "chrome-compatibility (133.0.6943.141)",
+        "head_sha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-10-04T21:35:59Z"
+      },
+      {
+        "id": 111533143188,
+        "name": "chrome-compatibility (stable)",
+        "head_sha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-10-04T21:36:33Z"
+      },
+      {
+        "id": 111533143219,
+        "name": "chrome-compatibility (120.0.6099.109)",
+        "head_sha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-10-04T21:35:49Z"
+      },
+      {
+        "id": 111533143226,
+        "name": "chrome-compatibility (152.0.7977.82)",
+        "head_sha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-10-04T21:36:19Z"
+      }
+    ]
+  },
+  "refs": [
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-classpilot-resulting-main-03a9-01/source-and-pr-receipt.json",
+      "bytes": 8076,
+      "sha256": "f366b29be5ebb3d720c2f5848536da57233a2e4e398982a52a4171eac8c06a88"
+    },
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-classpilot-resulting-main-03a9-01/source-pr-state-correction.json",
+      "bytes": 3258,
+      "sha256": "25e65b4e613823ebdb11c153e4df4c2f5072e0c799111405ec937276d2b16dd9"
+    },
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-classpilot-resulting-main-03a9-01/ci-observation-11.json",
+      "bytes": 2858,
+      "sha256": "42a9f3d2f40a6fc0af6f05bf9e6e2f700b9b81cdce5ffee70461b316ffd1ada0"
+    },
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-authorized-merges-20261004-01/classpilot-merged.json",
+      "bytes": 4828,
+      "sha256": "f121cff230db76a7f43bb20731826c20786aa7dff2b54cad998e7fd2f69d274f"
+    },
+    {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-authorized-merges-20261004-01/classpilot-source-reconciliation.json",
+      "bytes": 3064,
+      "sha256": "6d79c285feedf80a783cd803c53ca2657e75b870a99e26dbb8b27d08ba5056cd"
+    }
+  ],
+  "originalCheckoutsBranchesAndPackageUnchanged": true,
+  "objectFetchWithoutRefMutationOnly": true,
+  "performedPullRequestMutation": false,
+  "performedBuildTestsNativeCloudStoreOrDeployment": false,
+  "sourceEquivalenceAndCiOnly": true,
+  "publicationOrActivationAccepted": false
+}

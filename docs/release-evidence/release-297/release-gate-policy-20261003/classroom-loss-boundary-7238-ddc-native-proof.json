@@ -1,0 +1,78 @@
+{
+  "passed": true,
+  "preparationOnly": true,
+  "releaseAcceptance": false,
+  "capacityAcceptance": false,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "harnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+  "helperImage": "sha256:0efe4b7e82529ee285bb6a65b3a9ae37e87b2aa257df36e086f975578bb45ae7",
+  "profile": "release297-classroom-133-loss-boundary-preparation-v1",
+  "profileSha256": "d8143dabc585df28ff4f8a57134993863af8f4385069ae55a23fcbb989f12679",
+  "planSha256": "9a114693b5e3e1fb17303091770e19b4691768a3322c0d773a7185a70682a77a",
+  "driverSha256": "95c4104168617cb24c49def214c4322324b32aad6092ee4d05b91719e5e88556",
+  "startedAt": "2026-10-04T09:01:10.110Z",
+  "completedAt": "2026-10-04T09:02:29.968Z",
+  "withinAuthorizedWindow": true,
+  "failure": null,
+  "proof": {
+    "run": "34dda208415d",
+    "receiptManifestSha256": "baf05001f6bbeada7368c98b084a25c4f3be6457990b10e39cee6f42813a2f36",
+    "closureSha256": "30fe100dda8ba99fe3ab481c5fcc72cb088e455fd5b77c713fc5a7e4c54b5dc7",
+    "ordinaryOffers": 266,
+    "reconnectOffers": 133,
+    "ordinaryTargets": {
+      "0": 107,
+      "1": 80,
+      "2": 79
+    },
+    "reconnectTargets": {
+      "1": 67,
+      "2": 66
+    },
+    "status200": 399,
+    "reconnect204": 0,
+    "persisted": 399,
+    "exactBindings": true,
+    "actualTargetCounts": {
+      "0": 107,
+      "1": 147,
+      "2": 145
+    },
+    "ingressObserved": 107,
+    "lossAtMs": 1791104532133,
+    "reconnectAtMs": 1791104533133,
+    "absentAtMs": 1791104532973,
+    "actualReconnectStartedAtMs": 1791104533133,
+    "boundaryDispatches": [
+      {
+        "declaredOffsetMs": 599924.8120300752,
+        "dispatchWallOffsetMs": 599927,
+        "dispatchMonotonicOffsetMs": 599925.386749,
+        "targetIndex": 0,
+        "offerIndex": 132
+      },
+      {
+        "declaredOffsetMs": 600000,
+        "dispatchWallOffsetMs": 600002,
+        "dispatchMonotonicOffsetMs": 600000.648578,
+        "targetIndex": 1,
+        "offerIndex": 133
+      },
+      {
+        "declaredOffsetMs": 600075.1879699248,
+        "dispatchWallOffsetMs": 600077,
+        "dispatchMonotonicOffsetMs": 600075.699463,
+        "targetIndex": 2,
+        "offerIndex": 134
+      }
+    ],
+    "physicalAbsenceBeforeReconnect": true,
+    "roleCleanupPassed": true,
+    "completeErrorCoverage": true
+  },
+  "limitations": [
+    "Short20-second routing/physical-loss proof; it cannot replace any900-second acceptance run.",
+    "Canonical API routes execute in the release wrapper; actual index.ts service HealthMonitor was validated separately.",
+    "Historical failed mixed run remains failed."
+  ]
+}

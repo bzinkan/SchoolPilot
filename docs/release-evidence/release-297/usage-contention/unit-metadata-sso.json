@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T00:11:40.685Z",
+  "command": "npm run test:unit",
+  "status": "source_frozen_between_capture_and_verification",
+  "sourceBase": "9f1580615d72f6b0647abac27677773b03a88269",
+  "sourceBinding": "unit-metadata-sso-source.json",
+  "sourceFiles": 1139,
+  "sourceCaptureRawSha256": "4500112349e5bdad70a664d7bb7152756e0aca28fa9bacb4b083828f3a6eb755",
+  "sourceFilesUnchangedAfterRun": true,
+  "tests": 1714,
+  "passed": 1710,
+  "failed": 0,
+  "skipped": 4,
+  "exitCode": 0,
+  "skippedCases": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ],
+  "limitation": "Not final CI, database-lane or capacity acceptance. Four conditional skips are not passing tests. Source files are bound individually before and after the run; containing commit is recorded after freeze.",
+  "log": {
+    "file": "unit-metadata-sso.log.gz",
+    "rawFileName": "release297-metadata-sso-unit.log",
+    "rawSha256": "b98f7fcd511a393289fe8b4137becbe5031b26d1062a36e319c10dfa557ea166",
+    "sanitizedSha256": "230277999c2527466af1d6c287b95f92dede3fa55f1fd066b7f8404db410e292",
+    "gzipSha256": "b98cb9e750cac0c3fbfd8cb7cfc800c759a42959e92ff8fa02144c1623ea1fac"
+  }
+}

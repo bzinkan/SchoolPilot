@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "observedAtUtc": "2026-10-03T12:15:07.254Z",
+  "headSha": "9630c00928aa391efb964eee0847965a967d33eb",
+  "commands": "gh run view <run> --repo bzinkan/SchoolPilot --json databaseId,workflowName,headSha,status,conclusion,url,createdAt,updatedAt,jobs",
+  "result": "All four workflows passed; CI17/17 jobs including complete AWS rollout safety passed.",
+  "ciFullyPassed": true,
+  "failedJobs": 0,
+  "cancelledJobs": 0,
+  "notes": [
+    "Exact9630 CI only. A later source correction requires its own final-head checks.",
+    "The simultaneous resource-bound diagnostic failed capacity; green CI does not establish capacity or deployment approval.",
+    "Original204 monitor_exception remains unidentified. This passing complete rerun does not establish the historical exception cause.",
+    "No production action or local test was performed while retrieving this receipt."
+  ],
+  "workflows": [
+    {
+      "workflow": "Gitleaks",
+      "run": 37120132247,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132247",
+      "jobs": [
+        {
+          "name": "Scan for secrets",
+          "id": 111194470190,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132247/job/111194470190"
+        }
+      ]
+    },
+    {
+      "workflow": "Trivy Container Scan",
+      "run": 37120132275,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132275",
+      "jobs": [
+        {
+          "name": "Scan Docker image",
+          "id": 111194470250,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132275/job/111194470250"
+        }
+      ]
+    },
+    {
+      "workflow": "CI",
+      "run": 37120132340,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340",
+      "jobs": [
+        {
+          "name": "Cross-tenant isolation tests",
+          "id": 111194494567,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494567"
+        },
+        {
+          "name": "Detect changed paths",
+          "id": 111194494646,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494646"
+        },
+        {
+          "name": "Frontend (Vite Build)",
+          "id": 111194494665,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494665"
+        },
+        {
+          "name": "Backend (TypeScript + Build)",
+          "id": 111194494671,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494671"
+        },
+        {
+          "name": "RLS-enabled cross-tenant tests",
+          "id": 111194494697,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494697"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 1)",
+          "id": 111194494716,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494716"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 3)",
+          "id": 111194494742,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494742"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 2)",
+          "id": 111194494746,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494746"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 4)",
+          "id": 111194494798,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194494798"
+        },
+        {
+          "name": "AWS rollout safety (PowerShell + Terraform)",
+          "id": 111194539014,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111194539014"
+        },
+        {
+          "name": "SOC 2 privileged access evidence",
+          "id": 111195316359,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111195316359"
+        },
+        {
+          "name": "SOC 2 AI/privacy evidence",
+          "id": 111196140876,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111196140876"
+        },
+        {
+          "name": "SOC 2 monitoring evidence",
+          "id": 111196140894,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111196140894"
+        },
+        {
+          "name": "SOC 2 tenant isolation evidence",
+          "id": 111196966313,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111196966313"
+        },
+        {
+          "name": "SOC 2 incident evidence",
+          "id": 111196966315,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111196966315"
+        },
+        {
+          "name": "SOC 2 deployment evidence",
+          "id": 111196966319,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111196966319"
+        },
+        {
+          "name": "SOC 2 approval queue",
+          "id": 111196998629,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132340/job/111196998629"
+        }
+      ]
+    },
+    {
+      "workflow": "CodeQL",
+      "run": 37120132381,
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132381",
+      "jobs": [
+        {
+          "name": "Analyze (javascript-typescript)",
+          "id": 111194470501,
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37120132381/job/111194470501"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "file": "run-37120132247.json.gz",
+      "rawSha256": "54b8ee2218025ce48dbf2c6c61985dc8b7c2ff6c69e6307d10755c99ba3a6080",
+      "gzipSha256": "21134ca468e117bbcbfb6609942ee164b270aa9053e213c263736ca80abe7c97",
+      "bytes": 1368,
+      "sanitization": "Public GitHub run/job/step metadata only; no transformation required"
+    },
+    {
+      "file": "run-37120132275.json.gz",
+      "rawSha256": "16e1eb5e7dc301e27b63723a48beddc6a030eddf0e612907675d07eda1e189ab",
+      "gzipSha256": "a5c8671cfcbbf3358f59041c96f2be7c8043757d0e45be730c21f72886081817",
+      "bytes": 1662,
+      "sanitization": "Public GitHub run/job/step metadata only; no transformation required"
+    },
+    {
+      "file": "run-37120132340.json.gz",
+      "rawSha256": "d8592d68c8cbff3ff9c7c7fc7e9ec2daa269e613a838a0bb8acc554990693b17",
+      "gzipSha256": "f100c91d73ef7b6dbee07abe22af14727166782135e2c5b495047f0730d9d02c",
+      "bytes": 48858,
+      "sanitization": "Public GitHub run/job/step metadata only; no transformation required"
+    },
+    {
+      "file": "run-37120132381.json.gz",
+      "rawSha256": "c03662776aad0dfaa47b2ae56da4beaaf918fe9586ff7f0dae1c14a3112e741e",
+      "gzipSha256": "5c2620fb27a40a3b8f506aafa5bc0cc1ce9852338c8cd850b0765e2a02271643",
+      "bytes": 2006,
+      "sanitization": "Public GitHub run/job/step metadata only; no transformation required"
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T08:18:26.459Z",
+  "status": "test_only_source_contract_correction_passed_targeted_suite",
+  "source": "d6492333520608df1524c021999d9440a26149de",
+  "sourceState": "d649 application bytes unchanged; one uncommitted test-only correction. Parent-owned documentation edits were present by the end of the targeted run. Fresh final-head CI remains required.",
+  "scope": "Repair stale source assertions after inbox extraction: shared expiry clock, transaction/current call-site selection, exact clock mapping and legacy-only exclusions. Retry statuses, revision ownership and completed-ACK behavior assertions are retained.",
+  "test": {
+    "path": "tests/classpilot-runtime-security-contract.test.ts",
+    "beforeSha256": "e8a85cefd90d83f0102792925b7086b4f170213b55c40e4aed74260c7acabb58",
+    "afterSha256": "6a9575e0ac3bdd023889548797ce1bd862a3060eb7307288f5a5c689a168b9b6",
+    "patchSha256": "da32ba016dcacfc2ee0555348f14286d4788943329d3c50840b9496398f33961"
+  },
+  "remoteCi": {
+    "runId": 37107874564,
+    "jobId": 111159846331,
+    "name": "Cross-tenant isolation tests",
+    "conclusion": "failure",
+    "source": "d6492333520608df1524c021999d9440a26149de",
+    "reportedTotals": {
+      "tests": 1487,
+      "pass": 1478,
+      "fail": 1,
+      "skipped": 8,
+      "cancelled": 0
+    },
+    "failure": {
+      "file": "tests/classpilot-runtime-security-contract.test.ts",
+      "line": 728,
+      "name": "keeps durable heartbeat teacher messages retryable until completed ACK",
+      "reason": "Literal now() source matcher was stale after canonical shared-clock extraction."
+    },
+    "rawTapSkipAnnotations": [
+      "ok 82 - Focus authority and continuation under restricted RLS # SKIP",
+      "ok 89 - Classroom lesson prerequisites under restricted RLS # SKIP",
+      "ok 186 - ClassPilot roadmap forced tenant isolation # SKIP",
+      "ok 202 - ClassPilot schedule-change startup and forced-RLS bundle # SKIP",
+      "ok 355 - ClassPilot transactional plan scenarios against PostgreSQL/FORCE RLS # SKIP",
+      "ok 359 - Monitored Browser Time rollups under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)",
+      "ok 2 - RLS partitions PassPilot legacy multi-class memberships # SKIP",
+      "ok 3 - RLS partitions PassPilot appointments and rejects foreign appointment parents # SKIP",
+      "ok 4 - RLS partitions PassPilot issuance rules and their school-scoped read # SKIP",
+      "ok 5 - RLS partitions Monitored Browser Time rollups and their school-scoped read # SKIP",
+      "ok 6 - RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context # SKIP",
+      "ok 16 - RLS hides another school's School Library rows even when that school is named explicitly # SKIP",
+      "ok 18 - RLS hides another school's precise Flight Path resources even when that school is named explicitly # SKIP",
+      "ok 384 - GoPilot child-table RLS # SKIP",
+      "ok 520 - appointments under forced tenant RLS # SKIP requires restricted RLS lane",
+      "ok 7 - partitions canonical classes, rosters, passes, and migration state under RLS # SKIP",
+      "ok 551 - PassPilot rule tables under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)"
+    ],
+    "skipAnnotationCaveat": "Raw TAP annotations include skipped suites and nested subtests; use the reported summary totals rather than counting annotations."
+  },
+  "retrieval": {
+    "attempt01": "Mistaken repository path returned HTTP404; raw response retained. Not a test run and not counted in CI failures.",
+    "attempt02": "Successful gh api download from repos/bzinkan/SchoolPilot/actions/jobs/111159846331/logs; complete raw log retained externally."
+  },
+  "localTargeted": {
+    "exitCode": 0,
+    "startedAt": "2026-10-03T08:16:04.2223914Z",
+    "finishedAt": "2026-10-03T08:16:10.5542335Z",
+    "sourceHeadBefore": "d6492333520608df1524c021999d9440a26149de",
+    "sourceHeadAfter": "d6492333520608df1524c021999d9440a26149de",
+    "applicationFiles": 904,
+    "applicationBytesUnchanged": true,
+    "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-runtime-security-contract.test.ts",
+    "configuration": "Synthetic unreachable loopback DB URI for imports only; no dotenv, Redis, native fixture, or production access",
+    "testSha256": "6a9575e0ac3bdd023889548797ce1bd862a3060eb7307288f5a5c689a168b9b6",
+    "changedTrackedFiles": [
+      "docs/RELEASE_2_9_7_PR_INVENTORY.md",
+      "docs/SCHOOLPILOT_COMPETITIVE_ROADMAP.md",
+      "docs/release-evidence/release-297/usage-contention/README.md",
+      "tests/classpilot-runtime-security-contract.test.ts"
+    ],
+    "tests": 27,
+    "pass": 27,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "fullFile": true,
+    "gitDiffCheckPassed": true
+  },
+  "applicationSourceProof": {
+    "files": 904,
+    "beforeAfterIdentical": true,
+    "noBuild": true,
+    "noDatabaseFixture": true,
+    "productionMutations": 0
+  },
+  "finalCiRequired": true,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "files": [
+    {
+      "file": "job-111159846331.log.gz",
+      "rawBytes": 148,
+      "rawSha256": "c8c6a0adfaa45a3be2d017a86903c38dbf89db6b2228e3eb5eae1c17b6bc9ab4",
+      "sanitizedBytes": 148,
+      "sanitizedSha256": "c8c6a0adfaa45a3be2d017a86903c38dbf89db6b2228e3eb5eae1c17b6bc9ab4",
+      "gzipSha256": "8243d523d5f8733e45c815e321ec8dec51b2155b9b56505a614dfcc6747c1870"
+    },
+    {
+      "file": "job-111159846331-attempt02.log.gz",
+      "rawBytes": 2589862,
+      "rawSha256": "ea52f3368cb39beda2740f8385c9562278638196289f876540aecc90b7e18db3",
+      "sanitizedBytes": 2560726,
+      "sanitizedSha256": "d7e507bbb913c1a60e7a82b3cffdea7494b4382de9395791facc7e2aec85fb88",
+      "gzipSha256": "fb518220940715940a5430a00ca6c0093ea08a80b20ef79fe587a593085e9112"
+    },
+    {
+      "file": "prepare-test-patch.mjs.gz",
+      "rawBytes": 3284,
+      "rawSha256": "1f3745062a6bdf8854561d234d17053a8bc4944be698279698a0b039e8111df5",
+      "sanitizedBytes": 3164,
+      "sanitizedSha256": "05d3b3821a87f38b5a101d7c39795a138af4002497931271e8fe40cbb3b1d6c7",
+      "gzipSha256": "e95c697e9e62195ce79214c343d6f31a2eb35ed4adaae7a1027690829df01e12"
+    },
+    {
+      "file": "classpilot-runtime-security-contract.proposed.test.ts.gz",
+      "rawBytes": 53819,
+      "rawSha256": "6a9575e0ac3bdd023889548797ce1bd862a3060eb7307288f5a5c689a168b9b6",
+      "sanitizedBytes": 52837,
+      "sanitizedSha256": "8ed07e9cd0bfd07d8f2d2e3da6e73f140d083a258b2bf91d96de0dbe40e37cfb",
+      "gzipSha256": "d1e732170ea75ba2c47c6d833ccedd48dcad0f557732bce8279e550c82048b17"
+    },
+    {
+      "file": "runtime-security-clock-only.patch.gz",
+      "rawBytes": 2336,
+      "rawSha256": "da32ba016dcacfc2ee0555348f14286d4788943329d3c50840b9496398f33961",
+      "sanitizedBytes": 2336,
+      "sanitizedSha256": "da32ba016dcacfc2ee0555348f14286d4788943329d3c50840b9496398f33961",
+      "gzipSha256": "54c66e5ff91d8c1d65b300412c05600c3bb9218cce75b1741ed60b5b32e8928d"
+    },
+    {
+      "file": "proposed-patch.json.gz",
+      "rawBytes": 659,
+      "rawSha256": "b66a78249f1b023473216a833fd86c952a523697ab1715c16210a6cf08afdc5d",
+      "sanitizedBytes": 659,
+      "sanitizedSha256": "b66a78249f1b023473216a833fd86c952a523697ab1715c16210a6cf08afdc5d",
+      "gzipSha256": "1c630f5ac63dc7a945a9a929b921df795ff2e51015157ef9b640fb5c5464c590"
+    },
+    {
+      "file": "apply-and-check.ps1.gz",
+      "rawBytes": 3105,
+      "rawSha256": "e791ff5e8242be05fde668d5e2649428663f593d503174242ad38a31ca151981",
+      "sanitizedBytes": 2954,
+      "sanitizedSha256": "3427647b161c741da20d39a2504f1f345d064d8dd5871bbb3e88b3c8a0880c6f",
+      "gzipSha256": "5d9bdb47b57e416c7f143cebe718d6226caaad6071eceee7e0fe1b5436210e49"
+    },
+    {
+      "file": "application-before.json.gz",
+      "rawBytes": 141356,
+      "rawSha256": "6108e97c68dc3cda43aaca5f818e9ad5aabbf199b5f9b40d67d2a9260ceba2e6",
+      "sanitizedBytes": 137738,
+      "sanitizedSha256": "1a0956edb981336bd3c2fb7e34dc5035aef5af39c83f59ce51f865ce572fae91",
+      "gzipSha256": "9c9ea382f6ea50677fbb356dc25228f756682316dd0e7b48e863fc0ae86d2509"
+    },
+    {
+      "file": "application-after.json.gz",
+      "rawBytes": 141356,
+      "rawSha256": "6108e97c68dc3cda43aaca5f818e9ad5aabbf199b5f9b40d67d2a9260ceba2e6",
+      "sanitizedBytes": 137738,
+      "sanitizedSha256": "1a0956edb981336bd3c2fb7e34dc5035aef5af39c83f59ce51f865ce572fae91",
+      "gzipSha256": "9c9ea382f6ea50677fbb356dc25228f756682316dd0e7b48e863fc0ae86d2509"
+    },
+    {
+      "file": "runtime-security-after.log.gz",
+      "rawBytes": 7790,
+      "rawSha256": "e37ace9bc443f096045ca672cff8fd2b7e6d6adf4799aaf9a037f16f9e0b702b",
+      "sanitizedBytes": 7582,
+      "sanitizedSha256": "cabc3351187f74a36f847481cb5129cb619d31fd44f4a18da8019ebe77b92db7",
+      "gzipSha256": "681d9032d4712d8a0b9b53baf27a586bfa03eb4b377da2c11900acde5d9221d6"
+    },
+    {
+      "file": "runtime-security-after.json.gz",
+      "rawBytes": 942,
+      "rawSha256": "19e42514a01bc088aec2980949322109de4f6b64d6b400f01851a4bc72e676a7",
+      "sanitizedBytes": 924,
+      "sanitizedSha256": "85617d422bb524036b60d575c4f791b880f757fc1c56fce7eb03ebb5cf47dcb4",
+      "gzipSha256": "fcab6dc38e33924176d9e1109ce5f9f4542e4948917b8ede4e015ddda38b80a8"
+    }
+  ],
+  "sanitation": "Archive copies only: UTF8/LF; filesystem prefixes, connection URLs, JWTs, cookies, emails, UUIDs and SQL passwords redacted. Originals remain unchanged externally. Raw/sanitized/gzip hashes retained."
+}

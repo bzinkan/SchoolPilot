@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_exact_review_head_ci_metadata_completion",
+  "reviewer": "task_posture_review",
+  "observedAtUtc": "2026-10-04T19:07:33.5376948Z",
+  "startedAtUtc": "2026-10-04T19:07:32.8037415Z",
+  "pr": 603,
+  "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
+  "head": "30b874753943ff357cd0f013d4239d22f627afaf",
+  "isDraft": true,
+  "expectedChecks": 20,
+  "actualChecks": 20,
+  "allCompletedSuccess": true,
+  "namedChecks": [
+    {
+      "name": "Analyze (javascript-typescript)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:41Z",
+      "completedAt": "2026-10-04T18:35:33Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645822/job/111501681612"
+    },
+    {
+      "name": "AWS rollout safety (PowerShell + Terraform)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:30:01Z",
+      "completedAt": "2026-10-04T19:01:57Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501739513"
+    },
+    {
+      "name": "Backend (TypeScript + Build)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:36:48Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501681858"
+    },
+    {
+      "name": "Cross-tenant isolation tests",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:42:01Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501682038"
+    },
+    {
+      "name": "Detect changed paths",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:29:58Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501682008"
+    },
+    {
+      "name": "Frontend (Vite Build)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:41Z",
+      "completedAt": "2026-10-04T18:38:33Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501681965"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 1)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:41Z",
+      "completedAt": "2026-10-04T18:35:05Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501681966"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 2)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:40:50Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501682055"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 3)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:34:19Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501681974"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 4)",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:38:11Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501681950"
+    },
+    {
+      "name": "RLS-enabled cross-tenant tests",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:35:56Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111501682021"
+    },
+    {
+      "name": "Scan Docker image",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:41Z",
+      "completedAt": "2026-10-04T18:31:12Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645882/job/111501681720"
+    },
+    {
+      "name": "Scan for secrets",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:29:42Z",
+      "completedAt": "2026-10-04T18:29:49Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645820/job/111501681624"
+    },
+    {
+      "name": "SOC 2 AI/privacy evidence",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:40:54Z",
+      "completedAt": "2026-10-04T18:41:03Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111503786790"
+    },
+    {
+      "name": "SOC 2 approval queue",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:42:15Z",
+      "completedAt": "2026-10-04T18:42:23Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111504041038"
+    },
+    {
+      "name": "SOC 2 deployment evidence",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:42:04Z",
+      "completedAt": "2026-10-04T18:42:11Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111504006910"
+    },
+    {
+      "name": "SOC 2 incident evidence",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:42:03Z",
+      "completedAt": "2026-10-04T18:42:11Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111504006849"
+    },
+    {
+      "name": "SOC 2 monitoring evidence",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:40:53Z",
+      "completedAt": "2026-10-04T18:41:00Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111503786779"
+    },
+    {
+      "name": "SOC 2 privileged access evidence",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:36:51Z",
+      "completedAt": "2026-10-04T18:36:59Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111503031634"
+    },
+    {
+      "name": "SOC 2 tenant isolation evidence",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "startedAt": "2026-10-04T18:42:04Z",
+      "completedAt": "2026-10-04T18:42:12Z",
+      "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37224645823/job/111504006895"
+    }
+  ],
+  "raw": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-30b87475-independent-01\\observation-02-pr.raw.json",
+    "sha256": "b6d63d8191caba48d78dc499abcbd486eea078d1670d80ef847b33eded176000",
+    "bytes": 6154
+  },
+  "stderr": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ready-ci-30b87475-independent-01\\observation-02-pr.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "priorObservationPreserved": true,
+  "scope": "Single bounded read-only GH PR check metadata snapshot; no new logs or reruns",
+  "limitations": [
+    "This proves all20 named SchoolPilot checks at exact30b head; prior28f detailed native suite logs remain historical",
+    "ClassPilot separate10-check and package proof remains at its separately verified head",
+    "No release merge/deploy/publication/activation or capacity acceptance is implied"
+  ],
+  "operations": {
+    "ghReadOnlyCommands": 1,
+    "ciReruns": 0,
+    "tests": 0,
+    "builds": 0,
+    "dockerCommands": 0,
+    "sql": 0,
+    "awsCommands": 0
+  }
+}

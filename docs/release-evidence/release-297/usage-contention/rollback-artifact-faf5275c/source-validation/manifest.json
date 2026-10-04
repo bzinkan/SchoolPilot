@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T00:31:38.072Z",
+  "scope": "Narrow SSO/private-chat lock-order backport for compatible rollback; no metadata reuse or Usage optimizations",
+  "source": {
+    "baseline": "08802d020a3c51beea504140f923126ab518aac6",
+    "sourceSha": "faf5275ccf422dda602b2238c247a306c28ba508",
+    "branch": "codex/release297-compatible-rollback-sso",
+    "clean": true,
+    "checksRanBeforeCommit": true,
+    "committedFilesUnchanged": true,
+    "files": {
+      "src/services/storage.ts": "d6dd12a828cbc6af4017c807529b7dd4ed7f0b25b2ba486fb885138933d31af8",
+      "src/realtime/websocket.ts": "923cfd0c3b355ef5a4f83e51e9bf37f4de613cb98b46cb005f8a4df19db27220",
+      "tests/classpilot-private-chat-lifecycle.integration.test.ts": "732925af72750ecfee9415270218a1fbeebd43fe6086e6fd6284f2aa3102b2ed",
+      "tests/classpilot-sso-policy-delivery-contract.test.ts": "8dfe1403143252186efb2ba8e1c3e99d73c7507154c58072dbdb0f00efcdf673",
+      "tests/classpilot-websocket-auth-diagnostics.test.ts": "c6db91f19e53901754a83a5f6f94ca65d907055f2e8bcc6cee75a063ad34ff4b"
+    }
+  },
+  "validation": {
+    "focused": {
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0
+    },
+    "nativeOwner": {
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    "nativeRestricted": {
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    "checks": {
+      "check": 0,
+      "check:tests": 0,
+      "check:test-casts": 0,
+      "build": 0
+    },
+    "ownerCaveat": "Owner lane proves plumbing only; separate non-superuser/non-BYPASSRLS lane provides restricted-role evidence.",
+    "nativeCases": [
+      "pending-reply bootstrap versus real SSO writer",
+      "dark bridge and first adoption",
+      "sticky lifecycle under capability off",
+      "expired outbox cleanup",
+      "signed-in student change",
+      "exact binding transfer"
+    ]
+  },
+  "commands": {
+    "focused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-sso-policy-delivery-contract.test.ts tests/classpilot-websocket-auth-diagnostics.test.ts",
+    "checks": [
+      "npm run check",
+      "npm run check:tests",
+      "npm run check:test-casts",
+      "npm run build"
+    ],
+    "native": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 --test-name-pattern 'pending-reply bootstrap|dark-deployment bridge|sticky fence survives|signed-in student|binding transfer|expired .* outbox' tests/classpilot-private-chat-lifecycle.integration.test.ts"
+  },
+  "cleanup": {
+    "ownedContainer": "schoolpilot-chat-sso-e4cb59ff9b86",
+    "removed": true,
+    "readonlyDockerAbsenceConfirmed": true
+  },
+  "releaseLimitations": [
+    "Both Usage modes must remain off on this pre-contention rollback source.",
+    "A new image build/scan and candidate-schema migration re-entry proof are still required.",
+    "This source is locally committed only; no merge, registry publication, production task binding, deployment or activation is implied.",
+    "Original 088 artifact remains immutable and must be superseded explicitly in the eventual rollback packet."
+  ],
+  "sanitation": "Full logs retained after UTF8/LF normalization and credential URL/JWT/workstation path/synthetic UUID/email redaction; raw hashes preserve original identity. Original raw files are unchanged.",
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "focused.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\focused.log",
+      "rawBytes": 4673,
+      "rawSha256": "f943c7ee7c11f29a99aa75e4e087f6ca25cd7253550ce72cb249911ba566a79c",
+      "sanitizedBytes": 4554,
+      "sanitizedSha256": "c03bfecf9819cf00e054eb1f53d5e4c51b7ec213dedfac71894a46eb27c262ae",
+      "archiveBytes": 914,
+      "archiveSha256": "4ed1e84ff7b0bffea6c8b3e94df6100b326ccce608008fa0d685d6163f6c1e38"
+    },
+    {
+      "file": "check.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\check.log",
+      "rawBytes": 51,
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedBytes": 47,
+      "sanitizedSha256": "12652975a3b03117abbcc6550586f75df88990995b7237999814218ccc3e0c19",
+      "archiveBytes": 67,
+      "archiveSha256": "d4e63ffb40fae7ab1bb8688ebe8db54ed18d352d7a13029ffeb7e74a6a399a75"
+    },
+    {
+      "file": "check-tests.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\check-tests.log",
+      "rawBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedBytes": 199,
+      "sanitizedSha256": "718d56591c1784c9fd403388377ce8a2a1b8c73676d415ee615ba6bb5c5a6fc1",
+      "archiveBytes": 173,
+      "archiveSha256": "aef3f71be75edeb586ddcb8bcbfa9cc41f4774445bbdc784a39ddcbdd8111d81"
+    },
+    {
+      "file": "check-test-casts.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\check-test-casts.log",
+      "rawBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedBytes": 176,
+      "sanitizedSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce",
+      "archiveBytes": 160,
+      "archiveSha256": "16c197fd6331a0278a8da15e0f464efaab3d79a3a16b5e418027c4affdf682b0"
+    },
+    {
+      "file": "build.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\build.log",
+      "rawBytes": 55,
+      "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedBytes": 51,
+      "sanitizedSha256": "772633829129174cb4182a3a35d82f3b55aa7db9b5c8cbb275c65451e5a9359c",
+      "archiveBytes": 68,
+      "archiveSha256": "7ccb6cd8b56b24976c31ce4bf24f7efd45d4313431490f88f8266c7466f8c375"
+    },
+    {
+      "file": "checks.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\checks.json",
+      "rawBytes": 82,
+      "rawSha256": "7ac0478f5c07b375ec08a6ceb9dcec7dc1ac7729be764501101c9903b44d5126",
+      "sanitizedBytes": 76,
+      "sanitizedSha256": "026a9f9418560e01b9ba01f3ee2d4b316db9b5d15d8e1d3bb502453f0bd986f9",
+      "archiveBytes": 59,
+      "archiveSha256": "3f186fe5bbe7b3b32edb9976c0469aa84957270587fcea6835cd1983ecd8dba1"
+    },
+    {
+      "file": "run-native.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\run-native.ps1",
+      "rawBytes": 5345,
+      "rawSha256": "c50c532615601326a4cf8c1d786a7bbb9476b98170a988055ec442a68ffc8bd2",
+      "sanitizedBytes": 5259,
+      "sanitizedSha256": "8ea354c07562186b61dd732664e13a6577de910d28a6db5756cf70a244a912c9",
+      "archiveBytes": 1951,
+      "archiveSha256": "65ed0467e1df6677fcc629e2e218e2c9286a5eaaad0be0874513b4d38f055246"
+    },
+    {
+      "file": "native-runner.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-validation-01\\native-runner.log",
+      "rawBytes": 136,
+      "rawSha256": "6646ca4875174df701aebd885d5d55ac8ef4063dd51b7e509fd8f67c9d60d9d4",
+      "sanitizedBytes": 135,
+      "sanitizedSha256": "eab409422c43de6a05e7fc143a674a364a72dd691b471a319f6a7019e7933556",
+      "archiveBytes": 138,
+      "archiveSha256": "6fde8738a5014a8634725d9640072d28c4e1d9f8f5d768a15aaf3c5a0e8a724b"
+    },
+    {
+      "file": "native-ordinary.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\ordinary.log",
+      "rawBytes": 5261,
+      "rawSha256": "94280955c84a592de404f51f707ac00bdc8b45dad0e4104fbec696c9fa41cfcc",
+      "sanitizedBytes": 5173,
+      "sanitizedSha256": "f397d8b8ca4b623ef574c4ea367dc29295276148d242ae5b7e51efc2b2e941f2",
+      "archiveBytes": 1305,
+      "archiveSha256": "c98ece3aca748334bcc9a87bcdbebd6ba385ffc06b2bd3d6c0c2d9de573c39ef"
+    },
+    {
+      "file": "native-restricted.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\restricted.log",
+      "rawBytes": 5242,
+      "rawSha256": "ae4115cc2f0bd2f9b9c24aa9b2674d4f0aba9dbb6afae70d7418cec98842d8a5",
+      "sanitizedBytes": 5154,
+      "sanitizedSha256": "58752813112df885c924726da2e013d8f906441d462d9814ffa5ce549d0c1245",
+      "archiveBytes": 1295,
+      "archiveSha256": "047eda2a5e96cb185377f696587c370ac4b8cfd3d8496dd898b4bda354d222ea"
+    },
+    {
+      "file": "native-execution.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\execution.json",
+      "rawBytes": 328,
+      "rawSha256": "b5e7685bf85275e3a9fec4f93c7f6e51bfffe49a0a78e4abb7959973d1df860e",
+      "sanitizedBytes": 318,
+      "sanitizedSha256": "dcdbcab8ecc516e458de01ecad215939efdc24dc3ede1d6aac901faf37d40511",
+      "archiveBytes": 229,
+      "archiveSha256": "d532f9d318660afda6583cf88378850be3b32ae6edf1313e8ee1122a16a8916b"
+    },
+    {
+      "file": "native-cleanup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\cleanup.log",
+      "rawBytes": 35,
+      "rawSha256": "b7241f67e77749cd8c62ba0b9aa2ccfd6736e12365c7c3c168c5b55773195b3b",
+      "sanitizedBytes": 34,
+      "sanitizedSha256": "35a1258d96d04d8813a296b12f214d240133999e1dd0a8819cefca705651f342",
+      "archiveBytes": 54,
+      "archiveSha256": "0b6659a21a697ad549a9c49ba7c7c1d9e64e19b4b18cfa2ded7a7565068cad41"
+    },
+    {
+      "file": "native-container-create.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "a5aded32aa7650a4cee9ebf1074b06dda59271abafe8c4c48dad67133a27d6f1",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "35e58b505627bfef5b6db04e0689ded2fc694a16b82350289dad4b9db9b705fd",
+      "archiveBytes": 72,
+      "archiveSha256": "8af11419c279ab65feb2af65523f74c656b6b5d8aae77f94c325f023abf5e4a4"
+    },
+    {
+      "file": "native-restore.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "archiveBytes": 238,
+      "archiveSha256": "e1a39c2d22b9bba13ed6dee4236a2952da3652007910293c3a39c6c621561434"
+    },
+    {
+      "file": "native-role.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "archiveBytes": 38,
+      "archiveSha256": "bc2e8d3fce7d7509343416f0124ea21ce647ff6197c4b592fdaba5a517505820"
+    },
+    {
+      "file": "native-schema.sql.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-rollback-sso-native-e4cb59ff9b86\\schema.sql",
+      "rawBytes": 591139,
+      "rawSha256": "f23e9586eab364e10dd36ce27b084e708eeb0f34e92ddef4f83756e1c4c1f856",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "2baee018dbcc40a73efa867c167d73beff6b93a18b45572b500ccb4c7f1d44e1",
+      "archiveBytes": 56068,
+      "archiveSha256": "f78e594e4abe4b94b8cedcb83d466ba1abef404dfc6952ae325b798992098231"
+    }
+  ]
+}

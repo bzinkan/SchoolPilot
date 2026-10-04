@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent-final-host-pure-review",
+  "recordedAt": "2026-10-04T12:08:16.3386412Z",
+  "sourceCommit": "1091eaeb94264cd9c6d2416f434653f7d8e847b6",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "receiptSha256": "aa87574c52a22ec15e5bfc43601d05deea2a83bb2248329c4035e5de78eae27f",
+  "tapSha256": "aa2eba7dd03ceb2d7d6c71c1398f37ca33779e15e69a3a026135058fbaae4551",
+  "passed": true,
+  "namedUniqueTests": 139,
+  "testNameManifestSha256": "5ab3ecd740635295884285e6417fabeb97b953d158b92ba6c4822f26ddea2b4b",
+  "pass": 139,
+  "fail": 0,
+  "cancel": 0,
+  "skip": 0,
+  "todo": 0,
+  "configuredPerFileDeadlineMs": 20000,
+  "actualTapDurationMs": 14496.2292,
+  "stderrBytes": 0,
+  "processAbsentNow": true,
+  "forcedTerminationRecorded": false,
+  "inputIdentities": [
+    {
+      "path": "src",
+      "gitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "equal": true
+    },
+    {
+      "path": "schoolpilot-app/src",
+      "gitObject": "e494c0a2b1f3b4d7930298a9c136e91980be9528",
+      "equal": true
+    },
+    {
+      "path": "package.json",
+      "gitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "equal": true
+    },
+    {
+      "path": "package-lock.json",
+      "gitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "equal": true
+    },
+    {
+      "path": "Dockerfile",
+      "gitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "equal": true
+    },
+    {
+      "path": "schoolpilot-app/package.json",
+      "gitObject": "3f3bfa1f5368afb0351f60c4f72f7d7ff04e6060",
+      "equal": true
+    },
+    {
+      "path": "schoolpilot-app/package-lock.json",
+      "gitObject": "e45186bfb3c96600696cc565cfe58f6cce0a90d1",
+      "equal": true
+    },
+    {
+      "path": "schoolpilot-app/vite.config.js",
+      "gitObject": "2d8a34b34246fd5f8997580690c6082bcaed703c",
+      "equal": true
+    },
+    {
+      "path": "scripts/deploy.sh",
+      "gitObject": "d7eec297297ecede56f0c463ba578e4b2a04c16a",
+      "equal": true
+    },
+    {
+      "path": "infra",
+      "gitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "equal": true
+    },
+    {
+      "path": "migrations",
+      "gitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "equal": true
+    },
+    {
+      "path": ".github",
+      "gitObject": "0a9bdf9d0bea5844768b48d0465f645b5fb86ebc",
+      "equal": true
+    }
+  ],
+  "allGitDeltasConfinedToReviewedDocsTestsOrLoadHarness": true,
+  "initialScopeCheckCorrection": "Initial broad allowlist omitted the previously reviewed frontend browser regression script; correction allows that test only. No application/input change was found, and no test rerun was performed.",
+  "nativeActions": 0,
+  "reviewerRanTests": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "currentHeadCiVerified": false,
+  "limits": [
+    "This proves host-only combined pure tests, not original cold Usage, distinct native endpoints or deployment.",
+    "Latest exact-head remoteCI is separately pending.",
+    "Application/schema/frontend/deploy/infra/migration/workflow Git inputs remain identical to ddc; historical source-bound app artifacts are not rebuilt by this proof."
+  ],
+  "findings": []
+}

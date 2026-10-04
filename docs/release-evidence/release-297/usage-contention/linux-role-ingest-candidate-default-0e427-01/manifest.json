@@ -1,0 +1,733 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T15:40:00.921Z",
+  "source": "0e427e3ca9b82125e0bb8692176accad21f4f699",
+  "run": "15f3a261abf9",
+  "scope": "FAILED full6000-offer candidate-default ingestion diagnostic; no measured reports/rollups; helper8bed/application bytes unchanged",
+  "outerProfile": "release-enabled-linux-role-ingest-candidate-default-v1",
+  "inheritedInnerProfile": "release-enabled-linux-role-cgroups-ingest-unprofiled-100rps-v2",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "hostCleanupPassed": true,
+  "coordinatorExitCode": 1,
+  "unforcedChildExitCodes": [
+    0,
+    0,
+    0
+  ],
+  "offered": 6000,
+  "succeeded": 5116,
+  "failed": 260,
+  "refused": 624,
+  "lateOffers": 0,
+  "apiAcquisitionFailures": 260,
+  "apiCpuSeconds": 67.347039,
+  "phaseDurationMs": 67884.876716,
+  "runtimeFidelity": {
+    "bindingSha256": "4b6c66cfd0ca0992050e74699ec515d7d83ff04e3b911c58cbea6104970594d5",
+    "preloaderSha256": "5a6f0da7733ac994bf69bc8fbd398c8df4c36b6e8b3f78a78bff9a9026cb66a4",
+    "node": "22.23.3",
+    "apiHeapLimitMiB": 1048,
+    "otherRoleHeapLimitMiB": 524,
+    "cgroupLimitsChanged": false,
+    "poolTimeoutTrafficChanged": false,
+    "seederOldSpaceMiB": 512,
+    "productionRuntimeOverridesVerified": false
+  },
+  "syntheticSnapshot": {
+    "directory": "C:/Users/zinka/.codex/artifacts/release297-synthetic-prepared-0e427-15f3a261abf9",
+    "manifestSha256": "2fdbf767f63cf8d33657c508b7fff9481e25369bf5dcdba9b4d69af632b5799f",
+    "privateDumpExcluded": true,
+    "privateRoleVerifiersExcluded": true,
+    "restoreTested": false
+  },
+  "commands": {
+    "run": "pwsh -NoProfile -File <TEMP>/release297-role-runtime-default-0e427-design-01/generated/run-role-ingest-unprofiled.ps1 -SourceRepository <TEMP>/release297-role-0e427-unprofiled-host-01 -DiagnosticImageManifest <TEMP>/release297-role-runtime-default-0e427-design-01/runtime-image-binding.json -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory <TEMP>/release297-role-ingest-default-0e427-01 -Phase ingest -DiagnosticOnly",
+    "focused": "node --test <TEMP>/release297-role-runtime-default-0e427-design-01/runtime-default.test.mjs"
+  },
+  "limitations": [
+    "Unprofiled ingestion only, no concurrent reports/rollups.",
+    "New-space snapshots are dynamic occupied/capacity observations, not proof of the configured semi-space maximum.",
+    "Actual deployed NODE_OPTIONS/entrypoint overrides remain unverified.",
+    "Cgroup memory peaks are process/container observations for this short run, not live operating headroom."
+  ],
+  "sanitization": "Connection URLs, synthetic token/credential/cookie/nonce values and temp prefix redacted. Populated fixture state hash-only. Permanent database dump and synthetic SCRAM role DDL remain private and are excluded.",
+  "files": [
+    {
+      "path": "run/all-owned-role-fixtures-cleanup.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\all-owned-role-fixtures-cleanup.json",
+      "originalBytes": 867,
+      "originalSha256": "9528000ccb40eaf04aecd818de45ec473e6c0dce554362e9ffee04e4b69bdadd",
+      "sanitizedSha256": "9528000ccb40eaf04aecd818de45ec473e6c0dce554362e9ffee04e4b69bdadd",
+      "gzipSha256": "34ac19e68d1cf4d5ce4c60ac7efb1a64770739e64461e82b72d731a748040703"
+    },
+    {
+      "path": "run/api.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\api.log",
+      "originalBytes": 48225,
+      "originalSha256": "e16fe4a3d3ff3df4e84821fd142277c80ffedc8aaa0df233a43533b5d930d717",
+      "sanitizedSha256": "e16fe4a3d3ff3df4e84821fd142277c80ffedc8aaa0df233a43533b5d930d717",
+      "gzipSha256": "7a5dbf946484744455283447fa9be32eb59c9f38e9e1c90bc2f0be1ceda7c250"
+    },
+    {
+      "path": "run/build.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\build.log",
+      "originalBytes": 42,
+      "originalSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "gzipSha256": "a84b35aca284be9332bd5e7c138548f86a642453956f76c2cdd4726f09440d88"
+    },
+    {
+      "path": "run/cold-restart.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\cold-restart.log",
+      "originalBytes": 38,
+      "originalSha256": "45d4b5e703fa49171657ecc1c9f602fce85ca3f8e41860c47414295ef73474a1",
+      "sanitizedSha256": "45d4b5e703fa49171657ecc1c9f602fce85ca3f8e41860c47414295ef73474a1",
+      "gzipSha256": "2ddce79bc522edf4cbaa7ebaad4cc52690cdec2865ffc591d4dd8c1bd4560168"
+    },
+    {
+      "path": "run/cold-restarted-state.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\cold-restarted-state.json",
+      "originalBytes": 228,
+      "originalSha256": "7caaa37227bfc615a2ce27fd723fb1f0d6bcdea287496e49c69053af4a01f23b",
+      "sanitizedSha256": "484f4eaedab9e06c88f63ec1c15ba6beeb7d6f2f2a62b76bc45cf821b709a821",
+      "gzipSha256": "81d3e852f4525f37c55a5d2fb89e4ac83e016f7799d2dcb9ebeb0997e96691fc"
+    },
+    {
+      "path": "run/container-create.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\container-create.log",
+      "originalBytes": 66,
+      "originalSha256": "be85eb444b096d37681ceb3e9c4dd78bf0e478d8ef983b002a3457509bcbbd07",
+      "sanitizedSha256": "be85eb444b096d37681ceb3e9c4dd78bf0e478d8ef983b002a3457509bcbbd07",
+      "gzipSha256": "9be6297ee8e79f1d45952255b1abbea6f73d89ea7a80af4ec1d97192e760851f"
+    },
+    {
+      "path": "run/coordinator.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\coordinator.log",
+      "originalBytes": 4665,
+      "originalSha256": "7aea8b81a636fa925467ed72611df433a9dcb490d012ac30835aadd887fd1617",
+      "sanitizedSha256": "7aea8b81a636fa925467ed72611df433a9dcb490d012ac30835aadd887fd1617",
+      "gzipSha256": "e81f98da41a808abf3969b29a8a098ba74902316e765c3040710041703f8ac2d"
+    },
+    {
+      "path": "run/execution.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\execution.json",
+      "originalBytes": 2165,
+      "originalSha256": "74a74a76d105b9764840be8ce7f32f57424697456b18d7491967ca24cb43ee0c",
+      "sanitizedSha256": "9fb92f2bad4b1060845ba25d53860aec7e2eb53b7e799919ab47223b9982e1d1",
+      "gzipSha256": "52b085aabcbac84e13a5529de877f0eb9cdf5ef1341569168ab30ec1bef1a9af"
+    },
+    {
+      "path": "run/fixture-legacy-convergence.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\fixture-legacy-convergence.log",
+      "originalBytes": 12575,
+      "originalSha256": "51452e6b5ca4cf24dff19d6847b50af2168d41843a1f6f162f539cd7e0dbc86d",
+      "sanitizedSha256": "51452e6b5ca4cf24dff19d6847b50af2168d41843a1f6f162f539cd7e0dbc86d",
+      "gzipSha256": "5121b535c04245d95196a06e68685a92846b64be2c69e690da6575048fc41eb7"
+    },
+    {
+      "path": "run/fixture-versioned-migrations.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\fixture-versioned-migrations.log",
+      "originalBytes": 6246,
+      "originalSha256": "100680002f2b71ef6779a55e32244f83459713f372011389f4f982e99577f423",
+      "sanitizedSha256": "100680002f2b71ef6779a55e32244f83459713f372011389f4f982e99577f423",
+      "gzipSha256": "afd0088593047a7ea04d01f26104b5f6573d57742141faee5c4e530961dd9600"
+    },
+    {
+      "path": "run/generator.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\generator.log",
+      "originalBytes": 8959,
+      "originalSha256": "5a8278bc0df670c10131dd15d67520d83892a3128caf46ddf164868944ed07fc",
+      "sanitizedSha256": "5a8278bc0df670c10131dd15d67520d83892a3128caf46ddf164868944ed07fc",
+      "gzipSha256": "4f82c89720c4d0a3daa0837061ea5e8456ec1a1a55fc4c1534bc56273627793d"
+    },
+    {
+      "path": "run/local-docker-daemon.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\local-docker-daemon.json",
+      "originalBytes": 129,
+      "originalSha256": "ac3977cb203506418ab4960e2b6b0bf0244f421a2ae742abe2d8dba053345ee8",
+      "sanitizedSha256": "763840f55872b4f8c1d68d00fdce7ca2b03f5b484264e9f08872d374623d3835",
+      "gzipSha256": "7ef463f329d82861719029ca3ca89a95e1780886a44a428c6cc58293fc4c9a7d"
+    },
+    {
+      "path": "run/measurement-go.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\measurement-go.json",
+      "originalBytes": 663,
+      "originalSha256": "e57818e1fda32047dab255698fc91824ecbefaf1361c1c2ffd5db398a6ceaec6",
+      "sanitizedSha256": "dc39ed621b21311cb97754d21b46a5f0f5290e75998f508a55a7864512a4e138",
+      "gzipSha256": "b11c87c27a0dcfa2a875f17209dd455d8a8cb188508ba4bbe1c11ca5a0138589"
+    },
+    {
+      "path": "run/measurement-ready.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\measurement-ready.json",
+      "originalBytes": 516,
+      "originalSha256": "6d8aee6f09157079d986c7efa3142bff7b83e9e77a7e61144fb099be2e91f670",
+      "sanitizedSha256": "f83e2cc8198682296bdc63f6303a2efd6b5f394fae71ec596d1acf171694d6d2",
+      "gzipSha256": "003411c294f64129cc316bf618f2a42ea96cb99b7c98173e4e9cf68c4db486c0"
+    },
+    {
+      "path": "run/measurement-release-receipt.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\measurement-release-receipt.json",
+      "originalBytes": 647,
+      "originalSha256": "5938b9bc35a9f92a4830db107a463ae6c22fa736d24c2ecda54998c9b146b960",
+      "sanitizedSha256": "c261803eac1aa98ec479bd89c3e0941c2e2e678ce7da0bfff5ca6fc5e31464ad",
+      "gzipSha256": "e6cbe3e0cd5573e7a1072c33875b434fb5efcab3deca87f1906c3aea60122a27"
+    },
+    {
+      "path": "run/post-convergence-schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\post-convergence-schema.sql",
+      "originalBytes": 575957,
+      "originalSha256": "e1fb3e5d9031366655efb3f3b56dff61082f06017a0419bddb1358714d0d1565",
+      "sanitizedSha256": "e1fb3e5d9031366655efb3f3b56dff61082f06017a0419bddb1358714d0d1565",
+      "gzipSha256": "66e686473377507013b121721cca0cb0038fd767ead5d9c1137829c6f2951911"
+    },
+    {
+      "path": "run/preparation.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\preparation.log",
+      "originalBytes": 55329,
+      "originalSha256": "1d3f031cb3bb35e29e43f0995dedc4c379f82ecf21b66ae5522e42e73558819f",
+      "sanitizedSha256": "1d3f031cb3bb35e29e43f0995dedc4c379f82ecf21b66ae5522e42e73558819f",
+      "gzipSha256": "d23c1cec21a158d9838d93e2a83624742e216074e85beb2e861664c76839467e"
+    },
+    {
+      "path": "run/redis-create.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\redis-create.log",
+      "originalBytes": 66,
+      "originalSha256": "0c93c73a2ec97a6b2dc871f354d1f9cfa1b208a2ae9a049fea491ad7c1fc7e7e",
+      "sanitizedSha256": "0c93c73a2ec97a6b2dc871f354d1f9cfa1b208a2ae9a049fea491ad7c1fc7e7e",
+      "gzipSha256": "f8f9f950133ef4163fa9453520a827dc8d8643936f61a6ede8411a424dc53ec5"
+    },
+    {
+      "path": "run/release-control-preparation.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\release-control-preparation.json",
+      "originalBytes": 804,
+      "originalSha256": "a66ace1da7d08246d1dc237bc06a490a09b6bfc3586084a0c14b09b00d18956f",
+      "sanitizedSha256": "a66ace1da7d08246d1dc237bc06a490a09b6bfc3586084a0c14b09b00d18956f",
+      "gzipSha256": "874f39ed7a613c3b8eabdcb85a66ed7276c1c4d2f959a96a0b95982d7f231a65"
+    },
+    {
+      "path": "run/release-control-preparation.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\release-control-preparation.log",
+      "originalBytes": 3334,
+      "originalSha256": "96cbaa0c2dac29af88575a4619a6c0d707df1c7b3bd5d3c6eebff8c7ae6940a0",
+      "sanitizedSha256": "96cbaa0c2dac29af88575a4619a6c0d707df1c7b3bd5d3c6eebff8c7ae6940a0",
+      "gzipSha256": "c5a82680f6434cc6c4f5fa496d21a279d597a6aa9fa61297ce935738efdb0f6a"
+    },
+    {
+      "path": "run/resource-caps.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\resource-caps.json",
+      "originalBytes": 1560,
+      "originalSha256": "97849143889676f52971099453206fd945d7136b4ec4e477559ed8870097fb96",
+      "sanitizedSha256": "0ee159b05aba47e18173abad707ac2fe1589bcec1b126ec1e82f557315bf2f53",
+      "gzipSha256": "fbdc7c004e0e3f7fb2e2cb534be1042c48494b95a3607fe4e42387ff666102fe"
+    },
+    {
+      "path": "run/role-host-result.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\role-host-result.json",
+      "originalBytes": 4440,
+      "originalSha256": "e6d5ad7c9ed7a425f72e565d21882202a4ceee873edc88faff62d5e2535de4b4",
+      "sanitizedSha256": "b35b6c03f2476c2584f1d614126e2c6d1b5210a263ceae23fa83e16e703bde2d",
+      "gzipSha256": "96a6fa84981023371e0e2e88859477fe4ed09e7a0d32bdd90e4d852309945fd9"
+    },
+    {
+      "path": "run/role-launcher.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\role-launcher.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "run/role-runtime-plan.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\role-runtime-plan.json",
+      "originalBytes": 32200,
+      "originalSha256": "82f0145ac9a40ee78613e8e165166e82800bfe93057f9057af7de1bce7b712f2",
+      "sanitizedSha256": "7d8d17d4080ca954ef260144e6ebf987ddf65d7e81b95aee2cfb433b03ddead7",
+      "gzipSha256": "f65d59b361adf936cbfa58b2a61ddab50a0f15bd188faafd2537e989d233496f"
+    },
+    {
+      "path": "run/schema-fingerprint.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\schema-fingerprint.json",
+      "originalBytes": 290,
+      "originalSha256": "9afaf7c7da2c06dde62432be7f438cce043236006b42f4c9da0ab03ce9c4cc1d",
+      "sanitizedSha256": "6b9fedc96c2ca3da8eb1aa7b6ce6a28361a910d42ab09bbd79837a59b0cec37e",
+      "gzipSha256": "ceb2a94f4656fd02552ca14a8d9d58d44dc83abff29123fa2d77e58a3c2f9494"
+    },
+    {
+      "path": "run/schema-only.sql.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\schema-only.sql",
+      "originalBytes": 591139,
+      "originalSha256": "7a42dce64acff194369817a8482a2d6f451eba3733b23d720c338c05c1d46967",
+      "sanitizedSha256": "7a42dce64acff194369817a8482a2d6f451eba3733b23d720c338c05c1d46967",
+      "gzipSha256": "1a8536fb469b490ca56a9841c743656ae63e2b39bf0b139e191afa50cf0e47fb"
+    },
+    {
+      "path": "run/schema-restore.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\schema-restore.log",
+      "originalBytes": 20912,
+      "originalSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "9a99fefddcb0fcf3011896e51053298a28a342bf7a07f6453a76d0cdeb4a02f0"
+    },
+    {
+      "path": "run/usage-scale.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\usage-scale.json",
+      "originalBytes": 539377,
+      "originalSha256": "fb06d34645332b8337ca26c7c8262b4b5d9fd422aef1e11bb1817d14dddc8215",
+      "sanitizedSha256": "fb06d34645332b8337ca26c7c8262b4b5d9fd422aef1e11bb1817d14dddc8215",
+      "gzipSha256": "dac53dcf740a6a3a2b615be7cb04424bcf53f5dad4109f10473d4b84d60443ff"
+    },
+    {
+      "path": "run/worker.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01\\worker.log",
+      "originalBytes": 16409,
+      "originalSha256": "ee0fda5e69bdb877834ef40d55a54f2d5e306f78fd005d36c50f7a2bb791812f",
+      "sanitizedSha256": "ee0fda5e69bdb877834ef40d55a54f2d5e306f78fd005d36c50f7a2bb791812f",
+      "gzipSha256": "4d39152d9d0e6952b14aae9e060ff32a652ab20ffea8d44a9a009bd0eb3c66ba"
+    },
+    {
+      "path": "run/runner.log.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-01-runner.log",
+      "originalBytes": 427,
+      "originalSha256": "a2defdb5352196913a2aa83792a1b865e2774ba7a0543be59a05a3484e6d62f6",
+      "sanitizedSha256": "a2defdb5352196913a2aa83792a1b865e2774ba7a0543be59a05a3484e6d62f6",
+      "gzipSha256": "d12867a1d669dd84bb9a257c0acbe345a56735a3504f86305813c3be74f15d3b"
+    },
+    {
+      "path": "analysis/summary.json.gz",
+      "originalPath": "<TEMP>\\release297-role-ingest-default-0e427-analysis-01\\summary.json",
+      "originalBytes": 12342,
+      "originalSha256": "337a650a19e9e0224e8c36d85f7b3d342d3f4c24792a3da3a2255d6ff1601151",
+      "sanitizedSha256": "337a650a19e9e0224e8c36d85f7b3d342d3f4c24792a3da3a2255d6ff1601151",
+      "gzipSha256": "fceaf1bcedeb0577ff9421c4f2fa52d6cded6c19cb441a291d8c9a526786a740"
+    },
+    {
+      "path": "design/analysis-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\analysis-01.log",
+      "originalBytes": 5471,
+      "originalSha256": "a95eb95dc0433909214dce8fae9c9934ca7e4caa3fd82d5b07dd63785b77f57b",
+      "sanitizedSha256": "a95eb95dc0433909214dce8fae9c9934ca7e4caa3fd82d5b07dd63785b77f57b",
+      "gzipSha256": "f9188ccd0fa656289e03e80a9c4ed2119262d9a9375651e667a7019c1c9fc95d"
+    },
+    {
+      "path": "design/analyze-runtime-result.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\analyze-runtime-result.mjs",
+      "originalBytes": 4162,
+      "originalSha256": "48d7e75d04d17f52107483b04ecb0c50769ceebb60aa859301632f8aaf163b87",
+      "sanitizedSha256": "48d7e75d04d17f52107483b04ecb0c50769ceebb60aa859301632f8aaf163b87",
+      "gzipSha256": "e07fad12c76130c5b339f75806601f3945d9cee11ccedf77cc6de25d98552ccd"
+    },
+    {
+      "path": "design/bind-gate-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\bind-gate-01.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "design/bind-gate.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\bind-gate.mjs",
+      "originalBytes": 1895,
+      "originalSha256": "f6a1e769cc5c5c27c152339df0f271909d824d0297a7e378c769436dc2a0fbb4",
+      "sanitizedSha256": "f6a1e769cc5c5c27c152339df0f271909d824d0297a7e378c769436dc2a0fbb4",
+      "gzipSha256": "71e6ef1993300135f2f53df61687edce42cc0702527b134d4ec11cd938791ad7"
+    },
+    {
+      "path": "design/binding-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\binding-01.log",
+      "originalBytes": 309,
+      "originalSha256": "6569f0e66151313b5145fdfff1cedf9c794b7318e9b69922cd8ab70755106e6b",
+      "sanitizedSha256": "6569f0e66151313b5145fdfff1cedf9c794b7318e9b69922cd8ab70755106e6b",
+      "gzipSha256": "bc25c8ef270938efcfdf3287a08f701492503929ff709d70e174855018d8fd6e"
+    },
+    {
+      "path": "design/create-binding.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\create-binding.mjs",
+      "originalBytes": 2104,
+      "originalSha256": "93fea123ac059ac22a11c07535601a983badf76773558010d412dbac69dcfbf2",
+      "sanitizedSha256": "93fea123ac059ac22a11c07535601a983badf76773558010d412dbac69dcfbf2",
+      "gzipSha256": "2fcc39e49c842aa4d0050fe4a8e549d10741938a81715eaa854ba6020b0fd0f3"
+    },
+    {
+      "path": "design/generated/cleanup-linux-fixtures.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\generated\\cleanup-linux-fixtures.mjs",
+      "originalBytes": 3052,
+      "originalSha256": "ae302aff7c92af54e3a5fec22915d0675ffadfaa423edb52ae75ee4b49ec8906",
+      "sanitizedSha256": "ae302aff7c92af54e3a5fec22915d0675ffadfaa423edb52ae75ee4b49ec8906",
+      "gzipSha256": "06d6212d67d1084871260ceb66182b49579a01fead0417fd632b7c7eb70093ef"
+    },
+    {
+      "path": "design/generated/cleanup-role-fixtures.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\generated\\cleanup-role-fixtures.mjs",
+      "originalBytes": 3052,
+      "originalSha256": "1bb3897563f1a1d1b503f1d2586142554f9765ae18b15fc98cfde2ff1916f7d5",
+      "sanitizedSha256": "1bb3897563f1a1d1b503f1d2586142554f9765ae18b15fc98cfde2ff1916f7d5",
+      "gzipSha256": "af84abbf69770b02d645a4c50877185cb07e58cb198b83cdb9a9563bcbd5c5c4"
+    },
+    {
+      "path": "design/generated/measurement-gate.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\generated\\measurement-gate.mjs",
+      "originalBytes": 2208,
+      "originalSha256": "36accbff4fc9d9ddf72e8a702a94127e228fbd12abdab0e29916a24762af7e9d",
+      "sanitizedSha256": "36accbff4fc9d9ddf72e8a702a94127e228fbd12abdab0e29916a24762af7e9d",
+      "gzipSha256": "4c1d9016cf804494b188252fb571e3d36d54c553224acb5ac7ed96564e201f86"
+    },
+    {
+      "path": "design/generated/prototype-core.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\generated\\prototype-core.mjs",
+      "originalBytes": 10258,
+      "originalSha256": "3fd321d0e2991b5ac6bed2d51a72516d90e8c2dc2fd667f95faee5598237b82c",
+      "sanitizedSha256": "bda019a31ca19e911cc85be75c023a89f8e4c422a464a6b35d4593a1417de678",
+      "gzipSha256": "91c156b15ad55e0efd72f59b9170a4b74143c830d309993815f2f53495204d7c"
+    },
+    {
+      "path": "design/generated/run-role-ingest-unprofiled.ps1.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\generated\\run-role-ingest-unprofiled.ps1",
+      "originalBytes": 26322,
+      "originalSha256": "d983f92ccef3792110160052aa50f555235f38f4ce16f7a463517b2d26e03f6a",
+      "sanitizedSha256": "a4ed45686e59e69eec663da1914c7a14b58f2083eea9ade8f837115adf3c5642",
+      "gzipSha256": "99e400a734ffb5c6f5086862686599d2620f99ca254aa498f98abde69f1c40d7"
+    },
+    {
+      "path": "design/native-preloader-01.json.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\native-preloader-01.json",
+      "originalBytes": 612,
+      "originalSha256": "7e0fc08a69999af0880c86167c1a56f1f237a822cadfac095d49cd2f20ebff88",
+      "sanitizedSha256": "7e0fc08a69999af0880c86167c1a56f1f237a822cadfac095d49cd2f20ebff88",
+      "gzipSha256": "86034f2cf39441c3f320b2dbdb5124095ad196c0b1579ad0de7e1d2af8b337be"
+    },
+    {
+      "path": "design/native-preloader-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\native-preloader-01.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "design/native-preloader-cleanup-01.json.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\native-preloader-cleanup-01.json",
+      "originalBytes": 113,
+      "originalSha256": "006d58daec039778ca92b7097caef0296081645f7ec48069d4327309f471d5df",
+      "sanitizedSha256": "006d58daec039778ca92b7097caef0296081645f7ec48069d4327309f471d5df",
+      "gzipSha256": "662fdc84dfc9b628c1d0448e9d38c08a17b0de39cc0b3fa09945dda09bca1864"
+    },
+    {
+      "path": "design/native-preloader-proof-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\native-preloader-proof-01.log",
+      "originalBytes": 4498,
+      "originalSha256": "70252b7562bb8502c8763c7b7db5b89b1abd81c55d5bfba32992fb7ded9591ae",
+      "sanitizedSha256": "70252b7562bb8502c8763c7b7db5b89b1abd81c55d5bfba32992fb7ded9591ae",
+      "gzipSha256": "072d1768aaf9afeba1f3571a61793dfbc12983d83f1e89afc3f34bd7cd959724"
+    },
+    {
+      "path": "design/native-preloader-proof.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\native-preloader-proof.mjs",
+      "originalBytes": 3738,
+      "originalSha256": "99766b57fb942458ac230ac952f5f262826adfa503b8e892449fb10470240707",
+      "sanitizedSha256": "99766b57fb942458ac230ac952f5f262826adfa503b8e892449fb10470240707",
+      "gzipSha256": "d6f71307c00f9bb6798b3d78774b99aab5b3f1239f0c074e9be87d3d55bc408b"
+    },
+    {
+      "path": "design/parse-01.json.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\parse-01.json",
+      "originalBytes": 46,
+      "originalSha256": "ed659205819c2e4247100715efdc97280bb9886868347f1465c065f5ea5532d4",
+      "sanitizedSha256": "36b00b7f86aaba330009886363c44cf97607749e15260dbd06d580632a76735d",
+      "gzipSha256": "3f6bfe363a4b140ca2f8a8d31861adbbf08ef928a61d9398b16969ff87004395"
+    },
+    {
+      "path": "design/patch-receipt.json.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\patch-receipt.json",
+      "originalBytes": 956,
+      "originalSha256": "859d48b2dd00f247a34414847734b57201afdf9a103ab598638757250f9857b4",
+      "sanitizedSha256": "859d48b2dd00f247a34414847734b57201afdf9a103ab598638757250f9857b4",
+      "gzipSha256": "c798c227a325cf1ba3db37902abe7639ecc20ccf25fadfce27a008215c8cc627"
+    },
+    {
+      "path": "design/prepare-delta-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prepare-delta-01.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "design/prepare-delta.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prepare-delta.mjs",
+      "originalBytes": 3712,
+      "originalSha256": "03df7109cad808653c932e8cefe2109e5b50af16148a624a8ffcd651fd2e88be",
+      "sanitizedSha256": "03df7109cad808653c932e8cefe2109e5b50af16148a624a8ffcd651fd2e88be",
+      "gzipSha256": "eb4399f22a00cca83a4aac59bd04323d3e6bf7f3bd79a519f590b29b8f8c9db9"
+    },
+    {
+      "path": "design/preserve-prepared-snapshot.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\preserve-prepared-snapshot.mjs",
+      "originalBytes": 7001,
+      "originalSha256": "d2632c37065d182c263f5577ffda4a1879593ee97959e67426a259fef95535ba",
+      "sanitizedSha256": "d2632c37065d182c263f5577ffda4a1879593ee97959e67426a259fef95535ba",
+      "gzipSha256": "eef7ff5f4c11f77c2d7ce1aaa5239296affc4158ffd4ab2e0e734174aedad6d3"
+    },
+    {
+      "path": "design/preserve-snapshot-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\preserve-snapshot-01.log",
+      "originalBytes": 280,
+      "originalSha256": "54951df2e54bd8cde7517edd40f9c94d8bf061af59666a3c4779e5f98f6e4be9",
+      "sanitizedSha256": "54951df2e54bd8cde7517edd40f9c94d8bf061af59666a3c4779e5f98f6e4be9",
+      "gzipSha256": "b7bb3574a8428caa7b207fc35eae872ee8eb365aaeaf2955c41315a664fcd481"
+    },
+    {
+      "path": "design/probe-noop.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\probe-noop.mjs",
+      "originalBytes": 37,
+      "originalSha256": "c5621451c2d4e704c0891ae85dc4e4d0d9b75a5228ccbac12ce6d10df2bfc832",
+      "sanitizedSha256": "c5621451c2d4e704c0891ae85dc4e4d0d9b75a5228ccbac12ce6d10df2bfc832",
+      "gzipSha256": "977b16e94aa14b18daeec8278957838160a56aff04765b0f0b18c0278b6f380d"
+    },
+    {
+      "path": "design/prototype/authenticated-transport.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "9627c9fa13a767b4b5866787850856843eb08e0deec9981426279c1bf1a3881b"
+    },
+    {
+      "path": "design/prototype/coordinator-owner.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "c10edf9a00454270c4137631c1ee12419782fd15c284c3b7955abca054e53df9"
+    },
+    {
+      "path": "design/prototype/coordinator-startup.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "8df08920880007f263ca53443a556258b6b38f015a17b3a567e70e72f4f7a391"
+    },
+    {
+      "path": "design/prototype/docker-host-adapter.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "01f27c37c6bf7be8fe9808af3ebe2a359ab41eaed20890c65703528a35a4187b"
+    },
+    {
+      "path": "design/prototype/host-file-io.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "17a1232ada8dccd4b2aa89860da62107a477e25e7c977a08a1d276c765f479bd"
+    },
+    {
+      "path": "design/prototype/host-lifecycle.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\host-lifecycle.mjs",
+      "originalBytes": 4182,
+      "originalSha256": "7019599e2a57b056786d58500f17f6e7e002e9dc54940db4088b79f41fbe5192",
+      "sanitizedSha256": "7019599e2a57b056786d58500f17f6e7e002e9dc54940db4088b79f41fbe5192",
+      "gzipSha256": "a4bc481f15ac655eaf1b7a9dde2309fb4a58cd8ccf7bdefbcf5f727d24008944"
+    },
+    {
+      "path": "design/prototype/host-orchestrator.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\host-orchestrator.mjs",
+      "originalBytes": 4554,
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "1fdbf16f65e07d7de69213d2bf59d31585b20a00849782185fb0d33d7a8fcfe6"
+    },
+    {
+      "path": "design/prototype/launch-role-preflight.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\launch-role-preflight.mjs",
+      "originalBytes": 5318,
+      "originalSha256": "df3f7d6af01aa13fc649bb4c0b14307c2bb42406871dc22532ba2a2acd1cb14b",
+      "sanitizedSha256": "df3f7d6af01aa13fc649bb4c0b14307c2bb42406871dc22532ba2a2acd1cb14b",
+      "gzipSha256": "fe27ca195af59287432253f4fb0e589c4089a1fe3e91b78905940d31c4181413"
+    },
+    {
+      "path": "design/prototype/owned-ipc-core.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "96925c39f2549d45c7111fe6925d89d622d7f139a08705b2d97cc6781f351dc0"
+    },
+    {
+      "path": "design/prototype/patch-coordinator.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\patch-coordinator.mjs",
+      "originalBytes": 2448,
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "309cacb19cbb79ab7787f2515dcc72cce073c3cc746ce57c415d174435712573"
+    },
+    {
+      "path": "design/prototype/role-child-bootstrap.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "fdfc08496a284579b16b847204391ced34cc13a54dca35856be02057e75419b3"
+    },
+    {
+      "path": "design/prototype/role-coordinator-bridge.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "04dfd1af021a68318d6ff051fe2c2b3742bb7070964ba57aca2fcc7f259f918e"
+    },
+    {
+      "path": "design/prototype/role-coordinator.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "fb2494a405f3149a351aa4559f8d938e70f7a98d2605d78cbbe448d83b47c01d"
+    },
+    {
+      "path": "design/prototype/role-environment.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\role-environment.mjs",
+      "originalBytes": 5045,
+      "originalSha256": "7c40afd47508171b5fbd9371702ef68f924e3fb39cd3a8bac66e1045a9b08b1e",
+      "sanitizedSha256": "e34a53f14cfa4f585d7c6bae25ac050dfedccc086573b85ed894d621c90748d4",
+      "gzipSha256": "fa3a4b3e71654c602335cfa975e7935357f49f3674e90b235d3f63d38248f407"
+    },
+    {
+      "path": "design/prototype/role-plan.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\role-plan.mjs",
+      "originalBytes": 7379,
+      "originalSha256": "cfb8916d48db35335c07770d8f336d157e514e7ad0c9037e1ad7251badfb953b",
+      "sanitizedSha256": "cfb8916d48db35335c07770d8f336d157e514e7ad0c9037e1ad7251badfb953b",
+      "gzipSha256": "c12021d4814cee1c337cdc9bc3fcaea526261e4131a5c85b7bee1b22aea79350"
+    },
+    {
+      "path": "design/prototype/role-resources.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "afa095332064ea30bedff4e828e49b3ecee1f1462f3ccaa321e6adb5a152ad39"
+    },
+    {
+      "path": "design/prototype/runtime-fidelity.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\prototype\\runtime-fidelity.mjs",
+      "originalBytes": 3260,
+      "originalSha256": "5a6f0da7733ac994bf69bc8fbd398c8df4c36b6e8b3f78a78bff9a9026cb66a4",
+      "sanitizedSha256": "5a6f0da7733ac994bf69bc8fbd398c8df4c36b6e8b3f78a78bff9a9026cb66a4",
+      "gzipSha256": "afeac256c7f790e17de5b472d57ba3bb5d51c7d96302991000b13adad36556d6"
+    },
+    {
+      "path": "design/README.md.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\README.md",
+      "originalBytes": 3219,
+      "originalSha256": "c9671bdbba706a79a382d705c977ae2dd4bf5c44f95e8018d8e40f01eb24211b",
+      "sanitizedSha256": "baa0c426902938c46b4f5d9e6151c1a07b6de2a3c2181b3b64e17fa61f86be03",
+      "gzipSha256": "6e40ea34a870f57c7b5e36b178dbf6dd91525e8568f4f945a4659afad2eb6b93"
+    },
+    {
+      "path": "design/runtime-default.test.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\runtime-default.test.mjs",
+      "originalBytes": 5908,
+      "originalSha256": "2a28f2088509b720effdb2c885fd080db4dcb1bf6ea4a50bbf9e45116f7f78dd",
+      "sanitizedSha256": "2a28f2088509b720effdb2c885fd080db4dcb1bf6ea4a50bbf9e45116f7f78dd",
+      "gzipSha256": "98b59df3534da98fd519e8abb758e4e07064cc3097ade3b4b1c2f73fa1aec690"
+    },
+    {
+      "path": "design/runtime-image-binding.json.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\runtime-image-binding.json",
+      "originalBytes": 7094,
+      "originalSha256": "4b6c66cfd0ca0992050e74699ec515d7d83ff04e3b911c58cbea6104970594d5",
+      "sanitizedSha256": "a891ae13d7d74c3644a7e414a8c8244f93317b3f9b6d66f3d442460ebb9e73bf",
+      "gzipSha256": "b32ae14a77945abe885431988320a8e3be2a14dd24e4d63e3c6e3e2ae6ec9f7b"
+    },
+    {
+      "path": "design/tests-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\tests-01.log",
+      "originalBytes": 1704,
+      "originalSha256": "8a4047113614a1f11d0256f6411f61003ad9673bf6b3eebd125cec7e4eafe0d0",
+      "sanitizedSha256": "8a4047113614a1f11d0256f6411f61003ad9673bf6b3eebd125cec7e4eafe0d0",
+      "gzipSha256": "fc150356d6c2f52f5c9b72a3e3021b8df0f6a4288fe22485ebcfba65c8592bfc"
+    },
+    {
+      "path": "design/tests-02.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\tests-02.log",
+      "originalBytes": 1894,
+      "originalSha256": "acf1dd2f6862a82a82e1a2628c71c913b08b105704c01c04d29970bdc5bfe2c2",
+      "sanitizedSha256": "acf1dd2f6862a82a82e1a2628c71c913b08b105704c01c04d29970bdc5bfe2c2",
+      "gzipSha256": "b8ad7b6161885b7a677daa5fe9f7ee6575ae9797cf04b333582fe3228721b7a5"
+    },
+    {
+      "path": "design/verify-binding-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\verify-binding-01.log",
+      "originalBytes": 238,
+      "originalSha256": "6b4415a8fae1d44048a786a3686eb0e886bcb93ea1c876ef9738e19f00c9038d",
+      "sanitizedSha256": "6b4415a8fae1d44048a786a3686eb0e886bcb93ea1c876ef9738e19f00c9038d",
+      "gzipSha256": "3ec9953c547c8e48a3b666fd244ff0bf925252cfcad14e70518382165b0179de"
+    },
+    {
+      "path": "design/verify-binding.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\verify-binding.mjs",
+      "originalBytes": 1603,
+      "originalSha256": "c578cb3c0c1da972b3014ede3e7753514a298bf0c2a0fd80b5330e7685b7730a",
+      "sanitizedSha256": "c578cb3c0c1da972b3014ede3e7753514a298bf0c2a0fd80b5330e7685b7730a",
+      "gzipSha256": "a299c10743f28ee58e341d0a4ba7f90d383126fd932b5e53cc46cf346b56f00a"
+    },
+    {
+      "path": "design/verify-prepared-snapshot.mjs.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\verify-prepared-snapshot.mjs",
+      "originalBytes": 1696,
+      "originalSha256": "d80bb377f9c0e28d007e8ad0862efb009774030e0ae8375aa37159c941c4b058",
+      "sanitizedSha256": "d80bb377f9c0e28d007e8ad0862efb009774030e0ae8375aa37159c941c4b058",
+      "gzipSha256": "b4571e78087f3c326dcd57f3ccb3a31913e80876236ce3b2b976ce254340ffa5"
+    },
+    {
+      "path": "design/verify-snapshot-01.log.gz",
+      "originalPath": "<TEMP>\\release297-role-runtime-default-0e427-design-01\\verify-snapshot-01.log",
+      "originalBytes": 625,
+      "originalSha256": "0f7d3155424b4125472843c2731ee3b088a08aedac44257423b7a044c0de52a9",
+      "sanitizedSha256": "0f7d3155424b4125472843c2731ee3b088a08aedac44257423b7a044c0de52a9",
+      "gzipSha256": "8d3276da65fd5118c1879c0f83cc82655b6013588d6e1bca70539a9d82cc8e0b"
+    },
+    {
+      "path": "prepared-snapshot/manifest.json.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\artifacts\\release297-synthetic-prepared-0e427-15f3a261abf9\\manifest.json",
+      "originalBytes": 3886,
+      "originalSha256": "2fdbf767f63cf8d33657c508b7fff9481e25369bf5dcdba9b4d69af632b5799f",
+      "sanitizedSha256": "42b448c9ada0f944161958fd5dfbd7a9c5eece450386fa71c9fa92fa40ddcdc1",
+      "gzipSha256": "d95fb3d798a97464f83d7ab0bd4144cd07969bf7f727133ce8f1bc650d54cd72"
+    },
+    {
+      "path": "prepared-snapshot/post-export-verification.json.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\artifacts\\release297-synthetic-prepared-0e427-15f3a261abf9\\post-export-verification.json",
+      "originalBytes": 565,
+      "originalSha256": "75df98e28142b2a50d3be90e4a13b6b497024a5e92881df280fa0568498eed66",
+      "sanitizedSha256": "75df98e28142b2a50d3be90e4a13b6b497024a5e92881df280fa0568498eed66",
+      "gzipSha256": "35184f59056ff39a7d0fe2f41888cefa1d188ac3e25b872855cf5a6d2788c689"
+    }
+  ],
+  "hashOnly": [
+    {
+      "path": "cold-fixture-state.json",
+      "bytes": 183029,
+      "sha256": "b4a30d8c088ffb2f6b2d4ecc3ef814f8d11ef614e890dd4c1f940cf5e2f4eb41",
+      "reason": "Populated synthetic identity/credential fixture retained privately at original path and permanent synthetic snapshot."
+    },
+    {
+      "path": "preparation-fixture-contract.json",
+      "bytes": 35903,
+      "sha256": "e927716db225aa8969d78eb5904d49994b2f2e493b149ecf917ef0eb1c61f875",
+      "reason": "Populated synthetic identity/credential fixture retained privately at original path and permanent synthetic snapshot."
+    },
+    {
+      "path": "preparation-metrics.json",
+      "bytes": 45024,
+      "sha256": "b719d7dfa9aa57e21521960ddcd4e55231cd660c0087e6085771df9daf5c5f95",
+      "reason": "Populated synthetic identity/credential fixture retained privately at original path and permanent synthetic snapshot."
+    }
+  ]
+}

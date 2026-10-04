@@ -1,0 +1,660 @@
+{
+  "schemaVersion": 1,
+  "source": "814844f344a45159152415b0fb6d7027f05b093e",
+  "run": "bcf05c2fc367",
+  "mode": "capacity-candidate",
+  "diagnosticOnly": false,
+  "capacityAccepted": false,
+  "acceptedRunCount": 0,
+  "campaign": {
+    "sha256": "10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92",
+    "ordinal": 1,
+    "registrationSha256": "1412c86680781513be95f52a4042eacbf7c1679dfbc594d1c854cac95df6a63b",
+    "completionSha256": "73a190f7c3dfdfede1f180b4a12ed2b940939444f65f51646edb57d699f1c423",
+    "status": "completed",
+    "ownershipReleased": true,
+    "closed": false,
+    "originalComparisonRun": false
+  },
+  "timing": {
+    "preparedAt": "2026-10-03T21:23:34.010Z",
+    "releasedAt": "2026-10-03T21:25:13.667Z",
+    "startedAt": "2026-10-03T21:25:36.773Z",
+    "finishedAt": "2026-10-03T21:27:05.755Z",
+    "cleanupFinishedAt": "2026-10-03T21:27:14.481Z"
+  },
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5308,
+    "succeeded": 3042,
+    "failed": 2266,
+    "refusedAtInFlightLimit": 692,
+    "lateOffers": 408,
+    "maxOfferLatenessMs": 1715.0764219999983,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2662,
+        "succeeded": 1519,
+        "failed": 1143,
+        "refused": 338
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2646,
+        "succeeded": 1523,
+        "failed": 1123,
+        "refused": 354
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 2266
+    },
+    "offerWindowMs": 59989.907053999996,
+    "outstandingAtEndOfOffering": 915,
+    "totalIncludingDrainMs": 67169.253445,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5308,
+      "minMs": 492.9367630000015,
+      "p50Ms": 9430.173015000004,
+      "p95Ms": 13950.943330999999,
+      "maxMs": 16107.253559999997
+    }
+  },
+  "heartbeatStatuses": {
+    "200": 3042,
+    "500": 2266
+  },
+  "insertedObservations": 4069,
+  "reports": {
+    "offered": 64,
+    "successful": 48
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 15647.380921,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 38266.385882,
+      "correct": true
+    }
+  ],
+  "api": {
+    "cpuMicroseconds": {
+      "user": 49018434,
+      "system": 10147433
+    },
+    "eventLoop": {
+      "p50Ms": 22.380543,
+      "p95Ms": 49.545215,
+      "maxMs": 2709.520383,
+      "utilization": 0.8951992169933636
+    },
+    "acquisitions": {
+      "count": 14394,
+      "failures": 2269,
+      "maxMs": 5918.3637149999995
+    }
+  },
+  "correctness": {
+    "passed": true,
+    "currentObservationCutoff": "2026-10-03T21:26:56.000Z",
+    "currentDayWorkers": [
+      {
+        "schoolIndex": 0,
+        "schoolId": "4fa9c3ec-c9ca-4d52-8f8e-7752216bc382",
+        "fixtureViolations": {
+          "unexpectedStudents": 0,
+          "unexpectedUrlObservations": 0,
+          "unexpectedClassificationObservations": 0,
+          "unexpectedTeacherIntentObservations": 0,
+          "currentAiDecisionRows": 0,
+          "invalidRosterStudents": 0
+        },
+        "correct": true,
+        "rawObservationCount": 2045,
+        "persistedObservationCount": 2045,
+        "expectedSeconds": 22146,
+        "timestampPrecision": {
+          "precision": "integer_microseconds_text",
+          "rawObservations": 2045,
+          "includedObservations": 2045,
+          "submillisecondObservations": 2044,
+          "deduplicatedObservations": 2045,
+          "students": 500,
+          "exactRoundedSeconds": 22146,
+          "legacyRoundedSeconds": 22146,
+          "roundingSensitiveStudents": 0
+        },
+        "rowCount": 500,
+        "seconds": 22146,
+        "heartbeatCount": 2045,
+        "durationMs": 234.78795600000012
+      },
+      {
+        "schoolIndex": 1,
+        "schoolId": "545cc1a2-cd6a-40a4-8029-845786f1f3bf",
+        "fixtureViolations": {
+          "unexpectedStudents": 0,
+          "unexpectedUrlObservations": 0,
+          "unexpectedClassificationObservations": 0,
+          "unexpectedTeacherIntentObservations": 0,
+          "currentAiDecisionRows": 0,
+          "invalidRosterStudents": 0
+        },
+        "correct": true,
+        "rawObservationCount": 2036,
+        "persistedObservationCount": 2036,
+        "expectedSeconds": 22042,
+        "timestampPrecision": {
+          "precision": "integer_microseconds_text",
+          "rawObservations": 2036,
+          "includedObservations": 2036,
+          "submillisecondObservations": 2032,
+          "deduplicatedObservations": 2036,
+          "students": 500,
+          "exactRoundedSeconds": 22042,
+          "legacyRoundedSeconds": 22042,
+          "roundingSensitiveStudents": 0
+        },
+        "rowCount": 500,
+        "seconds": 22042,
+        "heartbeatCount": 2036,
+        "durationMs": 150.28325700000278
+      }
+    ],
+    "csvAuditCount": 8
+  },
+  "preflightDrain": {
+    "complete": true,
+    "budgetMs": 20000,
+    "elapsedMs": 2.0994950000022072,
+    "passes": 2,
+    "gauges": {
+      "activeOperations": 0,
+      "pendingCheckouts": 0,
+      "activeCheckouts": 0,
+      "pendingAcquisitions": 0,
+      "activeQueries": 0,
+      "poolWaiting": 0,
+      "poolHeld": 0,
+      "httpResponses": 0,
+      "pendingTenantReleases": 0
+    },
+    "physicallyIdle": true,
+    "abortedResponses": 0
+  },
+  "serverDrain": {
+    "api": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.0291460000007646,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.3584169999958249,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "Expected values to be strictly equal:\n\n500 !== 200\n"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "sourceAtFinish": {
+    "revision": "814844f344a45159152415b0fb6d7027f05b093e",
+    "clean": true
+  },
+  "finalSourceReceipt": {
+    "source": "814844f344a45159152415b0fb6d7027f05b093e",
+    "clean": true,
+    "unchanged": true,
+    "harnessSha256": "f0d4b3d44f686b6f751eafac444ab506f75015fefad463dcf2006d98bd221f38"
+  },
+  "roleExits": [
+    {
+      "role": "coordinator",
+      "containerId": "fa8699921917dae82e885ed22ef8f29777ec267919a2d7d201f873da7925c10c",
+      "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+      "run": "bcf05c2fc367",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 1,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 1,
+      "clean": false
+    },
+    {
+      "role": "api",
+      "containerId": "877da8b73f4a698304b21f6860cad47ecb24c97426d9d91fe7009046a104223d",
+      "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+      "run": "bcf05c2fc367",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 0,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 0,
+      "clean": true
+    },
+    {
+      "role": "worker",
+      "containerId": "9d41790cbee5132f60e299c8e96642e527ab2c76df07e28ca9b682627d4c7b3e",
+      "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+      "run": "bcf05c2fc367",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 0,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 0,
+      "clean": true
+    },
+    {
+      "role": "generator",
+      "containerId": "cd0307e55247d5aa907c9601ac2e428836525ccf6ccc26521e01325c81c55645",
+      "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+      "run": "bcf05c2fc367",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "inspected": true,
+      "running": false,
+      "logsClosed": true,
+      "exitCode": 0,
+      "forced": false,
+      "oomKilled": false,
+      "attachExitCode": 0,
+      "clean": true
+    }
+  ],
+  "cleanup": {
+    "schemaVersion": 1,
+    "run": "bcf05c2fc367",
+    "finishedAt": "2026-10-03T21:27:14.481Z",
+    "roles": {
+      "cleanupPassed": true,
+      "roles": [
+        {
+          "role": "generator",
+          "cleanupPassed": true,
+          "id": "cd0307e55247d5aa907c9601ac2e428836525ccf6ccc26521e01325c81c55645",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "worker",
+          "cleanupPassed": true,
+          "id": "9d41790cbee5132f60e299c8e96642e527ab2c76df07e28ca9b682627d4c7b3e",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "api",
+          "cleanupPassed": true,
+          "id": "877da8b73f4a698304b21f6860cad47ecb24c97426d9d91fe7009046a104223d",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "coordinator",
+          "cleanupPassed": true,
+          "id": "fa8699921917dae82e885ed22ef8f29777ec267919a2d7d201f873da7925c10c",
+          "forced": false,
+          "confirmedAbsent": true
+        }
+      ]
+    },
+    "fixtures": {
+      "resources": [
+        {
+          "id": "96f115e3a7da39273e369687246aa2fd9e2ea67c71a626b30cd04c34d08ac6a0",
+          "confirmedAbsent": true,
+          "cleanupPassed": true,
+          "volumes": [
+            {
+              "name": "bf1cf975c3966563460da857e5d0538aab506b596856c5516783f65ae1f02e00",
+              "confirmedAbsent": true
+            }
+          ],
+          "role": "postgres"
+        },
+        {
+          "id": "c0d1d62b821d68ad23e205bce17750e9aaeeb068d67b2c5080a8cea367bc56cc",
+          "confirmedAbsent": true,
+          "cleanupPassed": true,
+          "role": "redis"
+        }
+      ],
+      "cleanupPassed": true
+    },
+    "cleanupPassed": true,
+    "capacityAccepted": false
+  },
+  "validation": {
+    "runPassed": false,
+    "failures": [
+      "preparation",
+      "metrics",
+      "ownership"
+    ],
+    "capacityAccepted": false,
+    "diagnosticOnly": false,
+    "receiptManifestSha256": "3fe2230011333ca200d5185a741587485939bd111e6166981dc288fb13d9ef77"
+  },
+  "independentSafetyReview": {
+    "method": "Read-only in-memory exhaustive assertion replay; parent/safety messages retained, no separately archived replay file.",
+    "assertions": 880,
+    "unexpectedShapeBindingOrCleanupFailures": 0,
+    "preparationFailure": "execution.exitCode=1",
+    "ownershipFailures": "Eight consequences of coordinator numerical-failure exit1; original validation retained."
+  },
+  "all13OriginalReceiptHashesVerified": true,
+  "receiptManifestSha256": "3fe2230011333ca200d5185a741587485939bd111e6166981dc288fb13d9ef77",
+  "seed": {
+    "run": "82f0661adccf",
+    "abortedAt": "2026-10-03T21:17:38.424Z",
+    "code": "ABORTED_BEFORE_MEASUREMENT",
+    "measurementStarted": false,
+    "releaseAbsent": true,
+    "trafficAbsent": true,
+    "cleanup": {
+      "run": "82f0661adccf",
+      "containerId": "344ead0dec8a310e5a97dc94c456903740bcca29c1b77a3aa168316573ed3cd0",
+      "volumes": [
+        "c5c147a3776c71cb1497028a4c627471c32cc0f84d1483e733d5f7a77fa0bec9"
+      ],
+      "containerAbsent": true,
+      "volumesAbsent": true,
+      "listingCommandsSucceeded": true,
+      "measurementReleaseAbsent": true,
+      "verifiedAt": "2026-10-03T21:18:37.9730594Z"
+    }
+  },
+  "immutableSnapshot": {
+    "directory": "C:\\Users\\zinka\\.codex\\artifacts\\release297-synthetic-prepared-814844f3-01",
+    "manifestSha256": "014054a38bb4c9b498b9d8c7677ca506ab0eb30b659880997a6ac742fd278a23",
+    "source": "814844f344a45159152415b0fb6d7027f05b093e",
+    "migrations": 54,
+    "tables": 129,
+    "heartbeatRows": 2000002,
+    "readOnlyExport": true,
+    "privateFilesHashOnly": true
+  },
+  "finalCi": {
+    "schemaVersion": 1,
+    "recordedAt": "2026-10-03T21:32:34.316Z",
+    "source": "814844f344a45159152415b0fb6d7027f05b093e",
+    "allComplete": true,
+    "workflows": [
+      {
+        "id": 37153313271,
+        "name": "CI",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271",
+        "jobs": [
+          {
+            "id": 111291457050,
+            "name": "Backend (TypeScript + Build)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:02:16Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457050"
+          },
+          {
+            "id": 111291457161,
+            "name": "Frontend release-focused gates (shard 1)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:07:41Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457161"
+          },
+          {
+            "id": 111291457200,
+            "name": "Frontend release-focused gates (shard 2)",
+            "status": "completed",
+            "conclusion": "failure",
+            "completedAt": "2026-10-03T21:02:16Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457200"
+          },
+          {
+            "id": 111291457205,
+            "name": "Frontend (Vite Build)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:04:56Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457205"
+          },
+          {
+            "id": 111291457208,
+            "name": "Frontend release-focused gates (shard 4)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:05:23Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457208"
+          },
+          {
+            "id": 111291457210,
+            "name": "Detect changed paths",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T20:56:32Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457210"
+          },
+          {
+            "id": 111291457215,
+            "name": "Frontend release-focused gates (shard 3)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:01:32Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457215"
+          },
+          {
+            "id": 111291457229,
+            "name": "Cross-tenant isolation tests",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:13:04Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457229"
+          },
+          {
+            "id": 111291457231,
+            "name": "RLS-enabled cross-tenant tests",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:00:47Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291457231"
+          },
+          {
+            "id": 111291517873,
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:26:44Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111291517873"
+          },
+          {
+            "id": 111292551348,
+            "name": "SOC 2 privileged access evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:02:28Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111292551348"
+          },
+          {
+            "id": 111293514295,
+            "name": "SOC 2 monitoring evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:07:53Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111293514295"
+          },
+          {
+            "id": 111293514310,
+            "name": "SOC 2 AI/privacy evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:07:56Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111293514310"
+          },
+          {
+            "id": 111294451963,
+            "name": "SOC 2 incident evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:13:17Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111294451963"
+          },
+          {
+            "id": 111294452010,
+            "name": "SOC 2 deployment evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:13:19Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111294452010"
+          },
+          {
+            "id": 111294452014,
+            "name": "SOC 2 tenant isolation evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:13:16Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111294452014"
+          },
+          {
+            "id": 111294490834,
+            "name": "SOC 2 approval queue",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:13:33Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313271/job/111294490834"
+          }
+        ]
+      },
+      {
+        "id": 37153313221,
+        "name": "Gitleaks",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313221",
+        "jobs": [
+          {
+            "id": 111291456934,
+            "name": "Scan for secrets",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T20:56:24Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313221/job/111291456934"
+          }
+        ]
+      },
+      {
+        "id": 37153313243,
+        "name": "Trivy Container Scan",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313243",
+        "jobs": [
+          {
+            "id": 111291456775,
+            "name": "Scan Docker image",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T20:57:55Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313243/job/111291456775"
+          }
+        ]
+      },
+      {
+        "id": 37153313244,
+        "name": "CodeQL",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313244",
+        "jobs": [
+          {
+            "id": 111291456843,
+            "name": "Analyze (javascript-typescript)",
+            "status": "completed",
+            "conclusion": "success",
+            "completedAt": "2026-10-03T21:01:35Z",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37153313244/job/111291456843"
+          }
+        ]
+      }
+    ],
+    "rerunRequested": false
+  },
+  "limitations": [
+    "Failed candidate attempt, not accepted capacity. A completed journal status means execution and cleanup completed; validation remains false.",
+    "Sanitized records are evidence copies, never acceptance inputs. All original raw hashes and local private artifacts remain unchanged.",
+    "Synthetic PostgreSQL4CPU/4GiB is not dated production db.t4g.medium; no deployed headroom claim.",
+    "Fresh PostgreSQL/role restart does not flush host filesystem caches. No resource/deadline changes or automatic retries.",
+    "Every original acceptance/validator failure is retained; no failure is relabeled or omitted."
+  ]
+}

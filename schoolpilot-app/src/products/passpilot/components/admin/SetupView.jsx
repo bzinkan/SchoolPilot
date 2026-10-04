@@ -39,6 +39,7 @@ const PASS_PILOT_SETTINGS_PATH = "/passpilot/admin/settings";
 const PASS_PILOT_RULES_PATH = "/passpilot/admin/rules";
 const ClassSourceSetup = lazy(() => import("./ClassSourceSetup"));
 const RulesTab = lazy(() => import("./RulesTab"));
+const SchoolYearSetup = lazy(() => import("./SchoolYearSetup"));
 
 function apiErrorMessage(error, fallback = "Try again.") {
   const data = error?.response?.data;
@@ -2783,12 +2784,15 @@ function SettingsTab() {
   }
 
   return (
-    <SettingsForm
-      key={`${school.id}:${settingsQuery.data.revision}`}
-      settings={settingsQuery.data}
-      settingsQueryKey={settingsQueryKey}
-      refetchUser={refetchUser}
-    />
+    <>
+      <SettingsForm
+        key={`${school.id}:${settingsQuery.data.revision}`}
+        settings={settingsQuery.data}
+        settingsQueryKey={settingsQueryKey}
+        refetchUser={refetchUser}
+      />
+      <Suspense fallback={<Skeleton className="mt-4 h-32 w-full" />}><SchoolYearSetup /></Suspense>
+    </>
   );
 }
 

@@ -1,0 +1,225 @@
+{
+  "version": 1,
+  "sourceRevision": "b5e433d1a25b5ac4480eb54ea63c54deac5d9d04",
+  "startedAt": "2026-09-30T20:13:19.519Z",
+  "passed": false,
+  "productionReadiness": false,
+  "profile": {
+    "postgresCpus": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeV8OldSpaceMiB": 512,
+    "nodeHeapLimitBytes": 587202560,
+    "apiStatementDeadlineMs": 15000,
+    "apiAcquisitionDeadlineMs": 5000,
+    "workerStatementDeadlineMs": 60000,
+    "workerAcquisitionDeadlineMs": 10000
+  },
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "3eb0261850745bcf021121b66c2d92bac47ea8c05f7ace38a3acd52aeda9cd96",
+    "src/services/classpilotUsageRead.ts": "1137559a6b2d79272af2c6b3a58cad5ba939b6fae59a20e0b646bed147fc7059",
+    "src/routes/classpilot/devices.ts": "a4422a3f1a92245560fe1fab88282193a4c740e727a7b1f6cc8e842805bc30ea",
+    "scripts/load/usage/local-usage-scale.mjs": "6876e5608f6b89afb672305c842377491fc4fce53f18dddb6812dfd065850525"
+  },
+  "limitations": [
+    "Local DockerCPU/memory caps do not represent RDS I/O.",
+    "Node heap cap is not a Windows CPU or total RSS quota.",
+    "The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified."
+  ],
+  "writerQueries": [
+    {
+      "durationMs": 60003.54550000001,
+      "schoolId": "b3608410-80e1-4c09-8215-728b295a14b1"
+    },
+    {
+      "durationMs": 60069.83130000002,
+      "schoolId": "c7d9390c-1b6e-410e-820c-f35d6aa3c0e7"
+    }
+  ],
+  "reads": {
+    "0/school": {
+      "count": 8,
+      "minMs": 9556.074900000007,
+      "p50Ms": 12729.465000000026,
+      "p95Ms": 14970.801899999962,
+      "maxMs": 14970.801899999962
+    },
+    "0/grade": {
+      "count": 8,
+      "minMs": 4448.191200000001,
+      "p50Ms": 7080.909800000023,
+      "p95Ms": 13764.94550000003,
+      "maxMs": 13764.94550000003
+    },
+    "0/class": {
+      "count": 8,
+      "minMs": 856.4905000000144,
+      "p50Ms": 970.0277000000351,
+      "p95Ms": 1075.3129999999655,
+      "maxMs": 1075.3129999999655
+    },
+    "0/student": {
+      "count": 8,
+      "minMs": 666.8339000000269,
+      "p50Ms": 793.2174999999697,
+      "p95Ms": 990.1154000000097,
+      "maxMs": 990.1154000000097
+    },
+    "1/school": {
+      "count": 8,
+      "minMs": 7810.300999999978,
+      "p50Ms": 11751.156900000002,
+      "p95Ms": 15540.53859999997,
+      "maxMs": 15540.53859999997
+    },
+    "1/grade": {
+      "count": 8,
+      "minMs": 6871.630500000028,
+      "p50Ms": 10043.214200000046,
+      "p95Ms": 13171.463899999973,
+      "maxMs": 13171.463899999973
+    },
+    "1/class": {
+      "count": 8,
+      "minMs": 1057.6579999999958,
+      "p50Ms": 1191.849499999953,
+      "p95Ms": 1545.7359000000288,
+      "maxMs": 1545.7359000000288
+    },
+    "1/student": {
+      "count": 8,
+      "minMs": 1046.4801999999909,
+      "p50Ms": 1445.411999999953,
+      "p95Ms": 1762.1317000000272,
+      "maxMs": 1762.1317000000272
+    }
+  },
+  "ingest": {
+    "requests": 108,
+    "insertedHeartbeats": 0,
+    "statuses": {
+      "200": 108
+    },
+    "timings": {
+      "count": 108,
+      "minMs": 99.0065000000177,
+      "p50Ms": 1314.589799999958,
+      "p95Ms": 8862.557900000014,
+      "maxMs": 10415.831200000015
+    }
+  },
+  "peakRssBytes": 277778432,
+  "rls": [
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    }
+  ],
+  "database": {
+    "version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "max_connections": "100"
+  },
+  "dataset": {
+    "substantialSchools": 2,
+    "studentsPerSchool": 500,
+    "rawHeavyDayPerSchool": 1000000,
+    "uniqueHeavyDayPerSchool": 500000,
+    "officialClassesPerSchool": 100,
+    "historicalDenseDays": 361,
+    "historicalRowsPerSchool": 541500,
+    "requestedInclusiveDays": 366,
+    "retainedInclusiveDays": 365,
+    "successfulEmptyDate": "2026-09-27",
+    "unavailableDate": "2026-09-25",
+    "heavyDate": "2026-09-28",
+    "today": "2026-09-30",
+    "dateRange": {
+      "from": "2025-09-30",
+      "to": "2026-09-30"
+    }
+  },
+  "seedMs": 265979.4558,
+  "fixtureCounts": [
+    {
+      "school_id": "c7d9390c-1b6e-410e-820c-f35d6aa3c0e7",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    },
+    {
+      "school_id": "b3608410-80e1-4c09-8215-728b295a14b1",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    }
+  ],
+  "poolMax": {
+    "api": 16,
+    "worker": 5,
+    "apiWaitingPeak": 6,
+    "workerWaitingPeak": 0
+  },
+  "concurrentPhaseMs": 67047.48589999997,
+  "phaseOutcomes": [
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "read_waves",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    }
+  ],
+  "failure": {
+    "name": "error",
+    "code": "57014",
+    "message": "canceling statement due to statement timeout"
+  }
+}

@@ -1,0 +1,3711 @@
+{
+  "schemaVersion": 1,
+  "kind": "exact-review-head-remote-ci-observation",
+  "recordedAtUtc": "2026-10-04T12:46:59.957Z",
+  "observation": 5,
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "schoolPilotReviewHead": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+  "classPilotReviewHead": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "schoolPilot": {
+    "baseRefName": "main",
+    "baseRefOid": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
+    "headRefName": "codex/release-stabilization-297",
+    "headRefOid": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+    "isDraft": true,
+    "number": 603,
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:14:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755914",
+        "name": "Detect changed paths",
+        "startedAt": "2026-10-04T12:14:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:20:19Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429350/job/111433755703",
+        "name": "Analyze (javascript-typescript)",
+        "startedAt": "2026-10-04T12:14:40Z",
+        "status": "COMPLETED",
+        "workflowName": "CodeQL"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:14:53Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429351/job/111433755647",
+        "name": "Scan for secrets",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "Gitleaks"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:16:01Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429395/job/111433755813",
+        "name": "Scan Docker image",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "Trivy Container Scan"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:21:49Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755917",
+        "name": "Backend (TypeScript + Build)",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:31:25Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755962",
+        "name": "Cross-tenant isolation tests",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:20:56Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756014",
+        "name": "RLS-enabled cross-tenant tests",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:23:45Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755770",
+        "name": "Frontend (Vite Build)",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:25:33Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756071",
+        "name": "Frontend release-focused gates (shard 1)",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:26:19Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756007",
+        "name": "Frontend release-focused gates (shard 2)",
+        "startedAt": "2026-10-04T12:14:45Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:20:01Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756009",
+        "name": "Frontend release-focused gates (shard 3)",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:23:40Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756045",
+        "name": "Frontend release-focused gates (shard 4)",
+        "startedAt": "2026-10-04T12:14:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:46:34Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433813722",
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "startedAt": "2026-10-04T12:15:02Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:21:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111434967757",
+        "name": "SOC 2 privileged access evidence",
+        "startedAt": "2026-10-04T12:21:51Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:31:36Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436584369",
+        "name": "SOC 2 deployment evidence",
+        "startedAt": "2026-10-04T12:31:28Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:31:37Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436584368",
+        "name": "SOC 2 incident evidence",
+        "startedAt": "2026-10-04T12:31:28Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:31:36Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436584366",
+        "name": "SOC 2 tenant isolation evidence",
+        "startedAt": "2026-10-04T12:31:29Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:26:29Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111435726459",
+        "name": "SOC 2 AI/privacy evidence",
+        "startedAt": "2026-10-04T12:26:22Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:26:35Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111435726467",
+        "name": "SOC 2 monitoring evidence",
+        "startedAt": "2026-10-04T12:26:23Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-04T12:31:49Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436616396",
+        "name": "SOC 2 approval queue",
+        "startedAt": "2026-10-04T12:31:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      }
+    ],
+    "title": "Stabilize coordinated roadmap release for ClassPilot 2.9.7",
+    "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
+    "expectedReportedChecks": 20,
+    "reportedChecks": 20,
+    "successfulChecks": 20,
+    "allReportedChecksSuccess": true,
+    "workflowsComplete": true,
+    "runs": [
+      {
+        "conclusion": "success",
+        "databaseId": 37201429355,
+        "event": "pull_request",
+        "headSha": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+        "startedAt": "2026-10-04T12:14:38Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T12:46:35Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355",
+        "workflowName": "CI"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37201429350,
+        "event": "pull_request",
+        "headSha": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+        "startedAt": "2026-10-04T12:14:38Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T12:20:20Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429350",
+        "workflowName": "CodeQL"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37201429351,
+        "event": "pull_request",
+        "headSha": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+        "startedAt": "2026-10-04T12:14:38Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T12:14:53Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429351",
+        "workflowName": "Gitleaks"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37201429395,
+        "event": "pull_request",
+        "headSha": "b5d591307bcda1e492b0320b2c66f5662f8fec76",
+        "startedAt": "2026-10-04T12:14:38Z",
+        "status": "completed",
+        "updatedAt": "2026-10-04T12:16:02Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429395",
+        "workflowName": "Trivy Container Scan"
+      }
+    ],
+    "jobs": {
+      "jobs": [
+        {
+          "completedAt": "2026-10-04T12:23:45Z",
+          "conclusion": "success",
+          "databaseId": 111433755770,
+          "name": "Frontend (Vite Build)",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:44Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:47Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:54Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:59Z",
+              "conclusion": "success",
+              "name": "Use npm 11 for the dependency audit",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:09Z",
+              "conclusion": "success",
+              "name": "Install backend deps",
+              "number": 5,
+              "startedAt": "2026-10-04T12:14:59Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:17Z",
+              "conclusion": "success",
+              "name": "Install frontend deps",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:21Z",
+              "conclusion": "success",
+              "name": "Test Router reachability validator",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:17Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:22Z",
+              "conclusion": "success",
+              "name": "Test frontend dependency audit engine and scope contract",
+              "number": 8,
+              "startedAt": "2026-10-04T12:15:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:26Z",
+              "conclusion": "success",
+              "name": "Collect dependency audit and validate source reachability",
+              "number": 9,
+              "startedAt": "2026-10-04T12:15:22Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:26Z",
+              "conclusion": "success",
+              "name": "Test frontend API routing contract",
+              "number": 10,
+              "startedAt": "2026-10-04T12:15:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:27Z",
+              "conclusion": "success",
+              "name": "Test ClassPilot tile batching contract",
+              "number": 11,
+              "startedAt": "2026-10-04T12:15:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:28Z",
+              "conclusion": "success",
+              "name": "Test ClassPilot precise restriction matcher parity",
+              "number": 12,
+              "startedAt": "2026-10-04T12:15:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:28Z",
+              "conclusion": "success",
+              "name": "Test GoPilot staff-only contracts",
+              "number": 13,
+              "startedAt": "2026-10-04T12:15:28Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:28Z",
+              "conclusion": "success",
+              "name": "Test staff identity lifecycle frontend contracts",
+              "number": 14,
+              "startedAt": "2026-10-04T12:15:28Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:15Z",
+              "conclusion": "success",
+              "name": "Lint frontend",
+              "number": 15,
+              "startedAt": "2026-10-04T12:15:28Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:26Z",
+              "conclusion": "success",
+              "name": "Build frontend",
+              "number": 16,
+              "startedAt": "2026-10-04T12:16:15Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:57Z",
+              "conclusion": "success",
+              "name": "Install Chromium for production-preview smoke",
+              "number": 17,
+              "startedAt": "2026-10-04T12:16:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:17:12Z",
+              "conclusion": "success",
+              "name": "Test ClassPilot one-day schedule-change workflows",
+              "number": 18,
+              "startedAt": "2026-10-04T12:16:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:17:18Z",
+              "conclusion": "success",
+              "name": "Test ClassPilot Teaching tools School Library",
+              "number": 19,
+              "startedAt": "2026-10-04T12:17:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:45Z",
+              "conclusion": "success",
+              "name": "Smoke production preview routes",
+              "number": 20,
+              "startedAt": "2026-10-04T12:17:18Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:54Z",
+              "conclusion": "success",
+              "name": "Test PassPilot rules UI contracts and Chromium flows",
+              "number": 21,
+              "startedAt": "2026-10-04T12:19:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:57Z",
+              "conclusion": "success",
+              "name": "Validate standard frontend Router bundle",
+              "number": 22,
+              "startedAt": "2026-10-04T12:19:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:07Z",
+              "conclusion": "success",
+              "name": "Build GoPilot frontend",
+              "number": 23,
+              "startedAt": "2026-10-04T12:19:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:21Z",
+              "conclusion": "success",
+              "name": "Test GoPilot staff workflows in Chromium",
+              "number": 24,
+              "startedAt": "2026-10-04T12:20:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:23Z",
+              "conclusion": "success",
+              "name": "Validate GoPilot Router bundle",
+              "number": 25,
+              "startedAt": "2026-10-04T12:20:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:23Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-java@v5",
+              "number": 26,
+              "startedAt": "2026-10-04T12:20:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:24Z",
+              "conclusion": "success",
+              "name": "Sync GoPilot Android staff bundle",
+              "number": 27,
+              "startedAt": "2026-10-04T12:20:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:57Z",
+              "conclusion": "success",
+              "name": "Build GoPilot Android debug APK",
+              "number": 28,
+              "startedAt": "2026-10-04T12:20:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:58Z",
+              "conclusion": "success",
+              "name": "Inspect GoPilot mobile security and generated bundle",
+              "number": 29,
+              "startedAt": "2026-10-04T12:21:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:22:08Z",
+              "conclusion": "success",
+              "name": "Build PassPilot frontend",
+              "number": 30,
+              "startedAt": "2026-10-04T12:21:58Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:23Z",
+              "conclusion": "success",
+              "name": "Smoke canonical classes in the PassPilot bundle",
+              "number": 31,
+              "startedAt": "2026-10-04T12:22:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:25Z",
+              "conclusion": "success",
+              "name": "Validate PassPilot Router bundle",
+              "number": 32,
+              "startedAt": "2026-10-04T12:23:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:26Z",
+              "conclusion": "success",
+              "name": "Sync PassPilot Android secure-storage bundle",
+              "number": 33,
+              "startedAt": "2026-10-04T12:23:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:36Z",
+              "conclusion": "success",
+              "name": "Build PassPilot Android debug APK",
+              "number": 34,
+              "startedAt": "2026-10-04T12:23:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:38Z",
+              "conclusion": "success",
+              "name": "Inspect PassPilot mobile security and generated bundle",
+              "number": 35,
+              "startedAt": "2026-10-04T12:23:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:39Z",
+              "conclusion": "success",
+              "name": "Finalize production dependency gate",
+              "number": 36,
+              "startedAt": "2026-10-04T12:23:38Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:40Z",
+              "conclusion": "success",
+              "name": "Upload frontend dependency audit evidence",
+              "number": 37,
+              "startedAt": "2026-10-04T12:23:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:40Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 38,
+              "startedAt": "2026-10-04T12:23:40Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:42Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 39,
+              "startedAt": "2026-10-04T12:23:40Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:42Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-java@v5",
+              "number": 76,
+              "startedAt": "2026-10-04T12:23:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:42Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 77,
+              "startedAt": "2026-10-04T12:23:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:42Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 78,
+              "startedAt": "2026-10-04T12:23:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:42Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 79,
+              "startedAt": "2026-10-04T12:23:42Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755770"
+        },
+        {
+          "completedAt": "2026-10-04T12:14:59Z",
+          "conclusion": "success",
+          "databaseId": 111433755914,
+          "name": "Detect changed paths",
+          "startedAt": "2026-10-04T12:14:42Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:57Z",
+              "conclusion": "success",
+              "name": "Run dorny/paths-filter@v3",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:57Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:57Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755914"
+        },
+        {
+          "completedAt": "2026-10-04T12:21:49Z",
+          "conclusion": "success",
+          "databaseId": 111433755917,
+          "name": "Backend (TypeScript + Build)",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:42Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:46Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:50Z",
+              "conclusion": "success",
+              "name": "Use npm 11 for the dependency audit",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:00Z",
+              "conclusion": "success",
+              "name": "Install bounded PDF processing runtime",
+              "number": 5,
+              "startedAt": "2026-10-04T12:14:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:10Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:11Z",
+              "conclusion": "success",
+              "name": "Audit dependencies",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:49Z",
+              "conclusion": "success",
+              "name": "TypeScript check",
+              "number": 8,
+              "startedAt": "2026-10-04T12:15:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:49Z",
+              "conclusion": "success",
+              "name": "Unsafe test cast ratchet",
+              "number": 9,
+              "startedAt": "2026-10-04T12:15:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:30Z",
+              "conclusion": "success",
+              "name": "Build",
+              "number": 10,
+              "startedAt": "2026-10-04T12:15:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:17:29Z",
+              "conclusion": "success",
+              "name": "Test TypeScript check (no emit)",
+              "number": 11,
+              "startedAt": "2026-10-04T12:16:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:04Z",
+              "conclusion": "success",
+              "name": "Pure unit tests (concurrency 4)",
+              "number": 12,
+              "startedAt": "2026-10-04T12:17:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:07Z",
+              "conclusion": "success",
+              "name": "Usage workload fixture guards (no database or load)",
+              "number": 13,
+              "startedAt": "2026-10-04T12:19:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:45Z",
+              "conclusion": "success",
+              "name": "Infrastructure and load-safety tests (serial)",
+              "number": 14,
+              "startedAt": "2026-10-04T12:19:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:45Z",
+              "conclusion": "success",
+              "name": "SOC 2 governance evidence check",
+              "number": 15,
+              "startedAt": "2026-10-04T12:21:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:45Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 16,
+              "startedAt": "2026-10-04T12:21:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:46Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 17,
+              "startedAt": "2026-10-04T12:21:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:46Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 33,
+              "startedAt": "2026-10-04T12:21:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:47Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 34,
+              "startedAt": "2026-10-04T12:21:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:47Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 35,
+              "startedAt": "2026-10-04T12:21:47Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755917"
+        },
+        {
+          "completedAt": "2026-10-04T12:31:25Z",
+          "conclusion": "success",
+          "databaseId": 111433755962,
+          "name": "Cross-tenant isolation tests",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:56Z",
+              "conclusion": "success",
+              "name": "Initialize containers",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:58Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:01Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:58Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:11Z",
+              "conclusion": "success",
+              "name": "Install bounded PDF processing runtime",
+              "number": 5,
+              "startedAt": "2026-10-04T12:15:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:22Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:25Z",
+              "conclusion": "success",
+              "name": "Create test schema",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:22Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:08Z",
+              "conclusion": "success",
+              "name": "Build",
+              "number": 8,
+              "startedAt": "2026-10-04T12:15:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:08Z",
+              "conclusion": "success",
+              "name": "Install screenshot evidence migration-owned test contract",
+              "number": 9,
+              "startedAt": "2026-10-04T12:16:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:08Z",
+              "conclusion": "success",
+              "name": "Install appointment migration-owned test contract",
+              "number": 10,
+              "startedAt": "2026-10-04T12:16:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:28:37Z",
+              "conclusion": "success",
+              "name": "DB and ordinary cross-tenant tests (serial)",
+              "number": 11,
+              "startedAt": "2026-10-04T12:16:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:28:39Z",
+              "conclusion": "success",
+              "name": "Checkout released ClassPilot 2.9.3 capture runtime",
+              "number": 12,
+              "startedAt": "2026-10-04T12:28:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:29:05Z",
+              "conclusion": "success",
+              "name": "Install preview browser dependencies",
+              "number": 13,
+              "startedAt": "2026-10-04T12:28:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:18Z",
+              "conclusion": "success",
+              "name": "Real extension capture to observed and claimed tiles (serial)",
+              "number": 14,
+              "startedAt": "2026-10-04T12:29:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:20Z",
+              "conclusion": "success",
+              "name": "Upload real capture evidence",
+              "number": 15,
+              "startedAt": "2026-10-04T12:31:18Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:20Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 16,
+              "startedAt": "2026-10-04T12:31:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:21Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 17,
+              "startedAt": "2026-10-04T12:31:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:21Z",
+              "conclusion": "success",
+              "name": "Post Checkout released ClassPilot 2.9.3 capture runtime",
+              "number": 31,
+              "startedAt": "2026-10-04T12:31:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:21Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 32,
+              "startedAt": "2026-10-04T12:31:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:22Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 33,
+              "startedAt": "2026-10-04T12:31:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:22Z",
+              "conclusion": "success",
+              "name": "Stop containers",
+              "number": 34,
+              "startedAt": "2026-10-04T12:31:22Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:22Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 35,
+              "startedAt": "2026-10-04T12:31:22Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755962"
+        },
+        {
+          "completedAt": "2026-10-04T12:26:19Z",
+          "conclusion": "success",
+          "databaseId": 111433756007,
+          "name": "Frontend release-focused gates (shard 2)",
+          "startedAt": "2026-10-04T12:14:45Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:47Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:49Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:53Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:03Z",
+              "conclusion": "success",
+              "name": "Install backend deps",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:11Z",
+              "conclusion": "success",
+              "name": "Install frontend deps",
+              "number": 5,
+              "startedAt": "2026-10-04T12:15:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:36Z",
+              "conclusion": "success",
+              "name": "Install Chromium for release-focused browser gates",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:14Z",
+              "conclusion": "success",
+              "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 2)",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:14Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 8,
+              "startedAt": "2026-10-04T12:26:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:16Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 9,
+              "startedAt": "2026-10-04T12:26:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:16Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 17,
+              "startedAt": "2026-10-04T12:26:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:17Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 18,
+              "startedAt": "2026-10-04T12:26:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:17Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-04T12:26:17Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756007"
+        },
+        {
+          "completedAt": "2026-10-04T12:20:01Z",
+          "conclusion": "success",
+          "databaseId": 111433756009,
+          "name": "Frontend release-focused gates (shard 3)",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:46Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:53Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:05Z",
+              "conclusion": "success",
+              "name": "Install backend deps",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:12Z",
+              "conclusion": "success",
+              "name": "Install frontend deps",
+              "number": 5,
+              "startedAt": "2026-10-04T12:15:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:37Z",
+              "conclusion": "success",
+              "name": "Install Chromium for release-focused browser gates",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:57Z",
+              "conclusion": "success",
+              "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 3)",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:57Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 8,
+              "startedAt": "2026-10-04T12:19:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:59Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 9,
+              "startedAt": "2026-10-04T12:19:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:59Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 17,
+              "startedAt": "2026-10-04T12:19:59Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:59Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 18,
+              "startedAt": "2026-10-04T12:19:59Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:19:59Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-04T12:19:59Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756009"
+        },
+        {
+          "completedAt": "2026-10-04T12:20:56Z",
+          "conclusion": "success",
+          "databaseId": 111433756014,
+          "name": "RLS-enabled cross-tenant tests",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:42Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:55Z",
+              "conclusion": "success",
+              "name": "Initialize containers",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:57Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:55Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:59Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:09Z",
+              "conclusion": "success",
+              "name": "Install bounded PDF processing runtime",
+              "number": 5,
+              "startedAt": "2026-10-04T12:14:59Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:19Z",
+              "conclusion": "success",
+              "name": "Install dependencies",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:23Z",
+              "conclusion": "success",
+              "name": "Create test schema",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:19Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:06Z",
+              "conclusion": "success",
+              "name": "Build",
+              "number": 8,
+              "startedAt": "2026-10-04T12:15:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:11Z",
+              "conclusion": "success",
+              "name": "Run non-production legacy schema convergence",
+              "number": 9,
+              "startedAt": "2026-10-04T12:16:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:12Z",
+              "conclusion": "success",
+              "name": "Enable RLS on app tables",
+              "number": 10,
+              "startedAt": "2026-10-04T12:16:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:16:12Z",
+              "conclusion": "success",
+              "name": "Verify screenshot evidence as the actual restricted runtime",
+              "number": 11,
+              "startedAt": "2026-10-04T12:16:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:53Z",
+              "conclusion": "success",
+              "name": "RLS-enabled cross-tenant and tile-read isolation tests (serial)",
+              "number": 12,
+              "startedAt": "2026-10-04T12:16:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:53Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 13,
+              "startedAt": "2026-10-04T12:20:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:54Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 14,
+              "startedAt": "2026-10-04T12:20:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:54Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 26,
+              "startedAt": "2026-10-04T12:20:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:54Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 27,
+              "startedAt": "2026-10-04T12:20:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:54Z",
+              "conclusion": "success",
+              "name": "Stop containers",
+              "number": 28,
+              "startedAt": "2026-10-04T12:20:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:20:54Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 29,
+              "startedAt": "2026-10-04T12:20:54Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756014"
+        },
+        {
+          "completedAt": "2026-10-04T12:23:40Z",
+          "conclusion": "success",
+          "databaseId": 111433756045,
+          "name": "Frontend release-focused gates (shard 4)",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:44Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:48Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:55Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:06Z",
+              "conclusion": "success",
+              "name": "Install backend deps",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:55Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:14Z",
+              "conclusion": "success",
+              "name": "Install frontend deps",
+              "number": 5,
+              "startedAt": "2026-10-04T12:15:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:45Z",
+              "conclusion": "success",
+              "name": "Install Chromium for release-focused browser gates",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:36Z",
+              "conclusion": "success",
+              "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 4)",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:36Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 8,
+              "startedAt": "2026-10-04T12:23:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:37Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 9,
+              "startedAt": "2026-10-04T12:23:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:37Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 17,
+              "startedAt": "2026-10-04T12:23:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:37Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 18,
+              "startedAt": "2026-10-04T12:23:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:23:38Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-04T12:23:38Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756045"
+        },
+        {
+          "completedAt": "2026-10-04T12:25:33Z",
+          "conclusion": "success",
+          "databaseId": 111433756071,
+          "name": "Frontend release-focused gates (shard 1)",
+          "startedAt": "2026-10-04T12:14:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:14:42Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:14:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:48Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:14:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:14:58Z",
+              "conclusion": "success",
+              "name": "Install backend deps",
+              "number": 4,
+              "startedAt": "2026-10-04T12:14:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:05Z",
+              "conclusion": "success",
+              "name": "Install frontend deps",
+              "number": 5,
+              "startedAt": "2026-10-04T12:14:58Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:27Z",
+              "conclusion": "success",
+              "name": "Install Chromium for release-focused browser gates",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:25:30Z",
+              "conclusion": "success",
+              "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 1)",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:25:30Z",
+              "conclusion": "success",
+              "name": "Collect SOC 2 evidence",
+              "number": 8,
+              "startedAt": "2026-10-04T12:25:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:25:31Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 evidence",
+              "number": 9,
+              "startedAt": "2026-10-04T12:25:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:25:31Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 17,
+              "startedAt": "2026-10-04T12:25:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:25:32Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 18,
+              "startedAt": "2026-10-04T12:25:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:25:32Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-04T12:25:32Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433756071"
+        },
+        {
+          "completedAt": "2026-10-04T12:46:34Z",
+          "conclusion": "success",
+          "databaseId": 111433813722,
+          "name": "AWS rollout safety (PowerShell + Terraform)",
+          "startedAt": "2026-10-04T12:15:02Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:15:05Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:15:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:14Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:15:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:19Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:15:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:20Z",
+              "conclusion": "success",
+              "name": "Run hashicorp/setup-terraform@v4",
+              "number": 4,
+              "startedAt": "2026-10-04T12:15:19Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:21Z",
+              "conclusion": "success",
+              "name": "Configure non-UTC rollout test timezone",
+              "number": 5,
+              "startedAt": "2026-10-04T12:15:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:25Z",
+              "conclusion": "success",
+              "name": "PowerShell JSON date-kind conformance",
+              "number": 6,
+              "startedAt": "2026-10-04T12:15:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:26Z",
+              "conclusion": "success",
+              "name": "Capacity-acceptance tooling-only boundary",
+              "number": 7,
+              "startedAt": "2026-10-04T12:15:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:37Z",
+              "conclusion": "success",
+              "name": "Engineering capacity-acceptance runner tests",
+              "number": 8,
+              "startedAt": "2026-10-04T12:15:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:15:39Z",
+              "conclusion": "success",
+              "name": "Git Bash production Eastern clock",
+              "number": 9,
+              "startedAt": "2026-10-04T12:15:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:32:25Z",
+              "conclusion": "success",
+              "name": "Waf/800 diagnostic preparation lifecycle tests",
+              "number": 10,
+              "startedAt": "2026-10-04T12:15:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:32:43Z",
+              "conclusion": "success",
+              "name": "Fixture-preparation binding validation tests",
+              "number": 11,
+              "startedAt": "2026-10-04T12:32:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:32:46Z",
+              "conclusion": "success",
+              "name": "Credential-rotation contract tests",
+              "number": 12,
+              "startedAt": "2026-10-04T12:32:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:33:37Z",
+              "conclusion": "success",
+              "name": "ClassPilot same-digest runtime-config deployment tests",
+              "number": 13,
+              "startedAt": "2026-10-04T12:32:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:33:45Z",
+              "conclusion": "success",
+              "name": "My Desk runtime-config deployment tests",
+              "number": 14,
+              "startedAt": "2026-10-04T12:33:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:33:55Z",
+              "conclusion": "success",
+              "name": "Wave-1 product runtime-config deployment tests",
+              "number": 15,
+              "startedAt": "2026-10-04T12:33:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:33:56Z",
+              "conclusion": "success",
+              "name": "Terraform formatting",
+              "number": 16,
+              "startedAt": "2026-10-04T12:33:55Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:34:05Z",
+              "conclusion": "success",
+              "name": "Terraform lockfile-only initialization",
+              "number": 17,
+              "startedAt": "2026-10-04T12:33:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:34:10Z",
+              "conclusion": "success",
+              "name": "Terraform validation",
+              "number": 18,
+              "startedAt": "2026-10-04T12:34:05Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:35:02Z",
+              "conclusion": "success",
+              "name": "WAF block/count Terraform tests",
+              "number": 19,
+              "startedAt": "2026-10-04T12:34:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:35:07Z",
+              "conclusion": "success",
+              "name": "State backup and recovery tests",
+              "number": 20,
+              "startedAt": "2026-10-04T12:35:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:35:14Z",
+              "conclusion": "success",
+              "name": "Private load-artifact Windows ACL tests",
+              "number": 21,
+              "startedAt": "2026-10-04T12:35:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:39:17Z",
+              "conclusion": "success",
+              "name": "Rollout owned-process lifecycle tests",
+              "number": 22,
+              "startedAt": "2026-10-04T12:35:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:39:19Z",
+              "conclusion": "success",
+              "name": "Rollout mock failure evidence contract",
+              "number": 23,
+              "startedAt": "2026-10-04T12:39:17Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:45:32Z",
+              "conclusion": "success",
+              "name": "Rollout monitor and rollback tests",
+              "number": 24,
+              "startedAt": "2026-10-04T12:39:19Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:45:32Z",
+              "conclusion": "skipped",
+              "name": "Upload bounded mock rollout failure evidence",
+              "number": 25,
+              "startedAt": "2026-10-04T12:45:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:45:35Z",
+              "conclusion": "success",
+              "name": "Rollout plan-validator tests",
+              "number": 26,
+              "startedAt": "2026-10-04T12:45:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:45:36Z",
+              "conclusion": "success",
+              "name": "Rollout classification tests",
+              "number": 27,
+              "startedAt": "2026-10-04T12:45:35Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:45:41Z",
+              "conclusion": "success",
+              "name": "RDS capacity-gate tests",
+              "number": 28,
+              "startedAt": "2026-10-04T12:45:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:45:49Z",
+              "conclusion": "success",
+              "name": "Waf/800 diagnostic-only contract tests",
+              "number": 29,
+              "startedAt": "2026-10-04T12:45:41Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:11Z",
+              "conclusion": "success",
+              "name": "Waf certification-chain contract tests",
+              "number": 30,
+              "startedAt": "2026-10-04T12:45:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:13Z",
+              "conclusion": "success",
+              "name": "Waf certification preflight contract tests",
+              "number": 31,
+              "startedAt": "2026-10-04T12:46:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:23Z",
+              "conclusion": "success",
+              "name": "Database Insights monitoring lease tests",
+              "number": 32,
+              "startedAt": "2026-10-04T12:46:13Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:25Z",
+              "conclusion": "success",
+              "name": "Waf certification query-identity tests",
+              "number": 33,
+              "startedAt": "2026-10-04T12:46:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:27Z",
+              "conclusion": "success",
+              "name": "Waf certification Database Insights lease binding tests",
+              "number": 34,
+              "startedAt": "2026-10-04T12:46:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:29Z",
+              "conclusion": "success",
+              "name": "Waf certification deterministic PI finalizer tests",
+              "number": 35,
+              "startedAt": "2026-10-04T12:46:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:30Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 69,
+              "startedAt": "2026-10-04T12:46:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:32Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 70,
+              "startedAt": "2026-10-04T12:46:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:46:32Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 71,
+              "startedAt": "2026-10-04T12:46:32Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433813722"
+        },
+        {
+          "completedAt": "2026-10-04T12:21:59Z",
+          "conclusion": "success",
+          "databaseId": 111434967757,
+          "name": "SOC 2 privileged access evidence",
+          "startedAt": "2026-10-04T12:21:51Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:21:53Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:21:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:56Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:21:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:56Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:21:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:56Z",
+              "conclusion": "success",
+              "name": "Generate privileged access evidence",
+              "number": 4,
+              "startedAt": "2026-10-04T12:21:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:57Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 privileged access evidence",
+              "number": 5,
+              "startedAt": "2026-10-04T12:21:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:57Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 9,
+              "startedAt": "2026-10-04T12:21:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:58Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 10,
+              "startedAt": "2026-10-04T12:21:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:21:58Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-04T12:21:58Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111434967757"
+        },
+        {
+          "completedAt": "2026-10-04T12:26:29Z",
+          "conclusion": "success",
+          "databaseId": 111435726459,
+          "name": "SOC 2 AI/privacy evidence",
+          "startedAt": "2026-10-04T12:26:22Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:26:23Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:26:22Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:26Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:26:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:26Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:26:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:27Z",
+              "conclusion": "success",
+              "name": "Generate AI/privacy evidence",
+              "number": 4,
+              "startedAt": "2026-10-04T12:26:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:27Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 AI/privacy evidence",
+              "number": 5,
+              "startedAt": "2026-10-04T12:26:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:27Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 9,
+              "startedAt": "2026-10-04T12:26:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:28Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 10,
+              "startedAt": "2026-10-04T12:26:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:28Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-04T12:26:28Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111435726459"
+        },
+        {
+          "completedAt": "2026-10-04T12:26:35Z",
+          "conclusion": "success",
+          "databaseId": 111435726467,
+          "name": "SOC 2 monitoring evidence",
+          "startedAt": "2026-10-04T12:26:23Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:26:25Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:26:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:28Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:26:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:31Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:26:28Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:31Z",
+              "conclusion": "success",
+              "name": "Generate monitoring evidence",
+              "number": 4,
+              "startedAt": "2026-10-04T12:26:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:33Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 monitoring evidence",
+              "number": 5,
+              "startedAt": "2026-10-04T12:26:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:33Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 9,
+              "startedAt": "2026-10-04T12:26:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:33Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 10,
+              "startedAt": "2026-10-04T12:26:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:26:33Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-04T12:26:33Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111435726467"
+        },
+        {
+          "completedAt": "2026-10-04T12:31:36Z",
+          "conclusion": "success",
+          "databaseId": 111436584366,
+          "name": "SOC 2 tenant isolation evidence",
+          "startedAt": "2026-10-04T12:31:29Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:31:30Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:31:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:33Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:31:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:33Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:31:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Generate tenant isolation evidence",
+              "number": 4,
+              "startedAt": "2026-10-04T12:31:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 tenant isolation evidence",
+              "number": 5,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 9,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 10,
+              "startedAt": "2026-10-04T12:31:35Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-04T12:31:35Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436584366"
+        },
+        {
+          "completedAt": "2026-10-04T12:31:37Z",
+          "conclusion": "success",
+          "databaseId": 111436584368,
+          "name": "SOC 2 incident evidence",
+          "startedAt": "2026-10-04T12:31:28Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:31:30Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:31:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:33Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:31:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:31:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Generate incident response evidence",
+              "number": 4,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 incident evidence",
+              "number": 5,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 9,
+              "startedAt": "2026-10-04T12:31:35Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 10,
+              "startedAt": "2026-10-04T12:31:35Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:35Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-04T12:31:35Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436584368"
+        },
+        {
+          "completedAt": "2026-10-04T12:31:36Z",
+          "conclusion": "success",
+          "databaseId": 111436584369,
+          "name": "SOC 2 deployment evidence",
+          "startedAt": "2026-10-04T12:31:28Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:31:29Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:31:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:32Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:31:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:33Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:31:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:33Z",
+              "conclusion": "success",
+              "name": "Generate shadow deployment evidence",
+              "number": 4,
+              "startedAt": "2026-10-04T12:31:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 deployment evidence",
+              "number": 5,
+              "startedAt": "2026-10-04T12:31:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 9,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 10,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:34Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-04T12:31:34Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436584369"
+        },
+        {
+          "completedAt": "2026-10-04T12:31:49Z",
+          "conclusion": "success",
+          "databaseId": 111436616396,
+          "name": "SOC 2 approval queue",
+          "startedAt": "2026-10-04T12:31:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-04T12:31:42Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-04T12:31:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v7",
+              "number": 2,
+              "startedAt": "2026-10-04T12:31:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:45Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v7",
+              "number": 3,
+              "startedAt": "2026-10-04T12:31:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:46Z",
+              "conclusion": "success",
+              "name": "Generate local deployment evidence for approval pointers",
+              "number": 4,
+              "startedAt": "2026-10-04T12:31:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:46Z",
+              "conclusion": "success",
+              "name": "Generate local incident evidence for approval pointers",
+              "number": 5,
+              "startedAt": "2026-10-04T12:31:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:46Z",
+              "conclusion": "success",
+              "name": "Generate local tenant isolation evidence for approval pointers",
+              "number": 6,
+              "startedAt": "2026-10-04T12:31:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:46Z",
+              "conclusion": "success",
+              "name": "Generate local AI/privacy evidence for approval pointers",
+              "number": 7,
+              "startedAt": "2026-10-04T12:31:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:46Z",
+              "conclusion": "success",
+              "name": "Generate local privileged access evidence for approval pointers",
+              "number": 8,
+              "startedAt": "2026-10-04T12:31:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "success",
+              "name": "Generate local monitoring evidence for approval pointers",
+              "number": 9,
+              "startedAt": "2026-10-04T12:31:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "skipped",
+              "name": "Checkout private SOC 2 evidence repo",
+              "number": 10,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "skipped",
+              "name": "Generate private evidence readiness",
+              "number": 11,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "success",
+              "name": "Locate private evidence readiness",
+              "number": 12,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "success",
+              "name": "Generate SOC 2 approval queue",
+              "number": 13,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "success",
+              "name": "Locate SOC 2 approval queue",
+              "number": 14,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "success",
+              "name": "Build SOC 2 approval issue body",
+              "number": 15,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:47Z",
+              "conclusion": "skipped",
+              "name": "Open or update SOC 2 approval issue",
+              "number": 16,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:48Z",
+              "conclusion": "success",
+              "name": "Upload SOC 2 approval queue",
+              "number": 17,
+              "startedAt": "2026-10-04T12:31:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:48Z",
+              "conclusion": "skipped",
+              "name": "Upload SOC 2 private evidence readiness",
+              "number": 18,
+              "startedAt": "2026-10-04T12:31:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:48Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v7",
+              "number": 35,
+              "startedAt": "2026-10-04T12:31:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:48Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v7",
+              "number": 36,
+              "startedAt": "2026-10-04T12:31:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-04T12:31:48Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 37,
+              "startedAt": "2026-10-04T12:31:48Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111436616396"
+        }
+      ]
+    }
+  },
+  "classPilot": {
+    "baseRefName": "main",
+    "baseRefOid": "55bb531cb5f130cebec9d994daa957e82e87a13b",
+    "headRefName": "codex/release-stabilization-297",
+    "headRefOid": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "isDraft": true,
+    "number": 123,
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T19:04:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697682",
+        "name": "test",
+        "startedAt": "2026-10-02T18:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T01:04:11Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424496",
+        "name": "test",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:56:32Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698145",
+        "name": "chrome-compatibility (120.0.6099.109)",
+        "startedAt": "2026-10-02T18:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:55:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424609",
+        "name": "chrome-compatibility (120.0.6099.109)",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:56:49Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697900",
+        "name": "chrome-compatibility (133.0.6943.141)",
+        "startedAt": "2026-10-02T18:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:54:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424685",
+        "name": "chrome-compatibility (133.0.6943.141)",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:56:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697831",
+        "name": "chrome-compatibility (152.0.7977.82)",
+        "startedAt": "2026-10-02T18:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:56:26Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424815",
+        "name": "chrome-compatibility (152.0.7977.82)",
+        "startedAt": "2026-10-03T00:35:17Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-02T18:57:11Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698242",
+        "name": "chrome-compatibility (stable)",
+        "startedAt": "2026-10-02T18:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-03T00:56:35Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885/job/111086424822",
+        "name": "chrome-compatibility (stable)",
+        "startedAt": "2026-10-03T00:35:18Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      }
+    ],
+    "title": "Prepare consolidated ClassPilot 2.9.7 release candidate",
+    "url": "https://github.com/bzinkan/ClassPilot/pull/123",
+    "expectedReportedChecks": 10,
+    "reportedChecks": 10,
+    "successfulChecks": 10,
+    "allReportedChecksSuccess": true,
+    "workflowsComplete": true,
+    "runs": [
+      {
+        "conclusion": "success",
+        "databaseId": 37048485018,
+        "event": "pull_request",
+        "headSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+        "startedAt": "2026-10-02T18:35:38Z",
+        "status": "completed",
+        "updatedAt": "2026-10-02T19:04:59Z",
+        "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018",
+        "workflowName": "CI"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37048477885,
+        "event": "push",
+        "headSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+        "startedAt": "2026-10-03T00:35:12Z",
+        "status": "completed",
+        "updatedAt": "2026-10-03T01:04:12Z",
+        "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048477885",
+        "workflowName": "CI"
+      }
+    ],
+    "jobs": {
+      "jobs": [
+        {
+          "completedAt": "2026-10-02T19:04:58Z",
+          "conclusion": "success",
+          "databaseId": 110975697682,
+          "name": "test",
+          "startedAt": "2026-10-02T18:35:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-02T18:35:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-02T18:35:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:47Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v4",
+              "number": 3,
+              "startedAt": "2026-10-02T18:35:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:11Z",
+              "conclusion": "success",
+              "name": "Run npm ci",
+              "number": 4,
+              "startedAt": "2026-10-02T18:35:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:37Z",
+              "conclusion": "success",
+              "name": "Run npx playwright install --with-deps chromium",
+              "number": 5,
+              "startedAt": "2026-10-02T18:36:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:54Z",
+              "conclusion": "success",
+              "name": "Run npm run check",
+              "number": 6,
+              "startedAt": "2026-10-02T18:36:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:37:07Z",
+              "conclusion": "success",
+              "name": "Run npm run test",
+              "number": 7,
+              "startedAt": "2026-10-02T18:36:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:53:45Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:chrome",
+              "number": 8,
+              "startedAt": "2026-10-02T18:37:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:53:53Z",
+              "conclusion": "success",
+              "name": "Run npm run build",
+              "number": 9,
+              "startedAt": "2026-10-02T18:53:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:53:53Z",
+              "conclusion": "success",
+              "name": "Run bash extension/package-extension.sh",
+              "number": 10,
+              "startedAt": "2026-10-02T18:53:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T19:04:56Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:package",
+              "number": 11,
+              "startedAt": "2026-10-02T18:53:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T19:04:56Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v4",
+              "number": 21,
+              "startedAt": "2026-10-02T19:04:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T19:04:56Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 22,
+              "startedAt": "2026-10-02T19:04:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T19:04:56Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 23,
+              "startedAt": "2026-10-02T19:04:56Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697682"
+        },
+        {
+          "completedAt": "2026-10-02T18:56:58Z",
+          "conclusion": "success",
+          "databaseId": 110975697831,
+          "name": "chrome-compatibility (152.0.7977.82)",
+          "startedAt": "2026-10-02T18:35:42Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-02T18:35:44Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:46Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-02T18:35:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:50Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v4",
+              "number": 3,
+              "startedAt": "2026-10-02T18:35:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:10Z",
+              "conclusion": "success",
+              "name": "Run npm ci",
+              "number": 4,
+              "startedAt": "2026-10-02T18:35:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:37Z",
+              "conclusion": "success",
+              "name": "Run npx playwright install --with-deps chromium",
+              "number": 5,
+              "startedAt": "2026-10-02T18:36:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:42Z",
+              "conclusion": "success",
+              "name": "Install the exact compatibility browser",
+              "number": 6,
+              "startedAt": "2026-10-02T18:36:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:47Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:chrome:behavior",
+              "number": 7,
+              "startedAt": "2026-10-02T18:36:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:47Z",
+              "conclusion": "success",
+              "name": "Run bash extension/package-extension.sh",
+              "number": 8,
+              "startedAt": "2026-10-02T18:46:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:54Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:package",
+              "number": 9,
+              "startedAt": "2026-10-02T18:46:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:54Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v4",
+              "number": 17,
+              "startedAt": "2026-10-02T18:56:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:55Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 18,
+              "startedAt": "2026-10-02T18:56:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:55Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-02T18:56:55Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697831"
+        },
+        {
+          "completedAt": "2026-10-02T18:56:49Z",
+          "conclusion": "success",
+          "databaseId": 110975697900,
+          "name": "chrome-compatibility (133.0.6943.141)",
+          "startedAt": "2026-10-02T18:35:41Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-02T18:35:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-02T18:35:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:50Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v4",
+              "number": 3,
+              "startedAt": "2026-10-02T18:35:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:14Z",
+              "conclusion": "success",
+              "name": "Run npm ci",
+              "number": 4,
+              "startedAt": "2026-10-02T18:35:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:44Z",
+              "conclusion": "success",
+              "name": "Run npx playwright install --with-deps chromium",
+              "number": 5,
+              "startedAt": "2026-10-02T18:36:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:48Z",
+              "conclusion": "success",
+              "name": "Install the exact compatibility browser",
+              "number": 6,
+              "startedAt": "2026-10-02T18:36:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:48Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:chrome:behavior",
+              "number": 7,
+              "startedAt": "2026-10-02T18:36:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:48Z",
+              "conclusion": "success",
+              "name": "Run bash extension/package-extension.sh",
+              "number": 8,
+              "startedAt": "2026-10-02T18:46:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:47Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:package",
+              "number": 9,
+              "startedAt": "2026-10-02T18:46:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:47Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v4",
+              "number": 17,
+              "startedAt": "2026-10-02T18:56:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:47Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 18,
+              "startedAt": "2026-10-02T18:56:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:47Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-02T18:56:47Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975697900"
+        },
+        {
+          "completedAt": "2026-10-02T18:56:32Z",
+          "conclusion": "success",
+          "databaseId": 110975698145,
+          "name": "chrome-compatibility (120.0.6099.109)",
+          "startedAt": "2026-10-02T18:35:42Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-02T18:35:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:46Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:50Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v4",
+              "number": 3,
+              "startedAt": "2026-10-02T18:35:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:10Z",
+              "conclusion": "success",
+              "name": "Run npm ci",
+              "number": 4,
+              "startedAt": "2026-10-02T18:35:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:34Z",
+              "conclusion": "success",
+              "name": "Run npx playwright install --with-deps chromium",
+              "number": 5,
+              "startedAt": "2026-10-02T18:36:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:37Z",
+              "conclusion": "success",
+              "name": "Install the exact compatibility browser",
+              "number": 6,
+              "startedAt": "2026-10-02T18:36:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:29Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:chrome:behavior",
+              "number": 7,
+              "startedAt": "2026-10-02T18:36:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:29Z",
+              "conclusion": "success",
+              "name": "Run bash extension/package-extension.sh",
+              "number": 8,
+              "startedAt": "2026-10-02T18:46:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:16Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:package",
+              "number": 9,
+              "startedAt": "2026-10-02T18:46:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:16Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v4",
+              "number": 17,
+              "startedAt": "2026-10-02T18:56:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:16Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 18,
+              "startedAt": "2026-10-02T18:56:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:56:16Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-02T18:56:16Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698145"
+        },
+        {
+          "completedAt": "2026-10-02T18:57:11Z",
+          "conclusion": "success",
+          "databaseId": 110975698242,
+          "name": "chrome-compatibility (stable)",
+          "startedAt": "2026-10-02T18:35:42Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-02T18:35:43Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-02T18:35:43Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:35:47Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-node@v4",
+              "number": 3,
+              "startedAt": "2026-10-02T18:35:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:11Z",
+              "conclusion": "success",
+              "name": "Run npm ci",
+              "number": 4,
+              "startedAt": "2026-10-02T18:35:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:36Z",
+              "conclusion": "success",
+              "name": "Run npx playwright install --with-deps chromium",
+              "number": 5,
+              "startedAt": "2026-10-02T18:36:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:36:41Z",
+              "conclusion": "success",
+              "name": "Install the exact compatibility browser",
+              "number": 6,
+              "startedAt": "2026-10-02T18:36:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:50Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:chrome:behavior",
+              "number": 7,
+              "startedAt": "2026-10-02T18:36:41Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:46:50Z",
+              "conclusion": "success",
+              "name": "Run bash extension/package-extension.sh",
+              "number": 8,
+              "startedAt": "2026-10-02T18:46:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:57:03Z",
+              "conclusion": "success",
+              "name": "Run npm run test:extension:package",
+              "number": 9,
+              "startedAt": "2026-10-02T18:46:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:57:03Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-node@v4",
+              "number": 17,
+              "startedAt": "2026-10-02T18:57:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:57:03Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 18,
+              "startedAt": "2026-10-02T18:57:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-02T18:57:03Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 19,
+              "startedAt": "2026-10-02T18:57:03Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/bzinkan/ClassPilot/actions/runs/37048485018/job/110975698242"
+        }
+      ]
+    }
+  },
+  "schoolPilotEquivalence": [
+    {
+      "path": "src",
+      "applicationGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "reviewGitObject": "e49720245dc366e9fd1b81d963a8e818bd5926ed",
+      "oldEd026GitObject": "87754e8794fdcec712f2438e52540e32ad30107b",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": false
+    },
+    {
+      "path": "package.json",
+      "applicationGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "reviewGitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "oldEd026GitObject": "965f6d1e914114482774d8dff9dd497945aec4b0",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "package-lock.json",
+      "applicationGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "reviewGitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "oldEd026GitObject": "5079ee98d0b13431513a8a068621a3675e35c84e",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "Dockerfile",
+      "applicationGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "reviewGitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "oldEd026GitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": ".dockerignore",
+      "applicationGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "reviewGitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "oldEd026GitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "tsconfig.json",
+      "applicationGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "reviewGitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "oldEd026GitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "drizzle.config.ts",
+      "applicationGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "reviewGitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "oldEd026GitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "migrations",
+      "applicationGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "reviewGitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "oldEd026GitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "schoolpilot-app",
+      "applicationGitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "reviewGitObject": "b182c7eb835dc771f4952a42821846acc1875fe8",
+      "oldEd026GitObject": "9b38842e3b6ddf18c1db0bde4b529c400ebfaccb",
+      "finalSourceEqual": false,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [
+        "schoolpilot-app/scripts/passpilot-reports-v2-browser.test.mjs"
+      ],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "infra",
+      "applicationGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "reviewGitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "oldEd026GitObject": "befbf06f994e57c8bf735dab13e1a53bfd5f9ba9",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    },
+    {
+      "path": "docs/soc2",
+      "applicationGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "reviewGitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "oldEd026GitObject": "86876c264e6bbb2d1db8b360a5cbc946f01e4c99",
+      "finalSourceEqual": true,
+      "applicationInputsEqual": true,
+      "reviewedTestOnlyChanges": [],
+      "unchangedSinceEd026": true
+    }
+  ],
+  "classPilotPackageBinding": {
+    "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "packagedSourceAncestorOfHead": true,
+    "extensionTree": {
+      "packaged": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+      "head": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+    },
+    "documentationOnlyDiff": [
+      "docs/CLASS_PILOT_2_9_7_CANDIDATE.md",
+      "docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+    ],
+    "zip": {
+      "path": "C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip",
+      "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+      "bytes": 376052,
+      "rebuildPerformed": false
+    }
+  },
+  "nativeRegressionEvidence": {
+    "status": "completed-success",
+    "jobId": 111433755962,
+    "jobUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37201429355/job/111433755962",
+    "logFile": "db-native-job-111433755962.log",
+    "logSha256": "c437c5ababb55bac23a195e3c92a6964325925ddfd445e796eb746497715e2b9",
+    "logBytes": 2695680,
+    "cases": [
+      {
+        "name": "health sentinel round trip preserves no-CREATE runtime permissions and qualified cleanup",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "restricted missing-table bootstrap still fails without granting CREATE",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "owner bootstrap retains the persistent public sentinel and removes its own row",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "existing sentinel works without CREATE despite the old IF NOT EXISTS rejection",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "round-trip cleanup removes only the probe and old sentinel rows",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "real DML permission failure remains a health failure",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis preserves empty tabs and nested policy arrays through every mutation",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis keeps exact increasing revisions for writes and patches in one current millisecond",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis preserves escaped and unknown root values and removes duplicate replaced keys",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      },
+      {
+        "name": "native Redis retains exact binding, stale-write and signout fences without refreshing stale keys",
+        "successfulNamedOccurrences": 1,
+        "skippedOrTodo": false,
+        "passed": true
+      }
+    ],
+    "accepted": true,
+    "jobSteps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Initialize containers",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Run actions/checkout@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Run actions/setup-node@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install bounded PDF processing runtime",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Create test schema",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install screenshot evidence migration-owned test contract",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install appointment migration-owned test contract",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "DB and ordinary cross-tenant tests (serial)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Checkout released ClassPilot 2.9.3 capture runtime",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Install preview browser dependencies",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Real extension capture to observed and claimed tiles (serial)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload real capture evidence",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Collect SOC 2 evidence",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload SOC 2 evidence",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Checkout released ClassPilot 2.9.3 capture runtime",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Run actions/setup-node@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Post Run actions/checkout@v7",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Stop containers",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "limitations": [
+      "Named native regressions verified from complete job log; historical unrelated suite skips are not counted as these cases passing"
+    ]
+  },
+  "allRequiredRemoteChecksPassed": true,
+  "rawGhEvidence": [
+    {
+      "file": "observation-05-classpilot-pr.raw.json",
+      "sha256": "b1dc102a4376f2d13f88573f536d40c5717a432090a9da77f9699ed21db8598a",
+      "bytes": 3325,
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "123",
+        "--json",
+        "number,title,url,state,isDraft,headRefOid,baseRefOid,headRefName,baseRefName,statusCheckRollup"
+      ]
+    },
+    {
+      "file": "observation-05-schoolpilot-pr.raw.json",
+      "sha256": "7aa8ed0b9ba83e4d7ccc1beee03a6c61311e82b53b0f089a31c535301448678a",
+      "bytes": 6336,
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "603",
+        "--json",
+        "number,title,url,state,isDraft,headRefOid,baseRefOid,headRefName,baseRefName,statusCheckRollup"
+      ]
+    },
+    {
+      "file": "observation-05-schoolPilot-run-37201429355.raw.json",
+      "sha256": "42a648c35a7a287e29d1ca0f5e4cf694be79bf3396ff05bd595586d0260e9f8e",
+      "bytes": 309,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37201429355",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "file": "observation-05-schoolPilot-run-37201429350.raw.json",
+      "sha256": "f2ff40871f24722fde6c913364b99bcad92ca8eecb067fedc87ec9734ec3ad00",
+      "bytes": 313,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37201429350",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "file": "observation-05-schoolPilot-run-37201429395.raw.json",
+      "sha256": "70edbcb5f8b870fd57587547bab6626b2a0aa36bd5eb8ada172147bc019042c8",
+      "bytes": 327,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37201429395",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "file": "observation-05-schoolPilot-run-37201429351.raw.json",
+      "sha256": "0d2593a1c2896f21c6feeb5b0dc340a9fbd7bee5e9177dcb985820ad10b41f4e",
+      "bytes": 315,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37201429351",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "file": "observation-05-schoolPilot-jobs-37201429355.raw.json",
+      "sha256": "7a564f7a62cc5098b782313d594190a35604e24e880ddf7aff94132d0fdc0aa6",
+      "bytes": 48971,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37201429355",
+        "--json",
+        "jobs"
+      ]
+    },
+    {
+      "file": "observation-05-classPilot-run-37048477885.raw.json",
+      "sha256": "2f6bac87b7efce17b7f75fb99c1912b21881102e3aa6571381c8be41f18110ef",
+      "bytes": 300,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37048477885",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "file": "observation-05-classPilot-run-37048485018.raw.json",
+      "sha256": "365bbed639513a543c3e83c1e40bf63899728b0659f11ac01500cee9c9e3802f",
+      "bytes": 308,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37048485018",
+        "--json",
+        "databaseId,headSha,event,status,conclusion,workflowName,url,startedAt,updatedAt"
+      ]
+    },
+    {
+      "file": "observation-05-classPilot-jobs-37048485018.raw.json",
+      "sha256": "803f7ac6b7627e2607c2a34c21301581626559b80aabd60ea9fb78c145898d19",
+      "bytes": 11746,
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37048485018",
+        "--json",
+        "jobs"
+      ]
+    }
+  ],
+  "productionMutations": 0,
+  "localNativeTestsRun": false,
+  "mergePerformed": false,
+  "deployed": false,
+  "capacityAccepted": false,
+  "deploymentGreenLight": false,
+  "limitations": [
+    "Only exact-head reported remote checks and named native test outcomes; unfinished or missing checks remain pending",
+    "ed026 backend image/artifacts and capacity results remain historical after runtime source changes",
+    "Resulting-main checks, exact artifacts, recovery, production state and accepted release policy remain separate requirements"
+  ]
+}

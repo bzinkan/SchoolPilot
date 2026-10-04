@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T02:35:19.597Z",
+  "source": "ba5e7adc140d72ae6a6de78b820cd05892f06543",
+  "repository": "C:/Users/zinka/.codex/worktrees/release-stabilization-297/SchoolPilot",
+  "scope": "Independent read-only Git/object review; no tests, workloads, production reads or mutations",
+  "originalInventoryModified": false,
+  "actualImplementationOmissionsFound": false,
+  "findings": [
+    {
+      "number": 564,
+      "correction": "Replace incorrect no-remaining-commits explanation with original implementation commit ancestry plus retained triggers",
+      "head": {
+        "commit": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+        "ancestorOfReviewSource": false
+      },
+      "implementation": {
+        "commit": "73faefaf545138582dfb7d7853e2426537cf1f14",
+        "ancestorOfReviewSource": true
+      },
+      "securityDependency": {
+        "commit": "ac4675e828cdde8f3b825be191e90e2a442b793c",
+        "ancestorOfReviewSource": true
+      },
+      "originalResidualCommits": [
+        "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+        "73faefaf545138582dfb7d7853e2426537cf1f14",
+        "ac4675e828cdde8f3b825be191e90e2a442b793c"
+      ],
+      "ciTriggers": [
+        {
+          "path": ".github/workflows/ci-build.yml",
+          "reviewBlob": "ee0b45f34168925cb0baa1e1b71b40c68852c6ce",
+          "stackedPullRequestTriggerPresent": true
+        },
+        {
+          "path": ".github/workflows/codeql.yml",
+          "reviewBlob": "062fc5c6a973eec3d73e1102838b1c073a127417",
+          "stackedPullRequestTriggerPresent": true
+        },
+        {
+          "path": ".github/workflows/gitleaks.yml",
+          "reviewBlob": "e5c12d7f07696a0a3fc90d4b9804a67677cd3739",
+          "stackedPullRequestTriggerPresent": true
+        },
+        {
+          "path": ".github/workflows/trivy.yml",
+          "reviewBlob": "bebd7edcc9cda786c03954fb4c9f618c9ff28768",
+          "stackedPullRequestTriggerPresent": true
+        }
+      ]
+    },
+    {
+      "number": 574,
+      "correction": "Use exact-file-content equivalence plus route/lane retention and explicit additive documentation/router adaptation, not a whole-commit patch-equivalence claim",
+      "originalHead": "9250fab903d16b41769d86ec12086dfef21f9a12",
+      "yearBlobs": [
+        {
+          "path": "src/services/passpilotSchoolYear.ts",
+          "originalBlob": "f669755c90d640ca9d99b71b2324953c81378ff5",
+          "reviewBlob": "f669755c90d640ca9d99b71b2324953c81378ff5",
+          "exactFileContentEquivalent": true
+        },
+        {
+          "path": "src/routes/passpilot/schoolYear.ts",
+          "originalBlob": "cfde8bbe84c38aa31c6b2f9f4e7e4dce0c3904fb",
+          "reviewBlob": "cfde8bbe84c38aa31c6b2f9f4e7e4dce0c3904fb",
+          "exactFileContentEquivalent": true
+        },
+        {
+          "path": "src/services/classpilotScheduling.ts",
+          "originalBlob": "841461e46ccff524fa778c70e2810b0b4da2b1a9",
+          "reviewBlob": "841461e46ccff524fa778c70e2810b0b4da2b1a9",
+          "exactFileContentEquivalent": true
+        },
+        {
+          "path": "tests/passpilot-school-year.integration.test.ts",
+          "originalBlob": "dbf0ca03989f8f0a7c83df55228ceb118b6ceb12",
+          "reviewBlob": "dbf0ca03989f8f0a7c83df55228ceb118b6ceb12",
+          "exactFileContentEquivalent": true
+        }
+      ],
+      "routerMountRetained": true,
+      "databaseLaneRetained": true,
+      "adaptations": "Reports route and additional test lanes are additive; school-year/appointments documentation reflects later UI and writer-v2 readiness."
+    },
+    {
+      "number": 586,
+      "correction": "Six original commits are ancestors; kiosk fix is patch-equivalent and its file is exact; canonical class helper and all five calls are exact retained hunks. Current whole test blob has subsequent delta/cleanup race coverage.",
+      "originalHead": "157c47baef24f65176da5bbc694309fe6cdeff03",
+      "originalBase": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+      "commits": [
+        {
+          "commit": "84722fb7310658c086714f66eb1b55080efdb411",
+          "ancestorOfReviewSource": true
+        },
+        {
+          "commit": "dda72dc62d3c576df6be24c2f73e4b6a5fa5b204",
+          "ancestorOfReviewSource": true
+        },
+        {
+          "commit": "d9c45d77cb44d5ef1fa640610b495e4edc01284a",
+          "ancestorOfReviewSource": true
+        },
+        {
+          "commit": "e002c65e9e448400ca73b717a01d14b54c69a522",
+          "ancestorOfReviewSource": true
+        },
+        {
+          "commit": "7f957809e04aedcce7f22c3ca5caba3e93da34ff",
+          "ancestorOfReviewSource": true
+        },
+        {
+          "commit": "444aee1c05e44150695ad612c750dc2fe38b548a",
+          "ancestorOfReviewSource": true
+        },
+        {
+          "commit": "6b0ef9dbe3962512ff19d08dfc9d171a88da52d1",
+          "ancestorOfReviewSource": false
+        },
+        {
+          "commit": "157c47baef24f65176da5bbc694309fe6cdeff03",
+          "ancestorOfReviewSource": false
+        }
+      ],
+      "cherryAgainstReviewSource": [
+        "+ 6b0ef9dbe3962512ff19d08dfc9d171a88da52d1",
+        "- 157c47baef24f65176da5bbc694309fe6cdeff03"
+      ],
+      "fixture": {
+        "originalBlob": "ace7e98f407f9d992cc99fafbd927f6fc75ac491",
+        "reviewBlob": "9d26f6cbdabefa068246bcf950b06605824916eb",
+        "canonicalHelperSha256": "46a5b6cf9aee556a10323e66fc441036eb42bf515f6427235b370b7180515276",
+        "retainedCallCount": 5,
+        "helperAndCallsExact": true,
+        "diagnosticPrefixAdaptedToDeltaCte": true,
+        "subsequentTestChanges": "298 inserted lines; only original line changed is the read-only attribution CTE prefix from inserted to existing_grains."
+      },
+      "kiosk": {
+        "path": "tests/passpilot-kiosk-sessions.test.ts",
+        "originalBlob": "c2d756a5e456451563e6663b732e7cb9b5b0c462",
+        "reviewBlob": "c2d756a5e456451563e6663b732e7cb9b5b0c462",
+        "exact": true
+      }
+    }
+  ],
+  "releaseGreenLight": false
+}

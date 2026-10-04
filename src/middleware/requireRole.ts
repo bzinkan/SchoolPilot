@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { createSingleFlight } from "../util/singleFlight.js";
+import { runWithUsageCapacityOperation } from "../services/usageCapacityDiagnostics.js";
 import {
   identityHasAnyRole,
   loadVerifiedSchoolIdentities,
@@ -14,7 +15,7 @@ const loadRoleIdentitySingleFlight = createSingleFlight<
 
 function loadActiveIdentity(userId: string, schoolId: string) {
   return loadRoleIdentitySingleFlight(`${userId}\u0000${schoolId}`, async () => {
-    const [identity] = await loadVerifiedSchoolIdentities(userId, schoolId);
+    const [identity] = await runWithUsageCapacityOperation("user_identity", () => loadVerifiedSchoolIdentities(userId, schoolId));
     return identity;
   });
 }

@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "compatible-fallback-inactive-controller-public-pure-summary",
+  "commit": "4287d78a785e41a52c530bc6fb9b5562db8a55dd",
+  "parent": "437ee675da09340cbc82a377c40c7d3554bba4c6",
+  "sourceSha256": "2641e2cd3117ad6b7d73ef39b34990752ec5139cb875f281c4430404d5da501e",
+  "testSha256": "e6e1035af255b54f9d94c837d2c62e77c3ef765814fe924a783e88351959d564",
+  "sourceScope": [
+    "scripts/register-compatible-fallback-inactive.mjs",
+    "tests/release297-compatible-fallback-inactive.test.mjs"
+  ],
+  "clean": true,
+  "tests": {
+    "tests": 24,
+    "pass": 24,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "syntaxChecks": 2,
+    "configuredWholeDeadlineMs": 20000,
+    "actualElapsedMs": 866.1576,
+    "exitCode": 0
+  },
+  "staticReview": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-compatible-inactive-independent-static-01/independent-review.json",
+    "sha256": "cfc8e6d2a4d5af4a4a8254d39bef785d0a54a6b97590ac50f5c7d1eabab261f8"
+  },
+  "evidence": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\preparation.json",
+      "sha256": "fad6833f3f5bdaaab3c0e19b564a2921772062de31ad5ec0b7623915e98b7b93",
+      "bytes": 2181
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\run-pure.mjs",
+      "sha256": "dd418747da868d188e0282306bcf09c9227301602b21f984b72291452f6e9783",
+      "bytes": 5708
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\execution.json",
+      "sha256": "3fe0347d93c0f6e477531c698f6681e3d32c5a7e426bb8e0e18ab3cf508e88d1",
+      "bytes": 8067
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\tests.tap",
+      "sha256": "effbf80b7ccfe2782465abf482876127ef8d7a55589225a29d3b1421bbc4ae50",
+      "bytes": 4857
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\process-absence.json",
+      "sha256": "ad9386761b5d1432637a5743c77157c76883e8e4d0d5bf6e4946b73e385e30f7",
+      "bytes": 576
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\commit-verification.json",
+      "sha256": "e628a13a448cd74314085e7a3d3cadc7a684809cbbe590edb3f20fd54c170f91",
+      "bytes": 2138
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\register-compatible-fallback-inactive.mjs.syntax.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-pure-evidence-01\\release297-compatible-fallback-inactive.test.mjs.syntax.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "exactOwnedProcessesAbsent": true,
+  "forcedCleanup": false,
+  "imports": "Node built-ins only; supported scanner/identity/permission files pinned",
+  "ciDiscovery": "Automatically discovered in the ordinary unit lane",
+  "testedBehavior": [
+    "offline Plan preserving all task request fields except exact image and stamped identity",
+    "two inactive registrations only with mocked provider responses",
+    "live-service source and request drift rejection",
+    "exact source/tag/config/registry and independent anchor proof guards",
+    "fresh authorization immediately before mutation after awaited GET",
+    "partial or uncertain outcomes retained without automatic service rollback"
+  ],
+  "nativeActions": 0,
+  "cloudCommands": 0,
+  "cloudMutations": 0,
+  "actualPlanCreated": false,
+  "actualRegistryPublished": false,
+  "actualDefinitionsRegistered": false,
+  "applicationEdits": 0,
+  "schemaEdits": 0,
+  "packageEdits": 0,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "pending": [
+    "separately reviewed publication path with exact-owned graceful scanner custody",
+    "fresh actual fallback and anchor scan/source-tag/registry proofs",
+    "matching actual compatible 128 or 129 source API/worker definition captures with new issuance and Usage off",
+    "concrete hash-bound Plan and separate registration authorization/window",
+    "later supported recovery configuration using actual verified inactive ARNs"
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "forcedCleanup": false,
+  "auditRows": 0,
+  "snapshotManifestSha256": "8cac71893c0f05c2e68bbc856b6a5c6709c0c05c1fd32583c4f8cb4204ee94e9",
+  "startedAt": "2026-10-04T04:11:35.211Z",
+  "staffBindings": 200,
+  "seedFinishedAt": "2026-10-04T04:16:55.245Z",
+  "rlsTableCount": 129,
+  "productionActions": 0,
+  "measurementStarted": false,
+  "seedPassed": true,
+  "migrationLedgerRows": 54,
+  "neutralControls": 1000,
+  "rawSeedDurationMs": 279347,
+  "originalOct3SnapshotUnchanged": true,
+  "records": [
+    {
+      "bytes": 3063,
+      "sha256": "1afa7511613af4e0273404c3244d48b51d41835495d41fa054f2ba21ff38d6dc",
+      "file": "execution-result.json"
+    },
+    {
+      "bytes": 2062,
+      "sha256": "848393dca2b3a35f1f3d905f8c5be210dc426bec4950703203f9821db4554a84",
+      "file": "snapshot-handoff.json"
+    },
+    {
+      "bytes": 1138,
+      "sha256": "42dec2c70a7cb44e7a689fd8d2c1de477a9ec684539afb3a4639f9eff77e293c",
+      "file": "owned-cleanup.json"
+    },
+    {
+      "bytes": 1742,
+      "sha256": "65d1c6ab0e2ef5d2fb28ffdd03fe24c971c0f93db9efed652be77b03df6fb636",
+      "file": "seed-helper-binding.json"
+    },
+    {
+      "bytes": 670,
+      "sha256": "2994698c0060e5be0b1575e1a754a8d58510820020fb95b14938506cc66e88b5",
+      "file": "independent-fixture-counts.json"
+    },
+    {
+      "bytes": 444,
+      "sha256": "be6fd6bd568532b95cf390e0238c2bd4fbaf22e975b6a62548fe7439591c399d",
+      "file": "database-preflight.json"
+    },
+    {
+      "bytes": 878,
+      "sha256": "e899b6fa5296af914b9225faa0226a89f5ff5989dc1fe6289af2385f8a3395a0",
+      "file": "adapter-preparation.json"
+    },
+    {
+      "bytes": 795,
+      "sha256": "15cd4a3c218497b916fbfb5cdd8fea4d755ba7864af7bbe4c3ba04e134abcbdb",
+      "file": "local-seed-window-attempt02.json"
+    },
+    {
+      "bytes": 1141,
+      "sha256": "aa204da66033290ba8dc9871e946c8fac64a3f49f659f43b1b87a5dba65aace4",
+      "file": "restoration-attempt-01\\native-restoration-complete.json"
+    },
+    {
+      "bytes": 13257,
+      "sha256": "9b78e7ff8d2863fc67cf7bd586603bd0153fbde72f711a7658bfbb332949ea8b",
+      "file": "restoration-attempt-01\\native-restoration\\database-validation.json"
+    },
+    {
+      "bytes": 908,
+      "sha256": "5f3e5247f227c2a6bf85e65aa5b992a290ca9279a301fb55d5c6e4bf470235a3",
+      "file": "restoration-attempt-01\\native-restoration\\schema-comparison.json"
+    },
+    {
+      "bytes": 422,
+      "sha256": "4ff8ef33de97083f33d376da147156d0a1a5eb939866ed1cdb853a6a397fed41",
+      "file": "restoration-attempt-01\\native-restoration\\cleanup.json"
+    },
+    {
+      "bytes": 492,
+      "sha256": "bc3bca1cfe6e0c51b6fb0200be3fc78a4ab39fad75a859f199c67a94c3f9e90a",
+      "file": "restoration-attempt-01\\native-restoration\\graceful-stop.json"
+    },
+    {
+      "bytes": 18020,
+      "sha256": "0d4dcc848e3c9dd13a2117e308b79ba68e81e920689a9795102a55bbc3b0ea7b",
+      "file": "restoration-attempt-01\\restoration-abi-canonical-manifest.json"
+    },
+    {
+      "bytes": 2031,
+      "sha256": "5ba6f5c079cdf45f3c2d539ba6de2b614475bb18d43401a5fb37ec97ffff9150",
+      "file": "restoration-attempt-01\\restoration-abi-derivation.json"
+    },
+    {
+      "bytes": 1117,
+      "sha256": "4dc1c927fb0cf270cbbd577ac1f1f5c2de7fd831a92d75e470a1a5737335b521",
+      "file": "restoration-attempt-01\\validation-source-binding.json"
+    }
+  ],
+  "observationsPerSchool": [
+    1000001,
+    1000001
+  ],
+  "seedDurationMs": 320034,
+  "canonicalSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+  "capacityAcceptance": false,
+  "canonicalSeedAndRestoreABI": {
+    "restoreCleanupDerivation": "External exact-owned graceful cleanup only; original schema, migration, role, function, validity/data assertions retained",
+    "unchangedOriginalSixFiles": true
+  },
+  "preparedSchoolLocalDate": "2026-10-04",
+  "applicationImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+  "exactOwnedContainersAndVolumesAbsent": true,
+  "aggregateRows": 1083000,
+  "commandRows": 0,
+  "schemaVersion": 1,
+  "rawInvalidBindings": 0,
+  "snapshotDirectory": "C:/Users/zinka/.codex/artifacts/release297-usage-v2-snapshot-ed026-oct4-02",
+  "earliestControlExpiry": "2026-10-04T11:12:21.264-04:00",
+  "failedOct4Attempt01Preserved": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-v2-seed-execution-ed026-oct4-01\\failed-attempt-public-summary.json",
+    "sha256": "4ae6dc3493f5595377a151fa12efce5bb44eeacf48b9fde061b08a20aaf591cc",
+    "classification": "pre-container CLI discovery failure, not capacity evidence"
+  },
+  "rawObservations": 2000002,
+  "sourceAndCompiledApplicationBytesUnchanged": true,
+  "deploymentAcceptance": false,
+  "deliveryRows": 0,
+  "privateChatThreads": 0,
+  "gracefulExit0NoOOM": true,
+  "applicationEdits": 0,
+  "trimmedNormalizedSchemaSha256": "41da5e237efa6c56ab6869f974b5f00cf6190b0e0e89308e694bb633de7d483a",
+  "restrictedNativeRestorationPassed": true,
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d"
+}

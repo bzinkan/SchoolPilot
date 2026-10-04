@@ -84,18 +84,18 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
     },
     classpilotObservationStatus: async () => ({ status: "observed", expiresInSeconds: 120 }),
     withClasspilotStudentWebSocketBootstrapAuthority: async (
-      _binding: unknown,
+      binding: { freezeSsoPolicy?: boolean },
       prepare: (db: object) => Promise<unknown>,
       deliver: (messages: unknown[], prepared: unknown) => void,
     ) => {
+      assert.equal(binding.freezeSsoPolicy, true, "The real bootstrap adapter must request the pre-claim SSO fence");
       fail("authority_lock");
       const prepared = await prepare({});
       deliver([], prepared);
       fail("transaction_completion");
       return { authorized: true };
     },
-    lockClasspilotSsoPolicyDeliveryAuthority: async () => { fail("bootstrap_projection"); },
-    buildStudentFabState: async () => ({}),
+    buildStudentFabState: async () => { fail("bootstrap_projection"); return {}; },
     getClasspilotSsoPolicyForSchool: async () => ({ policy: {}, revision: 1 }),
     getClasspilotScreenshotAuthorityProjection: async () => ({}),
     serializeClasspilotStudentControlStateForDelivery: () => ({ classroomState: { revision: 1 }, withheld: false }),

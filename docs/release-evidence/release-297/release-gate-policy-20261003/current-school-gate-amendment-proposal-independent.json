@@ -1,0 +1,99 @@
+{
+  "kind": "independent_sole133_upgrade_proposal_static_review",
+  "recordedAtUtc": "2026-10-04T20:54:15.9078439Z",
+  "passed": true,
+  "verdict": "No concrete contradiction found; ready to present for an explicit owner decision.",
+  "proposal": {
+    "status": "NOT_APPROVED",
+    "sha256": "663d65fad99349ee98fee20eae43e6ae2916859db5adff7cb1c7c9971d9513b9",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-sole133-upgrade-decision-proposal-01\\proposal.json"
+  },
+  "evidence": [
+    {
+      "sha256": "38cc45eddc4afd96e98672a1c1c8fafc78510274ab5cf5156faa6382e1cdadb3",
+      "name": "comparison",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-02\\public-summary-02.json"
+    },
+    {
+      "sha256": "d232c9ea2d4ca95ae4f84026d6f014e332d5e8193dca47f47d64ad8a869b4ffd",
+      "name": "canonicalReview",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default-independent-full8-02\\review.json"
+    },
+    {
+      "sha256": "43b38c6f4b472dfec92b59d0c7f253fde9d31e7ca0262c9ac25d467b060f9bd0",
+      "name": "packetReview",
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default-independent-full8-02\\packet-review.json"
+    }
+  ],
+  "verification": {
+    "noHistoricalReceiptOrFailureRelabel": true,
+    "allThreeCandidateAbsolutePasses": 3,
+    "noNewPolicyApprovalInferred": true,
+    "allEightSourceSafetyCustodyAndCleanupVerified": true,
+    "allFiveBaselineLatencyFailuresPreserved": true,
+    "originalCpuControlLimitPreserved": true,
+    "baselineCpuAlreadyExemptUnderOriginalContract": true,
+    "conservativeComparisonUsesAllFiveBaselineAndAllThreeCandidateRuns": true,
+    "originalPairedThresholdsPreserved": true,
+    "measuredProjectionsExactlyMatchVerifiedPacket": true
+  },
+  "proposedExceptions": [
+    "baseline absolute 500ms p95 limit for this one-school133 upgrade decision",
+    "baseline 50ms latency control stability guard replaced by the declared conservative all-runs comparison"
+  ],
+  "measured": {
+    "conservativeCpuRatio": 0.3001995368412862,
+    "conservativeP95Ratio": 0.03296035871779914,
+    "candidateMaxFixedWindowCpuFraction": 0.21154976666666667,
+    "controlCpuRatio": 1.0347848519113432,
+    "candidateMaxP95Ms": 47.6562959999992,
+    "controlP95DifferenceMs": 1791.2547659999982
+  },
+  "originalLimits": {
+    "candidateP95LimitMs": 500,
+    "requireMedianPairedCpuPerSuccessRatioAtMost": 1.05,
+    "requireMedianPairedLatencyIncreaseMsAtMost": 50,
+    "requireConservativeMaxCandidateToMinBaselineP95RatioAtMost": 1.1,
+    "preserveExistingCpuControlLimit": 1.05,
+    "candidateFixedWindowCpuFractionMustBeBelow": 0.6,
+    "requireConservativeMaxCandidateToMinBaselineCpuRatioAtMost": 1.05,
+    "requireEveryPairedCpuPerSuccessRatioAtMost": 1.1,
+    "requireMedianPairedP95RatioAtMost": 1.1,
+    "requireEveryPairedLatencyIncreaseMsAtMost": 100
+  },
+  "documentation": {
+    "scope": "Only the shown edits in the two named documentation files; no full checkpoint review.",
+    "fresh129PairBeforePrivateAdoption": true,
+    "currentCompatiblePairAllowedByOriginalFallbackPath": true,
+    "fallback128LimitedTo128Stage": true,
+    "localLinksExist": true,
+    "files": [
+      {
+        "path": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\docs\\RELEASE_297_UNUSED_ANCHOR128_PREPARATION.md",
+        "sha256": "a278d4fa219b3644bea547eda014a5675d681f62ad2ec6237d088197cf0d6a9e"
+      },
+      {
+        "path": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\docs\\RELEASE_297_COMPATIBLE_FALLBACK_PREPARATION.md",
+        "sha256": "12e684a4f787b88f1b96ec832d68af5e13506828ebdf57947c51339834e1e08c"
+      }
+    ],
+    "newAnchor128RequiresUnusedSourcePair": true,
+    "cloudPublicationRegistrationAndRecoveryAuthorizationRemainSeparate": true
+  },
+  "limitations": [
+    "This is a static review of a proposed owner exception, not approval or an accepted comparison.",
+    "The original strict comparison remains FAILED, with latency-control instability preserved and no host-cause attribution.",
+    "Measured advertisements were version2.9.6; the version2.9.7 package/source proof is separate.",
+    "Fixtures are source-derived default43/53 schemas, not production raw-DDL exports.",
+    "Raw API checkout failure counters are unavailable; complete final EMF/log evidence provides the separately verified indirect check.",
+    "Broader population and Usage acceptance remain false; final CI, published serving/recovery artifacts, fresh production checks and separate operational authorization remain required."
+  ],
+  "ownerPolicyAmendmentApproved": false,
+  "historicalStrictComparisonRemainsFailed": true,
+  "comparisonAccepted": false,
+  "broaderCapacityAccepted": false,
+  "usageCapacityAccepted": false,
+  "productionReadiness": false,
+  "operationalAuthorityGranted": false,
+  "testsBuildsNativeSqlAwsOrCiCallsPerformed": false
+}

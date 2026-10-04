@@ -1,0 +1,312 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:09:16.589Z",
+  "scope": "Remove unused tsc-alias build tool and its exclusively development-only high-advisory dependency chain without changing emitted code.",
+  "source": {
+    "sourceHead": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "node": "v22.18.0",
+    "platform": "win32",
+    "architecture": "x64",
+    "npm": "11.7.0",
+    "typescript": "5.9.3",
+    "compilerEntrypointSha256": "8d5fa5bd883fec0979fc2004f1fe1d99aef40570155d550eadc0b03b55513bf0",
+    "compilerImplementationSha256": "e8f349eabd48486bdb2bf9dc1a00c89d58297270c54b745838879e2859194419",
+    "baselineAliasVersion": "1.8.17",
+    "baselineAliasEntrypointSha256": "d190d0dff28797d9ebeab10370663c16ce317a215c3807790eca5113542ecdff",
+    "archiveTimeSourceHashes": {
+      "package.json": "9dd31abf3f1927a8c086e86787925e3f097d9c54fc4d208d0af985a520fa1be6",
+      "package-lock.json": "a6c5985f819a5c6891736fff7c7993d83dc4170693ed8cab5f716b02132046bf",
+      "tsconfig.json": "8f5e764158b8e02f7f170fa008a09a3fa0431aefe43d87395e0278007cea0032",
+      "CLAUDE.md": "90612e0d037703af34ce0da45db4370b732c3b82e28099ad8cb6ef6a6fd75a4a",
+      "scripts/release/rehearse-local-upgrade.mjs": "a97f1ec9cf6a7d7c11b533ea06116a69e947c2df16bec4e6b21e3e4579b3c61a",
+      "scripts/release/rehearsal-build-steps.mjs": "efea9fc12d8a39d7e779075f8ac7b378c58aaa15e8b24b73d334fbf8c21cd339",
+      "tests/release-build-contract.test.mjs": "49f37cae51f8e123b9147da9495ca4ea53bf45ac5ae6cf4f077aee2a346cf4c4"
+    },
+    "state": "incremental uncommitted package/build-helper changes on verified sourceHead; no runtime application edits",
+    "exactRunTreeRecorded": false
+  },
+  "ciFailure": {
+    "runId": 37087926445,
+    "jobId": 111101943746,
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943746",
+    "failedStep": "Audit dependencies",
+    "laterBuildAndTypes": "Skipped by CI after audit failure; successful local compiler evidence is separate.",
+    "advisory": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+    "advisoryUpdatedAt": "2026-10-02T22:36:34Z",
+    "patchedVersionAtRead": null
+  },
+  "change": {
+    "buildBefore": "tsc && tsc-alias",
+    "buildAfter": "tsc",
+    "removedPackages": 34,
+    "removedPackagesAllDev": true,
+    "addedPackages": 0,
+    "changedRetainedPackageEntries": 0,
+    "productionDependencyVersionsChanged": 0,
+    "rehearsal": "Each target package.json chooses an explicitly allowed compiler-only or compiler-plus-alias sequence. Historical baseline/rollback transforms are retained; missing/extra/unknown build commands fail closed. Existing compile log names retained.",
+    "auditGate": "Unchanged high threshold; no advisory exception, downgrade, suppression or broad audit fix."
+  },
+  "validation": {
+    "oldBuildExit": 0,
+    "newBuildExit": 0,
+    "compilerTypecheck": "Both compiler invocations completed with no source diagnostics.",
+    "emittedFiles": 1583,
+    "javascriptFiles": 527,
+    "declarationFiles": 527,
+    "jsonFiles": 2,
+    "sourceMapFiles": 527,
+    "allEmittedBytesIdentical": true,
+    "targetedBuildContractTests": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    },
+    "helperSyntaxCheck": "passed",
+    "gitDiffCheck": "passed",
+    "auditExitCodes": {
+      "backendBefore": 1,
+      "backendAfter": 0,
+      "backendProductionAfter": 0,
+      "frontend": 0
+    },
+    "reports": {
+      "backend-audit-before.json": {
+        "info": 0,
+        "low": 0,
+        "moderate": 8,
+        "high": 6,
+        "critical": 0,
+        "total": 14
+      },
+      "backend-audit-after.json": {
+        "info": 0,
+        "low": 0,
+        "moderate": 8,
+        "high": 0,
+        "critical": 0,
+        "total": 8
+      },
+      "backend-production-audit-after.json": {
+        "info": 0,
+        "low": 0,
+        "moderate": 4,
+        "high": 0,
+        "critical": 0,
+        "total": 4
+      },
+      "frontend-audit.json": {
+        "info": 0,
+        "low": 1,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 1
+      }
+    }
+  },
+  "commands": {
+    "baselineCompiler": "node node_modules/typescript/bin/tsc --outDir <external-evidence>/build-before",
+    "baselineAlias": "node node_modules/tsc-alias/dist/bin/index.js --outDir <external-evidence>/build-before",
+    "lockRefresh": "npm install --package-lock-only --ignore-scripts --no-audit --no-fund",
+    "candidateCompiler": "npm run build -- --outDir <external-evidence>/build-after",
+    "backendAudit": "npm audit --audit-level=high --json",
+    "backendProductionAudit": "npm audit --omit=dev --audit-level=high --json",
+    "frontendAudit": "npm audit --audit-level=high --json (schoolpilot-app)",
+    "focused": "node --test tests/release-build-contract.test.mjs",
+    "syntax": "node --check scripts/release/rehearse-local-upgrade.mjs"
+  },
+  "remainingFindings": {
+    "backendAll": "8 moderate findings remain: drizzle-kit/esbuild development chain plus Express/body-parser/qs and ip-address. These were not concealed or fixed through unrelated runtime upgrades.",
+    "backendProduction": "4 moderate findings: body-parser,Express,ip-address,qs.",
+    "frontend": "1 low finding in development esbuild; no high/critical."
+  },
+  "limitations": [
+    "Local compiler used unchanged installed TypeScript/dependencies; lock refresh did not prune shared node_modules. Clean CI npm ci must verify the final dependency tree and all required lanes.",
+    "Both builds targeted fresh external directories; shared dist was untouched. Per-file before/after hashes are retained, including source maps.",
+    "No runtime application source, migrations, tenancy policy or production state changed.",
+    "Does not claim capacity acceptance, completed live release checks or deployment approval."
+  ],
+  "sanitation": "User-home paths, database URLs and JWT-shaped values redacted. Original/sanitized/archive hashes retained for every file.",
+  "files": [
+    {
+      "file": "ci-8069560d-backend-failed.log.gz",
+      "status": "failed_high_advisory",
+      "originalBytes": 56316,
+      "archivedBytes": 13118,
+      "originalSha256": "a9bd637224341e6b6ede23b735a681fd7fe5d6eec59224f33f01479c9f79bca2",
+      "sanitizedSha256": "a9bd637224341e6b6ede23b735a681fd7fe5d6eec59224f33f01479c9f79bca2",
+      "archiveSha256": "05c0b104e8e7d1a0dddf214f468aa5f8177ed07b2362c61949fb9eff6b67fed2"
+    },
+    {
+      "file": "braces-advisory.json.gz",
+      "status": "source_advisory",
+      "originalBytes": 2071,
+      "archivedBytes": 940,
+      "originalSha256": "b3961db9d1e95c8d03b9266e0cc6420efa3789f9361ef02d65f8f5997d9fc6b8",
+      "sanitizedSha256": "b3961db9d1e95c8d03b9266e0cc6420efa3789f9361ef02d65f8f5997d9fc6b8",
+      "archiveSha256": "abcf1f50781e168cd7a72e56a558afa22694f7977d36fda947727ec5115e63d0"
+    },
+    {
+      "file": "package-before.json.gz",
+      "status": "recorded",
+      "originalBytes": 5384,
+      "archivedBytes": 1578,
+      "originalSha256": "60bc37eb503035e376e6bc87898d16471309caece03add8ba762f59041ac8e06",
+      "sanitizedSha256": "60bc37eb503035e376e6bc87898d16471309caece03add8ba762f59041ac8e06",
+      "archiveSha256": "364c275762630823dccad754d43d5fbb76aa567145111039d78004597bc80aec"
+    },
+    {
+      "file": "package-lock-before.json.gz",
+      "status": "recorded",
+      "originalBytes": 256573,
+      "archivedBytes": 59133,
+      "originalSha256": "3557da2755ac4e3b0f67558f7b5f306c0ccb470ecf1e8f740f150d846afd9a85",
+      "sanitizedSha256": "3557da2755ac4e3b0f67558f7b5f306c0ccb470ecf1e8f740f150d846afd9a85",
+      "archiveSha256": "677b62baafe0d1f425eab1a734002a594d9909322a427b292128379e12c1f751"
+    },
+    {
+      "file": "backend-audit-before.json.gz",
+      "status": "failed_high_advisory",
+      "originalBytes": 10483,
+      "archivedBytes": 1816,
+      "originalSha256": "9ee3d355bfa20b1a8ac0b608629c85c5904fdeacc9712934699ca36ad635dc60",
+      "sanitizedSha256": "9ee3d355bfa20b1a8ac0b608629c85c5904fdeacc9712934699ca36ad635dc60",
+      "archiveSha256": "fa36b8f403e560e4723410e81ba83032288cff98a17516fd3d5d1bbd88bc6e4d"
+    },
+    {
+      "file": "backend-audit-before.stderr.gz",
+      "status": "recorded",
+      "originalBytes": 0,
+      "archivedBytes": 20,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "frontend-audit.json.gz",
+      "status": "recorded",
+      "originalBytes": 1223,
+      "archivedBytes": 550,
+      "originalSha256": "f512d4f26619ecf39d86ced60e1c6bd3c6b5f836371c13c4e28a96b2f95919e9",
+      "sanitizedSha256": "f512d4f26619ecf39d86ced60e1c6bd3c6b5f836371c13c4e28a96b2f95919e9",
+      "archiveSha256": "11bbbb18e811c0b9078a1d091360968d8b77d664d29c68ded41518b0412b51ad"
+    },
+    {
+      "file": "frontend-audit.stderr.gz",
+      "status": "recorded",
+      "originalBytes": 0,
+      "archivedBytes": 20,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "backend-audit-after.json.gz",
+      "status": "recorded",
+      "originalBytes": 7452,
+      "archivedBytes": 1477,
+      "originalSha256": "335196ddc0a28d08d38a41d958e2c899c3b30a1ac124b52f03103acc5483b295",
+      "sanitizedSha256": "335196ddc0a28d08d38a41d958e2c899c3b30a1ac124b52f03103acc5483b295",
+      "archiveSha256": "d8d2c1ef6d8fc449d222459e7aca905a5c5b3851815400e7436f18975db85a3a"
+    },
+    {
+      "file": "backend-audit-after.stderr.gz",
+      "status": "recorded",
+      "originalBytes": 0,
+      "archivedBytes": 20,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "backend-production-audit-after.json.gz",
+      "status": "recorded",
+      "originalBytes": 5074,
+      "archivedBytes": 1174,
+      "originalSha256": "32b75ad1cee679c80042ce92dd410e00ddb12f53a666ebc17e719b7da113ac61",
+      "sanitizedSha256": "32b75ad1cee679c80042ce92dd410e00ddb12f53a666ebc17e719b7da113ac61",
+      "archiveSha256": "9a7597087cdb343e5d7a9c6dcefc05699911f1669b6a2a3d7dfe8e5d6a07b51f"
+    },
+    {
+      "file": "backend-production-audit-after.stderr.gz",
+      "status": "recorded",
+      "originalBytes": 0,
+      "archivedBytes": 20,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "lock-refresh.log.gz",
+      "status": "recorded",
+      "originalBytes": 20,
+      "archivedBytes": 40,
+      "originalSha256": "9984d9e1f2ad8ca58f126608162e9cd0a7a3a3e34bb5551de1c5bd4816b68940",
+      "sanitizedSha256": "9984d9e1f2ad8ca58f126608162e9cd0a7a3a3e34bb5551de1c5bd4816b68940",
+      "archiveSha256": "e0dfa8247a3d6f92f4c8b2247de4f45181e91244234914a044cdee007c33c56c"
+    },
+    {
+      "file": "dependency-churn.json.gz",
+      "status": "recorded",
+      "originalBytes": 3478,
+      "archivedBytes": 512,
+      "originalSha256": "fb34a976f07c7bbd99602d4952217e973ea367f78a2f497b8ebf90d9dcf6a3e5",
+      "sanitizedSha256": "fb34a976f07c7bbd99602d4952217e973ea367f78a2f497b8ebf90d9dcf6a3e5",
+      "archiveSha256": "3bcfa69b6e7beda144c2eccf6373e90fb49cb9b43dc828e0566d1d8c32881e4e"
+    },
+    {
+      "file": "build-before-tsc.log.gz",
+      "status": "recorded",
+      "originalBytes": 0,
+      "archivedBytes": 20,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "build-before-alias.log.gz",
+      "status": "recorded",
+      "originalBytes": 0,
+      "archivedBytes": 20,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "build-after.log.gz",
+      "status": "recorded",
+      "originalBytes": 136,
+      "archivedBytes": 143,
+      "originalSha256": "a468c2dd15419b35a258457a39426a72e3aee1cd69a0c2b52368dda23310e53f",
+      "sanitizedSha256": "d0609c1a0c0cd21a1b86b3a2c09ebc6951f256f6ffbe369f7da267861d2d6ea4",
+      "archiveSha256": "f8e23ef5018ac545c937f98f50d696ffff092c97d1d9ccbae4320f0fc029dc4a"
+    },
+    {
+      "file": "emitted-equivalence.json.gz",
+      "status": "recorded",
+      "originalBytes": 349634,
+      "archivedBytes": 132727,
+      "originalSha256": "a5937610917dedbcb8749d7babcf71b2a11f459710a5d221e2ca7b906d922b03",
+      "sanitizedSha256": "a5937610917dedbcb8749d7babcf71b2a11f459710a5d221e2ca7b906d922b03",
+      "archiveSha256": "7c5d86ed64b96d4b6c58fc2c7fd41e83883f9159272c0b9a167d72c238973bae"
+    },
+    {
+      "file": "build-identity.json.gz",
+      "status": "recorded",
+      "originalBytes": 1254,
+      "archivedBytes": 731,
+      "originalSha256": "994016b35ea9d0b13cbdc1b726d0d7cbfa0ab1eb09d087debee94b91db06dfd2",
+      "sanitizedSha256": "994016b35ea9d0b13cbdc1b726d0d7cbfa0ab1eb09d087debee94b91db06dfd2",
+      "archiveSha256": "b79367868353945c34a8d00811533e4e999e475930b3324db0212bfad19c273c"
+    },
+    {
+      "file": "build-contract-tests.log.gz",
+      "status": "recorded",
+      "originalBytes": 1036,
+      "archivedBytes": 384,
+      "originalSha256": "85613969baf6188b284c24f1b59fac302df285610a8bc7af778cf0dfc1ed3b0a",
+      "sanitizedSha256": "85613969baf6188b284c24f1b59fac302df285610a8bc7af778cf0dfc1ed3b0a",
+      "archiveSha256": "08540d312bb47f1090d77dfe1dfef69eec6c7c9170c3cd45666347663032a5c3"
+    }
+  ]
+}

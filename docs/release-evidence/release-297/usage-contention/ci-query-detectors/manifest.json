@@ -1,0 +1,433 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T05:27:05.368Z",
+  "status": "ci_query_detector_repairs_native_passed",
+  "sourceHead": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+  "sourceState": "Uncommitted test-only repairs plus independently owned final control/SSO application projection present during source-run native checks; no primary commit or shared dist build performed by archivist.",
+  "scope": "Normalize live-binding test SQL casing/whitespace while comparing the complete canonical query and exact parameter array. Preserve two binding fences, held second-read expiry, and required-fence SQL fault injection. Separately retain root arrival middleware assertion repair requiring all three wrappers in exact order.",
+  "modifiedTest": {
+    "path": "tests/classpilot-private-chat-lifecycle.integration.test.ts",
+    "sha256": "b5421294d9028b1899cb9c0f163ac10b7cd7a05110ea9ccdf797c30e9230a122"
+  },
+  "arrivalTest": {
+    "path": "tests/classpilot-arrival-capacity.test.ts",
+    "sha256": "9fc4e410f62eaf70f962a1ecebbd1af4de615068dfcdb8fd7bad15cab1bbb4aa",
+    "before": {
+      "tests": 5,
+      "pass": 4,
+      "fail": 1,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "after": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    }
+  },
+  "remoteCi": {
+    "source": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+    "restrictedJobId": "111133120173",
+    "status": "Original failed backend and restricted-role job logs preserved unchanged externally; no remote rerun or green claim in this evidence."
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "dir": "release297-private-binding-detectors-native-2c4171ed0592",
+      "execution": {
+        "ownerExit": 0,
+        "restrictedExit": 0,
+        "source": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+        "worktreeDirty": true,
+        "container": "schoolpilot-private-binding-detectors-2c4171ed0592",
+        "database": "private_binding_2c4171ed0592",
+        "schemaSource": "Combined07 exact post-convergence schema-only dump",
+        "schemaRawSha256": "3e38549c92f495d5e62501d55522767d8f928b54077170ea78deef42a0fb0e50",
+        "productionMutations": 0,
+        "sourceExecution": "tsx",
+        "sharedDistRebuilt": false
+      },
+      "sourceFiles": [
+        {
+          "file": "src/services/storage.ts",
+          "sha256": "220f4140f0841f3f0c7f34419923b3f2d3cd328df37f6190778082a60497b1f6"
+        },
+        {
+          "file": "src/routes/classpilot/devices.ts",
+          "sha256": "3fe75686a1ce10d723782f994ce1138e46291dd8fd7641cb960e7a04dedcc17c"
+        },
+        {
+          "file": "tests/classpilot-private-chat-lifecycle.integration.test.ts",
+          "sha256": "b5421294d9028b1899cb9c0f163ac10b7cd7a05110ea9ccdf797c30e9230a122"
+        },
+        {
+          "file": "scripts/run-test-lane.mjs",
+          "sha256": "8d320d61f1ac5dc1eb47bcef8e84392335177abddaad5c1c0e8aa3665324f202"
+        }
+      ],
+      "sourceChanges": [
+        "scripts/run-test-lane.mjs"
+      ],
+      "owner": {
+        "tests": 68,
+        "pass": 68,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "restricted": {
+        "tests": 68,
+        "pass": 68,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "explicitRole": false,
+      "cleanupLogged": true,
+      "posture": "Restricted connection used the created NOSUPERUSER/NOBYPASSRLS role, but runner omitted RLS_TEST_ROLE so its explicit role assertion and log label were absent. This attempt is not used as final restricted-role proof."
+    },
+    {
+      "attempt": 2,
+      "dir": "release297-private-binding-detectors-native-79e7284f381b",
+      "execution": {
+        "ownerExit": 0,
+        "restrictedExit": 0,
+        "source": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+        "worktreeDirty": true,
+        "container": "schoolpilot-private-binding-detectors-79e7284f381b",
+        "database": "private_binding_79e7284f381b",
+        "schemaSource": "Combined07 exact post-convergence schema-only dump",
+        "schemaRawSha256": "3e38549c92f495d5e62501d55522767d8f928b54077170ea78deef42a0fb0e50",
+        "productionMutations": 0,
+        "sourceExecution": "tsx",
+        "sharedDistRebuilt": false
+      },
+      "sourceFiles": [
+        {
+          "file": "src/services/storage.ts",
+          "sha256": "220f4140f0841f3f0c7f34419923b3f2d3cd328df37f6190778082a60497b1f6"
+        },
+        {
+          "file": "src/routes/classpilot/devices.ts",
+          "sha256": "3fe75686a1ce10d723782f994ce1138e46291dd8fd7641cb960e7a04dedcc17c"
+        },
+        {
+          "file": "tests/classpilot-private-chat-lifecycle.integration.test.ts",
+          "sha256": "b5421294d9028b1899cb9c0f163ac10b7cd7a05110ea9ccdf797c30e9230a122"
+        },
+        {
+          "file": "scripts/run-test-lane.mjs",
+          "sha256": "3b872b02ac21c0f1307904c8014d8c23a24a1f0511273216efe9c20a3cf098c0"
+        }
+      ],
+      "sourceChanges": [],
+      "owner": {
+        "tests": 68,
+        "pass": 68,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "restricted": {
+        "tests": 68,
+        "pass": 68,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "explicitRole": true,
+      "cleanupLogged": true,
+      "posture": "Restricted fixture explicitly asserted rolsuper=false and rolbypassrls=false before all68cases."
+    }
+  ],
+  "testSearch": "Read-only search of tests found no further literal live-binding SELECT detectors affected by uppercase/newline formatting; unchanged fixtures and source-contract checks retained.",
+  "productionMutations": 0,
+  "limitations": [
+    "Native source execution used a separate owned local PostgreSQL fixture for each attempt, based on the exact combined07 schema-only dump; no production data or database write.",
+    "Owner and restricted fixtures are distinct role configurations, not production admission proof. No capacity, deployment or activation approval is implied.",
+    "Final full combined type/build/CI checks remain separate; readiness reported shared dist-dependent type mismatches pending its rebuild."
+  ],
+  "sanitation": "UTF8/LF plus workstation-path, URL/token/email/UUID/SQL-password redaction. Original raw files, failed CI/arrival attempts and first native role-marker omission retained.",
+  "files": [
+    {
+      "file": "native-attempt-01/cleanup.log.gz",
+      "rawBytes": 52,
+      "rawSha256": "49f2d2d554aea1a153ccaa153783ebab5b2d9cc7327d236493933cffede365ce",
+      "sanitizedSha256": "3c82d9941485c7104a0f7c3aadfa5d493bc3343a04a7427cc0bd16f5f96b458d",
+      "gzipSha256": "c84e175ddeb50abdf4486d84a7602a8a2a934b4440ff4c335b6075f0afcb9742",
+      "gzipBytes": 71
+    },
+    {
+      "file": "native-attempt-01/container-create.log.gz",
+      "rawBytes": 66,
+      "rawSha256": "3cc76af9935738102e8e57d53abab433a0237d16a635e5287c2cb7144bd90e14",
+      "sanitizedSha256": "79bb4e277ed74f6fe33b470a7fdbebe5ced139d4627055bd210dd65f54780c91",
+      "gzipSha256": "40c963edf335a6961a15280f563d3747040a88e68d2c26d75bce9117f2bd71bd",
+      "gzipBytes": 72
+    },
+    {
+      "file": "native-attempt-01/execution.json.gz",
+      "rawBytes": 500,
+      "rawSha256": "29e54d38b071e4838c85ba0c308e502ac97336f8a9cb66e28aa90fe6dd060cae",
+      "sanitizedSha256": "ab0de040039f33f534a9c627856c9dde67343d83cd73a8c402e15753f849e373",
+      "gzipSha256": "5ee69ef9cec2337fb783571f21b831f1088cdbba63f2d5c52260749c413b6107",
+      "gzipBytes": 327
+    },
+    {
+      "file": "native-attempt-01/owner.log.gz",
+      "rawBytes": 19621,
+      "rawSha256": "51c91def9b4a25ebd0f2702a1f0b88bafa34b6e3d2ba7d7bf44a2aea8a141946",
+      "sanitizedSha256": "5858562143a325bffac88f6b66c6d670a3fc4ece78131064cbc2728fa28d9cc8",
+      "gzipSha256": "2865fdf9aff42ebaeef084881c486ab5b863ba5cded8ddb3338230be1783dddc",
+      "gzipBytes": 3721
+    },
+    {
+      "file": "native-attempt-01/restore.log.gz",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed",
+      "gzipBytes": 232
+    },
+    {
+      "file": "native-attempt-01/restricted-role.log.gz",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128",
+      "gzipBytes": 38
+    },
+    {
+      "file": "native-attempt-01/restricted.log.gz",
+      "rawBytes": 19640,
+      "rawSha256": "ae8cf0d15fa518afe521c2107c739dda2bd4649bfd1d390ba088c5eddc6de930",
+      "sanitizedSha256": "e16b41ea667fbadb94fcf02f92ef27298cbec9e7beb11ed71cc9e2fdddc9ae7e",
+      "gzipSha256": "b70a9f3683236a0d6d90c8d766ec1f9ec01c1494adff48a41b930da31a7fed1f",
+      "gzipBytes": 3723
+    },
+    {
+      "file": "native-attempt-01/schema.sql.gz",
+      "rawBytes": 575957,
+      "rawSha256": "3e38549c92f495d5e62501d55522767d8f928b54077170ea78deef42a0fb0e50",
+      "sanitizedSha256": "3e38549c92f495d5e62501d55522767d8f928b54077170ea78deef42a0fb0e50",
+      "gzipSha256": "4232b65b68af4bcab231b0e054a50622fbc8fb979493da37c144e5e15b6c2193",
+      "gzipBytes": 55728
+    },
+    {
+      "file": "native-attempt-01/source-after.json.gz",
+      "rawBytes": 584,
+      "rawSha256": "16af6f29716dc9823eff864c8e3224b511141004db5a79d574ff397f4cbb2a56",
+      "sanitizedSha256": "9e6ae9dd366b3920a4a8b2ee9d4b6b063ad8994e7691ee3def6bccf312500c5a",
+      "gzipSha256": "dae202ea94b09b0019996ac60b692e21c1e12001402f6cf308cd0869a68c38f5",
+      "gzipBytes": 332
+    },
+    {
+      "file": "native-attempt-01/source-before.json.gz",
+      "rawBytes": 584,
+      "rawSha256": "f8cbd282579e04e1cbe7f675a0818fd23b30ca56cb6b780579378806677db9e4",
+      "sanitizedSha256": "8aea4920e0db9591c274cd1ea6f71256bb46db6b88fbb05bc51576f3aceb6e66",
+      "gzipSha256": "70ac676cf772ebdd53d11387cfe242834ff4582ccbc7bc3633a220cbde722b1f",
+      "gzipBytes": 334
+    },
+    {
+      "file": "native-attempt-02/cleanup.log.gz",
+      "rawBytes": 52,
+      "rawSha256": "fa033db1cb775924511a94129344731729776ab3c0c57d7ac5302eeab039b28e",
+      "sanitizedSha256": "e0b7fad0c47de6f84b4bb61f86c230c65cfb3f225501ff3e24597aeb9c9d7558",
+      "gzipSha256": "e084f9d3fa8f8005397e90f0d58f4582a0a80ac277575504909c698fe06acf7b",
+      "gzipBytes": 71
+    },
+    {
+      "file": "native-attempt-02/container-create.log.gz",
+      "rawBytes": 66,
+      "rawSha256": "47434a83cf0203d58ab311eee7c281c3fc626ef3a94cd25a0c30d3aab0e2c5d3",
+      "sanitizedSha256": "cccfb23ac866952a43dcf24e2b66c5190478aaa67073f03f2355f32e4114a9d3",
+      "gzipSha256": "c62da92f39b7b5db5da86663cded8edf10e9d411041568ffafc0d80786f284cc",
+      "gzipBytes": 72
+    },
+    {
+      "file": "native-attempt-02/execution.json.gz",
+      "rawBytes": 500,
+      "rawSha256": "4517d35e262753b7b3fbfb0d859be1e7c559e6141b28ef1d3d6276c01867c1ef",
+      "sanitizedSha256": "0adba263ddf4f805475e569e9e9bdc9e683445bf23fd2a15fcc7d394edf7c254",
+      "gzipSha256": "c0146dd93dd46c64edfc3a771a6bf15f790290f85fa2bdb7e5b2fcfc44eee56f",
+      "gzipBytes": 328
+    },
+    {
+      "file": "native-attempt-02/owner.log.gz",
+      "rawBytes": 27387,
+      "rawSha256": "2f7fd06756c61c099e91b210e81009e093e423419566a6494908b2c786e92a82",
+      "sanitizedSha256": "1eb1a94c5da04e713a467e1cd641292413fc9d2f4864dfbfbb0157cdf095a520",
+      "gzipSha256": "e72c26bcc17fe38cafceecaa490bd06a90a606cb44523716c356fd8b7fc9173e",
+      "gzipBytes": 5192
+    },
+    {
+      "file": "native-attempt-02/restore.log.gz",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed",
+      "gzipBytes": 232
+    },
+    {
+      "file": "native-attempt-02/restricted-role.log.gz",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128",
+      "gzipBytes": 38
+    },
+    {
+      "file": "native-attempt-02/restricted.log.gz",
+      "rawBytes": 19610,
+      "rawSha256": "631752b4e159bc70ce93364035d9d57a5ce90409b9346b88f828b7a54964e919",
+      "sanitizedSha256": "277bbe210f045a1315b950199f842d7dc63129459c8aafbfcbc5514bae671893",
+      "gzipSha256": "2cd4027baaa237bd9aa531b900981ed677f6ef964fae9ff9f12805579697ec3a",
+      "gzipBytes": 3710
+    },
+    {
+      "file": "native-attempt-02/schema.sql.gz",
+      "rawBytes": 575957,
+      "rawSha256": "3e38549c92f495d5e62501d55522767d8f928b54077170ea78deef42a0fb0e50",
+      "sanitizedSha256": "3e38549c92f495d5e62501d55522767d8f928b54077170ea78deef42a0fb0e50",
+      "gzipSha256": "4232b65b68af4bcab231b0e054a50622fbc8fb979493da37c144e5e15b6c2193",
+      "gzipBytes": 55728
+    },
+    {
+      "file": "native-attempt-02/source-after.json.gz",
+      "rawBytes": 584,
+      "rawSha256": "16af6f29716dc9823eff864c8e3224b511141004db5a79d574ff397f4cbb2a56",
+      "sanitizedSha256": "9e6ae9dd366b3920a4a8b2ee9d4b6b063ad8994e7691ee3def6bccf312500c5a",
+      "gzipSha256": "dae202ea94b09b0019996ac60b692e21c1e12001402f6cf308cd0869a68c38f5",
+      "gzipBytes": 332
+    },
+    {
+      "file": "native-attempt-02/source-before.json.gz",
+      "rawBytes": 584,
+      "rawSha256": "16af6f29716dc9823eff864c8e3224b511141004db5a79d574ff397f4cbb2a56",
+      "sanitizedSha256": "9e6ae9dd366b3920a4a8b2ee9d4b6b063ad8994e7691ee3def6bccf312500c5a",
+      "gzipSha256": "dae202ea94b09b0019996ac60b692e21c1e12001402f6cf308cd0869a68c38f5",
+      "gzipBytes": 332
+    },
+    {
+      "file": "arrival/after.json.gz",
+      "rawBytes": 157,
+      "rawSha256": "97ec3051d0e7d3ef0ab052f955d5493afb55e6aa24ce45c009aab1dbc40f5276",
+      "sanitizedSha256": "22d7338ab34560805ac008d1d9d094f841cde232270c83d19bdba11b26383d77",
+      "gzipSha256": "fb078d6dc54f9f8228a1a385725230f01ce03e05eb3bbfab3c3509ad59b1a0aa",
+      "gzipBytes": 148
+    },
+    {
+      "file": "arrival/arrival-after.log.gz",
+      "rawBytes": 1576,
+      "rawSha256": "524da45cbf46c59388bcc4ce74fdecbfc56771badde56aea4bfc572f24924110",
+      "sanitizedSha256": "5a36437446f49e845118a46febda65014e3bd1a8ddac1afbb58bb67b77c8e584",
+      "gzipSha256": "eddb841ef68af3d60eacb9b248028bd01e62d3c572f73e107c43bf683a70d388",
+      "gzipBytes": 505
+    },
+    {
+      "file": "arrival/arrival-before.log.gz",
+      "rawBytes": 81445,
+      "rawSha256": "b0a63794d1ce7a7becaa28a5c2d2b56830155f42704152c70c5bf35c9c57130e",
+      "sanitizedSha256": "3450ada14247e9dc6748acbb4897f64bb4e39448c08f2a30c7792ea74659e764",
+      "gzipSha256": "f3144ed8b72f34d68b674e28e98a9d34daad7044efd9f7a3d3650ca1f19d5165",
+      "gzipBytes": 14657
+    },
+    {
+      "file": "arrival/before.json.gz",
+      "rawBytes": 126,
+      "rawSha256": "b9802c810e0544d22dfb328f7405ad96d46096897dda03a6aa7ebd5b22bee110",
+      "sanitizedSha256": "8adf7b75e834301cc189f96b0baf59428b6b059de31318792525489372716a2c",
+      "gzipSha256": "f267950f76cb0b1a11e692f2fca369dc2f18110434e16b6f0c261324d444c83b",
+      "gzipBytes": 126
+    },
+    {
+      "file": "arrival/entitlement-after-02.log.gz",
+      "rawBytes": 16,
+      "rawSha256": "b4610200300fd28738c70a3ee38d133fb65d916dabbc55044a856780ee2676f1",
+      "sanitizedSha256": "7cb03ab03edf5190a8aa546c78285344395fad3d42d4011cd224f934aef96b3f",
+      "gzipSha256": "1a5e8354766c5448f1223d36639705c8b9fb7d2a1079048f181ab0f67fef0874",
+      "gzipBytes": 35
+    },
+    {
+      "file": "arrival/entitlement-after.json.gz",
+      "rawBytes": 115,
+      "rawSha256": "4adff899df65305fd02f5980d382d5fe798f7488363a72ca700d533e34738e1f",
+      "sanitizedSha256": "a45d3b06e6dac6084f0f741454f525e5f2fd63ff64b3dfcfa772e2b8e43f1c8c",
+      "gzipSha256": "94322d732a9bdf308ae34085e3444fc8da315d96c5ee35a0a6dbfb4e5e78eb52",
+      "gzipBytes": 121
+    },
+    {
+      "file": "arrival/entitlement-after.log.gz",
+      "rawBytes": 1199,
+      "rawSha256": "ea46c165e9157429fc53d2276e26a8bad292bfb6e24340b54821cc9f5ef8d693",
+      "sanitizedSha256": "024e8ea3c784e765da0f14417f6fe712467f706eb3fdc3cdf2517d7ad88d879b",
+      "gzipSha256": "be9beaa7637e94c26bc9d6167eafb577e1cfd312425255edec2eb828d763c40d",
+      "gzipBytes": 588
+    },
+    {
+      "file": "arrival/entitlement-before.json.gz",
+      "rawBytes": 23,
+      "rawSha256": "c34bc644b4dfc96082e294ccb49ac40bdf34a3c659c956ffef43981ed30b2234",
+      "sanitizedSha256": "01614b0e7bf86220a2287c6fd76f9b3a5c06913c2e0762c9eb3958c397f0bbee",
+      "gzipSha256": "d0e68350f4a240d7d996a7f2a0457323658d64e585124e340ec087b1562f335a",
+      "gzipBytes": 40
+    },
+    {
+      "file": "arrival/entitlement-before.log.gz",
+      "rawBytes": 1199,
+      "rawSha256": "dffd43b036d29f0ec6999666adc768e65ad4b5db5d7bfba123c175c75d8f2af1",
+      "sanitizedSha256": "ab1d90e3627dda85064eb7eb249b1dbef78a01d5d7a782a342d0284e5685993c",
+      "gzipSha256": "99e006ca2760cb590c8765bb5a8343905798fabb7cc713a97951d45cdd7624a8",
+      "gzipBytes": 588
+    },
+    {
+      "file": "ci-backend.log.gz",
+      "rawBytes": 1296370,
+      "rawSha256": "ceb595412c317487e3515d444f526766560e84868113247fbee744b8fb72995c",
+      "sanitizedSha256": "2fb0ab49a0d036822a1f0a8eaf9a8577b34e87cf5d3d6dabdf0a0cbee0bfac46",
+      "gzipSha256": "c2b8872cff02d18316311cf3cfad0a4ae675c486af62f07ef9727c8678a95ecb",
+      "gzipBytes": 233997
+    },
+    {
+      "file": "ci-restricted-role.log.gz",
+      "rawBytes": 452663,
+      "rawSha256": "09865bce5db88753c3f15c684aa2b07b066e9b5eb3233e58223bbce334a12dc6",
+      "sanitizedSha256": "43767855094465e5b95f14a8d7cc04aeacf682798722d59857a457dc13845adb",
+      "gzipSha256": "228088da64d36c55cb857facf949abccf2001faed3aeb4d4193050348c7e5b35",
+      "gzipBytes": 79040
+    },
+    {
+      "file": "native-attempt-01/runner.ps1.gz",
+      "rawBytes": 5493,
+      "rawSha256": "a780dfaf7896b04d33eed6fb4b1d18b3311060dca260f521b4dbd216a556db1a",
+      "sanitizedSha256": "aa649dc1102d8df72dbc680c95c99d56aace7011a6e410f8fa6c961ee96fbbab",
+      "gzipSha256": "59027c3cef67a4067d34ab85dce0e70f867a424fa75a74ee4ec649c2eb1e3083",
+      "gzipBytes": 2134
+    },
+    {
+      "file": "native-attempt-02/runner.ps1.gz",
+      "rawBytes": 5518,
+      "rawSha256": "35ec5964b6d271236c628ca47aaca2cb6c635d0ff13ee9b0e34197622f53cb33",
+      "sanitizedSha256": "131ac38bee68a4b94693482458968a4f1f4d63e706c06b168fbb00ca41e3cc39",
+      "gzipSha256": "70f250adf677e0bf0a644d27f1f1c561882ab6f09b7d399fa0bd30428f00f370",
+      "gzipBytes": 2143
+    },
+    {
+      "file": "private-binding-detectors.patch.gz",
+      "rawBytes": 9854,
+      "rawSha256": "03ace8de0d7cb5093cfe1d2afaea016b592f85cd59dd2c2aed46859f733f17ce",
+      "sanitizedSha256": "03ace8de0d7cb5093cfe1d2afaea016b592f85cd59dd2c2aed46859f733f17ce",
+      "gzipSha256": "d69d9b77164a0da58f69efe33dcbb4cf107fc87f4c4f2b861183805cae048d3a",
+      "gzipBytes": 2946
+    }
+  ]
+}

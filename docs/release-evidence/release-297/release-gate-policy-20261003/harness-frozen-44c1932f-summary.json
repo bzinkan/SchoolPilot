@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T02:38:17.032Z",
+  "purpose": "Focused checks on frozen v2 harness, not capacity acceptance",
+  "rootIntegratedSource": "44c1932f4a5ac5565f00a1e915e8a6fffc480b8c",
+  "harnessOwnerSource": "f8af7b0be7055bd2c2f8bb7d10ad4481066354af",
+  "harnessTreeOid": "c8da7326bf3398552a194581051281cc37136362",
+  "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "runtimeAndFrontendInputsIdentical": true,
+  "rootHarnessMatchesOwner": true,
+  "focusedTests": {
+    "tests": 37,
+    "passed": 37,
+    "failed": 0,
+    "skipped": 0
+  },
+  "rawLog": {
+    "name": "harness-44c1932f-37.log",
+    "bytes": 9130,
+    "sha256": "b2da367ff9bb9b4159d8f38cbeb9097b1fbab0d361ca7093ba0d98af29664985"
+  },
+  "priorCheck": {
+    "path": "harness-final-6e0c8aa9-summary.json",
+    "sha256": "f21fbbe1a9bddb60bb2d8c625ff6bc45b2784a2c8cd4731c2a258a753641b28e"
+  },
+  "finalGuard": "Initial offering wake over the existing100ms budget fails even if all later relative offers succeed",
+  "measuredAcceptance": "pending",
+  "productionReadiness": false,
+  "storeSubmissionHeld": true
+}

@@ -1500,6 +1500,10 @@ TEMP_FILES=(
   .rls-standard-api-registered.json
   .rls-emergency-api-registered.json
   .rls-worker-registered.json
+  .private-chat-api-source.json
+  .private-chat-worker-source.json
+  .private-chat-api-candidate.json
+  .private-chat-worker-candidate.json
   .ecs-network.json
   .tile-auth-plan-task.json
   .tile-auth-plan-result.json
@@ -3862,6 +3866,43 @@ preflight_rls_table_enablement_sources() {
     return 1
   fi
   success "Reviewed RLS allowlist delta: +${ENABLE_RLS_TABLE} (master remains true; no existing table changes)"
+}
+
+preflight_private_chat_release_floor() {
+  if ! describe_exact_classpilot_candidate_task_definition "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" .private-chat-api-source.json ||
+      ! describe_exact_classpilot_candidate_task_definition "$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" .private-chat-worker-source.json; then
+    error "Could not inspect the exact source pair for retained private chat enforcement."
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/enforce-private-chat-release-floor.mjs" \
+      --repository-root "$PROJECT_ROOT" --app-sha "$LOCAL_SHA" \
+      --expected-repository "$ECR_REPO" --region "$REGION" \
+      --api-source .private-chat-api-source.json --worker-source .private-chat-worker-source.json \
+      --enable-rls-table "${ENABLE_RLS_TABLE:-none}" > /dev/null; then
+    error "Candidate source violates the retained private chat writer/admission floor; capability off does not permit a legacy image."
+    return 1
+  fi
+}
+
+verify_private_chat_release_floor_candidates() {
+  local api_candidate_arn="$API_ROLLOUT_TASK_DEF"
+  if [[ "$api_candidate_arn" != arn:* ]]; then
+    api_candidate_arn="arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${api_candidate_arn}"
+  fi
+  if ! describe_exact_classpilot_candidate_task_definition "$api_candidate_arn" .private-chat-api-candidate.json ||
+      ! describe_exact_classpilot_candidate_task_definition "$WORKER_CANDIDATE_TASK_DEF" .private-chat-worker-candidate.json; then
+    error "Could not inspect private chat candidate admission."
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/enforce-private-chat-release-floor.mjs" \
+      --repository-root "$PROJECT_ROOT" --app-sha "$LOCAL_SHA" \
+      --expected-repository "$ECR_REPO" --region "$REGION" \
+      --api-source .private-chat-api-source.json --worker-source .private-chat-worker-source.json \
+      --api-candidate .private-chat-api-candidate.json --worker-candidate .private-chat-worker-candidate.json \
+      --enable-rls-table "${ENABLE_RLS_TABLE:-none}" > /dev/null; then
+    error "Registered candidates violate the retained private chat writer/admission floor."
+    return 1
+  fi
 }
 
 preflight_microsoft_sign_in_secret() {
@@ -6249,6 +6290,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     CAPACITY_ACCEPTANCE_NETWORK_SHA256="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
   fi
 
+  resolve_classpilot_candidate_source_task_definitions
+  preflight_private_chat_release_floor
   if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
     production_backend_capacity_preflight "before rehearsal receipt consumption"
     if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
@@ -6265,7 +6308,6 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     local_rehearsal_digest="$DIGEST"
     local_rehearsal_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
   else
-  resolve_classpilot_candidate_source_task_definitions
   preflight_rls_table_enablement_sources
   preflight_microsoft_sign_in_secret
 
@@ -6286,22 +6328,33 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   else
     # Legacy build path remains until two successful shadow deployments prove
     # the immutable-image workflow. It can then be removed in a separate PR.
+    LEGACY_IMAGE_EVIDENCE=$(node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" init "$LOCAL_SHA")
     info "Building Docker image..."
-    docker build -t "${NAME}-api:${IMAGE_TAG}" .
+    docker build --label "org.opencontainers.image.revision=${LOCAL_SHA}" \
+      --iidfile "$LEGACY_IMAGE_EVIDENCE/build-image-id.txt" -t "${NAME}-api:${IMAGE_TAG}" .
     success "Docker build complete"
+
+    info "Scanning the exact built image before ECR publication..."
+    LEGACY_IMAGE_SCAN=$(node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" scan \
+      "$LEGACY_IMAGE_EVIDENCE" "$LOCAL_SHA" "${NAME}-api:${IMAGE_TAG}")
+    LEGACY_IMAGE_ID=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).imageId)')
+    LEGACY_DOCKER_HOST=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).dockerHost)')
+    LEGACY_SCAN_RECEIPT=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).receiptPath)')
+    LEGACY_SCAN_SHA256=$(SCAN_JSON="$LEGACY_IMAGE_SCAN" node -e 'console.log(JSON.parse(process.env.SCAN_JSON).receiptSha256)')
+    success "Exact image scan passed; evidence: ${LEGACY_IMAGE_EVIDENCE}"
 
     info "Logging into ECR..."
     aws ecr get-login-password --region "$REGION" | \
-      docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+      MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
     success "ECR login OK"
 
     info "Pushing to ECR..."
-    docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:${IMAGE_TAG}"
-    docker push "${ECR_REPO}:${IMAGE_TAG}"
+    MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" tag "$LEGACY_IMAGE_ID" "${ECR_REPO}:${IMAGE_TAG}"
+    MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" push "${ECR_REPO}:${IMAGE_TAG}"
 
     if [[ "$IMAGE_TAG" != "latest" ]]; then
-      docker tag "${NAME}-api:${IMAGE_TAG}" "${ECR_REPO}:latest"
-      docker push "${ECR_REPO}:latest"
+      MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" tag "$LEGACY_IMAGE_ID" "${ECR_REPO}:latest"
+      MSYS_NO_PATHCONV=1 docker --host "$LEGACY_DOCKER_HOST" push "${ECR_REPO}:latest"
     fi
     success "Image pushed: ${ECR_REPO}:${IMAGE_TAG}"
 
@@ -6313,6 +6366,9 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       --output text \
       --region "$REGION")
     info "Digest: $DIGEST"
+    DIGEST="${DIGEST%$'\r'}"
+    node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" verify-registry \
+      "$LEGACY_SCAN_RECEIPT" "$LEGACY_SCAN_SHA256" "$LOCAL_SHA" "${NAME}-api" "$DIGEST" "$REGION"
   fi
 
   DIGEST="${DIGEST%$'\r'}"
@@ -6543,6 +6599,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     verify_classpilot_rehearsed_candidates
   fi
   fi
+
+  verify_private_chat_release_floor_candidates
 
   # This opt-in release gate runs the exact digest-pinned reviewed-size revision in
   # the service VPC before the autoscaling hold, migration, or service update.

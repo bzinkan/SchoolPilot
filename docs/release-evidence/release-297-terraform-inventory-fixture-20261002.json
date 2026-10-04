@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "state": "focused-test-correction",
+  "repository": "bzinkan/SchoolPilot",
+  "correctionBaseCommit": "4ce644af819a03113f1ab5c341f2218970096d36",
+  "failure": {
+    "runId": 37046419054,
+    "jobId": 110969638953,
+    "headSha": "37d01a4aab913533bf4fddf1d86265a44741707f",
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37046419054/job/110969638953",
+    "step": "WAF block/count Terraform tests",
+    "testFile": "infra/tests/mydesk.tftest.hcl",
+    "runName": "passpilot_appointments_target",
+    "line": 361,
+    "terraformResult": { "passed": 41, "failed": 1 },
+    "failedCondition": "length(local.rls_post_expand_tables) == 128 && contains(local.rls_post_expand_tables, \"passpilot_appointments\")",
+    "cause": "The current post-expand registry target now contains 129 private-chat tables; the historical appointments inventory remains 128. The test incorrectly treated the old inventory as the final target.",
+    "retainedLog": "release-297-ci-rollout-second.log",
+    "retainedLogSha256": "1826c203cb4e3b96e7912ee0adaea46ae01a05a7384c2091336083b838b6702c",
+    "fullCiArchive": "Maintained separately by the release coordinator; not duplicated here."
+  },
+  "correction": {
+    "historicalAppointments": "Assert exact configured 128-table appointments inventory and its subset membership in the current target.",
+    "currentPrivateChat": "Separately assert configured/current 129-table target equals the exact preserved appointments inventory plus only classpilot_private_chat_threads.",
+    "scope": ["infra/tests/mydesk.tftest.hcl", "this evidence record"],
+    "productionConfigurationChanged": false,
+    "registryOrHistoricalInventoryChanged": false,
+    "runtimeOrSchemaChanged": false,
+    "terraformApplyPerformed": false
+  },
+  "validation": {
+    "gitDiffCheck": "passed",
+    "focusedTerraform": { "passed": 21, "failed": 0, "exitCode": 0, "version": "1.14.3", "platform": "windows_amd64" },
+    "focusedCommand": "terraform -chdir=infra test -filter=tests\\mydesk.tftest.hcl -no-color",
+    "initialization": "terraform -chdir=infra init -backend=false -input=false -lockfile=readonly -no-color",
+    "localTerraformRunDuringCapacityWindow": false,
+    "quietWindowClearance": "The release coordinator released the quiet gate before local initialization and testing.",
+    "unselectedProbe": { "log": "release-297-terraform-inventory-unselected-forward-slash.log", "passed": 0, "failed": 0, "reason": "The Windows test path requires a backslash filter. This invocation is not counted as validation." },
+    "logs": [
+      { "name": "release-297-terraform-inventory-green.log", "sha256": "7688e17848f837eb880dc731524a3bbf62fdc34792aef9f94f897fdeeb831161", "bytes": 1449 },
+      { "name": "release-297-terraform-inventory-init.log", "sha256": "4811be1ec28cd0c2894f6a8b7d4f94d522cbea9b4fc07c003919c2841a380f52", "bytes": 3445 }
+    ]
+  }
+}

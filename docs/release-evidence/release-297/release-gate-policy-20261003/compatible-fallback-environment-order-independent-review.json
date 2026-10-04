@@ -1,0 +1,83 @@
+{
+  "selectedTwoFileCommitCleared": true,
+  "kind": "independent-compatible-fallback-environment-order-pure-review",
+  "tap": {
+    "sha256": "d6a0fe3345afc6f11c66c5337a0a966927b1b4dfa14092615b17b982d195d2d3",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\tests.tap"
+  },
+  "syntaxChecks": 2,
+  "nativeAcceptance": false,
+  "fail": 0,
+  "childProcesses": 9,
+  "todo": 0,
+  "capacityAcceptance": false,
+  "schemaVersion": 1,
+  "elapsedMs": 985.7428,
+  "execution": {
+    "sha256": "f53b04b67e3ba321b565f39e658d52fbd6dd10e22b6eac0d435e08b887cf971b",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\execution.json"
+  },
+  "historical24ProofPreserved": true,
+  "recordedAtUtc": "2026-10-04T16:09:22.9964475Z",
+  "cloudAuthorization": false,
+  "sourceSha256": "5bf2a4110fd4fa1d7e6fd373da2e3e6a8fadd1ad00400fa4749e07ad47a861f7",
+  "unforced": true,
+  "uniqueDeclaredNames": 28,
+  "members": [
+    {
+      "bytes": 34181,
+      "sha256": "5bf2a4110fd4fa1d7e6fd373da2e3e6a8fadd1ad00400fa4749e07ad47a861f7",
+      "path": "scripts/register-compatible-fallback-inactive.mjs"
+    },
+    {
+      "bytes": 28268,
+      "sha256": "f8497ecf11a16d42d79f23504b451d2d1c744ec5a90db05917e06d4ee627fd54",
+      "path": "tests/release297-compatible-fallback-inactive.test.mjs"
+    },
+    {
+      "bytes": 18842,
+      "sha256": "8746f73e61d28510fbf2b333f14d7376d88c8a762c06dc001f1e3eaed6370c5a",
+      "path": "scripts/verify-legacy-deploy-image.mjs"
+    },
+    {
+      "bytes": 2080,
+      "sha256": "328701028f7c36554bfc4ff0d4ede28c57a0c63ec4ff9584faa0b54e07eb9a4b",
+      "path": "scripts/stamp-release-runtime-identity.mjs"
+    },
+    {
+      "bytes": 323831,
+      "sha256": "bcfd3f3575974c23fa958eaad8c46045ff536523f732fdcfb6d082d34bd08049",
+      "path": "scripts/deploy-classpilot-runtime-config.ps1"
+    },
+    {
+      "bytes": 86839,
+      "sha256": "874e137a373c32b5de68dc2a3f9a91c11e371086f1beae06a9e97d6e3ce03fe4",
+      "path": "src/config/rlsRegistry.json"
+    },
+    {
+      "bytes": 19924,
+      "sha256": "06ab3a254080ee52c27594adfe873a24b1bf93a16d5717e5377b96746075cc12",
+      "path": "src/services/classpilotProtocol.ts"
+    },
+    {
+      "bytes": 6445,
+      "sha256": "cca18d0e2d122a2f21ffa6f66b7160636f0dfe6ebc1ffeb8c7f43c5ff5879c98",
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json"
+    }
+  ],
+  "testSha256": "f8497ecf11a16d42d79f23504b451d2d1c744ec5a90db05917e06d4ee627fd54",
+  "skipped": 0,
+  "cancelled": 0,
+  "passed": true,
+  "ownedChildAbsenceVerified": true,
+  "absence": {
+    "sha256": "266cfb40031750158c14b6addf6114e211d81cbcbb58d740163e461a6ed2cebd",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-inactive-order-pure-evidence-01\\process-absence.json"
+  },
+  "configuredDeadlineMs": 20000,
+  "limitations": [
+    "Pure mocks verify control-plane guards; actual publication, registry identity and inactive registration evidence remain pending.",
+    "Only environment order is canonicalized; all values, unique names, tags, commands, secrets and other arrays remain strict."
+  ],
+  "tests": 28
+}

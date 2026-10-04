@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T18:55:39.963Z",
+  "scope": "Superseded failed CI attempts retained for audit; final source CI is separate.",
+  "productionMutations": 0,
+  "records": [
+    {
+      "source": "6fe733fbceb4fc0e8ac2443160c01ecf9d6b3c21",
+      "lane": "Frontend shard 2",
+      "status": "failed_superseded",
+      "runUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37044198625",
+      "diagnosis": "Canonical Messages history fixture returned no messages after the notification; corrected by 37d01a4a. The unchanged full shard passed on that checkpoint.",
+      "file": "release-297-ci-shard2-first.log.gz",
+      "rawSha256": "ef6c661d029f0a9f712af2a4320672642398b126864bfc636b637ebe359d7067",
+      "sanitizedSha256": "ef6c661d029f0a9f712af2a4320672642398b126864bfc636b637ebe359d7067",
+      "archiveSha256": "1218d28d7ff25cccd0297ddd957ed0aaec8e0ae1ae7b0d09938ece4817f7fd3f",
+      "credentialRedactions": 0
+    },
+    {
+      "source": "6fe733fbceb4fc0e8ac2443160c01ecf9d6b3c21",
+      "lane": "Ordinary database",
+      "status": "failed_superseded",
+      "runUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37044198625",
+      "diagnosis": "New native lifecycle fixture needed its explicit local ADMIN_DATABASE_URL; corrected by 2df2c93e. Restricted CI already supplied it.",
+      "file": "release-297-ci-db-first.log.gz",
+      "rawSha256": "beb7476f4efa8ba9e5ed085a3b6eb590edcfc6342de0ce1175aa90620db7db2d",
+      "sanitizedSha256": "beb7476f4efa8ba9e5ed085a3b6eb590edcfc6342de0ce1175aa90620db7db2d",
+      "archiveSha256": "2eb7205f78e877f0f6afcb6af6e6c17d20b0e2f2ec69c1fd43b4bcb79a945c5c",
+      "credentialRedactions": 0
+    },
+    {
+      "source": "37d01a4aab913533bf4fddf1d86265a44741707f",
+      "lane": "Ordinary database",
+      "status": "failed_superseded",
+      "runUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37046419054",
+      "diagnosis": "Foreign thread insertion was denied by forced WITH CHECK before the assertion expected the hidden-parent guard. The fixture correction retains exact denials and adds a strict malformed same-school parent proof.",
+      "file": "release-297-ci-db-second.log.gz",
+      "rawSha256": "5735a63aa0e1449a3d3018b130d0599cff4141590374418992a4b972fcb46652",
+      "sanitizedSha256": "5735a63aa0e1449a3d3018b130d0599cff4141590374418992a4b972fcb46652",
+      "archiveSha256": "816b6ed07993796f076aa5d390f97ec3cfa9d9bff85836e82679ec2005b5eb3b",
+      "credentialRedactions": 0
+    },
+    {
+      "source": "37d01a4aab913533bf4fddf1d86265a44741707f",
+      "lane": "AWS rollout / Terraform",
+      "status": "failed_superseded",
+      "runUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37046419054",
+      "diagnosis": "41 Terraform cases passed; the prior appointments assertion still expected 128 tables for the complete target after private lifecycle added table 129. Preserve the historical 128 inventory and verify the new complete target separately.",
+      "file": "release-297-ci-rollout-second.log.gz",
+      "rawSha256": "1826c203cb4e3b96e7912ee0adaea46ae01a05a7384c2091336083b838b6702c",
+      "sanitizedSha256": "1826c203cb4e3b96e7912ee0adaea46ae01a05a7384c2091336083b838b6702c",
+      "archiveSha256": "a8754ee8d440d6a0d47bf3700b34626fee35c3c75a3bcc6f43883e79de07adaa",
+      "credentialRedactions": 0
+    }
+  ]
+}

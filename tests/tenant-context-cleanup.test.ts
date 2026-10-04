@@ -3,13 +3,14 @@ import { EventEmitter } from "node:events";
 import { describe, it, mock, type TestContext } from "node:test";
 import type { Request, Response, NextFunction } from "express";
 import { WebSocketServer } from "ws";
+import { sql } from "drizzle-orm";
 import { wasTenantPoolAcquisitionFailureReported } from "../src/util/operationalErrors.js";
 
 // Unit CI intentionally has no database configuration. Production modules
 // validate this at import time; all database operations below are mocked.
 // Force an inert fixture URL so this test never inherits a developer database.
 process.env.DATABASE_URL = "postgresql://unit:unit@127.0.0.1:1/schoolpilot_unit";
-const { pool } = await import("../src/db.js");
+const { db, pool } = await import("../src/db.js");
 const { drainHealthMonitor, startHealthMonitor, stopHealthMonitor } = await import("../src/services/healthMonitor.js");
 const { default: errorMonitor, ErrorMonitor } = await import("../src/services/errorMonitor.js");
 const {
@@ -19,6 +20,7 @@ const {
   runWithTenantContext,
 } = await import("../src/middleware/tenantContext.js");
 const { getTenantStore } = await import("../src/db/tenantContext.js");
+const { getUsageCapacityDiagnostics, resetUsageCapacityDiagnostics } = await import("../src/services/usageCapacityDiagnostics.js");
 
 function deferred() {
   let resolve!: () => void;
@@ -394,6 +396,133 @@ describe("tenant request disconnect races", { timeout: 5_000 }, () => {
 });
 
 describe("tenant context cleanup during drain", () => {
+  it("reuses physical-client metadata across leases while rebinding authority and reading fresh rows", async (t) => {
+    enableRls(t);
+    let school = "";
+    let isSuper = "off";
+    let releases = 0;
+    let reads = 0;
+    const initialized: unknown[][] = [];
+    const client = {
+      async query(statement: string | { text: string }, values?: unknown[]) {
+        const text = typeof statement === "string" ? statement : statement.text;
+        if (isReset(text)) { school = ""; isSuper = "off"; }
+        else if (text.includes("set_config")) {
+          initialized.push([...(values ?? [])]);
+          isSuper = String(values?.[0]);
+          school = String(values?.[1]);
+        } else {
+          reads++;
+          return { rows: [{ school, isSuper, value: reads }] };
+        }
+        return { rows: [] };
+      },
+      release(error?: Error) {
+        assert.equal(error, undefined);
+        assert.equal(school, "", "authority is reset before every release");
+        assert.equal(isSuper, "off");
+        releases++;
+      },
+    };
+    const connect = t.mock.method(pool, "connect", async () => client);
+    const stores: NonNullable<ReturnType<typeof getTenantStore>>[] = [];
+    for (const [schoolId, superAccess] of [["school-A", true], ["school-B", false]] as const) {
+      await runWithTenantContext({ schoolId, isSuper: superAccess }, async () => {
+        const store = getTenantStore();
+        assert.ok(store);
+        stores.push(store);
+        assert.equal(store.schoolId, schoolId);
+        assert.equal(store.isSuper, superAccess);
+        const result = await db.execute(sql`select current_setting('app.school_id')`);
+        assert.deepEqual(result.rows, [{ school: schoolId, isSuper: superAccess ? "on" : "off", value: stores.length }]);
+      });
+      assert.equal(getTenantStore(), undefined);
+    }
+    assert.notEqual(stores[0], stores[1], "each lease owns fresh ALS authority");
+    assert.equal(stores[0]!.db, stores[1]!.db, "the same physical client reuses only its ORM metadata");
+    const response = new TenantResponse("school-C");
+    let requestStore: ReturnType<typeof getTenantStore>;
+    try {
+      await invokeBinding(response, () => { requestStore = getTenantStore(); });
+      assert.ok(requestStore);
+      assert.equal(requestStore.schoolId, "school-C");
+      assert.equal(requestStore.isSuper, false);
+      assert.equal(requestStore.db, stores[0]!.db, "HTTP and background leases share the same metadata cache");
+      assert.equal(school, "school-C");
+    } finally {
+      response.finishResponse();
+      await drainTenantContextReleases();
+    }
+    assert.equal(reads, 2, "repeated queries execute rather than return cached rows");
+    assert.equal(connect.mock.callCount(), 3);
+    assert.equal(releases, 3);
+    assert.deepEqual(initialized, [["on", "school-A"], ["off", "school-B"], ["off", "school-C"]]);
+    assert.equal(getTenantStore(), undefined);
+  });
+
+  it("does not reuse a discarded client's metadata for a replacement physical client", async (t) => {
+    enableRls(t);
+    const resetFailure = new Error("fixture RESET failure");
+    const releases: Array<Error | undefined> = [];
+    const clients = [true, false].map(failReset => ({
+      async query(text: string) {
+        if (failReset && isReset(text)) throw resetFailure;
+        return { rows: [] };
+      },
+      release(error?: Error) { releases.push(error); },
+    }));
+    let index = 0;
+    t.mock.method(pool, "connect", async () => clients[index++]!);
+    const databases: NonNullable<ReturnType<typeof getTenantStore>>["db"][] = [];
+    for (const schoolId of ["school-A", "school-B"]) {
+      await runWithTenantContext({ schoolId }, async () => {
+        const store = getTenantStore();
+        assert.ok(store);
+        databases.push(store.db);
+      });
+    }
+    assert.notEqual(databases[0], databases[1]);
+    assert.deepEqual(releases, [resetFailure, undefined]);
+    assert.equal(getTenantContextReleaseSnapshot().pending, 0);
+  });
+
+  it("attributes the actual connection owner until its RESET completes", async (t) => {
+    enableRls(t);
+    resetUsageCapacityDiagnostics();
+    const resetStarted = deferred();
+    const resetAllowed = deferred();
+    let released = false;
+    const client: FixtureClient = {
+      async query(sql) {
+        if (isReset(sql)) { resetStarted.resolve(); await resetAllowed.promise; }
+        return { rows: [] };
+      },
+      release() { released = true; },
+    };
+    t.mock.method(pool, "connect", async () => client);
+    const work = runWithTenantContext({ schoolId: "private-school", operation: "heartbeat_persistence" }, async () => {
+      assert.equal(getTenantStore()?.schoolId, "private-school");
+    });
+    try {
+      await resetStarted.promise;
+      const pending = getUsageCapacityDiagnostics().operations.heartbeat_persistence!;
+      assert.equal(pending.counters.checkoutSuccess, 1);
+      assert.equal(pending.activeCheckouts, 1);
+      assert.equal(pending.timings.holdMs!.count, 0);
+      assert.equal(released, false);
+      resetAllowed.resolve();
+      await work;
+      const complete = getUsageCapacityDiagnostics();
+      assert.equal(complete.operations.heartbeat_persistence!.activeCheckouts, 0);
+      assert.equal(complete.operations.heartbeat_persistence!.timings.holdMs!.count, 1);
+      assert.equal(complete.operations.heartbeat_persistence!.timings.operationMs!.count, 1);
+      assert.doesNotMatch(JSON.stringify(complete), /private-school/);
+    } finally {
+      resetAllowed.resolve();
+      await work;
+      await drainTenantContextReleases();
+    }
+  });
   it("reports an acquisition failure once without creating another database write", async (t) => {
     const previous = process.env.RLS_GUC_ENABLED;
     process.env.RLS_GUC_ENABLED = "true";

@@ -1,0 +1,179 @@
+{
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "acceptedRuns": 0,
+  "earlierAttempt": {
+    "phases": 0,
+    "failure": "ROLE_DISCONNECTED_BEFORE_READY",
+    "apiForcedExit137": true,
+    "profileUsable": false,
+    "cleanupConfirmed": true,
+    "namespaceCauseNativeProven": true
+  },
+  "current": {
+    "heartbeats": {
+      "configured": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "expected": 6000,
+      "offered": 6000,
+      "started": 5559,
+      "succeeded": 5081,
+      "failed": 478,
+      "refusedAtInFlightLimit": 441,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 47.854740000002494,
+      "peakInFlight": 1000,
+      "bySchool": {
+        "0": {
+          "offered": 3000,
+          "started": 2779,
+          "succeeded": 2542,
+          "failed": 237,
+          "refused": 221
+        },
+        "1": {
+          "offered": 3000,
+          "started": 2780,
+          "succeeded": 2539,
+          "failed": 241,
+          "refused": 220
+        }
+      },
+      "failureCodes": {
+        "ERR_ASSERTION": 478
+      },
+      "offerWindowMs": 59990.11533500001,
+      "outstandingAtEndOfOffering": 997,
+      "totalIncludingDrainMs": 68458.133535,
+      "outstandingAfterDrain": 0,
+      "accepted": false,
+      "timings": {
+        "count": 5559,
+        "minMs": 44.40645500000028,
+        "p50Ms": 9914.561271000006,
+        "p95Ms": 12607.596091000007,
+        "maxMs": 14211.913990000001
+      }
+    },
+    "cpuSeconds": 68.139655,
+    "eventLoop": {
+      "p50Ms": 22.527999,
+      "p95Ms": 40.206335,
+      "maxMs": 527.958015,
+      "utilization": 0.9969158614920924
+    },
+    "acquisitions": {
+      "count": 16340,
+      "failures": 478,
+      "maxMs": 5375.994715000001
+    },
+    "insertedObservations": 5295,
+    "drains": {
+      "api": {
+        "complete": true,
+        "budgetMs": 20000,
+        "elapsedMs": 11.901452999998583,
+        "passes": 3,
+        "gauges": {
+          "activeOperations": 0,
+          "pendingCheckouts": 0,
+          "activeCheckouts": 0,
+          "pendingAcquisitions": 0,
+          "activeQueries": 0,
+          "poolWaiting": 0,
+          "poolHeld": 0,
+          "httpResponses": 0,
+          "pendingTenantReleases": 0
+        },
+        "physicallyIdle": true,
+        "abortedResponses": 0
+      },
+      "worker": {
+        "complete": true,
+        "budgetMs": 20000,
+        "elapsedMs": 1.6889590000064345,
+        "passes": 2,
+        "gauges": {
+          "activeOperations": 0,
+          "pendingCheckouts": 0,
+          "activeCheckouts": 0,
+          "pendingAcquisitions": 0,
+          "activeQueries": 0,
+          "poolWaiting": 0,
+          "poolHeld": 0,
+          "httpResponses": 0,
+          "pendingTenantReleases": 0
+        },
+        "physicallyIdle": true,
+        "abortedResponses": 0
+      }
+    },
+    "exits": [
+      {
+        "role": "coordinator",
+        "exitCode": 1,
+        "forced": false,
+        "oomKilled": false
+      },
+      {
+        "role": "api",
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false
+      },
+      {
+        "role": "worker",
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false
+      },
+      {
+        "role": "generator",
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false
+      }
+    ],
+    "profile": {
+      "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+      "run": "9a4ae9e537fd",
+      "imageId": "sha256:ca8080f073af9ecb16e4522df982842b2e23f2949fdd0fa2136606a83f30a558",
+      "bytes": 3511981,
+      "sha256": "43e7aa9acfa3f6df946de4d7f35a7fe5e8edd45103dc3934a60b2f2f7f4dd871",
+      "samples": 64747,
+      "actualApiExit": {
+        "containerId": "152beb6ae77b47bab252b51884ac8cc6d141944a9696fe68e74bffea709d8610",
+        "imageId": "sha256:ca8080f073af9ecb16e4522df982842b2e23f2949fdd0fa2136606a83f30a558",
+        "run": "9a4ae9e537fd",
+        "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+        "role": "api",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      },
+      "capacityAccepted": false
+    },
+    "cleanupConfirmed": true
+  },
+  "analysisManifestSha256": "fed5cf4eb9eff44a2ee4643ff8844bddf53c2580d2b535cbb5beb4c3f9e5fc6e",
+  "limitations": [
+    "Sampled wall durations include profiler overhead, not exclusive CPU. Inclusive stacks overlap.",
+    "Restored ingest diagnostic is not a paired fresh-seed/combined capacity comparison.",
+    "Original zero-offer namespace failure and empty profile preserved.",
+    "Exact PG anonymous volume absence confirmed; Redis removal used --volumes but no separately captured Redis volume identity."
+  ]
+}

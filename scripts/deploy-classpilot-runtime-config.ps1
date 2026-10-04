@@ -8,6 +8,8 @@ param(
     [string]$TurnEvidencePath,
     [string]$SyntheticValidationPath,
     [string]$ManagedTestWaiverPath,
+    [string]$RoadmapReleaseEvidencePath,
+    [string]$RoadmapPilotEvidencePath,
     [string]$TrackingPilotEvidencePath,
     [string]$StudentGatePilotEvidencePath,
     [string]$FastPreviewCandidateReceiptPath,
@@ -24,6 +26,7 @@ param(
     [string]$RegistryTargetAppSha,
     [switch]$ConfirmProductionMutation,
     [switch]$ConfirmSyntheticOnlyGlobalActivation,
+    [switch]$ConfirmRoadmapManagedWaiver,
     [switch]$ConfirmProtectedWindowProductionMutation
 )
 
@@ -100,26 +103,38 @@ $script:UnpinnableCapabilities = @(
 )
 $script:RoadmapProfileCapabilities = @{
     "after-hours-safety-only-pilot" = "afterHoursSafetyOnlyV1"
+    "after-hours-safety-only-global-on" = "afterHoursSafetyOnlyV1"
     "after-hours-safety-only-off" = "afterHoursSafetyOnlyV1"
     "school-website-block-pilot" = "schoolWebsiteBlockEnforcementV1"
+    "school-website-block-global-on" = "schoolWebsiteBlockEnforcementV1"
     "school-website-block-off" = "schoolWebsiteBlockEnforcementV1"
     "read-only-observation-pilot" = "screenshotReadOnlyObservationV1"
     "read-only-observation-off" = "screenshotReadOnlyObservationV1"
     "precise-restriction-resources-pilot" = "preciseRestrictionResourcesV1"
+    "precise-restriction-resources-global-on" = "preciseRestrictionResourcesV1"
     "precise-restriction-resources-off" = "preciseRestrictionResourcesV1"
+    "focus-tab-pilot" = "focusTabV1"
+    "focus-tab-global-on" = "focusTabV1"
+    "focus-tab-off" = "focusTabV1"
+    "private-chat-lifecycle-pilot" = "privateChatLifecycleV1"
+    "private-chat-lifecycle-off" = "privateChatLifecycleV1"
+    "private-chat-lifecycle-global-on" = "privateChatLifecycleV1"
+    "private-chat-lifecycle-global-off" = "privateChatLifecycleV1"
 }
 $script:PreciseRestrictionCapability = "preciseRestrictionResourcesV1"
+$script:RoadmapGlobalModes = @('after-hours-safety-only-global-on', 'school-website-block-global-on', "precise-restriction-resources-global-on", "focus-tab-global-on", 'private-chat-lifecycle-global-on')
+$script:RoadmapGlobalCapabilities = @('afterHoursSafetyOnlyV1', 'schoolWebsiteBlockEnforcementV1', "preciseRestrictionResourcesV1", "focusTabV1", 'privateChatLifecycleV1')
 $script:RoadmapCapabilities = @(
     "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability,
-    $script:PreciseRestrictionCapability
+    $script:PreciseRestrictionCapability, "focusTabV1", 'privateChatLifecycleV1'
 )
 $script:RoadmapPilotModes = @(
     "after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot",
-    "precise-restriction-resources-pilot"
+    "precise-restriction-resources-pilot", "focus-tab-pilot", 'private-chat-lifecycle-pilot'
 )
 $script:RoadmapOffModes = @(
     "after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off",
-    "precise-restriction-resources-off"
+    "precise-restriction-resources-off", "focus-tab-off", 'private-chat-lifecycle-off', 'private-chat-lifecycle-global-off'
 )
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
@@ -141,8 +156,8 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities) + @(
-    "kioskLaunchTicketV1"
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1') }) + @(
+    "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1'
 )
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
@@ -165,6 +180,8 @@ $script:CapabilityFlags = [ordered]@{
     kioskLaunchTicketV2           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2"
     scheduledClassroomV1          = "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1"
     preciseRestrictionResourcesV1 = "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1"
+    focusTabV1                   = "CLASSPILOT_CAP_FOCUS_TAB_V1"
+    privateChatLifecycleV1       = 'CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1'
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -194,21 +211,36 @@ $script:LateSignInBlockedZipSha256s = @(
 )
 $script:FastPreviewRequiredReleaseTag = "v2.8.2"
 $script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
-# preciseRestrictionResourcesV1 is negotiated only by ClassPilot 2.10.0, which is
-# not tagged yet. The pilot stays refused until a reviewed follow-up binds the
-# exact MANAGED-CHROMEBOOK VERIFIED 2.10.0 package here (tag, merge commit, ZIP
-# SHA-256). The off profile is always available.
-$script:PreciseRestrictionRequiredReleaseTag = ""
-$script:PreciseRestrictionRequiredMergeSha = ""
-$script:PreciseRestrictionRequiredZipSha256 = ""
+# The user authorized a precise/Focus synthetic-only exception for the exact
+# 2.9.7 successor. These pins identify source/artifact bytes only; they do not
+# assert acceptance, merge, tag publication, deployment or Store publication.
+# For these new profiles, the legacy RequiredMergeSha/classPilotMergeSha names
+# mean the exact packaged source commit. Receipts still gate activation and say
+# managedValidation=waived_not_passed. Historical release bindings stay unchanged.
+$script:PreciseRestrictionRequiredReleaseTag = "v2.9.7"
+$script:PreciseRestrictionRequiredMergeSha = "065be165b5df704d84eb716e3fb914c1fed17f98"
+$script:PreciseRestrictionRequiredZipSha256 = "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575"
 
-function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
-    if ([string]$script:PreciseRestrictionRequiredReleaseTag -cnotmatch '^v2\.1[0-9]\.[0-9]+$' -or
-        [string]$script:PreciseRestrictionRequiredMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
-        [string]$script:PreciseRestrictionRequiredZipSha256 -cnotmatch '^[0-9a-f]{64}$') {
-        throw "precise-restriction-resources-pilot requires the exact MANAGED-CHROMEBOOK VERIFIED ClassPilot 2.10.0 package to be bound first."
+$script:FocusTabRequiredReleaseTag = "v2.9.7"
+$script:FocusTabRequiredMergeSha = "065be165b5df704d84eb716e3fb914c1fed17f98"
+$script:FocusTabRequiredZipSha256 = "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575"
+function Assert-FocusTabPilotReleaseEvidenceBound {
+    if ([string]$script:FocusTabRequiredReleaseTag -cne 'v2.9.7' -or
+        [string]$script:FocusTabRequiredMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$script:FocusTabRequiredZipSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "Focus activation requires the exact reviewed ClassPilot 2.9.7 commit and ZIP to be bound first."
     }
 }
+
+function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
+    if ([string]$script:PreciseRestrictionRequiredReleaseTag -cne 'v2.9.7' -or
+        [string]$script:PreciseRestrictionRequiredMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$script:PreciseRestrictionRequiredZipSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "Precise activation requires the exact reviewed ClassPilot 2.9.7 commit and ZIP to be bound first."
+    }
+}
+
+. (Join-Path $PSScriptRoot 'classpilot-roadmap-release-evidence.ps1')
 
 function Get-ServingProtocolCapabilities {
     param(
@@ -269,6 +301,16 @@ function Get-RuntimeProjectionCapabilities {
     }
     if (-not [string]::IsNullOrEmpty($RegistryTargetAppSha)) {
         $target = @(Get-ServingProtocolCapabilities -RepositoryRoot $RepositoryRoot -AppSha $RegistryTargetAppSha)
+        if ('privateChatLifecycleV1' -cin $known -and 'privateChatLifecycleV1' -cnotin $target) {
+            throw 'A lifecycle-aware serving image cannot project to a pre-lifecycle writer; retained private-chat enforcement may be latched. Roll forward with a compatible image.'
+        }
+        $privateChatAdmission = @($SourceTaskDefinition.containerDefinitions | Where-Object name -CEQ 'api' | ForEach-Object {
+            @($_.environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES' | ForEach-Object { ([string]$_.value).Split(',') | ForEach-Object { $_.Trim() } })
+        }) -ccontains 'classpilot_private_chat_threads'
+        if ('privateChatLifecycleV1' -cin $known -and ($privateChatAdmission -or
+            $Mode -cin @('private-chat-lifecycle-pilot','private-chat-lifecycle-off','private-chat-lifecycle-global-on','private-chat-lifecycle-global-off'))) {
+            Assert-PrivateChatRelaySource -RepositoryRoot $RepositoryRoot -AppSha $RegistryTargetAppSha
+        }
         $known = @($known | Where-Object { $_ -cin $target })
     }
     return ,$known
@@ -676,10 +718,15 @@ function ConvertTo-RuntimeConfiguration {
         if ($mode -ceq "precise-restriction-resources-pilot") {
             Assert-PreciseRestrictionPilotReleaseEvidenceBound
         }
+        if ($mode -ceq "focus-tab-pilot") {
+            Assert-FocusTabPilotReleaseEvidenceBound
+        }
     }
     elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {
         throw "$mode profiles must not contain a pilot school field."
     }
+    if ($mode -ceq 'precise-restriction-resources-global-on') { Assert-PreciseRestrictionPilotReleaseEvidenceBound }
+    if ($mode -ceq 'focus-tab-global-on') { Assert-FocusTabPilotReleaseEvidenceBound }
 
     $turn = $null
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
@@ -2546,17 +2593,24 @@ function Assert-RoadmapRuntimeControls {
             throw "Roadmap capabilities require both matching activation controls."
         }
         if ($flagValue -ceq "false") { continue }
+        $hasSchools = $entry.PSObject.Properties.Name -contains 'schoolIds'
         if ([string]$entry.mode -cne "on" -or
-            -not ($entry.PSObject.Properties.Name -contains "schoolIds") -or
-            $entry.schoolIds -isnot [Array] -or @($entry.schoolIds).Count -ne 1 -or
-            [string]$entry.schoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
-            throw "Roadmap capabilities may be enabled only for one exact school."
+            (-not $hasSchools -and $capability -cnotin $script:RoadmapGlobalCapabilities) -or
+            ($hasSchools -and ($entry.schoolIds -isnot [Array] -or @($entry.schoolIds).Count -ne 1 -or
+             [string]$entry.schoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'))) {
+            throw "Roadmap controls must use their reviewed global or exact one-school shape."
         }
         if ([string]$Values.CLASSPILOT_PROTOCOL_V3_ENABLED -cne "true" -or
             [string]$Values.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 -cne "true" -or
             [string]$Rollouts.scopedAuthorityChecksV1.mode -cne "on" -or
             $Rollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds") {
             throw "Roadmap pilots require the completed global repaired-capability runtime."
+        }
+        if ($capability -ceq 'privateChatLifecycleV1' -and
+            ([string]$Values.CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1 -cne 'true' -or
+             [string]$Rollouts.studentChatIdempotencyV1.mode -cne 'on' -or
+             $Rollouts.studentChatIdempotencyV1.PSObject.Properties.Name -contains 'schoolIds')) {
+            throw 'Private chat lifecycle requires global scoped authority and student chat idempotency.'
         }
     }
 }
@@ -3038,6 +3092,16 @@ function Assert-AllowedRuntimeTransition {
                 [string]$targetControls[$selectedCapability].schoolIds[0] -cne
                     [string]$TargetRuntimeConfiguration.PilotSchoolId) {
                 throw "Roadmap activation must begin with one exact school-scoped pilot from off."
+            }
+        }
+        elseif ($roadmapMode -cin $script:RoadmapGlobalModes) {
+            if ([string]$sourceControls[$selectedCapability].flag -cne 'true' -or
+                [string]$sourceControls[$selectedCapability].mode -cne 'on' -or
+                @($sourceControls[$selectedCapability].schoolIds).Count -ne 1 -or
+                [string]$targetControls[$selectedCapability].flag -cne 'true' -or
+                [string]$targetControls[$selectedCapability].mode -cne 'on' -or
+                @($targetControls[$selectedCapability].schoolIds).Count -ne 0) {
+                throw 'Roadmap global promotion must release only its exact active school pilot.'
             }
         }
         elseif ([string]$targetControls[$selectedCapability].mode -cne "off") {
@@ -4002,6 +4066,8 @@ function New-RuntimeConfigPlan {
         [string]$PrivateTurnEvidencePath,
         [string]$PrivateSyntheticValidationPath,
         [string]$PrivateManagedTestWaiverPath,
+        [string]$PrivateRoadmapReleaseEvidencePath,
+        [string]$PrivateRoadmapPilotEvidencePath,
         [string]$PrivateTrackingPilotEvidencePath,
         [string]$PrivateStudentGatePilotEvidencePath,
         [string]$PrivateFastPreviewCandidateReceiptPath,
@@ -4016,6 +4082,7 @@ function New-RuntimeConfigPlan {
         [switch]$SkipRepositoryCheck,
         [switch]$ConfirmProductionMutation,
         [switch]$ConfirmSyntheticOnlyGlobalActivation,
+        [switch]$ConfirmRoadmapManagedWaiver,
         [switch]$ConfirmProtectedWindowProductionMutation
     )
     if (-not [string]::IsNullOrEmpty($RegistryTargetAppSha) -and $RegistryTargetAppSha -cnotmatch '^[0-9a-f]{40}$') {
@@ -4062,6 +4129,35 @@ function New-RuntimeConfigPlan {
     }
     else {
         Assert-RepositoryIdentity -RepositoryRoot $RepositoryRoot
+    }
+    $roadmapWaiver = $null -ne (Get-RoadmapReleaseCapability -Mode ([string]$runtime.Mode))
+    $roadmapLiveOnly = $runtime.Mode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on', 'private-chat-lifecycle-global-on')
+    if ($roadmapWaiver -and (-not $ConfirmProductionMutation -or -not $ConfirmRoadmapManagedWaiver -or
+        [string]::IsNullOrWhiteSpace($PrivateRoadmapReleaseEvidencePath))) {
+        throw 'Precise/Focus activation requires scoped release evidence and explicit production/managed-waiver confirmations.'
+    }
+    if (-not $roadmapWaiver -and ($ConfirmRoadmapManagedWaiver -or $PrivateRoadmapReleaseEvidencePath -or
+        ($PrivateRoadmapPilotEvidencePath -and -not $roadmapLiveOnly))) {
+        throw 'The precise/Focus waiver cannot authorize another runtime profile.'
+    }
+    $roadmapReleaseSnapshot = $null
+    $roadmapPilotSnapshot = $null
+    if ($roadmapWaiver) {
+        $PrivateRoadmapReleaseEvidencePath = Assert-PrivateInputPath -Path $PrivateRoadmapReleaseEvidencePath -RepositoryRoot $RepositoryRoot
+        $roadmapReleaseSnapshot = Read-StrictJsonSnapshot -Path $PrivateRoadmapReleaseEvidencePath
+        if ($runtime.Mode -cin $script:RoadmapGlobalModes) {
+            if ([string]::IsNullOrWhiteSpace($PrivateRoadmapPilotEvidencePath)) { throw 'Global promotion requires live pilot evidence.' }
+            $PrivateRoadmapPilotEvidencePath = Assert-PrivateInputPath -Path $PrivateRoadmapPilotEvidencePath -RepositoryRoot $RepositoryRoot
+            $roadmapPilotSnapshot = Read-StrictJsonSnapshot -Path $PrivateRoadmapPilotEvidencePath
+        }
+        elseif ($PrivateRoadmapPilotEvidencePath) { throw 'Live pilot evidence belongs only to global promotion.' }
+    }
+    if ($roadmapLiveOnly) {
+        if (-not $ConfirmProductionMutation -or [string]::IsNullOrWhiteSpace($PrivateRoadmapPilotEvidencePath)) {
+            throw 'This global promotion requires live pilot evidence and the explicit production confirmation.'
+        }
+        $PrivateRoadmapPilotEvidencePath = Assert-PrivateInputPath -Path $PrivateRoadmapPilotEvidencePath -RepositoryRoot $RepositoryRoot
+        $roadmapPilotSnapshot = Read-StrictJsonSnapshot -Path $PrivateRoadmapPilotEvidencePath
     }
     $trackingPilotEvidenceRequired = $runtime.Mode -ceq "tracking-window-global-on"
     if ($trackingPilotEvidenceRequired -and [string]::IsNullOrWhiteSpace($PrivateTrackingPilotEvidencePath)) {
@@ -4164,6 +4260,11 @@ function New-RuntimeConfigPlan {
             -RegistryTargetAppSha $RegistryTargetAppSha)
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    Assert-PrivateChatRuntimeCompatibility -Runtime $runtime -Snapshot $snapshot -RepositoryRoot $RepositoryRoot -AppSha $AppSha
+    Assert-RoadmapActivationEvidence -Runtime $runtime -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
+        -ReleaseSnapshot $roadmapReleaseSnapshot -PilotSnapshot $roadmapPilotSnapshot -ToolSha $toolSha `
+        -AppSha $AppSha -ImageDigest $ImageDigest -RepositoryRoot $RepositoryRoot `
+        -ApiTaskDefinitionArn $ApiTaskDefinitionArn -WorkerTaskDefinitionArn $WorkerTaskDefinitionArn -Now $Now
     $fastPreviewCandidateReceipt = $null
     if ($runtime.Mode -ceq "fast-preview-pilot") {
         $fastPreviewCandidateReceipt = Assert-FastPreviewCandidateReceipt `
@@ -4248,6 +4349,8 @@ function New-RuntimeConfigPlan {
     $fastPreviewPilotEvidenceFile = if ($null -ne $fastPreviewPilotEvidenceSnapshot) {
         "fast-preview-pilot-evidence.json"
     } else { $null }
+    $roadmapReleaseEvidenceFile = if ($roadmapWaiver) { 'roadmap-release-evidence.json' } else { $null }
+    $roadmapPilotEvidenceFile = if ($null -ne $roadmapPilotSnapshot) { 'roadmap-pilot-evidence.json' } else { $null }
     Write-PrivateBytes -Path (Join-Path $runDirectory $profileFile) -Bytes $profileSnapshot.Bytes
     if ($null -ne $turnEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $turnEvidenceFile) -Bytes $turnEvidenceSnapshot.Bytes
@@ -4272,6 +4375,12 @@ function New-RuntimeConfigPlan {
         Write-PrivateBytes -Path (Join-Path $runDirectory $fastPreviewPilotEvidenceFile) `
             -Bytes $fastPreviewPilotEvidenceSnapshot.Bytes
     }
+    if ($roadmapWaiver) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $roadmapReleaseEvidenceFile) -Bytes $roadmapReleaseSnapshot.Bytes
+    }
+    if ($null -ne $roadmapPilotSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $roadmapPilotEvidenceFile) -Bytes $roadmapPilotSnapshot.Bytes
+    }
     $manifest = [ordered]@{
         schemaVersion = 2
         runId = $runId
@@ -4288,6 +4397,10 @@ function New-RuntimeConfigPlan {
         syntheticValidationSha256 = if ($null -ne $syntheticValidation) { $syntheticValidation.EvidenceSha256 } else { $null }
         managedTestWaiverFile = $managedTestWaiverFile
         managedTestWaiverSha256 = if ($null -ne $managedTestWaiver) { $managedTestWaiver.EvidenceSha256 } else { $null }
+        roadmapReleaseEvidenceFile = $roadmapReleaseEvidenceFile
+        roadmapReleaseEvidenceSha256 = if ($roadmapWaiver) { [string]$roadmapReleaseSnapshot.Sha256 } else { $null }
+        roadmapPilotEvidenceFile = $roadmapPilotEvidenceFile
+        roadmapPilotEvidenceSha256 = if ($null -ne $roadmapPilotSnapshot) { [string]$roadmapPilotSnapshot.Sha256 } else { $null }
         trackingPilotEvidenceFile = $trackingPilotEvidenceFile
         trackingPilotEvidenceSha256 = if ($null -ne $trackingPilotEvidence) { $trackingPilotEvidence.EvidenceSha256 } else { $null }
         studentGatePilotEvidenceFile = $studentGatePilotEvidenceFile
@@ -4314,8 +4427,8 @@ function New-RuntimeConfigPlan {
         fastPreviewPilotEvidenceSha256 = if ($null -ne $fastPreviewPilotEvidence) {
             $fastPreviewPilotEvidence.EvidenceSha256
         } else { $null }
-        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "managed" } else { "not_applicable" }
-        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "passed" } else { "not_applicable" }
+        validationLevel = if ($syntheticOnlyWaiver -or $roadmapWaiver) { "synthetic_only" } elseif ($roadmapLiveOnly) { 'live_pilot' } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver -or $roadmapWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "passed" } else { "not_applicable" }
         protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
         toolSha = $toolSha
@@ -4361,6 +4474,7 @@ function Read-RuntimePlan {
         "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
         "turnEvidenceFile", "turnEvidenceSha256", "syntheticValidationFile", "syntheticValidationSha256",
         "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
+        "roadmapReleaseEvidenceFile", "roadmapReleaseEvidenceSha256", "roadmapPilotEvidenceFile", "roadmapPilotEvidenceSha256",
         "trackingPilotEvidenceFile", "trackingPilotEvidenceSha256",
         "studentGatePilotEvidenceFile", "studentGatePilotEvidenceSha256",
         "fastPreviewCandidateReceiptFile", "fastPreviewCandidateReceiptSha256",
@@ -4480,7 +4594,31 @@ function Read-RuntimePlan {
     if ($plan.protectedWindowProductionMutation -isnot [bool]) {
         throw "Runtime plan protected-window authority is invalid."
     }
-    if ($hasSyntheticValidation) {
+    $roadmapPropertyNames = @('roadmapReleaseEvidenceFile', 'roadmapReleaseEvidenceSha256', 'roadmapPilotEvidenceFile', 'roadmapPilotEvidenceSha256')
+    $presentRoadmapProperties = @($roadmapPropertyNames | Where-Object { $plan.PSObject.Properties.Name -ccontains $_ })
+    if ($presentRoadmapProperties.Count -notin @(0, 4)) { throw 'Runtime plan roadmap evidence identity is partial.' }
+    if ($presentRoadmapProperties.Count -eq 0) {
+        foreach ($name in $roadmapPropertyNames) { $plan | Add-Member -NotePropertyName $name -NotePropertyValue $null }
+    }
+    $hasRoadmapReleaseEvidence = $null -ne (Get-RoadmapReleaseCapability -Mode ([string]$plan.profileMode))
+    $hasRoadmapPilotEvidence = [string]$plan.profileMode -cin $script:RoadmapGlobalModes
+    if (($hasRoadmapReleaseEvidence -and ($plan.roadmapReleaseEvidenceFile -cne 'roadmap-release-evidence.json' -or
+            $plan.roadmapReleaseEvidenceSha256 -cnotmatch '^[0-9a-f]{64}$')) -or
+        (-not $hasRoadmapReleaseEvidence -and ($null -ne $plan.roadmapReleaseEvidenceFile -or $null -ne $plan.roadmapReleaseEvidenceSha256)) -or
+        ($hasRoadmapPilotEvidence -and ($plan.roadmapPilotEvidenceFile -cne 'roadmap-pilot-evidence.json' -or
+            $plan.roadmapPilotEvidenceSha256 -cnotmatch '^[0-9a-f]{64}$')) -or
+        (-not $hasRoadmapPilotEvidence -and ($null -ne $plan.roadmapPilotEvidenceFile -or $null -ne $plan.roadmapPilotEvidenceSha256))) {
+        throw 'Runtime plan roadmap evidence identity is invalid.'
+    }
+    if ($hasRoadmapReleaseEvidence) {
+        if ($hasSyntheticValidation -or $hasTurnEvidence -or $plan.validationLevel -cne 'synthetic_only' -or
+            $plan.managedValidation -cne 'waived_not_passed') { throw 'Runtime plan scoped managed-waiver authority is invalid.' }
+    }
+    elseif ([string]$plan.profileMode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on', 'private-chat-lifecycle-global-on')) {
+        if ($hasSyntheticValidation -or $hasTurnEvidence -or $plan.validationLevel -cne 'live_pilot' -or
+            $plan.managedValidation -cne 'not_applicable') { throw 'Runtime plan live-pilot authority is invalid.' }
+    }
+    elseif ($hasSyntheticValidation) {
         if (-not $hasTurnEvidence -or [string]$plan.profileMode -cne "global-on" -or
             [string]$plan.validationLevel -cne "synthetic_only" -or
             [string]$plan.managedValidation -cne "waived_not_passed" -or
@@ -4507,6 +4645,12 @@ function Read-RuntimePlan {
     )
     $plan | Add-Member -NotePropertyName managedTestWaiverPath -NotePropertyValue $(
         if ($hasManagedTestWaiver) { Join-Path $runDirectory "managed-test-waiver.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName roadmapReleaseEvidencePath -NotePropertyValue $(
+        if ($hasRoadmapReleaseEvidence) { Join-Path $runDirectory 'roadmap-release-evidence.json' } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName roadmapPilotEvidencePath -NotePropertyValue $(
+        if ($hasRoadmapPilotEvidence) { Join-Path $runDirectory 'roadmap-pilot-evidence.json' } else { $null }
     )
     $plan | Add-Member -NotePropertyName trackingPilotEvidencePath -NotePropertyValue $(
         if ($hasTrackingPilotEvidence) { Join-Path $runDirectory "tracking-pilot-evidence.json" } else { $null }
@@ -4549,6 +4693,8 @@ function Write-ResultEvidence {
         runtimeConfigurationSha256 = [string]$Plan.runtimeConfigurationSha256
         syntheticValidationSha256 = if ($null -ne $Plan.syntheticValidationSha256) { [string]$Plan.syntheticValidationSha256 } else { $null }
         managedTestWaiverSha256 = if ($null -ne $Plan.managedTestWaiverSha256) { [string]$Plan.managedTestWaiverSha256 } else { $null }
+        roadmapReleaseEvidenceSha256 = $Plan.roadmapReleaseEvidenceSha256
+        roadmapPilotEvidenceSha256 = $Plan.roadmapPilotEvidenceSha256
         trackingPilotEvidenceSha256 = if ($null -ne $Plan.trackingPilotEvidenceSha256) { [string]$Plan.trackingPilotEvidenceSha256 } else { $null }
         studentGatePilotEvidenceSha256 = if ($null -ne $Plan.studentGatePilotEvidenceSha256) {
             [string]$Plan.studentGatePilotEvidenceSha256
@@ -4592,9 +4738,17 @@ function Invoke-RuntimeConfigApply {
         [switch]$SkipRepositoryCheck,
         [switch]$ConfirmProductionMutation,
         [switch]$ConfirmSyntheticOnlyGlobalActivation,
+        [switch]$ConfirmRoadmapManagedWaiver,
         [switch]$ConfirmProtectedWindowProductionMutation
     )
-    $syntheticOnlyWaiver = [string]$Plan.validationLevel -ceq "synthetic_only"
+    $roadmapWaiver = $null -ne (Get-RoadmapReleaseCapability -Mode ([string]$Plan.profileMode))
+    $syntheticOnlyWaiver = [string]$Plan.validationLevel -ceq "synthetic_only" -and -not $roadmapWaiver
+    if ($roadmapWaiver -and (-not $ConfirmRoadmapManagedWaiver -or -not $ConfirmProductionMutation)) {
+        throw 'Precise/Focus apply requires the explicit production and scoped managed-waiver confirmations.'
+    }
+    if (-not $roadmapWaiver -and $ConfirmRoadmapManagedWaiver) { throw 'Scoped managed-waiver confirmation does not match this plan.' }
+    if ([string]$Plan.profileMode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on') -and
+        -not $ConfirmProductionMutation) { throw 'Live-pilot global promotion requires the production confirmation again at Apply.' }
     $protectedWindowMutation = [bool]$Plan.protectedWindowProductionMutation
     if ($ConfirmProtectedWindowProductionMutation -ne $protectedWindowMutation) {
         throw "Protected-window apply confirmation must match the exact reviewed plan authority."
@@ -4618,6 +4772,16 @@ function Invoke-RuntimeConfigApply {
     }
     $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profileSnapshot.Value
     $runtime = $runtimeIntent
+    $roadmapReleaseSnapshot = $null
+    $roadmapPilotSnapshot = $null
+    if ($roadmapWaiver) {
+        $roadmapReleaseSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.roadmapReleaseEvidencePath)
+        if ($roadmapReleaseSnapshot.Sha256 -cne $Plan.roadmapReleaseEvidenceSha256) { throw 'Roadmap release approval changed after planning.' }
+    }
+    if ($runtime.Mode -cin $script:RoadmapGlobalModes) {
+        $roadmapPilotSnapshot = Read-StrictJsonSnapshot -Path ([string]$Plan.roadmapPilotEvidencePath)
+        if ($roadmapPilotSnapshot.Sha256 -cne $Plan.roadmapPilotEvidenceSha256) { throw 'Roadmap live pilot evidence changed after planning.' }
+    }
     if ($runtime.Mode -cne [string]$Plan.profileMode -or $runtime.SchoolScopeCount -ne [int]$Plan.schoolScopeCount) {
         throw "Runtime profile semantics changed after planning."
     }
@@ -4738,6 +4902,11 @@ function Invoke-RuntimeConfigApply {
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
         -ContainerName "api" -TargetRuntimeConfiguration $runtime `
         -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    Assert-PrivateChatRuntimeCompatibility -Runtime $runtime -Snapshot $snapshot -RepositoryRoot ([string]$Plan.repositoryRoot) -AppSha ([string]$Plan.appSha)
+    Assert-RoadmapActivationEvidence -Runtime $runtime -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
+        -ReleaseSnapshot $roadmapReleaseSnapshot -PilotSnapshot $roadmapPilotSnapshot -ToolSha ([string]$Plan.toolSha) `
+        -AppSha ([string]$Plan.appSha) -ImageDigest ([string]$Plan.imageDigest) -RepositoryRoot ([string]$Plan.repositoryRoot) `
+        -ApiTaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn) -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) -Now $Now
     if ($runtime.Mode -ceq "tracking-window-global-on") {
         $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
         if ($sourceContainer.Count -ne 1) { throw "Pilot source runtime container is ambiguous." }
@@ -5052,6 +5221,7 @@ function Invoke-RuntimeConfigRollback {
         "schemaVersion", "runId", "recordedAt", "status", "planSha256", "profileSha256",
         "profileMode", "schoolScopeCount", "enabledCapabilityCount", "runtimeConfigurationSha256",
         "syntheticValidationSha256", "managedTestWaiverSha256", "validationLevel", "managedValidation",
+        "roadmapReleaseEvidenceSha256", "roadmapPilotEvidenceSha256",
         "trackingPilotEvidenceSha256", "studentGatePilotEvidenceSha256",
         "fastPreviewPilotEvidenceSha256",
         "protectedWindowProductionMutation",
@@ -5061,6 +5231,11 @@ function Invoke-RuntimeConfigRollback {
         "candidateWorkerTaskDefinitionArn", "rollbackApiTaskDefinitionArn", "rollbackWorkerTaskDefinitionArn",
         "scalingRestored"
     ) -Trail "runtime result"
+    foreach ($name in @('roadmapReleaseEvidenceSha256', 'roadmapPilotEvidenceSha256')) {
+        if ($result.PSObject.Properties.Name -cnotcontains $name) {
+            $result | Add-Member -NotePropertyName $name -NotePropertyValue $null
+        }
+    }
     if (-not (Test-IsJsonInteger -Value $result.schemaVersion) -or [long]$result.schemaVersion -ne 2 -or
         [string]$result.status -cnotin @("applied", "rollback_failed_candidate_restored", "rollback_failed_no_service_mutation") -or
         [string]$result.planSha256 -cne $PlanSha256) {
@@ -5073,6 +5248,8 @@ function Invoke-RuntimeConfigRollback {
         [string]$result.runtimeConfigurationSha256 -cne [string]$Plan.runtimeConfigurationSha256 -or
         [string]$result.syntheticValidationSha256 -cne [string]$Plan.syntheticValidationSha256 -or
         [string]$result.managedTestWaiverSha256 -cne [string]$Plan.managedTestWaiverSha256 -or
+        [string]$result.roadmapReleaseEvidenceSha256 -cne [string]$Plan.roadmapReleaseEvidenceSha256 -or
+        [string]$result.roadmapPilotEvidenceSha256 -cne [string]$Plan.roadmapPilotEvidenceSha256 -or
         [string]$result.trackingPilotEvidenceSha256 -cne [string]$Plan.trackingPilotEvidenceSha256 -or
         [string]$result.studentGatePilotEvidenceSha256 -cne [string]$Plan.studentGatePilotEvidenceSha256 -or
         [string]$result.fastPreviewPilotEvidenceSha256 -cne [string]$Plan.fastPreviewPilotEvidenceSha256 -or
@@ -5305,6 +5482,9 @@ function Invoke-RuntimeConfigRollback {
 
 function Invoke-Main {
     $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+    if ($Operation -cne 'Plan' -and ($RoadmapReleaseEvidencePath -or $RoadmapPilotEvidencePath)) {
+        throw 'Roadmap evidence paths belong to Plan; Apply/Rollback read the exact private planned copies.'
+    }
     switch ($Operation) {
         "Plan" {
             foreach ($required in @{
@@ -5318,6 +5498,8 @@ function Invoke-Main {
             $result = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $ProfilePath `
                 -PrivateTurnEvidencePath $TurnEvidencePath -PrivateSyntheticValidationPath $SyntheticValidationPath `
                 -PrivateManagedTestWaiverPath $ManagedTestWaiverPath `
+                -PrivateRoadmapReleaseEvidencePath $RoadmapReleaseEvidencePath `
+                -PrivateRoadmapPilotEvidencePath $RoadmapPilotEvidencePath `
                 -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath `
                 -PrivateStudentGatePilotEvidencePath $StudentGatePilotEvidencePath `
                 -PrivateFastPreviewCandidateReceiptPath $FastPreviewCandidateReceiptPath `
@@ -5328,6 +5510,7 @@ function Invoke-Main {
                 -RegistryTargetAppSha $RegistryTargetAppSha `
                 -ConfirmProductionMutation:$ConfirmProductionMutation `
                 -ConfirmSyntheticOnlyGlobalActivation:$ConfirmSyntheticOnlyGlobalActivation `
+                -ConfirmRoadmapManagedWaiver:$ConfirmRoadmapManagedWaiver `
                 -ConfirmProtectedWindowProductionMutation:$ConfirmProtectedWindowProductionMutation
             Write-Host "ClassPilot runtime plan created: mode=$($result.Mode) schoolScopeCount=$($result.SchoolScopeCount) planSha256=$($result.PlanSha256)"
             Write-Output $result.PlanRelativePath
@@ -5340,6 +5523,7 @@ function Invoke-Main {
             $result = Invoke-RuntimeConfigApply -Plan $plan -PlanSha256 $ExpectedPlanSha256 `
                 -ConfirmProductionMutation:$ConfirmProductionMutation `
                 -ConfirmSyntheticOnlyGlobalActivation:$ConfirmSyntheticOnlyGlobalActivation `
+                -ConfirmRoadmapManagedWaiver:$ConfirmRoadmapManagedWaiver `
                 -ConfirmProtectedWindowProductionMutation:$ConfirmProtectedWindowProductionMutation
             Write-Host "ClassPilot runtime configuration applied: mode=$($result.profileMode) schoolScopeCount=$($result.schoolScopeCount) scalingRestored=$($result.scalingRestored)"
         }

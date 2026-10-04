@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T11:55:10.226327+00:00",
+  "source": "9630c00928aa391efb964eee0847965a967d33eb",
+  "result": {
+    "sourceHead": "9630c00928aa391efb964eee0847965a967d33eb",
+    "startedAt": "2026-10-03T11:32:04.5039127Z",
+    "finishedAt": "2026-10-03T11:52:16.6630580Z",
+    "checks": [
+      {
+        "command": "npm run test:unit",
+        "startedAt": "2026-10-03T11:32:04.5092779Z",
+        "finishedAt": "2026-10-03T11:33:44.7741702Z",
+        "exitCode": 0,
+        "log": "test-unit.log"
+      },
+      {
+        "command": "npm run test:infrastructure",
+        "startedAt": "2026-10-03T11:33:44.7768786Z",
+        "finishedAt": "2026-10-03T11:52:14.8596061Z",
+        "exitCode": 0,
+        "log": "test-infrastructure.log"
+      }
+    ],
+    "sourceFileCount": 1175,
+    "sourceUnchanged": true,
+    "configuration": "DATABASE_URL absent, matching ordinary unit CI; individual unit fixtures configure their own imports",
+    "purpose": "Full unit and infrastructure suites after Usage-on API fair-pool integration; build/types/casts and focused native proof passed separately",
+    "output": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01"
+  },
+  "tap": {
+    "unit": {
+      "tests": 1867,
+      "pass": 1863,
+      "fail": 0,
+      "skip": 4
+    },
+    "infrastructure": {
+      "tests": 699,
+      "pass": 699,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  "remaining": [
+    "Combined Usage capacity remains unproven; next measured run is separate.",
+    "Local complete DB/RLS duplicate was postponed before any fixture/test started. Exact-source CI covers Linux DB/PDF/RLS; those remote results are a separate receipt.",
+    "Recovery rehearsal has not run on9630 yet."
+  ],
+  "cleanup": {
+    "activeOwnedTests": 0,
+    "ownedSerialFixtures": 0,
+    "waitingWrapperStoppedBeforeTest": true,
+    "quietReceipt": "quiet-02.json.gz",
+    "initialQuietReceiptNote": "quiet.json encoded an empty PowerShell property list as [null]; quiet-02 normalizes that shape, with same true/no-process observation."
+  },
+  "priorFocusedManifest": "../fair-main-pool-scheduler-01/manifest.json",
+  "files": [
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\checks.json",
+      "archive": "checks.json.gz",
+      "rawSha256": "e84058ff16cd2c8fca63557af4e946acc071982c526def74cac80b332d82121f",
+      "sanitizedSha256": "e84058ff16cd2c8fca63557af4e946acc071982c526def74cac80b332d82121f",
+      "gzipSha256": "d3ba31b10999fadd4057273bd93e173729f662e60fc4841233ad7382b92612ad",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\quiet-02.json",
+      "archive": "quiet-02.json.gz",
+      "rawSha256": "cbac1903b4172343a55f14e189750934e9379b60c2d06014ce78b49fa6e0cd80",
+      "sanitizedSha256": "cbac1903b4172343a55f14e189750934e9379b60c2d06014ce78b49fa6e0cd80",
+      "gzipSha256": "c2ae84b5c68e906f0251d8b27b1431aa3769d4c81ebfd911b37623e99dd05e91",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\quiet.json",
+      "archive": "quiet.json.gz",
+      "rawSha256": "ffbf8cdf6d03a7d7b3e7566c8f05eca90a05b8308eb210ae1b48a6a82469322c",
+      "sanitizedSha256": "ffbf8cdf6d03a7d7b3e7566c8f05eca90a05b8308eb210ae1b48a6a82469322c",
+      "gzipSha256": "8c2f096917d61a10d51cc8465a489db6455917718b73d51624a68b9870846399",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\result.json",
+      "archive": "result.json.gz",
+      "rawSha256": "2bb0111447c44edb61b2d9b9389198b3739473d41b9b164171f1638efeb60454",
+      "sanitizedSha256": "2bb0111447c44edb61b2d9b9389198b3739473d41b9b164171f1638efeb60454",
+      "gzipSha256": "0a64364b2f4d5aada626cc487a06b234121ee551cac43897cd1b971f60dc54ae",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\source-after.json",
+      "archive": "source-after.json.gz",
+      "rawSha256": "b62bf7560fe9a80ba5e3085aaf025821d26c757d6cafdfcbe881e270a276783c",
+      "sanitizedSha256": "b62bf7560fe9a80ba5e3085aaf025821d26c757d6cafdfcbe881e270a276783c",
+      "gzipSha256": "a87b5c46ee2fdd4d1cc707462d56610de9dc350448f8fb0e830d33b56350db03",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\source-before.json",
+      "archive": "source-before.json.gz",
+      "rawSha256": "b62bf7560fe9a80ba5e3085aaf025821d26c757d6cafdfcbe881e270a276783c",
+      "sanitizedSha256": "b62bf7560fe9a80ba5e3085aaf025821d26c757d6cafdfcbe881e270a276783c",
+      "gzipSha256": "a87b5c46ee2fdd4d1cc707462d56610de9dc350448f8fb0e830d33b56350db03",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\test-infrastructure.log",
+      "archive": "test-infrastructure.log.gz",
+      "rawSha256": "6bd2b4a12735fc5009bd43489c51c0f0b0c3dd77eaf0e81718cfa643a232c6ee",
+      "sanitizedSha256": "6bd2b4a12735fc5009bd43489c51c0f0b0c3dd77eaf0e81718cfa643a232c6ee",
+      "gzipSha256": "e1811dbaa2ff7aa7a96ceec48c211384ba3a73d1d7c504c17d8bbf434fdac708",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01\\test-unit.log",
+      "archive": "test-unit.log.gz",
+      "rawSha256": "9fd5d002df458895900e94db105fe6ff121527d827278c5a65bae0b45b21e0f6",
+      "sanitizedSha256": "9fd5d002df458895900e94db105fe6ff121527d827278c5a65bae0b45b21e0f6",
+      "gzipSha256": "0f48e626f8045e824fa2ed5e8805ae1201be7bff0e23c74a8b2b6b49ecd2f328",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01.ps1",
+      "archive": "release297-fair-final-backend-01.ps1.gz",
+      "rawSha256": "7f14f92072f98771b95663191e1fbde311d422f9863619cda076d5b871caba6f",
+      "sanitizedSha256": "7f14f92072f98771b95663191e1fbde311d422f9863619cda076d5b871caba6f",
+      "gzipSha256": "4c64780c5ab15b340e88cb79909f6a64261065c8f6844351ead018102a7a8b11",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-backend-01-runner.log",
+      "archive": "release297-fair-final-backend-01-runner.log.gz",
+      "rawSha256": "2bb0111447c44edb61b2d9b9389198b3739473d41b9b164171f1638efeb60454",
+      "sanitizedSha256": "2bb0111447c44edb61b2d9b9389198b3739473d41b9b164171f1638efeb60454",
+      "gzipSha256": "0a64364b2f4d5aada626cc487a06b234121ee551cac43897cd1b971f60dc54ae",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-serial-01.mjs",
+      "archive": "release297-fair-final-serial-01.mjs.gz",
+      "rawSha256": "5f8fcdc9449a262cbba51a4a7c238a8fbb64d0817def443cd3f5bd5f5c8346f9",
+      "sanitizedSha256": "5f8fcdc9449a262cbba51a4a7c238a8fbb64d0817def443cd3f5bd5f5c8346f9",
+      "gzipSha256": "9d3e6cea39b8bbbfabe8816ad4a4cbf1f22f257966056275d34e1bf658b552ff",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    },
+    {
+      "source": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-fair-final-serial-postponed-01.json",
+      "archive": "release297-fair-final-serial-postponed-01.json.gz",
+      "rawSha256": "3add3b155bb8461e21fef31eb922bbb655fff1356253f3a4a34d22255c3ec4bb",
+      "sanitizedSha256": "3add3b155bb8461e21fef31eb922bbb655fff1356253f3a4a34d22255c3ec4bb",
+      "gzipSha256": "c8872116eb3a6e452440b5d255d5020b05f6a24a172b36d39285f9d53a86d70c",
+      "redactions": {
+        "jwt": 0,
+        "dsn": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-04T01:59:44.817Z",
+  "version": "2.9.7",
+  "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+  "archiveSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "workerSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+  "sourceUnchanged": true,
+  "extensionRebuilt": false,
+  "passed": true,
+  "tests": 4,
+  "results": [
+    {
+      "name": "busy503 respects Retry-After and heartbeat maxAttempts=2",
+      "passed": true,
+      "requests": 2,
+      "waits": [
+        1200
+      ]
+    },
+    {
+      "name": "retired authentication aborts before another retry",
+      "passed": true,
+      "requests": 1
+    },
+    {
+      "name": "network retries and maximum server-requested delay are bounded",
+      "passed": true,
+      "requests": 2
+    },
+    {
+      "name": "cadence/event overlap does not multiply in-flight heartbeats",
+      "passed": true,
+      "requests": 1
+    }
+  ],
+  "scope": "Actual packaged retry and in-flight control functions under controlled fetch/clock dependencies; not a managed-browser or capacity result."
+}

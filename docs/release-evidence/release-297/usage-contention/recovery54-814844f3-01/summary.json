@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "source": "814844f344a45159152415b0fb6d7027f05b093e",
+  "fallbackSource": "6e251f2d1eece2b98fa2325e1fa46bd2b8553420",
+  "passed": true,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "productionMutations": 0,
+  "run": "73e1d87ed05d",
+  "startedAt": "2026-10-03T21:13:21.037Z",
+  "completedAt": "2026-10-03T21:14:58.849Z",
+  "phases": [
+    {
+      "phase": "grant",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "containerId": "7f3ae58df590eb35cdc94bf906beca04abbcf67024153c801c61a9fe45e3d36c",
+      "attachExit": 0,
+      "daemonExit": 0,
+      "oomKilled": false,
+      "proofSha256": "fadc84ae480ed28cd8e34c38bb8c0c019f874b8c9aec5ac2c91f2a02b5279ca3"
+    },
+    {
+      "phase": "seed",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "containerId": "ec0dd85f09aed030cd13ab763c092c2f420b8700e8b26e234306f3ad723d0681",
+      "attachExit": 0,
+      "daemonExit": 0,
+      "oomKilled": false,
+      "proofSha256": "4efc2d0445aa7a35ac16c4117d996fd7a5648fe906dc1f7e84b7b215c9c73fb3"
+    },
+    {
+      "phase": "fallback",
+      "source": "6e251f2d1eece2b98fa2325e1fa46bd2b8553420",
+      "containerId": "c223c2f812ebd04a38d7b4097f60b4f09b7154997dc425cd496059352847e5ee",
+      "attachExit": 0,
+      "daemonExit": 0,
+      "oomKilled": false,
+      "proofSha256": "68192b9cf15e51b288c451adc827789b26d24c0117b5461a690d631f07c9ea5c"
+    },
+    {
+      "phase": "return",
+      "source": "814844f344a45159152415b0fb6d7027f05b093e",
+      "containerId": "0b1a14b816d55a8225859cdbc02319a000dc5cec3efdc877aae762d5a737a3bd",
+      "attachExit": 0,
+      "daemonExit": 0,
+      "oomKilled": false,
+      "proofSha256": "25c5bfd2a917017c6a67c35c493646d0b4a309a1748fb1f74c6b9015db2b1869"
+    }
+  ],
+  "usageModes": "off/off",
+  "migrationCount": 54,
+  "inventoryCount": 129,
+  "functionProof": {
+    "signature": "public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)",
+    "bodySha256": "e198ab4901f23dd31aa286e90e3c7401302cd5220510af9b5facf306cf80c30b",
+    "attributes": {
+      "volatile": true,
+      "invoker": true,
+      "parallelUnsafe": true,
+      "searchPath": "pg_catalog",
+      "strict": false,
+      "leakproof": false
+    },
+    "runtimeExecute": true,
+    "publicExecute": false,
+    "owner": "recovery_owner",
+    "aclSha256": "66df5dcc13cec9f25d9a471c7ce613d79bf5b48b2e0316e4ad6e5785c37c1f44",
+    "ledgerEntries": 54,
+    "ledgerSha256": "befb03f2cbcff70e04e88898111a4b4516dd10f987806bef384ba21700febb4d",
+    "migrationChecksum": "2e7ff0728fd875c151e641b506c2e5d650d818ece2e54977db4f9fe4cefed036"
+  },
+  "privateEpochsAndGenerationVerified": true,
+  "expiredReplyCount": 4,
+  "deliveredHistoryRetained": true,
+  "focusStateVerified": true,
+  "cleanup": {
+    "containers": 5,
+    "anonymousVolumes": 1,
+    "allConfirmedAbsent": true,
+    "allUnforced": true,
+    "sourceRehearsalIndependentCleanup": true
+  },
+  "schemaSha256": "1da63b3755cd976491e16c2122dc46b281d319869399c1c907516656014faa65",
+  "sourceRehearsalSha256": "25f593275d68a333822ec84c2cf1db0fd3236d7c6378fdab7003e556124138c6",
+  "limits": [
+    "Local synthetic restricted-tenant OCI bundled-function recovery, not production service traffic rollback.",
+    "Source rehearsal proves empty baseline44 to candidate54 with retained54 across fallback/reentry; behavior fixture imports that actual complete ledger into fresh schema-only state.",
+    "No browser enforcement or Redis relay exercised; existing process-local realtime capability fixture only.",
+    "Both Usage modes remain off; both images have coverage-contract1, so this does not prove below-correction aggregate recovery.",
+    "No capacity acceptance, production changes, AWS operations or registry push."
+  ]
+}

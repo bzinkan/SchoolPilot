@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:26:33.923Z",
+  "scope": "Release-only canonical active control/staff preparation before PostgreSQL cold restart; original comparison seeder unchanged.",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "incremental shared worktree; no product source changes by this slice; native probe imports existing compiled dist",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "scripts/load/usage/prepare-release-control-ownership.mjs": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+      "scripts/load/usage/run-release-enabled-scale.ps1": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384",
+      "tests/release-control-ownership.test.mjs": "e9394ea2440bd12526cdc3aad030e0252106eab4c7b1f59151c7032bcf66089d"
+    },
+    "archiveTimeCompiledStorageSha256": "9fa6fd8e1ac515245cd0dddc6f2fe0e6e16bc88884db5dab0327139f1eb8faa5"
+  },
+  "implementation": {
+    "writer": "backfillOpenTeachingSessionRosterSnapshots(db,schoolId), inside runWithTenantContext({schoolId}) under restricted application role",
+    "coverage": "All100 current classes/500students in each of2schools; exact group/teacher/roster/control binding, revision>0, unexpired hard end, no supervision/source command and empty restrictions; ended-history counts unchanged.",
+    "ordering": "Raw immutable seeder completes; source/state-bound canonical preparation runs and closes all4 application/session/scheduler pools; runner then restarts owned PostgreSQL. No preparation scan occurs after restart.",
+    "safety": "Loopback5437/random usage fixture database+container identity, test environment, prepare phase, known release phase, full lifecycle RLS inventory and nonprivileged application URL are required."
+  },
+  "validation": {
+    "unit": {
+      "pass": 4,
+      "fail": 0
+    },
+    "native": {
+      "applicationRole": "NOSUPERUSER NOBYPASSRLS NOINHERIT",
+      "scope": "Small control-only fixture; no raw heartbeat load",
+      "before": {
+        "perSchoolControls": 0,
+        "perSchoolStaff": 0,
+        "canonicalCommandRejected": "COMMAND_ACTOR_AUTHORITY_STALE"
+      },
+      "after": {
+        "schools": 2,
+        "currentSessionsPerSchool": 100,
+        "controlRowsPerSchool": 500,
+        "staffBindingsPerSchool": 100,
+        "exactCommandTargetAccepted": true,
+        "foreignSchoolControlRowsVisible": 0
+      },
+      "poolsClosed": true,
+      "containerRemoved": true
+    },
+    "syntax": "passed",
+    "diffCheck": "passed"
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "result": "PowerShell5 native-stderr handling terminated the runner before a complete error/result document was captured; native log empty, container cleanup retained. Root cause of the initial Node stderr is unverified, and this attempt is not counted as native acceptance."
+    },
+    {
+      "attempt": 2,
+      "result": "pwsh runner preserved stderr and completed the entire canonical red-before/green-after restricted-role fixture successfully."
+    }
+  ],
+  "commands": {
+    "unit": "node --test tests/release-control-ownership.test.mjs",
+    "native": "pwsh -NoProfile -File <external>/release297-control-preparation-native.ps1",
+    "runnerStep": "node scripts/load/usage/bounded-fixture-step.mjs120000 --max-old-space-size=512 scripts/load/usage/prepare-release-control-ownership.mjs"
+  },
+  "limitations": [
+    "Native probe validates canonical storage command authority; it does not replace full HTTP/WebSocket lifecycle preflight/ACK proof.",
+    "Native red condition lacks both frozen staff and controls; it rejects at the earlier staff authority guard, and zero control rows are separately observed.",
+    "Full source-bound release preflight remains required after all shared source/harness changes settle.",
+    "No production mutation, load-capacity pass or operational approval."
+  ],
+  "sanitation": "Database URL credentials, JWT-shaped values and user-home paths redacted; raw schema dump and generated secrets omitted.",
+  "files": [
+    {
+      "file": "unit-01.log.gz",
+      "status": "passed",
+      "originalSha256": "1b2ac53ab21581653c9dd107390052bdbdb8fff5f0672d53be1a80c11da6fbf5",
+      "sanitizedSha256": "1b2ac53ab21581653c9dd107390052bdbdb8fff5f0672d53be1a80c11da6fbf5",
+      "archiveSha256": "37f89035a2c78f59f9492c99be26420301b59e9245c025d4296a5703817d69a5"
+    },
+    {
+      "file": "native-01-native.log.gz",
+      "status": "failed_harness_without_full_diagnostic",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "native-01-cleanup.log.gz",
+      "status": "failed_harness_without_full_diagnostic",
+      "originalSha256": "ea605d76574e6802755aa21c5143ed5ac6773b166eb7df006226e1509452fe13",
+      "sanitizedSha256": "1c995b2e92de4f312ca0771ec2f09e194ff450dc95c7cd70cd6ddee37c2b17ec",
+      "archiveSha256": "2fd0edece30310b5e308fe11f9c8ed7f44b5839d896b9b60e1c204ea8b6dcc28"
+    },
+    {
+      "file": "native-02-native.log.gz",
+      "status": "passed",
+      "originalSha256": "b8b0b42eab28a4587ed398275c0545e48ae01a7f21cb0993b9860add3b80ef43",
+      "sanitizedSha256": "b8b0b42eab28a4587ed398275c0545e48ae01a7f21cb0993b9860add3b80ef43",
+      "archiveSha256": "65d43f1c0cf03aadd5a3189f72a16766f9e05ce44dc74eee51a6646e2c674038"
+    },
+    {
+      "file": "native-02-native-result.json.gz",
+      "status": "passed",
+      "originalSha256": "838becf2c2cc98a2d49a3a4dcf2f8e3d78e63e4bd13d50cea10196cdd26d3cfd",
+      "sanitizedSha256": "838becf2c2cc98a2d49a3a4dcf2f8e3d78e63e4bd13d50cea10196cdd26d3cfd",
+      "archiveSha256": "83cbe552a2070770fc6a09af562d97e3561a67631b54fc67310f30f365ebef0f"
+    },
+    {
+      "file": "native-02-execution.json.gz",
+      "status": "passed",
+      "originalSha256": "ef6c30f3793b75ea69b1635c660043c633b9bce077582b36cfb6eaa998e8293e",
+      "sanitizedSha256": "ef6c30f3793b75ea69b1635c660043c633b9bce077582b36cfb6eaa998e8293e",
+      "archiveSha256": "e0ff636e26fbd27207787a95dd2dfe5cedaa4ad1e7705ce2b30c39e2e68dfe06"
+    },
+    {
+      "file": "native-02-cleanup.log.gz",
+      "status": "passed",
+      "originalSha256": "dbdb86aba6d0dc322fa5c6109494e537f628cb9ca85bba36f8e567ca5302769d",
+      "sanitizedSha256": "dbdb86aba6d0dc322fa5c6109494e537f628cb9ca85bba36f8e567ca5302769d",
+      "archiveSha256": "353eb8d3f6f584b8a6326e8b061c7c6053b30f3ce6df778dd16df624ec6499ff"
+    },
+    {
+      "file": "native-probe.mjs.gz",
+      "status": "reproduction_source",
+      "originalSha256": "a68950cf500e4f29bb4482c6bfcba010359febf49e2ca8e05686d694b8652e09",
+      "sanitizedSha256": "b571f7c070fc41fb76a10d2d0c464ab270e959b659e92e28c38b0c1ccb70d0fd",
+      "archiveSha256": "84050f94a2ed22260721580db986b250b7f1096af0ed1f983b25dd209baa82ae"
+    },
+    {
+      "file": "native-fixture-runner.ps1.gz",
+      "status": "reproduction_source",
+      "originalSha256": "f3769a19e9dd0821f58811abca9628cfcdd1f52c3816001061272f45194db23a",
+      "sanitizedSha256": "8a5754c2ee2ab778084d8877316ee9f8060d7d86d7c993afb22e0dd01cb1649c",
+      "archiveSha256": "e82a1402f946be3f604c692381d43501e89b63dfd8d53029df670a6a11f513f6"
+    }
+  ]
+}

@@ -1141,6 +1141,24 @@ export const classpilotUsageRollups = pgTable(
 export type ClasspilotUsageRollup = typeof classpilotUsageRollups.$inferSelect;
 export type InsertClasspilotUsageRollup = typeof classpilotUsageRollups.$inferInsert;
 
+// Computation coverage, including successful days with no observations. No
+// student, domain or device data: this is metadata for the existing aggregates.
+export const classpilotUsageRollupDays = pgTable("classpilot_usage_rollup_days", {
+  schoolId: text("school_id").notNull(),
+  usageDate: date("usage_date", { mode: "string" }).notNull(),
+  dayStartAt: timestamp("day_start_at", { withTimezone: true }).notNull(),
+  dayEndAt: timestamp("day_end_at", { withTimezone: true }).notNull(),
+  processedThrough: timestamp("processed_through", { withTimezone: true }).notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  isFinal: boolean("is_final").notNull().default(false),
+}, (table) => [
+  unique("cp_usage_days_school_date_unique").on(table.schoolId, table.usageDate),
+  foreignKey({ columns: [table.schoolId], foreignColumns: [schools.id], name: "cp_usage_days_school_fk" }).onDelete("cascade"),
+  check("cp_usage_days_window_check", sql`${table.dayStartAt} < ${table.dayEndAt}
+    AND ${table.processedThrough} >= ${table.dayStartAt} AND ${table.processedThrough} <= ${table.dayEndAt}
+    AND (NOT ${table.isFinal} OR ${table.processedThrough} = ${table.dayEndAt})`),
+]);
+
 // ============================================================================
 // Scoped classroom monitoring events - privacy-bounded extension telemetry
 // ============================================================================
@@ -1224,6 +1242,7 @@ export const sessionSettings = pgTable("session_settings", {
   chatEnabled: boolean("chat_enabled").default(true),
   raiseHandEnabled: boolean("raise_hand_enabled").default(true),
   chatPaused: boolean("chat_paused").notNull().default(false),
+  privateChatEpoch: integer("private_chat_epoch").notNull().default(1),
   lifecycleRevision: integer("lifecycle_revision").notNull().default(1),
   toolsRevision: integer("tools_revision").notNull().default(0),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -1243,6 +1262,28 @@ export const sessionSettings = pgTable("session_settings", {
 export type SessionSetting = typeof sessionSettings.$inferSelect;
 export type InsertSessionSetting = typeof sessionSettings.$inferInsert;
 
+export const classpilotPrivateChatThreads = pgTable("classpilot_private_chat_threads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schoolId: text("school_id").notNull(),
+  studentId: text("student_id").notNull(),
+  teachingSessionId: varchar("teaching_session_id"),
+  supervisionContextId: varchar("supervision_context_id"),
+  authorityAssignmentId: varchar("authority_assignment_id").notNull(),
+  generation: integer("generation").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("cp_private_chat_school_id_unique").on(table.schoolId, table.id),
+  uniqueIndex("cp_private_chat_assignment_unique").on(table.schoolId, table.studentId, table.authorityAssignmentId),
+  index("cp_private_chat_session_idx").on(table.schoolId, table.teachingSessionId, table.studentId),
+  index("cp_private_chat_context_idx").on(table.schoolId, table.supervisionContextId, table.studentId),
+  check("cp_private_chat_parent_check", sql`num_nonnulls(${table.teachingSessionId},${table.supervisionContextId})=1`),
+  check("cp_private_chat_generation_check", sql`${table.generation}>0`),
+  foreignKey({columns:[table.schoolId,table.studentId],foreignColumns:[students.schoolId,students.id],name:"cp_private_chat_student_fk"}).onDelete("cascade"),
+  foreignKey({columns:[table.schoolId,table.teachingSessionId],foreignColumns:[teachingSessions.schoolId,teachingSessions.id],name:"cp_private_chat_session_fk"}).onDelete("cascade"),
+  foreignKey({columns:[table.schoolId,table.supervisionContextId],foreignColumns:[classpilotSupervisionContexts.schoolId,classpilotSupervisionContexts.id],name:"cp_private_chat_context_fk"}).onDelete("cascade"),
+]);
+
 // ============================================================================
 // Chat Messages - Session-scoped messaging
 // ============================================================================
@@ -1257,6 +1298,10 @@ export const chatMessages = pgTable(
     studentSessionId: varchar("student_session_id"),
     deviceId: text("device_id"),
     clientMessageId: varchar("client_message_id", { length: 128 }),
+    privateChatThreadId: varchar("private_chat_thread_id"),
+    privateChatSchoolEpoch: integer("private_chat_school_epoch"),
+    privateChatActivityEpoch: integer("private_chat_activity_epoch"),
+    privateChatGeneration: integer("private_chat_generation"),
     senderId: text("sender_id").notNull(),
     senderType: text("sender_type").notNull().$type<"teacher" | "student">(),
     recipientId: text("recipient_id"), // null = broadcast
@@ -1929,6 +1974,7 @@ export const flightPaths = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     publishedBy: text("published_by"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`date_trunc('milliseconds', clock_timestamp())`),
   },
   (table) => [
     check(

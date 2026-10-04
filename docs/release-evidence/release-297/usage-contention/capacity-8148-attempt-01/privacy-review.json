@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "records": 299,
+  "hashOnly": 16,
+  "emptyPrivateFiles": 2,
+  "privateDumpCopied": false,
+  "privateRoleDdlCopied": false,
+  "environmentFilesCopied": false,
+  "redactions": [
+    "credential/password/secret/cookie/token/nonce fields including nested raw JSON",
+    "database/Redis URL literals",
+    "JWT and GitHub token patterns",
+    "temporary-directory prefix"
+  ],
+  "privateKeyAccessKeyScramPatternScanPassed": true,
+  "scope": "Synthetic owned local capacity/seed/campaign evidence only; no production or real-school data."
+}

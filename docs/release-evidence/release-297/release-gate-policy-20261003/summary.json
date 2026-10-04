@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-04T00:10:09.924Z",
+  "ownerDecisionDate": "2026-10-03",
+  "ownerDecisionTimezone": "America/New_York",
+  "releaseGate": "Usage-off paired regression/current-school classroom/recovery acceptance",
+  "usageActivationGate": "Separate three-API cold capacity plus deployed observation",
+  "oldCampaign": {
+    "canonicalSha256": "10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92",
+    "journalSha256": "0fa077d62df01d2423c629738e0e76695532ed44ba4ab02ed413aa18327c6604",
+    "capacityAccepted": false,
+    "frozenValidatorSha256": "97ef0256d0affc86bc48bc165ada8a9c4c42959c4d10878a3049f9aec86b41db",
+    "frozenJournalModuleSha256": "a8d4b675ea176eb3ea8488ec7e201608f1144ced2fb0db186b9af606c8950f33",
+    "firstRawHashGuardAttempt": "Rejected before mutation: wrapper-file hash was compared with canonical campaign identity; corrected after archived custody verification"
+  },
+  "newAcceptanceMeasured": false,
+  "productionMutationPerformed": false,
+  "storeSubmissionPerformed": false,
+  "privateHashOnly": [
+    {
+      "label": "selected-baseline-environment",
+      "sha256": "063360d631c65e7d4ce2bfcdbf4fe29781cb7016e670817874eb345aa649fd27",
+      "storedInRepository": false
+    }
+  ]
+}

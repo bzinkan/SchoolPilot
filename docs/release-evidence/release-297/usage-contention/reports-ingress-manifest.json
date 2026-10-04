@@ -1,0 +1,736 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-02T22:58:51.851Z",
+  "scope": "Usage full-app ingress/session-store deadline correction and original/selected-school epoch preservation; incremental evidence only.",
+  "source": {
+    "baseCommit": "08802d020a3c51beea504140f923126ab518aac6",
+    "archiveTimeHead": "08802d020a3c51beea504140f923126ab518aac6",
+    "state": "shared dirty worktree; incremental uncommitted implementation",
+    "exactRunTreeRecorded": false,
+    "archiveTimeFiles": {
+      "src/app.ts": "600d985638104a3402b8c8a0c6701dda4c04c32ae3c495db99b46785158aa4e2",
+      "src/services/classpilotUsageRequest.ts": "dc86432e127e3f6255d6e3fc18000ee709fca6ead2959d5dfa0ad7d24c7f0a32",
+      "src/routes/classpilot/adminUsage.ts": "61f86fcf110ff8729cafcae9c625a06864d5233f922106dc7818ea9a030b80b9",
+      "tests/classpilot-usage-request.test.ts": "54b0a43fc51d200e7227ae13f79771d9e52e5f07159c1a1227ea57c30c17bca4",
+      "tests/classpilot-usage-admission.integration.test.ts": "129feee3b80196f0a4d6818c083a837264c2be3af80e8827827632328d37e6ed"
+    },
+    "note": "Archive-time hashes describe the final local files only and do not retrospectively identify source for earlier attempts. Code and fixtures advanced during verification. Clean final-source CI remains separately required."
+  },
+  "commands": {
+    "nativeOwnerAndRestricted": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-usage-admission.integration.test.ts",
+    "requestUnit": "node --import tsx --test tests/classpilot-usage-request.test.ts",
+    "focused": "node --import tsx --test tests/classpilot-usage-admission.test.ts tests/classpilot-usage-execution.test.ts tests/classpilot-usage-request.test.ts tests/classpilot-usage-coverage.test.ts tests/classpilot-usage-rollup-sql.test.ts",
+    "bootstrap": "Same separate loopback-only owned PostgreSQL fixtures, schema-only donor,2CPU/2GiB limits, restricted role and ownership-checked cleanup described in reports-commands.json; no shared database writes."
+  },
+  "coverage": [
+    "Existing20s timer begins before connect-pg-simple, global limiter, idle timeout, CSRF and request-body parsing; no deadline renewal at router entry.",
+    "Only active canonical GET/HEAD is intercepted, matching Express case-insensitivity and optional slash; dark/unadmitted paths preserve ordinary behavior.",
+    "Two-MiB bounded JSON/CSV buffer defers transport output until session save completes, preserving normal complete body and rolling cookie while deadline produces fresh503 JSON/Retry-After1 without stale CSV, length, cookie or ETag headers.",
+    "Late session get/save/save-error, body-parser continuation and synchronous save continuation after monotonic deadline cannot emit a second response or reach the late route.",
+    "Full createApp native requests use the real PostgreSQL-backed session store and unchanged production20s deadline; tests delay the store continuation after the native query completes. They do not simulate a held PostgreSQL statement.",
+    "Authorized cross-school selection uses the selected school epoch and succeeds across different epochs; selected-school revocation while queued still401s. Same-school original pre-resolver epoch remains protected.",
+    "Normal cookie200, no late duplicate finish, strict audit behavior and drained report/session pools are asserted in native owner and restricted lanes."
+  ],
+  "runs": [
+    {
+      "id": "native-attempt-01",
+      "originalRunId": "99f2e31ae90a",
+      "status": "failed_fixture",
+      "note": "Both lanes failed only the newly added session-save fixture: its interception looked for sid at parameter0, but connect-pg-simple INSERT uses parameter2. The response therefore correctly completed200 instead of the asserted503. The fixture was corrected; this failed attempt remains preserved. All other native cases, including full-app delayed session get and cross-school selection/revocation, passed.",
+      "owner": {
+        "file": "reports-ingress-native-attempt-01-owner.log.gz",
+        "tap": {
+          "tests": 12,
+          "suites": 1,
+          "pass": 11,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "fixture owner, not RLS proof"
+      },
+      "restricted": {
+        "file": "reports-ingress-native-attempt-01-restricted.log.gz",
+        "tap": {
+          "tests": 12,
+          "suites": 1,
+          "pass": 11,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "non-owner NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "execution": {
+        "ordinaryExit": 1,
+        "restrictedExit": 1,
+        "source": "08802d020a3c51beea504140f923126ab518aac6",
+        "worktreeDirty": true,
+        "container": "schoolpilot-usage-native-99f2e31ae90a",
+        "database": "usage_native_99f2e31ae90a",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "support": [
+        "reports-ingress-native-attempt-01-execution.json.gz",
+        "reports-ingress-native-attempt-01-cleanup.log.gz",
+        "reports-ingress-native-attempt-01-container-create.log.gz",
+        "reports-ingress-native-attempt-01-restore.log.gz",
+        "reports-ingress-native-attempt-01-role.log.gz"
+      ],
+      "schemaDonorSnapshotSha256": "c1abea8bca9720188ff20a4e2726738de8c0c98f84b800d76db1c483a80c50fa"
+    },
+    {
+      "id": "native-attempt-02",
+      "originalRunId": "460275fe46fc",
+      "status": "passed_incremental",
+      "note": "Corrected interception of the actual PostgreSQL-backed session save continuation; every native case passed in owner and restricted lanes.",
+      "owner": {
+        "file": "reports-ingress-native-attempt-02-owner.log.gz",
+        "tap": {
+          "tests": 12,
+          "suites": 1,
+          "pass": 12,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "fixture owner, not RLS proof"
+      },
+      "restricted": {
+        "file": "reports-ingress-native-attempt-02-restricted.log.gz",
+        "tap": {
+          "tests": 12,
+          "suites": 1,
+          "pass": 12,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "privilege": "non-owner NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "execution": {
+        "ordinaryExit": 0,
+        "restrictedExit": 0,
+        "source": "08802d020a3c51beea504140f923126ab518aac6",
+        "worktreeDirty": true,
+        "container": "schoolpilot-usage-native-460275fe46fc",
+        "database": "usage_native_460275fe46fc",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "support": [
+        "reports-ingress-native-attempt-02-execution.json.gz",
+        "reports-ingress-native-attempt-02-cleanup.log.gz",
+        "reports-ingress-native-attempt-02-container-create.log.gz",
+        "reports-ingress-native-attempt-02-restore.log.gz",
+        "reports-ingress-native-attempt-02-role.log.gz"
+      ],
+      "schemaDonorSnapshotSha256": "5b50346499d201df4d90e71cf3815b1c99c8c6beb1a576372efb002c651ddc7c"
+    }
+  ],
+  "units": [
+    {
+      "file": "reports-ingress-request-unit-01.log.gz",
+      "tap": {
+        "tests": 8,
+        "suites": 0,
+        "pass": 8,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "note": "Eight request cases after correcting Busy header installation."
+    },
+    {
+      "file": "reports-ingress-request-unit-02.log.gz",
+      "tap": {
+        "tests": 12,
+        "suites": 0,
+        "pass": 12,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "note": "Twelve request cases; the subsequent focused run tightens the overdue-save fixture to invoke its callback before timers resume."
+    },
+    {
+      "file": "reports-ingress-focused.log.gz",
+      "tap": {
+        "tests": 53,
+        "suites": 9,
+        "pass": 53,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "note": "Final focused regression set with twelve request cases plus admission, execution, coverage and migration/query tests."
+    }
+  ],
+  "checks": [
+    {
+      "command": "npm run check",
+      "file": "reports-ingress-typecheck-01.log.gz",
+      "status": "passed_incremental"
+    },
+    {
+      "command": "npm run check",
+      "file": "reports-ingress-typecheck-final.log.gz",
+      "status": "passed_incremental"
+    },
+    {
+      "command": "npm run check:tests",
+      "file": "reports-ingress-test-typecheck.log.gz",
+      "status": "passed_incremental"
+    },
+    {
+      "command": "npm run check:test-casts",
+      "file": "reports-ingress-cast-check.log.gz",
+      "status": "passed_incremental"
+    }
+  ],
+  "transcriptOnlyDevelopmentAttempts": [
+    {
+      "status": "failed_corrected",
+      "kind": "TypeScript check",
+      "evidenceKind": "agent tool-output summary; no original on-disk transcript",
+      "finding": "Two nullable schoolId typing errors were corrected by preserving string|null in captured session identity."
+    },
+    {
+      "status": "failed_corrected",
+      "kind": "Initial expanded request unit run",
+      "tests": 8,
+      "passed": 5,
+      "failed": 3,
+      "evidenceKind": "agent tool-output summary; no original on-disk transcript",
+      "finding": "Aborted setHeader guard suppressed Busy headers when native writeHead processed a supplied header object. Corrected by setting Busy headers through captured rawSetHeader before rawWriteHead(status). All subsequent request runs pass."
+    }
+  ],
+  "logs": [
+    {
+      "file": "reports-ingress-native-attempt-01-owner.log.gz",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:50:51.437Z",
+      "rawBytes": 5774,
+      "sanitizedBytes": 5774,
+      "rawSha256": "018daa4e4aa00b47feca77946da6fad45c2d9da1b25c647214181158ee7afc33",
+      "sanitizedSha256": "018daa4e4aa00b47feca77946da6fad45c2d9da1b25c647214181158ee7afc33",
+      "archiveBytes": 1715,
+      "archiveSha256": "d09749a4a786c2576811d06e237b6b601d76977b0e56536da73505c2ba723267",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 12,
+        "suites": 1,
+        "pass": 11,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-native-attempt-01-restricted.log.gz",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:51:23.014Z",
+      "rawBytes": 13576,
+      "sanitizedBytes": 13576,
+      "rawSha256": "e3f21672961a6f8415a054a7483a2812028524abb8b486e8f514be0bfc5a244f",
+      "sanitizedSha256": "e3f21672961a6f8415a054a7483a2812028524abb8b486e8f514be0bfc5a244f",
+      "archiveBytes": 3307,
+      "archiveSha256": "bdeda6b42c6360e2fd4c7e0c868fa1b97c2daa705ac30602393029734aeb68f5",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 12,
+        "suites": 1,
+        "pass": 11,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-native-attempt-01-execution.json.gz",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:51:23.128Z",
+      "rawBytes": 332,
+      "sanitizedBytes": 332,
+      "rawSha256": "4fc178f29a501bdd66e89db98607ba6c8487cf1b7a434116f248c3505106d85a",
+      "sanitizedSha256": "4fc178f29a501bdd66e89db98607ba6c8487cf1b7a434116f248c3505106d85a",
+      "archiveBytes": 232,
+      "archiveSha256": "25d6b63e8d70655c7e6f5ae95e884eb07ec90835ec4d4b9a33001cd053844cc5",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-01-cleanup.log.gz",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:51:23.845Z",
+      "rawBytes": 39,
+      "sanitizedBytes": 39,
+      "rawSha256": "1220c2fd82ff390152789ced5cf622ae559ace1064cb7d7205e0328fd822946c",
+      "sanitizedSha256": "1220c2fd82ff390152789ced5cf622ae559ace1064cb7d7205e0328fd822946c",
+      "archiveBytes": 59,
+      "archiveSha256": "917dde9e1c8e4aa3fb20845df225418762da09ac0208a0d00bf89b661f12d248",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-01-container-create.log.gz",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:50:09.067Z",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "f94132f3d5da6c871e029c326e086b2798e9681737c5c178576626c2b982cba7",
+      "sanitizedSha256": "f94132f3d5da6c871e029c326e086b2798e9681737c5c178576626c2b982cba7",
+      "archiveBytes": 74,
+      "archiveSha256": "76964aa9ab9233d51e0eca07c3723a7851c6f61317e668ebee82bbacb96cbf66",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-01-restore.log.gz",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:50:18.849Z",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-01-role.log.gz",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:50:19.166Z",
+      "rawBytes": 34,
+      "sanitizedBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-owner.log.gz",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:54:51.441Z",
+      "rawBytes": 3757,
+      "sanitizedBytes": 3757,
+      "rawSha256": "f01e0ceb54e7b6c81302a059d1d40adcf28247aa2132a95ece5544a1cb77cec6",
+      "sanitizedSha256": "f01e0ceb54e7b6c81302a059d1d40adcf28247aa2132a95ece5544a1cb77cec6",
+      "archiveBytes": 976,
+      "archiveSha256": "b43b3c977a890c4efe40a728a00e804a78085e80a44b88b74f51262ec1796edd",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 12,
+        "suites": 1,
+        "pass": 12,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-restricted.log.gz",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:55:42.577Z",
+      "rawBytes": 11558,
+      "sanitizedBytes": 11558,
+      "rawSha256": "d92218dc159702b209e15747bc454af4869e56e684d952366a639d98394d52aa",
+      "sanitizedSha256": "d92218dc159702b209e15747bc454af4869e56e684d952366a639d98394d52aa",
+      "archiveBytes": 2585,
+      "archiveSha256": "56d1c48dd6d8241886749e5677ba9ca701341034e9e659b6ee1cf21b7dc588dd",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 12,
+        "suites": 1,
+        "pass": 12,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-execution.json.gz",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:55:42.655Z",
+      "rawBytes": 332,
+      "sanitizedBytes": 332,
+      "rawSha256": "8f646c7adf04915fa9f143661f83f5a1dcbc2ce3f44ca6f171598174c195a9a9",
+      "sanitizedSha256": "8f646c7adf04915fa9f143661f83f5a1dcbc2ce3f44ca6f171598174c195a9a9",
+      "archiveBytes": 233,
+      "archiveSha256": "36e752cfda66d966e2b46a30bd25e36325b06e5374e8f41763cf1ae42ae2ddc0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-cleanup.log.gz",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:55:43.404Z",
+      "rawBytes": 39,
+      "sanitizedBytes": 39,
+      "rawSha256": "da2e4d1f408ac817fa8582843404f45d987be8187dc4cf3709245378e669db19",
+      "sanitizedSha256": "da2e4d1f408ac817fa8582843404f45d987be8187dc4cf3709245378e669db19",
+      "archiveBytes": 59,
+      "archiveSha256": "6f7bceca23a36a0ce33ac1121e3eced641230024fc2952b92d0731061816da52",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-container-create.log.gz",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:53:43.607Z",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "4c2a881c1f3ba64d9d91f07b9f857daa96e931b095f96884c48a7b8781d21955",
+      "sanitizedSha256": "4c2a881c1f3ba64d9d91f07b9f857daa96e931b095f96884c48a7b8781d21955",
+      "archiveBytes": 75,
+      "archiveSha256": "b95463b1cfdb46f8fc7624d9f6c4201624ccd22195957258473721afcd81614b",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-restore.log.gz",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:53:56.281Z",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-native-attempt-02-role.log.gz",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:53:56.673Z",
+      "rawBytes": 34,
+      "sanitizedBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-request-unit-01.log.gz",
+      "sourceFile": "release297-usage-ingress-unit-corrected-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:47:09.586Z",
+      "rawBytes": 1894,
+      "sanitizedBytes": 1894,
+      "rawSha256": "5ac58217040e33b8f8d8a2a552df893db0271f5d02f06e76e8c858aeb122d480",
+      "sanitizedSha256": "5ac58217040e33b8f8d8a2a552df893db0271f5d02f06e76e8c858aeb122d480",
+      "archiveBytes": 425,
+      "archiveSha256": "434a3b637988045f75cd99c77bbd143b4a05fd29ec5f308a88e66e6acc74f9b0",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 8,
+        "suites": 0,
+        "pass": 8,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-request-unit-02.log.gz",
+      "sourceFile": "release297-usage-ingress-unit-corrected-02.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:52:24.727Z",
+      "rawBytes": 2900,
+      "sanitizedBytes": 2900,
+      "rawSha256": "15c6901e10dc2ff3932667b5b8606d7e21364bb9415e1f6849dc824a147d93fb",
+      "sanitizedSha256": "15c6901e10dc2ff3932667b5b8606d7e21364bb9415e1f6849dc824a147d93fb",
+      "archiveBytes": 626,
+      "archiveSha256": "8f5045adbe6dc57c42ee5cc58d4355875797f54de17de2ef2dcae9336e37a27d",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 12,
+        "suites": 0,
+        "pass": 12,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-focused.log.gz",
+      "sourceFile": "release297-usage-ingress-focused-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:54:13.083Z",
+      "rawBytes": 13716,
+      "sanitizedBytes": 13716,
+      "rawSha256": "d3550db4b4cb481c656771a99e85759ccd8e549fed2d27fc70b3a26f99537ec0",
+      "sanitizedSha256": "d3550db4b4cb481c656771a99e85759ccd8e549fed2d27fc70b3a26f99537ec0",
+      "archiveBytes": 2916,
+      "archiveSha256": "c86f08132ed9690dd7d46ab691993604419f675c94ceedea0e1946bc238d8d50",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 53,
+        "suites": 9,
+        "pass": 53,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "file": "reports-ingress-typecheck-01.log.gz",
+      "sourceFile": "release297-usage-ingress-typecheck-02.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:49:35.404Z",
+      "rawBytes": 51,
+      "sanitizedBytes": 51,
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveBytes": 71,
+      "archiveSha256": "6459468e740490899bd8ae976788dcab3cf3aed6fbb9f4e79bc4a6e1042454be",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-typecheck-final.log.gz",
+      "sourceFile": "release297-usage-ingress-typecheck-final.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:56:12.135Z",
+      "rawBytes": 51,
+      "sanitizedBytes": 51,
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveBytes": 71,
+      "archiveSha256": "6459468e740490899bd8ae976788dcab3cf3aed6fbb9f4e79bc4a6e1042454be",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-test-typecheck.log.gz",
+      "sourceFile": "release297-usage-ingress-test-typecheck-01.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:54:22.776Z",
+      "rawBytes": 204,
+      "sanitizedBytes": 204,
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveBytes": 180,
+      "archiveSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-ingress-cast-check.log.gz",
+      "sourceFile": "release297-usage-ingress-cast-final.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:57:02.106Z",
+      "rawBytes": 181,
+      "sanitizedBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveBytes": 166,
+      "archiveSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f",
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "credentialRedactions": 0,
+      "gzipRoundtripVerified": true
+    }
+  ],
+  "preservation": "Credential-shape scans passed without redaction. Exact raw bytes retained in gzip; raw and archive SHA256 plus gzip roundtrip verified. Prior reports-manifest.json and its archives remain untouched.",
+  "limitations": [
+    "This is not a final frozen-source run or capacity acceptance. No production traffic, deployment, activation or live browser validation occurred.",
+    "Native timing includes fixture setup and intentional20s waits; it is not a capacity measurement.",
+    "No additional connection, pool size, statement timeout or infrastructure limit was introduced. Underlying session/store operations retain ownership until their normal completion.",
+    "Repeated and overlapping test invocations must not be summed as a unique-case total."
+  ],
+  "productionMutations": 0,
+  "builds": 0,
+  "operationalAcceptance": {
+    "finalSourceChecks": false,
+    "usageCapacity": false,
+    "deploymentGreenLight": false
+  }
+}

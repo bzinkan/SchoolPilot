@@ -1,0 +1,56 @@
+{
+  "kind": "independent_matched133_failed_A1_diagnosis",
+  "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "run": "b3cb7e356176",
+  "recordedAt": "2026-10-04T20:01:39.8975571+00:00",
+  "reviewPassed": true,
+  "canonicalRunPassed": false,
+  "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+  "receiptManifest": {
+    "sha256": "d729b5516b9219bd1cca565054088d23360f0474127d277643ab198cfa186c6d",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\attempt-1\\receipt\\receipt-manifest.json",
+    "allHashesMatch": true,
+    "memberBytes": 95939,
+    "members": 12
+  },
+  "verificationError": {
+    "sha256": "2869c2ee8bdb5ad7f756fbef1d719a0632ba660e6b713b050f058206c662e0a7",
+    "sourceLine": 29,
+    "actual": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+    "assertion": "record.failure must equal null",
+    "classification": "external diagnostic wrapper blocks intended latency-only continuation",
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\attempt-1\\verification-error.private.json"
+  },
+  "failedAcceptanceChecks": [
+    "latency"
+  ],
+  "p95Ms": 1812.5356030000003,
+  "cpuMsPer200": 56.02339473684211,
+  "offered": 798,
+  "http200": 798,
+  "offeringFailures": 0,
+  "sourceSchemaImageHelperBindingMatch": true,
+  "cleanup": {
+    "postgresAbsentRecorded": true,
+    "roles": 4,
+    "postgresVolumeAbsentRecorded": true,
+    "roleContainersAbsentRecorded": true,
+    "allExit0NoOomUnforcedSettled": true,
+    "postgresExit0NoOomUnforced": true
+  },
+  "completeErrorScopes": 5,
+  "allLoggedErrorsZero": true,
+  "attemptsCompleted": 1,
+  "heldAttempts": 7,
+  "strictClosureCreated": false,
+  "capacityAccepted": false,
+  "policyApproved": false,
+  "releaseOperationsAuthorized": false,
+  "minimumNextAction": "Narrow external classifier guard: after proving nonempty failed checks are only cpuBound/latency and all existing safety/cleanup/source guards pass, allow exactly V2_NUMERICAL_ACCEPTANCE_FAILED while preserving canonical runPassed=false/failure. Reject every other failure. Prove against retained A1 plus wrong-code/safety negatives under a separately authorized bounded pure slot; no application/helper/profile/schema change.",
+  "limitations": [
+    "Retained small receipt/source/cleanup replay; no new native, test, build, cloud or SQL work.",
+    "This run remains failed and no candidate was measured.",
+    "Supplemental verifier failed before writing its successful supplement; previously executed checks are evidenced by the exact stack/source ordering, not a completed supplemental receipt.",
+    "No full new performance block or numerical policy exception is authorized by this diagnosis."
+  ]
+}

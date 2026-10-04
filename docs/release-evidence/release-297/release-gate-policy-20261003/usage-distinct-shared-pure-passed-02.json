@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "kind": "distinct-shared-integration-pure-proof",
+  "commit": "e330c39ab2eb16fde5c45f74fd817edb21c1a463",
+  "base": "f0992a9f4b36744872ee60d32a6b88eac8c66542",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "sourceMemberCount": 11,
+  "sourceMembers": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/contracts.mjs",
+      "sha256": "a78c2dfc42da9bded6d0025ef90b88ce3d95af731d74beb135a7482df62bfe5e",
+      "bytes": 8128
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/prepare-helper.mjs",
+      "sha256": "b08acb8fe8d20f2bb84e3ef0a4f70bc7cb033740b27158e5bb45075a238fed2b",
+      "bytes": 6338
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-rpc-overlay.mjs",
+      "sha256": "e8543fc229aca20b66b9e914cabd690dc9a921a0dcf25e46499983b0d995804e",
+      "bytes": 3503
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-operation.mjs",
+      "sha256": "9a8f988487862debad6f76334d2739ed58a01970e55820e32eccd60a54b67866",
+      "bytes": 20162
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-run.mjs",
+      "sha256": "8d579fda680185298feb9062a8cc57a33d104a3409a4382a1093ca8ad6284c37",
+      "bytes": 9544
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-custody.mjs",
+      "sha256": "e0a90d994a5e99c6506f13d5d6e507a795c2e7f6315ae3cdee261016143b02dc",
+      "bytes": 19564
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/campaign.mjs",
+      "sha256": "b5d790ae36e3a48afbd6490c38df14ba69b588bfc412eac6c22a376b6e19a379",
+      "bytes": 19067
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/run.mjs",
+      "sha256": "eaa2bdcff55c977a7d72a8c5f19c7ac120cd92a28b1a1ab793f29c694a346e48",
+      "bytes": 37412
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/receipts.mjs",
+      "sha256": "2fb1f05b42837e608b4140c0652970a2333a829ea7d2f9507b94145cca31e4e6",
+      "bytes": 5966
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/distinct-report-integration.test.mjs",
+      "sha256": "23a0e3c3e0f65672f5c7bd1e5cbb731072f516afabd1d8d8549437d84ae49077",
+      "bytes": 33373
+    },
+    {
+      "path": "tests/release297-gates-v2.test.mjs",
+      "sha256": "aa6b337be187093c57f6e61509583d49ad80ec716d80112963bf34cdf964fbe0",
+      "bytes": 1031
+    }
+  ],
+  "syntaxPassed": 11,
+  "tap": {
+    "tests": 48,
+    "pass": 48,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "testDurationMs": 12409.1381,
+  "unchangedDeadlineMs": 20000,
+  "exactChildAbsence": true,
+  "forced": false,
+  "dependencies": {
+    "sha256": "265db08bce775a1e4e33a2f3a3f3aa4235b4ad0c57602e1ffa2ccff635580142",
+    "metadataMembers": 14,
+    "packageLockByteMatch": true,
+    "installedCodeByteHashClaim": false,
+    "windowsAclReadOnlyClaim": false,
+    "operationalReadUseOnly": true
+  },
+  "aggregateStaticCases": 133,
+  "aggregateUniqueStaticCases": 133,
+  "aggregateCaseFiles": [
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\contracts.test.mjs",
+      "staticCaseCount": 34,
+      "sha256": "79b2666e4c4055059c29303bfeac6588b3afd9df6708bfed5af5e8356b234e06"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\lifecycle-audience.test.mjs",
+      "staticCaseCount": 17,
+      "sha256": "91bcbf75f1dae3fd342aa0c60643e40e97d0121edf5afc7847a265e3ed40dddf"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\postgres-readiness.test.mjs",
+      "staticCaseCount": 3,
+      "sha256": "c631c019f83e71499eb06b6e8eedd78384b65cb83b90a1ec3b76b1e874d95a9e"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\operational-fixture.test.mjs",
+      "staticCaseCount": 4,
+      "sha256": "060dc8c5823827c148bbf4780a4b035f297a943568a86b186f4418c609d43596"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\operational-fixture-custody.test.mjs",
+      "staticCaseCount": 3,
+      "sha256": "2b79b5b7a20833795c17e0544bcbc1c8e93f3656b560a332c556cdb550b9f2dc"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\classroom-bindings-custody.test.mjs",
+      "staticCaseCount": 3,
+      "sha256": "5c6de6552b5f295253638c81a561206b4f6dd64344e796d1c3cf267af296081a"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\routing.test.mjs",
+      "staticCaseCount": 11,
+      "sha256": "0b203d3bf6319de3bf2268024b2ca88035258658e38a6252e1157766effedc63"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\usage-post-verification.test.mjs",
+      "staticCaseCount": 10,
+      "sha256": "cd817afd4052231f294b1cfc50f9239c0354aed07b42d7e20200dbff02c2a6c0"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\distinct-reports.test.mjs",
+      "staticCaseCount": 17,
+      "sha256": "69d63bea2fb0cd85c8d3f43e8cb2d4a954f2f22665149e9955713338570d3d55"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\distinct-report-operation.test.mjs",
+      "staticCaseCount": 10,
+      "sha256": "880626ec99139f30bb4b263cb484c3db6de45e1017956f9f091a4608c09d9c1b"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\distinct-report-rpc.test.mjs",
+      "staticCaseCount": 11,
+      "sha256": "215eb860ad4c446b24ef8cee16757cd2ef16e824964b3bb6f799fc29b3a7d83b"
+    },
+    {
+      "path": "C:\\GitHub\\SP297-distinct-reports\\scripts\\load\\usage\\release-gates-v2\\distinct-report-integration.test.mjs",
+      "staticCaseCount": 10,
+      "sha256": "23a0e3c3e0f65672f5c7bd1e5cbb731072f516afabd1d8d8549437d84ae49077"
+    }
+  ],
+  "aggregateExecutedInThisProof": false,
+  "preservedFailedAttempt": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-01\\public-summary.json",
+    "sha256": "988d2ac5f4e8f4c9c31ad0d8f77190ef849cdcf28940cc3f4c6612b4f1f31caf"
+  },
+  "staticIndependentReview": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-independent-review-01\\static-review.json",
+    "sha256": "b93c4af245cc1144946b5063db38bd6cd430b131924d03963cf3a00e20054685"
+  },
+  "members": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-02\\run-pure.mjs",
+      "sha256": "72594ffcb940918d5d57c042baf427056d8a81afe1cf2e50f8c585d874111500",
+      "bytes": 7455
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-02\\dependency-binding.json",
+      "sha256": "265db08bce775a1e4e33a2f3a3f3aa4235b4ad0c57602e1ffa2ccff635580142",
+      "bytes": 6373
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-02\\dependency-binding-preparation-failed-01.json",
+      "sha256": "2176efe244e06a1c4d1fb9a2eb47ac27e5ab4c54076dc8214b7750d8c1f6ac6f",
+      "bytes": 281
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-02\\execution.json",
+      "sha256": "71c532cfa636c2d692a6d6fdba2c04c1304a7eb4ac56f6bdba204bd5d4b2f087",
+      "bytes": 12899
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-02\\tests.tap",
+      "sha256": "71ff9b613f51dc1798decc2d6b17926f11012fcd905d7409c3c5fbe33e4a5b5a",
+      "bytes": 12981
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-distinct-shared-pure-evidence-02\\process-absence.json",
+      "sha256": "22e8b0da58c8dc370f38cbd29efc5d9d21c8415f71b2b52d6d1eb29c18c745fe",
+      "bytes": 397
+    }
+  ],
+  "nativeActions": 0,
+  "applicationSchemaPoolTimeoutDurabilityChanges": 0,
+  "capacityAcceptance": false,
+  "deploymentReadiness": false,
+  "originalAcceptedColdPrerequisites": 0,
+  "futureDistinctExecutionBlocked": true,
+  "limits": [
+    "Pure/generated-wrapper and mock custody regressions only.",
+    "Fresh source-bound helper, native restricted endpoint/audit/coverage and complete teardown remain separate requirements.",
+    "Existing failed cold campaign is unchanged and has no accepted capacity prerequisite.",
+    "Dependency metadata/lock identity does not prove every installed package code byte."
+  ]
+}

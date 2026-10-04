@@ -1,0 +1,59 @@
+{
+  "kind": "report-export-browser-cancellation-regression",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "applicationInputsUnchanged": true,
+  "changeScope": "Browser test only; actual known-failure export cancellation, HTTP handling and report UI unchanged",
+  "testSourceSha256": "802e8f1d7b48859d838202e79b032c9874bd2587dee5ed2e0ecb6d35d1f0db92",
+  "positive": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0
+  },
+  "negative": {
+    "expectedRejected": true,
+    "failed": 1,
+    "skipped": 0,
+    "mutation": "Remove only pending-export abort in actual report fail handler through the test Vite loader",
+    "rejectedAt": "Explicit native XHR abort receipt, despite same-origin login navigation"
+  },
+  "retainedAssertions": [
+    "Native abort delegates to original implementation",
+    "Same-origin durable marker is written only after native abort returns",
+    "Exact export requestfailed event and original 10-second timeout",
+    "Held route released after explicit abort proof",
+    "No download, no success notice or prior student rows",
+    "409 refresh recovery and page-error checks"
+  ],
+  "historicalRunsRetained": [
+    "Original 401 case passed unchanged locally",
+    "Earlier full10 and mutant02 use asynchronous marker and remain preserved",
+    "First mutant wrapper failed before browser startup because of Windows ESM import URLs; not a negative test proof",
+    "Historical remote401 failure and later unchanged shard4 pass remain preserved"
+  ],
+  "cleanup": "Each browser/Vite command exited after the test file cleanup hooks; no separate PID-level absence inventory was recorded",
+  "records": [
+    {
+      "name": "strengthened-full-03.log",
+      "bytes": 2545,
+      "sha256": "d3b16ac3c888f9c584c98cd7c27db2903d027bd556a636f52da74c30cefb58b8"
+    },
+    {
+      "name": "abort-mutant-401-03.log",
+      "bytes": 984,
+      "sha256": "e24ace55733693aa09668be8624df9ab440e44c36dacda82a62df7c077a25c97"
+    },
+    {
+      "name": "abort-mutant-03-preparation.json",
+      "bytes": 721,
+      "sha256": "8209e434bfb73097e9c7b60dc37ac3866781f66bd1b0d489834d825b515be220"
+    },
+    {
+      "name": "prepare-abort-mutant-03.mjs",
+      "bytes": 2356,
+      "sha256": "0e6709b6b9e72f046026684609293193f2512454aa800247640732ba8fec3d50"
+    }
+  ],
+  "finalCombinedCiAccepted": false,
+  "capacityAccepted": false,
+  "productionMutations": 0
+}

@@ -1,0 +1,581 @@
+{
+  "schemaVersion": 1,
+  "scope": "External harness v2 host-exit repair and driver-only stress calibration",
+  "capacityAccepted": false,
+  "resourceAcceptance": false,
+  "newReleasePrerequisite": false,
+  "calibration": [
+    {
+      "cpu": 1,
+      "offered": 6000,
+      "started": 6000,
+      "succeeded": 3000,
+      "expectedSyntheticFailures": 3000,
+      "refused": 0,
+      "late": 203,
+      "maxLatenessMs": 384.6214489999984,
+      "driverCpuSeconds": 12.375194,
+      "throttleSeconds": 7.037093,
+      "schedulingPassed": false,
+      "expectedSyntheticFailuresVerified": true,
+      "childExit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "cpu": 2,
+      "offered": 6000,
+      "started": 6000,
+      "succeeded": 3000,
+      "expectedSyntheticFailures": 3000,
+      "refused": 0,
+      "late": 39,
+      "maxLatenessMs": 211.38981900000363,
+      "driverCpuSeconds": 11.994076,
+      "throttleSeconds": 0.057309,
+      "schedulingPassed": false,
+      "expectedSyntheticFailuresVerified": true,
+      "childExit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ],
+  "proof": {
+    "hostRaceRedTestFailed": true,
+    "hostFixFocusedPass": 22,
+    "finalPrototypeTestsPass": 36,
+    "exit1NativePreservedActualCode": true,
+    "exit1NativeClean": false,
+    "nativeProfileOutputSamples": 5,
+    "profileMountOnlyWritableFile": true,
+    "allOwnedContainersRemoved": true
+  },
+  "limitations": [
+    "Synthetic responder never exercises real authentication, API correctness or database performance; unmodified generator initialize flags are mock-context observations only.",
+    "Both65.7KB/5s-burst stress trials miss no-late criterion, but this extra stress pattern is not a release prerequisite. Original actual-workload gates decide acceptance.",
+    "Driver2CPU is a harness-only budget; API1CPU/2GiB,worker0.5CPU/1GiB,PG4CPU/4GiB,pools/deadlines unchanged.",
+    "Original9630failed-run null coordinator receipt is not rewritten."
+  ],
+  "files": [
+    {
+      "path": "prototype02/adapter-tests-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapter-tests-01.log",
+      "originalSha256": "9d392a18d8993a6a352c6e8c3a15968a81caf37e1fd4ec4f9a13d30f7e708c71",
+      "sanitizedSha256": "9d392a18d8993a6a352c6e8c3a15968a81caf37e1fd4ec4f9a13d30f7e708c71",
+      "gzipSha256": "402b1f455cce6085f0d0f08980cc17d2fe7d3671a686660cab6f3533e466c1cc"
+    },
+    {
+      "path": "prototype02/adapter-tests-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapter-tests-02.log",
+      "originalSha256": "496c7ec8defc9bc5f1e6851f090f1ef3d7f53f56eceaee2f70c0372c63a8be3a",
+      "sanitizedSha256": "496c7ec8defc9bc5f1e6851f090f1ef3d7f53f56eceaee2f70c0372c63a8be3a",
+      "gzipSha256": "e0393d11d5486260e2cf554d1824a67a7e87d2ff8486d3fc4189e2497351a2b7"
+    },
+    {
+      "path": "prototype02/adapter-tests-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapter-tests-03.log",
+      "originalSha256": "4597a06dceab8c914f9b33e430c345ac3c7231101d2c83771159806f6fdbb9fd",
+      "sanitizedSha256": "4597a06dceab8c914f9b33e430c345ac3c7231101d2c83771159806f6fdbb9fd",
+      "gzipSha256": "7c61df07ed8c3171a5b91a04559ea5563d648aeaded779be6d41761aec2e89b3"
+    },
+    {
+      "path": "prototype02/adapter-tests-04.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapter-tests-04.log",
+      "originalSha256": "a5111edcfa124e0a0018736ea1f4795575d8b023b2ebd68885b45dbcab6e464c",
+      "sanitizedSha256": "a5111edcfa124e0a0018736ea1f4795575d8b023b2ebd68885b45dbcab6e464c",
+      "gzipSha256": "e756272e1a8ba8c630d000f7b45bc18dc500e15a8beab1f620e98d5725bc734a"
+    },
+    {
+      "path": "prototype02/adapter-tests-05.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapter-tests-05.log",
+      "originalSha256": "f54dba3341b545b4eaeff41f77900fc2e6570c30af8dd31d29aac69f0488fc11",
+      "sanitizedSha256": "f54dba3341b545b4eaeff41f77900fc2e6570c30af8dd31d29aac69f0488fc11",
+      "gzipSha256": "59ca7ed30cd514d06e24bd1f96ffe1552e3b35aec7f99f9261c8e601d56607f4"
+    },
+    {
+      "path": "prototype02/adapter-tests-06.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapter-tests-06.log",
+      "originalSha256": "38545129dfb6856ae719c8afc2bc0112ba14ca78bc4b3b4d89c6d90b9723f107",
+      "sanitizedSha256": "38545129dfb6856ae719c8afc2bc0112ba14ca78bc4b3b4d89c6d90b9723f107",
+      "gzipSha256": "6f92e574230b842e68ec8ffbf410bef0aa03b231f179413e4c3a8bb34e47035c"
+    },
+    {
+      "path": "prototype02/adapters.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\adapters.test.mjs",
+      "originalSha256": "008413456ff75bb9b1952a685a5215db9ec16183ef4e801889a7cf97b339f3d7",
+      "sanitizedSha256": "78b3b9eeabc6a8c9dbe40dabf2e9f3548183f8a1664262a45bf6ad8aaaf0f361",
+      "gzipSha256": "3930fe2ebd0f32fedb99f9ab995214c41d49656605b6bd326f631f510366d2e8"
+    },
+    {
+      "path": "prototype02/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\authenticated-transport.mjs",
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "3607793865f16df7f9a44011e8c6e83235499dbf4f4eed0e03516160674f098a"
+    },
+    {
+      "path": "prototype02/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\coordinator-owner.mjs",
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "5da913aea35edc07f8d9b2cf5459d92712afdc7a8b1bc6802030fa66ed099c7b"
+    },
+    {
+      "path": "prototype02/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\coordinator-startup.mjs",
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "7e7e2dd86aaa9c1568385d95fedc37e47b574b6b8cea5e84dcaac117f01cff7a"
+    },
+    {
+      "path": "prototype02/DESIGN.md.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\DESIGN.md",
+      "originalSha256": "0bb4aa80fa954d2287d5fb4b5242375822080196fcfce795aa3994152f5a736b",
+      "sanitizedSha256": "0bb4aa80fa954d2287d5fb4b5242375822080196fcfce795aa3994152f5a736b",
+      "gzipSha256": "77f27f52bbb9d3750d36091ca031e8bb90de676c631e2daf787f2b7db101d3fb"
+    },
+    {
+      "path": "prototype02/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\docker-host-adapter.mjs",
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "15e1d608466d72839a1da685522e86b978db49659e876bc3a6e1df3ae7f46bbf"
+    },
+    {
+      "path": "prototype02/Dockerfile.prototype.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\Dockerfile.prototype",
+      "originalSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "sanitizedSha256": "62d716338b7fe0f318936f7f991801cc80570174b9a7f4c4412f49fcb8a68536",
+      "gzipSha256": "f8fb70fe08a8aaf5c80318b0aeb9d7b3996c16ad95d09e44c9243af5a05b3058"
+    },
+    {
+      "path": "prototype02/generate-review-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\generate-review-01.log",
+      "originalSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "sanitizedSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "gzipSha256": "746ff6ec5e52d9c34cbd18d7c0416c57938899c3ab9ba4abeda9070c23c9e061"
+    },
+    {
+      "path": "prototype02/generate-review-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\generate-review-02.log",
+      "originalSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "sanitizedSha256": "05d5b1991a864847f956db81b2bb9841abd9b7a66e40ec83a9c6e76d8a0a5eda",
+      "gzipSha256": "746ff6ec5e52d9c34cbd18d7c0416c57938899c3ab9ba4abeda9070c23c9e061"
+    },
+    {
+      "path": "prototype02/generate-review.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\generate-review.mjs",
+      "originalSha256": "80991f909b61539f0c5728abf97ff6ada66d72737868fdd000bec42327021763",
+      "sanitizedSha256": "e2bfb8f385cff6844998e4a6d75edbd928d3906cd787ea76fb140f6ad946620d",
+      "gzipSha256": "a2c1df42de297ef503a677da1266be03751f342ffbd794bbe5b4da27cf59a085"
+    },
+    {
+      "path": "prototype02/generated-docker-plan.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\generated-docker-plan.json",
+      "originalSha256": "521670780b414305f3fedda8dea0229fd1436087d0bf08f2374d4baa90cd3c13",
+      "sanitizedSha256": "521670780b414305f3fedda8dea0229fd1436087d0bf08f2374d4baa90cd3c13",
+      "gzipSha256": "2e1e97ba0919f76bb3a8876abc0b3a79b872dbff07aa21e3fa98a555bcfb2999"
+    },
+    {
+      "path": "prototype02/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\host-file-io.mjs",
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "704d06a2ca5131d911ad74ffba5658e286ed20deebab0bea5e9f04ee060cc299"
+    },
+    {
+      "path": "prototype02/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\host-lifecycle.mjs",
+      "originalSha256": "7019599e2a57b056786d58500f17f6e7e002e9dc54940db4088b79f41fbe5192",
+      "sanitizedSha256": "7019599e2a57b056786d58500f17f6e7e002e9dc54940db4088b79f41fbe5192",
+      "gzipSha256": "cd019cd4622b4c6b9a82831f087835d58cd83cfa458d728305890ab76ec52a60"
+    },
+    {
+      "path": "prototype02/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\host-orchestrator.mjs",
+      "originalSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "sanitizedSha256": "d3b962ee5997d97ab1d38d7559616b19b1cd024c778070c05ee50465c28acd4f",
+      "gzipSha256": "6b4b169b45b81d10ef8e0f2c09874c8b435648aea2aac7cfee811da59b09c209"
+    },
+    {
+      "path": "prototype02/inherited-v01-manifest.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\inherited-v01-manifest.json",
+      "originalSha256": "1c1ca65b8e13ba65edc618f3e2da45afa646d09b109b9b256a3c7f81db224de7",
+      "sanitizedSha256": "1c1ca65b8e13ba65edc618f3e2da45afa646d09b109b9b256a3c7f81db224de7",
+      "gzipSha256": "7829a29c6ef8dd474acfd723519236b9ea7ca56010e53a36f1d18d1386e6b13a"
+    },
+    {
+      "path": "prototype02/launch-role-preflight.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\launch-role-preflight.mjs",
+      "originalSha256": "895d144ad960e7419afec8cf1ba06a33155eea8e78144eadc1afec7dff55fdd5",
+      "sanitizedSha256": "895d144ad960e7419afec8cf1ba06a33155eea8e78144eadc1afec7dff55fdd5",
+      "gzipSha256": "824e047f7ffee5e74fb9bdfc44f2c426afba0d1e8cfd4666439b38cb57e019d3"
+    },
+    {
+      "path": "prototype02/manifest.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\manifest.json",
+      "originalSha256": "841173feb3d98b232a1bf9bd4e65faa1e60971bf30d7b2abe93f7c8d10f40413",
+      "sanitizedSha256": "841173feb3d98b232a1bf9bd4e65faa1e60971bf30d7b2abe93f7c8d10f40413",
+      "gzipSha256": "7069f68064b36680eab0ce96849325559b87877d29eb834753f1c9410e9360a5"
+    },
+    {
+      "path": "prototype02/native-api-profile-proof.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\native-api-profile-proof.mjs",
+      "originalSha256": "18beaaef9066338dcdc752e95050f25e59deb769036ddacbedc31b9bdd5f4088",
+      "sanitizedSha256": "d7b4c440b05855c4698a10b5b469a3a4a93fab623ec9f805099b6340301689e4",
+      "gzipSha256": "4d5ef2af6d6b97c8e5e30aef11b08793ad165e7a1b48945c133ab3afba32912c"
+    },
+    {
+      "path": "prototype02/native-exit1-proof.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\native-exit1-proof.mjs",
+      "originalSha256": "b6add95304ead3ac255e402aa3a18cebc032299ee457ba7d373e9ee6eef24465",
+      "sanitizedSha256": "9ee83bb768165a933a6efa0cb86df4da56c1da846817e8d9c1b4f8bee247e635",
+      "gzipSha256": "d132ae2a74943b78cb674efde8b25aaa7fe945a9775f47fd087b715aa1ec28ab"
+    },
+    {
+      "path": "prototype02/nonzero-exit-green.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\nonzero-exit-green.log",
+      "originalSha256": "75b1b1d22c2b97d65f20621b57afcb3e5c0a59402342f7fdc33d79f44d9c58d8",
+      "sanitizedSha256": "75b1b1d22c2b97d65f20621b57afcb3e5c0a59402342f7fdc33d79f44d9c58d8",
+      "gzipSha256": "7514294e276cb406b9b9a9d5fb35c78a6ab92d308000c8ba11291b1bfd6ad1ed"
+    },
+    {
+      "path": "prototype02/nonzero-exit-red.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\nonzero-exit-red.log",
+      "originalSha256": "5e71c1837127600e1593e65b702980044118d40551c5528986f2e77312316f3d",
+      "sanitizedSha256": "e5da62e2fe8ca4169a696deb182aebf435d539a18a3bcef38308b11f47d006e2",
+      "gzipSha256": "baa4114c85ab48415abb2ebf933d220bddec8fa59ffa980bd226faa23fb49ec2"
+    },
+    {
+      "path": "prototype02/observed-payload-sizes.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\observed-payload-sizes.json",
+      "originalSha256": "9672dc2395e5155370db8ee323aa32c62b9fd1c57b9d881656529c4b9d84d7cc",
+      "sanitizedSha256": "af612aa187615b51d7fd9b0880a41860bc5dbc935bb336aa511a1ef9cf133d75",
+      "gzipSha256": "15106e7f03f9070548d8a1093f7c39f8c9a827e2d5e06b1dfd52e4467beb3571"
+    },
+    {
+      "path": "prototype02/orchestrator.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\orchestrator.test.mjs",
+      "originalSha256": "83970b3e85e01e7af965c4bf1a85f9bc8706da0800f3b14db17b3ca932fdd0bb",
+      "sanitizedSha256": "83970b3e85e01e7af965c4bf1a85f9bc8706da0800f3b14db17b3ca932fdd0bb",
+      "gzipSha256": "83700c6e01556502caaae5b9c2a476e072fd3b809c482b62c2dae0cebaf21979"
+    },
+    {
+      "path": "prototype02/overlay-receipt.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\overlay-receipt.json",
+      "originalSha256": "373848beac277702ec07466aff70345754fbbc00108b973810c3c4c3a80c21cd",
+      "sanitizedSha256": "6339b8439cbade2e21732ea9b6129adbe5e1c806657e598ee6d4b23fc836d55f",
+      "gzipSha256": "131cc33bfc3b93d6af26707c8a532fa6463bd9122948916a9eded072d3c23411"
+    },
+    {
+      "path": "prototype02/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\owned-ipc-core.mjs",
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "c99c947edb9fa36732ec98e52da349ced1a48bd5c7c6ec527917fce5057bb5bf"
+    },
+    {
+      "path": "prototype02/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\patch-coordinator.mjs",
+      "originalSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "sanitizedSha256": "fb26f5ec48f37fa50a83c38645c1cf089e219e53258d4f79496e3d73179478dd",
+      "gzipSha256": "c8b6421ff56e80a33c7429c31d27b6f0371a6f4712eb8bbd3cee13ae346361e3"
+    },
+    {
+      "path": "prototype02/profile-version-tests-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\profile-version-tests-01.log",
+      "originalSha256": "54ed75edb7a06aa0bd49c5d85709fccbd919330ffb750a782a4ece841ee2a6cf",
+      "sanitizedSha256": "54ed75edb7a06aa0bd49c5d85709fccbd919330ffb750a782a4ece841ee2a6cf",
+      "gzipSha256": "19d47a0168e5687ffe1430cd0f6fb310d137bb0341f56132bc93bf22e85221a4"
+    },
+    {
+      "path": "prototype02/prototype.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\prototype.test.mjs",
+      "originalSha256": "1751a9b687337fae3fa117c0bd9128b238f349038b4a67cf0323170e983f1874",
+      "sanitizedSha256": "1751a9b687337fae3fa117c0bd9128b238f349038b4a67cf0323170e983f1874",
+      "gzipSha256": "a3c0c7cb413f39861afc99492eb785cec6abec9fcfa95b0b320dcd266357dd94"
+    },
+    {
+      "path": "prototype02/pure-tests-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\pure-tests-01.log",
+      "originalSha256": "054a49a4e627554a3976f8d09037ae4c5b1f7039a1c086b374e4092f50946e04",
+      "sanitizedSha256": "054a49a4e627554a3976f8d09037ae4c5b1f7039a1c086b374e4092f50946e04",
+      "gzipSha256": "5788da058eec23fa47273696c09813d72c48129890c62d1616a84ae12a0cb368"
+    },
+    {
+      "path": "prototype02/pure-tests-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\pure-tests-02.log",
+      "originalSha256": "fafef8f1fae7409f75952c5b878d93713e73f17ff30d61483ed8aa999c023aaa",
+      "sanitizedSha256": "fafef8f1fae7409f75952c5b878d93713e73f17ff30d61483ed8aa999c023aaa",
+      "gzipSha256": "a79ea3bde26ad22a94edf8bd27539158d1a91a13ae16e309b27f12938f76a3bf"
+    },
+    {
+      "path": "prototype02/pure-tests-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\pure-tests-03.log",
+      "originalSha256": "1de5a76cb4b13fbac93d86a456ab6c1191db88c3e0e206c170a79f90f3242261",
+      "sanitizedSha256": "1de5a76cb4b13fbac93d86a456ab6c1191db88c3e0e206c170a79f90f3242261",
+      "gzipSha256": "bd11df61848d5f11e3c9f55e0891c9d91cd393b5295b74d61286154c0ce4b5f0"
+    },
+    {
+      "path": "prototype02/release-enabled-scale.overlay.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\release-enabled-scale.overlay.mjs",
+      "originalSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "sanitizedSha256": "1a9bb47600be6c3c60f6e56078999d7661dba013b3ef7b177d58077a94cf6f5b",
+      "gzipSha256": "7ffb185aa14f109c485fd2f26c92a1138231b6aee86016183378439549e803d1"
+    },
+    {
+      "path": "prototype02/reproduce-nonzero-exit.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\reproduce-nonzero-exit.mjs",
+      "originalSha256": "54fa5fc4d16059e5f9d8a9542e4ed71709cd74dcdde11e75888b3fddc50d9100",
+      "sanitizedSha256": "0d1843ce7a3ecfcceee97a84482ae703dee554c9425ad9bbf952d9cabde8be9f",
+      "gzipSha256": "22d60dbe16d7090a6edffd657db49b6baf478ec9e3f37872cdc546b50e2d60fe"
+    },
+    {
+      "path": "prototype02/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\role-child-bootstrap.mjs",
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "e9c071aa368043e5f52c1b3278624c209d9247d9217caa2ece43cb17857a23f4"
+    },
+    {
+      "path": "prototype02/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\role-coordinator-bridge.mjs",
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "3fc53ec89b1ba55a83bfa08b00176a3a1cf1a57e58e90ea5942f44e5da8b444c"
+    },
+    {
+      "path": "prototype02/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\role-coordinator.mjs",
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "6dce84ffc077cb46ab294f960ec00dd5c7a7a1dc640a4c8f79af55793a5ddcf2"
+    },
+    {
+      "path": "prototype02/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\role-environment.mjs",
+      "originalSha256": "84ce2b2e657e74876223d7ad55a3d6731fbe63d0a55d9be2dbcde0da26d45a10",
+      "sanitizedSha256": "84ce2b2e657e74876223d7ad55a3d6731fbe63d0a55d9be2dbcde0da26d45a10",
+      "gzipSha256": "56dfb4ea896735e8d0e26286d9b8adfe32635ff8fdb62c535a9c6bf6b4c7ebf0"
+    },
+    {
+      "path": "prototype02/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\role-plan.mjs",
+      "originalSha256": "a13ce428ad7a9c52241a84cf336cfddbc00f5d02126a0d4e6bcf06268423d6f3",
+      "sanitizedSha256": "a13ce428ad7a9c52241a84cf336cfddbc00f5d02126a0d4e6bcf06268423d6f3",
+      "gzipSha256": "6c1d06ac7db6d855cb69a2acc7d45b5d65463070962bb0ea34d0a6e22bf7d83b"
+    },
+    {
+      "path": "prototype02/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\role-resources.mjs",
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "dd60eb25de6d30de4d6af6769959b21599bd872395f4ed4b599209fd7df4f0ab"
+    },
+    {
+      "path": "prototype02/VERSION-02.md.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-role-cgroups-prototype-02\\VERSION-02.md",
+      "originalSha256": "aa513156e16f14ea10d481b6b501234b46cf090840eba7b0d07db803dc05b6c8",
+      "sanitizedSha256": "aa513156e16f14ea10d481b6b501234b46cf090840eba7b0d07db803dc05b6c8",
+      "gzipSha256": "735b21ed9783a2f455923051f6a47758a20c3914acb8f0b049890e82c409d563"
+    },
+    {
+      "path": "calibration-source/driver.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-01\\driver.mjs",
+      "originalSha256": "8c2f501c6ac9742932779511925399ec26ad14f844a84fb33b7e8ee69f458d75",
+      "sanitizedSha256": "8869acfe13a566f981bf73a47187d83eee1ef65bfc1d31288f6207cd3dacb909",
+      "gzipSha256": "b2995cee1b662c0ceeca46098cbef3a1578f1cfa7537f110697fc13a78d05b05"
+    },
+    {
+      "path": "calibration-source/manifest.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-01\\manifest.json",
+      "originalSha256": "5a2c9b40b770705209c15a627523b8e733dd7827193361a0a2e17786dce8c308",
+      "sanitizedSha256": "5a2c9b40b770705209c15a627523b8e733dd7827193361a0a2e17786dce8c308",
+      "gzipSha256": "53b0ead63a01c2d62924a68cb8aec9f0079b57c00867c117d9e7e47b8895a9cb"
+    },
+    {
+      "path": "calibration-source/ownership-tests.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-01\\ownership-tests.log",
+      "originalSha256": "65250b83b346598cfb99dbc65634f8d00ee0a8a08841a16e325d3525046d6434",
+      "sanitizedSha256": "65250b83b346598cfb99dbc65634f8d00ee0a8a08841a16e325d3525046d6434",
+      "gzipSha256": "23932c3836267a052ceb37d33fa6ef275851d36ac2c8939be2666455850e63b7"
+    },
+    {
+      "path": "calibration-source/ownership.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-01\\ownership.test.mjs",
+      "originalSha256": "9ee34292f25ae1e366f40cf45a8c4d414e3f4e1cc83234b13daebb0fd81006a6",
+      "sanitizedSha256": "9ee34292f25ae1e366f40cf45a8c4d414e3f4e1cc83234b13daebb0fd81006a6",
+      "gzipSha256": "27258025598c563821a94861346e5eaa434cbc8f8927d5f7f24eaf9082550de6"
+    },
+    {
+      "path": "calibration-source/responder.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-01\\responder.mjs",
+      "originalSha256": "0aaae357fc6fa453fb650d5a5af9ecf9a0b7b91d4b1a0bbc4014b64a0c8bc909",
+      "sanitizedSha256": "0aaae357fc6fa453fb650d5a5af9ecf9a0b7b91d4b1a0bbc4014b64a0c8bc909",
+      "gzipSha256": "9e1a13d5bec725dd989288b0cdf21d553d81440756e4000425fa43797f0b3c1a"
+    },
+    {
+      "path": "calibration-source/run.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-01\\run.mjs",
+      "originalSha256": "cf931ad32e415bba3037b115c88ba81d49b626c95b4282481904e714adb290d0",
+      "sanitizedSha256": "1435ac834ccf59b941cdacf42babd8b1fee97e8170f02cd41e06162b1afb0ea3",
+      "gzipSha256": "bf88094a1eed01323fd00136bef4154e4099551b8164a40011969e30c6e77f5e"
+    },
+    {
+      "path": "driver-cpu1/driver-attach.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu1-01\\driver-attach.log",
+      "originalSha256": "a57b4bbefacb7d7378ad176851c1b43bb2e4aaaba626d7df799ae4d5d49187d5",
+      "sanitizedSha256": "a57b4bbefacb7d7378ad176851c1b43bb2e4aaaba626d7df799ae4d5d49187d5",
+      "gzipSha256": "35042041f545d3e9db7e014256f50354c6c6c54da17cf0967bcb9ae10359e0eb"
+    },
+    {
+      "path": "driver-cpu1/generator.stderr.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu1-01\\generator.stderr.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "driver-cpu1/generator.stdout.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu1-01\\generator.stdout.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "driver-cpu1/host-receipt.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu1-01\\host-receipt.json",
+      "originalSha256": "60ebfb1d4c46fa4bcedb4d2b66351bdfb6155847d0fe2d90ec9f77201c1cfcff",
+      "sanitizedSha256": "60ebfb1d4c46fa4bcedb4d2b66351bdfb6155847d0fe2d90ec9f77201c1cfcff",
+      "gzipSha256": "395939695e89e2294dab001fd78dfd8c964f43ed2b0df4c16c1681484efc599e"
+    },
+    {
+      "path": "driver-cpu1/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu1-01\\result.json",
+      "originalSha256": "ec0023bc27a7619a58bcf3a1ca068658857fd739baa4b2d5233d6b597d4c5848",
+      "sanitizedSha256": "ec0023bc27a7619a58bcf3a1ca068658857fd739baa4b2d5233d6b597d4c5848",
+      "gzipSha256": "ff8a2b68f8d2ddb52512736f339fff848f96ff2cc0b405bda90d1eed3c2673a5"
+    },
+    {
+      "path": "driver-cpu2/driver-attach.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu2-01\\driver-attach.log",
+      "originalSha256": "94473fd3f3874db9c90b837ebc7db74fe4196aacf851a0a39e446e72a6a9c468",
+      "sanitizedSha256": "94473fd3f3874db9c90b837ebc7db74fe4196aacf851a0a39e446e72a6a9c468",
+      "gzipSha256": "dacadf4f4fddc7e03151ef2d7c32e2dbac909cfb80ff364f76ae59597a82a11e"
+    },
+    {
+      "path": "driver-cpu2/generator.stderr.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu2-01\\generator.stderr.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "driver-cpu2/generator.stdout.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu2-01\\generator.stdout.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "driver-cpu2/host-receipt.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu2-01\\host-receipt.json",
+      "originalSha256": "1f32cff6cf79f1c99d816588c5bc973c07fd92fc5625e865e91a4191916c9824",
+      "sanitizedSha256": "1f32cff6cf79f1c99d816588c5bc973c07fd92fc5625e865e91a4191916c9824",
+      "gzipSha256": "45989dd567a58d8503c2dba248ec326d5e14d08b316f4c7a5e52b29012769bb6"
+    },
+    {
+      "path": "driver-cpu2/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-generator-calibration-cpu2-01\\result.json",
+      "originalSha256": "591481f9d5ec4c841cb87f1388b8a2ef7439922b62f44d01b75ebf4dce15ec8e",
+      "sanitizedSha256": "591481f9d5ec4c841cb87f1388b8a2ef7439922b62f44d01b75ebf4dce15ec8e",
+      "gzipSha256": "7d0c28a399130618cfc270386a6c9c6d6100d3b7f50eca697687f96c5f7d6d53"
+    },
+    {
+      "path": "native-exit1-original-race/coordinator.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-exit1-reproduction-01\\coordinator.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "native-exit1-original-race/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-exit1-reproduction-01\\result.json",
+      "originalSha256": "e4d1c3c42644411acf4847baaa20a72b4e91026c10cbd30e6f67f675c244bb23",
+      "sanitizedSha256": "e4d1c3c42644411acf4847baaa20a72b4e91026c10cbd30e6f67f675c244bb23",
+      "gzipSha256": "54b9733d122a5207a9746a6d66f7d44e997fa936d3abfe5a681be878ae5142f1"
+    },
+    {
+      "path": "native-exit1-fixed/coordinator.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-exit1-native-green-01\\coordinator.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "native-exit1-fixed/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-exit1-native-green-01\\result.json",
+      "originalSha256": "73c91929a8c7151f835d87390bd062af812d5fd3751113e68ceac39d4aa31a42",
+      "sanitizedSha256": "73c91929a8c7151f835d87390bd062af812d5fd3751113e68ceac39d4aa31a42",
+      "gzipSha256": "3ccf3c71c8503f2aef6d11513e2a0c691cef0a287fec9c7b3ece9539ee70673a"
+    },
+    {
+      "path": "native-profile-output/api.cpuprofile.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-api-profile-native-01\\api.cpuprofile",
+      "originalSha256": "e43f6de118ac78b228956c0cf2ce79d8c5290d709435358cc7e05e8ceaa466f0",
+      "sanitizedSha256": "e43f6de118ac78b228956c0cf2ce79d8c5290d709435358cc7e05e8ceaa466f0",
+      "gzipSha256": "46124c73af1d1dfdb51634bb76c41dd0fcdbded7ee2f8126bd0709fe7c3831f2"
+    },
+    {
+      "path": "native-profile-output/api.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-api-profile-native-01\\api.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "native-profile-output/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-api-profile-native-01\\result.json",
+      "originalSha256": "897b17a19248843e440fb953e82c56be1867f3341afdc7600e7ecdb935bc94d8",
+      "sanitizedSha256": "897b17a19248843e440fb953e82c56be1867f3341afdc7600e7ecdb935bc94d8",
+      "gzipSha256": "6abb50f236063a2ec88262cbfae88760bacce576c8fc05a4d8a629af65064fe5"
+    },
+    {
+      "path": "ingest-wiring/ingest-wiring.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-ingest-cpu-5d54-design-01\\ingest-wiring.test.mjs",
+      "originalSha256": "f4ce06d4004cb02170b736f664fc0cdfccae5d4de925d8b639e23d7c2ea49219",
+      "sanitizedSha256": "bbb3ad0fae3d16605f997729c4bf748e1019151f486fd47a25e43dccf5d0f6a1",
+      "gzipSha256": "c628ec06fb104dd012bb4444b541e5f752ee570f68ee488b16dfd777dba94f1c"
+    },
+    {
+      "path": "ingest-wiring/ingest-wiring-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-ingest-cpu-5d54-design-01\\ingest-wiring-01.log",
+      "originalSha256": "c2c826f4098a481c3389ad3df5a2724510901c12c7a9edb182eb59af26bdf60d",
+      "sanitizedSha256": "609b57c9415d6a68e4d0c6d079efb2a1dd05ab8df71ce190ffeebce8c783582c",
+      "gzipSha256": "87a3d5adf0e0e718c15e6235fc0d5557699ae768f080efd2ddbe9631143f688b"
+    },
+    {
+      "path": "ingest-wiring/ingest-wiring-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-ingest-cpu-5d54-design-01\\ingest-wiring-02.log",
+      "originalSha256": "e2880d0036240cf9f5842752e26a851bb9fe865d922985c9d6b91e3e1b5afe13",
+      "sanitizedSha256": "e2880d0036240cf9f5842752e26a851bb9fe865d922985c9d6b91e3e1b5afe13",
+      "gzipSha256": "a89cc88e9de90f9c102cd1761dfa896738e1a999605f5ebbc14dda0685b6aa2e"
+    },
+    {
+      "path": "ingest-wiring/adopt-role-context.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-ingest-cpu-5d54-design-01\\adopt-role-context.mjs",
+      "originalSha256": "d194433d65b23787f27c208004bf0a9b343c12728d68c82647737888305e95ec",
+      "sanitizedSha256": "50f56205e35881cedb49e05d381312ee70086183b40aa65c3218e3c7612abe12",
+      "gzipSha256": "113f8e5e7becd718f1c72205fa5b607f56816f49493be1cc5b5b977ec30fe8de"
+    },
+    {
+      "path": "ingest-wiring/prepare-role-context.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-role-ingest-cpu-5d54-design-01\\prepare-role-context.mjs",
+      "originalSha256": "d349a3a9954ae10fc3a444950f28463fd00c64de12155cfcbbb06f20c2a315ea",
+      "sanitizedSha256": "97330a50b9b79ce6fd59638d68c46b3743547850237f871af30911439a09ca6c",
+      "gzipSha256": "f951347e12391100c882112f269eca7d03a90a3ea50de0add90e7e51f8df53d4"
+    }
+  ]
+}

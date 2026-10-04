@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-04T01:26:26.490Z",
+  "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "reviewedHead": "cc8a8724ced7e0db5af326402a4b75a3dbc69ee1",
+  "testedRuntimeInputsUnchanged": true,
+  "frontendInputsUnchangedSinceFreshBuild": true,
+  "unit": {
+    "tests": 2032,
+    "passed": 2032,
+    "failed": 0,
+    "skipped": 0,
+    "isolatedPostgreSqlAndRedis": true,
+    "firstAttempt": "Preserved environment failure: the optional PostgreSQL type-parsing test was enabled by an intentionally unreachable DATABASE_URL. The complete lane was rerun with an owned reachable fixture; no assertion or classification changed."
+  },
+  "harnessValidators": {
+    "tests": 19,
+    "passed": 19,
+    "failed": 0,
+    "skipped": 0,
+    "capacityMeasured": false
+  },
+  "image": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-candidate-ed026-01/image-binding.json",
+    "sha256": "b7a60227af4ec68a7657ee7f36221979e24b6d64e2b7344812b31cfd099fb379"
+  },
+  "candidateSchema": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-candidate-input-ed026-01/ready-inputs.json",
+    "sha256": "929ffafacaaeff9863f208397decbb0fe9fcac0bc7fd136b3eabb42de8411cba"
+  },
+  "frontend": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-frontend-ed026-01/frontend-preparation.json",
+    "sha256": "a518a58434978722eacb890a248044c60af03b01a98a26cec0c982e8c9079f5e"
+  },
+  "sourceMigrationRehearsal": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-source-rehearsal-ed026-01/rehearsal.json",
+    "sha256": "2ee61a0d411d0f28c6b999b7a08bd86b9a201933fed9d2b7e1b0b25791bc143d"
+  },
+  "frontendArchiveSha256": "7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675",
+  "migrations": 54,
+  "targetTenantTables": 129,
+  "rollback": "The successful source rehearsal used historical fallback6e251f2d. It is being superseded by the same cleanup lease correction before final image recovery.",
+  "records": {
+    "unit-failed-environment-01.log": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-final-app-ed026-01\\unit-failed-environment-01.log",
+      "sha256": "31727458c426d7df1e965c9b1b330292afad544799d774361e777309efda762f"
+    },
+    "unit-pass-02.log": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-final-app-ed026-01\\unit-pass-02.log",
+      "sha256": "810b5a4b88674731f0c079069bf06f410900ba2af01e295d5f4330f3becd1241"
+    },
+    "unit-owned-fixture-cleanup.json": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-final-app-ed026-01\\unit-owned-fixture-cleanup.json",
+      "sha256": "11cd9b63449747c65dbdbfefa883e7ecabc338f5d9278ae23454a92b616f8356"
+    },
+    "application-build.log": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-final-app-ed026-01\\application-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "harness-tests.log": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-final-app-ed026-01\\harness-tests.log",
+      "sha256": "d4810d616592d9ad697fd4bfee04ee9da1afc12a24a5241bc593c185892ae483"
+    }
+  },
+  "usageCapacityAccepted": false,
+  "releaseAcceptanceComplete": false,
+  "deploymentGreenLight": false,
+  "productionMutations": 0,
+  "storeSubmission": false
+}

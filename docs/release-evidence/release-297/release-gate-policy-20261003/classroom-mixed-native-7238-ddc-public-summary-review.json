@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-04T10:25:25.001Z",
+  "kind": "independent-public-classroom-block-summary-review",
+  "publicSummarySha256": "f4f6ff8aa6d714dad17963f225817e0f0a5a8d06d659bddde2ce8972498d3e57",
+  "passed": true,
+  "actualAll45MinuteRowsCompared": true,
+  "sourceAndManifestBindingsCompared": true,
+  "unavailableReconnectCounterRemainsUnavailable": true,
+  "allCountsMarginsAndResourceSummariesEqualCanonicalEvidence": true,
+  "scope": "Current-school133syntheticclassroomonly",
+  "productionReadiness": false,
+  "usageCapacityAccepted": false,
+  "comparisonPolicyAmendmentApproved": false,
+  "liveValidationPerformed": false
+}

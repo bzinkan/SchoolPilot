@@ -1,0 +1,155 @@
+{
+  "source": "d6492333520608df1524c021999d9440a26149de",
+  "profile": "release-enabled-linux-shared-namespace-ingest-cpu-100rps-v1",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "passed": false,
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Diagnostic ingestion failed\n\nfalse !== true\n"
+  },
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5832,
+    "succeeded": 5832,
+    "failed": 0,
+    "refusedAtInFlightLimit": 168,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 33.289607999999134,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2913,
+        "succeeded": 2913,
+        "failed": 0,
+        "refused": 87
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2919,
+        "succeeded": 2919,
+        "failed": 0,
+        "refused": 81
+      }
+    },
+    "offerWindowMs": 59990.462832000005,
+    "outstandingAtEndOfOffering": 890,
+    "totalIncludingDrainMs": 66788.039692,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5832,
+      "minMs": 39.75035899999966,
+      "p50Ms": 9419.595637000002,
+      "p95Ms": 11428.486833000003,
+      "maxMs": 11685.109176000002
+    }
+  },
+  "cpuProfile": {
+    "enabled": true,
+    "file": "api.cpuprofile",
+    "samplingIntervalMicroseconds": 1000,
+    "includesStartupAndDrain": true,
+    "capacityEvidence": false,
+    "sha256": "d07ed325ae27cc3f37e50609609540506c6c7dd403c40066fbf737bffffb9a82",
+    "bytes": 3239431,
+    "samples": 66447,
+    "startTime": 1417327437697,
+    "endTime": 1417400821178
+  },
+  "apiAcquisitions": {
+    "count": 17496,
+    "failures": 0,
+    "maxMs": 4836.807744999998
+  },
+  "apiCpuMicroseconds": {
+    "user": 66333836,
+    "system": 13954288
+  },
+  "apiEventLoop": {
+    "p50Ms": 21.626879,
+    "p95Ms": 26.755071,
+    "maxMs": 79.167487,
+    "utilization": 0.9781475428494568
+  },
+  "serverDrain": {
+    "api": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 12.482365999996546,
+      "passes": 3,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 2.3694680000044173,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "childShutdownClean": true,
+  "allOwnedContainersCleanup": {
+    "cleanupPassed": true,
+    "resources": [
+      {
+        "role": "harness",
+        "removed": false,
+        "cleanupPassed": true,
+        "confirmedAbsent": true
+      },
+      {
+        "role": "redis",
+        "removed": true,
+        "cleanupPassed": true
+      },
+      {
+        "role": "postgres",
+        "removed": true,
+        "cleanupPassed": true
+      }
+    ]
+  },
+  "currentDayAndCsvVerificationCompleted": false,
+  "reportsOrWorkersMeasured": false,
+  "exactCommand": "pwsh -NoProfile -File ./run-linux-ingest-cpu.ps1 -SourceRepository C:/Users/zinka/AppData/Local/Temp/release297-linux-d649-host-02 -DiagnosticImageManifest C:/Users/zinka/AppData/Local/Temp/release297-linux-helper-d649-ingest-cpu-build-01/diagnostic-image-binding.json -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory C:/Users/zinka/AppData/Local/Temp/release297-enabled-linux-ingest-cpu-01 -Phase ingest -CollectApiCpuProfile",
+  "commandCwd": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-linux-ingest-cpu-design-01",
+  "caveat": "Historical d649 application source before pending inbox projection. Linux shared namespace, no hard per-role CPU/RSS; profiler overhead; not production task capacity."
+}

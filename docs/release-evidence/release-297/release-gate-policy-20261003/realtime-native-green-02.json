@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Focused realtime serialization correction and native regression evidence",
+  "result": "PASSED COMPONENT CHECKS",
+  "releaseOrCapacityAccepted": false,
+  "productionMutations": 0,
+  "sourceFiles": [
+    {
+      "name": "src/services/classpilotRealtimeStatus.ts",
+      "sha256": "9f9df60cf0ee78c1bd4d5ec26bb19963f8f3e7a480439ea671857ab64efb3f22"
+    },
+    {
+      "name": "tests/classpilot-realtime-status-redis.integration.test.ts",
+      "sha256": "5a3a9ae7340a6ef6815a6a15e2d45ae3628fe6b9c80af6517f46cb8ae5cea35f"
+    },
+    {
+      "name": "tests/classpilot-realtime-status.test.ts",
+      "sha256": "f94680ce3310be8d695d0f1501033691a38dc5ad8085aa30635b399d8ff78413"
+    }
+  ],
+  "change": {
+    "plainJsonStorageRetained": true,
+    "strictDecoderRetained": true,
+    "oneEvalPerMutation": true,
+    "authorityStaleAndSignedOutFencesRetained": true,
+    "ttlSeconds": 360,
+    "untouchedRootValuesPreserved": true,
+    "exactIntegerRevisions": true,
+    "schemaPoolTimeoutDurabilityChanges": false
+  },
+  "checks": {
+    "existingUnit": 20,
+    "nativeRedis": 4,
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "nativeCases": [
+      "empty tabs and nested policy arrays through write/classification set/clear/signout",
+      "current-millisecond exact increasing16-digit revisions",
+      "escaped/unknown80KB values and duplicate replaced root keys",
+      "binding/stale/signout/replacement/TTL fences"
+    ]
+  },
+  "cleanup": {
+    "exitCode": 0,
+    "noOom": true,
+    "forced": false,
+    "containerAbsent": true,
+    "volumesAbsent": true,
+    "graceful": true
+  },
+  "startedAt": "2026-10-04T05:51:00.104Z",
+  "finishedAt": "2026-10-04T05:51:05.102Z",
+  "records": [
+    {
+      "name": "native-green02-execution",
+      "sha256": "c824f48bf3faba260467db772a83cdafd6ff9d311a714441bfba8c3c25304d5d"
+    },
+    {
+      "name": "native-green02-focused-log",
+      "sha256": "f51b35a9888d10012bae3b552a1c05cf45cf66382e799fbae3ce6f041a32acd8"
+    },
+    {
+      "name": "native-green02-plan",
+      "sha256": "da06b30bd23bf9f2433d1ab954f0a541ea115e598e89912fde54121655f6cd39"
+    },
+    {
+      "name": "native-green02-window",
+      "sha256": "7cd9cba463537ccf51ab33743b386aeb920f623bf836d439741de112087aef65"
+    },
+    {
+      "name": "native-original-regression-public-summary",
+      "sha256": "46625d1a3781f52be55fa92a33141baae1609c0fc474061ec80ecae4d771582b"
+    }
+  ],
+  "preservedFailures": [
+    {
+      "attempt": "original-red01",
+      "outcome": "pre-application fixture failure; exits127/128; exact cleanup; startup cause unproven"
+    },
+    {
+      "attempt": "original-red02",
+      "outcome": "native application array/revision defects confirmed; overall FAILED due wrong cleanup import; exact owners absent, probe1/Redis0"
+    },
+    {
+      "attempt": "green01",
+      "outcome": "23/24, canonical classification-null fields omitted from test input; source unchanged; exact graceful cleanup"
+    }
+  ],
+  "limits": [
+    "Native source component proof; final combined type/build/CI and new scanned serving/fallback artifacts remain required",
+    "No deployment, Store publication, runtime activation, fleet capacity or live managed-device acceptance"
+  ]
+}

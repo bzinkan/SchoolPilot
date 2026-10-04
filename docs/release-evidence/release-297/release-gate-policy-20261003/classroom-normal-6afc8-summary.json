@@ -1,0 +1,449 @@
+{
+  "schemaVersion": 1,
+  "disposition": "specific synthetic classroom-normal profile passed; deployment and broader capacity not certified",
+  "run": "c8b7f684a8fd",
+  "startedAtUtc": "2026-10-04T03:44:16.780Z",
+  "finishedAtUtc": "2026-10-04T03:46:07.265Z",
+  "observedSchoolLocalDate": "2026-10-03",
+  "profile": "release297-classroom-normal-34-v2",
+  "arm": "C",
+  "bindings": {
+    "applicationSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+    "applicationImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+    "harnessSource": "6afc8f09cedbc634c481d9882e49d2d491d4921d",
+    "helperImage": "sha256:bda6e4735a9680028f69df3bae827acc2d0d61e1ce3fb4bfd3151d3f541d6b5e",
+    "helperBindingSha256": "60a64e390e13ea8be4c26dd335af21ffc557ef2b2123bf42543078771c7f13ff",
+    "profileContractSha256": "dc6d059cf5d7fceb4652527f3de9826e1bbc441b4bf0e2a77148724bcbe4caea",
+    "campaignContractSha256": "228f29017a6d4b1349f916bc343bd0c11ae9405411241bb8bac0f2842ce83221",
+    "journalSha256": "6d7bb880be0761996d77e68cae856069e79c0a9d11387109dcce7488baf6f32a",
+    "receiptManifestSha256": "74a4ac232fe209607db053be139570e0f9a200fb12f897c470e77e0937c10740",
+    "receiptRecordCount": 11,
+    "receiptRecordsVerified": true,
+    "closureSha256": "c30e79d94ee3c0105cebc450cd5cd3496f6a66a895373f186c8ac5a53d2bda6e",
+    "canonicalSchemaSha256": "3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570",
+    "rawSchemaInputSha256": "6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3",
+    "observedEnvironmentSha256": "063360d631c65e7d4ce2bfcdbf4fe29781cb7016e670817874eb345aa649fd27",
+    "observedFlagsSha256": "2a4366a1066a4f30c2cea1724b460a05dbfcb6367d3f285e3a6d0b5d24a6ffe9",
+    "syntheticScopeBindingSha256": "15a9d91b2a1e57ea6a2b85bd10cc564deb5ee1f9b6d4b4362733ba1d15ddc265",
+    "quietWindowSha256": "a48dcc3b567b6ff88421123a6a9adce37b206a2d102074982814f8e0526a8a81",
+    "fixtureLogicalSha256": "0cb731a661cb0cec200d922c944a05023e2d106af2e712ffccb72d46c57b64cc",
+    "planSha256": "3e5536afbcd4c38cc66c55374e72b5d1baf4d723cbbd5ae6c9142e4c0c95aa17",
+    "clientVersionAdvertisement": "2.9.7",
+    "simulatedModernClientCapabilityCount": 39
+  },
+  "topology": {
+    "apiProcesses": 1,
+    "apiCpuQuota": "100000 100000",
+    "apiMemoryBytes": 2147483648,
+    "apiEffectiveMainPool": 16,
+    "apiSessionPool": 2,
+    "postgresCpu": 4,
+    "postgresMemoryGiB": 4,
+    "redisIsolated": true,
+    "activeClients": 340,
+    "syntheticSchools": 2,
+    "clientsPerSchool": [
+      170,
+      170
+    ],
+    "deviceCadenceMs": 10000,
+    "requestsPerSecond": 34,
+    "activeApiIndices": [
+      0
+    ],
+    "targetHistogram": {
+      "0": 2040
+    },
+    "capabilities": {
+      "preciseRestrictions": true,
+      "focus": true,
+      "privateChatLifecycle": true
+    },
+    "usageModes": {
+      "rollups": false,
+      "reporting": false
+    },
+    "nodeVersion": "v22.23.3"
+  },
+  "traffic": {
+    "expected": 2040,
+    "offered": 2040,
+    "started": 2040,
+    "successful200": 2040,
+    "failed": 0,
+    "refused": 0,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 6.148618999999599,
+    "startLatenessMs": 3,
+    "startAlignmentAccepted": true,
+    "offerWindowMs": 60000.897674,
+    "peakInFlight": 26,
+    "outstandingAfterDrain": 0,
+    "statusHistogram": {
+      "200": 2040
+    },
+    "capabilityAcknowledgements200": 2040,
+    "perSchool": {
+      "0": {
+        "offered": 1020,
+        "started": 1020,
+        "succeeded": 1020,
+        "failed": 0,
+        "refused": 0
+      },
+      "1": {
+        "offered": 1020,
+        "started": 1020,
+        "succeeded": 1020,
+        "failed": 0,
+        "refused": 0
+      }
+    },
+    "persistence": {
+      "passed": true,
+      "total": 2040,
+      "perBindingCompared": true,
+      "fixtureBindings": "exact school/student/device/active-session tuple",
+      "invalid": 0
+    },
+    "reportsOffered": 0
+  },
+  "lifecycle": {
+    "passed": true,
+    "events": [
+      "websocket_authenticated",
+      "precise_command_ack",
+      "focus_command_ack",
+      "focus_classroom_ack_and_public_state",
+      "private_reply_ack",
+      "private_chat_closed",
+      "stale_private_reply_rejected",
+      "expired_reply_ack_and_projection_verified",
+      "expired_reply_absent_after_reconnect",
+      "stop_focus_ack",
+      "stop_focus_classroom_ack_and_public_state",
+      "precise_cleanup_ack",
+      "forbidden_recipient_frames_absent",
+      "websocket_authenticated",
+      "precise_command_ack",
+      "focus_command_ack",
+      "focus_classroom_ack_and_public_state",
+      "private_reply_ack",
+      "private_chat_closed",
+      "stale_private_reply_rejected",
+      "expired_reply_ack_and_projection_verified",
+      "expired_reply_absent_after_reconnect",
+      "stop_focus_ack",
+      "stop_focus_classroom_ack_and_public_state",
+      "precise_cleanup_ack",
+      "forbidden_recipient_frames_absent"
+    ],
+    "expectedNegativeProbes": [
+      {
+        "status": 409,
+        "code": "PRIVATE_CHAT_LIFECYCLE_STALE"
+      },
+      {
+        "status": 409,
+        "code": "PRIVATE_CHAT_LIFECYCLE_STALE"
+      }
+    ],
+    "expectedNegativeLogCoverage": true,
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "timing": {
+    "heartbeat": {
+      "count": 2040,
+      "p50Ms": 24.348652000000584,
+      "p95Ms": 308.7430039999999,
+      "maxMs": 743.5845049999989
+    },
+    "cpuMeasuredDeclaredWindowMs": 60000,
+    "cpuMeanFraction": 0.54210545,
+    "cpuFixedWindowMicroseconds": 32526327,
+    "cpuWholeOwnedMicroseconds": 32554042,
+    "cpuAfterWindowMicroseconds": 27715,
+    "cpuPerSuccessful200Ms": 15.957863725490197,
+    "cpuWindows": [
+      {
+        "role": "api0",
+        "window": {
+          "start": {
+            "hrtimeMicroseconds": 1484514944101,
+            "cpu": {
+              "usage_usec": 4899332,
+              "user_usec": 3991608,
+              "system_usec": 907724,
+              "nr_periods": 132,
+              "nr_throttled": 39,
+              "throttled_usec": 1681807,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memoryEvents": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "nodeVersion": "v22.23.3",
+            "cpuMax": "100000 100000",
+            "memoryMax": 2147483648
+          },
+          "end": {
+            "hrtimeMicroseconds": 1484574944286,
+            "cpu": {
+              "usage_usec": 37425659,
+              "user_usec": 31002446,
+              "system_usec": 6423213,
+              "nr_periods": 732,
+              "nr_throttled": 99,
+              "throttled_usec": 6970409,
+              "nr_bursts": 0,
+              "burst_usec": 0
+            },
+            "memoryEvents": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "nodeVersion": "v22.23.3",
+            "cpuMax": "100000 100000",
+            "memoryMax": 2147483648
+          },
+          "declaredDurationMs": 60000,
+          "startDelayMs": 1,
+          "endDelayMs": 0
+        },
+        "usec": 32526327,
+        "meanFraction": 0.54210545,
+        "durationMs": 60000.185,
+        "wholeOwnedUsec": 32554042
+      }
+    ],
+    "eventLoop": [
+      {
+        "p50Ms": 20.152319,
+        "p95Ms": 21.725183,
+        "maxMs": 127.401983,
+        "utilization": 0.5019980409126108
+      }
+    ],
+    "independentCanaryMaxDelayMs": 35.913727
+  },
+  "database": {
+    "failures": 0,
+    "acquisitions": [
+      {
+        "count": 6320,
+        "failures": 0,
+        "maxMs": 128.57451799999944
+      }
+    ],
+    "failedStatements": 0,
+    "peakHeld": [
+      16
+    ],
+    "peakWaiting": [
+      10
+    ],
+    "completeErrorCoverage": [
+      {
+        "role": "generator",
+        "kind": "api",
+        "available": true,
+        "complete": true,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "errorCount": 0,
+        "categories": {},
+        "expectedNegativeRequestIdCount": 0
+      },
+      {
+        "role": "api0",
+        "kind": "api",
+        "available": true,
+        "complete": true,
+        "bytes": 33499,
+        "sha256": "2c2f466fec07b9b1fa84a0fb516ed1704c3391568167bb628194f9307ed6e096",
+        "errorCount": 0,
+        "categories": {},
+        "expectedNegativeRequestIdCount": 2
+      },
+      {
+        "role": "observer",
+        "kind": "api",
+        "available": true,
+        "complete": true,
+        "bytes": 2632,
+        "sha256": "d5f27aa1c379dc0685d7d8ad9d9f1a3530378bc0f5697023a975b3fd847c4a20",
+        "errorCount": 0,
+        "categories": {},
+        "expectedNegativeRequestIdCount": 0
+      },
+      {
+        "role": "seeder",
+        "kind": "api",
+        "available": true,
+        "complete": true,
+        "bytes": 2694,
+        "sha256": "703e9df272527850f280c9d585b0eca51fd232c689374329418423ebad55253b",
+        "errorCount": 0,
+        "categories": {},
+        "expectedNegativeRequestIdCount": 0
+      },
+      {
+        "kind": "postgres",
+        "available": true,
+        "complete": true,
+        "bytes": 4653,
+        "sha256": "7cb28d5950eb258fbbb766c891dbf5c7d3f5d3aa798a228207989a6590390c49",
+        "errorCount": 0,
+        "categories": {},
+        "expectedNegativeRequestIdCount": 0
+      }
+    ],
+    "restrictedRoleVerified": true,
+    "crossSchoolIsolationVerified": true,
+    "tenantGucResetVerified": true
+  },
+  "recovery": {
+    "drains": [
+      {
+        "complete": true,
+        "physicallySettled": true,
+        "budgetMs": 20000,
+        "elapsedMs": 1.0400300000037532,
+        "passes": 2,
+        "gauges": {
+          "activeOperations": 0,
+          "pendingCheckouts": 0,
+          "activeCheckouts": 0,
+          "pendingAcquisitions": 0,
+          "activeQueries": 0,
+          "poolWaiting": 0,
+          "poolHeld": 0,
+          "httpResponses": 0,
+          "pendingTenantReleases": 0,
+          "queuedHeartbeats": 0,
+          "admittedHeartbeats": 0
+        },
+        "physicallyIdle": true,
+        "abortedResponses": 0
+      }
+    ],
+    "roles": [
+      {
+        "role": "seeder",
+        "exitCode": 0,
+        "oomKilled": false,
+        "forced": false,
+        "requests": 3,
+        "settled": 3,
+        "expired": 0,
+        "unsettledAtExit": 0,
+        "clean": true,
+        "logsSha256": "703e9df272527850f280c9d585b0eca51fd232c689374329418423ebad55253b"
+      },
+      {
+        "role": "generator",
+        "exitCode": 0,
+        "oomKilled": false,
+        "forced": false,
+        "requests": 3,
+        "settled": 3,
+        "expired": 0,
+        "unsettledAtExit": 0,
+        "clean": true,
+        "logsSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "role": "api0",
+        "exitCode": 0,
+        "oomKilled": false,
+        "forced": false,
+        "requests": 6,
+        "settled": 6,
+        "expired": 0,
+        "unsettledAtExit": 0,
+        "clean": true,
+        "logsSha256": "2c2f466fec07b9b1fa84a0fb516ed1704c3391568167bb628194f9307ed6e096"
+      },
+      {
+        "role": "observer",
+        "exitCode": 0,
+        "oomKilled": false,
+        "forced": false,
+        "requests": 4,
+        "settled": 4,
+        "expired": 0,
+        "unsettledAtExit": 0,
+        "clean": true,
+        "logsSha256": "d5f27aa1c379dc0685d7d8ad9d9f1a3530378bc0f5697023a975b3fd847c4a20"
+      }
+    ],
+    "redisCleanStop": true,
+    "exactOwnedResourcesConfirmedAbsent": true,
+    "cleanupPassed": true,
+    "sourceUnchanged": true
+  },
+  "acceptance": {
+    "checks": {
+      "actualProfile": true,
+      "offering": true,
+      "reconnect": true,
+      "persistence": true,
+      "declaredStartAlignment": true,
+      "capabilityAcknowledgements": true,
+      "targetCounts": true,
+      "declaredDistribution": true,
+      "drains": true,
+      "cpuBound": true,
+      "latency": true,
+      "classroom": true,
+      "database": true
+    },
+    "passed": true,
+    "diagnosticOnly": false
+  },
+  "quietHost": {
+    "declaredNoOtherLoadOrBuilds": true,
+    "preparationOnly": false,
+    "dockerCpuCount": 16,
+    "dockerMemoryBytes": 33577676800,
+    "observedAt": "2026-10-04T03:44:24.600Z",
+    "hostInterferenceEstablished": false
+  },
+  "historicalEvidence": {
+    "priorHarness": "f8af7b0be7055bd2c2f8bb7d10ad4481066354af",
+    "priorRun": "23f23d9c6f8c",
+    "priorManifestSha256": "6b81ef13810e6b4741de89951c9ff6eb38ee2d69874524a2abb6727adc34eab2",
+    "priorClosureSha256": "725c82fa62460538c909f21742ab4987ca4c08b2031d66813ab628d0bd05f32b",
+    "priorP95Ms": 118.31405,
+    "priorApiCpuMeanFraction": 0.50710935,
+    "retainedUnchanged": true,
+    "comparisonAccepted": false,
+    "explanation": "Both are independent synthetic passes. The different latency/CPU observations do not establish host interference or causation from the narrow teardown accounting change."
+  },
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "deployed": false,
+  "activated": false,
+  "managedDevicePrerequisite": "waived by operator, not passed",
+  "limits": [
+    "Local4CPU/4GiBPostgreSQL is not production headroom.",
+    "Synthetic client ACKs do not prove packaged browser enforcement.",
+    "Host filesystem cache is not cleared.",
+    "One 60-second synthetic capability-on run does not replace the three continuous current-school 900-second runs.",
+    "This C34 modern-capability profile cannot substitute for the dark B34 production-flag/versioned-2.9.6 paired comparison.",
+    "No Usage capacity, broader800 failover capacity or real managed-browser enforcement claim.",
+    "No production deployment, Store publication, runtime activation or live school validation occurred.",
+    "Private log contents, credentials, real school scopes and fixture identities are excluded; only content-free custody hashes and counts are published."
+  ]
+}

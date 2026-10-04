@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-04T03:24:06.358Z",
+  "purpose": "One capability-on normal candidate measurement, not complete release acceptance",
+  "run": "23f23d9c6f8c",
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "harnessSource": "f8af7b0be7055bd2c2f8bb7d10ad4481066354af",
+  "profile": "release297-classroom-normal-34-v2",
+  "contractSha256": "dc6d059cf5d7fceb4652527f3de9826e1bbc441b4bf0e2a77148724bcbe4caea",
+  "passed": true,
+  "cleanupPassed": true,
+  "sourceUnchanged": true,
+  "offers": {
+    "expected": 2040,
+    "offered": 2040,
+    "succeeded": 2040,
+    "failed": 0,
+    "refused": 0,
+    "late": 0,
+    "p95Ms": 118.31405000000086
+  },
+  "apiCpuMeanFraction": 0.50710935,
+  "acceptance": {
+    "checks": {
+      "actualProfile": true,
+      "offering": true,
+      "reconnect": true,
+      "persistence": true,
+      "declaredStartAlignment": true,
+      "capabilityAcknowledgements": true,
+      "targetCounts": true,
+      "declaredDistribution": true,
+      "drains": true,
+      "cpuBound": true,
+      "latency": true,
+      "classroom": true,
+      "database": true
+    },
+    "passed": true,
+    "diagnosticOnly": false
+  },
+  "closureSha256": "725c82fa62460538c909f21742ab4987ca4c08b2031d66813ab628d0bd05f32b",
+  "limitations": [
+    "Three continuous mixed classroom runs remain pending",
+    "Synthetic successful ACKs do not establish installed managed-device enforcement",
+    "Usage and paired comparison remain unaccepted",
+    "No live validation or deployment"
+  ]
+}
