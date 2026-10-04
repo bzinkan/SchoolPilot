@@ -26,8 +26,7 @@ Current application source is `ddc5996b3b8645859fa51a9613486db52c481b7f`.
 The combined standard backend type check passes. The narrow Redis correction
 passes [24 component checks, including four native regressions](release-evidence/release-297/release-gate-policy-20261003/realtime-native-green-02.json),
 and the [restricted-role health correction](release-evidence/release-297/release-gate-policy-20261003/health-native-green-03.json)
-passes six native checks. Final combined
-CI, freshly scanned serving/fallback artifacts and staged recovery remain pending.
+passes six native checks. [Fresh serving/fallback builds and scans](release-evidence/release-297/release-gate-policy-20261003/runtime-artifacts-ddc5996b-c578120d.json) pass with zero HIGH/CRITICAL findings. The [actual API/worker staged recovery](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json) passes bridge, adoption, compatible fallback and return, preserving all 54 completed migrations, function permissions and chat expiration. Eight services drain gracefully and the exact synthetic resources are absent. Its synthetic schema/protocol limitations remain explicit; it does not verify the production catalog or ECS/ALB drain. Final combined CI and measured release acceptance remain pending.
 Earlier application images and measurements do not certify the revised source.
 
 Historical application `ed026513` passes 2,032 local unit tests without skips and all 20
@@ -40,17 +39,15 @@ also verifies all 20 SchoolPilot checks at `ca388d10`, all 10 ClassPilot checks,
 and unchanged application/frontend/package inputs. Resulting-main checks remain
 required after separately authorized merges.
 The corrected safe fallback passes its scan and [actual image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json).
-The separate [staged service rehearsal is still failed overall](release-evidence/release-297/release-gate-policy-20261003/staging128129-partial-05.json).
+The earlier [staged service rehearsal remains failed overall](release-evidence/release-297/release-gate-policy-20261003/staging128129-partial-05.json).
 Its actual 128-admission bridge, worker appointment maintenance and SQL drains are
-verified; complete 129-adoption/fallback acceptance still needs real authenticated
-heartbeat capability evidence. The earlier synthetic advertised-capability
+verified; that attempt did not establish 129-adoption/fallback. The earlier synthetic advertised-capability
 telemetry setup is recorded as a limitation, not accepted client support.
 The [subsequent real-heartbeat staging attempt](release-evidence/release-297/release-gate-policy-20261003/staging128129-failed-06.json)
 also failed overall. A [native Redis diagnostic](release-evidence/release-297/release-gate-policy-20261003/realtime-native-regression-ed026.json)
 confirms valid empty snapshots become unreadable and same-millisecond revisions
 lose ordering; its failed cleanup import remains recorded. Snapshot and
-health-monitor compatibility corrections are integrated with native proof. Refresh final serving
-and fallback artifacts, CI and measured acceptance after these source changes.
+health-monitor compatibility corrections are integrated with native proof. Fresh source-bound serving/fallback scans and complete local service recovery now pass; final CI and measured acceptance remain required.
 The ed026 artifacts and previous measurements remain historical evidence.
 New paired/current-school acceptance and three continuous classroom runs remain
 pending. Usage capacity has zero accepted runs and both new Usage modes remain off.

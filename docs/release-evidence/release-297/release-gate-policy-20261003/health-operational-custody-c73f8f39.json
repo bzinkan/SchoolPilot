@@ -1,0 +1,24 @@
+{
+  "kind": "operational-native-artifact-custody",
+  "commit": "c73f8f39cee675bd9e5dabd0734dc51851c1f560",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "bootstrapCommit": "20975334b48afe84a48dbc0ae2e4036c6a3f6b14",
+  "tests": {
+    "failed": 0,
+    "logSha256": "8de7055a7f000bb95f4904b4799e1affead25c5652ec480b4812d545ef74f4c6",
+    "skipped": 0,
+    "passed": 60
+  },
+  "verification": [
+    "Declared exact SQL artifact filenames and contained realpaths",
+    "Raw before/after SQL hashes and complete canonical identities",
+    "Pinned source schema remains the before-bootstrap identity",
+    "Original operational DDL and minimal effective privileges",
+    "Original snapshot successful verification and exact manifest binding"
+  ],
+  "historicalAbiAndReceiptsUnchanged": true,
+  "schemaNormalizerUnchanged": true,
+  "appMigrationsProfilesThresholdsUnchanged": true,
+  "nativeExecution": false,
+  "capacityAcceptance": false
+}

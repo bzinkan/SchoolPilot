@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "title": "Local actual-service admission and compatible recovery rehearsal",
+  "run": "2587c11e0855",
+  "passed": true,
+  "servingSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "fallbackSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+  "servingImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "fallbackImage": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+  "startedAt": "2026-10-04T06:43:14.742Z",
+  "completedAt": "2026-10-04T06:46:16.899Z",
+  "phases": [
+    {
+      "name": "bridge128",
+      "privateIssuance": false,
+      "actualLegacyBootstrapAndAck": true,
+      "announcementDuringHardOff": true,
+      "actualSchedulerAppointmentMaintenance": true,
+      "zeroLifecycleAdoptionWrites": true
+    },
+    {
+      "name": "adopt129",
+      "privateIssuance": true,
+      "firstAdoption": true,
+      "legacyPendingExpired": true,
+      "stampedCloseExpired": true,
+      "deliveredHistoryPreserved": true,
+      "foreignSchoolUnadopted": true
+    },
+    {
+      "name": "fallback129",
+      "privateIssuance": false,
+      "expirationAndExactHistoryPreserved": true,
+      "deliveredHistoryPreserved": true,
+      "foreignSchoolUnadopted": true
+    },
+    {
+      "name": "return129",
+      "privateIssuance": false,
+      "expirationAndExactHistoryPreserved": true,
+      "deliveredHistoryPreserved": true,
+      "foreignSchoolUnadopted": true
+    }
+  ],
+  "allPhasesActualApiWorker": true,
+  "actualServices": 8,
+  "actualApiFullHealthCycles": 4,
+  "actualHeartbeatBindingsAndPersistedRows": true,
+  "realWebSocketNegotiationBootstrapAndAck": true,
+  "requiredAdmissionAndRestrictedTenantChecks": true,
+  "retainedCompletedMigrationLedgerRows": 54,
+  "fallbackDeclaredMigrations": 53,
+  "missingFallbackDeclaration": "classpilot-heartbeat-screenshot-evidence-v1-20261003",
+  "retainedScreenshotFunctionBodyAndAcl": true,
+  "unchangedNativeChecksumVectors": true,
+  "rawHistoricalByteEquivalence": false,
+  "explicitCrLfOnlyCompiledDifferences": 99,
+  "operationalHealthSentinel": {
+    "ddl": "CREATE TABLE public._health_sentinel (id SERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW())",
+    "ddlSha256": "41cb2cd4ad12d4cb94953e0df7ef33de49015e14101a09f32e9abf377b164fe6",
+    "outsideRlsInventory": true,
+    "migrationLedgerUnchanged": true,
+    "minimalRuntimePrivileges": {
+      "schema_create": false,
+      "can_select": true,
+      "can_insert": true,
+      "can_delete": true,
+      "can_update": false,
+      "sequence_usage": true,
+      "sequence_select": false,
+      "rolsuper": false,
+      "rolbypassrls": false
+    }
+  },
+  "gracefulServiceDrains": 8,
+  "allDrainsExitZeroNoOomNoForceAndZeroNamedSqlConnections": true,
+  "ownedContainersAbsent": 16,
+  "ownedVolumesAbsent": 2,
+  "ownedNetworkAbsent": true,
+  "independentAbsenceCheck": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\independent-cleanup-verification.json",
+    "bytes": 497,
+    "sha256": "eb77965923fdfc08f8361fa73655cc27901687aff4f00f1ce5052a988ceda75f"
+  },
+  "usageModes": "off/off",
+  "limits": {
+    "syntheticProtocolClientNotChromeOrSsoEnrollment": true,
+    "syntheticSchemaAndCopiedCompletedLedgerNotProductionHistoryOrIndependentMigrationReplay": true,
+    "operationalHealthTableOutsideMigrationAndRlsInventories": true,
+    "preStartProtocolPreflightOnly128Off": true,
+    "laterProtocolPreflightsAndActualNegotiationAfterEachPairStarts": true,
+    "oneShotProbesRetainAnUndisposedImportedRateLimiterRedisClientUntilExplicitExit": true,
+    "allOneShotSqlTenantSocketBackgroundCleanupAwaited": true,
+    "actualServiceShutdownIsSeparateAndGraceful": true,
+    "capacityAcceptance": false,
+    "productionCatalogReadiness": false,
+    "actualEcsAlbTargetDrainProof": false,
+    "deploymentGreenLight": false,
+    "productionMutations": 0
+  },
+  "records": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\execution.json",
+      "bytes": 27971,
+      "sha256": "e69fd739a1632debee331e7560e33da422a330dfe7283d9d33efc4a6d5d70161"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\custody-manifest.json",
+      "bytes": 41023,
+      "sha256": "a62084dcc0580a0cbe9f930bd57fc6ab00f9e0e6833d83e1d24c79b73d8a4a7d"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\probe-prepare-result.json",
+      "bytes": 1117,
+      "sha256": "27db38ac3d15c60cbd21232d639a9b02a51c5701bd9771868f680889f4a17db6"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\probe-bridge-result.json",
+      "bytes": 1374,
+      "sha256": "581d6a6229903ad8627c8531b4a90cdfc7d8cc56c46109400fac48118e36afe6"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\probe-adopt-result.json",
+      "bytes": 1435,
+      "sha256": "28218ac36f1de048783d72a67aef59db2c3984ac4cbc3c19bf6e92c30846a9b3"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\probe-fallback-result.json",
+      "bytes": 1434,
+      "sha256": "55e1ca49a40614da2215b4ff0308b0d2a168e5033d7b66939c295373f55ba98f"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\execution-2587c11e0855\\probe-return-result.json",
+      "bytes": 1432,
+      "sha256": "43aaea521702710ce1bcb99f2adc389cd5f6cfbf557d2f2723c7eb02e4263d2d"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\bound-stage-plan.json",
+      "bytes": 7796,
+      "sha256": "29fa2b27cd8e5ae55561a5a8302338ac148b39c7046ea161d5759d17f1ba76df"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\local-window-01.json",
+      "bytes": 1095,
+      "sha256": "6adb5c58685639719e6fe5435848d51fea25dfdc8b87c24cddb3102f74c76ce0"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ddc5996b-01\\independent-static-clearance.json",
+      "bytes": 497,
+      "sha256": "132d43a468d6a7164f3751837e42e648a4ea9309982274677c3419349d4c36de"
+    }
+  ]
+}

@@ -1,0 +1,1713 @@
+{
+  "schemaVersion": 2,
+  "kind": "native_manifest_and_explicit_line_ending_continuity",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "historicalSchemaSource": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "fallbackSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+  "image": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+  "verified": true,
+  "passed": true,
+  "productionMutations": 0,
+  "databaseConnections": 0,
+  "serviceProcesses": 0,
+  "migrationCallbacksInvoked": 0,
+  "capacityAccepted": false,
+  "applicationImports": true,
+  "applicationManifestImportsOnly": true,
+  "actualRuntime": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\actual-image-runtime-tree.json",
+    "sha256": "dc95fee74cd73cb7bd7fbcbe5147ff3357125b1c268c30cc1aab276fd386c636"
+  },
+  "runtimeComparisonScope": "All emitted .js/.json executable/configuration files; first raw tree also captured declaration .d.ts files, preserved separately.",
+  "historicalRuntime": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-input-ed026-01\\attempt-03\\image-source-runtime-proof.json",
+    "sha256": "3a3419d84a968bb9f530e27b2a08ec597e7bab4d2de4e4a8d946ba890b14d39d"
+  },
+  "nativeCaptures": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-metadata-diagnostic-02\\historical-metadata.json",
+      "sha256": "cee557a43d2c9dd9baeb19f4e5d749d12bab77d175d655629ba0d58ef3e309e8",
+      "arm": "historical",
+      "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+      "image": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+      "cleanup": {
+        "containerId": "6ece7f107748cd48fecf33b8efac2904bd78340c804044d1d19f709560b824d4",
+        "confirmedAbsent": true,
+        "exitCode": 0,
+        "oom": false,
+        "forced": false
+      }
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-metadata-diagnostic-02\\serving-metadata.json",
+      "sha256": "d67e435747d9e148fe678e73308653c79a4778bbb85f747f0595928f5471d137",
+      "arm": "serving",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "image": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "cleanup": {
+        "containerId": "6a4e15f6e3183f780a01649231a74ca70729b02db8c13782b684418830737644",
+        "confirmedAbsent": true,
+        "exitCode": 0,
+        "oom": false,
+        "forced": false
+      }
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-metadata-diagnostic-02\\fallback-metadata.json",
+      "sha256": "195fa5ffd8c2c2c4ca72b436e624ffd5b46dc9802930124c1dc4200bc128f311",
+      "arm": "fallback",
+      "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "image": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+      "cleanup": {
+        "containerId": "f0b2ec580eda92db9afebd5cf2fed90579e7a9deeada12f9e4ad17931eaa82b0",
+        "confirmedAbsent": true,
+        "exitCode": 0,
+        "oom": false,
+        "forced": false
+      }
+    }
+  ],
+  "originalFailedDiagnostics": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-schema-equivalence.json",
+      "sha256": "44c2168ee0bbf841278baec22e4f9a6e237eb7c8a3c8a0dde68818429eaf432b"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-metadata-diagnostic-02\\diagnostic.json",
+      "sha256": "6d7768e4631a63b2ce0bbd36b9a051de102886900f7879fca4071cfed2804e3e"
+    }
+  ],
+  "capturePlan": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\runtime-metadata-plan.json",
+    "sha256": "82c8d8b045e696f7caf1c2c3e6e2f5ccdb84086ffbaafdbc7e0f3a28761ea116"
+  },
+  "ledgerContract": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-source-rehearsal-ed026-01/candidate-after-rollback-contract.json",
+    "sha256": "c8d830c59cf56235cb1c9b23350665ca8b31a983cfedc65d06056617c20a8f9c"
+  },
+  "exactServing54ManifestEqualHistorical": true,
+  "exactFallback53Subset": true,
+  "fallbackMissingOnly": "classpilot-heartbeat-screenshot-evidence-v1-20261003",
+  "fallbackMustRetainAll54CompletedLedgerAndFunctionAcl": true,
+  "exact128129AdmissionsEqual": true,
+  "rawHistoricalApplicationByteEquivalence": false,
+  "rawChangedRuntimeFiles": 101,
+  "lineEndingOnlyFiles": 99,
+  "lineEndingContinuity": [
+    {
+      "file": "cli/auditGopilotContainment.js",
+      "historicalRawSha256": "b98f25ced0be32dd727480c24beedcb49c0693862e0d6673d01b1799a4e67752",
+      "currentRawSha256": "5cc9e0927b2d060622d2662db6e30c62eb13bf1006f865007b1f76b462a695c8",
+      "afterOnlyCrLfToLfSha256": "5cc9e0927b2d060622d2662db6e30c62eb13bf1006f865007b1f76b462a695c8",
+      "historicalLineEndings": {
+        "crlf": 119,
+        "loneCr": 0,
+        "lf": 210
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 210
+      }
+    },
+    {
+      "file": "cli/benchmarkPaperworkPreparation.js",
+      "historicalRawSha256": "bb2122980bd8165e73ccc6a711c3ad569ff34e5362bb3a4285c59129b5c5687d",
+      "currentRawSha256": "1a58e1901d4eb3f513dd992c6d6ac00e29db8931081e2e414f88e92cf9680e15",
+      "afterOnlyCrLfToLfSha256": "1a58e1901d4eb3f513dd992c6d6ac00e29db8931081e2e414f88e92cf9680e15",
+      "historicalLineEndings": {
+        "crlf": 2,
+        "loneCr": 0,
+        "lf": 314
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 314
+      }
+    },
+    {
+      "file": "cli/repairClasspilotStaffIdentity.js",
+      "historicalRawSha256": "0c19cd6007e1e22c5d0cf088134026038e36ba1b1ab8987d80666bd208892921",
+      "currentRawSha256": "8348e09830a7fe93db06e681496a3b8ce0bc3a07076f424cf317858ebb45451b",
+      "afterOnlyCrLfToLfSha256": "8348e09830a7fe93db06e681496a3b8ce0bc3a07076f424cf317858ebb45451b",
+      "historicalLineEndings": {
+        "crlf": 8,
+        "loneCr": 0,
+        "lf": 465
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 465
+      }
+    },
+    {
+      "file": "db/classpilotChatChannelControlMigration.js",
+      "historicalRawSha256": "6c9049b9e13ebdc400796fca247f9181b522af07cfd7627aa45cc49758a446d8",
+      "currentRawSha256": "9d675a31787d86cd3e8a86559286c67d560fb33834736259f470aaae72b2ccca",
+      "afterOnlyCrLfToLfSha256": "9d675a31787d86cd3e8a86559286c67d560fb33834736259f470aaae72b2ccca",
+      "historicalLineEndings": {
+        "crlf": 5,
+        "loneCr": 0,
+        "lf": 19
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 19
+      }
+    },
+    {
+      "file": "db/classpilotChatOversightMigration.js",
+      "historicalRawSha256": "96353e53d7d39cf60032a0e9e78548b6002c8b65fdd93b84b947a3d0a5591902",
+      "currentRawSha256": "4ad38302b1e85a91729a8fc0bfd92caa2fa4aed9357df2587c42a1353572d116",
+      "afterOnlyCrLfToLfSha256": "4ad38302b1e85a91729a8fc0bfd92caa2fa4aed9357df2587c42a1353572d116",
+      "historicalLineEndings": {
+        "crlf": 4,
+        "loneCr": 0,
+        "lf": 17
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 17
+      }
+    },
+    {
+      "file": "db/classpilotChatSeenStateMigration.js",
+      "historicalRawSha256": "853e73dc7af7ac06698517c29d20cbee41296b013720a59ee53bd9a5f64577cc",
+      "currentRawSha256": "6034bcfbfaa9f225ef35f74773a069587429769554eb53e5ea769834929a3054",
+      "afterOnlyCrLfToLfSha256": "6034bcfbfaa9f225ef35f74773a069587429769554eb53e5ea769834929a3054",
+      "historicalLineEndings": {
+        "crlf": 5,
+        "loneCr": 0,
+        "lf": 20
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 20
+      }
+    },
+    {
+      "file": "db/classpilotChatTranscriptIndexMigration.js",
+      "historicalRawSha256": "c328e966999e4b502b42f4297f9e194a97f73e5f6a2f6880d83d8205836a8933",
+      "currentRawSha256": "b9e19972b02e0bef218c7d601ca332b72b7f0131b5c655176d42666b741c1eb1",
+      "afterOnlyCrLfToLfSha256": "b9e19972b02e0bef218c7d601ca332b72b7f0131b5c655176d42666b741c1eb1",
+      "historicalLineEndings": {
+        "crlf": 8,
+        "loneCr": 0,
+        "lf": 37
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 37
+      }
+    },
+    {
+      "file": "db/classpilotContentCategoriesMigration.js",
+      "historicalRawSha256": "043cc0df325cf1c0314fca9736efba03cf445f9eb309d0e5b0776634d6c718cd",
+      "currentRawSha256": "c1770042c513d16c17ed32f682081e6579d3058dd1c604bd85f6aaf26350911a",
+      "afterOnlyCrLfToLfSha256": "c1770042c513d16c17ed32f682081e6579d3058dd1c604bd85f6aaf26350911a",
+      "historicalLineEndings": {
+        "crlf": 15,
+        "loneCr": 0,
+        "lf": 22
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 22
+      }
+    },
+    {
+      "file": "db/classpilotCoverageCategoriesMigration.js",
+      "historicalRawSha256": "cba634d86857a70ba362be4e28ff99b8e3edbfa80e57abfaa9ace9e092b49e7c",
+      "currentRawSha256": "bf7ec2d270bbdcdbbc92ecec327905083e92b9949fe0e5a9d019c5a06c11b79b",
+      "afterOnlyCrLfToLfSha256": "bf7ec2d270bbdcdbbc92ecec327905083e92b9949fe0e5a9d019c5a06c11b79b",
+      "historicalLineEndings": {
+        "crlf": 30,
+        "loneCr": 0,
+        "lf": 38
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 38
+      }
+    },
+    {
+      "file": "db/classpilotMonitoringInterruptionsMigration.js",
+      "historicalRawSha256": "e791880f29bd44f594040229c9448a8124a01c2c834ee9ead7ae1bec86198825",
+      "currentRawSha256": "220a62a5e4e564a121284a26c94c1df8ecb1ca04719d9ac1b34488d27e1e1c80",
+      "afterOnlyCrLfToLfSha256": "220a62a5e4e564a121284a26c94c1df8ecb1ca04719d9ac1b34488d27e1e1c80",
+      "historicalLineEndings": {
+        "crlf": 78,
+        "loneCr": 0,
+        "lf": 110
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 110
+      }
+    },
+    {
+      "file": "db/classpilotScheduleBoundaryMigration.js",
+      "historicalRawSha256": "05dc2d7fb72c6321c94154e6dde9e1d8974d281ad3d70ccf2c0645f9c06b94a4",
+      "currentRawSha256": "7952cf194e7346d25f03edee66b827c77b78de13b309c45e8e53311154085998",
+      "afterOnlyCrLfToLfSha256": "7952cf194e7346d25f03edee66b827c77b78de13b309c45e8e53311154085998",
+      "historicalLineEndings": {
+        "crlf": 60,
+        "loneCr": 0,
+        "lf": 69
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 69
+      }
+    },
+    {
+      "file": "db/classpilotScheduleConfigRepairMigration.js",
+      "historicalRawSha256": "d498202accc93d0723bc998b7b9219037a7ac07cc55715c63e22fe5c9d2c1516",
+      "currentRawSha256": "2e82a9b315f9c127cf15eb1972483dc5aa3acd5115d927ffb83d035eb5613773",
+      "afterOnlyCrLfToLfSha256": "2e82a9b315f9c127cf15eb1972483dc5aa3acd5115d927ffb83d035eb5613773",
+      "historicalLineEndings": {
+        "crlf": 4,
+        "loneCr": 0,
+        "lf": 21
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 21
+      }
+    },
+    {
+      "file": "db/classpilotScheduleProfileSupervisionMigration.js",
+      "historicalRawSha256": "de51894d4ac549e17b8a5efaafc1acbeffd4179033833d62db4b69a97838e718",
+      "currentRawSha256": "41ae5eb458509b5da921fad2be9cb4ba5ac5e3daf6a58b60d280d90c067d585e",
+      "afterOnlyCrLfToLfSha256": "41ae5eb458509b5da921fad2be9cb4ba5ac5e3daf6a58b60d280d90c067d585e",
+      "historicalLineEndings": {
+        "crlf": 24,
+        "loneCr": 0,
+        "lf": 33
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 33
+      }
+    },
+    {
+      "file": "db/classpilotScheduledClassroomMigration.js",
+      "historicalRawSha256": "250fbce12c657c209c4d8625a7f68d004ce6d83d2304b8dae6ca904c6e53361e",
+      "currentRawSha256": "ff2637ac51a6251d1e66812966e2289dc37d3719298f79277d63e4d77943e488",
+      "afterOnlyCrLfToLfSha256": "ff2637ac51a6251d1e66812966e2289dc37d3719298f79277d63e4d77943e488",
+      "historicalLineEndings": {
+        "crlf": 127,
+        "loneCr": 0,
+        "lf": 148
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 148
+      }
+    },
+    {
+      "file": "db/classpilotSchedulingMigration.js",
+      "historicalRawSha256": "7ac23b82f202f03306b2a898ee7daffc0f8589c0d5b3ec9c6131d6c3b37b29dc",
+      "currentRawSha256": "2fa50c9faa4fe1d747492d23e83d9bffa2c276760493b820d858e0f5e7330cf3",
+      "afterOnlyCrLfToLfSha256": "2fa50c9faa4fe1d747492d23e83d9bffa2c276760493b820d858e0f5e7330cf3",
+      "historicalLineEndings": {
+        "crlf": 15,
+        "loneCr": 0,
+        "lf": 24
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 24
+      }
+    },
+    {
+      "file": "db/classpilotSchoolWebsitePolicyMigration.js",
+      "historicalRawSha256": "623b8c9868d44d5d8fe45c5cacfb2047ca45a4858a5ec210fa6a4163af84f4a0",
+      "currentRawSha256": "e8fd745c4cd84db2f48fe3e11f09cb7869396b6e3a021893e989c1909ffaeee3",
+      "afterOnlyCrLfToLfSha256": "e8fd745c4cd84db2f48fe3e11f09cb7869396b6e3a021893e989c1909ffaeee3",
+      "historicalLineEndings": {
+        "crlf": 41,
+        "loneCr": 0,
+        "lf": 57
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 57
+      }
+    },
+    {
+      "file": "db/classpilotStudentSessionRecoveryIndexes.js",
+      "historicalRawSha256": "7431851e540cf700b417a34f389f81db84966b04195337f55f971f1a88e5ecb3",
+      "currentRawSha256": "1d8a69c4ef22364316924cbae8ada160d3eb033877a5a35e7c2d2d9d2b078942",
+      "afterOnlyCrLfToLfSha256": "1d8a69c4ef22364316924cbae8ada160d3eb033877a5a35e7c2d2d9d2b078942",
+      "historicalLineEndings": {
+        "crlf": 55,
+        "loneCr": 0,
+        "lf": 252
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 252
+      }
+    },
+    {
+      "file": "db/classpilotSupervisionReportsMigration.js",
+      "historicalRawSha256": "2b3780ee9597acb13caaaebcb81ec05b8c9ad082c3341fab720c39e52ade1137",
+      "currentRawSha256": "44859b68c6f5bd885cc7ec2fe51814f8b7226eabc30c30b4773053f6bd9bcbee",
+      "afterOnlyCrLfToLfSha256": "44859b68c6f5bd885cc7ec2fe51814f8b7226eabc30c30b4773053f6bd9bcbee",
+      "historicalLineEndings": {
+        "crlf": 86,
+        "loneCr": 0,
+        "lf": 94
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 94
+      }
+    },
+    {
+      "file": "db/classpilotTeacherPreferencesMigration.js",
+      "historicalRawSha256": "80049d2512915cec6d12ae12ce0d96fb3a73ab51634b3161a922b6d30cd27a8b",
+      "currentRawSha256": "4f9f9bc8a9da3d504cb05dbae122a0bc6c9dff34ed131e4b602b44fd216bb0bb",
+      "afterOnlyCrLfToLfSha256": "4f9f9bc8a9da3d504cb05dbae122a0bc6c9dff34ed131e4b602b44fd216bb0bb",
+      "historicalLineEndings": {
+        "crlf": 68,
+        "loneCr": 0,
+        "lf": 82
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 82
+      }
+    },
+    {
+      "file": "db/classpilotToolsMigration.js",
+      "historicalRawSha256": "f46af8d034013ccf7670a24eebed92b7067044692e23d258528f14f7fdbe13c3",
+      "currentRawSha256": "e277074d68d53aae048ff5d6ede3593a3688ccd589f3c52a1e293938c8cd276a",
+      "afterOnlyCrLfToLfSha256": "e277074d68d53aae048ff5d6ede3593a3688ccd589f3c52a1e293938c8cd276a",
+      "historicalLineEndings": {
+        "crlf": 125,
+        "loneCr": 0,
+        "lf": 135
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 135
+      }
+    },
+    {
+      "file": "db/classpilotUsageRollupDaysMigration.js",
+      "historicalRawSha256": "45f68c4ffc6ebf74b23ce20b6476d312aa15a08627f462eaf3596babdd7b3b8b",
+      "currentRawSha256": "01c89decbde65dae5e05c57cf5cbdb3f2d50127a63c31824c95240d2f48d140b",
+      "afterOnlyCrLfToLfSha256": "01c89decbde65dae5e05c57cf5cbdb3f2d50127a63c31824c95240d2f48d140b",
+      "historicalLineEndings": {
+        "crlf": 76,
+        "loneCr": 0,
+        "lf": 86
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 86
+      }
+    },
+    {
+      "file": "db/classpilotUsageRollupsMigration.js",
+      "historicalRawSha256": "1bdb46cf473e4e134046f1cf69cae73bf0c57b92819006e7ab8b9eaafca014d0",
+      "currentRawSha256": "b3930709e71307e2b8865c11624ba8e9a7d6209849c57b97a11138bdbd0281f7",
+      "afterOnlyCrLfToLfSha256": "b3930709e71307e2b8865c11624ba8e9a7d6209849c57b97a11138bdbd0281f7",
+      "historicalLineEndings": {
+        "crlf": 71,
+        "loneCr": 0,
+        "lf": 94
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 94
+      }
+    },
+    {
+      "file": "db/flightPathContentRevisionMigration.js",
+      "historicalRawSha256": "008e9c26eddf95065100e2eadfc06a751157c1368cfc2e149ceedaf46c6e9454",
+      "currentRawSha256": "e4140ffe47aea5e2216f196a59bf1be561f5f9cd7975dd314f7366282fa99973",
+      "afterOnlyCrLfToLfSha256": "e4140ffe47aea5e2216f196a59bf1be561f5f9cd7975dd314f7366282fa99973",
+      "historicalLineEndings": {
+        "crlf": 18,
+        "loneCr": 0,
+        "lf": 27
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 27
+      }
+    },
+    {
+      "file": "db/flightPathResourcesMigration.js",
+      "historicalRawSha256": "ce1697d990135f2f9fa9261de2c8bd411f272db867e2c413c4c808271c61000e",
+      "currentRawSha256": "6d646cdee6ebbd6097bdb2b1b4e0b3cb3d3ecb219a5bdd633a6607aedbd25e27",
+      "afterOnlyCrLfToLfSha256": "6d646cdee6ebbd6097bdb2b1b4e0b3cb3d3ecb219a5bdd633a6607aedbd25e27",
+      "historicalLineEndings": {
+        "crlf": 34,
+        "loneCr": 0,
+        "lf": 57
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 57
+      }
+    },
+    {
+      "file": "db/heartbeatHistoryIndex.js",
+      "historicalRawSha256": "c4864b3c563cc528929c4bfe3c8bd5d8ed4a902637c65c0fff0297ffe839cc99",
+      "currentRawSha256": "33340c5db18f849bdc3482162f477d16acbefab3e5b3db206d70a7acd8177c39",
+      "afterOnlyCrLfToLfSha256": "33340c5db18f849bdc3482162f477d16acbefab3e5b3db206d70a7acd8177c39",
+      "historicalLineEndings": {
+        "crlf": 39,
+        "loneCr": 0,
+        "lf": 231
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 231
+      }
+    },
+    {
+      "file": "db/importProcessingStagesMigration.js",
+      "historicalRawSha256": "ccb7f1c59e548bcb7cd3e5d957d18817e1d95323c4d7c97492444cef53b171f4",
+      "currentRawSha256": "015d74d6772e5133352566fea9dda4f8170d1675a3cbbc7f9c44a8846c5f277c",
+      "afterOnlyCrLfToLfSha256": "015d74d6772e5133352566fea9dda4f8170d1675a3cbbc7f9c44a8846c5f277c",
+      "historicalLineEndings": {
+        "crlf": 48,
+        "loneCr": 0,
+        "lf": 56
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 56
+      }
+    },
+    {
+      "file": "db/mailpilotSafetyDurabilityMigration.js",
+      "historicalRawSha256": "d009aace1768930055564bdb55ced285375d6eeb79a465ad779f608217401b2f",
+      "currentRawSha256": "cf9ba21a0fdee7d43de51a89a1eced73c7fce78abbd95b4e50a8e27c6a8eb7e5",
+      "afterOnlyCrLfToLfSha256": "cf9ba21a0fdee7d43de51a89a1eced73c7fce78abbd95b4e50a8e27c6a8eb7e5",
+      "historicalLineEndings": {
+        "crlf": 32,
+        "loneCr": 0,
+        "lf": 39
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 39
+      }
+    },
+    {
+      "file": "db/microsoftSignInMigration.js",
+      "historicalRawSha256": "e4bf472877e9bad0a9b0f56efad24621f0f31b34ec1eb65bf0d5fcd7763eff0c",
+      "currentRawSha256": "0517eebec8f2e0101a31a27c9e39ea72605d0f2ee97dd970677f986a7ca1771c",
+      "afterOnlyCrLfToLfSha256": "0517eebec8f2e0101a31a27c9e39ea72605d0f2ee97dd970677f986a7ca1771c",
+      "historicalLineEndings": {
+        "crlf": 44,
+        "loneCr": 0,
+        "lf": 57
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 57
+      }
+    },
+    {
+      "file": "db/migrationLedger.js",
+      "historicalRawSha256": "89d860e76c12b619b775f1308561f2ff490a61d7c394b4e0f2f6aecee538cd00",
+      "currentRawSha256": "752e4abba01911b909465df5d80b6040307cd40aceacaf04beceaf2adaaf4f51",
+      "afterOnlyCrLfToLfSha256": "752e4abba01911b909465df5d80b6040307cd40aceacaf04beceaf2adaaf4f51",
+      "historicalLineEndings": {
+        "crlf": 54,
+        "loneCr": 0,
+        "lf": 161
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 161
+      }
+    },
+    {
+      "file": "db/mydeskGradeFilingMigration.js",
+      "historicalRawSha256": "8a7e1ebc9b6ea8c7bd28189956ad3516668d28ee414a97ce4f75aa7f149c6f98",
+      "currentRawSha256": "eedda9228ea2dfb0e7d105e9ab17d505725357fd758c0022655afcc65974dc3d",
+      "afterOnlyCrLfToLfSha256": "eedda9228ea2dfb0e7d105e9ab17d505725357fd758c0022655afcc65974dc3d",
+      "historicalLineEndings": {
+        "crlf": 22,
+        "loneCr": 0,
+        "lf": 30
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 30
+      }
+    },
+    {
+      "file": "db/mydeskImportDestinationMigration.js",
+      "historicalRawSha256": "a547f22efbcab963bdfb291de4f89fd7cb1a8c0cdb10349b76331b5a46de89cc",
+      "currentRawSha256": "98e378ffee4df095ea2a0bc8d7e7d442e78301e4b25eed518d62a64eb0b7ab33",
+      "afterOnlyCrLfToLfSha256": "98e378ffee4df095ea2a0bc8d7e7d442e78301e4b25eed518d62a64eb0b7ab33",
+      "historicalLineEndings": {
+        "crlf": 22,
+        "loneCr": 0,
+        "lf": 29
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 29
+      }
+    },
+    {
+      "file": "db/mydeskImportsMigration.js",
+      "historicalRawSha256": "b05dce6a548d69f169c637400983de9da6b677bdf59d7c8256a3e61f3b561c6c",
+      "currentRawSha256": "2e8cdf2175fa67105c1eec271bb87e8960a5a0704a9dbbd897dae68767d25be7",
+      "afterOnlyCrLfToLfSha256": "2e8cdf2175fa67105c1eec271bb87e8960a5a0704a9dbbd897dae68767d25be7",
+      "historicalLineEndings": {
+        "crlf": 124,
+        "loneCr": 0,
+        "lf": 130
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 130
+      }
+    },
+    {
+      "file": "db/mydeskMigration.js",
+      "historicalRawSha256": "153a563bf7d02ecb3b5b3623c51f41663b79c5e64140cba7466d81d2ba5d2d9b",
+      "currentRawSha256": "bf6fb0d751ad5e7612754e164b89de4160d23a5413d46a5f80ba70a04f3e2299",
+      "afterOnlyCrLfToLfSha256": "bf6fb0d751ad5e7612754e164b89de4160d23a5413d46a5f80ba70a04f3e2299",
+      "historicalLineEndings": {
+        "crlf": 95,
+        "loneCr": 0,
+        "lf": 103
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 103
+      }
+    },
+    {
+      "file": "db/mydeskReadiness.js",
+      "historicalRawSha256": "ca4297aa6fb5546f737fb4c92b26cb456ac06e65318ab8286afe15562d341362",
+      "currentRawSha256": "58dde2698e09117026471bce55a2a920431c6e096c829ba1d532d8df11977e44",
+      "afterOnlyCrLfToLfSha256": "58dde2698e09117026471bce55a2a920431c6e096c829ba1d532d8df11977e44",
+      "historicalLineEndings": {
+        "crlf": 29,
+        "loneCr": 0,
+        "lf": 114
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 114
+      }
+    },
+    {
+      "file": "db/mydeskSeatingMeasuredMigration.js",
+      "historicalRawSha256": "7afb17700347744d1c221ddbf3cb95cd7bcd957b09428462db0b5f20a1ecc300",
+      "currentRawSha256": "15a93442924bba96556be5d6284d3b1bf526cdafba909cb47aa3d18850511c6b",
+      "afterOnlyCrLfToLfSha256": "15a93442924bba96556be5d6284d3b1bf526cdafba909cb47aa3d18850511c6b",
+      "historicalLineEndings": {
+        "crlf": 12,
+        "loneCr": 0,
+        "lf": 21
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 21
+      }
+    },
+    {
+      "file": "db/mydeskSeatingMigration.js",
+      "historicalRawSha256": "af0ea71a45abbe816952505ce24f99dfd4611e1134092f955126816a932f464d",
+      "currentRawSha256": "6226b70b688d88ae9ed50f85ced1e8879377582b5a272774c1850d396ef68c2f",
+      "afterOnlyCrLfToLfSha256": "6226b70b688d88ae9ed50f85ced1e8879377582b5a272774c1850d396ef68c2f",
+      "historicalLineEndings": {
+        "crlf": 44,
+        "loneCr": 0,
+        "lf": 50
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 50
+      }
+    },
+    {
+      "file": "db/mydeskWorkspaceMigration.js",
+      "historicalRawSha256": "4a04fa10e75d298f32ed1500f7063f7d5659583a6e69b3e65f6e76626c07f02f",
+      "currentRawSha256": "2f84b2a684f6d2ddbfcde9ea46efed35932388fc0e6bf78da4f5ecd82cd9a0c3",
+      "afterOnlyCrLfToLfSha256": "2f84b2a684f6d2ddbfcde9ea46efed35932388fc0e6bf78da4f5ecd82cd9a0c3",
+      "historicalLineEndings": {
+        "crlf": 36,
+        "loneCr": 0,
+        "lf": 42
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 42
+      }
+    },
+    {
+      "file": "db/passpilotAppointmentsMigration.js",
+      "historicalRawSha256": "593faca2855dadebc437bd19189dbec4b283f2ac2a6fa7fc3170d44a3ae2d32a",
+      "currentRawSha256": "028754085846ec0816cfdde616eecaa578a2252e0a3b115e36b668955475b501",
+      "afterOnlyCrLfToLfSha256": "028754085846ec0816cfdde616eecaa578a2252e0a3b115e36b668955475b501",
+      "historicalLineEndings": {
+        "crlf": 70,
+        "loneCr": 0,
+        "lf": 78
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 78
+      }
+    },
+    {
+      "file": "db/passpilotKioskScheduleMigration.js",
+      "historicalRawSha256": "47c93e3f0e9ff542f97c66350a5b0d531d832333e9c92e2d3c7846209fc78ce0",
+      "currentRawSha256": "7cae0e71b2c1844bd0d160ab30e276f044b1f0ec4a70692abe7fab6202287a11",
+      "afterOnlyCrLfToLfSha256": "7cae0e71b2c1844bd0d160ab30e276f044b1f0ec4a70692abe7fab6202287a11",
+      "historicalLineEndings": {
+        "crlf": 54,
+        "loneCr": 0,
+        "lf": 62
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 62
+      }
+    },
+    {
+      "file": "db/passpilotRulesMigration.js",
+      "historicalRawSha256": "1f71a2d5e3b436a5d5f72cecad1dd150bfef5ed450e92a7c4b469a12aa3e30c9",
+      "currentRawSha256": "04cc0ab42111e95a623c5cba53c56973a2b46b4a69d2f5571d9b24ef6a02ce41",
+      "afterOnlyCrLfToLfSha256": "04cc0ab42111e95a623c5cba53c56973a2b46b4a69d2f5571d9b24ef6a02ce41",
+      "historicalLineEndings": {
+        "crlf": 134,
+        "loneCr": 0,
+        "lf": 197
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 197
+      }
+    },
+    {
+      "file": "db/rlsEnforcement.js",
+      "historicalRawSha256": "921f28984ba0d78bcb640d68063036dbfbc1b10c248eb766cbc0c245151994ad",
+      "currentRawSha256": "c872090e02a03506ead5cd465a0781a3c52a69095f7c912176a6398fe8de0437",
+      "afterOnlyCrLfToLfSha256": "c872090e02a03506ead5cd465a0781a3c52a69095f7c912176a6398fe8de0437",
+      "historicalLineEndings": {
+        "crlf": 21,
+        "loneCr": 0,
+        "lf": 76
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 76
+      }
+    },
+    {
+      "file": "db/rosterIntegrationsMigration.js",
+      "historicalRawSha256": "f01ae5d23139716b337a7b6de2f01ec925c74e3a32ca4784ddb52023571dfabe",
+      "currentRawSha256": "091dc3389319ea9adf5016c7292b6b46ea34fd7b949b241019fd045c77dc2f7c",
+      "afterOnlyCrLfToLfSha256": "091dc3389319ea9adf5016c7292b6b46ea34fd7b949b241019fd045c77dc2f7c",
+      "historicalLineEndings": {
+        "crlf": 65,
+        "loneCr": 0,
+        "lf": 69
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 69
+      }
+    },
+    {
+      "file": "db/safetyCenterMigration.js",
+      "historicalRawSha256": "abc4d54c92035e0b284365dfe932282b0ada892818fa51d965ed624b4c6d5aee",
+      "currentRawSha256": "9c4dcac2fd9a47a146c1db8cae7c4cad31a6266aa8b2126346b71dd3621f75d0",
+      "afterOnlyCrLfToLfSha256": "9c4dcac2fd9a47a146c1db8cae7c4cad31a6266aa8b2126346b71dd3621f75d0",
+      "historicalLineEndings": {
+        "crlf": 79,
+        "loneCr": 0,
+        "lf": 101
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 101
+      }
+    },
+    {
+      "file": "db/schoolDisciplineMigration.js",
+      "historicalRawSha256": "648d321e816faee280ad7f1cf0a9f9a138c015e6fdc737cebe702a93cc802437",
+      "currentRawSha256": "5c2fbcfd188568089ff17fecef084725dcd3348afe2ea7c334f88e3dbce94e6e",
+      "afterOnlyCrLfToLfSha256": "5c2fbcfd188568089ff17fecef084725dcd3348afe2ea7c334f88e3dbce94e6e",
+      "historicalLineEndings": {
+        "crlf": 91,
+        "loneCr": 0,
+        "lf": 95
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 95
+      }
+    },
+    {
+      "file": "db/schoolDisciplineRedesignMigration.js",
+      "historicalRawSha256": "9e3d0f53f1edce3abc3943587a19904be56922b3ccfc2b81b7ccd19d37d4d6a7",
+      "currentRawSha256": "6b58f8f232c85dcb15a4efd5ceb500c58e5d3693f84425e1161fa2c03a76c93c",
+      "afterOnlyCrLfToLfSha256": "6b58f8f232c85dcb15a4efd5ceb500c58e5d3693f84425e1161fa2c03a76c93c",
+      "historicalLineEndings": {
+        "crlf": 19,
+        "loneCr": 0,
+        "lf": 25
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 25
+      }
+    },
+    {
+      "file": "db/sharedTeachingResourcesMigration.js",
+      "historicalRawSha256": "c3db26caa47e64c99e85da20533938ad9e3a3b46f9ff93ada2437c852f2a0001",
+      "currentRawSha256": "efcd308825772d7ec5e585234747517a524d19aa457b8a52b46e8e3d82265667",
+      "afterOnlyCrLfToLfSha256": "efcd308825772d7ec5e585234747517a524d19aa457b8a52b46e8e3d82265667",
+      "historicalLineEndings": {
+        "crlf": 46,
+        "loneCr": 0,
+        "lf": 62
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 62
+      }
+    },
+    {
+      "file": "db/staffIdentityIntegrityMigration.js",
+      "historicalRawSha256": "a996e4a59026ad1ad6c56c5e144034b1095eb810e036d5deda66c53a4edfc1fd",
+      "currentRawSha256": "719a989ccd0c054b43494e9fa86394743d9d95962fb0ffaf40137dd65acef686",
+      "afterOnlyCrLfToLfSha256": "719a989ccd0c054b43494e9fa86394743d9d95962fb0ffaf40137dd65acef686",
+      "historicalLineEndings": {
+        "crlf": 2951,
+        "loneCr": 0,
+        "lf": 2977
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 2977
+      }
+    },
+    {
+      "file": "db/studentInformationRedesignMigration.js",
+      "historicalRawSha256": "a5d3106b0fb08d983477c246d95dca4038e1bfc57386ffa4cbeceedcca396b5a",
+      "currentRawSha256": "3eefc86860b6e2e3adc12467e5231ff9b6e9155513ff650c7477bab87c7cb8bb",
+      "afterOnlyCrLfToLfSha256": "3eefc86860b6e2e3adc12467e5231ff9b6e9155513ff650c7477bab87c7cb8bb",
+      "historicalLineEndings": {
+        "crlf": 80,
+        "loneCr": 0,
+        "lf": 92
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 92
+      }
+    },
+    {
+      "file": "prompts/systemPrompt.js",
+      "historicalRawSha256": "cd6aacacde3672fff8b63690f34cb7fa4883df0855a28f6bd8a15707919d1c2c",
+      "currentRawSha256": "5833b0d8cb4e26252d4c4de5d8d850b3618b1657ce389ec0b8fb666bf02f1730",
+      "afterOnlyCrLfToLfSha256": "5833b0d8cb4e26252d4c4de5d8d850b3618b1657ce389ec0b8fb666bf02f1730",
+      "historicalLineEndings": {
+        "crlf": 86,
+        "loneCr": 0,
+        "lf": 123
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 123
+      }
+    },
+    {
+      "file": "realtime/classpilotStaffPresence.js",
+      "historicalRawSha256": "a17eef92b881906cb1b86c0e3b4537dc36f1e05f563d0501449c30e00f63a3bf",
+      "currentRawSha256": "7dd24b6083309468f2ced2af5b529cb1968e2fa0b3cc7106dc0bb2f55f84e7cc",
+      "afterOnlyCrLfToLfSha256": "7dd24b6083309468f2ced2af5b529cb1968e2fa0b3cc7106dc0bb2f55f84e7cc",
+      "historicalLineEndings": {
+        "crlf": 21,
+        "loneCr": 0,
+        "lf": 140
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 140
+      }
+    },
+    {
+      "file": "realtime/ws-redis.js",
+      "historicalRawSha256": "d56d0802731b15c0f50ecf1ad60d3e0d7a95d3fec024081f1d976fa5dfb42b05",
+      "currentRawSha256": "dd104ac6aa685997e8e317b66b22bf9b2f5591a4bf95c7974afe1bf07c7b7e75",
+      "afterOnlyCrLfToLfSha256": "dd104ac6aa685997e8e317b66b22bf9b2f5591a4bf95c7974afe1bf07c7b7e75",
+      "historicalLineEndings": {
+        "crlf": 13,
+        "loneCr": 0,
+        "lf": 969
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 969
+      }
+    },
+    {
+      "file": "routes/admin/superAdmin.js",
+      "historicalRawSha256": "14cdccb90442f0afd62162692ba5e9e6600f015ce99fc953aa2e3dba7972ee21",
+      "currentRawSha256": "a724132f0a343499a67f0bd6c6ef5b8f24bdf2fadf0f418e9516540475e6a8cd",
+      "afterOnlyCrLfToLfSha256": "a724132f0a343499a67f0bd6c6ef5b8f24bdf2fadf0f418e9516540475e6a8cd",
+      "historicalLineEndings": {
+        "crlf": 13,
+        "loneCr": 0,
+        "lf": 1079
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 1079
+      }
+    },
+    {
+      "file": "schema/classpilot.js",
+      "historicalRawSha256": "d6f5c6eec68b5d6b0a9b344a854fb417f004bda60ddcf6e6012a74956195837f",
+      "currentRawSha256": "8a3cd343d0adfb38490b7251ef2fa3e439f22c5a484d9bc029a02c599ad27a79",
+      "afterOnlyCrLfToLfSha256": "8a3cd343d0adfb38490b7251ef2fa3e439f22c5a484d9bc029a02c599ad27a79",
+      "historicalLineEndings": {
+        "crlf": 49,
+        "loneCr": 0,
+        "lf": 1457
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 1457
+      }
+    },
+    {
+      "file": "schema/mydesk.js",
+      "historicalRawSha256": "468c1b81288d44de91a86286ab37ba0a7c494f2275ea8eef91f46f21e76683f2",
+      "currentRawSha256": "8884c7053e09719fd450d4bc999b4b61f65d33d189f9859228d6e8cbff65922a",
+      "afterOnlyCrLfToLfSha256": "8884c7053e09719fd450d4bc999b4b61f65d33d189f9859228d6e8cbff65922a",
+      "historicalLineEndings": {
+        "crlf": 5,
+        "loneCr": 0,
+        "lf": 98
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 98
+      }
+    },
+    {
+      "file": "schema/mydeskImports.js",
+      "historicalRawSha256": "15c9f02cf60e98c6c53eff52bd27ad9e6dba1ce9da5ed24547e2df407838c8c0",
+      "currentRawSha256": "fa2e44b87dc6508e3cbd91ddfd2183c4f59224e4dc2143c7664285a8c38ba961",
+      "afterOnlyCrLfToLfSha256": "fa2e44b87dc6508e3cbd91ddfd2183c4f59224e4dc2143c7664285a8c38ba961",
+      "historicalLineEndings": {
+        "crlf": 25,
+        "loneCr": 0,
+        "lf": 82
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 82
+      }
+    },
+    {
+      "file": "schema/passpilot.js",
+      "historicalRawSha256": "71b783d6fb1c7d7ef1598e0cb774682ff7687d76a075a8f3f2efd5c53f187292",
+      "currentRawSha256": "55c80950464e53abf2001fdf2086d5937984f2250d9f842f4b0ce1bbf9e2b2a2",
+      "afterOnlyCrLfToLfSha256": "55c80950464e53abf2001fdf2086d5937984f2250d9f842f4b0ce1bbf9e2b2a2",
+      "historicalLineEndings": {
+        "crlf": 2,
+        "loneCr": 0,
+        "lf": 374
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 374
+      }
+    },
+    {
+      "file": "schema/shared.js",
+      "historicalRawSha256": "b3b7bd6a389cb487ed7acef0cbb4d8ddf12986871f4816a2d25e565f9b2c4ead",
+      "currentRawSha256": "88f0ab9033153179f90fc7e0a59c90521ecc7a97deb2fdf145312356749766ee",
+      "afterOnlyCrLfToLfSha256": "88f0ab9033153179f90fc7e0a59c90521ecc7a97deb2fdf145312356749766ee",
+      "historicalLineEndings": {
+        "crlf": 5,
+        "loneCr": 0,
+        "lf": 462
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 462
+      }
+    },
+    {
+      "file": "services/accountLockout.js",
+      "historicalRawSha256": "645c6c01b9a85c1cce2747d4d054f45596a43f1380dc141da0acd82111276da3",
+      "currentRawSha256": "ad58a781edde55c1d92759be22c03a8d6dc0a07ed6cff492abd7355822903768",
+      "afterOnlyCrLfToLfSha256": "ad58a781edde55c1d92759be22c03a8d6dc0a07ed6cff492abd7355822903768",
+      "historicalLineEndings": {
+        "crlf": 12,
+        "loneCr": 0,
+        "lf": 95
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 95
+      }
+    },
+    {
+      "file": "services/classpilotActivityHistory.js",
+      "historicalRawSha256": "97e7649fb3edf202810392099a1d7b3f981fdf4d2ba841fb4d148f08f01e5a89",
+      "currentRawSha256": "e0f421038b0e91175bf41b8946f076134ae3cc5a91c56ddc6939657afd687e0f",
+      "afterOnlyCrLfToLfSha256": "e0f421038b0e91175bf41b8946f076134ae3cc5a91c56ddc6939657afd687e0f",
+      "historicalLineEndings": {
+        "crlf": 43,
+        "loneCr": 0,
+        "lf": 60
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 60
+      }
+    },
+    {
+      "file": "services/classpilotAdminAnalytics.js",
+      "historicalRawSha256": "617523b792ea236bcc643a4cce9505638c3c0d6991cd3910d97c89754e4d3da9",
+      "currentRawSha256": "d8954c8658145d4eacf653b42f523861cef67c410f985b37d5d37fb773d8f426",
+      "afterOnlyCrLfToLfSha256": "d8954c8658145d4eacf653b42f523861cef67c410f985b37d5d37fb773d8f426",
+      "historicalLineEndings": {
+        "crlf": 3,
+        "loneCr": 0,
+        "lf": 294
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 294
+      }
+    },
+    {
+      "file": "services/classpilotBrowsingHistory.js",
+      "historicalRawSha256": "5a824412e467b6ebf853c31de852322da41f3b69e7487f069a6c6d6717020c3f",
+      "currentRawSha256": "e80e1287dad3ec29e91734bfcfaefc1ccd6dcd1b54ddefd7768c76f5cb363f5c",
+      "afterOnlyCrLfToLfSha256": "e80e1287dad3ec29e91734bfcfaefc1ccd6dcd1b54ddefd7768c76f5cb363f5c",
+      "historicalLineEndings": {
+        "crlf": 16,
+        "loneCr": 0,
+        "lf": 117
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 117
+      }
+    },
+    {
+      "file": "services/classpilotCoverageDirectory.js",
+      "historicalRawSha256": "0718b3e2c53a704607f9a82566d3bbc4d569841e77dd8f4e93dca8cce4cdcd74",
+      "currentRawSha256": "b12ab4367a52c8edcb81d633dd106c4ca61147534ae02bca451af2e1db696a7a",
+      "afterOnlyCrLfToLfSha256": "b12ab4367a52c8edcb81d633dd106c4ca61147534ae02bca451af2e1db696a7a",
+      "historicalLineEndings": {
+        "crlf": 28,
+        "loneCr": 0,
+        "lf": 248
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 248
+      }
+    },
+    {
+      "file": "services/classpilotDailyUsageRollup.js",
+      "historicalRawSha256": "81b78237e54e7d9edfcd0fe135b360c199f89c4b0b5198047bcd0da1ba9372b7",
+      "currentRawSha256": "0f2f5e8b6ad9f7ddb6d09cf69b532cb165edda59345f14c3f4d2d331562069ff",
+      "afterOnlyCrLfToLfSha256": "0f2f5e8b6ad9f7ddb6d09cf69b532cb165edda59345f14c3f4d2d331562069ff",
+      "historicalLineEndings": {
+        "crlf": 95,
+        "loneCr": 0,
+        "lf": 197
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 197
+      }
+    },
+    {
+      "file": "services/classpilotDashboardSnapshot.js",
+      "historicalRawSha256": "5917b6788942403f19334303a16d85798c83cbfbb13b746c0c2e74f36de02f5a",
+      "currentRawSha256": "4308650e50a989613cf9839d38b6aede179e0e0390c925aa3343a9af52f8bc37",
+      "afterOnlyCrLfToLfSha256": "4308650e50a989613cf9839d38b6aede179e0e0390c925aa3343a9af52f8bc37",
+      "historicalLineEndings": {
+        "crlf": 147,
+        "loneCr": 0,
+        "lf": 404
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 404
+      }
+    },
+    {
+      "file": "services/classpilotEntitlement.js",
+      "historicalRawSha256": "6af9cf167ef5c2bfffdae415a8ef777484051dd8ef134d1e038e10cfddce6b62",
+      "currentRawSha256": "39d8e1a95be7796c592e27eeb61756c0c59991c1532bf9088cb0e44634be2a94",
+      "afterOnlyCrLfToLfSha256": "39d8e1a95be7796c592e27eeb61756c0c59991c1532bf9088cb0e44634be2a94",
+      "historicalLineEndings": {
+        "crlf": 19,
+        "loneCr": 0,
+        "lf": 93
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 93
+      }
+    },
+    {
+      "file": "services/classpilotHeartbeatReadQueries.js",
+      "historicalRawSha256": "d6bb464eb66342f5abc151648fbd2ada9b97b42ff1d3a65abab7c2499dfab2f8",
+      "currentRawSha256": "6b1b0d1c227d5f378bec7a41f7d8e21d41d0a25c1e70703398e6c034f03eda69",
+      "afterOnlyCrLfToLfSha256": "6b1b0d1c227d5f378bec7a41f7d8e21d41d0a25c1e70703398e6c034f03eda69",
+      "historicalLineEndings": {
+        "crlf": 31,
+        "loneCr": 0,
+        "lf": 112
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 112
+      }
+    },
+    {
+      "file": "services/classpilotMonitoringDigests.js",
+      "historicalRawSha256": "2b22ec2ba1fc58ecde03b79cb335d25f097c4ace5b170058329af0b235a06dae",
+      "currentRawSha256": "6c7c9ee1209b28efa57b1e112578dd9c92bde32e5564d9f29d4d0826fb7a29c5",
+      "afterOnlyCrLfToLfSha256": "6c7c9ee1209b28efa57b1e112578dd9c92bde32e5564d9f29d4d0826fb7a29c5",
+      "historicalLineEndings": {
+        "crlf": 18,
+        "loneCr": 0,
+        "lf": 68
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 68
+      }
+    },
+    {
+      "file": "services/classpilotMonitoringInterruptions.js",
+      "historicalRawSha256": "887b29f11d15bdfd75eaa806b74fbcd8b88c735f57ae2015cfd51555c4e3d8f4",
+      "currentRawSha256": "3e4d122b77d9652f80fa96d83a9ebf69ab6c0b740841efc0061afafaf0e74817",
+      "afterOnlyCrLfToLfSha256": "3e4d122b77d9652f80fa96d83a9ebf69ab6c0b740841efc0061afafaf0e74817",
+      "historicalLineEndings": {
+        "crlf": 47,
+        "loneCr": 0,
+        "lf": 227
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 227
+      }
+    },
+    {
+      "file": "services/classpilotScheduleBoundaries.js",
+      "historicalRawSha256": "6c51b7f1338adb2d90e2b1a09e6a7049abb580e9e836dfb4c9c6e55c5e2c9872",
+      "currentRawSha256": "93f89af41e4a0f0c999ac5ab29d9c4a158bdee559711d3bb0ddc8c11347639b2",
+      "afterOnlyCrLfToLfSha256": "93f89af41e4a0f0c999ac5ab29d9c4a158bdee559711d3bb0ddc8c11347639b2",
+      "historicalLineEndings": {
+        "crlf": 17,
+        "loneCr": 0,
+        "lf": 237
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 237
+      }
+    },
+    {
+      "file": "services/classpilotStudentData.js",
+      "historicalRawSha256": "c1302977bb2a3eb3c542c9c2b2f71bdb5758bdcd574a096363903a3a8bfe2bf2",
+      "currentRawSha256": "2fe3e841e12dfdf90efa81f6dd96f4b94b1ecbf96773cb74c92c9e23bfc8f1ad",
+      "afterOnlyCrLfToLfSha256": "2fe3e841e12dfdf90efa81f6dd96f4b94b1ecbf96773cb74c92c9e23bfc8f1ad",
+      "historicalLineEndings": {
+        "crlf": 369,
+        "loneCr": 0,
+        "lf": 1706
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 1706
+      }
+    },
+    {
+      "file": "services/classpilotStudentSessionLifecycle.js",
+      "historicalRawSha256": "49c259f66c1b7b0c57791e8a3ce18e65a30e44f640482c5fcfcad9e7459e0c28",
+      "currentRawSha256": "65bc7f8ebad6d0a08477888b49ab970b9e2abb6ff75ba322241cf841037e8471",
+      "afterOnlyCrLfToLfSha256": "65bc7f8ebad6d0a08477888b49ab970b9e2abb6ff75ba322241cf841037e8471",
+      "historicalLineEndings": {
+        "crlf": 45,
+        "loneCr": 0,
+        "lf": 219
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 219
+      }
+    },
+    {
+      "file": "services/classpilotSupervisionHistory.js",
+      "historicalRawSha256": "84369e33bdffc25285bd6090874902e4d736c9e44a47a440fa182363a1520bf2",
+      "currentRawSha256": "8ed88ebbe1d69616d59ef73e2975866f8f36e484996258ee1d0d91cc8694dd48",
+      "afterOnlyCrLfToLfSha256": "8ed88ebbe1d69616d59ef73e2975866f8f36e484996258ee1d0d91cc8694dd48",
+      "historicalLineEndings": {
+        "crlf": 27,
+        "loneCr": 0,
+        "lf": 39
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 39
+      }
+    },
+    {
+      "file": "services/classpilotSupervisionReportLifecycle.js",
+      "historicalRawSha256": "8d711db1d17ca9b57c435331d9fc45c4eede0d3130a425c28ae335180e866962",
+      "currentRawSha256": "f436dfe560acda44973140528f2987c1ec528d2097453453578aeebd0d87a9ca",
+      "afterOnlyCrLfToLfSha256": "f436dfe560acda44973140528f2987c1ec528d2097453453578aeebd0d87a9ca",
+      "historicalLineEndings": {
+        "crlf": 9,
+        "loneCr": 0,
+        "lf": 293
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 293
+      }
+    },
+    {
+      "file": "services/classpilotSupervisionReports.js",
+      "historicalRawSha256": "27a4a35678f21ddd4bb4f5c178ab88662de3336606da1ba80627063da32b16b0",
+      "currentRawSha256": "b64efbfc00b801a94e4d0931a4101bf469df92a6228af35de65675809f868d10",
+      "afterOnlyCrLfToLfSha256": "b64efbfc00b801a94e4d0931a4101bf469df92a6228af35de65675809f868d10",
+      "historicalLineEndings": {
+        "crlf": 8,
+        "loneCr": 0,
+        "lf": 344
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 344
+      }
+    },
+    {
+      "file": "services/classpilotTileAuthorizationPlanCheck.js",
+      "historicalRawSha256": "122984d957994043234bf296ffa02517e65b04c1b587d4a0b9e6dc081cb5f649",
+      "currentRawSha256": "3b9c3676f1b87944799d2ac1e669f9b39a05c2745e2a0c7390ed1d7c1bc61335",
+      "afterOnlyCrLfToLfSha256": "3b9c3676f1b87944799d2ac1e669f9b39a05c2745e2a0c7390ed1d7c1bc61335",
+      "historicalLineEndings": {
+        "crlf": 882,
+        "loneCr": 0,
+        "lf": 2109
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 2109
+      }
+    },
+    {
+      "file": "services/classpilotUsageRead.js",
+      "historicalRawSha256": "c02665f829a5cf38e8d6c7693eb406cc950ac4369ea566543c6ff8f6e458f99b",
+      "currentRawSha256": "04d077094df390a682e7b9812ba00e73cdfba32a6daaf2004a53574861cba5d7",
+      "afterOnlyCrLfToLfSha256": "04d077094df390a682e7b9812ba00e73cdfba32a6daaf2004a53574861cba5d7",
+      "historicalLineEndings": {
+        "crlf": 63,
+        "loneCr": 0,
+        "lf": 400
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 400
+      }
+    },
+    {
+      "file": "services/classpilotUsageRollup.js",
+      "historicalRawSha256": "e8093b1b808f44d0a18400be8cdfd211fcba679e02f52257db1429d9cffd5a37",
+      "currentRawSha256": "68ff48fec1ecadc31fbb540959fcc85cf0625e8af1adf0c68e7765c0208e6b58",
+      "afterOnlyCrLfToLfSha256": "68ff48fec1ecadc31fbb540959fcc85cf0625e8af1adf0c68e7765c0208e6b58",
+      "historicalLineEndings": {
+        "crlf": 260,
+        "loneCr": 0,
+        "lf": 619
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 619
+      }
+    },
+    {
+      "file": "services/email.js",
+      "historicalRawSha256": "b91f5a6840bd30f59125b42774c4fdada3a0387532fa0810f3f96b697f1de546",
+      "currentRawSha256": "7446d0506eaa3a35c7b45d1f8ba59fab62a8cf4787139eeaddd450add452757e",
+      "afterOnlyCrLfToLfSha256": "7446d0506eaa3a35c7b45d1f8ba59fab62a8cf4787139eeaddd450add452757e",
+      "historicalLineEndings": {
+        "crlf": 180,
+        "loneCr": 0,
+        "lf": 518
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 518
+      }
+    },
+    {
+      "file": "services/heartbeatTileCache.js",
+      "historicalRawSha256": "d769873ec40938d2bbfed51e3c68eb663bdc2bb318f9debb666043eb154492a2",
+      "currentRawSha256": "0d2b2dbc10a95619736ceca95ce364c53f6e28161fb7a1f2511fc66983a0eb01",
+      "afterOnlyCrLfToLfSha256": "0d2b2dbc10a95619736ceca95ce364c53f6e28161fb7a1f2511fc66983a0eb01",
+      "historicalLineEndings": {
+        "crlf": 41,
+        "loneCr": 0,
+        "lf": 409
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 409
+      }
+    },
+    {
+      "file": "services/importProcessingStages.js",
+      "historicalRawSha256": "b53a141cb7f8100601860d13bc1ca05aa1992c5b343090af0d29d098168cf020",
+      "currentRawSha256": "7cdaa4c9e631c3fe20d2d041718d16925b1476f11968e2aead71d29f5dc59d1b",
+      "afterOnlyCrLfToLfSha256": "7cdaa4c9e631c3fe20d2d041718d16925b1476f11968e2aead71d29f5dc59d1b",
+      "historicalLineEndings": {
+        "crlf": 24,
+        "loneCr": 0,
+        "lf": 254
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 254
+      }
+    },
+    {
+      "file": "services/mailpilotSafetyPersistence.js",
+      "historicalRawSha256": "bb5193a7f4b7352b96be1eb567a1f5dcf8f0c2acf68e302a9882f67f756bddb8",
+      "currentRawSha256": "019aaa51df7fbc4773825e7a876b8680e1ebe5ec0d62d89c375dca88d059557b",
+      "afterOnlyCrLfToLfSha256": "019aaa51df7fbc4773825e7a876b8680e1ebe5ec0d62d89c375dca88d059557b",
+      "historicalLineEndings": {
+        "crlf": 4,
+        "loneCr": 0,
+        "lf": 81
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 81
+      }
+    },
+    {
+      "file": "services/mydeskImportWorker.js",
+      "historicalRawSha256": "72f16f139507b47ec62b268a3dc3f196081fe31e988c8c9b3524a7b242a2cb44",
+      "currentRawSha256": "4e95a00e32cabdfb419e1655ad2f8ad7a2274a70c533aa2f8be7c0d810c40521",
+      "afterOnlyCrLfToLfSha256": "4e95a00e32cabdfb419e1655ad2f8ad7a2274a70c533aa2f8be7c0d810c40521",
+      "historicalLineEndings": {
+        "crlf": 7,
+        "loneCr": 0,
+        "lf": 506
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 506
+      }
+    },
+    {
+      "file": "services/passpilotAppointments.js",
+      "historicalRawSha256": "8da01475b00330abd5a9bf958c08f17cdb7d3f4d1de016a99028cb834fa84838",
+      "currentRawSha256": "fc931d5efb8b325eb6310dceb596f7d9bffc988868928a222e6b12d07bad31c1",
+      "afterOnlyCrLfToLfSha256": "fc931d5efb8b325eb6310dceb596f7d9bffc988868928a222e6b12d07bad31c1",
+      "historicalLineEndings": {
+        "crlf": 15,
+        "loneCr": 0,
+        "lf": 300
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 300
+      }
+    },
+    {
+      "file": "services/passpilotAppointmentsLifecycle.js",
+      "historicalRawSha256": "0e6c336827b8e1f9ccf4b25de090a1504a5e10b8f4e0cf0759a400eafe0dce95",
+      "currentRawSha256": "e5ec8d2ea42303d157a5e1d2420ab22723d001000b3132c22bcc572c84e75b7e",
+      "afterOnlyCrLfToLfSha256": "e5ec8d2ea42303d157a5e1d2420ab22723d001000b3132c22bcc572c84e75b7e",
+      "historicalLineEndings": {
+        "crlf": 13,
+        "loneCr": 0,
+        "lf": 28
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 28
+      }
+    },
+    {
+      "file": "services/passpilotKioskAssignments.js",
+      "historicalRawSha256": "2c481fa0b5b8a3cb13efd9cd483ca3481ae258f7cd44df6439f955e28b2651b3",
+      "currentRawSha256": "bab0a7e179adba995241b23db4ddc12d1c1c2f24488d6df773267a7e96b98236",
+      "afterOnlyCrLfToLfSha256": "bab0a7e179adba995241b23db4ddc12d1c1c2f24488d6df773267a7e96b98236",
+      "historicalLineEndings": {
+        "crlf": 7,
+        "loneCr": 0,
+        "lf": 416
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 416
+      }
+    },
+    {
+      "file": "services/passpilotKioskData.js",
+      "historicalRawSha256": "970fe413be1eef268db3460aee1cb51b4a1686395daef3eabeed256f82fde278",
+      "currentRawSha256": "3528bb15d0fd7d9fd4ab4e22c25ea0dd86fe69d209e64d632e95b414b09e039c",
+      "afterOnlyCrLfToLfSha256": "3528bb15d0fd7d9fd4ab4e22c25ea0dd86fe69d209e64d632e95b414b09e039c",
+      "historicalLineEndings": {
+        "crlf": 9,
+        "loneCr": 0,
+        "lf": 133
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 133
+      }
+    },
+    {
+      "file": "services/passpilotReports.js",
+      "historicalRawSha256": "efa680262ec3026f97a716182ede48e7af9ebb47d0ebaea85f7f78d72b859039",
+      "currentRawSha256": "9263279e93c9997b1ce8a03416508edab01e0e3f964e0836b0ff3bfbdc6ebc57",
+      "afterOnlyCrLfToLfSha256": "9263279e93c9997b1ce8a03416508edab01e0e3f964e0836b0ff3bfbdc6ebc57",
+      "historicalLineEndings": {
+        "crlf": 16,
+        "loneCr": 0,
+        "lf": 346
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 346
+      }
+    },
+    {
+      "file": "services/passpilotRules.js",
+      "historicalRawSha256": "d9887b1053a84ee57f1e7968190b8f77f384e89454519ac17332756cd5d74353",
+      "currentRawSha256": "2c5dead6efe5283544c65b025b6bb1a5a8f3dff72ab8ba764316bfce6e913ecb",
+      "afterOnlyCrLfToLfSha256": "2c5dead6efe5283544c65b025b6bb1a5a8f3dff72ab8ba764316bfce6e913ecb",
+      "historicalLineEndings": {
+        "crlf": 3,
+        "loneCr": 0,
+        "lf": 504
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 504
+      }
+    },
+    {
+      "file": "services/safetyCenter.js",
+      "historicalRawSha256": "9375eae015a1052dc952430f30ec80df49d51743877d470880b8950145a1aad8",
+      "currentRawSha256": "d9a33145f3378424289afc8c210afc3a983b3833d84e29f9ab5019a32e8f87a9",
+      "afterOnlyCrLfToLfSha256": "d9a33145f3378424289afc8c210afc3a983b3833d84e29f9ab5019a32e8f87a9",
+      "historicalLineEndings": {
+        "crlf": 48,
+        "loneCr": 0,
+        "lf": 347
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 347
+      }
+    },
+    {
+      "file": "services/safetyNotifications.js",
+      "historicalRawSha256": "1b303c22f28c56391c30382a50fd7b9a68d76a12cd8d1320e3f00efec3607905",
+      "currentRawSha256": "3e81328c2ac8befa2a2988bd384c41a292b28a4b8d53b6f4a8fee1ef12b7eaed",
+      "afterOnlyCrLfToLfSha256": "3e81328c2ac8befa2a2988bd384c41a292b28a4b8d53b6f4a8fee1ef12b7eaed",
+      "historicalLineEndings": {
+        "crlf": 45,
+        "loneCr": 0,
+        "lf": 155
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 155
+      }
+    },
+    {
+      "file": "services/scheduler.js",
+      "historicalRawSha256": "55ab1b95894159b12f126fb014798335b6c1fe9fbddbd69d99bcf1f2e8170bd0",
+      "currentRawSha256": "292bd4ee477a783ac726ad5d37c46cb1f754e2e199510ce7b9830f29d6f1afdc",
+      "afterOnlyCrLfToLfSha256": "292bd4ee477a783ac726ad5d37c46cb1f754e2e199510ce7b9830f29d6f1afdc",
+      "historicalLineEndings": {
+        "crlf": 233,
+        "loneCr": 0,
+        "lf": 2035
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 2035
+      }
+    },
+    {
+      "file": "services/schoolDiscipline.js",
+      "historicalRawSha256": "0eb97feb277b9af94c04e6052421d5aa96dc7f1eef47d103d715f3ae83f04ea6",
+      "currentRawSha256": "e0112dcd11553ab4c9464a1abea59ccbf9a2b97afe8cf6bfa95d631ade67cef8",
+      "afterOnlyCrLfToLfSha256": "e0112dcd11553ab4c9464a1abea59ccbf9a2b97afe8cf6bfa95d631ade67cef8",
+      "historicalLineEndings": {
+        "crlf": 2,
+        "loneCr": 0,
+        "lf": 460
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 460
+      }
+    },
+    {
+      "file": "services/schoolDisciplineWorkspace.js",
+      "historicalRawSha256": "a6b09a45f2e19e41208b0f63cff348eb337109eccbdbbbe4c1baff05fbe5d345",
+      "currentRawSha256": "9a8beaa531755cc9a18321dd579a8e34a769cbc98d7a6249b8091fac753c478f",
+      "afterOnlyCrLfToLfSha256": "9a8beaa531755cc9a18321dd579a8e34a769cbc98d7a6249b8091fac753c478f",
+      "historicalLineEndings": {
+        "crlf": 13,
+        "loneCr": 0,
+        "lf": 611
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 611
+      }
+    },
+    {
+      "file": "services/securityMonitor.js",
+      "historicalRawSha256": "45da4ae9813fa293fd44052586a76dfbc04d6c2eabb6e581f2d1478c4f833972",
+      "currentRawSha256": "c188e428a210dd8dc3b921da5cf23d7bfacf746a2bcb054c0940b8303af73f0b",
+      "afterOnlyCrLfToLfSha256": "c188e428a210dd8dc3b921da5cf23d7bfacf746a2bcb054c0940b8303af73f0b",
+      "historicalLineEndings": {
+        "crlf": 40,
+        "loneCr": 0,
+        "lf": 199
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 199
+      }
+    },
+    {
+      "file": "services/sharedStudentRecords.js",
+      "historicalRawSha256": "3bf96a7d79f462a2f950df8afd1a71a29edd171c28d97a3eb3b7be479ae67861",
+      "currentRawSha256": "fc933c671c4cc32901c1bfc01f25366828f19d0be10c7564f2ba35638c665271",
+      "afterOnlyCrLfToLfSha256": "fc933c671c4cc32901c1bfc01f25366828f19d0be10c7564f2ba35638c665271",
+      "historicalLineEndings": {
+        "crlf": 8,
+        "loneCr": 0,
+        "lf": 57
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 57
+      }
+    },
+    {
+      "file": "services/staffAssignmentLifecycle.js",
+      "historicalRawSha256": "2e1396140392c2b9f76d3f0c886d323490cb8814eab6dd93aac97a1d34ea15ed",
+      "currentRawSha256": "f1536ca204765c127db66798f153be30c9a4fe29899093f43248ec7ed2eeb4d5",
+      "afterOnlyCrLfToLfSha256": "f1536ca204765c127db66798f153be30c9a4fe29899093f43248ec7ed2eeb4d5",
+      "historicalLineEndings": {
+        "crlf": 169,
+        "loneCr": 0,
+        "lf": 2112
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 2112
+      }
+    },
+    {
+      "file": "services/staffIdentityMonitoring.js",
+      "historicalRawSha256": "21a8d63c2b2f2189dc9863cf1bdc5d71f0394d5992e6fc3edee4b28e59b5ae67",
+      "currentRawSha256": "27bb34323ca11d74665b585f226e2fdba19a766d60765d92ac77f742d636c4a0",
+      "afterOnlyCrLfToLfSha256": "27bb34323ca11d74665b585f226e2fdba19a766d60765d92ac77f742d636c4a0",
+      "historicalLineEndings": {
+        "crlf": 8,
+        "loneCr": 0,
+        "lf": 246
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 246
+      }
+    },
+    {
+      "file": "services/storage.js",
+      "historicalRawSha256": "3038eb7ac343751a14c2f8f71a2bcd6c6eec5a471144addace07f40e96068d01",
+      "currentRawSha256": "be31291d3ea662f3972247d7983126eabec9b3c4cd48446d97153215e96f34a2",
+      "afterOnlyCrLfToLfSha256": "be31291d3ea662f3972247d7983126eabec9b3c4cd48446d97153215e96f34a2",
+      "historicalLineEndings": {
+        "crlf": 1023,
+        "loneCr": 0,
+        "lf": 23187
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 23187
+      }
+    },
+    {
+      "file": "services/studentInformationOffice.js",
+      "historicalRawSha256": "53cba4e0eaf959c4c6f02c4a697846824ef87e080efcd6adb39624e68f15dba2",
+      "currentRawSha256": "32a89e39ae99a6a0d021120eee5ef92a21e57b0bc1a5a772086c4d5e5977ec86",
+      "afterOnlyCrLfToLfSha256": "32a89e39ae99a6a0d021120eee5ef92a21e57b0bc1a5a772086c4d5e5977ec86",
+      "historicalLineEndings": {
+        "crlf": 55,
+        "loneCr": 0,
+        "lf": 138
+      },
+      "currentLineEndings": {
+        "crlf": 0,
+        "loneCr": 0,
+        "lf": 138
+      }
+    }
+  ],
+  "changedRuntimeFiles": [
+    "services/classpilotRealtimeStatus.js",
+    "services/healthMonitor.js"
+  ],
+  "addedRuntimeFiles": [
+    "services/healthDbRoundTrip.js"
+  ],
+  "sourceTree": {
+    "inputs": [
+      "src/schema",
+      "src/db",
+      "src/config/rlsRegistry.json",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "drizzle.config.ts"
+    ],
+    "oldTreeSha256": "0e53d973197d3fe6ed4f01882dfaa8488be6a0a6ab2db20bd57d36bc54d577c3",
+    "currentTreeSha256": "0e53d973197d3fe6ed4f01882dfaa8488be6a0a6ab2db20bd57d36bc54d577c3"
+  },
+  "schemaSourceFilesCompared": 25,
+  "unchangedSchemaMigrationSemanticsEstablished": true,
+  "checksumNormalization": false,
+  "compiledByteNormalization": "Only CRLF→LF comparison used for diagnostic continuity; raw hashes and native checksum exports remain exact/unmodified.",
+  "cleanup": {
+    "confirmedAbsent": true,
+    "forced": false,
+    "exitCode": 0,
+    "oom": false
+  },
+  "scope": "Offline explicit policy assertions over exact actual-image metadata captures, preserving failed raw-byte/all-arms54 tests. Establishes native checksum/admission continuity; not raw application-byte equality, database callback/reentry, service health or capacity acceptance."
+}

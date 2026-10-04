@@ -35,7 +35,26 @@ async function setup(options = {}) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), state = { ...options }, requests = [], errors = [];
   state.exportReady = new Promise(resolve => { state.notifyExport = resolve; });
   pages.set(page, state); page.on('pageerror', error => errors.push(error.message));
+  await page.exposeBinding('__reportExportAborted', (_source, url) => {
+    state.exportAbortUrl = url;
+  });
   await page.addInitScript(() => {
+    const requestUrls = new WeakMap(), open = XMLHttpRequest.prototype.open, abort = XMLHttpRequest.prototype.abort;
+    XMLHttpRequest.prototype.open = function(method, url, ...args) {
+      requestUrls.set(this, new URL(String(url), location.href).href);
+      return open.call(this, method, url, ...args);
+    };
+    XMLHttpRequest.prototype.abort = function(...args) {
+      const url = requestUrls.get(this);
+      const result = abort.apply(this, args);
+      if (url && new URL(url).pathname.endsWith('/reports/export.csv')) {
+        // Record after the native abort returns; same-origin login navigation
+        // can destroy the old context before the asynchronous binding arrives.
+        sessionStorage.setItem('__reportExportAbortUrl', url);
+        void window.__reportExportAborted(url).catch(() => {});
+      }
+      return result;
+    };
     localStorage.setItem('sp_activeSchoolId', 'school-a');
     window.__scope = { user: { id: 'office-a', role: 'office_staff', roles: ['office_staff'], authVersion: 1 }, school: { id: 'school-a', schoolTimezone: 'America/New_York' } };
     window.changeSchool = () => { window.__scope = { ...window.__scope, school: { ...window.__scope.school, id: 'school-b' } }; localStorage.setItem('sp_activeSchoolId', 'school-b'); window.dispatchEvent(new Event('scope-change')); };
@@ -146,8 +165,11 @@ test(`a known ${failure.status} report failure aborts a held export before it ca
     else await page.getByText(failure.status === 409
       ? 'Report records changed during the request. Refresh the report to load a consistent snapshot.'
       : 'Report access changed. Refresh this page before continuing.', { exact: true }).waitFor();
-    await exportAborted;
+    const exportAbortUrl = await page.evaluate(() => sessionStorage.getItem('__reportExportAbortUrl'));
+    assert.ok(exportAbortUrl, 'The held export never received an explicit native XHR abort');
+    assert.ok(new URL(exportAbortUrl).pathname.endsWith('/reports/export.csv'));
     state.releaseExport();
+    await exportAborted;
     await page.waitForLoadState('networkidle');
     assert.equal(downloaded, false, 'a verified authority or snapshot failure must retire the pending export');
     assert.equal(await page.getByText('CSV downloaded. The server recorded this export.', { exact: true }).count(), 0);

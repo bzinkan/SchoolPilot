@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_runtime_corrected_local_images",
+  "createdAt": "2026-10-04T06:27:34.087Z",
+  "artifacts": [
+    {
+      "role": "serving",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "sourceCleanAtBuildAndFinish": true,
+      "imageIdentities": {
+        "imageId": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "imageIdKind": "index",
+        "indexDigest": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "platformManifestDigest": "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+        "configDigest": "sha256:8b66f44e342194c35c36cf50e30cdc0ae7e467ab0b52aa9c50d1a0d6c370f799",
+        "exportIndexSha256": "4a2a17c85fcd2e165fc24b9d4267b7a343b2e2e3fd938e49cab259d6fe7d4635",
+        "verifiedBlobDigests": [
+          "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+          "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+          "sha256:4a4a4c5332a42b7555d4452c2d2c2959fc300ef7474d7bc84198ce43b8f47a28"
+        ]
+      },
+      "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+      "dockerfileDerivation": {
+        "committed": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+        "derived": "ac09cd9ad1fdf9c0c1d448b00e1fc1de3cc1aed96f872435bb7976d13b2a7791",
+        "diff": [
+          {
+            "line": 6,
+            "before": "FROM node:22-alpine AS builder",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder"
+          },
+          {
+            "line": 24,
+            "before": "FROM node:22-alpine",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+          }
+        ]
+      },
+      "startedAt": "2026-10-04T06:12:09.949Z",
+      "finishedAt": "2026-10-04T06:14:44.559Z",
+      "buildAndScanPassed": true,
+      "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+      "counts": {
+        "UNKNOWN": 0,
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0
+      },
+      "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+      "archiveSha256": "78dfee093d214208e01e8d5c3776f46df6d66eda144c1352f25b113b3dd02ec8",
+      "fullScanSha256": "938e4692065c98c89effefcfddcbeb7344ed465dccdf236a77a31f3db8b73ac2",
+      "embeddedCompatibilityAndCorrectionChecksPassed": true,
+      "actualServiceAcceptance": false,
+      "exactOwnedScannerInspectorCleanupPassed": true,
+      "forcedCleanup": false,
+      "usageModes": "off/off",
+      "evidence": {
+        "preparation": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\candidate-preparation.json",
+          "sha256": "38a197c5e7d3964664dc588e08c583030ed6d1c7753e8036c4235f165af3433d"
+        },
+        "scan": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\scan-receipt.json",
+          "sha256": "3525d01efc16568ae5f773f80570c76beaaa8e67b6ea69f111dc3e0f6965f787"
+        },
+        "imageBinding": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-ddc5996b-01\\schoolpilot-image-scan-aU5exj\\image-binding.json",
+          "sha256": "86c4b4f4627a9ebac314bfe4a0efbc1aeff47d14667928541405461308a64b21"
+        }
+      }
+    },
+    {
+      "role": "compatibleFallback",
+      "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "sourceCleanAtBuildAndFinish": true,
+      "imageIdentities": {
+        "imageId": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "imageIdKind": "index",
+        "indexDigest": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "platformManifestDigest": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+        "configDigest": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+        "exportIndexSha256": "abea3027b2bb875632f8b405238b1c9f59cd0b84056455b55dec6f68ae9b5832",
+        "verifiedBlobDigests": [
+          "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+          "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+          "sha256:504184dea9b4b1f2f0ba9599c5de9d0f7b3beac69862d006c4be973f5991f682"
+        ]
+      },
+      "runtimeBase": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+      "dockerfileDerivation": {
+        "committed": "ba0907584149e7ab13a37ff48c4c2eb99fb2a7d86d21d712f86ff71752e9dcc0",
+        "derived": "ac09cd9ad1fdf9c0c1d448b00e1fc1de3cc1aed96f872435bb7976d13b2a7791",
+        "diff": [
+          {
+            "line": 6,
+            "before": "FROM node:22-alpine AS builder",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder"
+          },
+          {
+            "line": 24,
+            "before": "FROM node:22-alpine",
+            "after": "FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+          }
+        ]
+      },
+      "startedAt": "2026-10-04T06:15:35.179Z",
+      "finishedAt": "2026-10-04T06:19:46.608Z",
+      "buildAndScanPassed": true,
+      "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+      "counts": {
+        "UNKNOWN": 0,
+        "LOW": 0,
+        "MEDIUM": 0,
+        "HIGH": 0,
+        "CRITICAL": 0
+      },
+      "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+      "archiveSha256": "1cbedd3fda3b18e806a8f56a82342e80a48107d13030265918d2d19fd8bc2fa3",
+      "fullScanSha256": "d11290c715ab10818103e9441ed267ece611f6ebe4c57c094073635899393ba3",
+      "embeddedCompatibilityAndCorrectionChecksPassed": true,
+      "actualServiceAcceptance": false,
+      "exactOwnedScannerInspectorCleanupPassed": true,
+      "forcedCleanup": false,
+      "usageModes": "off/off",
+      "evidence": {
+        "preparation": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\candidate-preparation.json",
+          "sha256": "5719fd07da19e4655322cb36c9062e055c4e05529e03f79e87b78d331dec1a5f"
+        },
+        "scan": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\scan-receipt.json",
+          "sha256": "616b9e94b980d97f0c5b5cfeb7f9a911e30984ac3c330b7616ef773d21e45c13"
+        },
+        "imageBinding": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-safe-fallback-c578120d-01\\schoolpilot-image-scan-TAQuxe\\image-binding.json",
+          "sha256": "aa4087dd5caa03ef7ae20a214bab74615384ff95258d49f113bb07b33fb24417"
+        }
+      }
+    }
+  ],
+  "correctionScope": "Redis lossless root-field atomic mutations preserve arrays and exact integer revisions; existing public health sentinel avoids schema CREATE while missing-table bootstrap failures remain explicit.",
+  "fallbackScope": "Six-file correction/test-lane delta from preserved6d1, keeping cleanup lease, lifecycle writer/bridge/relay/adoption floor and Focus cleanup; no Usage optimizations imported.",
+  "preservedHistoricalSources": [
+    "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+    "6d1f3a7e737ebd2e3e266f2f571cdea811db5e27"
+  ],
+  "historicalEvidenceRewritten": false,
+  "productionMutations": 0,
+  "registryPushes": 0,
+  "taskRegistrations": 0,
+  "capacityAccepted": false,
+  "actualServiceRecoveryAccepted": false,
+  "productionReadinessProven": false,
+  "scope": "Fresh local clean-source artifact preparation only. Native Redis/health component evidence and actual service staged recovery remain separately bound; no deployment/activation/Store/Chromebook/capacity claim."
+}
