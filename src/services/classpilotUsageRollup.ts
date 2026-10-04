@@ -17,7 +17,8 @@ import {
 /*
  * Monitored Browser Time rollups (classpilot_usage_rollups).
  *
- * One school-local day per statement, rewritten (DELETE + INSERT) inside one
+ * One school-local day per statement, reconciled (changed UPDATE, missing
+ * INSERT, vanished DELETE) inside one
  * transaction under a per-school advisory lock on the scheduler pool. That pool
  * runs with app.is_super=on, so every statement below filters school_id = $1
  * itself; RLS does not scope scheduler work.
@@ -68,6 +69,7 @@ const DEFAULT_CONCURRENCY = 2;
 export const CLASSPILOT_USAGE_ROLLUP_LOCK_SQL =
   "SELECT pg_advisory_xact_lock(hashtext('classpilot_usage_rollup'), hashtext($1))";
 
+/** Historical benchmark helper; the production writer never deletes a whole day. */
 export const CLASSPILOT_USAGE_ROLLUP_DELETE_SQL =
   "DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date = $2::date";
 
@@ -153,7 +155,7 @@ school_roster_window AS MATERIALIZED (
   JOIN groups AS class
     ON class.id = roster.group_id AND class.school_id = $1
 ),
-grains AS (
+grains AS MATERIALIZED (
   -- Forced tenant RLS can substantially underestimate school cardinality.
   -- Correlating the timeline and roster to one student bounds any nested-loop
   -- plan to that student's observations and sessions instead of the school.
@@ -295,19 +297,60 @@ GROUP BY attributed.student_id, attributed.class_id, attributed.session_id,
   ) AS student_grains
   WHERE student_scope.school_id = $1
 ),
+existing_grains AS MATERIALIZED (
+  SELECT id, student_id, class_id, session_id, domain, classification, seconds, heartbeat_count
+  FROM classpilot_usage_rollups
+  WHERE school_id = $1 AND usage_date = $4::date
+),
+reconciled AS MATERIALIZED (
+  -- Equality on the same COALESCE keys as the unique grain index permits a
+  -- hash/merge join: never probe the materialized whole day once per grain.
+  -- The three writers below consume disjoint existing/missing/vanished sets
+  -- from one statement snapshot. Unchanged rows are neither locked nor written.
+  SELECT existing.id AS existing_id, grains.*,
+    existing.class_id AS prior_class_id, existing.session_id AS prior_session_id,
+    existing.seconds AS prior_seconds, existing.heartbeat_count AS prior_heartbeat_count
+  FROM grains
+  FULL OUTER JOIN existing_grains AS existing
+    ON existing.student_id = grains.student_id
+    AND COALESCE(existing.class_id, '') = COALESCE(grains.class_id, '')
+    AND COALESCE(existing.session_id, '') = COALESCE(grains.session_id, '')
+    AND existing.domain = grains.domain AND existing.classification = grains.classification
+),
+updated AS (
+  UPDATE classpilot_usage_rollups AS target
+  SET class_id = reconciled.class_id, session_id = reconciled.session_id,
+    seconds = reconciled.seconds, heartbeat_count = reconciled.heartbeat_count, computed_at = now()
+  FROM reconciled
+  WHERE target.school_id = $1 AND target.usage_date = $4::date
+    AND target.id = reconciled.existing_id AND reconciled.student_id IS NOT NULL
+    AND (reconciled.prior_class_id, reconciled.prior_session_id,
+      reconciled.prior_seconds, reconciled.prior_heartbeat_count)
+      IS DISTINCT FROM (reconciled.class_id, reconciled.session_id,
+        reconciled.seconds, reconciled.heartbeat_count)
+  RETURNING target.id
+),
 inserted AS (
   INSERT INTO classpilot_usage_rollups (
     school_id, usage_date, student_id, class_id, session_id, domain, classification, seconds, heartbeat_count
   )
-  SELECT $1, $4::date, grains.student_id, grains.class_id, grains.session_id,
-    grains.domain, grains.classification, grains.seconds, grains.heartbeat_count
-  FROM grains
-  RETURNING seconds, heartbeat_count
+  SELECT $1, $4::date, reconciled.student_id, reconciled.class_id, reconciled.session_id,
+    reconciled.domain, reconciled.classification, reconciled.seconds, reconciled.heartbeat_count
+  FROM reconciled
+  WHERE reconciled.existing_id IS NULL
+  RETURNING id
+),
+deleted AS (
+  DELETE FROM classpilot_usage_rollups AS target
+  USING reconciled
+  WHERE target.school_id = $1 AND target.usage_date = $4::date
+    AND target.id = reconciled.existing_id AND reconciled.student_id IS NULL
+  RETURNING target.id
 )
 SELECT COUNT(*)::int AS row_count,
   COALESCE(SUM(seconds), 0)::bigint AS seconds,
   COALESCE(SUM(heartbeat_count), 0)::bigint AS heartbeat_count
-FROM inserted`;
+FROM grains`;
 
 export type ClasspilotUsageRollupDay = {
   date: string;
@@ -469,7 +512,6 @@ export async function rollupClasspilotUsageDay(
         await query("COMMIT");
         return { rowCount: 0, seconds: 0, heartbeatCount: 0 };
       }
-      await query(CLASSPILOT_USAGE_ROLLUP_DELETE_SQL, [options.schoolId, options.day.date]);
       const result = await query(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, [
         options.schoolId,
         utcTimestampForSql(options.day.dayStartUtc),
@@ -478,7 +520,7 @@ export async function rollupClasspilotUsageDay(
         classpilotUsageExclusionsJson(options.exclusions),
       ]);
       // Aggregate-change triggers invalidate prior coverage. Restore it only
-      // after a successful insert, including the successful empty-day case.
+      // after successful reconciliation, including the empty/unchanged case.
       await query(CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [
         options.schoolId, options.day.date, options.day.dayStartUtc.toISOString(),
         options.day.dayEndUtc.toISOString(), options.windowEndUtc.toISOString(),

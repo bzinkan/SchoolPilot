@@ -367,7 +367,20 @@ function recordingPool(options: { failInsert?: boolean; answer?: (text: string, 
 describe("one-day rewrite transaction", () => {
   const day = classpilotUsageRollupDay("2026-09-14", "America/New_York");
 
-  it("locks the school, deletes the day and reinserts it in one transaction with UTC wall-clock bounds", async () => {
+  it("reconciles disjoint deltas once and never rewrites unchanged aggregate rows", () => {
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /grains AS MATERIALIZED/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /existing_grains AS MATERIALIZED/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /reconciled AS MATERIALIZED/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /FULL OUTER JOIN existing_grains/);
+    assert.match(cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "updated", "inserted"), /IS DISTINCT FROM/);
+    assert.match(cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "inserted", "deleted"), /WHERE reconciled\.existing_id IS NULL/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /reconciled\.student_id IS NULL/);
+    assert.doesNotMatch(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ON CONFLICT/i);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /FROM grains$/);
+    assert.doesNotMatch(between(source("src/services/classpilotUsageRollup.ts"), "export async function rollupClasspilotUsageDay", "async function loadTrackingEvents"), /query\(CLASSPILOT_USAGE_ROLLUP_DELETE_SQL/);
+  });
+
+  it("locks the school and reconciles the day atomically with UTC wall-clock bounds", async () => {
     const originalTimeZone = process.env.TZ;
     process.env.TZ = "America/Los_Angeles";
     try {
@@ -384,15 +397,13 @@ describe("one-day rewrite transaction", () => {
         "BEGIN",
         CLASSPILOT_USAGE_ROLLUP_LOCK_SQL,
         CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL,
-        CLASSPILOT_USAGE_ROLLUP_DELETE_SQL,
         CLASSPILOT_USAGE_ROLLUP_INSERT_SQL,
         CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL,
         "COMMIT",
       ]);
-      assert.equal(calls.filter(call => call.text === CLASSPILOT_USAGE_ROLLUP_TIMEOUT_SQL).length, 6);
+      assert.equal(calls.filter(call => call.text === CLASSPILOT_USAGE_ROLLUP_TIMEOUT_SQL).length, 5);
       assert.deepEqual(workCalls[1]!.values, ["school-1"]);
-      assert.deepEqual(workCalls[3]!.values, ["school-1", "2026-09-14"]);
-      assert.deepEqual(workCalls[4]!.values, [
+      assert.deepEqual(workCalls[3]!.values, [
         "school-1",
         "2026-09-14 04:00:00",
         "2026-09-15 04:00:00",
@@ -417,7 +428,7 @@ describe("one-day rewrite transaction", () => {
     const { pool, calls } = recordingPool({ answer: (text) => text === CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL
       ? [{ processed_through: day.dayEndUtc, is_final: true }] : [] });
     await rollupClasspilotUsageDay(pool, { schoolId: "school-1", day, windowEndUtc: new Date("2026-09-14T16:00:00Z"), exclusions: [] });
-    assert.equal(calls.some((call) => call.text === CLASSPILOT_USAGE_ROLLUP_DELETE_SQL), false);
+    assert.equal(calls.some((call) => call.text === CLASSPILOT_USAGE_ROLLUP_INSERT_SQL), false);
     assert.equal(calls.at(-1)?.text, "COMMIT");
   });
 });
@@ -457,7 +468,7 @@ describe("hourly runner", () => {
     assert.equal(outcome.recomputedDays, 4);
     assert.equal(outcome.failedSchools, 0);
     assert.equal(outcome.budgetExhausted, false);
-    const dates = calls.filter((call) => call.text === CLASSPILOT_USAGE_ROLLUP_DELETE_SQL).map((call) => call.values);
+    const dates = calls.filter((call) => call.text === CLASSPILOT_USAGE_ROLLUP_INSERT_SQL).map((call) => [call.values![0], call.values![3]]);
     assert.deepEqual(dates, [["school-a", "2026-09-14"], ["school-b", "2026-09-14"], ["school-a", "2026-09-15"], ["school-b", "2026-09-15"]]);
     assert.deepEqual([...done.complete].sort(), ["school-a:2026-09-14", "school-b:2026-09-14"]);
   });
@@ -477,7 +488,7 @@ describe("hourly runner", () => {
     assert.equal(outcome.finalizedDays, 0);
     assert.equal(done.complete.has("school-a:2026-09-14"), false);
     assert.deepEqual(
-      calls.filter((call) => call.text === CLASSPILOT_USAGE_ROLLUP_DELETE_SQL).map((call) => call.values![1]),
+      calls.filter((call) => call.text === CLASSPILOT_USAGE_ROLLUP_INSERT_SQL).map((call) => call.values![3]),
       ["2026-09-15"],
       "only today is rewritten"
     );

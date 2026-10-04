@@ -17,7 +17,7 @@ const reference = readFileSync(new URL("./fixtures/classpilot-usage-rollup-b112.
 assert.equal(createHash("sha256").update(reference).digest("hex"), "87f1493e4ba33b760288e375f91b1574878c798458eb92b18c17f2cb5b2fabb2");
 const columns = "school_id,usage_date,student_id,class_id,session_id,domain,classification,seconds,heartbeat_count";
 function grains(statement: string) {
-  const marker = ",\ninserted AS (\n  INSERT INTO classpilot_usage_rollups (";
+  const marker = statement.includes(",\nexisting_grains AS ") ? ",\nexisting_grains AS " : ",\ninserted AS (\n  INSERT INTO classpilot_usage_rollups (";
   const index = statement.indexOf(marker);
   assert.ok(index > 0);
   return statement.slice(0, index) + "\nSELECT $1::text AS school_id,$4::date AS usage_date,grains.* FROM grains";

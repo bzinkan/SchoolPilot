@@ -161,7 +161,7 @@ const reportReference = readFileSync(new URL("./fixtures/usage-before-fast-paths
 for (const query of [attributionReference, reportReference]) assert.doesNotMatch(query, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|COPY|DO)\b/i);
 
 function readonlyGrains() {
-  const query = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\ninserted AS (")[0];
+  const query = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\nexisting_grains AS ")[0];
   assert.ok(query, "The attribution diagnostic must have a nonempty read-only prefix");
   assert.ok(!query.includes("INSERT INTO"));
   return query + " SELECT $4::date AS usage_date,grains.* FROM grains ORDER BY student_id,COALESCE(class_id,''),COALESCE(session_id,''),domain,classification";
@@ -773,6 +773,65 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
 });
 
 describe("computation coverage ledger (DB lane)", { concurrency: false }, () => {
+  it("advances unchanged coverage without replacing, updating or WAL-writing aggregate rows", async () => {
+    const schoolId = await createSchool("Unchanged delta", "720");
+    const studentId = await createStudent(schoolId, "Unchanged");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const firstCutoff = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://same.example.edu", category: "educational" });
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    const identities = async () => (await system.query("SELECT id,ctid::text,xmin::text,computed_at,seconds,heartbeat_count FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY id", [schoolId])).rows;
+    const beforeRows = await identities();
+    const beforeCoverage = (await system.query("SELECT computed_at FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows[0].computed_at;
+    const result = await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    assert.deepEqual(result, { rowCount: 1, seconds: 15, heartbeatCount: 1 });
+    assert.deepEqual(await identities(), beforeRows, "unchanged grains retain physical and logical identity, xmin and computed_at");
+    const coverage = (await system.query("SELECT processed_through,computed_at,is_final FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows[0];
+    assert.equal(coverage.processed_through.getTime(), day.dayEndUtc.getTime());
+    assert.equal(coverage.is_final, true);
+    assert.ok(coverage.computed_at >= beforeCoverage, "the successful computation still writes its ledger");
+    // Explain the writer alone so the legitimate completion-ledger WAL does
+    // not get confused with aggregate churn. Real triggers and FKs remain on.
+    const client = await system.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(rollup.CLASSPILOT_USAGE_ROLLUP_LOCK_SQL, [schoolId]);
+      const plan = (await client.query("EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON) " + rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL,
+        [schoolId, wall(day.dayStartUtc.getTime()), wall(day.dayEndUtc.getTime()), day.date, "[]"])).rows[0]["QUERY PLAN"][0];
+      assert.equal(plan.Plan["WAL Records"] ?? 0, 0, "unchanged aggregate reconciliation emits no WAL records");
+      assert.equal(plan.Plan["WAL Bytes"] ?? 0, 0);
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+    assert.deepEqual(await identities(), beforeRows);
+  });
+
+  it("updates only changed grains, inserts missing grains and deletes vanished grains atomically", async () => {
+    const schoolId = await createSchool("Changed delta", "720");
+    const studentId = await createStudent(schoolId, "Changed");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const start = day.dayStartUtc.getTime() + 3600_000;
+    for (const [offset, domain] of [[0, "changed"], [30, "same"], [60, "gone"]] as const) {
+      await heartbeat({ schoolId, studentId, at: start + offset * 1000, url: `https://${domain}.example.edu`, category: "educational" });
+    }
+    const firstCutoff = new Date(start + 90_000);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    const physical = async () => (await system.query("SELECT domain,id,ctid::text,xmin::text,computed_at,seconds,heartbeat_count FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY domain", [schoolId])).rows;
+    const original = await physical();
+    await heartbeat({ schoolId, studentId, at: start + 120_000, url: "https://changed.example.edu", category: "educational" });
+    await heartbeat({ schoolId, studentId, at: start + 150_000, url: "https://new.example.edu", category: "educational" });
+    await system.query("DELETE FROM heartbeats WHERE school_id=$1 AND active_tab_url='https://gone.example.edu'", [schoolId]);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    const actual = await physical();
+    assert.deepEqual(actual.map(row => row.domain), ["changed.example.edu", "new.example.edu", "same.example.edu"]);
+    const changed = actual.find(row => row.domain === "changed.example.edu")!;
+    assert.equal(changed.id, original.find(row => row.domain === changed.domain)!.id);
+    assert.equal(changed.seconds, 30); assert.equal(changed.heartbeat_count, 2);
+    assert.notEqual(changed.xmin, original.find(row => row.domain === changed.domain)!.xmin);
+    assert.deepEqual(actual.find(row => row.domain === "same.example.edu"), original.find(row => row.domain === "same.example.edu"));
+    assert.ok(!original.some(row => row.id === actual.find(row => row.domain === "new.example.edu")!.id));
+  });
+
   it("serializes concurrent old and new live cutoffs without losing the newer activity", async () => {
     const schoolId = await createSchool("Concurrent", "720");
     const studentId = await createStudent(schoolId, "Concurrent");
@@ -784,6 +843,76 @@ describe("computation coverage ledger (DB lane)", { concurrency: false }, () => 
     const ledger = await system.query("SELECT processed_through FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId]);
     assert.equal(ledger.rows[0].processed_through.getTime(), newer.getTime());
     assert.equal((await rows(schoolId))[0]?.seconds, 15);
+  });
+
+  it("does not lock unchanged aggregates during a concurrent student deletion", async () => {
+    const schoolId = await createSchool("Delete during unchanged delta", "720");
+    const studentId = await createStudent(schoolId, "Deleting");
+    const retainedId = await createStudent(schoolId, "Retained");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    for (const id of [studentId, retainedId]) await heartbeat({ schoolId, studentId: id,
+      at: day.dayStartUtc.getTime() + 3600_000, url: "https://same.example.edu", category: "educational" });
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day,
+      windowEndUtc: new Date(day.dayStartUtc.getTime() + 2 * 3600_000), exclusions: [] });
+    const retained = (await system.query("SELECT id,ctid::text,xmin::text FROM classpilot_usage_rollups WHERE school_id=$1 AND student_id=$2", [schoolId, retainedId])).rows;
+    const deleting = await system.connect();
+    const shortPool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1,
+      options: "-c app.is_super=on -c statement_timeout=1000" });
+    try {
+      await deleting.query("BEGIN");
+      await deleting.query("DELETE FROM students WHERE school_id=$1 AND id=$2", [schoolId, studentId]);
+      // The uncommitted deletion locks its aggregate. A rewrite/upsert would
+      // block here; an unchanged delta must complete before deletion commits.
+      await rollup.rollupClasspilotUsageDay(shortPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+      await deleting.query("COMMIT");
+      assert.deepEqual((await rows(schoolId)).map(row => row.student_id), [retainedId]);
+      assert.deepEqual((await system.query("SELECT id,ctid::text,xmin::text FROM classpilot_usage_rollups WHERE school_id=$1 AND student_id=$2", [schoolId, retainedId])).rows, retained);
+      assert.equal((await system.query("SELECT is_final FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows[0].is_final, true);
+    } catch (error) { await deleting.query("ROLLBACK"); throw error; }
+    finally { deleting.release(); await shortPool.end(); }
+  });
+
+  it("rolls back coverage when a concurrently deleted student loses the missing-grain FK race", async () => {
+    const schoolId = await createSchool("Delete during missing delta", "720");
+    const studentId = await createStudent(schoolId, "Deleting missing grain");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const firstCutoff = new Date(day.dayStartUtc.getTime() + 3600_000);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    const coverage = async () => (await system.query("SELECT processed_through,computed_at,is_final FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows;
+    const previous = await coverage();
+    await heartbeat({ schoolId, studentId, at: firstCutoff.getTime() + 1000, url: "https://missing.example.edu", category: "educational" });
+    const deleting = await system.connect();
+    let writerPid = 0;
+    const watchedPool: Parameters<typeof rollup.rollupClasspilotUsageDay>[0] = {
+      query: (text, values) => system.query(text, values),
+      async connect() {
+        const client = await system.connect();
+        writerPid = (await client.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        return { query: (text, values) => client.query(text, values), release(error) { client.release(error); } };
+      },
+    };
+    let pending: Promise<{ error?: unknown }> | undefined;
+    try {
+      await deleting.query("BEGIN");
+      await deleting.query("DELETE FROM students WHERE school_id=$1 AND id=$2", [schoolId, studentId]);
+      pending = rollup.rollupClasspilotUsageDay(watchedPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] })
+        .then(() => ({}), error => ({ error }));
+      let fkWaitObserved = false;
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !fkWaitObserved) {
+        if (writerPid) fkWaitObserved = (await system.query("SELECT wait_event_type='Lock' AND wait_event='transactionid' AS waiting FROM pg_stat_activity WHERE pid=$1", [writerPid])).rows[0]?.waiting === true;
+        if (!fkWaitObserved) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(fkWaitObserved, true, "the actual insert must reach its parent-FK wait before deletion commits");
+      await deleting.query("COMMIT");
+      const outcome = await pending;
+      assert.ok(outcome.error instanceof Error && "code" in outcome.error && outcome.error.code === "23503");
+      assert.deepEqual(await coverage(), previous);
+      assert.deepEqual(await rows(schoolId), []);
+      await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+      assert.equal((await coverage())[0].is_final, true);
+    } catch (error) { await deleting.query("ROLLBACK"); await pending; throw error; }
+    finally { deleting.release(); }
   });
   it("records empty DST days with their real windows and reports verified zeros", async () => {
     const schoolId = await createSchool("Empty DST", "8760");
@@ -853,8 +982,8 @@ describe("computation coverage ledger (DB lane)", { concurrency: false }, () => 
         return { async query(text, values) {
           if (injectDelay && text === rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL) {
             observedLimit = Number((await client.query("SELECT setting FROM pg_settings WHERE name='statement_timeout'")).rows[0].setting);
-            // A real PostgreSQL statement timeout after the transactional day
-            // DELETE must restore both aggregates and the invalidated ledger.
+            // A real PostgreSQL statement timeout must preserve the prior
+            // aggregates and completion ledger in the same transaction.
             await client.query("SELECT pg_sleep(1)");
           }
           return client.query(text, values);

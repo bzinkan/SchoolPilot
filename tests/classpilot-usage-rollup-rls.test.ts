@@ -239,7 +239,7 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
       [`a-${randomUUID()}`,a!.schoolId,beat,wall(at+60_000),`z-${randomUUID()}`,randomUUID(),b!.schoolId,wall(at+120_000),randomUUID(),wall(dayStart-1000)]);
     const reference = readFileSync(new URL("./fixtures/usage-before-fast-paths/attribution.sql",import.meta.url),"utf8");
     const reports = readFileSync(new URL("./fixtures/usage-before-fast-paths/report.sql",import.meta.url),"utf8");
-    const candidate = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\ninserted AS (")[0] + " SELECT $4::date AS usage_date,grains.* FROM grains ORDER BY student_id,COALESCE(class_id,''),COALESCE(session_id,''),domain,classification";
+    const candidate = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\nexisting_grains AS ")[0] + " SELECT $4::date AS usage_date,grains.* FROM grains ORDER BY student_id,COALESCE(class_id,''),COALESCE(session_id,''),domain,classification";
     const client = await pool.connect(), dialect = new PgDialect();
     const transaction = { execute(statement: SQL) { const query=dialect.sqlToQuery(statement); return client.query(query.sql,query.params); } };
     try {

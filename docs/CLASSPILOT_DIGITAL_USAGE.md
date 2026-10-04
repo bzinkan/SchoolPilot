@@ -38,7 +38,7 @@ canonical `tenant_isolation` policy, reviewed bundle `classpilotUsageRollups`):
 | `domain` | Lowercase http(s) hostname without `www.`; `''` for any other URL |
 | `classification` | `educational`, `non-educational` or `unknown` |
 | `seconds`, `heartbeat_count` | Attributed seconds and counted observations for the grain |
-| `computed_at` | When the day was last rewritten |
+| `computed_at` | When this aggregate grain was inserted or last changed; the day ledger records every successful computation |
 
 The grain `(school_id, usage_date, student_id, class_id, session_id, domain, classification)` is unique
 (COALESCE over the nullable columns). No row carries a device identifier.
@@ -86,8 +86,13 @@ rollup and before the :30 retention purge. For each active, ClassPilot-licensed 
    top-of-hour tick after local midnight. Redis markers are advisory only. All finalizations are queued before today's work.
 2. Computes today once even when empty, then refreshes when a heartbeat arrived since its stored processed cutoff (with a five-minute overlap).
 
-Each day is rewritten with DELETE, INSERT and its completion record in one transaction on the scheduler pool, under a per-school
-advisory lock; every statement filters `school_id = $1` itself because the scheduler bypasses RLS.
+Each day is reconciled from one materialized set of computed grains: changed grains are updated, missing
+grains are inserted and vanished grains are deleted by three disjoint sibling CTEs. Unchanged aggregates
+keep their identity and timestamps and produce no aggregate-row writes. The completion ledger still records
+successful empty or unchanged computations and advances their processed cutoff. All changes and completion
+remain in one transaction on the scheduler pool under the existing per-school advisory lock; every statement
+filters `school_id = $1` itself because the scheduler bypasses RLS. The grain reconciliation uses the same
+COALESCE keys as the unique index and a hashable full join rather than one full-day scan per grain.
 
 Retention safety: the job never rewrites a day that starts before the purge horizon (the top of the
 current UTC hour before :30, or now after it, or when this process last finished the purge if later,
