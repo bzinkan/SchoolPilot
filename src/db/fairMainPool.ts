@@ -1,10 +1,10 @@
 import { AsyncResource } from 'node:async_hooks';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { readClasspilotDigitalUsageMode } from '../config/classpilotUsageModes.js';
+import { readClasspilotUsageModes } from '../config/classpilotUsageModes.js';
 import type { DatabaseProcessRole } from '../config/databasePools.js';
 
-const LANES = ['default', 'usage_report', 'user_identity'] as const;
+const LANES = ['default', 'usage_report', 'user_identity', 'heartbeat'] as const;
 type Lane = typeof LANES[number];
 type Release = (error?: Error | boolean) => void;
 type ConnectCallback = (error: Error | undefined, client: pg.PoolClient | undefined, release: Release) => void;
@@ -27,13 +27,14 @@ export interface FairPoolOptions extends Omit<pg.PoolConfig, 'Client' | 'Promise
   Client?: typeof pg.Client; Promise?: PromiseConstructor;
 }
 export function shouldScheduleUsagePool(role: DatabaseProcessRole, env: NodeJS.ProcessEnv = process.env): boolean {
-  return role === 'api' && readClasspilotDigitalUsageMode(env) === 'on';
+  const modes = readClasspilotUsageModes(env);
+  return role === 'api' && (modes.rollupMode === 'on' || modes.digitalUsageMode === 'on');
 }
 
 
 export interface FairMainPoolInstance extends pg.Pool {
   schedulingSnapshot(): {
-    max: number; callerBudgetMs: number; queuedDefault: number; queuedUsageReports: number; queuedUserIdentities: number;
+    max: number; callerBudgetMs: number; queuedDefault: number; queuedUsageReports: number; queuedUserIdentities: number; queuedHeartbeats: number;
     ownedSlots: number; nativeInFlight: number; leased: number; closing: number;
     unendedClients: number; ending: boolean; waitingCount: number;
   };
@@ -48,7 +49,7 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
   clearTimer: timer => clearTimeout(timer),
 } }: { readOperation: () => string | undefined; NativeClient?: typeof pg.Client; runtime?: FairPoolRuntime }): new (options: FairPoolOptions) => FairMainPoolInstance {
   return class FairMainPool extends NativePool {
-    #queues = { default: new Fifo(), usage_report: new Fifo(), user_identity: new Fifo() };
+    #queues = { default: new Fifo(), usage_report: new Fifo(), user_identity: new Fifo(), heartbeat: new Fifo() };
     #entries = new Set<Entry>();
     #clients = new WeakMap<pg.Client, ClientState>();
     #unendedClients = new Set<pg.Client>();
@@ -80,7 +81,7 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
       this.#promise = options.Promise ?? Promise;
       // pg declares this readonly property but implements a public getter.
       Object.defineProperty(this, 'waitingCount', { configurable: true, get: () =>
-        this.#queues.default.size + this.#queues.usage_report.size + this.#queues.user_identity.size +
+        this.#queues.default.size + this.#queues.usage_report.size + this.#queues.user_identity.size + this.#queues.heartbeat.size +
         Reflect.get(NativePool.prototype, 'waitingCount', this) });
       hooks.created = client => this.#observeClient(client);
       this.#ownershipDrained = new Promise(resolve => { this.#resolveOwnershipDrained = resolve; });
@@ -127,7 +128,7 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
     schedulingSnapshot() {
       return { max: this.options.max, callerBudgetMs: 5000,
         queuedDefault: this.#queues.default.size, queuedUsageReports: this.#queues.usage_report.size,
-        queuedUserIdentities: this.#queues.user_identity.size,
+        queuedUserIdentities: this.#queues.user_identity.size, queuedHeartbeats: this.#queues.heartbeat.size,
         ownedSlots: this.#slots, nativeInFlight: this.#native, leased: this.#leased,
         closing: this.#closing, unendedClients: this.#unendedClients.size,
         ending: this.#endRequested, waitingCount: this.waitingCount };
@@ -155,7 +156,8 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
       }
       const operation = readOperation();
       const entry: Entry = {
-        kind: operation === 'usage_report' || operation === 'user_identity' ? operation : 'default',
+        kind: operation === 'usage_report' || operation === 'user_identity' ? operation
+          : operation === 'heartbeat_middleware' || operation === 'heartbeat_persistence' || operation === 'heartbeat_final_delivery' ? 'heartbeat' : 'default',
         deadline: runtime.now() + 5000, callback, resource: new AsyncResource('fair-main-pool-checkout'),
         state: 'queued', callerSettled: false, timer: undefined, previous: null, next: null,
       };

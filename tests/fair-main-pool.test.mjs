@@ -324,14 +324,40 @@ test('each two-lane subset alternates and empty identity lanes reserve no native
   clients.forEach(client => client.release());
 });
 
-test('auth entitlement and label lookalikes remain default while identity gets one bounded turn', async t => {
+test('generic auth and label lookalikes remain default while heartbeat and identity get bounded turns', async t => {
   const f = fixture(t, { max: 1 }), held = await f.occupy(), order = [];
   const labels = ['auth', 'user_identity_untrusted', 'USER_IDENTITY', 'heartbeat_middleware', 'user_identity', 'usage_report'];
   const jobs = labels.map(label => f.connect(label).then(client => { order.push(label); client.release(); }));
-  assert.equal(f.pool.schedulingSnapshot().queuedDefault, 4);
+  assert.equal(f.pool.schedulingSnapshot().queuedDefault, 3);
   assert.equal(f.pool.schedulingSnapshot().queuedUserIdentities, 1);
+  assert.equal(f.pool.schedulingSnapshot().queuedHeartbeats, 1);
   held[0].release(); await Promise.all(jobs);
-  assert.deepEqual(order, ['usage_report', 'user_identity', 'auth', 'user_identity_untrusted', 'USER_IDENTITY', 'heartbeat_middleware']);
+  assert.deepEqual(order, ['usage_report', 'user_identity', 'heartbeat_middleware', 'auth', 'user_identity_untrusted', 'USER_IDENTITY']);
+});
+
+test('heartbeat flood cannot starve staff identity, reports or default traffic at unchanged pool limits', async t => {
+  for (const max of [1, 2, 16]) {
+    const f = fixture(t, { max }), held = await f.occupy(), order = [];
+    const labels = ['default', 'usage_report', 'user_identity', 'heartbeat_persistence'];
+    const jobs = labels.flatMap(label => Array.from({ length: 20 }, (_, i) =>
+      f.connect(label).then(client => { order.push(`${label}:${i}`); client.release(); })));
+    assert.equal(f.pool.waitingCount, 80); assert.equal(f.pool.schedulingSnapshot().queuedHeartbeats, 20);
+    held[0].release(); await Promise.all(jobs);
+    assert.deepEqual(order, Array.from({ length: 20 }, (_, i) =>
+      [`usage_report:${i}`, `user_identity:${i}`, `heartbeat_persistence:${i}`, `default:${i}`]).flat());
+    assert.equal(f.physical().peakAlive, max); held.slice(1).forEach(client => client.release()); await f.cleanup();
+  }
+});
+
+test('only exact foreground heartbeat labels share the heartbeat lane and retain FIFO', async t => {
+  const f = fixture(t, { max: 1 }), held = await f.occupy(), order = [];
+  const labels = ['heartbeat_background', 'heartbeat_persistence_untrusted', 'HEARTBEAT', 'heartbeat',
+    'heartbeat_middleware', 'heartbeat_final_delivery', 'heartbeat_persistence', 'user_identity'];
+  const jobs = labels.map(label => f.connect(label).then(client => { order.push(label); client.release(); }));
+  assert.equal(f.pool.schedulingSnapshot().queuedHeartbeats, 3); assert.equal(f.pool.schedulingSnapshot().queuedDefault, 4);
+  held[0].release(); await Promise.all(jobs);
+  assert.deepEqual(order, ['user_identity', 'heartbeat_middleware', 'heartbeat_background', 'heartbeat_final_delivery',
+    'heartbeat_persistence_untrusted', 'heartbeat_persistence', 'HEARTBEAT', 'heartbeat']);
 });
 
 test('expired identity work consumes no turn or connection and new work keeps its absolute deadline', async t => {

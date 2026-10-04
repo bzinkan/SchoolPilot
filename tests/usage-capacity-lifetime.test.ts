@@ -130,8 +130,9 @@ test("actual heartbeat owner uses finally outside all post-response work and mid
   assert.match(route, /startUsageCapacityOperation\("heartbeat_handler"\);\s*let finishForegroundTelemetry: \(\) => void = \(\) => \{\};\s*try \{/);
   assert.match(route, /await Promise\.all\(teacherReplyPublications\);[\s\S]*return finalDelivery\.value;[\s\S]*finally \{[\s\S]*endHeartbeatHandler\(\);/);
   assert.match(route, /catch \(err\) \{\s*recordUsageCapacityCounter\("heartbeatHandlerFailures", "heartbeat_handler"\);\s*next\(err\);/);
-  for (const middleware of ["requireCryptographicDeviceAuth", "requireClasspilotEntitlement", "deviceHeartbeatLimiter"]) {
+  for (const middleware of ["requireCryptographicDeviceAuth", "deviceHeartbeatLimiter"]) {
     assert.ok(route.includes(`trackUsageCapacityMiddleware("heartbeat_middleware", ${middleware})`));
   }
+  assert.match(route, /withClasspilotHeartbeatAdmission\(\[\s*trackUsageCapacityMiddleware\("heartbeat_middleware", createRequireClasspilotEntitlement\(schoolId =>\s*runWithUsageCapacityOperation\("heartbeat_middleware", \(\) => resolveClasspilotEntitlement\(schoolId\)\)\)\)/);
   assert.doesNotMatch(route, /(?:once|on)\(["'](?:close|finish)["'],\s*endHeartbeatHandler/);
 });

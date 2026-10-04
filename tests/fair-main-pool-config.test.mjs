@@ -7,9 +7,10 @@ const admitted = {
   CLASSPILOT_USAGE_ROLLUP_MODE: 'on', CLASSPILOT_DIGITAL_USAGE_MODE: 'on',
   RLS_GUC_ENABLED: 'true', RLS_ENABLED_TABLES: 'classpilot_usage_rollups,classpilot_usage_rollup_days',
 };
-test('only admitted reporting-on API processes select fair main scheduling', () => {
+test('only admitted Usage-on API processes select fair main scheduling including rollup-only', () => {
   assert.equal(shouldScheduleUsagePool('api', admitted), true);
-  for (const env of [{}, { ...admitted, CLASSPILOT_DIGITAL_USAGE_MODE: 'off' },
+  assert.equal(shouldScheduleUsagePool('api', { ...admitted, CLASSPILOT_DIGITAL_USAGE_MODE: 'off' }), true);
+  for (const env of [{},
     { ...admitted, CLASSPILOT_USAGE_ROLLUP_MODE: 'off' }, { ...admitted, CLASSPILOT_DIGITAL_USAGE_MODE: 'ON' },
     { ...admitted, RLS_GUC_ENABLED: 'false' }, { ...admitted, RLS_ENABLED_TABLES: 'classpilot_usage_rollups' },
     { ...admitted, RLS_ENABLED_TABLES: 'classpilot_usage_rollup_days' },

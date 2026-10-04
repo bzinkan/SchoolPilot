@@ -30,7 +30,8 @@ import {
   releaseClassPilotTileAdmission,
 } from "../../middleware/classpilotTileAdmission.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
+import { createRequireClasspilotEntitlement, requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
+import { withClasspilotHeartbeatAdmission } from "../../middleware/classpilotHeartbeatAdmission.js";
 import {
   markStudentSignInStage,
   markStudentSignInMethod,
@@ -202,7 +203,7 @@ import {
   trackHeartbeatClassificationProducer,
 } from "../../services/heartbeatClassificationBatcher.js";
 import { selectRequestSchoolRole } from "../../services/schoolAuthorization.js";
-import { recordUsageCapacityCounter, startUsageCapacityOperation, trackUsageCapacityMiddleware } from "../../services/usageCapacityDiagnostics.js";
+import { recordUsageCapacityCounter, runWithUsageCapacityOperation, startUsageCapacityOperation, trackUsageCapacityMiddleware } from "../../services/usageCapacityDiagnostics.js";
 import {
   bindHeartbeatHotPathHistoryFallbackSqlIdentity,
   recordHeartbeatHotPathCounter,
@@ -3770,7 +3771,9 @@ router.post(
 // POST /api/classpilot/device/heartbeat - Device sends heartbeat (device JWT auth)
 router.post("/device/heartbeat",
   trackUsageCapacityMiddleware("heartbeat_middleware", requireCryptographicDeviceAuth),
-  trackUsageCapacityMiddleware("heartbeat_middleware", requireClasspilotEntitlement),
+  withClasspilotHeartbeatAdmission([
+  trackUsageCapacityMiddleware("heartbeat_middleware", createRequireClasspilotEntitlement(schoolId =>
+    runWithUsageCapacityOperation("heartbeat_middleware", () => resolveClasspilotEntitlement(schoolId)))),
   trackUsageCapacityMiddleware("heartbeat_middleware", deviceHeartbeatLimiter), async (req, res, next) => {
   const endHeartbeatHandler = startUsageCapacityOperation("heartbeat_handler");
   let finishForegroundTelemetry: () => void = () => {};
@@ -4957,7 +4960,7 @@ router.post("/device/heartbeat",
     // disconnect must never report this handler as drained before its work ends.
     endHeartbeatHandler();
   }
-});
+}]));
 
 // ============================================================================
 // Screenshots
