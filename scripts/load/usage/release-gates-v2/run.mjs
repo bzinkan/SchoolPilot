@@ -53,7 +53,9 @@ export async function runV2(options) {
   assert.equal(reservation.receiptDirectory,output);assert.equal(reservation.privateDirectory,control);
   const windowBytes = readFileSync(options.quietWindowFile); assert.equal(hash(windowBytes), options.quietWindowSha256);
   const window = JSON.parse(windowBytes); assert.equal(window.source, options.source); assert.equal(window.profile, profile.name);
-  assert.equal(window.noOtherLoadOrBuilds, true); assert.ok(Date.now() >= Date.parse(window.startsAt) && Date.now() < Date.parse(window.expiresAt));
+  if(options.preparationSmoke===true)assert.equal(window.preparationSmoke,true);
+  else assert.equal(window.noOtherLoadOrBuilds, true);
+  assert.ok(Date.now() >= Date.parse(window.startsAt) && Date.now() < Date.parse(window.expiresAt));
   const run = options.run, arm = options.arm || 'C', declaredAt = new Date().toISOString();
   assert.ok(['A', 'B', 'C'].includes(arm)); assert.equal(profile.usage, !!options.snapshotDirectory);
   const plan = { schemaVersion: 2, run, source: options.source, arm, mode: 'diagnostic', declaredAt, profile: profile.name, contractSha256: profileHash(profile),
