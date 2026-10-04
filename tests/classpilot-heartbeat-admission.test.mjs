@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { createHeartbeatAdmissionGate, HeartbeatAdmissionError, heartbeatAdmissionEnabled,
-  withClasspilotHeartbeatAdmission } from '../src/middleware/classpilotHeartbeatAdmission.ts';
+  getClasspilotHeartbeatAdmissionSnapshot, withClasspilotHeartbeatAdmission } from '../src/middleware/classpilotHeartbeatAdmission.ts';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -32,6 +32,28 @@ function run(stages, gate, supplied = request(), enabled = true) {
   return { ...supplied, completion };
 }
 function errorCode(code) { return error => error instanceof HeartbeatAdmissionError && error.code === code; }
+
+test('singleton ownership snapshots are fresh, immutable and include queued/running cleanup until complete drain', async () => {
+  const initial = getClasspilotHeartbeatAdmissionSnapshot(), cleanup = deferred();
+  assert.deepEqual(initial, { active: 0, queued: 0 });
+  assert.notEqual(initial, getClasspilotHeartbeatAdmissionSnapshot());
+  assert.ok(Object.isFrozen(initial));
+  assert.throws(() => { initial.active = 99; }, TypeError);
+  const invoke = stages => {
+    const supplied = request();
+    return { ...supplied, completion: withClasspilotHeartbeatAdmission(stages, { enabled: () => true })(
+      supplied.req, supplied.res, error => supplied.errors.push(error)) };
+  };
+  const running = Array.from({ length: 8 }, () => invoke([async (_req, res) => { res.json({ ok: true }); await cleanup.promise; }]));
+  await tick();
+  const queued = invoke([(_req, res) => res.json({ ok: true })]);
+  await tick(); assert.deepEqual(getClasspilotHeartbeatAdmissionSnapshot(), { active: 8, queued: 1 });
+  queued.req.aborted = true; queued.req.emit('aborted'); await queued.completion;
+  assert.deepEqual(getClasspilotHeartbeatAdmissionSnapshot(), { active: 8, queued: 0 });
+  assert.deepEqual(initial, { active: 0, queued: 0 });
+  cleanup.resolve(); await Promise.all(running.map(invocation => invocation.completion));
+  assert.deepEqual(getClasspilotHeartbeatAdmissionSnapshot(), { active: 0, queued: 0 });
+});
 
 test('eight active plus32 FIFO waiters; the33rd waiter is rejected without starting work', async () => {
   const { gate, clock } = fixture(), held = await occupy(gate), order = [];

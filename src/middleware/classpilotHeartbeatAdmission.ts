@@ -81,6 +81,10 @@ export function createHeartbeatAdmissionGate(runtime: Runtime = {
 }
 export type HeartbeatAdmissionGate = ReturnType<typeof createHeartbeatAdmissionGate>;
 const heartbeatAdmissionGate = createHeartbeatAdmissionGate();
+/** Content-free ownership gauge; each read is independent of the singleton. */
+export function getClasspilotHeartbeatAdmissionSnapshot(): Readonly<{ active: number; queued: number }> {
+  return Object.freeze(heartbeatAdmissionGate.snapshot());
+}
 export function heartbeatAdmissionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const modes = readClasspilotUsageModes(env);
   return modes.rollupMode === "on" || modes.digitalUsageMode === "on";
