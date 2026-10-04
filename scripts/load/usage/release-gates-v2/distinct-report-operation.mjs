@@ -87,7 +87,7 @@ function requireDatabase(snapshot) {
   const statements = Object.values(snapshot.database.statements); assert.ok(statements.length > 0);
   assert.ok(statements.every(row => row.failures === 0));
 }
-function requireHeartbeatTraffic(traffic) {
+export function verifyDistinctHeartbeatTraffic(traffic) {
   const offered = traffic.heartbeats;
   assert.deepEqual(offered.configured, PROFILES.usage.offering);
   for (const key of ['expected', 'started', 'succeeded', 'capabilityAcknowledgements200']) assert.equal(offered[key], 6000);
@@ -96,6 +96,11 @@ function requireHeartbeatTraffic(traffic) {
   assert.equal(offered.startAlignmentAccepted, true); assert.ok(offered.declaredStartLatenessMs >= 0 && offered.declaredStartLatenessMs <= 100);
   assert.deepEqual(offered.targetHistogram, { 0: 2004, 1: 1998, 2: 1998 });
   assert.equal(traffic.lifecycle.passed, true);
+  assert.equal(traffic.lifecycle.expectedNegativeProbes?.length, 2);
+  assert.equal(new Set(traffic.lifecycle.expectedNegativeProbes.map(row=>row.requestId)).size,2);
+  for(const row of traffic.lifecycle.expectedNegativeProbes){
+    assert.match(row.requestId,/^[a-f0-9-]{36}$/);assert.equal(row.status,409);assert.equal(row.code,'PRIVATE_CHAT_LIFECYCLE_STALE');
+  }
   assert.equal(traffic.reports.length, 0, 'The original64 matrix must not run inside the separate distinct operation');
 }
 
@@ -226,7 +231,7 @@ export async function runDistinctEndpointOperation({ registration, fixture, apis
     result.concurrent = settled.map(row => row.status === 'fulfilled' ? { status: row.status, valueSha256: digest(row.value) } : { status: row.status, error: safeError(row.reason) });
     assert.ok(settled.every(row => row.status === 'fulfilled'));
     const [traffic, distinct, workers] = settled.map(row => row.value);
-    requireHeartbeatTraffic(traffic); requireWorkers(workers);
+    verifyDistinctHeartbeatTraffic(traffic); requireWorkers(workers);
     verifyDistinctEndpointReportResult(distinct, prepared, fixture, oracle);
     result.actualWorkloadOverlap = verifyDistinctWorkloadOverlap(workers, traffic, distinct, startsAtMs);
     result.reports = distinct;

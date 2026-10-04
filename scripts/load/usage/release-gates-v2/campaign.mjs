@@ -6,10 +6,18 @@ import { profileFor, profileHash, OLD_CONTRACT_SHA256, OLD_CLOSED_JOURNAL_SHA256
 import { loadReceipt } from './receipts.mjs';
 import { validatePairs, validateMixedRuns } from './validation.mjs';
 import {assertUsagePostVerificationBinding,assertUsagePostVerificationReceiptBinding,assertUsagePostVerificationSet} from './usage-post-verification.mjs';
+import {verifyOriginalUsagePrerequisites} from './distinct-report-run.mjs';
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
 export function declareCampaign(options) {
   const profile=profileFor(options.profile), directory=resolve(options.directory);
-  assert.equal(existsSync(directory),false);assert.ok(['paired','mixed','usage','classroom','preparation'].includes(options.kind));
+  assert.equal(existsSync(directory),false);assert.ok(['paired','mixed','usage','classroom','preparation','distinct'].includes(options.kind));
+  assert.equal(options.kind==='distinct',profile.distinctReports===true,'Distinct endpoints require their separate campaign');
+  if(profile.distinctReports){
+    assert.equal(options.originalUsageReceiptManifestSha256s?.length,3);
+    assert.equal(new Set(options.originalUsageReceiptManifestSha256s).size,3);
+    for(const value of options.originalUsageReceiptManifestSha256s)assert.match(value,/^[a-f0-9]{64}$/);
+    for(const key of ['originalUsageCampaignContractSha256','originalUsageCampaignJournalSha256'])assert.match(options[key],/^[a-f0-9]{64}$/);
+  }
   if(options.kind!=='preparation')assert.equal(options.kind==='paired',['blackbox','diagnostic'].includes(profile.kind));
   assert.match(options.candidateSource,/^[a-f0-9]{40}$/);if(options.kind==='paired')assert.match(options.baselineSource,/^[a-f0-9]{40}$/);
   assert.match(options.observedFlagsSha256,/^[a-f0-9]{64}$/);
@@ -20,8 +28,10 @@ export function declareCampaign(options) {
   mkdirSync(directory);
   const contract={schemaVersion:2,declaredAt:new Date().toISOString(),kind:options.kind,profile:profile.name,contractSha256:profileHash(profile),
     candidateSource:options.candidateSource,baselineSource:options.baselineSource??null,observedFlagsSha256:options.observedFlagsSha256,
-    originalFailedContractSha256:OLD_CONTRACT_SHA256,order:options.kind==='preparation'?[options.arm||'C']:options.kind==='paired'?['A','A','A','B','B','A','A','B']:['C','C','C'].slice(0,options.kind==='classroom'?1:3),
-    pairedReleaseComparisonRequired:options.kind==='usage',historicalSingleTaskDiagnosticOnly:true,capacityAccepted:false,productionReadiness:false,...postVerification};
+    originalFailedContractSha256:OLD_CONTRACT_SHA256,order:options.kind==='preparation'?[options.arm||'C']:options.kind==='paired'?['A','A','A','B','B','A','A','B']:['C','C','C'].slice(0,['classroom','distinct'].includes(options.kind)?1:3),
+    pairedReleaseComparisonRequired:options.kind==='usage',historicalSingleTaskDiagnosticOnly:true,capacityAccepted:false,productionReadiness:false,...postVerification,
+    ...(profile.distinctReports?{originalUsageReceiptManifestSha256s:[...options.originalUsageReceiptManifestSha256s],
+      originalUsageCampaignContractSha256:options.originalUsageCampaignContractSha256,originalUsageCampaignJournalSha256:options.originalUsageCampaignJournalSha256}:{})};
   writeFileSync(join(directory,'contract.json'),JSON.stringify(contract,null,2)+'\n',{flag:'wx'});
   writeFileSync(join(directory,'journal.json'),JSON.stringify({contractSha256:hash(readFileSync(join(directory,'contract.json'))),attempts:[],closed:false},null,2)+'\n',{flag:'wx'});
   return contract;
@@ -39,6 +49,8 @@ export function registerAttempt(options) {
   assert.equal(receipt.observedFlagsSha256,contract.observedFlagsSha256);
   assert.equal(receipt.run,reservation.run);assert.equal(receipt.reservationSha256,reservation.reservationSha256);
   assertUsagePostVerificationReceiptBinding(contract,receipt);
+  if(contract.kind==='distinct')assert.deepEqual(receipt.originalColdRunPrerequisites?.map(row=>row.receiptManifestSha256),contract.originalUsageReceiptManifestSha256s);
+  if(contract.kind==='distinct')assert.deepEqual(receipt.originalUsageCampaignBinding,{contractSha256:contract.originalUsageCampaignContractSha256,journalSha256:contract.originalUsageCampaignJournalSha256});
   } catch { verificationFailure='RECEIPT_UNAVAILABLE_OR_INVALID'; receipt={run:reservation.run,source:reservation.source,profile:contract.profile,arm:reservation.arm,runPassed:false,cleanupPassed:false,verificationFailure}; }
   const previousJournalSha256=hash(readFileSync(join(directory,'journal.json')));
   const attempt={index,run:reservation.run,registeredAt:new Date().toISOString(),receiptDirectory:resolve(options.receiptDirectory),receiptManifestSha256:options.receiptManifestSha256,
@@ -56,7 +68,9 @@ export function reserveAttempt(options) {
   const arm=contract.order[index],reservation={index,run:options.run,arm,source:arm==='A'?contract.baselineSource:contract.candidateSource,
     profile:contract.profile,contractSha256:contract.contractSha256,campaignContractSha256:journal.contractSha256,preparationSmoke:contract.kind==='preparation',
     observedFlagsSha256:contract.observedFlagsSha256,receiptDirectory:resolve(options.receiptDirectory),privateDirectory:resolve(options.privateDirectory),reservedAt:new Date().toISOString(),
-    ...(contract.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:contract.usagePostVerificationContractSha256,hostHarnessSource:contract.hostHarnessSource}:{})};
+    ...(contract.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:contract.usagePostVerificationContractSha256,hostHarnessSource:contract.hostHarnessSource}:{}),
+    ...(contract.kind==='distinct'?{originalUsageReceiptManifestSha256s:contract.originalUsageReceiptManifestSha256s,
+      originalUsageCampaignContractSha256:contract.originalUsageCampaignContractSha256,originalUsageCampaignJournalSha256:contract.originalUsageCampaignJournalSha256}:{})};
   const file=join(directory,`reservation-${index+1}.json`);writeFileSync(file,JSON.stringify(reservation,null,2)+'\n',{flag:'wx'});
   const reservationSha256=hash(readFileSync(file));journal.attempts.push({...reservation,reservationSha256,state:'reserved'});
   writeFileSync(join(directory,'journal.next'),JSON.stringify(journal,null,2)+'\n',{flag:'wx'});renameSync(join(directory,'journal.next'),join(directory,'journal.json'));
@@ -114,6 +128,14 @@ export function closeCampaign(options) {
     const binding=usageCandidateBinding(records,contract.candidateSource),evidence=verifyUsageComparisons(options,contract,binding);
     result={passed:true,candidateBinding:binding,
       ...evidence,capacityAccepted:false,...(contract.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:contract.usagePostVerificationContractSha256,hostHarnessSource:contract.hostHarnessSource}:{})};
+  } else if(contract.kind==='distinct'){
+    assert.equal(records.length,1);const record=records[0];assert.equal(record.runPassed,true);
+    assert.deepEqual(options.originalUsageRuns?.map(row=>row.receiptManifestSha256),contract.originalUsageReceiptManifestSha256s);
+    assert.deepEqual({contractSha256:options.originalUsageCampaign?.contractSha256,journalSha256:options.originalUsageCampaign?.journalSha256},record.originalUsageCampaignBinding);
+    const prerequisites=verifyOriginalUsagePrerequisites(options.originalUsageRuns,{source:record.source,applicationImage:record.applicationImage,schemaSha256:record.schemaSha256,originalUsageCampaign:options.originalUsageCampaign});
+    assert.deepEqual(prerequisites,record.originalColdRunPrerequisites);
+    result={passed:true,distinctEndpointGatePassed:true,original64MatrixChanged:false,firstComputationColdEvidence:false,
+      originalUsageReceiptManifestSha256s:contract.originalUsageReceiptManifestSha256s,capacityAccepted:false};
   } else if(contract.kind==='paired') {
     result={passed:false,diagnosticOnly:true,recordsComplete:records.length===8,
       safetyAndRecoveryPassed:records.every(record=>record.cleanupPassed&&record.sourceUnchanged&&record.rounds.every(round=>round.persistence?.passed&&round.drains.every(drain=>drain.complete))),capacityAccepted:false};

@@ -22,6 +22,8 @@ import { bootstrapHealthOperationalFixture, restoredOperationalIdentities } from
 import { runHeavyUsageWorkers, completeUsageChecks } from './usage-checks.mjs';
 import {runBoundaryPreparation} from './boundary-preparation.mjs';
 import {assertUsagePostVerificationReservation,verifyUsageClassroomAfterLoad} from './usage-post-verification.mjs';
+import { assertDistinctGeneratedBinding, verifyOriginalUsagePrerequisites, executeDistinctProfile, verifyDistinctCompletedRun } from './distinct-report-run.mjs';
+import { sanitizedDistinctOperationFailure } from './distinct-report-operation.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -60,6 +62,18 @@ export async function runV2(options) {
   assert.equal(reservation.profile,profile.name);assert.equal(reservation.contractSha256,profileHash(profile));assert.equal(reservation.observedFlagsSha256,remapped.observedFlagsSha256);
   const requiredUsagePostVerification=assertUsagePostVerificationReservation(reservation,options,profile);
   const hostHarnessDirectory=resolve(dirname(fileURLToPath(import.meta.url)),'../../../..');
+  let originalColdRunPrerequisites;
+  if(profile.distinctReports){
+    assert.equal(options.preparationSmoke===true,false,'Distinct endpoint acceptance requires its own full registered run');
+    assert.equal(git(hostHarnessDirectory,['rev-parse','HEAD']),preparation.harnessSource);
+    assert.equal(git(hostHarnessDirectory,['status','--porcelain']),'');
+    assertDistinctGeneratedBinding(preparation,hostHarnessDirectory);
+    originalColdRunPrerequisites=verifyOriginalUsagePrerequisites(options.originalUsageRuns,{source:options.source,
+      applicationImage:binding.applicationImage,schemaSha256:preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256,originalUsageCampaign:options.originalUsageCampaign});
+    assert.deepEqual(reservation.originalUsageReceiptManifestSha256s,originalColdRunPrerequisites.map(row=>row.receiptManifestSha256));
+    assert.equal(reservation.originalUsageCampaignContractSha256,options.originalUsageCampaign.contractSha256);
+    assert.equal(reservation.originalUsageCampaignJournalSha256,options.originalUsageCampaign.journalSha256);
+  }
   if(requiredUsagePostVerification){
     assert.equal(options.preparationSmoke===true,false,'The cold Usage post-verification contract is not a preparation smoke');
     assert.equal(git(hostHarnessDirectory,['rev-parse','HEAD']),options.hostHarnessSource);assert.equal(git(hostHarnessDirectory,['status','--porcelain']),'');
@@ -82,7 +96,9 @@ export async function runV2(options) {
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
     operationalFixtureBootstrapRequired: true,
     sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false,
-    ...(options.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:options.usagePostVerificationContractSha256,hostHarnessSource:options.hostHarnessSource}:{}) };
+    ...(options.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:options.usagePostVerificationContractSha256,hostHarnessSource:options.hostHarnessSource}:{}),
+    ...(profile.distinctReports?{distinctReportRpc:true,originalColdRunPrerequisites,originalUsageCampaignBinding:{
+      contractSha256:options.originalUsageCampaign.contractSha256,journalSha256:options.originalUsageCampaign.journalSha256}}:{} ) };
   const planFile = output + '.plan.json'; writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n', { flag: 'wx' }); const planSha256 = hash(readFileSync(planFile));
   const environment = { ...process.env }; for (const key of Object.keys(environment)) if (/^(?:DOCKER_|BUILDX_BUILDER$|NODE_OPTIONS$)/.test(key)) delete environment[key];
   const docker = async (args, { input, timeout = 120_000 } = {}) => {
@@ -137,6 +153,8 @@ export async function runV2(options) {
       }
       assert.match(redisId, /^[a-f0-9]{64}$/);
       for (let n = 0; n < 60; n++) { try { assert.equal((await dockerInput(['exec', redisId, 'redis-cli', '-p', '6387', 'PING'])).trim(), 'PONG'); break; } catch { if (n === 59) throw Error('REDIS_NOT_READY'); await pause(100); } }
+      const apiBases = [0, 1, 2].map(n => 'http://127.0.0.1:' + (4001 + n));
+      if(profile.distinctReports)Object.assign(fixture,{sourceRevision:options.source,apiBases});
       observer = await role('observer', '/harness/observer.mjs', .5, 1024 ** 3); await observer.rpc('initialize', fixture);
       const blackbox = ['blackbox', 'diagnostic'].includes(profile.kind);
       async function startApi(index) { const owner = await role('api' + index, blackbox ? '/harness/blackbox-api.mjs' : '/diagnostic/scripts/load/usage/release-enabled-process.mjs', 1, 2 * 1024 ** 3, index); active.set(index, owner); return owner; }
@@ -144,10 +162,17 @@ export async function runV2(options) {
       if (profile.kind === 'usage'||profile.initialApiTasks===3) { await startApi(1); await startApi(2); }
       const worker = profile.usage ? await role('worker', '/diagnostic/scripts/load/usage/release-enabled-process.mjs', .5, 1024 ** 3) : null;
       const generator = await role('generator', blackbox ? '/harness/blackbox-generator.mjs' : '/diagnostic/scripts/load/usage/release-enabled-generator.mjs', 2, 1024 ** 3);
-      const apiBases = [0, 1, 2].map(n => 'http://127.0.0.1:' + (4001 + n));
-      await generator.rpc('initialize', { ...fixture, apiBases });
+      const generatorInitialization=await generator.rpc('initialize', { ...fixture, apiBases });
+      if(profile.distinctReports)metrics.generatorInitialization=generatorInitialization;
       await pause(5500); // Keep the preflight's existing5s throttle out of measured ordinary offers.
       await Promise.all([...active.values()].map(owner => owner.rpc('quiesce')));
+      if(profile.distinctReports){
+        await executeDistinctProfile({options:{...options,harnessDirectory:hostHarnessDirectory},metrics,preparation,fixture,active,worker,observer,generator,
+          output,save:(name,value)=>save(output,name,value)});
+        assert.equal(today(),fixture.today,'Distinct fixture crossed the school-local date');
+        assert.ok(Date.now()<Date.parse(window.expiresAt),'Distinct operation exceeded its declared quiet window');
+        return;
+      }
       if(options.preparationSmoke===true){
         if(profile.preparationOnly){
           const result=await runBoundaryPreparation({profile,active,stop,generator,observer,fixture,docker:dockerInput,save:(name,value)=>save(output,name,value)});
@@ -289,7 +314,7 @@ export async function runV2(options) {
       mkdirSync(output); mkdirSync(control); save(output, 'run-plan.json', plan);
       await withCommonDatabase({ ...options, outputDirectory: output, privateDirectory: control }, dockerInput, (configuration, restart) => measure(configuration, restart));
     }
-  } catch (error) { failure = error.code || error.message || 'V2_RUN_FAILED'; if (error.privateDetail && existsSync(control)) writeFileSync(join(control, 'failure.private'), error.privateDetail, { flag: 'wx', mode: 0o600 }); }
+  } catch (error) { failure = profile.distinctReports?sanitizedDistinctOperationFailure(error).code:error.code || error.message || 'V2_RUN_FAILED'; if (error.privateDetail && existsSync(control)) writeFileSync(join(control, 'failure.private'), error.privateDetail, { flag: 'wx', mode: 0o600 }); }
   finally {
     if (existsSync(output)) {
       metrics.sourceUnchanged = git(options.sourceDirectory, ['rev-parse', 'HEAD']) === options.source && git(options.sourceDirectory, ['status', '--porcelain']) === '';
@@ -304,6 +329,14 @@ export async function runV2(options) {
         && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0)&&metrics.expectedNegativeLogCoverage===true;
       if(profile.kind==='blackbox')metrics.runPassed&&=Number.isFinite(metrics.wholeOwnedApiCpuMicroseconds)&&metrics.wholeOwnedApiCpuMicroseconds>0&&metrics.wholeOwnedCpuIncludesFinalClassificationFlush===true;
       if(options.usagePostVerificationContractSha256)metrics.runPassed&&=metrics.usagePostVerification?.passed===true&&metrics.hostHarnessSourceUnchanged===true;
+      if(profile.distinctReports){
+        metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===preparation.harnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
+        metrics.runPassed=!failure&&metrics.distinctOperation?.passed===true&&metrics.distinctClassroomBindings?.passed===true
+          &&metrics.rounds.length===0&&metrics.cleanupPassed===true&&metrics.sourceUnchanged&&metrics.hostHarnessSourceUnchanged
+          &&metrics.errorCoverage?.length===8&&metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0)&&metrics.expectedNegativeLogCoverage===true;
+        if(metrics.runPassed)try{metrics.distinctNativeCustody=verifyDistinctCompletedRun(output,control,metrics);}
+        catch(error){metrics.runPassed=false;failure=sanitizedDistinctOperationFailure(error).code;}
+      }
       metrics.failure = failure ?? null; metrics.finishedAt = new Date().toISOString();
       if (metrics.rounds.length) { metrics.cpuMsPer200 ??= metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }
       save(output, 'metrics.json', metrics);

@@ -26,6 +26,16 @@ const distinctObserverRpc = createDistinctObserverRpc({ pool, run: process.env.U
     } else if (request.operation === 'distinctAudit') {
       value = await distinctObserverRpc.audit(request.value);
     } else if (request.operation === 'correctness') {`);
+  text = replaceOnce(text, '      value = { passed: true, catalog, migrations, restrictedRole: true, crossSchool: true, resetScope: true };', `      const heavyRows = (await pool.query(\`SELECT school.id AS school_id,COUNT(h.id)::int AS count
+        FROM schools school LEFT JOIN heartbeats h ON h.school_id=school.id
+          AND h.timestamp >= (($2::date::timestamp AT TIME ZONE school.school_timezone) AT TIME ZONE 'UTC')
+          AND h.timestamp < ((($2::date+1)::timestamp AT TIME ZONE school.school_timezone) AT TIME ZONE 'UTC')
+        WHERE school.id=ANY($1::text[]) GROUP BY school.id ORDER BY school.id\`,
+        [fixture.schools.map(school=>school.id),fixture.heavyDate])).rows;
+      assert.equal(heavyRows.length,2);
+      const distinctHeavyRows=fixture.schools.map(school=>({schoolIndex:school.index,count:heavyRows.find(row=>row.school_id===school.id)?.count}));
+      assert.ok(distinctHeavyRows.every(row=>row.count===1_000_000));
+      value = { passed: true, catalog, migrations, restrictedRole: true, crossSchool: true, resetScope: true, distinctHeavyRows };`);
   return text;
 }
 export function patchDistinctRoleEntryRpc(source) {

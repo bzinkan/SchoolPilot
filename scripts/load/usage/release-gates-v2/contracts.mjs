@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { distinctReportContractHash } from './distinct-reports.mjs';
 
 // New contracts only. The failed single-API 100/s contract is immutable.
 export const OLD_CONTRACT_SHA256 = '10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92';
@@ -10,6 +11,10 @@ const offering = (rate, schoolDevices, durationMs = 60_000) => frozen({ requests
   schoolDevices: frozen(schoolDevices), durationMs, deviceCadenceMs: 10_000,
   expected: rate * durationMs / 1000, maxInFlight: schoolDevices.reduce((a, b) => a + b, 0),
   requestTimeoutMs: 20_000, maxOfferLatenessMs: 100 });
+// Preserve the historical Usage object's exact property order and values.
+// Contracts depend only on the pure report contract, never its coordinator.
+export const USAGE_BASE = frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
+  apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, pairedReleaseComparisonRequired: true });
 const broader = (variant, distribution) => frozen({name:`release297-usage-800-3-2-${variant}-v2`,kind:'mixed',offering:offering(80,[400,400]),usage:true,
   apiTasks:3,initialApiTasks:3,rounds:15,repetitions:3,continuousOffering:offering(80,[400,400],900_000),broaderCapacityGate:true,
   broaderVariant:variant,reports:64,rawPerSchool:1_000_000,workerAcceptanceMs:48_000,workerStartAtMs:600_000,
@@ -46,8 +51,13 @@ export const PROFILES = frozen({
       frozen({fromRound:7,active:frozen([0,1,2]),distribution:'sticky80'}),
       frozen({fromRound:10,active:frozen([1,2]),distribution:'survivors',lost:0,reconnectOffers:133,reconnectWindowMs:10_000,reconnectStartDelayMs:1000}),
     ])}),
-  usage: frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
-    apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, pairedReleaseComparisonRequired: true }),
+  usage: USAGE_BASE,
+  usageDistinct: frozen({ ...USAGE_BASE,
+    name: 'release297-usage-shared-db-three-api-distinct64-v1', repetitions: 1,
+    distinctReports: true, reportContractSha256: distinctReportContractHash(),
+    originalColdRunsRequired: 3, freshRestoreRequired: true,
+    coveragePreparation: 'actual-workers-before-timed-offers',
+    firstComputationColdEvidence: false, original64MatrixChanged: false }),
   broader: broader('ordinary-survivors','survivors'),
   broaderConcentrated: broader('concentrated-lost-reconnect','lostToOneSurvivor'),
 });
