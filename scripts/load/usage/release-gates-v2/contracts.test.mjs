@@ -304,3 +304,13 @@ test('v2 snapshot cleanup overlays only exact owned graceful cleanup and preserv
   assert.equal(adapted.compareNativeSchemas.toString().replaceAll('\r\n','\n'),native.compareNativeSchemas.toString().replaceAll('\r\n','\n'));assert.equal(adapted.verifyOwnedSnapshotContainer.toString().replaceAll('\r\n','\n'),native.verifyOwnedSnapshotContainer.toString().replaceAll('\r\n','\n'));
   assert.throws(()=>gracefulSnapshotOverlay(original.replace("remove:actualId=>call(['rm','--force','--volumes',actualId]","changed"),url));
 });
+
+
+test('monotonic offering waits through undersleep at each due time and the complete window',async()=>{
+  let clock=0,waits=0;const offered=[];
+  const config={...PROFILES.normal.offering,requestsPerSecond:20,schoolDevices:[3,0],durationMs:150,deviceCadenceMs:150,expected:3,maxInFlight:3};
+  const result=await offerHeartbeats(async offer=>{offered.push({offset:offer.offsetMs,actual:clock});return{status:200,targetIndex:0};},
+    {config,now:()=>clock,sleep:async ms=>{waits++;clock+=Math.max(.1,ms-.75);}});
+  assert.equal(result.accepted,true);assert.ok(waits>3);assert.ok(offered.every(row=>row.actual>=row.offset));
+  assert.ok(result.offerWindowMs>=config.durationMs);assert.equal(result.offered,3);assert.equal(result.outstandingAfterDrain,0);
+});

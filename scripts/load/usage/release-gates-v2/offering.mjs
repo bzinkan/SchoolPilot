@@ -15,6 +15,7 @@ export function targetFor(index, config) {
 export async function offerHeartbeats(send, { config, now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), reconnect = false, mapOffer } = {}) {
   assertOffering(config);if(mapOffer)assert.equal(reconnect,true,'Only declared reconnect subsets may remap the ordinary population');
   const pending = new Set(), start = now();
+  const sleepUntil=async deadline=>{while(now()<deadline)await sleep(Math.max(1,deadline-now()));};
   const fresh = configured => ({ configured: structuredClone(configured), expected: configured.expected, offered: 0, started: 0, succeeded: 0, failed: 0,
     refusedAtInFlightLimit: 0, lateOffers: 0, maxOfferLatenessMs: 0, peakInFlight: 0, outstandingAfterDrain: null,
     bySchool: {}, bindings: {}, targetHistogram: {}, timingsMs: [], buckets: [], statusHistogram: {} });
@@ -25,7 +26,7 @@ export async function offerHeartbeats(send, { config, now = () => performance.no
     assert.ok(Number.isSafeInteger(offer.deviceIndex)&&offer.deviceIndex>=0&&offer.deviceIndex<500);
     const due = start + offer.offsetMs;
     const minute=result.windows[Math.floor(offer.offsetMs/60_000)], outputs=minute?[result,minute]:[result];
-    if (now() < due) await sleep(due - now());
+    await sleepUntil(due);
     const lateness = Math.max(0, now() - due), bucketIndex = Math.floor(offer.offsetMs / 5000);
     const bucket = result.buckets[bucketIndex] ??= { offsetMs: bucketIndex * 5000, offered: 0, started: 0, succeeded: 0, failed: 0, refused: 0, timingsMs: [] };
     const school = result.bySchool[offer.schoolIndex] ??= { offered: 0, started: 0, succeeded: 0, failed: 0, refused: 0 };
@@ -58,11 +59,11 @@ export async function offerHeartbeats(send, { config, now = () => performance.no
     }).finally(() => { clearTimeout(timer); const elapsed = now() - started; result.timingsMs.push(elapsed);if(minute)minute.timingsMs.push(elapsed); bucket.timingsMs.push(elapsed); pending.delete(operation); });
     pending.add(operation); result.peakInFlight = Math.max(result.peakInFlight, pending.size);
   }
-  if (now() < start + config.durationMs) await sleep(start + config.durationMs - now());
+  await sleepUntil(start+config.durationMs);
   result.offerWindowMs = now() - start; result.outstandingAtEndOfOffering = pending.size;
   await Promise.all([...pending]); result.totalIncludingDrainMs = now() - start; result.outstandingAfterDrain = pending.size;
   result.accepted = result.offered === config.expected && result.started === config.expected && result.succeeded === config.expected
-    && !result.failed && !result.refusedAtInFlightLimit && !result.lateOffers && !pending.size;
+    && result.offerWindowMs>=config.durationMs && !result.failed && !result.refusedAtInFlightLimit && !result.lateOffers && !pending.size;
   for(const minute of result.windows){minute.outstandingAfterDrain=0;minute.capabilityAcknowledgements200=minute.succeeded;
     minute.accepted=minute.offered===minute.expected&&minute.started===minute.expected&&minute.succeeded===minute.expected&&!minute.failed&&!minute.refusedAtInFlightLimit&&!minute.lateOffers;}
   return result;
