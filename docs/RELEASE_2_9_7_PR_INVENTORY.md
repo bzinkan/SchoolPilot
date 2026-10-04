@@ -1,6 +1,13 @@
 # SchoolPilot / ClassPilot 2.9.7 release inventory
 
-The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Historical review-head checks at c237cd7a and unchanged extension 8069a9c9 are green; changed SchoolPilot source requires fresh combined checks. New paired/current-school acceptance is not yet measured. Historical Usage failures remain intact.
+The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Application `ed026513` passes all 20 reported CI checks and 2,032 local unit tests without skips; unchanged extension `8069a9c9` passes all 10 checks. The [current read-only checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json) binds exact commits and package bytes. Subsequent harness/documentation changes require new review-head CI. Paired/current-school acceptance and corrected-fallback image recovery remain pending. Historical Usage failures remain intact.
+
+New corrections incorporated directly into #603 include bounded heartbeat admission,
+Usage-aware pool fairness, changed/missing/vanished rollup writes, and tenant-owned
+cleanup/retention/audit transactions. They preserve the 54 migrations and 129-table
+inventory. The reviewed safe fallback is `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`,
+a narrow cleanup backport to the historical fallback; both Usage modes must stay off.
+No additional source PR has been independently merged or closed by this work.
 
 This is an inclusion inventory, not merge, deployment, or activation evidence. The structured record preserves full commits, base dependencies and inclusion proofs. Checkpoint 60bb2338157a9f0c313ebffae3f42a69ac3e3345 is based on main 996d965f0b044f8fc4d4bbc399c5ab3781fbac04. Preserve original review branches; reconcile their PRs only after the single integration PR lands.
 

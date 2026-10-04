@@ -20,7 +20,21 @@ have separate [incremental evidence](release-evidence/release-297/usage-contenti
 and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
-Current October 3 checkpoint: **Usage capacity has no accepted passing run**.
+## Current preparation status
+
+Application `ed026513` passes 2,032 local unit tests without skips and all 20
+reported CI checks. Its fresh local API/worker image has zero HIGH/CRITICAL scan
+findings; the frontend is rebuilt and the 54-migration/129-table synthetic schema
+is verified. Exact hashes and verification limits are in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
+and [CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json).
+The corrected safe fallback is being built and scanned. Final image recovery,
+new paired/current-school acceptance and three continuous classroom runs remain
+pending. Usage capacity has zero accepted runs and both new Usage modes remain off.
+The owner is waiting to submit ClassPilot until preparation is complete.
+
+## Historical preparation checkpoints
+
+Historical October 3 checkpoint: **Usage capacity has no accepted passing run**.
 The new [screenshot-reader implementation](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
 passes 2,012 unit tests, 95 owner-role and 95 restricted-role database tests,
 four private-chat checks, and build/type/cast checks. The initial full-unit
@@ -175,30 +189,27 @@ recipient, enforcement, tenancy or deployment health checks.
 
 ## Current release selection and evidence
 
-This selection snapshot includes application `e95a2b56`; its fresh local image
-passes build/scan/compatibility checks and follow-up CI is green. Capacity remains
-unaccepted. **No final-source API/worker release candidate is selected.**
-The preceding b112 local image and its 6e251 recovery pair pass their stated checks,
-but Usage capacity remains failed. Reconcile final source, images, completed CI
-and accepted capacity before the separately authorized release steps below.
+The prepared application artifact is bound to `ed026513`; later changes affect
+harness/tests/documentation only. Selection for execution still requires accepted
+release gates, final review-head and resulting-main checks, recovery and fresh
+production verification. Historical images and failed campaigns remain intact.
 
 | Item | Current selection / evidence limitation |
 |---|---|
-| SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`; remote main verified unchanged October 3, 2026 |
-| Integration branch | `codex/release-stabilization-297`; [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603), preserve original review branches |
-| ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
-| Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
-| Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Remote review source / CI | [Review head `97dad081`](release-evidence/release-297/usage-contention/ci-97dad081-final-01/manifest.json) contains application `e95a2b56` and passes all 17 CI jobs and three security workflows, including both database lanes, frontend/browser and rollout safety. The prior clock failure and test-only correction remain recorded. The subsequently committed role harness has 378 passing local guards and remains outside this CI source. Approved merged main requires its own checks. |
-| Current correction / local checks | The [domain-map correction](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json) passes 1,906 unit cases, 25 owner and 12 restricted native cases, all without skips, and build/type/cast checks. It preserves all nine semantic grain columns against immutable b112 SQL. Prepared reads, Focus, privacy and lifecycle corrections remain included. |
-| API / worker artifacts | **No final release image selected.** The [fresh e95 image](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json) passes an uncached build, pinned scan with zero findings and compatibility checks; Linux manifest `sha256:3b0816f59a00612b0bfb41e2b45e4767dbac2f7eba873d6354035cb24e523593`. The [6e251 fallback](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) remains compatible at the checked contract floor. The completed actual-image recovery pair used the preceding b112 candidate. Final capacity, recovery binding, registry identities, approved merged-main bindings and production task pairs remain unverified. |
-| Local recovery rehearsal | The [current b112/6e251 local rehearsal](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) verifies reconstructed empty baseline 7af9 → b112 → 6e251 → b112 with 53 migration IDs and 129 forced-RLS tables. Separate actual-image bundled-function checks preserve expired chat and exact Focus cleanup. These are synthetic source/schema and function proofs, not production catalog/data or service-traffic rollback verification. Earlier rehearsals remain historical. |
-| Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
-| Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
-| Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [reconciled read-only check](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. The [previously cancelled sibling run](https://github.com/bzinkan/ClassPilot/actions/runs/37048477885) passed on rerun, including Chrome 120, 133, 152 and stable. The PR remains open/draft. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes; CI is not publication or live acceptance. |
-| Frontend aggregate | [Frontend source binding to e95](release-evidence/release-297/usage-contention/frontend-e95-binding-01/receipt.json) verifies all 632 input blobs and the retained artifact hash against the prior 739 passing Node cases, direct browser scripts, build and lint (29 existing warnings). Artifact SHA-256 `7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f`. Follow-up CI at `97dad081` also passes. This is not live acceptance. |
-| Live pilot / validation | User confirmed St. Francis DeSales, Cincinnati (`desalescincy.org`), with 133 students, three administrators and nine teachers shown in the supplied screenshot. Production school UUID and current eligibility remain unverified. Live validation has not started; minimum 30 minutes with nonzero samples for every required lifecycle category. |
-| Usage capacity | **Zero accepted runs; Usage remains off.** The [e95 combined diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json) has 4,413/6,000 successful heartbeats, 949 failures, 638 refusals, zero late offers and 950 acquisition failures. All 64 reports and independent numeric/coverage/CSV checks pass; classroom lifecycle fails. Whole workers take 12.284/30.984 seconds. The [ingestion-only CPU diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-cpu-e95-01/manifest.json) also fails at 5,081/6,000 successful offers. Attribution supports bounded follow-up experiments, not a proven capacity fix. Three consecutive final-source full passes and the original comparison remain required. Both load schools are synthetic; DeSales is the sole live school. |
+| SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`; origin/main remains separate from the open integration PR |
+| Integration branch | `codex/release-stabilization-297`; [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603); preserve and later reconcile incorporated review branches |
+| Application source / CI | `ed0265133d4a87fd3d2477dd90884535b749ee7d`; [all 20 reported checks pass](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json). Later harness/documentation heads need fresh CI; approved resulting main needs its own checks and application equivalence proof. |
+| Current correction / local checks | [2,032 unit passes, no skips](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json). Bounded Usage heartbeat admission, pool fairness, delta rollup writes and tenant-owned atomic cleanup/audit are included. |
+| Local API / worker candidate | Fresh ed026 image: index `sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f`, amd64 manifest `sha256:1edf606c00d4abd931745449bb0b2d65770f424f80ba9e46f391d7c9718ca72d`. Pinned scanner reports zero HIGH/CRITICAL findings, including unfixed. Local preparation is not registry publication, a deployed task pair or release approval. |
+| Compatible fallback | `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`, a narrow cleanup backport to historical 6e251 with existing chat writer/bridge/relay and Focus protections. Native regressions pass; new scanned-image recovery is pending. Both new Usage modes must remain off. The old production image is invalid after lifecycle adoption. |
+| Schema / recovery | Verified synthetic 54-migration/129-table candidate schema and baseline-to-candidate source re-entry. The recorded source rehearsal used historical 6e251; it does not certify the new safe fallback image, production catalog/data or service-traffic rollback. |
+| Frontend | Fresh ed026 lint/build artifact SHA-256 `7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675`. All four frontend release CI shards pass for the application. No frontend was published. |
+| ClassPilot integration / CI | [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123), #119 → #120 → #121 → #122 ancestry. Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d` has all 10 checks passing, including Chrome 120/133/152/stable. PR remains open/draft. |
+| Extension identity / package | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7; packaged source `065be165b5df704d84eb716e3fb914c1fed17f98`; ZIP SHA-256 `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`. Unchanged 24-file verification passes; copy is at C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip. |
+| Store state | Last public observation: 2.9.6, updated September 27. Pending developer submissions remain unverified. Repeat both checks immediately before separately authorized upload; submission is held. |
+| Release capacity | Paired sole-school/34-per-second comparison and three continuous 15-minute mixed-classroom passes are pending. Real-image preparation smokes and 23 harness validators are preparation-only. Original single-task 100/s failures remain diagnostic failures. |
+| Usage capacity | Zero accepted runs. Separate three-API campaign and deployed observation gate Usage activation. A faster unchanged-grain component is not capacity acceptance. DeSales is the only live school; all load schools are synthetic. |
+| Live pilot / validation | DeSales screenshot showed 133 students; current production UUID, eligibility and participating clients remain unverified. No live acceptance has started. Require at least 30 sample-bearing minutes after separately authorized staged release. Managed two-Chromebook gate remains waived_not_passed. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)

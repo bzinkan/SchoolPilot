@@ -9,13 +9,25 @@ ClassPilot to the Store.
 
 ## Current verified checkpoint
 
-- SchoolPilot review head c237cd7a1dba7b4b92b7a474715f181f176c5bab: all 20
-  reported checks pass. ClassPilot head 8069a9c9bd50352e187847158b356a69edc4e45d:
-  all 10 reported checks pass. Future changed heads require fresh checks.
-- Application checkpoint 814844f344a45159152415b0fb6d7027f05b093e retains
-  54 migrations and the 129-table target. Historical Usage acceptance is zero;
-  the latest diagnostic's successful reports/workers did not complete lifecycle,
-  drain and post-load correctness.
+- Application source `ed0265133d4a87fd3d2477dd90884535b749ee7d`: all 20
+  reported checks pass, including backend, both database lanes, four frontend
+  release shards and security. ClassPilot head
+  `8069a9c9bd50352e187847158b356a69edc4e45d`: all 10 checks pass.
+  The [read-only CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
+  records exact heads and links. Subsequent SchoolPilot harness/documentation
+  changes preserve application and frontend inputs; their new review head still
+  requires fresh CI before merging.
+- The [application correction record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
+  records 2,032 local unit passes with no skips, the fresh candidate image with
+  zero HIGH/CRITICAL findings, rebuilt frontend, 54-migration/129-table synthetic
+  admission, and source migration re-entry. The corrected fallback source is
+  `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; final image recovery is pending.
+  These proofs do not establish capacity, production admission or deployment.
+- New harness validators pass 23 checks. Real production-image and candidate-image
+  preparation smokes have passed; they are explicitly preparation-only. Paired
+  current-school capacity and continuous mixed-classroom acceptance are pending.
+  Historical Usage acceptance remains zero. Successful report/worker timings in
+  a failed lifecycle/drain run remain failed diagnostic evidence.
 - The old registered campaign is closed using the byte-identical frozen validator.
   Canonical campaign hash: 10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92.
   Closed journal hash: 0fa077d62df01d2423c629738e0e76695532ed44ba4ab02ed413aa18327c6604.

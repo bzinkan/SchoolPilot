@@ -5,6 +5,24 @@ does not record a deployment, Chrome Web Store upload, managed-device test pass,
 or production capacity result. SchoolPilot and the extension release separately.
 The canonical release checklist remains the operator's release authority.
 
+## Current preparation checkpoint
+
+Application `ed0265133d4a87fd3d2477dd90884535b749ee7d` passes all 20 reported
+CI checks and 2,032 local unit tests with zero skips. The [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
+binds the fresh scanned API/worker candidate, rebuilt frontend, complete synthetic
+54-migration/129-table schema and source re-entry. The [CI and package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
+records exact successful runs and unchanged ClassPilot 2.9.7 bytes. Subsequent
+harness/documentation edits preserve application inputs but need review-head CI.
+
+Native regressions cover atomic cleanup audit, disconnect ownership, exactly-once
+lease release and tenant reset. Those fixes also exist in safe fallback source
+`6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; its final scanned-image recovery
+is pending. Real-image preparation smokes are preparation-only. The new measured
+paired/current-school and mixed-classroom gates have not passed yet. No new Usage
+capacity run is accepted, and no release execution or Store submission is approved.
+Historical checkpoint tables below retain their dated scope and do not select
+the current release artifact.
+
 Focused source-bound SQL, restricted-role and release-tool checks are preserved
 in the [durable validation manifest and sanitized log archive](release-evidence/release-297/README.md).
 They identify their exact incremental checkpoint and retain superseded failures;
