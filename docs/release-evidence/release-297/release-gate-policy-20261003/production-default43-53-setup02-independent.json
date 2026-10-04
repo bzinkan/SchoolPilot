@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_preserved_failure02_review",
+  "recordedAt": "2026-10-04T18:20:49.6024723Z",
+  "reviewer": "task_posture_review",
+  "executionSha256": "203ef3b0d49b3d03358eab9bded6a1e413779122cad8d34b8f17f3958c322e0b",
+  "custodySha256": "b6493f5ee1594991f3f022ba20daea778484ec25671a41ce781f1fd5f032848d",
+  "absenceSha256": "60f2d03cf3a7348e17bd24199575f186d3be90f7d3a3eea47bec21e63729ed0f",
+  "retainedMembersRehashed": 20,
+  "allContainedMemberBytesAndHashesMatched": true,
+  "baselineActualCli": {
+    "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+    "logSha256": "5940e45e014c56ecb3b227fb817894aabc2e34bff63d73117aa8769620d0b7c1",
+    "exitCode": 0,
+    "oomKilled": false,
+    "loggedAppliedCallbacks": 43,
+    "uniqueIds": 43,
+    "idsMatchIndependentlyPinnedBaseline43": true,
+    "optionalContractDeferred": true,
+    "terminalComplete": true,
+    "namedSqlConnections": 0,
+    "nativeChecksumModeStatusVectorCaptured": false
+  },
+  "failure": {
+    "code": "EEXIST",
+    "phase": "allocation before install121 native probe",
+    "sourceCause": "environment() allocates a deterministic migration-baseline121 environment path with wx; defaultProbe calls the same allocator again after the completed baseline CLI."
+  },
+  "outcomes": {
+    "apiWorkerServicesStarted": 0,
+    "nativePolicyInspectRestoreRecords": 0,
+    "schemaHandoff": false,
+    "nativeAccepted": false,
+    "capacityAccepted": false,
+    "productionMutations": 0
+  },
+  "cleanup": {
+    "retainedExactOwnedAbsenceVerified": true,
+    "ownedContainers": 2,
+    "ownedPostgresVolumes": 1,
+    "networkAbsent": true,
+    "allRemovedUnforced": true,
+    "allContainerExitCodesZero": true,
+    "noOom": true,
+    "gracefulCleanupPassed": true,
+    "executorAndConstructorAbsent": true
+  },
+  "prospectiveFixBoundary": [
+    "Unique environment allocation for every invocation without changing configured PGAPPNAME or runtime/source settings.",
+    "Unique native probe output for repeated candidate inspect/reentry, with no-overwrite durable custody.",
+    "No app, callback, schema, pool, deadline, resource or scenario change."
+  ],
+  "limitations": [
+    "Logged applied IDs and successful canonical CLI completion are observed; the intended independent native checksum/mode/status and schema checks were never reached.",
+    "Cleanup evidence is retained and rehashed; this review issued no fresh Docker query.",
+    "Original failed02 result and logs remain unchanged; no native acceptance or retry authorization is implied."
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_ci_historical_profile_fixture_review",
+  "recordedAt": "2026-10-04T16:51:41.676Z",
+  "sourceHead": "b6cadc7404ccdf8fbbda1e224873ca7ec4ce4900",
+  "staticReviewedFiles": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/lower-load.test.mjs",
+      "sha256": "36fe32da61d6e93632237f97e16edc4fec7fcf4fd08e9aa71a8a1449bef8164c"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/fixtures/contracts-05d745d5.fixture.mjs",
+      "sha256": "3de37a4d6170b0f0305118076df4614f78e02c1b7d98e24f1034fed10edd47af"
+    }
+  ],
+  "fixtureExactHistoricalGitBytes": true,
+  "gitDependencyRemoved": true,
+  "oldDeepEqualAndCanonicalHashesPreserved": true,
+  "meaningfulMutationRegressions": true,
+  "actualTests": 19,
+  "actualUniqueNames": 19,
+  "pass": 19,
+  "fail": 0,
+  "cancelled": 0,
+  "skipped": 0,
+  "todo": 0,
+  "syntaxChecks": 2,
+  "pathEmpty": true,
+  "elapsedMs": 902,
+  "wholeDeadlineMs": 20000,
+  "childCount": 6,
+  "allActualLogsRehashed": true,
+  "allEightSourcePinsMatch": true,
+  "ownedAbsent": true,
+  "unforced": true,
+  "evidence": [
+    [
+      "execution.json",
+      "1df5b84d5da6ad1d1cf1b9362b295c85dbdcdbc96164376304735757d5aa22b8"
+    ],
+    [
+      "tests.tap",
+      "8d10f75e53e5acd88cbd5c04348fe0ed0cf44e472dbae741331f1c4496528e76"
+    ],
+    [
+      "process-absence.json",
+      "ef920e76cfcf6603d4561125b4b6f00a968a5e80d704bf6bfc657bf4bd07739c"
+    ]
+  ],
+  "applicationEdits": 0,
+  "testsRunByReviewer": 0,
+  "remoteCiRepairedClaimed": false,
+  "capacityAccepted": false
+}

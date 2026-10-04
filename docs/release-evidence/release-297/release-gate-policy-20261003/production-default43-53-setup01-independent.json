@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_preserved_failure_review",
+  "recordedAt": "2026-10-04T18:13:15.5353795Z",
+  "reviewer": "task_posture_review",
+  "executionSha256": "6fdeb25b77923e8a94343edab34f0b4b6d5f100f772834ef0e354dfbfa03903f",
+  "custodySha256": "02e63c6d0936bcc433cb52baf59179d04e679fbf694903c93e745bcfa9304cef",
+  "absenceSha256": "f642f615d27c28851596db2de32fadf1a00a023786b7133122a672347c0a3d4d",
+  "nativeProbeSha256": "caa3131f9379c706a55bee2f9eb07fbde19935ee5e7a3ae699bd1413f4a59767",
+  "postgresLogSha256": "a93643657f454af01d508ed06d683d611163d88f5d601dd7cf2963fdbe99ae77",
+  "retainedMembersRehashed": 21,
+  "allContainedMemberBytesAndHashesMatched": true,
+  "constructor": {
+    "exitCode": 0,
+    "freshOwnedDatabase": true
+  },
+  "failure": {
+    "phase": "install121",
+    "arm": "baseline",
+    "code": "42P01",
+    "missingRelation": "classpilot_supervision_report_segments",
+    "clientEnded": true,
+    "sourceCause": "The source Drizzle configuration omits the reports schema module; the selected classpilot-supervision-activity-reports-20260910 callback creates all three report tables. Fixture policy installation preceded that callback."
+  },
+  "outcomes": {
+    "migrationCallbacksExecuted": false,
+    "apiWorkerServicesStarted": 0,
+    "serviceDrains": 0,
+    "schemaHandoff": false,
+    "nativeAccepted": false,
+    "capacityAccepted": false,
+    "productionMutations": 0
+  },
+  "cleanup": {
+    "retainedExactOwnedAbsenceVerified": true,
+    "ownedContainers": 2,
+    "ownedPostgresVolumes": 1,
+    "networkAbsent": true,
+    "allRemovedUnforced": true,
+    "postgresExitCode": 0,
+    "postgresOom": false,
+    "failedProbeExitCode": 1,
+    "failedProbeOom": false,
+    "failedProbeWasRemoved": true,
+    "gracefulCleanupPassed": false,
+    "containedFailureOnly": true
+  },
+  "limitations": [
+    "Resource absence is independently retained and rehashed evidence; this review issued no fresh Docker command.",
+    "Constructor success and failed-probe containment do not establish completed migration, restoration or service acceptance.",
+    "Original failed result, source bytes, logs, and public summary remain unchanged."
+  ]
+}

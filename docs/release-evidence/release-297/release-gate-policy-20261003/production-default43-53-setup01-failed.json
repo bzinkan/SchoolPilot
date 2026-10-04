@@ -1,0 +1,57 @@
+{
+  "actualServiceProcesses": 0,
+  "limitations": [
+    "Failed preparation, no accepted A43/B53 fixture",
+    "Probe selected actual43 but no migration callback had executed",
+    "Nonzero failed probe was safely removed; this is containment, not full graceful success",
+    "Private logs and synthetic credentials remain private under immutable custody"
+  ],
+  "accepted": false,
+  "windowSha256": "048787af964bbecb4f8d9a1800a6e9e37702a0ff534efaa3a2398a76fb3d85f7",
+  "cleanup": {
+    "constructorAndExecutorAbsent": true,
+    "failedOneShotProbeExitCode": 1,
+    "forced": false,
+    "fullyGracefulSuccess": false,
+    "allOwnedResourcesAbsent": true,
+    "postgresOomKilled": false,
+    "postgresExitCode": 0
+  },
+  "boundPlanSha256": "590c15964bff60bb03bd4b44308bac3c4502f2c67c77195fcb7c9c9845e8a37d",
+  "actualMigrationCliExecutions": 0,
+  "sourceDrizzleConstructor": {
+    "productionRawSchemaExport": false,
+    "ownedFreshEmptyDatabaseVerified": true,
+    "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+    "exitCode": 0
+  },
+  "attempt": "01",
+  "absence": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-01\\execution-0945561eb681\\independent-owned-absence.json",
+    "sha256": "f642f615d27c28851596db2de32fadf1a00a023786b7133122a672347c0a3d4d"
+  },
+  "failure": {
+    "missingRelation": "classpilot_supervision_report_segments",
+    "phase": "canonical121 policy setup",
+    "policySetupPrecededCreationCallback": true,
+    "sqlState": "42P01",
+    "sourceCallback": "classpilot-supervision-activity-reports-20260910"
+  },
+  "execution": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-01\\execution-0945561eb681\\execution.json",
+    "sha256": "6fdeb25b77923e8a94343edab34f0b4b6d5f100f772834ef0e354dfbfa03903f"
+  },
+  "productionMutations": 0,
+  "custody": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-01\\execution-0945561eb681\\custody-manifest.json",
+    "sha256": "02e63c6d0936bcc433cb52baf59179d04e679fbf694903c93e745bcfa9304cef"
+  },
+  "actualCompiledDefaultSelector": {
+    "previouslyApplied": false,
+    "requested": false,
+    "selectedCount": 43,
+    "exactObservedProductionIDChecksumModeMatch": true
+  },
+  "capacityAccepted": false,
+  "kind": "failed_local_production_default_fixture_preparation"
+}

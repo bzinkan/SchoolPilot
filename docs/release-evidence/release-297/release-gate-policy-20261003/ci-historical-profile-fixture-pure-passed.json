@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "kind": "ci-historical-profile-public-proof",
+  "commit": "a7a6eb194d733a8b5a429a812db84a483f84983f",
+  "parent": "b6cadc7404ccdf8fbbda1e224873ca7ec4ce4900",
+  "clean": true,
+  "scope": [
+    "scripts/load/usage/release-gates-v2/fixtures/contracts-05d745d5.fixture.mjs",
+    "scripts/load/usage/release-gates-v2/lower-load.test.mjs"
+  ],
+  "files": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/lower-load.test.mjs",
+      "sha256": "36fe32da61d6e93632237f97e16edc4fec7fcf4fd08e9aa71a8a1449bef8164c",
+      "bytes": 19064,
+      "gitBlob": "14150b764e349eb87108d8533e0ce2534e5f7f9a"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/fixtures/contracts-05d745d5.fixture.mjs",
+      "sha256": "3de37a4d6170b0f0305118076df4614f78e02c1b7d98e24f1034fed10edd47af",
+      "bytes": 7395,
+      "gitBlob": "afc727f6047a383084da91600bbeda63d4e20f56"
+    }
+  ],
+  "historicalFixture": {
+    "source": "05d745d5d695faf1d526bf31c44532ec43a0deb2",
+    "gitPath": "scripts/load/usage/release-gates-v2/contracts.mjs",
+    "gitBlob": "afc727f6047a383084da91600bbeda63d4e20f56",
+    "rawSourceSha256": "3de37a4d6170b0f0305118076df4614f78e02c1b7d98e24f1034fed10edd47af",
+    "byteIdenticalCopiedSource": true
+  },
+  "tests": {
+    "total": 19,
+    "pass": 19,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "syntaxChecks": 2,
+    "configuredWholeDeadlineMs": 20000,
+    "elapsedMs": 902,
+    "testExecutable": "absolute Node",
+    "testPATH": "empty",
+    "historicalGitRequired": false
+  },
+  "exactOwnedProcessesAbsent": true,
+  "ownedChildren": 6,
+  "forcedCleanup": false,
+  "staticReview": {
+    "kind": "independent_reviewer_message",
+    "reviewer": "task_posture_review",
+    "sourceSha256": "36fe32da61d6e93632237f97e16edc4fec7fcf4fd08e9aa71a8a1449bef8164c",
+    "fixtureSha256": "3de37a4d6170b0f0305118076df4614f78e02c1b7d98e24f1034fed10edd47af",
+    "clearedBeforeExecution": true,
+    "actualProofReviewPending": true
+  },
+  "preservedAssertions": [
+    "all historical profile deep equality",
+    "exact old single-task contract and closed journal hashes",
+    "exact per-profile canonical JSON hashes",
+    "unchanged lower workloads and policy"
+  ],
+  "newNegativeRegression": [
+    "changed Usage heartbeat offering total rejects",
+    "equal-value but reordered profile JSON rejects canonical hash drift"
+  ],
+  "evidence": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-historical-profile-pure-01\\preparation.json",
+      "sha256": "6aed0c7eb9087e527ead2c846838d3a87e5c22a7f6ec44680e3721152ca336be",
+      "bytes": 4765
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-historical-profile-pure-01\\run-pure.mjs",
+      "sha256": "cb5e87522ff39d56b0d19557aa9f34a8bda7acdca3b18731bcb65fa45a423ab5",
+      "bytes": 3789
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-historical-profile-pure-01\\execution.json",
+      "sha256": "1df5b84d5da6ad1d1cf1b9362b295c85dbdcdbc96164376304735757d5aa22b8",
+      "bytes": 4942
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-historical-profile-pure-01\\tests.tap",
+      "sha256": "8d10f75e53e5acd88cbd5c04348fe0ed0cf44e472dbae741331f1c4496528e76",
+      "bytes": 4331
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-historical-profile-pure-01\\process-absence.json",
+      "sha256": "ef920e76cfcf6603d4561125b4b6f00a968a5e80d704bf6bfc657bf4bd07739c",
+      "bytes": 470
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-ci-historical-profile-pure-01\\commit-verification.json",
+      "sha256": "c203dd74f3cd4feead91d856edd8e20791552ca8ee545683c9c404c85e178f05",
+      "bytes": 1848
+    }
+  ],
+  "priorFailure": {
+    "source": "root_confirmed_ci_failure",
+    "base": "b6cadc7404ccdf8fbbda1e224873ca7ec4ce4900",
+    "testLine": 36,
+    "cause": "historical Git object unavailable in shallow CI checkout",
+    "newHistoricalControlExecuted": false
+  },
+  "remoteCiRequired": true,
+  "applicationEdits": 0,
+  "schemaEdits": 0,
+  "packageEdits": 0,
+  "nativeActions": 0,
+  "cloudActions": 0,
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false
+}

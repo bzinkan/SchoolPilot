@@ -1,0 +1,54 @@
+{
+  "readOnlyWorkerObservation": {
+    "actualProviderHealthUnchanged": "UNKNOWN",
+    "cliSeconds": 10,
+    "wholeSeconds": 120,
+    "maximumEventsPerPage": 200,
+    "maximumCalls": 9,
+    "identityPrePostRequired": true,
+    "scanProof": "positive SchoolsInScope, equal SchoolsScanned, zero ScanFailures and ScanSkippedOverlap; aggregate integrity findings separately retained",
+    "noPagination": true,
+    "noProbeOrSql": true,
+    "maximumFilteredLogPages": 2,
+    "exactCurrentTaskStreamRequired": true
+  },
+  "toolProof": {
+    "sourceSha256": "5bf2a4110fd4fa1d7e6fd373da2e3e6a8fadd1ad00400fa4749e07ad47a861f7",
+    "integratedCommit": "27f16309a65a65f440ad9f82806eca1a0fd9d932",
+    "pureTests": 28,
+    "testSha256": "f8497ecf11a16d42d79f23504b451d2d1c744ec5a90db05917e06d4ee627fd54",
+    "isolatedCommit": "dde0b9e83f032129d18db43b38069777cf0bc088",
+    "actualRegistration": false,
+    "actualPublication": false
+  },
+  "recordedAtUtc": "2026-10-04T16:28:30.3311424Z",
+  "document": {
+    "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-operator-fallback-supplement-01\\OPERATOR_SUPPLEMENT.md",
+    "sha256": "c5943c77f15f8cf1359896e8f70343fdbad802fe1ba2785e553e01c71b1a4660"
+  },
+  "sourceBlobProof": {
+    "workerBlob": "b7e9f224444810d935e1cf3704eaf9bccfa0eead",
+    "candidate": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+    "baseline": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+    "identicalAcrossSources": true,
+    "staffScanBlob": "4698914367abb235e7b69c4a3d0f284c6c798580"
+  },
+  "schemaVersion": 1,
+  "workerPlan": {
+    "file": "C:\\Users\\zinka\\.codex\\artifacts\\release297-operator-fallback-supplement-01\\worker-health-readonly-plan.json",
+    "sha256": "68961196404617002074cb6fe584c83efb54c3b132965719850fd3ac2da1d436"
+  },
+  "passed": true,
+  "capacityAccepted": false,
+  "executionAuthorized": false,
+  "reviewOnly": true,
+  "kind": "independent-operator-fallback-supplement-and-worker-readonly-plan-review",
+  "productionWorkerObserved": false,
+  "limitations": [
+    "This is a source-backed non-executing plan. Concrete capture implementation, exact request hashes and separate root disposition remain future inputs.",
+    "WorkerHeartbeat precedes scheduler startup and proves liveness only; the counts-only staff scan can establish one completed database-backed existing operation, not every job or relational correctness.",
+    "A missing, stale, paginated, truncated or source/task-drifted record cannot be replaced with silence or service-wide aggregate metrics.",
+    "Actual fallback publication, compatible source task definitions, Plan/RegisterInactive authorization and recovery configuration remain pending; ECS ACTIVE registration is unused by services, not provider INACTIVE status."
+  ],
+  "noActionableFindings": true
+}
