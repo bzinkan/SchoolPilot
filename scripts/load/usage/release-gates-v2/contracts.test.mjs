@@ -314,3 +314,14 @@ test('monotonic offering waits through undersleep at each due time and the compl
   assert.equal(result.accepted,true);assert.ok(waits>3);assert.ok(offered.every(row=>row.actual>=row.offset));
   assert.ok(result.offerWindowMs>=config.durationMs);assert.equal(result.offered,3);assert.equal(result.outstandingAfterDrain,0);
 });
+
+
+test('a future declared offering start anchors the monotonic epoch after actual waiting',async()=>{
+  let clock=0;const actual=[];
+  const config={...PROFILES.normal.offering,requestsPerSecond:20,schoolDevices:[3,0],durationMs:150,deviceCadenceMs:150,expected:3,maxInFlight:3};
+  const result=await offerHeartbeats(async offer=>{actual.push({offset:offer.offsetMs,at:clock});return{status:200,targetIndex:0};},
+    {config,now:()=>clock,wallNow:()=>1000+clock,startsAtMs:1100,sleep:async ms=>{clock+=Math.max(.1,ms-.75);}});
+  assert.equal(result.accepted,true);assert.ok(actual[0].at>=100);assert.ok(actual.every(row=>row.at>=100+row.offset));
+  assert.equal(result.declaredStartedAtMs,1100);assert.ok(result.actualStartedAtMs>=1100);assert.ok(result.offerWindowMs>=150);
+  assert.ok(clock>=250);assert.ok(clock<253);
+});

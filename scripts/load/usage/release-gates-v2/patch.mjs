@@ -51,10 +51,12 @@ const endpointFor = (school, index) => {
   text = replaceOnce(text, "      value = { realSessionCookies: true, acceptedCapabilities: true };", "      }\n      value = { realSessionCookies: true, acceptedCapabilities: true };");
   text = replaceOnce(text, '      const config = { ...OPEN_LOOP_HEARTBEATS, ...(rpc.value.durationMs ? { durationMs: rpc.value.durationMs } : {}) };', `      const config = rpc.value.offering;
       assertOffering(config); assert.deepEqual(config, rpc.value.continuous ? v2Profile.continuousOffering : v2Profile.offering);
+      if(rpc.value.startsAtMs)while(Date.now()<rpc.value.startsAtMs)await sleep(Math.max(1,rpc.value.startsAtMs-Date.now()));
       continuousStartsAtMs=rpc.value.continuous?rpc.value.startsAtMs:null;
       observedStickyBindings.clear();
       topology = rpc.value.topology; base = apiBases[topology.active[0]];
       assert.ok(base);`);
+  text = replaceOnce(text,'false), { config }) : null,','false), { config, startsAtMs:rpc.value.startsAtMs }) : null,');
   // Long survival waves are fixed-clock offers, routed through targets that
   // are active when offered. They do not reuse the last lifecycle's base.
   text = replaceOnce(text, '  const start = performance.now(), result = await staffRequest(school, `/admin/usage?${query}`);',

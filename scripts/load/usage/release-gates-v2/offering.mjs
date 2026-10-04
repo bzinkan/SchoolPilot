@@ -12,14 +12,17 @@ export function targetFor(index, config) {
   }
   throw Error('Invalid fixture target');
 }
-export async function offerHeartbeats(send, { config, now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), reconnect = false, mapOffer } = {}) {
+export async function offerHeartbeats(send, { config, now = () => performance.now(), wallNow=()=>Date.now(),startsAtMs,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), reconnect = false, mapOffer } = {}) {
   assertOffering(config);if(mapOffer)assert.equal(reconnect,true,'Only declared reconnect subsets may remap the ordinary population');
-  const pending = new Set(), start = now();
   const sleepUntil=async deadline=>{while(now()<deadline)await sleep(Math.max(1,deadline-now()));};
+  if(startsAtMs!==undefined){assert.ok(Number.isFinite(startsAtMs));await sleepUntil(now()+Math.max(0,startsAtMs-wallNow()));}
+  const pending = new Set(), start = now();
   const fresh = configured => ({ configured: structuredClone(configured), expected: configured.expected, offered: 0, started: 0, succeeded: 0, failed: 0,
     refusedAtInFlightLimit: 0, lateOffers: 0, maxOfferLatenessMs: 0, peakInFlight: 0, outstandingAfterDrain: null,
     bySchool: {}, bindings: {}, targetHistogram: {}, timingsMs: [], buckets: [], statusHistogram: {} });
-  const result=fresh(config);result.windows=config.durationMs>60_000?Array.from({length:config.durationMs/60_000},(_,index)=>({...fresh({...config,durationMs:60_000,expected:Math.round(config.requestsPerSecond*60)}),windowIndex:index})):[];
+  const result=fresh(config);result.declaredStartedAtMs=startsAtMs??null;result.actualStartedAtMs=wallNow();
+  result.windows=config.durationMs>60_000?Array.from({length:config.durationMs/60_000},(_,index)=>({...fresh({...config,durationMs:60_000,expected:Math.round(config.requestsPerSecond*60)}),windowIndex:index})):[];
   for (let index = 0; index < config.expected; index++) {
     const selected=targetFor(index,config),offer=mapOffer?mapOffer(selected):selected;
     assert.equal(offer.index,selected.index);assert.equal(offer.offsetMs,selected.offsetMs);assert.equal(offer.schoolIndex,selected.schoolIndex);

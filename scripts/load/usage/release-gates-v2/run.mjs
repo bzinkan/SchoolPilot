@@ -170,7 +170,7 @@ export async function runV2(options) {
         const startsAtMs = Date.now() + 1000; canary.reset();
         const windowPromises = [...active.values()].map(owner => owner.rpc('measureWindow', { startsAtMs, durationMs: 60_000 }));
         const trafficPromise = generator.rpc('phase', { startsAtMs, offering: profile.offering, topology: stage, ingest: true, reports: profile.usage, lifecycle: !blackbox, reconnect: profile.kind === 'mixed' && index === 10 });
-        const workerOperation=worker?runHeavyUsageWorkers(worker,fixture):Promise.resolve([]);
+        const workerOperation=worker?(async()=>{while(Date.now()<startsAtMs)await pause(Math.max(1,startsAtMs-Date.now()));return runHeavyUsageWorkers(worker,fixture);})():Promise.resolve([]);
         const results=await Promise.allSettled([trafficPromise,workerOperation]);
         const traffic=results[0].status==='fulfilled'?results[0].value:{failed:true,error:'GENERATOR_PHASE_FAILED'};
         const workers=results[1].status==='fulfilled'?results[1].value:[{correct:false,error:'WORKER_PHASE_FAILED'}];

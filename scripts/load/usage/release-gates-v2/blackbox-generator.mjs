@@ -32,7 +32,8 @@ process.on('message', async request => {
         if (response.status !== 200) throw Object.assign(Error('Heartbeat failed'), { httpStatus: response.status });
         for (const capability of required) assert.ok(body.acceptedCapabilities?.includes(capability), `Missing negotiated ${capability}`);
         return { status: response.status, school: school.index, targetIndex:0 };
-      }, { config: verification?{...profile.offering,requestsPerSecond:200,schoolDevices:[1,1],durationMs:10,deviceCadenceMs:10,expected:2,maxInFlight:2}:profile.offering }));
+      }, { startsAtMs:verification?undefined:request.value.startsAtMs,
+        config: verification?{...profile.offering,requestsPerSecond:200,schoolDevices:[1,1],durationMs:10,deviceCadenceMs:10,expected:2,maxInFlight:2}:profile.offering }));
       value.clientWorkCompletedMs = performance.now() - started;
       value.capabilityAcknowledgements200=value.succeeded;
       if(verification)value.passed=value.accepted&&value.succeeded===2;
