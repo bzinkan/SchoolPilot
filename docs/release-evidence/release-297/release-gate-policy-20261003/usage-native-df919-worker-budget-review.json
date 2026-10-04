@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent-static-worker-contention-measurement-design",
+  "recordedAt": "2026-10-04T11:51:18.7833064Z",
+  "applicationSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "run": "df9199c13d82",
+  "sourceFiles": [
+    {
+      "path": "src/services/classpilotUsageRollup.ts",
+      "sha256": "fb8da117c027d51c7bd0e76c762e58668ba32c2927bb23eec99f61b80e76ddf4",
+      "gitBlob": "ee93afa9db710d7d102a7fa005932a8900dd1749"
+    },
+    {
+      "path": "src/services/classpilotUsageRollupAdmission.ts",
+      "sha256": "80bec8c4f197fefb5e44568aaa11a2f2ea920546ec306dd8747e84a1de578d79",
+      "gitBlob": "d1e1284b39cf5f5b4b850df2e84dce9a24fecb8a"
+    },
+    {
+      "path": "src/services/schedulerDb.ts",
+      "sha256": "bcbed37c78a1cef4d6acca3137dbc8a2b7271af7f9dded40a627b9b46693b1dc",
+      "gitBlob": "88b67adf24f5ef9866617d3c9b95490aa6acefbd"
+    },
+    {
+      "path": "src/schema/classpilot.ts",
+      "sha256": "e15c63e0c322adc19ef0e6e06cfb1136812a810fbdda7347c4fc87ed7a641ddc",
+      "gitBlob": "bf6bb6822e0f2059ed961c99fb0d466adf179558"
+    },
+    {
+      "path": "src/schema/shared.ts",
+      "sha256": "13934f29f316a290a127ebbd8a6b05e6a8f6a6bfd9832ebac32d375c30f4b21f",
+      "gitBlob": "f54b6a66ac0b19fc71dcf741e260ab472d92ed8f"
+    },
+    {
+      "path": "src/db/classpilotUsageRollupsMigration.ts",
+      "sha256": "a0758e7d9c381d74dabd339f22a91069697498a60278afb7a4ba7430b21bd747",
+      "gitBlob": "18698f33510384907666126ec351e4371b806532"
+    }
+  ],
+  "failedPublicSummary": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-usage-native-post-967bb-ddc-20261004-02\\public-completed-failure-summary-02.json",
+    "sha256": "2b764e5c6fa6cb6c85e2a6e1b3aa11bce2746ca735f5bb09b7bb4de60c95197c"
+  },
+  "measuredFacts": {
+    "workerFirstCompleteMs": 39268.286835,
+    "workerOperations": 2,
+    "workerOperationTotalMs": 100664.297,
+    "workerSecondCode": "57014",
+    "secondDurationMsInferredFromTotal": 61396.010165,
+    "apiAdmissionAdmitted": 2655,
+    "apiAdmissionDenied": 3345,
+    "http200": 2655,
+    "http503": 3345,
+    "finalAll11OwnershipGaugesZero": true,
+    "report200Correct": 64,
+    "perSqlPlansOrWaitsRetained": false,
+    "individual503BodiesRetained": false
+  },
+  "timeoutQualification": "One bulk writer plus one FIFO waiter on the shared scheduler pool; each60s budget starts at admission acquisition. Each SQL timeout is LEAST(inherited timeout, remaining budget). Second SQL timeout does not establish a60s standalone query. Exact queue/query split is unavailable.",
+  "hypotheses": [
+    "Per-student LATERAL ai_decision may repeatedly scan or rebuild a join against the school-wide materialized AI relation; inspect actual loops and rows.",
+    "Forced RLS estimates, observed/dedup windows and roster interval joins may misestimate cardinalities.",
+    "Full-outer grain reconciliation, hash/sort spilling and update/insert/delete trigger work are distinct candidate costs.",
+    "API persistence/final-delivery hold dominates checkout wait; query count and individual statement timings are needed to attribute it."
+  ],
+  "minimumProspectiveDiagnostics": [
+    "Fresh identical frozen restore for actual simultaneous two-school worker-only calls; retain actual scheduler role/GUC,pool5,.5CPU,PG4CPU4GiB and whole60s/accept48s budgets. Capture admission-called,permit-granted,checkout,lock,prior-ledger,reconcile,completion,commit,rollback,release timestamps and actual remaining SQL timeout values.",
+    "Separate fresh restore for exact100rps6000 heartbeats plus representative lifecycle, no64 reports or rollup worker traffic; retain three1CPU APIs/pool16,8active32queued250ms admission and existing deadlines. Capture per-canonical-SQL hash/timing and content-free pg wait categories via existing observer pool.",
+    "Read-only EXPLAIN FORMAT JSON of the exact compiled canonical SQL+original five parameter hashes before an executing plan. Separate EXPLAIN ANALYZE BUFFERS TIMING FALSE of unchanged DML in an owned synthetic transaction with the same lock/role/GUC and inherited remaining timeout, then awaited rollback and exact cleanup. This is diagnosis, not complete rollup acceptance.",
+    "Planner receipt includes actual loops/rows,buffer/temp block counts,sort method/spill,hash batches,reconciliation and trigger timing. Keep full plans/parameters private; content-free public hashes and counters only.",
+    "Use original measured combined failure as the unchanged reference. No acceptance runs, relabeling,reduced traffic pass,increased pools/timeouts,cache/aggregate,or index before a measured need. Any later repair requires new exact-source synthetic acceptance."
+  ],
+  "limitations": [
+    "No SQL,Docker,workload or application mutation occurred for this review.",
+    "Measured counters align admission denial with aggregate503s; individual response codes are not proven without retained bodies.",
+    "No leak,host interference,or single root cause is established.",
+    "PostgreSQL restart means cold server process, not cleared host filesystem cache."
+  ],
+  "noAcceptanceClaim": true,
+  "approvalPolicyUnchanged": true
+}

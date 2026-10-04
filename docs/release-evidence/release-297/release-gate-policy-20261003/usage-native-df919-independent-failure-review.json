@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "kind": "Independent preserved original Usage measured failure review",
+  "reviewedAt": "2026-10-04T11:35:54.132Z",
+  "run": "df9199c13d82",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "hostHarnessSource": "967bbf46b513554cf44048fe4e5d5139e784ce4b",
+  "helperHarnessSource": "7238c17c4c6367dbb6a35d3858a696e065381ab2",
+  "profile": "release297-usage-shared-db-three-api-100-v2",
+  "originalProfileSha256": "a9718adcfae27a856646c670720f13a8c36557009e78169e0905499a3f00d81f",
+  "sourceUnchanged": true,
+  "hostHarnessSourceUnchanged": true,
+  "overallAccepted": false,
+  "runRemainsFailed": true,
+  "outerFailure": "SNAPSHOT_RESTORE_FAILED",
+  "originalRestoreFailure": {
+    "stage": "handoff",
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION"
+  },
+  "firstFailingPredicate": {
+    "file": "scripts/load/usage/release-gates-v2/run.mjs:201",
+    "predicate": "cpuWindow endDelayMs <=100",
+    "actualWindows": [
+      {
+        "role": "api0",
+        "startDelayMs": 0,
+        "endDelayMs": 1448
+      },
+      {
+        "role": "api1",
+        "startDelayMs": 0,
+        "endDelayMs": 0
+      },
+      {
+        "role": "api2",
+        "startDelayMs": 0,
+        "endDelayMs": 1370
+      }
+    ],
+    "originalUsageOptionalCpuHelperNotUsedInThisPath": true,
+    "roundsSaved": 0
+  },
+  "independentWorkloadFailures": {
+    "heartbeatOffers": 6000,
+    "heartbeatStarted": 6000,
+    "heartbeatSuccesses": 2655,
+    "heartbeatFailures": 3345,
+    "lateOffers": 56,
+    "refusedAtInFlightLimit": 0,
+    "completeDrainOutstanding": 0,
+    "p95Ms": 982.0506910000004,
+    "workerSchool0CompletedDurationMs": 39268.286835000006,
+    "workerSchool1SqlErrorCode": "57014",
+    "workerSchool1SqlError": "statement timeout",
+    "workerSchool1StatementStarts": "WITH school_ai_decisions AS MATERIALIZED"
+  },
+  "successfulPartialEvidence": {
+    "reportEntries": 64,
+    "generatorReportsHttp200AndCorrect": 64,
+    "lifecycleEventCount": 26,
+    "generatorLifecyclePassed": true
+  },
+  "postgresCompleteLogCategories": {
+    "totalRejectedEntries": 5,
+    "startingUpFatal": 1,
+    "autovacuumCancellationErrors": 3,
+    "statementTimeoutErrors": 1
+  },
+  "cleanupPassed": true,
+  "roleCleanupConfirmedAbsent": true,
+  "roleCleanupPassed": true,
+  "pgCleanupPassed": true,
+  "forcedPgCleanup": false,
+  "pgExitCode": 0,
+  "pgOomKilled": false,
+  "rawBindings": [
+    {
+      "file": "receipt/receipt-manifest.json",
+      "bytes": 2855,
+      "sha256": "e35f26f83740a22aede9dc7b60b491830f55900c531f1a88ff31cf23dd281374"
+    },
+    {
+      "file": "receipt/metrics.json",
+      "bytes": 158438,
+      "sha256": "ea1f93b2bf35426df3404ae5dc0272bb0965012b845176a6f8692a7910c7c165"
+    },
+    {
+      "file": "receipt/continuous-traffic.json",
+      "bytes": 108493,
+      "sha256": "78d95d8d52453d9e0d3641dce5c06ede2f585fb00239a0292c0b7a0d1980f77f"
+    },
+    {
+      "file": "receipt/failure.json",
+      "bytes": 80,
+      "sha256": "826cd9722e49b89b0e3073f027b2df2c5f912e59b115ce2109196d0a9b69e381"
+    },
+    {
+      "file": "receipt/cleanup.json",
+      "bytes": 830,
+      "sha256": "d14e1a04f4fd13dd36b07b4f725224b166a7741bc8da37abec7bc44ca5a644f9"
+    },
+    {
+      "file": "receipt/role-cleanup.json",
+      "bytes": 4488,
+      "sha256": "81da3b342cbea5e6f72be456b3e14bcb8ec2f1d7f4df6fc3a81a73c4006654ba"
+    },
+    {
+      "file": "private/worker/response-2.json",
+      "bytes": 713,
+      "sha256": "4f038f4112cebb491d66c65f837be39cfc67b69b8a3773b748fc23f0e79f828d"
+    },
+    {
+      "file": "private/worker/response-3.json",
+      "bytes": 651,
+      "sha256": "96cad83a470f98957d04605957dbc6c28c7d749dcf7f3aeb237b9f981d2e7d2c"
+    },
+    {
+      "file": "private/api0/response-3.json",
+      "bytes": 1351,
+      "sha256": "73ef99a7be587679b31a923838f2dc4e5aa4adac7fcc47b9f9720d2704dd88af"
+    },
+    {
+      "file": "private/api1/response-3.json",
+      "bytes": 1348,
+      "sha256": "a50b7b440bf14d013910f0b0cad0a35c9aa5d61b63c174bceaa5207ed52658ba"
+    },
+    {
+      "file": "private/api2/response-3.json",
+      "bytes": 1351,
+      "sha256": "b4399b4194711da58292aff885146eec26e8d60f15c36bacf77b3b7a62734800"
+    },
+    {
+      "file": "private/postgres-log.private",
+      "bytes": 19098,
+      "sha256": "e69b9b421bde1cceac2edc4473da6d574877927225ba68eb88cb46e2e728bac1"
+    }
+  ],
+  "limitations": [
+    "CPU predicate is first thrown assertion, not a proven causal explanation of heartbeat or worker failure.",
+    "Role/API log error counters0 do not establish successful workload.",
+    "Heartbeat successful-status histogram records2655 HTTP200 entries only; transport failure status causes are not yet established.",
+    "Generator report correctness is partial evidence; final independent coverage/audit/CSV/native private lifecycle postconditions were not reached.",
+    "No application root cause, connection leak or independently invalid host condition is established.",
+    "No threshold, deadline, infrastructure or workload change is authorized by this review."
+  ],
+  "reviewerTestsNativeBuildActions": 0,
+  "capacityAccepted": false,
+  "productionReadiness": false
+}
