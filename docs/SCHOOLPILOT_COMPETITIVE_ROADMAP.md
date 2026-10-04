@@ -19,7 +19,16 @@ paired regression, current-school, three-to-two and separate Usage checks.
 Usage's deployed observation remains a later activation gate. SFU implementation
 and legacy media changes remain excluded.
 
-The latest October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
+Current preparation uses application `ed026513`, which passes all 20 reported
+CI checks and 2,032 local unit tests with no skips. Fresh local candidate,
+frontend and synthetic schema proofs are bound in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json).
+The [read-only CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
+records exact commits and unchanged ClassPilot 2.9.7 bytes. New measured release
+acceptance, corrected-fallback image recovery and separate Usage capacity remain
+pending. Subsequent harness/documentation changes need fresh review-head CI.
+The owner is holding Store submission until preparation is complete.
+
+The following checkpoints are historical. The October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
 passes 2,012 unit tests, 190 owner/restricted database checks, four private-chat
 checks and build/type/cast checks. It reduces client/database round trips while
 preserving authority, locks and tenant isolation. The [814844f3 image](release-evidence/release-297/usage-contention/candidate-artifact-814844f3/manifest.json)
