@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_runtime_fence_independent_final_review",
+  "reviewer": "usage_delta_writer",
+  "reviewedAtUtc": "2026-10-04T22:11:08.3346671+00:00",
+  "verdict": "CLEAR",
+  "commit": "3ff9869e705e516627272fcb3caee1e537178278",
+  "selectedPath": "tests/aws-rollout-automation.test.ps1",
+  "selectedRawSha256": "9cc025734f0151c9df1c243ac3b118b03febf27dab8f939acaf7b077731a574f",
+  "sourceScope": "Five negative mock acceptance minimums use unchanged existing90000ms watchdog-derived90s; iteration limits/thresholds/production monitor unchanged; exit2/statusfailed strengthened.",
+  "custody": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-rollout-runtime-fence-proof-01/custody-manifest.json",
+    "sha256": "b1e899790894895c29e0800e1d80340c9dba5dc4475090ddd4e803de347a3292",
+    "members": 62,
+    "bytes": 679131,
+    "allMatch": true
+  },
+  "publicVerificationSha256": "d813ad355405d29301889fdc6b27843761c9d26f80b6354b3e2419d1ea96c840",
+  "additiveReplaySha256": "b28d5deeca4e3335475f5355759c3d782248139d0fd9554eb9193d50d7af02bd",
+  "actualRetainedOutcomes": [
+    "old minimum10 red: exit0/completed/one false sample after12s first-sweep delay",
+    "five-minute stale: exit2/failed/false,false,true and exact three credit stale codes",
+    "unchanged600s-fresh control: exit0/completed/four false samples",
+    "one-minute stale: exit2/failed/false,false,true",
+    "auxiliary resource: exit2/failed/false,false,true and exact four codes",
+    "swap growth: exit2/failed/false,false,false,true; initial value then three increases",
+    "metric freshness: exit2/failed/false,false,true"
+  ],
+  "sourceAssertionsCompleted": 11,
+  "fiveCurrentRawSourcePinsStable": true,
+  "originalExecution": {
+    "sha256": "bab4e82b0ee4d4df94af2a40f9d68017571c4aa9af8879b4fc1111ee102402ed",
+    "passed": false,
+    "failure": "PowerShell scalar Count in final external aggregation",
+    "unchanged": true
+  },
+  "sevenRecordedChildrenAbsent": true,
+  "forced": false,
+  "boundaries": {
+    "casesReexecutedByReplay": false,
+    "reviewerRanTests": false,
+    "cloudCalls": 0,
+    "nativeLoads": 0,
+    "productionCodeModified": false,
+    "fullMockSuiteRerun": false,
+    "remoteCiRequired": true
+  },
+  "findings": []
+}

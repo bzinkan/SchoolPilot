@@ -1,5 +1,7 @@
 # Coordinated SchoolPilot release and ClassPilot 2.9.7
 
+**Latest merge status:** the owner authorized reviewed release merges after final CI. [ClassPilot #123 is merged with five green resulting-main checks and unchanged package bytes](release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json). SchoolPilot #603 is held on its concrete test-only mock timing correction and the artifact-preparation follow-up; fresh combined-head/main checks remain required. Use the [latest follow-up](RELEASE_297_DEPLOY_READINESS.md#october-4-merge-and-operator-tool-follow-up) and [artifact-only interfaces](RELEASE_ARTIFACT_PREPARATION.md). Historical no-merge statements below describe their dated checkpoints. Publication, deployment and activation remain separate operations.
+
 **October 4 update:** use [current deploy-readiness evidence](RELEASE_297_DEPLOY_READINESS.md#october-4-preparation-update), the [operator preparation addendum](RELEASE_297_OPERATOR_PREPARATION_AUDIT.md) and the [compatible fallback supplement](RELEASE_297_COMPATIBLE_FALLBACK_PREPARATION.md). The selected 250-client heartbeat/staff-read envelope retains its full-manifest fixture scope; deployment remains DeSales's 133 clients. The corrected, separately approved catalog inspection completed with 121 protected tables and 43 completed production migrations. The source-derived ordinary 43-to-53 migration/service recovery and restricted restoration now have accepted completed components, with original failures preserved. All three fresh candidate comparison runs on that 53-entry schema pass, but the strict comparison remains FAILED on the older baseline's latency and unstable controls. The [current-school gate amendment](RELEASE_297_DEPLOY_READINESS.md#approved-current-school-gate-correction) is separately owner-approved, and its bounded numerical criteria pass. It adds no merge, deployment, publication or activation permission. The missing unused 128-table preparation path is implemented and independently reviewed. All 20 SchoolPilot checks pass at `30b87475` and all ten ClassPilot checks at unchanged `8069a9c9`; later preparation heads/main still need checks. Published/registered recovery artifacts and operational gates remain pending. Both new Usage modes stay off. Historical checkpoints retain their original outcomes and do not establish a deployment green light.
 
 The shared distinct-report slice is integrated as `1091eaeb` from reviewed `e330c39a`. [Source binding](release-evidence/release-297/release-gate-policy-20261003/harness-integration-1091-source-binding.json) verifies the 11 identical reviewed Git blobs and unchanged application/schema/build/infrastructure inputs; CRLF-only working differences remain explicit. The [focused component proof](release-evidence/release-297/release-gate-policy-20261003/usage-distinct-shared-pure-passed-02.json) passes 48 unique cases and 11 syntax checks, with [independent review](release-evidence/release-297/release-gate-policy-20261003/usage-distinct-shared-independent-review.json). The [full primary aggregate](release-evidence/release-297/release-gate-policy-20261003/harness-integrated-1091-pure.json) passes all 139 unique cases (133 harness plus six report-cost cases), no skips/cancellations/TODOs, in 14.496 seconds with the configured 20-second test timeout, with [independent aggregate/source review](release-evidence/release-297/release-gate-policy-20261003/harness-integrated-1091-independent-review.json). The [earlier dependency failure](release-evidence/release-297/release-gate-policy-20261003/usage-distinct-shared-pure-failed-01.json) remains failed. At that historical 1091 checkpoint, helper/protocol-native verification, distinct-report capacity and new-head CI remained pending. Later native proofs and the exact 28f CI checkpoint are recorded above; actual distinct-report capacity remains pending, and later heads still require applicable checks.
@@ -402,11 +404,16 @@ match origin and required CI must pass. Use the documented `scripts/deploy.sh`
 procedure; no hand-edited task definitions. The immutable-image workflow is
 opt-in and currently disabled. Keep `IMMUTABLE_RELEASE_IMAGE_ENABLED` disabled
 until the `release-image` environment, `AWS_RELEASE_IMAGE_ROLE_ARN` and
-repository-scoped GitHub OIDC trust are provisioned and verified. While disabled,
-use the deploy script's guarded legacy build path and record its resolved source
-SHA and digest. Do not enable the flag merely to obtain a green workflow. An
-enabled immutable path supplies both `--immutable-image-sha` and
-`--immutable-image-digest` for the exact green image. The legacy path rebuilds.
+repository-scoped GitHub OIDC trust are provisioned and verified. Do not enable
+the flag merely to obtain a green workflow. The supported manual consumption
+path supplies both `--immutable-image-sha` (the full resulting-main SHA) and
+`--immutable-image-digest` (the verified actual ECR digest), even while that CI
+publication workflow is disabled. It requires clean main equal to origin/main,
+green main CI and a matching full-source ECR tag. Prepare that publication and
+unused121 definitions through the separately authorized [artifact-only
+adapter](RELEASE_ARTIFACT_PREPARATION.md). This manual path does not establish
+a signature; retain scan, source, config and registry verification. The ordinary
+legacy path remains available but rebuilds and includes migrations/service updates.
 For every admission-stage invocation, the existing controller binds clean main
 and the build's `--iidfile`, then runs the pinned `verify-legacy-deploy-image.mjs`
 scan before ECR login or publication. All HIGH/CRITICAL findings, including
@@ -416,8 +423,12 @@ image before task registration, migration or service update. Retain each emitted
 evidence directory, source SHA, image archive/config hash, scan receipt/hash,
 registry proof and resolved digest in the operator packet. Each rebuilt image
 gets its own proof; retain the prepared local image scan as preparation evidence.
-Candidate rehearsal remains a separately authorized operation and cannot be
-combined with `--enable-rls-table`.
+The old candidate-rehearsal flags are retired and rejected before AWS credential
+work. The capacity-acceptance route is paused. Neither is an artifact-preparation
+path, and an ordinary deployment must not be interrupted to prepare artifacts.
+The observed ECR repository has mutable tags; preserve its policy and reserve one
+authorized publisher during artifact publication. Fresh publisher/tag checks
+detect conflicts but do not provide an atomic lock against an unauthorized writer.
 
 Reconcile the live catalog and migration ledger before forming admission plans.
 The [read-only access feasibility record](release-evidence/release-297/usage-contention/production-schema-read-feasibility.json)

@@ -1,0 +1,190 @@
+{
+  "kind": "release297_runtime_negative_test_fence_verification",
+  "createdAtUtc": "2026-10-04T22:04:13.287Z",
+  "passed": true,
+  "verificationScope": "Additive replay of already completed mocked monitor cases, source assertions and retained raw records; no monitor cases were re-executed.",
+  "baseHead": "caacdf5f15b2044420c27dedab90e93848d712a6",
+  "changedPaths": [
+    "tests/aws-rollout-automation.test.ps1"
+  ],
+  "testWorkingSha256": "9cc025734f0151c9df1c243ac3b118b03febf27dab8f939acaf7b077731a574f",
+  "failedCiRunId": 37235213540,
+  "redReproduced": true,
+  "correctedNegativeCases": 5,
+  "unchangedFreshControl": 1,
+  "sourceAssertionsCompleted": 11,
+  "cases": [
+    {
+      "id": "five-minute-runtime-stale-red",
+      "status": "completed",
+      "exitCode": 0,
+      "observations": 1,
+      "triggered": [
+        false
+      ],
+      "minimumWallClockSeconds": 10,
+      "maximumIterations": 4,
+      "durationMs": 15725,
+      "failureCodes": [],
+      "rollbackAttempted": false
+    },
+    {
+      "id": "five-minute-runtime-stale",
+      "status": "failed",
+      "exitCode": 2,
+      "observations": 3,
+      "triggered": [
+        false,
+        false,
+        true
+      ],
+      "minimumWallClockSeconds": 90,
+      "maximumIterations": 4,
+      "durationMs": 16533,
+      "failureCodes": [
+        "stale_metric:rds_cpu_credit",
+        "stale_metric:rds_surplus_credits_charged",
+        "stale_metric:redis_cpu_credit"
+      ],
+      "rollbackAttempted": false
+    },
+    {
+      "id": "five-minute-runtime-freshness",
+      "status": "completed",
+      "exitCode": 0,
+      "observations": 4,
+      "triggered": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "minimumWallClockSeconds": 3,
+      "maximumIterations": 5,
+      "durationMs": 4949,
+      "failureCodes": [],
+      "rollbackAttempted": false
+    },
+    {
+      "id": "one-minute-runtime-stale",
+      "status": "failed",
+      "exitCode": 2,
+      "observations": 3,
+      "triggered": [
+        false,
+        false,
+        true
+      ],
+      "minimumWallClockSeconds": 90,
+      "maximumIterations": 4,
+      "durationMs": 3865,
+      "failureCodes": [
+        "stale_metric:waf_device_blocked",
+        "stale_metric:waf_api_blocked",
+        "stale_metric:ecs_cpu:api",
+        "stale_metric:ecs_memory:api",
+        "stale_metric:ecs_cpu:worker",
+        "stale_metric:ecs_memory:worker",
+        "stale_metric:rds_cpu",
+        "stale_metric:rds_connections",
+        "stale_metric:rds_storage_headroom",
+        "stale_metric:rds_free_memory",
+        "stale_metric:rds_swap_telemetry",
+        "stale_metric:redis_cpu",
+        "stale_metric:redis_memory",
+        "stale_metric:redis_free_memory",
+        "stale_metric:redis_evictions",
+        "stale_metric:redis_rejected_connections"
+      ],
+      "rollbackAttempted": false
+    },
+    {
+      "id": "auxiliary-resource-gates",
+      "status": "failed",
+      "exitCode": 2,
+      "observations": 3,
+      "triggered": [
+        false,
+        false,
+        true
+      ],
+      "minimumWallClockSeconds": 90,
+      "maximumIterations": 5,
+      "durationMs": 3924,
+      "failureCodes": [
+        "rds_free_memory",
+        "rds_cpu_credit",
+        "rds_surplus_credits_charged",
+        "redis_cpu_credit"
+      ],
+      "rollbackAttempted": false
+    },
+    {
+      "id": "rds-swap-growth-gate",
+      "status": "failed",
+      "exitCode": 2,
+      "observations": 4,
+      "triggered": [
+        false,
+        false,
+        false,
+        true
+      ],
+      "minimumWallClockSeconds": 90,
+      "maximumIterations": 5,
+      "durationMs": 5013,
+      "failureCodes": [
+        "rds_swap_growing"
+      ],
+      "rollbackAttempted": false
+    },
+    {
+      "id": "metric-freshness-gate",
+      "status": "failed",
+      "exitCode": 2,
+      "observations": 3,
+      "triggered": [
+        false,
+        false,
+        true
+      ],
+      "minimumWallClockSeconds": 90,
+      "maximumIterations": 4,
+      "durationMs": 3851,
+      "failureCodes": [
+        "stale_metric:waf_device_blocked",
+        "stale_metric:waf_api_blocked",
+        "stale_metric:ecs_cpu:api",
+        "stale_metric:ecs_memory:api",
+        "stale_metric:ecs_cpu:worker",
+        "stale_metric:ecs_memory:worker",
+        "stale_metric:rds_cpu",
+        "stale_metric:rds_connections",
+        "stale_metric:rds_storage_headroom",
+        "stale_metric:rds_free_memory",
+        "stale_metric:rds_swap_telemetry",
+        "stale_metric:redis_cpu",
+        "stale_metric:redis_memory",
+        "stale_metric:redis_free_memory",
+        "stale_metric:redis_evictions",
+        "stale_metric:redis_rejected_connections"
+      ],
+      "rollbackAttempted": false
+    }
+  ],
+  "originalExecutionPassed": false,
+  "originalAggregateFailure": "PowerShell scalar Count access in external final summary check; all seven cases and original eleven source assertions had completed before it failed.",
+  "originalExecutionSha256": "bab4e82b0ee4d4df94af2a40f9d68017571c4aa9af8879b4fc1111ee102402ed",
+  "replaySha256": "b28d5deeca4e3335475f5355759c3d782248139d0fd9554eb9193d50d7af02bd",
+  "diagnosisSha256": "03c3c4446248f9ff9804deab07e8835e213ed566f28d4edf0929d131f9a27466",
+  "ownedAbsenceSha256": "fa570093c36a73a7679a38bfcdadb4482fef7df5b4e8ae0f84328a00488732cf",
+  "sevenChildrenAbsent": true,
+  "unforced": true,
+  "childWatchdogMilliseconds": 90000,
+  "productionOperations": 0,
+  "nativeLoad": 0,
+  "runtimeModified": false,
+  "productionTimeoutsModified": false,
+  "fullMockedSuiteRerun": false,
+  "finalRemoteCiPending": true
+}

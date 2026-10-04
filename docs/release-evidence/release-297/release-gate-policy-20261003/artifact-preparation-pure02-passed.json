@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "kind": "offline_release_artifact_adapter_pure_proof",
+  "passed": true,
+  "node": "v22.18.0",
+  "tests": 24,
+  "pass": 24,
+  "fail": 0,
+  "cancelled": 0,
+  "skipped": 0,
+  "todo": 0,
+  "syntaxChecks": 2,
+  "syntaxPassed": true,
+  "durationMs": 5306.9985,
+  "wholeBudgetMs": 20000,
+  "exactOwnedAllAbsent": true,
+  "forced": false,
+  "sourceHashes": {
+    "scripts/prepare-release-artifacts.mjs": "60d29d647f0277901abc5b501c920f8cd3893a8dd150b0b90fad34f0ceac7f76",
+    "tests/release297-artifact-preparation.test.mjs": "a60373ccc1b1df674993ae27aef0c48813c4f1e9f623860140d86c5e4a32d375",
+    "docs/RELEASE_ARTIFACT_PREPARATION.md": "ba6b8de63414d982f10e969bf90e5d19781b7ab75f5ee98029205f6f0c9c9176"
+  },
+  "files": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\run.mjs",
+      "sha256": "5d9bfa43b10395e50ac0fc6868a1a0409e6544a2db37ee5271521ce9dc76485e"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\source-bindings.json",
+      "sha256": "dab5a50756be9332af99c86b0486e0a23d2aadf21e59c3f5ac76a657ba7b2e29"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\module-syntax.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\module-syntax.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\test-syntax.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\test-syntax.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\focused.stdout",
+      "sha256": "5ff8b17cfe2472ed471f30c4b9c313bb6c609be32843bf58b68ab6a019294942"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\focused.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\execution.json",
+      "sha256": "8f9954ff5dfbc1b1071a4abc2050357ba662968ad639e57a197c5707e51aa6d1"
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-02\\owned-absence.json",
+      "sha256": "4425b0c698c9469a3b277ebda9ac7c7cad722ace5ec5b7bceefb7766e9a2ed17"
+    }
+  ],
+  "realAwsCommands": 0,
+  "realDockerCommands": 0,
+  "actualBuilds": 0,
+  "actualTasks": 0,
+  "actualSql": 0,
+  "publicationAuthorized": false,
+  "registrationAuthorized": false,
+  "capacityEvidence": false,
+  "failed01Preserved": true,
+  "correction": "Separate request-level tags from taskDefinition; existing validator unchanged",
+  "previousFailedProof": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-artifact-preparation-pure-01\\public-proof.json",
+    "sha256": "6254ab10d54acbc11d8981b5a3365906ec915ce79a5a1ad7b9b759240805b4e4"
+  }
+}
