@@ -34,6 +34,21 @@ function sort(value) { return Array.isArray(value) ? value.map(sort) : value && 
 export const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
 function equal(actual, expected, message) { assert.ok(canonical(actual) === canonical(expected), message); }
 function checkString(value, pattern, message) { assert.ok(typeof value === 'string' && pattern.test(value), message); }
+export function registrationEnvironmentProjection(request) {
+  const value = structuredClone(request);
+  assert.ok(Array.isArray(value?.containerDefinitions), 'REGISTERED_CONTAINERS_INVALID');
+  for (const container of value.containerDefinitions) {
+    if (!Object.hasOwn(container, 'environment')) continue;
+    assert.ok(Array.isArray(container.environment), 'REGISTERED_ENVIRONMENT_INVALID');
+    const names = new Set();
+    for (const entry of container.environment) {
+      assert.ok(entry && !Array.isArray(entry) && typeof entry === 'object' && Object.keys(entry).sort().join(',') === 'name,value' && typeof entry.name === 'string' && entry.name.length > 0 && typeof entry.value === 'string' && !names.has(entry.name), 'REGISTERED_ENVIRONMENT_INVALID');
+      names.add(entry.name);
+    }
+    container.environment.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  }
+  return value;
+}
 function pinnedJson(record) {
   assert.ok(record && path.isAbsolute(record.path), 'INPUT_PATH_REQUIRED'); checkString(record.sha256, /^[a-f0-9]{64}$/, 'INPUT_HASH_REQUIRED');
   const bytes = readFileSync(record.path); assert.ok(bytes.length > 0 && bytes.length <= 8 * 1024 * 1024, 'INPUT_SIZE_INVALID');
@@ -260,7 +275,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
       inWindow();
       const actual = JSON.parse(await checked(run, 'aws', ['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
       validateSourceResponse(actual, role, FALLBACK.source, plan.registryDigest, inventoryFor(plan.input.admissionCount));
-      const actualRequest = Object.fromEntries(Object.entries(actual.taskDefinition).filter(([key]) => requestFields.has(key))); if (actual.tags !== undefined) actualRequest.tags = actual.tags; equal(actualRequest, request, 'REGISTERED_DEFINITION_DRIFT');
+      const actualRequest = Object.fromEntries(Object.entries(actual.taskDefinition).filter(([key]) => requestFields.has(key))); if (actual.tags !== undefined) actualRequest.tags = actual.tags; equal(registrationEnvironmentProjection(actualRequest), registrationEnvironmentProjection(request), 'REGISTERED_DEFINITION_DRIFT');
     }
     inWindow(); const after = JSON.parse(await checked(run, 'aws', serviceArgs)); equal(after.services, live.services, 'SERVICES_CHANGED_DURING_INACTIVE_REGISTRATION');
     result.status = 'registered_inactive'; result.servicesUnchanged = true;
