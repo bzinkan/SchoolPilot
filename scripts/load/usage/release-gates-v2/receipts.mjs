@@ -4,6 +4,7 @@ import { resolve, relative, isAbsolute, join } from 'node:path';
 import { hash, profileFor, profileHash } from './contracts.mjs';
 import { validateRound } from './validation.mjs';
 import { classifyLog, runNegativeProbes, negativeLogCoverage } from './measurements.mjs';
+import { verifyOperationalFixtureCustody } from './operational-fixture.mjs';
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const root=realpathSync(directory), path=join(root,'receipt-manifest.json'), bytes=readFileSync(path);
@@ -20,6 +21,8 @@ export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const metrics=json(join(root,'metrics.json')), cleanup=json(join(root,'role-cleanup.json'));
   assert.equal(metrics.profile,profile.name);assert.equal(metrics.contractSha256,profileHash(profile));
   assert.equal(metrics.source,manifest.source);assert.equal(metrics.run,manifest.run);assert.equal(metrics.planSha256,manifest.planSha256);
+  if(metrics.operationalFixtureBootstrapRequired)assert.ok(manifest.records['operational-fixture-bootstrap.json']);
+  if(manifest.records['operational-fixture-bootstrap.json'])verifyOperationalFixtureCustody(root,metrics);
   for(const exit of cleanup.exits) {
     assert.equal(exit.run,metrics.run);assert.equal(exit.source,metrics.source);
     assert.deepEqual(exit,json(join(root,exit.role+'-exit.json')));

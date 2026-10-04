@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative } from 'node:path';
 import { hash } from './contracts.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 
@@ -64,6 +64,36 @@ export function restoredOperationalIdentities(configuration, ready) {
   return { containerId: ready.pgContainerId, owner: admin.username, database: ready.database, appRole: app.username };
 }
 
+export function verifyOperationalFixtureCustody(directory, metrics) {
+  const root = realpathSync(directory);
+  const contained = name => {
+    const path = realpathSync(join(root, name)), rel = relative(root, path);
+    assert.ok(!isAbsolute(rel) && rel !== '..' && !rel.startsWith('..\\') && !rel.startsWith('../'), 'Operational artifact escaped its receipt directory');
+    return path;
+  };
+  const receipt = JSON.parse(readFileSync(contained('operational-fixture-bootstrap.json'), 'utf8'));
+  assert.equal(receipt.schemaVersion, 1); assert.equal(receipt.kind, 'synthetic-existing-health-operational-bootstrap');
+  assert.equal(receipt.source, metrics.source); assert.equal(receipt.sourceSchemaInputSha256, metrics.schemaInputSha256);
+  assert.equal(receipt.canonicalSourceSchemaSha256, metrics.schemaSha256);
+  assert.equal(receipt.beforeDumpFile, 'operational-schema-before.sql'); assert.equal(receipt.afterDumpFile, 'operational-schema-after.sql');
+  assert.equal(receipt.ddlSha256, hash(HEALTH_SENTINEL_DDL)); verifyHealthFixturePrivileges(receipt.runtimePrivileges);
+  for (const key of ['productionCatalogClaimed', 'canonicalMigrationSchemaRelabeled', 'migrationInventoryChanged', 'tenantRlsInventoryChanged', 'healthMonitorExecuted', 'capacityAcceptance'])
+    assert.equal(receipt[key], false, key);
+  assert.equal(typeof receipt.createdOperationalRelation, 'boolean');
+  const before = readFileSync(contained(receipt.beforeDumpFile)), after = readFileSync(contained(receipt.afterDumpFile));
+  assert.equal(hash(before), receipt.beforeDumpSha256); assert.equal(hash(after), receipt.afterDumpSha256);
+  assert.equal(canonicalSchemaFingerprint(before.toString('utf8')), receipt.beforeCanonicalSha256);
+  assert.equal(canonicalSchemaFingerprint(after.toString('utf8')), receipt.afterCanonicalSha256);
+  assert.equal(receipt.beforeCanonicalSha256, receipt.canonicalSourceSchemaSha256);
+  if (receipt.createdOperationalRelation) assert.notEqual(receipt.afterCanonicalSha256, receipt.beforeCanonicalSha256);
+  else assert.equal(receipt.afterCanonicalSha256, receipt.beforeCanonicalSha256);
+  if (metrics.snapshotManifestSha256) {
+    assert.equal(receipt.originalSnapshotRestore?.restorationPassed, true);
+    assert.equal(receipt.originalSnapshotRestore?.snapshotManifestSha256, metrics.snapshotManifestSha256);
+  } else assert.equal(receipt.originalSnapshotRestore, null);
+  return receipt;
+}
+
 export async function bootstrapHealthOperationalFixture(options, docker) {
   const { containerId, owner, database, appRole, outputDirectory } = options;
   assert.match(containerId, /^[a-f0-9]{64}$/); assert.match(options.source, /^[a-f0-9]{40}$/);
@@ -90,6 +120,7 @@ export async function bootstrapHealthOperationalFixture(options, docker) {
   const receipt = { schemaVersion: 1, kind: 'synthetic-existing-health-operational-bootstrap', source: options.source,
     productionCatalogClaimed: false, sourceSchemaInputSha256: options.schemaInputSha256,
     canonicalSourceSchemaSha256: options.canonicalSourceSchemaSha256, ddlSha256: hash(HEALTH_SENTINEL_DDL),
+    beforeDumpFile: 'operational-schema-before.sql', afterDumpFile: 'operational-schema-after.sql',
     beforeDumpSha256: hash(before), beforeCanonicalSha256: canonicalSchemaFingerprint(before),
     afterDumpSha256: hash(after), afterCanonicalSha256: afterCanonical, createdOperationalRelation: !present.present,
     canonicalMigrationSchemaRelabeled: false, migrationInventoryChanged: false, tenantRlsInventoryChanged: false,

@@ -71,6 +71,7 @@ export async function runV2(options) {
     observedEnvironmentSha256: options.observedEnvironmentSha256, observedFlagsSha256: remapped.observedFlagsSha256,
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
+    operationalFixtureBootstrapRequired: true,
     sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false };
   const planFile = output + '.plan.json'; writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n', { flag: 'wx' }); const planSha256 = hash(readFileSync(planFile));
   const environment = { ...process.env }; for (const key of Object.keys(environment)) if (/^(?:DOCKER_|BUILDX_BUILDER$|NODE_OPTIONS$)/.test(key)) delete environment[key];
