@@ -5,17 +5,23 @@ import { pathToFileURL } from 'node:url';
 import { profileFor, profileHash, OLD_CONTRACT_SHA256, OLD_CLOSED_JOURNAL_SHA256, PROFILES, hash } from './contracts.mjs';
 import { loadReceipt } from './receipts.mjs';
 import { validatePairs, validateMixedRuns } from './validation.mjs';
+import {assertUsagePostVerificationBinding,assertUsagePostVerificationReceiptBinding,assertUsagePostVerificationSet} from './usage-post-verification.mjs';
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
 export function declareCampaign(options) {
   const profile=profileFor(options.profile), directory=resolve(options.directory);
   assert.equal(existsSync(directory),false);assert.ok(['paired','mixed','usage','classroom','preparation'].includes(options.kind));
   if(options.kind!=='preparation')assert.equal(options.kind==='paired',['blackbox','diagnostic'].includes(profile.kind));
   assert.match(options.candidateSource,/^[a-f0-9]{40}$/);if(options.kind==='paired')assert.match(options.baselineSource,/^[a-f0-9]{40}$/);
-  assert.match(options.observedFlagsSha256,/^[a-f0-9]{64}$/);mkdirSync(directory);
+  assert.match(options.observedFlagsSha256,/^[a-f0-9]{64}$/);
+  const postVerification=options.usagePostVerificationContractSha256===undefined?{}:{
+    usagePostVerificationContractSha256:assertUsagePostVerificationBinding(options.usagePostVerificationContractSha256,profile),
+    hostHarnessSource:options.hostHarnessSource};
+  if(postVerification.usagePostVerificationContractSha256){assert.equal(options.kind,'usage');assert.match(options.hostHarnessSource,/^[a-f0-9]{40}$/);}
+  mkdirSync(directory);
   const contract={schemaVersion:2,declaredAt:new Date().toISOString(),kind:options.kind,profile:profile.name,contractSha256:profileHash(profile),
     candidateSource:options.candidateSource,baselineSource:options.baselineSource??null,observedFlagsSha256:options.observedFlagsSha256,
     originalFailedContractSha256:OLD_CONTRACT_SHA256,order:options.kind==='preparation'?[options.arm||'C']:options.kind==='paired'?['A','A','A','B','B','A','A','B']:['C','C','C'].slice(0,options.kind==='classroom'?1:3),
-    pairedReleaseComparisonRequired:options.kind==='usage',historicalSingleTaskDiagnosticOnly:true,capacityAccepted:false,productionReadiness:false};
+    pairedReleaseComparisonRequired:options.kind==='usage',historicalSingleTaskDiagnosticOnly:true,capacityAccepted:false,productionReadiness:false,...postVerification};
   writeFileSync(join(directory,'contract.json'),JSON.stringify(contract,null,2)+'\n',{flag:'wx'});
   writeFileSync(join(directory,'journal.json'),JSON.stringify({contractSha256:hash(readFileSync(join(directory,'contract.json'))),attempts:[],closed:false},null,2)+'\n',{flag:'wx'});
   return contract;
@@ -32,6 +38,7 @@ export function registerAttempt(options) {
   assert.equal(receipt.arm,contract.order[index]);assert.equal(receipt.source,receipt.arm==='A'?contract.baselineSource:contract.candidateSource);
   assert.equal(receipt.observedFlagsSha256,contract.observedFlagsSha256);
   assert.equal(receipt.run,reservation.run);assert.equal(receipt.reservationSha256,reservation.reservationSha256);
+  assertUsagePostVerificationReceiptBinding(contract,receipt);
   } catch { verificationFailure='RECEIPT_UNAVAILABLE_OR_INVALID'; receipt={run:reservation.run,source:reservation.source,profile:contract.profile,arm:reservation.arm,runPassed:false,cleanupPassed:false,verificationFailure}; }
   const previousJournalSha256=hash(readFileSync(join(directory,'journal.json')));
   const attempt={index,run:reservation.run,registeredAt:new Date().toISOString(),receiptDirectory:resolve(options.receiptDirectory),receiptManifestSha256:options.receiptManifestSha256,
@@ -48,7 +55,8 @@ export function reserveAttempt(options) {
   assert.equal(existsSync(options.receiptDirectory),false);assert.equal(existsSync(options.privateDirectory),false);
   const arm=contract.order[index],reservation={index,run:options.run,arm,source:arm==='A'?contract.baselineSource:contract.candidateSource,
     profile:contract.profile,contractSha256:contract.contractSha256,campaignContractSha256:journal.contractSha256,preparationSmoke:contract.kind==='preparation',
-    observedFlagsSha256:contract.observedFlagsSha256,receiptDirectory:resolve(options.receiptDirectory),privateDirectory:resolve(options.privateDirectory),reservedAt:new Date().toISOString()};
+    observedFlagsSha256:contract.observedFlagsSha256,receiptDirectory:resolve(options.receiptDirectory),privateDirectory:resolve(options.privateDirectory),reservedAt:new Date().toISOString(),
+    ...(contract.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:contract.usagePostVerificationContractSha256,hostHarnessSource:contract.hostHarnessSource}:{})};
   const file=join(directory,`reservation-${index+1}.json`);writeFileSync(file,JSON.stringify(reservation,null,2)+'\n',{flag:'wx'});
   const reservationSha256=hash(readFileSync(file));journal.attempts.push({...reservation,reservationSha256,state:'reserved'});
   writeFileSync(join(directory,'journal.next'),JSON.stringify(journal,null,2)+'\n',{flag:'wx'});renameSync(join(directory,'journal.next'),join(directory,'journal.json'));
@@ -102,9 +110,10 @@ export function closeCampaign(options) {
   else if(contract.kind==='paired'&&contract.profile!==PROFILES.overload.name) result=validatePairs(records,{profile:profileFor(contract.profile),baselineSource:contract.baselineSource,candidateSource:contract.candidateSource,observedFlagsSha256:contract.observedFlagsSha256});
   else if(contract.kind==='mixed') result=validateMixedRuns(records);
   else if(contract.kind==='usage') {
+    if(contract.usagePostVerificationContractSha256){assertUsagePostVerificationSet(records,contract.usagePostVerificationContractSha256);assert.ok(records.every(row=>row.hostHarnessSource===contract.hostHarnessSource));}
     const binding=usageCandidateBinding(records,contract.candidateSource),evidence=verifyUsageComparisons(options,contract,binding);
     result={passed:true,candidateBinding:binding,
-      ...evidence,capacityAccepted:false};
+      ...evidence,capacityAccepted:false,...(contract.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:contract.usagePostVerificationContractSha256,hostHarnessSource:contract.hostHarnessSource}:{})};
   } else if(contract.kind==='paired') {
     result={passed:false,diagnosticOnly:true,recordsComplete:records.length===8,
       safetyAndRecoveryPassed:records.every(record=>record.cleanupPassed&&record.sourceUnchanged&&record.rounds.every(round=>round.persistence?.passed&&round.drains.every(drain=>drain.complete))),capacityAccepted:false};

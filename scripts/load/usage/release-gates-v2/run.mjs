@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
-import { resolve, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { resolve, join,dirname } from 'node:path';
+import { pathToFileURL,fileURLToPath } from 'node:url';
 import { execFile, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { profileFor, profileHash, hash, stageForRound } from './contracts.mjs';
 import { validateRound } from './validation.mjs';
-import { classifyLog, cpuWindow, negativeProbes, runNegativeProbes, negativeLogCoverage } from './measurements.mjs';
+import { classifyLog, cpuWindow, negativeProbes, runNegativeProbes, negativeLogCoverage,retainCompletedGeneratorTraffic } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { runMixed } from './mixed.mjs';
 import { assertOutside, ownRole } from './owner.mjs';
@@ -21,6 +21,7 @@ import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 import { bootstrapHealthOperationalFixture, restoredOperationalIdentities } from './operational-fixture.mjs';
 import { runHeavyUsageWorkers, completeUsageChecks } from './usage-checks.mjs';
 import {runBoundaryPreparation} from './boundary-preparation.mjs';
+import {assertUsagePostVerificationReservation,verifyUsageClassroomAfterLoad} from './usage-post-verification.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -57,6 +58,12 @@ export async function runV2(options) {
   const reservationBytes=readFileSync(options.reservationFile);assert.equal(hash(reservationBytes),options.reservationSha256);
   const reservation=JSON.parse(reservationBytes);assert.equal(reservation.run,options.run);assert.equal(reservation.source,options.source);assert.equal(reservation.arm,options.arm);
   assert.equal(reservation.profile,profile.name);assert.equal(reservation.contractSha256,profileHash(profile));assert.equal(reservation.observedFlagsSha256,remapped.observedFlagsSha256);
+  const requiredUsagePostVerification=assertUsagePostVerificationReservation(reservation,options,profile);
+  const hostHarnessDirectory=resolve(dirname(fileURLToPath(import.meta.url)),'../../../..');
+  if(requiredUsagePostVerification){
+    assert.equal(options.preparationSmoke===true,false,'The cold Usage post-verification contract is not a preparation smoke');
+    assert.equal(git(hostHarnessDirectory,['rev-parse','HEAD']),options.hostHarnessSource);assert.equal(git(hostHarnessDirectory,['status','--porcelain']),'');
+  }
   assert.equal(reservation.preparationSmoke,options.preparationSmoke===true);
   assert.equal(reservation.receiptDirectory,output);assert.equal(reservation.privateDirectory,control);
   const windowBytes = readFileSync(options.quietWindowFile); assert.equal(hash(windowBytes), options.quietWindowSha256);
@@ -74,7 +81,8 @@ export async function runV2(options) {
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
     operationalFixtureBootstrapRequired: true,
-    sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false };
+    sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false,
+    ...(options.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:options.usagePostVerificationContractSha256,hostHarnessSource:options.hostHarnessSource}:{}) };
   const planFile = output + '.plan.json'; writeFileSync(planFile, JSON.stringify(plan, null, 2) + '\n', { flag: 'wx' }); const planSha256 = hash(readFileSync(planFile));
   const environment = { ...process.env }; for (const key of Object.keys(environment)) if (/^(?:DOCKER_|BUILDX_BUILDER$|NODE_OPTIONS$)/.test(key)) delete environment[key];
   const docker = async (args, { input, timeout = 120_000 } = {}) => {
@@ -184,6 +192,7 @@ export async function runV2(options) {
         const trafficPromise = generator.rpc('phase', { startsAtMs, offering: profile.offering, topology: stage, ingest: true, reports: profile.usage, lifecycle: !blackbox, reconnect: profile.kind === 'mixed' && index === 10 });
         const workerOperation=worker?(async()=>{while(Date.now()<startsAtMs)await pause(Math.max(1,startsAtMs-Date.now()));return runHeavyUsageWorkers(worker,fixture);})():Promise.resolve([]);
         const results=await Promise.allSettled([trafficPromise,workerOperation]);
+        if(options.usagePostVerificationContractSha256)retainCompletedGeneratorTraffic(results,metrics,(name,value)=>save(output,name,value));
         const traffic=results[0].status==='fulfilled'?results[0].value:{failed:true,error:'GENERATOR_PHASE_FAILED'};
         const workers=results[1].status==='fulfilled'?results[1].value:[{correct:false,error:'WORKER_PHASE_FAILED'}];
         const windows = await Promise.all(windowPromises);
@@ -208,6 +217,7 @@ export async function runV2(options) {
         if (profile.usage) {
           const usage=await completeUsageChecks({worker,observer,generator,fixture});
           round.correctness=usage.correctness;round.workerDatabase=usage.workerDatabase;round.drains.push(usage.drain);
+          if(options.usagePostVerificationContractSha256)await verifyUsageClassroomAfterLoad({observer,fixture,metrics,save:(name,value)=>save(output,name,value)});
           round.errorCoverage=await Promise.all([...active.values()].map(async owner=>({role:owner.role,...classifyLog(await owner.logs(),'api',{complete:true,expectedNegativeProbes:negativeProbes(traffic)})})));
           round.errorCoverage.push({role:'worker',...classifyLog(await worker.logs(),'api',{complete:true})},classifyLog(await dockerInput(['logs',configuration.pgContainerId]),'postgres',{complete:true}));
           round.databaseFailures=round.errorCoverage.reduce((sum,row)=>sum+row.errorCount,0);
@@ -283,6 +293,7 @@ export async function runV2(options) {
   finally {
     if (existsSync(output)) {
       metrics.sourceUnchanged = git(options.sourceDirectory, ['rev-parse', 'HEAD']) === options.source && git(options.sourceDirectory, ['status', '--porcelain']) === '';
+      if(options.usagePostVerificationContractSha256)metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===options.hostHarnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
       const pgCleanup = ['postgres-cleanup.json', 'cleanup.json'].map(name => join(output, name)).find(existsSync);
       metrics.cleanupPassed = metrics.roleCleanup?.cleanupPassed === true && pgCleanup && read(pgCleanup).cleanupPassed === true;
       metrics.diagnosticCompleted = !failure && profile.kind === 'diagnostic' && metrics.rounds.length === 1 && metrics.cleanupPassed===true && metrics.sourceUnchanged;
@@ -292,6 +303,7 @@ export async function runV2(options) {
         && metrics.rounds.every(round => round.acceptance.passed === true) && metrics.cleanupPassed === true && metrics.sourceUnchanged
         && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0)&&metrics.expectedNegativeLogCoverage===true;
       if(profile.kind==='blackbox')metrics.runPassed&&=Number.isFinite(metrics.wholeOwnedApiCpuMicroseconds)&&metrics.wholeOwnedApiCpuMicroseconds>0&&metrics.wholeOwnedCpuIncludesFinalClassificationFlush===true;
+      if(options.usagePostVerificationContractSha256)metrics.runPassed&&=metrics.usagePostVerification?.passed===true&&metrics.hostHarnessSourceUnchanged===true;
       metrics.failure = failure ?? null; metrics.finishedAt = new Date().toISOString();
       if (metrics.rounds.length) { metrics.cpuMsPer200 ??= metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }
       save(output, 'metrics.json', metrics);

@@ -6,6 +6,7 @@ import { validateRound } from './validation.mjs';
 import { classifyLog, runNegativeProbes, negativeLogCoverage } from './measurements.mjs';
 import { verifyOperationalFixtureCustody } from './operational-fixture.mjs';
 import { verifyClassroomNativeCustody } from './classroom-bindings.mjs';
+import {verifyUsagePostVerificationCustody} from './usage-post-verification.mjs';
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const root=realpathSync(directory), path=join(root,'receipt-manifest.json'), bytes=readFileSync(path);
@@ -25,6 +26,10 @@ export function loadReceipt(directory, manifestSha256, privateDirectory) {
   if(metrics.operationalFixtureBootstrapRequired)assert.ok(manifest.records['operational-fixture-bootstrap.json']);
   if(manifest.records['operational-fixture-bootstrap.json'])verifyOperationalFixtureCustody(root,metrics);
   if(metrics.runPassed||metrics.smokePassed)verifyClassroomNativeCustody(privateDirectory,metrics);
+  if(metrics.usagePostVerificationContractSha256&&(metrics.runPassed||metrics.usagePostVerification)){
+    assert.ok(manifest.records['usage-classroom-post-verification.json']);verifyUsagePostVerificationCustody(root,privateDirectory,metrics);
+    assert.equal(metrics.hostHarnessSourceUnchanged,true);
+  }
   for(const exit of cleanup.exits) {
     assert.equal(exit.run,metrics.run);assert.equal(exit.source,metrics.source);
     assert.deepEqual(exit,json(join(root,exit.role+'-exit.json')));
