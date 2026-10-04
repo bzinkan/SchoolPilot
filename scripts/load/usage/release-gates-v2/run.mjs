@@ -18,6 +18,7 @@ import { withCommonDatabase } from './common-database.mjs';
 import { withUsageSnapshotV2 } from './restore.mjs';
 import { loadSnapshot } from '../roles/snapshot-contract.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
+import { bootstrapHealthOperationalFixture, restoredOperationalIdentities } from './operational-fixture.mjs';
 import { runHeavyUsageWorkers, completeUsageChecks } from './usage-checks.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
@@ -257,6 +258,9 @@ export async function runV2(options) {
         mode: 'diagnostic', planFile, planSha256, purpose: 'New v2 three-API synthetic campaign; original single-API contract is unchanged' }, async context => {
         const configuration = read(context.configurationFile); configuration.pgContainerId = context.ready.pgContainerId; configuration.schemaSha256 = snapshot.data['schema-fingerprint.json'].canonicalSha256;
         configuration.schemaInputSha256=options.schemaSha256;
+        await bootstrapHealthOperationalFixture({ ...restoredOperationalIdentities(configuration, context.ready), outputDirectory: output,
+          source: options.source, schemaInputSha256: options.schemaSha256, canonicalSourceSchemaSha256: configuration.schemaSha256,
+          originalSnapshotRestore: { restorationPassed: context.ready.restorationPassed, snapshotManifestSha256: options.snapshotManifestSha256 } }, dockerInput);
         await measure(configuration, () => context.restartAfterRelease({ run, source: options.source, releasedAt: new Date().toISOString() }), fixture);
       });
     } else {

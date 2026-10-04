@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
+import { bootstrapHealthOperationalFixture } from './operational-fixture.mjs';
 
 export async function withCommonDatabase(options, docker, use) {
   const { run, outputDirectory, privateDirectory } = options;
@@ -48,6 +49,9 @@ export async function withCommonDatabase(options, docker, use) {
 DO $owned_fixture$ BEGIN IF to_regprocedure('public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)') IS NOT NULL THEN
 REVOKE EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text) TO ${app}; END IF; END $owned_fixture$;` });
+    await bootstrapHealthOperationalFixture({ containerId: id, owner, database, appRole: app, outputDirectory,
+      source: options.source, schemaInputSha256: options.schemaSha256,
+      canonicalSourceSchemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')) }, docker);
     const configuration = { pgContainerId: id, schemaInputSha256: options.schemaSha256, schemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')),
       adminUrl: `postgresql://${owner}:${password}@127.0.0.1:5437/${database}`, appUrl: `postgresql://${app}:${appPassword}@127.0.0.1:5437/${database}` };
     return await use(configuration, async () => {
