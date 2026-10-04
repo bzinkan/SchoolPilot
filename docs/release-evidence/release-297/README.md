@@ -3,8 +3,9 @@
 The [current application correction record](release-gate-policy-20261003/application-correction-summary.json)
 and [read-only CI/package checkpoint](release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
 bind application `ed026513`, 2,032 local unit passes, all 20 reported CI checks,
-fresh image/frontend/schema proofs and the unchanged extension. Capacity and
-corrected-fallback image recovery remain pending. The later harness checks and
+fresh image/frontend/schema proofs and the unchanged extension. The [safe fallback](release-gate-policy-20261003/safe-fallback-6d1f3a7e-summary.json)
+passes its full scan and [actual image recovery](release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json).
+Capacity remains pending. The later harness checks and
 preparation smokes do not establish deployment or live acceptance.
 
 The [superseded CI attempt manifest](ci-attempts/manifest.json) retains the four

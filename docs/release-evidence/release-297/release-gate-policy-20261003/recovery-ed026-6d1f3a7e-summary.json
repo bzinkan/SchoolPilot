@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_actual_image_synthetic_recovery",
+  "verifiedAt": "2026-10-04T01:57:55.662Z",
+  "passed": true,
+  "firstAttempt": true,
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "candidateImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+  "fallbackSource": "6d1f3a7e737ebd2e3e266f2f571cdea811db5e27",
+  "fallbackImage": "sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387",
+  "sequence": [
+    "candidate",
+    "safe-compatible-fallback",
+    "candidate"
+  ],
+  "bindings": {
+    "configSha256": "3a5f60513484c661de7faaa0e91df84423b9632fa67e1d87ee5c856dc7f66711",
+    "executionSha256": "b53041d697bf5ed993fa5ab15ea7b83ca92ccafdec43e7fa2608564b1c36c64f",
+    "independentVerificationSha256": "9f8da7cd5c2d49631da03c1ef036fec48e3768c38b15c38cd3326a745fc0d90a",
+    "finalBindingTestsSha256": "97588c5b99d526038f7243987f19aa2cd49eb81ba44a489d06e41fcbd9c417af"
+  },
+  "bindingTests": {
+    "passed": 9,
+    "failed": 0,
+    "skipped": 0
+  },
+  "retention": {
+    "migrationLedgerEntries": 54,
+    "wholeLedgerSha256": "3c18f8c2c072c339e6bee238685baa052bc76915cbe049b9af698ebf7268d207",
+    "wholeLedgerExactAcrossAllImages": true,
+    "ledgerBootstrap": "Complete ledger copied from successful exact-source54 reentry into a schema-only synthetic fixture; not actual production migration history",
+    "screenshotFunctionBodySha256": "e198ab4901f23dd31aa286e90e3c7401302cd5220510af9b5facf306cf80c30b",
+    "screenshotFunctionAclSha256": "b40d5fe45970bc0935e8d9a17e076761d50d360094a51c3c5d44faa4f1555732",
+    "screenshotFunctionAttributes": {
+      "volatile": true,
+      "invoker": true,
+      "parallelUnsafe": true,
+      "searchPath": "pg_catalog",
+      "strict": false,
+      "leakproof": false
+    },
+    "screenshotRuntimeExecute": true,
+    "screenshotPublicExecute": false,
+    "functionRepairedBetweenPhases": false,
+    "deliveredHistoryRetained": true,
+    "threadGenerationAndSchoolActivityEpochsVerified": true,
+    "expiredReplyCounts": {
+      "seed": 2,
+      "fallback": 4,
+      "return": 4
+    },
+    "oldLifecycleSendAndAckRejected": true,
+    "expiredDeliveriesAbsent": true
+  },
+  "focus": {
+    "adoptedFocusRetainedBeforeCleanup": true,
+    "stopFocusWithIssuanceOffAndOfflineTarget": true,
+    "otherRestrictionsRetained": true,
+    "returnCleanupFrameExactBindingVerified": true,
+    "evidence": "Assertions in the hash-bound adapter completed inside the recorded scanned OCI images"
+  },
+  "usageModes": {
+    "rollup": "off",
+    "reporting": "off",
+    "throughoutAllPhases": true
+  },
+  "cleanup": {
+    "ownedContainers": 5,
+    "ownedVolumes": 1,
+    "forcedCleanup": false,
+    "gracefulPostgresStop": true,
+    "independentExactContainerAndVolumeAbsence": true,
+    "listingCommandsSucceeded": true
+  },
+  "scope": {
+    "actualOciFunctions": true,
+    "syntheticRestrictedRoleFixture": true,
+    "productionMutations": 0,
+    "actualProductionCatalogProven": false,
+    "serviceTrafficRollbackProven": false,
+    "redisRelayProven": false,
+    "browserDeliveryProven": false,
+    "capacityAccepted": false,
+    "deploymentAuthorized": false
+  },
+  "files": {
+    "binding.mjs": "438be9cddcda8f7c9ed097487ac402bd0dd617ed5b537eec69435847525968ab",
+    "bound-config.json": "3a5f60513484c661de7faaa0e91df84423b9632fa67e1d87ee5c856dc7f66711",
+    "execution.json": "b53041d697bf5ed993fa5ab15ea7b83ca92ccafdec43e7fa2608564b1c36c64f",
+    "fallback-result.json": "1d123d04a6a8aa26cbf06b91744d719109893321183f543693ec31af1938e0aa",
+    "function-retention.mjs": "4539effb689919ec9b2bc06975ea622ac13b4316fba765c909f12001450703c9",
+    "grant-result.json": "e4174713d7ca93877ebab47f3a868db9b2d22e3f855f7508c362ed2c26950b81",
+    "grant.mjs": "42e5a56a5b6d4d0c693be77cdb2d1e41d68d3e47c5bba2e85a01b050ba7ddcd2",
+    "independent-verification.json": "9f8da7cd5c2d49631da03c1ef036fec48e3768c38b15c38cd3326a745fc0d90a",
+    "postgres-owner.json": "c08865db989d70f2c161b9797ede21155226a9fbac0cf41c6621449e099a0614",
+    "probe.mjs": "e5fd3fb38b24438b49bf5576ef8049c55bd94ec11070c2a5527238ec63b0e998",
+    "return-result.json": "b72c1cbe60836939ff3d51fbfe746b59e93f8c597a7bb6b378d33097510c5ee0",
+    "run.mjs": "a683ab6a7efb5a151a82e34bd65ca22efd026598f59e063188d52d0243134f38",
+    "seed-result.json": "f7f9d6eafb3eb229dfbe0efe72672ff3fdb0c96c662135759d2e9e9e33eae926"
+  }
+}

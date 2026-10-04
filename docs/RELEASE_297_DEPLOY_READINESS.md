@@ -21,7 +21,10 @@ ClassPilot to the Store.
   records 2,032 local unit passes with no skips, the fresh candidate image with
   zero HIGH/CRITICAL findings, rebuilt frontend, 54-migration/129-table synthetic
   admission, and source migration re-entry. The corrected fallback source is
-  `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; final image recovery is pending.
+  `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; its [fresh scan and focused checks](release-evidence/release-297/release-gate-policy-20261003/safe-fallback-6d1f3a7e-summary.json)
+  and [candidate → fallback → candidate image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json)
+  pass. Recovery retains the full ledger, private-chat expiration/history,
+  screenshot function permissions and exact offline Focus cleanup.
   These proofs do not establish capacity, production admission or deployment.
 - New harness validators pass 23 checks. Real production-image and candidate-image
   preparation smokes have passed; they are explicitly preparation-only. Paired
@@ -45,6 +48,10 @@ ClassPilot to the Store.
   82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575,
   376052 bytes, copied without rebuilding to C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip.
   Public listing still showed 2.9.6 when checked; pending submissions remain unverified.
+  Four [actual packaged-function retry checks](release-evidence/release-297/release-gate-policy-20261003/packaged-heartbeat-retry-297-summary.json)
+  verify bounded 503 retries, Retry-After, retired-auth cancellation and in-flight
+  heartbeat exclusion. No extension bytes changed; these are not browser capacity
+  or managed-device results.
 
 ## Release profiles and acceptance
 

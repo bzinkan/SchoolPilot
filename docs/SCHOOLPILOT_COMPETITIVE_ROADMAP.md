@@ -24,8 +24,9 @@ CI checks and 2,032 local unit tests with no skips. Fresh local candidate,
 frontend and synthetic schema proofs are bound in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json).
 The [read-only CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
 records exact commits and unchanged ClassPilot 2.9.7 bytes. New measured release
-acceptance, corrected-fallback image recovery and separate Usage capacity remain
-pending. Subsequent harness/documentation changes need fresh review-head CI.
+acceptance and separate Usage capacity remain pending. The [corrected-fallback image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json)
+passes with the complete ledger, chat expiration/history and exact Focus cleanup.
+Subsequent harness/documentation changes need fresh review-head CI.
 The owner is holding Store submission until preparation is complete.
 
 The following checkpoints are historical. The October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)

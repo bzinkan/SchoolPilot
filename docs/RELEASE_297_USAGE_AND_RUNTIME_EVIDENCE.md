@@ -16,10 +16,16 @@ harness/documentation edits preserve application inputs but need review-head CI.
 
 Native regressions cover atomic cleanup audit, disconnect ownership, exactly-once
 lease release and tenant reset. Those fixes also exist in safe fallback source
-`6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; its final scanned-image recovery
-is pending. Real-image preparation smokes are preparation-only. The new measured
+`6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; its [fresh scan/focused proof](release-evidence/release-297/release-gate-policy-20261003/safe-fallback-6d1f3a7e-summary.json)
+and [actual candidate/fallback/candidate recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json)
+pass. Recovery preserves all 54 ledger entries, function permissions, expired
+private replies, delivered history and exact offline Stop Focus cleanup. These
+synthetic image-function checks do not establish production catalog or service
+traffic rollback. Real-image preparation smokes are preparation-only. The new measured
 paired/current-school and mixed-classroom gates have not passed yet. No new Usage
 capacity run is accepted, and no release execution or Store submission is approved.
+The unchanged extension's [four packaged retry controls](release-evidence/release-297/release-gate-policy-20261003/packaged-heartbeat-retry-297-summary.json)
+also pass, including two-attempt heartbeat limits for 503 and auth cancellation.
 Historical checkpoint tables below retain their dated scope and do not select
 the current release artifact.
 
