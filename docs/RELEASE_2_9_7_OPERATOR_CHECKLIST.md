@@ -27,13 +27,37 @@ reported CI checks. Its fresh local API/worker image has zero HIGH/CRITICAL scan
 findings; the frontend is rebuilt and the 54-migration/129-table synthetic schema
 is verified. Exact hashes and verification limits are in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
 and [CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json).
-The [fresh review-head checkpoint](release-evidence/release-297/release-gate-policy-20261003/ci-2110e269-complete.json)
-also verifies all 20 SchoolPilot checks at `2110e269`, all 10 ClassPilot checks,
+The [fresh review-head checkpoint](release-evidence/release-297/release-gate-policy-20261003/ci-ca388d10-complete.json)
+also verifies all 20 SchoolPilot checks at `ca388d10`, all 10 ClassPilot checks,
 and unchanged application/frontend/package inputs. Resulting-main checks remain
 required after separately authorized merges.
 The corrected safe fallback passes its scan and [actual image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json).
+The separate [staged service rehearsal is still failed overall](release-evidence/release-297/release-gate-policy-20261003/staging128129-partial-05.json).
+Its actual 128-admission bridge, worker appointment maintenance and SQL drains are
+verified; complete 129-adoption/fallback acceptance still needs real authenticated
+heartbeat capability evidence. The earlier synthetic advertised-capability
+telemetry setup is recorded as a limitation, not accepted client support.
+The [subsequent real-heartbeat staging attempt](release-evidence/release-297/release-gate-policy-20261003/staging128129-failed-06.json)
+also failed overall. A [native Redis diagnostic](release-evidence/release-297/release-gate-policy-20261003/realtime-native-regression-ed026.json)
+confirms valid empty snapshots become unreadable and same-millisecond revisions
+lose ordering; its failed cleanup import remains recorded. Snapshot and
+health-monitor compatibility corrections are in progress. Refresh final serving
+and fallback artifacts, CI and measured acceptance after these source changes.
+The ed026 artifacts and previous measurements remain historical evidence.
 New paired/current-school acceptance and three continuous classroom runs remain
 pending. Usage capacity has zero accepted runs and both new Usage modes remain off.
+The [initial continuous mixed block](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-6afc8-failed-held.json)
+retains two failed attempts and an unreserved third attempt. Its positive
+classroom fixture included an idle school; a new reviewed harness revision and
+fresh three-pass campaign are required. Completed heartbeat traffic is partial
+evidence and does not accept the failed classroom checks.
+The [new harness correction](release-evidence/release-297/release-gate-policy-20261003/harness-active-audience-631fb338-summary.json)
+passes 53 focused checks, including regressions that fail on the preceding
+harness. It is integrated as `0691cdb8`; helper refresh and measured acceptance
+are still pending.
+The [October 4 synthetic fixture and restricted-role restoration](release-evidence/release-297/release-gate-policy-20261003/usage-oct4-snapshot-preparation.json)
+pass preparation checks; their authority expires at 11:12:21 Eastern that day.
+They do not count as a capacity run or a production catalog inspection.
 The owner is waiting to submit ClassPilot until preparation is complete.
 
 ## Historical preparation checkpoints
@@ -351,9 +375,18 @@ repository-scoped GitHub OIDC trust are provisioned and verified. While disabled
 use the deploy script's guarded legacy build path and record its resolved source
 SHA and digest. Do not enable the flag merely to obtain a green workflow. An
 enabled immutable path supplies both `--immutable-image-sha` and
-`--immutable-image-digest` for the exact green image. The legacy path rebuilds;
-verify and scan that exact resulting image before execution rather than treating
-the prepared local image's scan as proof for different bytes.
+`--immutable-image-digest` for the exact green image. The legacy path rebuilds.
+For every admission-stage invocation, the existing controller binds clean main
+and the build's `--iidfile`, then runs the pinned `verify-legacy-deploy-image.mjs`
+scan before ECR login or publication. All HIGH/CRITICAL findings, including
+unfixed findings, and uncertain scanner cleanup stop progression. After push,
+the controller verifies the actual registry manifest/config against that scanned
+image before task registration, migration or service update. Retain each emitted
+evidence directory, source SHA, image archive/config hash, scan receipt/hash,
+registry proof and resolved digest in the operator packet. Each rebuilt image
+gets its own proof; retain the prepared local image scan as preparation evidence.
+Candidate rehearsal remains a separately authorized operation and cannot be
+combined with `--enable-rls-table`.
 
 Reconcile the live catalog and migration ledger before forming admission plans.
 The [read-only access feasibility record](release-evidence/release-297/usage-contention/production-schema-read-feasibility.json)

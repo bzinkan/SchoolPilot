@@ -1,0 +1,103 @@
+{
+  "schema": "release297-harness-correction-pure-verification-v1",
+  "before": "6afc8f09cedbc634c481d9882e49d2d491d4921d",
+  "after": "631fb338d965730456869bdbeb215e070f53f225",
+  "hostNode": "v22.18.0",
+  "sourceClean": true,
+  "changedFiles": [
+    "scripts/load/usage/release-gates-v2/common-database.mjs",
+    "scripts/load/usage/release-gates-v2/lifecycle-audience.mjs",
+    "scripts/load/usage/release-gates-v2/lifecycle-audience.test.mjs",
+    "scripts/load/usage/release-gates-v2/measurements.mjs",
+    "scripts/load/usage/release-gates-v2/mixed.mjs",
+    "scripts/load/usage/release-gates-v2/observer.mjs",
+    "scripts/load/usage/release-gates-v2/owner.mjs",
+    "scripts/load/usage/release-gates-v2/patch.mjs",
+    "scripts/load/usage/release-gates-v2/postgres-readiness.mjs",
+    "scripts/load/usage/release-gates-v2/postgres-readiness.test.mjs",
+    "tests/release297-gates-v2.test.mjs"
+  ],
+  "redAgainstExactBefore": [
+    {
+      "log": "red-active-audience.log",
+      "nativeExitCode": 1,
+      "predicate": "offered school set [0] versus generated lifecycle [0,1]"
+    },
+    {
+      "log": "red-postgres-readiness.log",
+      "nativeExitCode": 1,
+      "predicate": "pre-ready native connection attempt exists"
+    }
+  ],
+  "preservedFirstGreenFailure": {
+    "log": "focused-green.log",
+    "tests": 53,
+    "passed": 51,
+    "failed": 2,
+    "cause": "Ambiguous generator school-loop source anchor; narrowed unique lifecycle anchor"
+  },
+  "finalFocused": {
+    "command": "node --test tests/release297-gates-v2.test.mjs tests/release297-report-cost.test.mjs",
+    "nativeExitCode": 0,
+    "tests": 53,
+    "passed": 53,
+    "failed": 0,
+    "skipped": 0
+  },
+  "syntaxCheck": {
+    "modules": 11,
+    "passed": true
+  },
+  "protectedProjection": {
+    "paths": [
+      "src",
+      "schoolpilot-app",
+      "Dockerfile",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "infrastructure",
+      "terraform",
+      "scripts/load/usage/release-gates-v2/contracts.mjs",
+      "scripts/load/usage/release-gates-v2/validation.mjs",
+      "scripts/load/usage/release-gates-v2/campaign.mjs",
+      "scripts/load/usage/release-gates-v2/offering.mjs",
+      "scripts/load/usage/release-gates-v2/usage-checks.mjs",
+      "scripts/load/usage/release-enabled-generator.mjs",
+      "scripts/load/usage/release-enabled-profile.mjs",
+      "scripts/load/usage/restore-snapshot.mjs"
+    ],
+    "equal": true
+  },
+  "applicationChanged": false,
+  "schemaChanged": false,
+  "profilesChanged": false,
+  "thresholdsChanged": false,
+  "independentStaticReview": true,
+  "artifacts": [
+    {
+      "name": "red-active-audience.log",
+      "sha256": "7fb56be0152bbfe012b6e00a7b11acbc6f189bbb403cb76abbc2707846c2f224"
+    },
+    {
+      "name": "red-postgres-readiness.log",
+      "sha256": "28210bd7490648a219db4195cd38f2ecece5190868ca19859f949f579c13bf7c"
+    },
+    {
+      "name": "focused-green.log",
+      "sha256": "55ea9be70c17ce20c395e1ff17b04ad811b3c0c37dbdbb0ab5a4da584acf08e6"
+    },
+    {
+      "name": "focused-green-02.log",
+      "sha256": "50125b25a99c20046a87c28153f1d420600c34d5b989eac06e38a49a069009ec"
+    },
+    {
+      "name": "focused-green-final.log",
+      "sha256": "fbc243e8cc54f5edaa2c22dc94545f66e39b2bdb5244643946c7b3ee4aa26151"
+    }
+  ],
+  "nativeWorkloadExecuted": false,
+  "capacityAcceptance": false,
+  "historicalMixedRunsDisposition": "failed/held unchanged",
+  "helperRefresh": "required before any new measured run"
+}

@@ -1,0 +1,48 @@
+{
+  "productionCatalogProven": false,
+  "candidateImage": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+  "fallbackImage": "sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387",
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "createdAt": "2026-10-04T04:12:45.8873508Z",
+  "schemaVersion": 1,
+  "nextCorrection": "Use real authenticated HTTP heartbeat, server accepted capabilities, exact bindings and freshness; remove fabricated realtime positive support; require separately coordinated local rehearsal.",
+  "priorFourFailuresPreserved": true,
+  "actualEcsAlbDrainProven": false,
+  "productionMutations": 0,
+  "rawLogsRemainPrivate": true,
+  "attempt05": {
+    "passed": false,
+    "startedAt": "2026-10-04T03:55:12.997Z",
+    "forcedRemoval": false,
+    "sha256": "b5ac0509225537f33c29dc075b54f33a755fe43d621c5261ca4ab70c6df7ff2d",
+    "interpretation": "Synthetic eligibility mismatch is source-supported; not established application defect",
+    "completedAt": "2026-10-04T03:56:22.395Z",
+    "gracefulCleanupPassed": false,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-ed026-05\\execution-6006ee5c0e60\\execution.json",
+    "limitations": [
+      "Announcement helper wrote advertised four capabilities into realtime Redis directly at128/off while negotiated three were accepted. Preserve legacy delivery observation without claiming real heartbeat support or stronger bridge guarantee.",
+      "WS negotiation alone does not establish fresh exact-bound realtime private-chat support. No129 adoption, fallback or return service acceptance.",
+      "One-shot probe explicit exit follows asserted SQL/tenant/socket/background drain; residual module Redis is not claimed disposed.",
+      "Failed adopt probe exited1; exact cleanup is containment, not a graceful passing full execution."
+    ],
+    "failure": "New stamped reply rejected PRIVATE_CHAT_UPDATE_REQUIRED; no actual HTTP heartbeat freshness/support evidence supplied",
+    "cleanupPassed": true,
+    "acceptedPartial": {
+      "api129Readyz200": true,
+      "apiWorker128Exit0NoOOM": true,
+      "legacyWsDeliveryAndAck": true,
+      "actualWorker128Maintenance": true,
+      "exactNamedSqlConnectionsZeroBefore129": true,
+      "zeroThreadsTokensAndLatchesAt128": true,
+      "accepted129CapabilitiesNegotiated": true,
+      "api128Readyz200": true
+    }
+  },
+  "capacityAccepted": false,
+  "stagedServiceAcceptance": false,
+  "previousSummary": {
+    "unchanged": true,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-staging128129-summary-01\\staging-partial-public-summary.json",
+    "sha256": "29c51728b4117ca9b2f4dd5756b7c0f3aae5865fbeb1aa0c95360b25314d296e"
+  }
+}

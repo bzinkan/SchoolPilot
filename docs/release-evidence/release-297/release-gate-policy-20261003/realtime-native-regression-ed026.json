@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Native original-source regression proof; retained failed overall attempt",
+  "source": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+  "image": "sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f",
+  "redisImage": "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2",
+  "overall": "FAILED",
+  "functionalObservations": {
+    "emptyArrayMutationConfirmed": true,
+    "signoutEmptyArrayConfirmed": true,
+    "nestedClassroomArraysBecameObjects": true,
+    "sameMillisecondRevisions": [
+      1791091412269000,
+      1791091412269000,
+      1791091412269000,
+      1791091412269000
+    ],
+    "exactMonotonicRevisionContractPassed": false,
+    "staleBindingSignedoutGuardsPassed": true,
+    "originalTtlPreserved": true,
+    "baselineLuaEqual": true,
+    "originalScripts": {
+      "write": "2b47857253e32cb01811a1eb795155d4266e4b562ce76299ce5504480e4c33ac",
+      "classification": "83472e178d0b5dd1d940da12984b898000b30654f86e2ec467e84b1b294445b0",
+      "signout": "4aa0a55ae200aec2e05f3caa99529abdafc79ada964fdb9249253a63daab2bb2"
+    }
+  },
+  "cleanup": {
+    "allExactOwnersAbsent": true,
+    "unforced": true,
+    "redisExit0": true,
+    "probeExit1": true,
+    "fullGraceful": false,
+    "limitation": "Probe cleanup imported db/tenantContext instead of middleware/tenantContext; owned Redis was quit and unconnected DB pools ended before the TypeError"
+  },
+  "evidenceLimits": [
+    "parsed JSON root rawRevision values establish duplicate revisions; rawRevisionToken regex may match a nested revision and is not used as the root numeric evidence",
+    "This confirms existing application defects, not feature/capacity/deployment acceptance",
+    "Original failed attempt01 and all attempt02 records remain immutable"
+  ],
+  "productionMutations": 0,
+  "capacityAccepted": false,
+  "records": [
+    {
+      "name": "original-result.json",
+      "sha256": "14beebb73c74f700da3cdfa1daec7c5e31a9418e869d0800e9695653c3738b29"
+    },
+    {
+      "name": "execution.json",
+      "sha256": "552fc5199823648bb275ab71437b4a85d74c88eeffe3b3f81ca774033d69c570"
+    },
+    {
+      "name": "baseline-script-proof.json",
+      "sha256": "e24648a697c82d1049017312fd8e57f9ea9af1e8234b6a08ffae4f4a8faaed9d"
+    },
+    {
+      "name": "local-window.json",
+      "sha256": "855beee5b0edafb76c73fe30c754d23fb92befe893785b891bbbd4e6e4afe32d"
+    }
+  ]
+}
