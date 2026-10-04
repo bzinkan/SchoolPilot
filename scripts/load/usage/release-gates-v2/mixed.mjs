@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { pause } from './application.mjs';
 import { stageForRound, profileHash } from './contracts.mjs';
-import { cpuWindow, classifyLog, negativeProbes } from './measurements.mjs';
+import { cpuObservation, classifyLog, negativeProbes } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { validateRound } from './validation.mjs';
 import { runHeavyUsageWorkers,completeUsageChecks } from './usage-checks.mjs';
@@ -74,12 +74,13 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
   errorCoverage.push(classifyLog(await docker(['logs',pgContainerId]),'postgres',{complete:true}));
   for(let minute=0;minute<profile.rounds;minute++){
     const stage=stageForRound(minute,profile), cpuByRole=[];
-    for(const index of stage.active){const window=await windows.get(`${index}:${minute}`);cpuByRole.push({role:'api'+index,window,...cpuWindow(window)});}
+    for(const index of stage.active){const window=await windows.get(`${index}:${minute}`);cpuByRole.push({role:'api'+index,window,
+      ...cpuObservation(window,{strict:!profile.capacityDeadlinesOnly})});}
     const perMinute=traffic.heartbeats.windows[minute],reconnect=minute===loss.fromRound?traffic.reconnect:null;
     const lifecycle=traffic.lifecycle.rounds[minute];
     const coverage=errorCoverage.filter(row=>row.kind==='postgres'||row.role==='worker'||stage.active.some(index=>row.role==='api'+index));
     const round={index:minute,profile:profile.name,contractSha256:profileHash(profile),topology:stage,reconnect:minute===loss.fromRound,
-      measuredWindowMs:60_000,cpuByRole,apiCpuMeanFraction:Math.max(...cpuByRole.map(row=>row.meanFraction)),
+      measuredWindowMs:60_000,cpuByRole,apiCpuMeanFraction:cpuByRole.every(row=>row.available)?Math.max(...cpuByRole.map(row=>row.meanFraction)):null,
       traffic:{heartbeats:perMinute,reconnect,lifecycle},continuousGlobal:global,persistence, persisted:persistence.total,invalidBindings:after.invalid,
       drains,api:stage.active.map(index=>terminal.get(index)),errorCoverage:coverage,databaseFailures:coverage.reduce((sum,row)=>sum+row.errorCount,0)};
     round.acceptance=validateRound(round,profile);metrics.rounds.push(round);save(`round-${minute+1}.json`,round);

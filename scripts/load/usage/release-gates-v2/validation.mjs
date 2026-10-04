@@ -37,7 +37,7 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
       (row.seenHeartbeatOffers??row.http?.seenHeartbeatOffers)===(traffic?.targetHistogram?.[round.topology.active[n]]??0)+(extra?.targetHistogram?.[round.topology.active[n]]??0)),
     declaredDistribution:profile.kind!=='mixed'||JSON.stringify(traffic?.targetHistogram)===JSON.stringify(expectedTopologyCounts(profile,round.topology)),
     drains: round.drains?.length > 0 && round.drains.every(row => row.complete === true),
-    cpuBound: baseline || (round.measuredWindowMs===60_000 && round.cpuByRole?.length===round.topology.active.length
+    cpuBound: profile.usage || baseline || (round.measuredWindowMs===60_000 && round.cpuByRole?.length===round.topology.active.length
       && round.cpuByRole.every(row=>cpuWindow(row.window).meanFraction < NONREGRESSION.meanCpuFraction)
       && round.apiCpuMeanFraction===Math.max(...round.cpuByRole.map(row=>cpuWindow(row.window).meanFraction))),
     latency: traffic?.timings?.p95Ms <= NONREGRESSION.p95Ms,

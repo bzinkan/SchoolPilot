@@ -8,7 +8,7 @@ import { PROFILES, assertOffering, profileHash, stageForRound, stickyTarget, has
 import { offerHeartbeats, sealTimings, targetFor } from './offering.mjs';
 import { patchGeneratorV2, patchProcessV2, patchDrainV2 } from './patch.mjs';
 import { validateRound, validatePairs, reportMatrix, validateMixedRuns,expectedTopologyCounts,validateLostReconnectEvidence,workerLossOverlap } from './validation.mjs';
-import { classifyLog, cpuWindow, negativeLogCoverage } from './measurements.mjs';
+import { classifyLog, cpuWindow, cpuObservation, negativeLogCoverage } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { declareCampaign, reserveAttempt, registerAttempt, verifyPairedClosure, verifyUsageComparisons, assertCandidateBinding, usageCandidateBinding, verifyBroaderGate } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
@@ -270,6 +270,7 @@ test('mixed Usage cannot omit workers, reports, coverage, audit or worker databa
     invalidBindings:0,persistence:{passed:true},continuousGlobal:{passed:true,actualPersisted:72000,acknowledged200:72000,targetCounts:true,usage},drains:[{complete:true}],
     errorCoverage:Array.from({length:5},()=>({available:true,complete:true,errorCount:0,sha256:digest})),databaseFailures:0};
   assert.equal(validateRound(round,profile).passed,true); // Usage deadlines, not dark-release CPU/500ms criteria.
+  const unavailableCpu=structuredClone(round);unavailableCpu.cpuByRole=[{window:{windowFailed:true},...cpuObservation({windowFailed:true},{strict:false})}];assert.equal(validateRound(unavailableCpu,profile).passed,true);
   for(const key of ['reports','workers','correctness','workerDatabase']){const altered=structuredClone(round);delete altered.continuousGlobal.usage[key];assert.equal(validateRound(altered,profile).passed,false,key);}
   const late=structuredClone(round);late.continuousGlobal.usage.workers[0].durationMs=48_001;assert.equal(validateRound(late,profile).passed,false);
   const failure=structuredClone(round);failure.continuousGlobal.usage.workerDatabase.statements.rollup.failures=1;assert.equal(validateRound(failure,profile).passed,false);
@@ -283,4 +284,11 @@ test('worker loss overlap uses actual native worker intervals and real loss-wave
   assert.equal(workerLossOverlap(usage,PROFILES.broader),true);
   assert.equal(workerLossOverlap({...usage,workers:usage.workers.map(row=>({...row,startedAtMs:620000,finishedAtMs:630000}))},PROFILES.broader),false);
   assert.equal(workerLossOverlap({...usage,workers:usage.workers.map(row=>({...row,finishedAtMs:601010}))},PROFILES.broader),false);
+});
+
+
+test('optional Usage CPU timing remains unavailable while dark mixed keeps strict capture criteria',()=>{
+  const late={declaredDurationMs:60_000,startDelayMs:1000,endDelayMs:1000,start:{cpu:{usage_usec:0},hrtimeMicroseconds:0},end:{cpu:{usage_usec:40_000_000},hrtimeMicroseconds:60_000_000}};
+  const optional=cpuObservation(late,{strict:false});assert.equal(optional.available,false);assert.equal(optional.acceptedAsCpuEvidence,false);assert.equal(optional.meanFraction,null);
+  assert.throws(()=>cpuObservation(late));assert.throws(()=>cpuWindow(late));
 });

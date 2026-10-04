@@ -30,6 +30,10 @@ export function classifyLog(bytes, kind, { complete = false, expectedNegativePro
   return { kind, complete, available: complete, bytes: Buffer.byteLength(bytes), sha256: hash(bytes),
     errorCount: errors.length, expectedNegativeRequestIds, categories: Object.fromEntries([...new Set(errors)].map(value => [value, errors.filter(item => item === value).length])) };
 }
+export function cpuObservation(window,{strict=true}={}){
+  try{return{available:true,acceptedAsCpuEvidence:true,...cpuWindow(window)};}
+  catch(error){if(strict)throw error;return{available:false,acceptedAsCpuEvidence:false,usec:null,meanFraction:null,errorCode:'OPTIONAL_CPU_WINDOW_INVALID'};}
+}
 export function cpuWindow(window) {
   assert.equal(window.declaredDurationMs, 60_000); assert.ok(window.start && window.end);
   const usec = window.end.cpu.usage_usec - window.start.cpu.usage_usec;
