@@ -152,6 +152,7 @@ export async function runV2(options) {
         const since = new Date(Date.now() - 86400_000).toISOString(), before = await observer.rpc('snapshot', { since });
         await Promise.all([...active.values()].map(owner => owner.rpc('reset'))); if (worker) await worker.rpc('reset');
         const resourceBefore = [...active.values()].map(owner => ({ role: owner.role, value: owner.resources.at(-1) }));
+        metrics.wholeOwnedCpuStarts=resourceBefore;
         const startsAtMs = Date.now() + 1000; canary.reset();
         const windowPromises = [...active.values()].map(owner => owner.rpc('measureWindow', { startsAtMs, durationMs: 60_000 }));
         const trafficPromise = generator.rpc('phase', { startsAtMs, offering: profile.offering, topology: stage, ingest: true, reports: profile.usage, lifecycle: !blackbox, reconnect: profile.kind === 'mixed' && index === 10 });
@@ -222,6 +223,18 @@ export async function runV2(options) {
         if (exits.some(exit => exit.containerId === owner.id)) continue;
         try { exits.push(await owner.shutdown()); } catch { exits.push({ role: owner.role, containerId: owner.id, clean: false }); }
       }
+      if(profile.kind==='blackbox'||profile.kind==='diagnostic'){
+        // Baseline exposes producer flush rather than a live batch drain.
+        // Its final permanent flush is therefore part of the paired CPU cost,
+        // measured through the owned shutdown acknowledgement in both arms.
+        const successful=metrics.rounds[0]?.traffic?.succeeded;
+        const whole=owners.filter(owner=>owner.role.startsWith('api')).reduce((sum,owner)=>{
+          const start=metrics.wholeOwnedCpuStarts?.find(row=>row.role===owner.role)?.value;
+          return sum+(start?owner.resources.at(-1).cpu.usage_usec-start.cpu.usage_usec:NaN);
+        },0);
+        metrics.wholeOwnedApiCpuMicroseconds=whole;metrics.cpuMsPer200=successful&&Number.isFinite(whole)?whole/1000/successful:null;
+        metrics.wholeOwnedCpuIncludesFinalClassificationFlush=true;
+      }
       metrics.errorCoverage = owners.map(owner => ({ role:owner.role,
         ...classifyLog(readFileSync(join(control,`${owner.role}-log.private`),'utf8'),'api',{complete:exits.find(exit => exit.containerId===owner.id)?.clean===true}) }));
       const pgLog = await dockerInput(['logs',configuration.pgContainerId]); writeFileSync(join(control,'postgres-log.private'),pgLog,{flag:'wx',mode:0o600});
@@ -268,7 +281,7 @@ export async function runV2(options) {
         && metrics.rounds.every(round => round.acceptance.passed === true) && metrics.cleanupPassed === true && metrics.sourceUnchanged
         && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0);
       metrics.failure = failure ?? null; metrics.finishedAt = new Date().toISOString();
-      if (metrics.rounds.length) { metrics.cpuMsPer200 = metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }
+      if (metrics.rounds.length) { metrics.cpuMsPer200 ??= metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }
       save(output, 'metrics.json', metrics);
       const records = Object.fromEntries(readdirSync(output).filter(name => name.endsWith('.json')).sort().map(name => [name, hash(readFileSync(join(output, name)))]));
       save(output, 'receipt-manifest.json', { schemaVersion: 2, profile: profile.name, source: options.source, run, planSha256, records, capacityAccepted: false });
