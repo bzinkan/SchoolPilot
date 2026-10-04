@@ -20,6 +20,7 @@ import { loadSnapshot } from '../roles/snapshot-contract.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 import { bootstrapHealthOperationalFixture, restoredOperationalIdentities } from './operational-fixture.mjs';
 import { runHeavyUsageWorkers, completeUsageChecks } from './usage-checks.mjs';
+import {runBoundaryPreparation} from './boundary-preparation.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -28,6 +29,7 @@ const git = (directory, args) => execFileSync('git', ['-C', directory, ...args],
 
 export async function runV2(options) {
   const profile = profileFor(options.profile), output = resolve(options.outputDirectory), control = resolve(options.privateDirectory);
+  if(profile.preparationOnly)assert.equal(options.preparationSmoke,true,'Preparation-only profiles cannot be release runs');
   assert.match(options.source, /^[a-f0-9]{40}$/); assert.match(options.run, /^[a-f0-9]{12}$/);
   assert.match(options.endpoint, /^(?:npipe:\/{2,4}\.\/pipe\/[a-zA-Z0-9_.-]+|unix:\/\/\/[^\s?#]+)$/);
   assertOutside(options.sourceDirectory, output); assertOutside(options.sourceDirectory, control); assertOutside(output, control);
@@ -139,6 +141,11 @@ export async function runV2(options) {
       await pause(5500); // Keep the preflight's existing5s throttle out of measured ordinary offers.
       await Promise.all([...active.values()].map(owner => owner.rpc('quiesce')));
       if(options.preparationSmoke===true){
+        if(profile.preparationOnly){
+          const result=await runBoundaryPreparation({profile,active,stop,generator,observer,fixture,docker:dockerInput,save:(name,value)=>save(output,name,value)});
+          metrics.preparationSmokeResult={passed:result.passed,result,capacityAccepted:false,releaseAcceptance:false};
+          save(output,'boundary-preparation.json',result);save(output,'preparation-smoke.json',metrics.preparationSmokeResult);return;
+        }
         const before=await observer.rpc('snapshot',{since:new Date(Date.now()-86400_000).toISOString()});
         const result=blackbox?await generator.rpc('verify'):await generator.rpc('phase',{offering:profile.offering,topology:{active:[...active.keys()],distribution:'uniform'},ingest:false,reports:false,lifecycle:true,reconnect:false});
         const drained=await Promise.all([...active.values()].map(owner=>owner.rpc('drain')));

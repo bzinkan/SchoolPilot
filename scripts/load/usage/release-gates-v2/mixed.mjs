@@ -5,6 +5,7 @@ import { cpuObservation, classifyLog, negativeProbes, retainCompletedGeneratorTr
 import { checkPersistence } from './persistence.mjs';
 import { validateRound } from './validation.mjs';
 import { runHeavyUsageWorkers,completeUsageChecks } from './usage-checks.mjs';
+import {expectedTargetsBefore,waitForHeartbeatOwnership} from './routing.mjs';
 
 // One continuous offering, with fixed-clock routing and actual process loss.
 // Database observations are whole-run exact binding totals. They are never
@@ -12,13 +13,14 @@ import { runHeavyUsageWorkers,completeUsageChecks } from './usage-checks.mjs';
 export async function runMixed({profile,active,startApi,stop,generator,observer,worker,fixture,metrics,save,docker,readLog,pgContainerId,expiresAt}) {
   const since=new Date(Date.now()-86400_000).toISOString(), before=await observer.rpc('snapshot',{since});
   await Promise.all([...active.values()].map(owner=>owner.rpc('reset')));const startsAtMs=Date.now()+1500, windows=new Map(), terminal=new Map(), drains=[];
-  const waitAt=async offset=>{await pause(Math.max(0,startsAtMs+offset-Date.now()));assert.ok(Date.now()<Date.parse(expiresAt),'Quiet window expired');};
+  const waitAt=async offset=>{while(Date.now()<startsAtMs+offset)await pause(Math.max(1,startsAtMs+offset-Date.now()));assert.ok(Date.now()<Date.parse(expiresAt),'Quiet window expired');};
   const scheduleWindows=(index,from,to)=>{
     const owner=active.get(index);
     for(let minute=from;minute<to;minute++) windows.set(`${index}:${minute}`,owner.rpc('measureWindow',{startsAtMs:startsAtMs+minute*60_000,durationMs:60_000},startsAtMs+(minute+1)*60_000-Date.now()+30_000)
       .catch(error=>({windowFailed:true,errorCode:error.code||'WINDOW_CAPTURE_FAILED'})));
   };
   const loss=profile.stages.find(stage=>stage.lost!==undefined);
+  const expectedPreLoss=expectedTargetsBefore(profile,loss.fromRound*60_000);
   if(profile.usage){assert.ok(worker);await worker.rpc('reset');}
   for(const index of active.keys())scheduleWindows(index,0,index===loss.lost?loss.fromRound:profile.rounds);
   const phase=generator.rpc('phase',{startsAtMs,offering:profile.continuousOffering,continuous:true,topology:stageForRound(0,profile),ingest:true,reports:profile.usage,lifecycle:true,reconnect:true},960_000);
@@ -40,9 +42,11 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
       await waitAt(stage.fromRound*60_000);let removal={};
       if(stage.lost!==undefined){
         await windows.get(`${stage.lost}:${stage.fromRound-1}`);const owner=active.get(stage.lost);
+        const ingressHandoff=await waitForHeartbeatOwnership(owner,expectedPreLoss[stage.lost],{deadlineMs:startsAtMs+stage.fromRound*60_000+profile.offering.requestTimeoutMs});
         drains.push(await owner.rpc('drain'));terminal.set(stage.lost,await owner.rpc('snapshot'));
         const exit=await stop(owner);active.delete(stage.lost);assert.equal(exit.clean,true);
-        removal={lostRole:'api'+stage.lost,cleanShutdown:exit.clean,exit};
+        const shutdownCompletedAtMs=Date.now();assert.ok(shutdownCompletedAtMs<startsAtMs+stage.fromRound*60_000+stage.reconnectStartDelayMs,'Lost API remained available into reconnect offers');
+        removal={lostRole:'api'+stage.lost,cleanShutdown:exit.clean,exit,ingressHandoff,shutdownCompletedAtMs};
       }
       metrics.transitions.push({round:stage.fromRound,active:stage.active,distribution:stage.distribution,atOffsetMs:stage.fromRound*60_000,...removal});
     }

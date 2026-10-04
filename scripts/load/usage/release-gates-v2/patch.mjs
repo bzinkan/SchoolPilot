@@ -4,30 +4,31 @@ import { replaceOnce } from '../roles/patch-coordinator.mjs';
 // Hash-bound generated overlay: canonical historical files never change.
 export function patchGeneratorV2(source) {
   let text = source.replaceAll('\r\n', '\n');
-  text = replaceOnce(text, "import { offerOpenLoopHeartbeats, OPEN_LOOP_HEARTBEATS } from './open-loop-heartbeats.mjs';", "import { offerHeartbeats as offerOpenLoopHeartbeats, sealTimings } from './release-gates-v2/offering.mjs';\nimport { assertOffering, profileFor, stickyTarget, stageForRound } from './release-gates-v2/contracts.mjs';\nimport { lostReconnectBindings } from './release-gates-v2/reconnect.mjs';\nimport { lifecycleAudience } from './release-gates-v2/lifecycle-audience.mjs';");
+  text = replaceOnce(text, "import { offerOpenLoopHeartbeats, OPEN_LOOP_HEARTBEATS } from './open-loop-heartbeats.mjs';", "import { offerHeartbeats as offerOpenLoopHeartbeats, sealTimings } from './release-gates-v2/offering.mjs';\nimport { assertOffering, profileFor, stickyTarget, stageForRound } from './release-gates-v2/contracts.mjs';\nimport { topologyForOffer } from './release-gates-v2/routing.mjs';\nimport { lostReconnectBindings } from './release-gates-v2/reconnect.mjs';\nimport { lifecycleAudience } from './release-gates-v2/lifecycle-audience.mjs';");
   text = replaceOnce(text, 'let fixture, base, schools;', `let fixture, base, schools;
 const v2Profile = profileFor(process.env.RELEASE297_PROFILE);
 let topology = { active: [0], distribution: 'uniform' }, apiBases, continuousStartsAtMs;
 const issuedRecipients=new Map();
 const observedStickyBindings=new Map();
-const endpointFor = (school, index) => {
+const sleepUntilWall = async deadline => { while(Date.now()<deadline)await sleep(Math.max(1,deadline-Date.now())); };
+const endpointFor = (school, index, offeringOffsetMs) => {
   const ordinal = school.index * 500 + index;
-  const activeTopology = continuousStartsAtMs ? stageForRound(Math.min(v2Profile.rounds-1,Math.max(0,Math.floor((Date.now()-continuousStartsAtMs)/60_000))),v2Profile) : topology;
+  const activeTopology = continuousStartsAtMs ? (offeringOffsetMs===undefined ? stageForRound(Math.min(v2Profile.rounds-1,Math.max(0,Math.floor((Date.now()-continuousStartsAtMs)/60_000))),v2Profile) : topologyForOffer(v2Profile,offeringOffsetMs)) : topology;
   const target = stickyTarget(ordinal, activeTopology.active, activeTopology.distribution);
   assert.ok(apiBases[target]); return apiBases[target];
 };`);
   text = replaceOnce(text, "{ method = 'GET', body, cookie, token, schoolId, csrf, signal } = {}", "{ method = 'GET', body, cookie, token, schoolId, csrf, signal, endpoint } = {}");
   text = replaceOnce(text, 'fetch(`${base}${path}`,', 'fetch(`${endpoint ?? base}${path}`,');
-  text = replaceOnce(text, "async function heartbeat(school, index, signal, allowPreflightThrottle = false) {", "async function heartbeat(school, index, signal, allowPreflightThrottle = false) {\n  const actualEndpoint=endpointFor(school,index);");
+  text = replaceOnce(text, "async function heartbeat(school, index, signal, allowPreflightThrottle = false) {", "async function heartbeat(school, index, signal, allowPreflightThrottle = false, offeringOffsetMs, actualDispatchOffsetMs) {\n  const offeredAtMs=Date.now(), actualEndpoint=endpointFor(school,index,offeringOffsetMs);");
   text = replaceOnce(text, "method: 'POST', token: school.tokens[index], signal,", "method: 'POST', token: school.tokens[index], signal, endpoint: actualEndpoint,");
   text = replaceOnce(text, "assert.ok([200, 204].includes(result.status), `Heartbeat HTTP ${result.status}`);", "if (!(result.status === 200 || (allowPreflightThrottle && result.status === 204))) throw Object.assign(new Error('Heartbeat status'), { httpStatus: result.status });");
-  text = replaceOnce(text, 'offer.index < RELEASE_ENABLED_PROFILE.preflightDevicesPerSchool * schools.length', 'false');
+  text = replaceOnce(text, 'offer.index < RELEASE_ENABLED_PROFILE.preflightDevicesPerSchool * schools.length', 'false, offer.offsetMs, offer.actualDispatchOffsetMs');
   text = replaceOnce(text, '  return result;\n}\n\nexport function assertHistoricalReport', `  const targetIndex=apiBases.indexOf(actualEndpoint);
   if(continuousStartsAtMs&&v2Profile.broaderCapacityGate&&!allowPreflightThrottle&&result.status===200){
-    const stage=stageForRound(Math.min(v2Profile.rounds-1,Math.floor((Date.now()-continuousStartsAtMs)/60_000)),v2Profile);
+    const stage=topologyForOffer(v2Profile,offeringOffsetMs);
     if(stage.distribution==='sticky80')observedStickyBindings.set(school.index+':'+index,{schoolIndex:school.index,deviceIndex:index,targetIndex,observedAtMs:Date.now()});
   }
-  return { ...result, targetIndex };\n}\n\nexport function assertHistoricalReport`);
+  return { ...result, targetIndex, ...(continuousStartsAtMs&&offeringOffsetMs!==undefined?{route:{declaredOffsetMs:offeringOffsetMs,dispatchWallOffsetMs:offeredAtMs-continuousStartsAtMs,dispatchMonotonicOffsetMs:actualDispatchOffsetMs,targetIndex}}:{}) };\n}\n\nexport function assertHistoricalReport`);
   text = replaceOnce(text, "`${base.replace('http:', 'ws:')}/ws`", "`${endpointFor(school, index).replace('http:', 'ws:')}/ws`");
   text = replaceOnce(text, '  return issued.body.command.id;', "  issuedRecipients.set('command:'+issued.body.command.id,school.students[index]);\n  return issued.body.command.id;");
   text = replaceOnce(text, '    await sleep(1500);\n    for (const school of schools) {', '    await sleep(1500);\n    for (const school of schools.filter(item => lifecycleAudience(v2Profile, schools).schoolIndices.includes(item.index))) {');
@@ -57,13 +58,13 @@ const endpointFor = (school, index) => {
       observedStickyBindings.clear();
       topology = rpc.value.topology; base = apiBases[topology.active[0]];
       assert.ok(base);`);
-  text = replaceOnce(text,'false), { config }) : null,','false), { config, startsAtMs:rpc.value.startsAtMs }) : null,');
+  text = replaceOnce(text,'false, offer.offsetMs, offer.actualDispatchOffsetMs), { config }) : null,','false, offer.offsetMs, offer.actualDispatchOffsetMs), { config, startsAtMs:rpc.value.startsAtMs }) : null,');
   // Long survival waves are fixed-clock offers, routed through targets that
   // are active when offered. They do not reuse the last lifecycle's base.
   text = replaceOnce(text, '  const start = performance.now(), result = await staffRequest(school, `/admin/usage?${query}`);',
     '  const start = performance.now(), result = await staffRequest(school, `/admin/usage?${query}`, {endpoint:endpointFor(school,0)});');
   text = replaceOnce(text, '    const days = RELEASE_ENABLED_PROFILE.reportOffers.rangesInDays[wave];',
-    `    if(continuousStartsAtMs)await sleep(Math.max(0,continuousStartsAtMs+v2Profile.reportWaveOffsetsMs[wave]-Date.now()));
+    `    if(continuousStartsAtMs)await sleepUntilWall(continuousStartsAtMs+v2Profile.reportWaveOffsetsMs[wave]);
     const days = RELEASE_ENABLED_PROFILE.reportOffers.rangesInDays[wave];`);
   text = replaceOnce(text, 'const row = { wave, days, schoolIndex: school.index, scope, status: 0, correct: false };',
     `const row = { wave, days, schoolIndex: school.index, scope, status: 0, correct: false,
@@ -72,18 +73,29 @@ const endpointFor = (school, index) => {
   text = replaceOnce(text, 'const [heartbeats, reports, classroom] = await Promise.all([', 'const [heartbeats, reports, classroom, reconnect] = await Promise.all([');
   text = replaceOnce(text, 'rpc.value.reports ? reportWaves() : [], rpc.value.lifecycle ? lifecycle() : null,', `rpc.value.reports ? reportWaves() : [], rpc.value.lifecycle ? (rpc.value.continuous ? (async()=>{
           const rounds=[];for(let minute=0;minute<v2Profile.rounds;minute++){
-            await sleep(Math.max(0,continuousStartsAtMs+minute*60_000-Date.now()));base=apiBases[stageForRound(minute,v2Profile).active[0]];
+            await sleepUntilWall(continuousStartsAtMs+minute*60_000);base=apiBases[stageForRound(minute,v2Profile).active[0]];
             rounds.push({minute,...await lifecycle()});
           }return {passed:rounds.length===v2Profile.rounds&&rounds.every(row=>row.passed),rounds};})() : lifecycle()) : null,
         rpc.value.reconnect ? (async()=>{const stage=v2Profile.stages.find(row=>row.reconnectOffers);
-          await sleep(rpc.value.continuous?Math.max(0,continuousStartsAtMs+stage.fromRound*60_000+stage.reconnectStartDelayMs-Date.now()):stage.reconnectStartDelayMs);
+          if(rpc.value.continuous)await sleepUntilWall(continuousStartsAtMs+stage.fromRound*60_000+stage.reconnectStartDelayMs);else await sleep(stage.reconnectStartDelayMs);
           const selected=stage.reconnectLostOnly?lostReconnectBindings([...observedStickyBindings.values()],v2Profile,continuousStartsAtMs):null;
-          const result=await offerOpenLoopHeartbeats((offer,signal)=>heartbeat(schools[offer.schoolIndex],offer.deviceIndex,signal,true),
+          const result=await offerOpenLoopHeartbeats((offer,signal)=>heartbeat(schools[offer.schoolIndex],offer.deviceIndex,signal,true,rpc.value.continuous?stage.fromRound*60_000+stage.reconnectStartDelayMs+offer.offsetMs:undefined,rpc.value.continuous?stage.fromRound*60_000+stage.reconnectStartDelayMs+offer.actualDispatchOffsetMs:undefined),
             {config:{...config,schoolDevices:stage.reconnectSchoolDevices??config.schoolDevices,maxInFlight:stage.reconnectOffers,durationMs:stage.reconnectWindowMs,deviceCadenceMs:stage.reconnectWindowMs,expected:stage.reconnectOffers},reconnect:true,
               ...(selected?{mapOffer:offer=>({...offer,deviceIndex:selected.schools[offer.schoolIndex][offer.deviceIndex].deviceIndex})}:{})});
           if(selected)result.lostBindingEvidence=selected;return result;})() : null,`);
   text = replaceOnce(text, 'if (heartbeats) { heartbeats.timings = summarize(heartbeats.timingsMs); delete heartbeats.timingsMs; }', 'if (heartbeats) { sealTimings(heartbeats); heartbeats.capabilityAcknowledgements200=heartbeats.succeeded; } if (reconnect) sealTimings(reconnect);');
   text = replaceOnce(text, "'Only the first offer to each of the ten explicitly warmed bindings may use the5s throttle. Every other204 fails. Raw persistence must equal200responses.'", "'Ordinary offerings all require200; only the separately counted reconnect extras may be204. Raw rows equal exact per-binding200 acknowledgements.'");
+  text = replaceOnce(text, "    } else if (rpc.operation === 'phase') {", `    } else if (rpc.operation === 'boundaryProof') {
+      assert.equal(v2Profile.preparationOnly,true);assert.equal(rpc.value.preparationOnly,true);
+      const window=v2Profile.boundaryWindow;continuousStartsAtMs=rpc.value.startsAtMs-window.fromOffsetMs;
+      const config={...v2Profile.offering,durationMs:window.durationMs,expected:266};
+      const [heartbeats,reconnect]=await Promise.all([
+        offerOpenLoopHeartbeats((offer,signal)=>heartbeat(schools[offer.schoolIndex],offer.deviceIndex,signal,false,window.fromOffsetMs+offer.offsetMs,window.fromOffsetMs+offer.actualDispatchOffsetMs),{config,startsAtMs:rpc.value.startsAtMs}),
+        (async()=>{const starts=continuousStartsAtMs+window.reconnectOffsetMs;await sleepUntilWall(starts);
+          return offerOpenLoopHeartbeats((offer,signal)=>heartbeat(schools[offer.schoolIndex],offer.deviceIndex,signal,true,window.reconnectOffsetMs+offer.offsetMs,window.reconnectOffsetMs+offer.actualDispatchOffsetMs),
+            {config:{...config,durationMs:window.reconnectDurationMs,expected:window.reconnectOffers,maxInFlight:window.reconnectOffers,deviceCadenceMs:window.reconnectDurationMs},startsAtMs:starts,reconnect:true});})(),
+      ]);sealTimings(heartbeats);sealTimings(reconnect);value={heartbeats,reconnect,preparationOnly:true,capacityAcceptance:false,logicalOffsetFromMs:window.fromOffsetMs,actualStartsAtMs:rpc.value.startsAtMs};
+    } else if (rpc.operation === 'phase') {`);
   text = replaceOnce(text, 'value = { heartbeats, heartbeatStatuses, heartbeat204Reason:', 'value = { heartbeats, reconnect, topology, contractProfile: v2Profile.name, heartbeatStatuses, heartbeat204Reason:');
   return text;
 }

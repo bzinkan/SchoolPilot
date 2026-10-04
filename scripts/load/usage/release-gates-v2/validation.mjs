@@ -3,6 +3,7 @@ import { profileFor, profileHash, NONREGRESSION, PROFILES,stickyTarget } from '.
 import { cpuWindow, negativeProbes } from './measurements.mjs';
 import { lostReconnectBindings } from './reconnect.mjs';
 import { lifecycleAudience } from './lifecycle-audience.mjs';
+import { expectedTargetsBefore } from './routing.mjs';
 const median = values => { const rows = [...values].sort((a, b) => a - b); return rows.length % 2 ? rows[(rows.length - 1) / 2] : (rows[rows.length / 2 - 1] + rows[rows.length / 2]) / 2; };
 export function expectedTopologyCounts(profile,stage){
   const counts={};for(let schoolIndex=0;schoolIndex<2;schoolIndex++)for(let deviceIndex=0;deviceIndex<profile.offering.schoolDevices[schoolIndex];deviceIndex++){
@@ -110,13 +111,30 @@ export function validateMixedRuns(runs) {
     assert.equal(run.contractSha256, profileHash(profile)); assert.equal(run.sourceUnchanged, true);
     for (const round of run.rounds) assert.equal(validateRound(round, profile).passed, true);
     assert.deepEqual(run.transitions.map(row => [row.round,row.active.length,row.distribution]),profile.stages.map(row=>[row.fromRound,row.active.length,row.distribution]));
-    assert.equal(run.transitions.at(-1).lostRole, 'api0'); assert.equal(run.transitions.at(-1).cleanShutdown, true);
+    validatePhysicalLoss(run,profile);
   }
   assert.equal(new Set(runs.map(row => row.source)).size, 1); assert.equal(new Set(runs.map(row => row.schemaSha256)).size, 1);
   assert.equal(new Set(runs.map(row=>row.applicationImage)).size,1);
   assert.equal(new Set(runs.map(row=>row.harnessSource)).size,1);assert.ok(runs.every(row=>/^[a-f0-9]{40}$/.test(row.harnessSource)));
   return { passed: true, currentSchoolOnly: !profile.broaderCapacityGate,broaderVariant:profile.broaderVariant??null,
     broaderVariantPassed:profile.broaderCapacityGate===true,broaderSyntheticCapacityGatePassed:false,broaderCapacityClaimed:false };
+}
+export function validatePhysicalLoss(run,profile) {
+  const loss=profile.stages.find(stage=>stage.lost!==undefined),transition=run.transitions.find(row=>row.round===loss.fromRound);
+  assert.equal(transition.lostRole,'api'+loss.lost);assert.equal(transition.cleanShutdown,true);
+  const epoch=run.continuous.traffic.heartbeats.declaredStartedAtMs,lossAtMs=epoch+loss.fromRound*60_000,
+    reconnectAtMs=lossAtMs+loss.reconnectStartDelayMs,handoff=transition.ingressHandoff,
+    expected=expectedTargetsBefore(profile,loss.fromRound*60_000)[loss.lost];
+  assert.ok(Number.isFinite(epoch)&&epoch>0);assert.equal(handoff.expected,expected);assert.equal(handoff.observed,expected);
+  assert.equal(handoff.actualServerOwnership,true);assert.ok(Number.isFinite(handoff.startedAtMs)&&Number.isFinite(handoff.completedAtMs));
+  assert.ok(handoff.startedAtMs>=lossAtMs&&handoff.completedAtMs>=handoff.startedAtMs&&handoff.completedAtMs<reconnectAtMs);
+  assert.ok(Array.isArray(handoff.observations)&&handoff.observations.length>0);
+  assert.ok(handoff.observations.every(row=>Number.isFinite(row.atMs)&&row.atMs>=handoff.startedAtMs&&row.atMs<=handoff.completedAtMs
+    &&Number.isSafeInteger(row.count)&&row.count>=0&&row.count<=expected));
+  assert.equal(handoff.observations.at(-1).count,expected);assert.equal(handoff.observations.at(-1).atMs,handoff.completedAtMs);
+  assert.ok(Number.isFinite(transition.shutdownCompletedAtMs)&&transition.shutdownCompletedAtMs>=handoff.completedAtMs
+    &&transition.shutdownCompletedAtMs<reconnectAtMs,'Physical API loss must precede declared reconnect offers');
+  return true;
 }
 const stageForReport=(profile,wave)=>[...profile.stages].reverse().find(stage=>stage.fromRound*60_000<=profile.reportWaveOffsetsMs[wave]);
 export function workerLossOverlap(usage,profile){

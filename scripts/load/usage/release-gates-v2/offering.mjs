@@ -45,8 +45,11 @@ export async function offerHeartbeats(send, { config, now = () => performance.no
     const started = now(), controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.requestTimeoutMs);
     let operation;
-    operation = Promise.resolve().then(() => send(offer, controller.signal)).then(reply => {
+    operation = Promise.resolve().then(() => send({...offer,actualDispatchOffsetMs:now()-start}, controller.signal)).then(reply => {
       const status = reply?.status ?? 200; result.statusHistogram[status] = (result.statusHistogram[status] || 0) + 1;
+      if(reply.route && (reply.route.declaredOffsetMs%60_000<100 || reply.route.declaredOffsetMs%60_000>59_900)){
+        (result.boundaryDispatches??=[]).push({...reply.route,offerIndex:offer.index});
+      }
       assert.ok(reconnect ? [200, 204].includes(status) : status === 200,
         'Ordinary offers require HTTP200; declared reconnect extras allow throttled HTTP204');
       for(const output of outputs){

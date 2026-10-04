@@ -39,6 +39,13 @@ export const PROFILES = frozen({
       frozen({fromRound:7,active:frozen([0,1,2]),distribution:'sticky80'}),
       frozen({fromRound:10,active:frozen([1,2]),distribution:'survivors',lost:0,reconnectOffers:133,reconnectWindowMs:10_000,reconnectStartDelayMs:1000}),
     ])}),
+  boundaryPreparation:frozen({name:'release297-classroom-133-loss-boundary-preparation-v1',kind:'mixed',offering:offering(13.3,[133,0]),usage:false,
+    apiTasks:3,initialApiTasks:3,rounds:15,continuousOffering:offering(13.3,[133,0],900_000),preparationOnly:true,
+    boundaryWindow:frozen({fromOffsetMs:590_000,durationMs:20_000,reconnectOffsetMs:601_000,reconnectDurationMs:10_000,reconnectOffers:133}),stages:frozen([
+      frozen({fromRound:0,active:frozen([0]),distribution:'uniform'}),frozen({fromRound:5,active:frozen([0,1,2]),distribution:'uniform'}),
+      frozen({fromRound:7,active:frozen([0,1,2]),distribution:'sticky80'}),
+      frozen({fromRound:10,active:frozen([1,2]),distribution:'survivors',lost:0,reconnectOffers:133,reconnectWindowMs:10_000,reconnectStartDelayMs:1000}),
+    ])}),
   usage: frozen({ name: 'release297-usage-shared-db-three-api-100-v2', kind: 'usage', offering: offering(100, [500, 500]), usage: true,
     apiTasks: 3, repetitions: 3, reports: 64, rawPerSchool: 1_000_000, workerAcceptanceMs: 48_000, pairedReleaseComparisonRequired: true }),
   broader: broader('ordinary-survivors','survivors'),
