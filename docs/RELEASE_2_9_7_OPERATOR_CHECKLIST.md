@@ -1,6 +1,9 @@
 # Coordinated SchoolPilot release and ClassPilot 2.9.7
 
-Status: release stabilization and capacity acceptance in progress. No deployment green
+Status: release stabilization and separate Usage activation work in progress.
+The owner's October 3 amended [release policy and acceptance gates](RELEASE_297_DEPLOY_READINESS.md)
+are authoritative for current preparation; earlier dated checkpoints below
+preserve their original outcomes and superseded gate wording. No deployment green
 light, merge, production deployment, capability activation or Store publication
 is recorded by this document. The current release inventory is
 [here](RELEASE_2_9_7_PR_INVENTORY.md). Preserve the historical September 30 evidence;
@@ -250,20 +253,25 @@ tag, and no 2.9.7 tag or merged status is claimed here.
 - Run source and exact-ZIP checks across the existing supported Chrome matrix,
   including pages already open across an update. Record source, manifest version,
   extension ID, ZIP hash and actual outcomes together.
-- Require three consecutive cold, release-enabled final-source/schema runs
-  before requesting release execution. Every complete worker operation must
-  finish within 48 seconds at the unchanged 60-second limit. Use two schools,
-  one million stored observations per school, all 64 concurrent reports across
-  four waves, and all 6,000 authenticated offers at 100/second with complete drain
-  and no rejected, failed or excessively late traffic. Require no database
-  acquisition failures and agreement on independent totals, stored observations,
-  coverage, tenant isolation and audited CSV. Rerun the retained comparison
-  profile once. Preserve all failed attempts and the measured capacity envelope.
+- Require the [amended release gates](RELEASE_297_DEPLOY_READINESS.md): paired
+  production-source/candidate checks with both new Usage modes off, current-school
+  mixed classroom checks with the three new capabilities on, and compatible
+  recovery/artifact evidence on final source. Preserve every failed attempt.
+- Before either new Usage mode is activated, separately complete the declared
+  three-API/shared-database campaign: three consecutive cold passes, two schools,
+  one million stored observations each, 6,000 offers at 100/second fleet-wide,
+  all 64 reports plus distinct-report checks, workers within 48 seconds, full
+  correctness/drain and no acquisition or statement-deadline failures. Complete
+  three-to-two sticky-client survival before claiming broader capacity. The
+  historical single-task comparison stays diagnostic, with its failures intact.
 
-The current release decision requires completed Usage development and synthetic
-acceptance before requesting execution. Its deployed shadow/rollup observation
-still gates later reporting activation. A failed confidentiality, authority,
-recipient or enforcement check always blocks the affected release.
+Owner-adopted release decision, October 3, 2026:
+
+> SchoolPilot/ClassPilot 2.9.7 may proceed with both new Usage modes off after passing final-source regression, classroom, current-school capacity and recovery checks. Usage activation requires its separate completed development, synthetic capacity acceptance and deployed observation. Historical single-task 100-heartbeat/second failures remain preserved and are not reclassified as passes.
+
+Deployed daily-shadow/new-rollup observation still gates later reporting
+activation. A failed confidentiality, authority, recipient, enforcement or
+recovery check always blocks the affected release.
 
 ## Read actual production before execution
 

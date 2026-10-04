@@ -221,7 +221,7 @@ ingestions. The full-128 integration repeat's minimum complete-worker margin was
 remain limitations. The retained long-range fixture contains 541,500 historical
 aggregate rows per school, not a dense full year of heavy daily grains.
 
-The new acceptance requires three fresh, separately recorded final-schema runs
+The historical October 2 acceptance required three fresh, separately recorded final-schema runs
 with the same 4-CPU/4-GiB owned PostgreSQL container and 512-MiB Node heap cap,
 all existing constraints/RLS/deadlines, two schools with one million stored
 observations each, all supported report scopes/date queries, and independently
@@ -238,9 +238,15 @@ finished in 22.623/22.753 seconds, but 32 of 64 JSON reports failed and only 1,5
 of 6,000 offered heartbeats succeeded; connection-pool acquisition failures
 persisted. Post-run correctness passed. These results establish neither the
 required three passing runs nor a lower supported arrival-rate envelope. New
-Usage aggregation/reporting remain off. The current user decision requires Usage
-synthetic acceptance before requesting this coordinated release. Existing
-daily-rollup shadow mode is a separate
+Usage aggregation/reporting remain off. The owner's October 3 amended decision
+separates release acceptance from Usage activation:
+
+> SchoolPilot/ClassPilot 2.9.7 may proceed with both new Usage modes off after passing final-source regression, classroom, current-school capacity and recovery checks. Usage activation requires its separate completed development, synthetic capacity acceptance and deployed observation. Historical single-task 100-heartbeat/second failures remain preserved and are not reclassified as passes.
+
+The [amended readiness record](RELEASE_297_DEPLOY_READINESS.md) defines new,
+separately identified release and three-API Usage profiles; none is recorded as
+passed until its bound final-source measurements complete. The old profile and
+failed records remain immutable. Existing daily-rollup shadow mode is a separate
 pre-existing setting; do not describe every usage worker as disabled.
 
 The retained comparison scenario runs with

@@ -9,10 +9,15 @@ and [PR inventory](RELEASE_2_9_7_PR_INVENTORY.md) supersede the earlier candidat
 version, independent stack-merging order and two-Chromebook prerequisite. Managed
 validation is `waived_not_passed`; actual sample-bearing live acceptance is still
 required before global promotion. No implementation or test status here implies
-deployment or activation. The owner's subsequent decision requires all Usage
-development and synthetic capacity acceptance before requesting coordinated
-release execution. Usage's deployed observation remains a later activation
-gate. SFU implementation and legacy media changes remain excluded.
+deployment or activation. The owner's October 3 decision separates the release
+and Usage activation gates:
+
+> SchoolPilot/ClassPilot 2.9.7 may proceed with both new Usage modes off after passing final-source regression, classroom, current-school capacity and recovery checks. Usage activation requires its separate completed development, synthetic capacity acceptance and deployed observation. Historical single-task 100-heartbeat/second failures remain preserved and are not reclassified as passes.
+
+The [amended readiness record](RELEASE_297_DEPLOY_READINESS.md) specifies the
+paired regression, current-school, three-to-two and separate Usage checks.
+Usage's deployed observation remains a later activation gate. SFU implementation
+and legacy media changes remain excluded.
 
 The latest October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
 passes 2,012 unit tests, 190 owner/restricted database checks, four private-chat

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "path": "frozen-closed-journal.json.gz",
+      "originalBytes": 9184,
+      "originalSha256": "0fa077d62df01d2423c629738e0e76695532ed44ba4ab02ed413aa18327c6604",
+      "sanitizedSha256": "0fa077d62df01d2423c629738e0e76695532ed44ba4ab02ed413aa18327c6604",
+      "gzipSha256": "1bae66f5c3fb3dde1c604ac13362a6774e620b1f518e6167042158b89d19e533"
+    },
+    {
+      "path": "fresh-baseline-metadata.json.gz",
+      "originalBytes": 9965,
+      "originalSha256": "6caf8d541571eeccb6fde8ef674bff7579d7b44af521512a74742f939d0b2b4a",
+      "sanitizedSha256": "6caf8d541571eeccb6fde8ef674bff7579d7b44af521512a74742f939d0b2b4a",
+      "gzipSha256": "2469e8d32483d6b60d035c56c94c1e513038cb7288f68f06a705c6ac40cfd058"
+    },
+    {
+      "path": "plan-c-original.md.gz",
+      "originalBytes": 31825,
+      "originalSha256": "b1c32fff6660a64748a0bdb83a583a74db5251b0412e7d7db7b468092a72053b",
+      "sanitizedSha256": "b1c32fff6660a64748a0bdb83a583a74db5251b0412e7d7db7b468092a72053b",
+      "gzipSha256": "69dc1a37c6ae631f8ee7fb8c87fab79cda65bd13169c2dee58b8715b68bc7ec8"
+    },
+    {
+      "path": "plan-c-amended.md.gz",
+      "originalBytes": 33088,
+      "originalSha256": "b51132328f1e28cbd5f14cea87911bd18ec2df1fa92539a2947878e9c5638dea",
+      "sanitizedSha256": "b51132328f1e28cbd5f14cea87911bd18ec2df1fa92539a2947878e9c5638dea",
+      "gzipSha256": "15747745d139770d345a92836830879558fef4cbc51807a90201e4faa6239ec1"
+    }
+  ],
+  "summarySha256": "d01c47dba4594d5d068dd25b4d1b9e137dec6baec99fcc502ede3447a8f1fb0b",
+  "notes": [
+    "Original historical evidence remains byte-identical",
+    "Sanitized archive paths are presentation records; original private custody remains outside repository",
+    "Closed journal remains failed; no new acceptance pass claimed",
+    "Private runtime environment values not copied"
+  ]
+}

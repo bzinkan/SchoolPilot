@@ -35,7 +35,7 @@ db_username              = "schoolpilot"
 redis_node_type     = "cache.t4g.micro"
 redis_replica_count = 0
 
-# ECS — scheduler work remains isolated; API runs single-task in pilot mode
+# ECS — isolated scheduler; API ordinary minimum 1, weekday school-day minimum 3, maximum 6
 # Observed /readyz activation verified 2026-09-09 00:24 UTC after PR #414.
 # This adopts the live baseline; no Terraform apply is needed. See
 # docs/API_POOL_READINESS_OPERATIONS.md for activation and rollback.

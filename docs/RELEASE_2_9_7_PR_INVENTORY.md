@@ -1,5 +1,7 @@
 # SchoolPilot / ClassPilot 2.9.7 release inventory
 
+The owner adopted the October 3 [split release and Usage gates](RELEASE_297_DEPLOY_READINESS.md). Current-source checks at c237cd7a and extension 8069a9c9 are green; new paired/current-school acceptance is not yet measured. Historical Usage failures remain intact.
+
 This is an inclusion inventory, not merge, deployment, or activation evidence. The structured record preserves full commits, base dependencies and inclusion proofs. Checkpoint 60bb2338157a9f0c313ebffae3f42a69ac3e3345 is based on main 996d965f0b044f8fc4d4bbc399c5ab3781fbac04. Preserve original review branches; reconcile their PRs only after the single integration PR lands.
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
