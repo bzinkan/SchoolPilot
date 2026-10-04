@@ -14,9 +14,10 @@ ClassPilot to the Store.
   release shards and security. ClassPilot head
   `8069a9c9bd50352e187847158b356a69edc4e45d`: all 10 checks pass.
   The [read-only CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json)
-  records exact heads and links. Subsequent SchoolPilot harness/documentation
-  changes preserve application and frontend inputs; their new review head still
-  requires fresh CI before merging.
+  records exact heads and links. The [fresh review-head checkpoint](release-evidence/release-297/release-gate-policy-20261003/ci-2110e269-complete.json)
+  verifies all 20 checks at `2110e269` and all 10 ClassPilot checks, exact
+  application/frontend input equivalence, packaged ancestry and unchanged ZIP.
+  Resulting-main checks remain required after separately authorized merges.
 - The [application correction record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
   records 2,032 local unit passes with no skips, the fresh candidate image with
   zero HIGH/CRITICAL findings, rebuilt frontend, 54-migration/129-table synthetic
@@ -26,9 +27,9 @@ ClassPilot to the Store.
   pass. Recovery retains the full ledger, private-chat expiration/history,
   screenshot function permissions and exact offline Focus cleanup.
   These proofs do not establish capacity, production admission or deployment.
-- [New teardown-accounting validators](release-evidence/release-297/release-gate-policy-20261003/harness-physical-settlement-9fd96ea1-summary.json) pass 40 checks. The unchanged application and frontend remain bound to ed026; [CI at 2c31d0f6](release-evidence/release-297/release-gate-policy-20261003/ci-2c31d0f6-complete.json) passes all 20 checks, with new-head CI required for this harness-only correction.
+- [New teardown-accounting validators](release-evidence/release-297/release-gate-policy-20261003/harness-physical-settlement-9fd96ea1-summary.json) pass 40 checks. The unchanged application and frontend remain bound to ed026; [CI at 2110e269](release-evidence/release-297/release-gate-policy-20261003/ci-2110e269-complete.json) passes all 20 checks and covers this harness correction. The earlier [2c31d0f6 checkpoint](release-evidence/release-297/release-gate-policy-20261003/ci-2c31d0f6-complete.json) remains historical.
 - [Three candidate sole-school runs](release-evidence/release-297/release-gate-policy-20261003/sole-f8af7-completed-failed.json) pass all 798 offers at p95 44–54 ms and 22–25% API CPU, but the strict paired comparison is unaccepted because every baseline misses its absolute latency limit and A/A controls fail stability. [The 34/s comparison](release-evidence/release-297/release-gate-policy-20261003/normal-f8af7-incomplete-failed-summary.json) stopped after its failed baseline; no host cause is established.
-- [One capability-on 34/s candidate run](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-f8af7-summary.json) passes all 2,040 offers, exact recipient/persistence checks, p95 about 118 ms and 51% API CPU. Three continuous mixed runs and the separate Usage campaign remain pending. The [October 3 two-million fixture and restricted restoration](release-evidence/release-297/release-gate-policy-20261003/usage-oct3-snapshot-preparation.json) are preparation-only; a fresh date-bound fixture is required for later Usage.
+- The [capability-on 34/s run with the current helper](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-6afc8-summary.json) passes all 2,040 offers, exact recipient/persistence checks, p95 about 309 ms and 54.2% API CPU. The earlier [f8 helper run](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-f8af7-summary.json) also passed at about 118 ms and 51% CPU; neither substitutes for three continuous mixed runs or a production-capability dark comparison. Those and the separate Usage campaign remain pending. The [October 3 two-million fixture and restricted restoration](release-evidence/release-297/release-gate-policy-20261003/usage-oct3-snapshot-preparation.json) are preparation-only; a fresh date-bound fixture is being prepared for October 4.
 - The actual-services 128 → 129 admission staging rehearsal is in progress. The passed 129-table recovery proof does not substitute for this intermediate startup/drain check.
 - The old registered campaign is closed using the byte-identical frozen validator.
   Canonical campaign hash: 10772ca928db810eda736c260f450cbe97ab76d1f130e7124c8e7e5e72815e92.

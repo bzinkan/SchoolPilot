@@ -214,9 +214,11 @@ that fence is not a compatible rollback artifact.
 
 ## Usage contention repair and capacity acceptance
 
-The current release decision requires all development and synthetic capacity
-acceptance before requesting release execution. Deployed Usage observation is
-still a later activation gate. Passing worker timings alone is insufficient.
+The historical October 2 decision required all development and synthetic capacity
+acceptance before requesting release execution. The approved October 3 amendment
+allows the classroom release with both new Usage modes off after its separate
+release gates pass. Usage activation still requires completed synthetic capacity
+acceptance and deployed observation. Passing worker timings alone is insufficient.
 
 The Usage route now admits at most two reports per API process and one per
 school. A round-robin queue holds at most 32 requests overall and 16 per school,
