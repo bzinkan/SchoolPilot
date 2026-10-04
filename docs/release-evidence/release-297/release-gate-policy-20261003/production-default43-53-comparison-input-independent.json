@@ -1,0 +1,49 @@
+{
+  "kind": "independent_matched133_production_default_pre_window_review",
+  "passed": true,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "hostHarnessSource": "aaf95156940a8f37a009ad1d640f18f7bf7ba4a3",
+  "hostHeadAndCleanStatusChecked": true,
+  "inputPacket": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-matched-133-production-default-preparation-01/input-packet.json",
+    "sha256": "538532a0decea0f441416c11f67236e6998639acdc1dfc5d319b7c4331c3f678"
+  },
+  "fixturePreparation": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-matched-133-production-default-preparation-01/fixture-preparation.json",
+    "sha256": "788a95f64c62750242dba173f68b4e299120869b13706a758aac9e0d1fd01891"
+  },
+  "successfulCompositionReview": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-production-default43-53-independent-composed06-01/composition-review.json",
+    "sha256": "eaf182ac5e4259acba8ecfbd737a35d0da0fdf59ffc00f510fd11ba60d9898c3"
+  },
+  "all104InputHashesMatch": true,
+  "originalOptionTemplatesHashPinned": true,
+  "optionFieldsChangedPerArm": ["schemaFile", "schemaReceiptFile", "schemaReceiptSha256", "schemaSha256"],
+  "allOtherOptionFieldsUnchanged": true,
+  "commonHistoricalHelperHarnessSource": "c73f8f39cee675bd9e5dabd0734dc51851c1f560",
+  "same148ActualHelperFileBindings": true,
+  "profile": "release297-blackbox-sole-133-v2",
+  "profileSha256": "59167a96d825a56ed6f951f5327200257a0cacde0f2bc65a02606603cb9998a1",
+  "fixedOrder": ["A", "A", "A", "B", "B", "A", "A", "B"],
+  "offersPerAttempt": 798,
+  "staffReadsAdded": false,
+  "minimumBeforeAttemptMs": 600000,
+  "assemblerSha256": "10208dace54d052ffaee6f03aa6ba05526c2a09df5f751b80b5371f35c7582e6",
+  "assemblerSoleDeltaFromF33VerifiedByReverseHash": "Pin original option bytes before four-field derivative comparison",
+  "sealerSha256": "8bd216af44a19cee78fec59bd742ce58fbb23dd024f478ccc31c2a4d325106bd",
+  "driverSha256": "4d9443d77329ad1e5e1f4b206f0baddfb972fe507833fd6108d14ae6047e09c8",
+  "noStaticBlocker": true,
+  "requiresFreshBoundRoot40MinuteWindowAndFinalSealedPacketReplay": true,
+  "nativeExecutionAuthorized": false,
+  "explicitRootGoStillRequired": true,
+  "comparisonPolicyAmendmentApproved": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "releaseOperationsAuthorized": false,
+  "limitations": [
+    "Synthetic source-derived production-default43/53 schemas; no production raw DDL export.",
+    "Completed03 service scopes compose with successful06 restoration; original03,04,05 remain failed.",
+    "No tests, builds, Docker, SQL, cloud or CI calls performed for this input review.",
+    "This is input review, not measurement acceptance or approval of a numerical policy exception."
+  ]
+}

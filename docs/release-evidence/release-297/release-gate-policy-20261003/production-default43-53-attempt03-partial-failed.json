@@ -1,0 +1,91 @@
+{
+  "kind": "failed_local_production_default_fixture_preparation_with_completed_service_recovery",
+  "attempt": "03",
+  "accepted": false,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "productionMutations": 0,
+  "capacityAccepted": false,
+  "productionRawSchemaExport": false,
+  "startedAt": "2026-10-04T18:27:50.875Z",
+  "completedAt": "2026-10-04T18:31:39.916Z",
+  "windowSha256": "aabbe139f8689e64bbaa482b98697dd792c3f5d6a280761e26d19f90c82217ad",
+  "boundPlanSha256": "82bc8b34e179d506c61a9397373e98e80a176022b53388b9dc71353c400fd6e7",
+  "execution": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\execution.json",
+    "sha256": "299ce57509e9f55d59d8fc3d0925c52fd152287d0eab2b4d5846e4c4d781e9bd",
+    "bytes": 43296
+  },
+  "absence": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\independent-owned-absence.json",
+    "sha256": "17fc0a7e3c3048e0b7b9b436f1b670ce857f96879471dfc0d37bd4feeccf75d0",
+    "bytes": 5408
+  },
+  "custody": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\custody-manifest.json",
+    "sha256": "635ef75499aa477247aae6497217ac30bf856394e5c617c66ab7786b240a4630",
+    "bytes": 35900
+  },
+  "sourceDrizzleExitCode": 0,
+  "nativeDefaultReplay": {
+    "baseline43": true,
+    "candidate53": true,
+    "baselineMigrationCount": 43,
+    "candidateMigrationCount": 53,
+    "baselineRls": 121,
+    "candidateRls": 129,
+    "optionalStaffContractDeferred": true,
+    "baselineProof": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\default-inspect-baseline-p2.json",
+      "sha256": "8540d1a957e61923edab195713b924f6537c3e061a0b76e16775b932a3a324c8",
+      "bytes": 33072
+    },
+    "candidateProof": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\default-inspect-candidate-p3.json",
+      "sha256": "2c8a40a5b0516e351d783d7b12b479e5330bd6dc5429efc5311d477f414bf3bc",
+      "bytes": 40123
+    }
+  },
+  "actualServiceRecovery": {
+    "phases": [
+      "bridge128",
+      "adopt129",
+      "fallback129",
+      "return129"
+    ],
+    "allFourOracleResultsPassed": true,
+    "actualServices": 8,
+    "apiActualFullHealthCycles": 4,
+    "serviceDrains": 8,
+    "allNamedSqlConnectionsZero": true,
+    "complete53LedgerAndScreenshotFunctionRetainedAcrossFallback": true,
+    "privateChatExpiryHistoryAndCleanupPassed": true,
+    "focusCleanupOfPreExistingSyntheticDesiredStatePassed": true,
+    "newFocusIssuanceClaim": false,
+    "syntheticSignedProtocolClient": true,
+    "chromeEnrollmentOrBrowserAcceptance": false
+  },
+  "failure": {
+    "code": "ERR_ASSERTION",
+    "phase": "first baseline restricted restoration after successful schema-only psql",
+    "exactAssertionCauseProven": false,
+    "restoredDumpRetained": false,
+    "noRestrictedRestoreProofProduced": true,
+    "readyHandoffEmitted": false
+  },
+  "cleanup": {
+    "allOwnedAbsent": true,
+    "constructorAndExecutorAbsent": true,
+    "allExit0NoOom": true,
+    "containers": 27,
+    "forced": false,
+    "completedInsideWindow": true
+  },
+  "limitations": [
+    "Overall preparation FAILED; no accepted comparison fixture or ready handoff",
+    "Actual source-derived migration and service recovery are partial proof only",
+    "Restricted restoration and canonical restoration equality remain unaccepted",
+    "One-shot protocol probe explicitly exits with undisposed unexported Redis handle; actual service drains are independently normal and SQL-free",
+    "No actual production raw schema export, ECS/ALB drain, browser/Chrome enrollment, capacity or deployment acceptance",
+    "No retry under the consumed03 window"
+  ]
+}

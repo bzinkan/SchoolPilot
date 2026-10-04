@@ -1,0 +1,783 @@
+{
+  "kind": "matched133_production_default_fixed8_measurement",
+  "recordedAt": "2026-10-04T20:39:14.900Z",
+  "fixedOrder": [
+    "A",
+    "A",
+    "A",
+    "B",
+    "B",
+    "A",
+    "A",
+    "B"
+  ],
+  "profile": "release297-blackbox-sole-133-v2",
+  "profileSha256": "59167a96d825a56ed6f951f5327200257a0cacde0f2bc65a02606603cb9998a1",
+  "hostHarnessSource": "aaf95156940a8f37a009ad1d640f18f7bf7ba4a3",
+  "commonHelperHarnessSource": "c73f8f39cee675bd9e5dabd0734dc51851c1f560",
+  "driverSha256": "211c410d6f4d4f991178aacddc3a963272221bc6c81338bbb03db840469e3194",
+  "preparationSha256": "c68fda2ecf14edac02262c60ccb40d5046dbaa294f02d7920c790af0ca5a3297",
+  "quietWindowSha256": "0d5613a04874e651b2fa4322acc7c191203b71c02b9345f14d1ffb0ebe34636a",
+  "quietWindow": {
+    "startsAt": "2026-10-04T20:17:14.0440024+00:00",
+    "expiresAt": "2026-10-04T20:57:14.0440024+00:00"
+  },
+  "schemaScope": "source-derived synthetic production-default43/53, aligned observed baseline43 ledger/catalog; stable restricted roundtrip exports",
+  "productionRawSchemaExport": false,
+  "baselineImageRetainedProduction": true,
+  "arms": {
+    "A": {
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "canonicalSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "forcedRlsTables": 121,
+      "migrations": 43
+    },
+    "B": {
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "helperImage": "sha256:1393f3fe55dbe8afb198004def67a427f0a2111642a5c4d15ece8158840bbcca",
+      "rawSchemaSha256": "b66f708ae877283ec90fce1ebee26cb32e2a3ef21ae0571526e7917a8e07aabb",
+      "canonicalSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "forcedRlsTables": 129,
+      "migrations": 53
+    }
+  },
+  "offering": {
+    "activeSchoolCount": 1,
+    "clients": 133,
+    "expected": 798,
+    "durationMs": 60000,
+    "perDeviceCadenceMs": 10000,
+    "apiTasks": 1,
+    "apiCpuCores": 1,
+    "apiMemoryBytes": 2147483648,
+    "usageEnabled": false,
+    "staffReadsAdded": false,
+    "detailedRecorder": false,
+    "profiler": false,
+    "clientAdvertisementVersion": "2.9.6"
+  },
+  "allEightCompleted": true,
+  "allEightSafetySourceCustodyAndGracefulCleanupPassed": true,
+  "heldAttempts": 0,
+  "candidateAbsolutePasses": 3,
+  "baselineCanonicalLatencyFailures": 5,
+  "candidateMaxP95Ms": 47.6562959999992,
+  "candidateMaxFixedWindowCpuFraction": 0.21154976666666667,
+  "totalOffered": 6384,
+  "totalHttp200": 6384,
+  "totalPersisted": 6384,
+  "totalFailed": 0,
+  "totalLateOffers": 0,
+  "totalInvalidBindings": 0,
+  "totalCompleteLoggedErrors": 0,
+  "rows": [
+    {
+      "index": 1,
+      "arm": "A",
+      "run": "b288d969489b",
+      "startedAt": "2026-10-04T20:20:35.717Z",
+      "finishedAt": "2026-10-04T20:22:18.762Z",
+      "manifest": {
+        "file": "attempt-1\\receipt\\receipt-manifest.json",
+        "sha256": "55f38878aea7da103048f301b5becf204ce0dddee3e503380cfcfaffc8f5bad1"
+      },
+      "supplement": {
+        "file": "attempt-1\\supplemental-verification.json",
+        "sha256": "434d586e14d4f0255c155cdd366d3c5b9d725affc0db5c7fbf92de4bd619b79c"
+      },
+      "completedDisposition": {
+        "file": "attempt-1\\completed-disposition.json",
+        "sha256": "13050d47095c980d13afd6182eb5ffcef380ca75d70e25a1bdbcb29025401b51"
+      },
+      "metricsSha256": "93d214500207dd9cf4d9ac59f15e33135c7d017ac6f4013165456e80ce00137a",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "sourceSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": false,
+      "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": false,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": true,
+      "p95Ms": 3237.121796999998,
+      "fixedWindowCpuFraction": 0.7316695833333333,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 55.06187969924812,
+      "totalOwnedCpuMicroseconds": 43939380,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 4.257945368421133,
+      "peakInFlight": 50,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-1\\receipt\\role-cleanup.json",
+        "sha256": "d2785335dbec65aa912901b643bd6e7d015c1aa120612bc9b319e529fbe892f2"
+      },
+      "postgresCleanup": {
+        "file": "attempt-1\\receipt\\postgres-cleanup.json",
+        "sha256": "57b734a7b4807093b215db26e0ef8a9225824a628d800a661c9f8c6953e63f4c"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 2,
+      "arm": "A",
+      "run": "94481852be54",
+      "startedAt": "2026-10-04T20:22:19.385Z",
+      "finishedAt": "2026-10-04T20:24:06.432Z",
+      "manifest": {
+        "file": "attempt-2\\receipt\\receipt-manifest.json",
+        "sha256": "b124fd54e337ed361631a6ddcb2d689346a7828a910b316431f3da8358727ca7"
+      },
+      "supplement": {
+        "file": "attempt-2\\supplemental-verification.json",
+        "sha256": "62bd45a651372b1497735bc72361f84736eaf4ee6da2a17e249808c0db0df622"
+      },
+      "completedDisposition": {
+        "file": "attempt-2\\completed-disposition.json",
+        "sha256": "e9b4e2c1aacb5323a7a07c43c8e627bdf876da9c1d92b170dcc90be00613fe06"
+      },
+      "metricsSha256": "77d138ac95a7cae5fef4523c67ddb56ad133f3b52b29d12baa838ce041756319",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "sourceSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": false,
+      "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": false,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": true,
+      "p95Ms": 1445.8670309999998,
+      "fixedWindowCpuFraction": 0.7058218166666667,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 53.210944862155394,
+      "totalOwnedCpuMicroseconds": 42462334,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 4.273297375941183,
+      "peakInFlight": 24,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-2\\receipt\\role-cleanup.json",
+        "sha256": "c48ecf3b4f89c21e6596335d0af8a0bc1320e8911e16ac32bc0c6f6c72600643"
+      },
+      "postgresCleanup": {
+        "file": "attempt-2\\receipt\\postgres-cleanup.json",
+        "sha256": "5afa7e77548e6b97fbf54190beda08432976a5fcd6faabeb055c77c2a8e59e83"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 3,
+      "arm": "A",
+      "run": "0916e3f49225",
+      "startedAt": "2026-10-04T20:24:07.007Z",
+      "finishedAt": "2026-10-04T20:25:51.713Z",
+      "manifest": {
+        "file": "attempt-3\\receipt\\receipt-manifest.json",
+        "sha256": "f0c6915b6fbe9d8cf010e478d2f77513d8341012ad297305c0b01e5481ee1e6f"
+      },
+      "supplement": {
+        "file": "attempt-3\\supplemental-verification.json",
+        "sha256": "a0ab8814c49fc1256b87c2955bc2933fd7d3b73476823292003a83de0d4560b9"
+      },
+      "completedDisposition": {
+        "file": "attempt-3\\completed-disposition.json",
+        "sha256": "d14febbc07e2f84dc361fcd721171355be423afeb39a67e1682b8ae16778ef01"
+      },
+      "metricsSha256": "5fbb9280c74aa080e6d18e6bc0bf94881a5127aa554f866f4d8f83a20d3275ea",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "sourceSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": false,
+      "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": false,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": true,
+      "p95Ms": 1565.347382,
+      "fixedWindowCpuFraction": 0.7199085666666667,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 54.33668045112782,
+      "totalOwnedCpuMicroseconds": 43360671,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 12.772136353383758,
+      "peakInFlight": 25,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-3\\receipt\\role-cleanup.json",
+        "sha256": "7ed51f9d71aca20a18d51a534335a386cc2f510fb38d37d862864d4aedd73b16"
+      },
+      "postgresCleanup": {
+        "file": "attempt-3\\receipt\\postgres-cleanup.json",
+        "sha256": "352710b351afef7f4e715435e82c69e037b1d6f9bd0a6daf06f2e0c5edcd6936"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 4,
+      "arm": "B",
+      "run": "fb841b154c02",
+      "startedAt": "2026-10-04T20:25:52.317Z",
+      "finishedAt": "2026-10-04T20:27:40.632Z",
+      "manifest": {
+        "file": "attempt-4\\receipt\\receipt-manifest.json",
+        "sha256": "08c29462e6ec1a6c0dfe497501d318165dc8df003de1437132cf945add4d4963"
+      },
+      "supplement": {
+        "file": "attempt-4\\supplemental-verification.json",
+        "sha256": "de1cff8f985a6fc9f21ddfdfa26e7019bf59cfb744005e94c038e1bdb3d2b366"
+      },
+      "completedDisposition": {
+        "file": "attempt-4\\completed-disposition.json",
+        "sha256": "4aca64ff8ada1438113a103f100534d0b0bc26ae131f2ba356dfa9193cd44f8c"
+      },
+      "metricsSha256": "9dd3fb72d6d589507a7da2898f6cc88083609540ef7aaf358abef0f4edbfc580",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "helperImage": "sha256:1393f3fe55dbe8afb198004def67a427f0a2111642a5c4d15ece8158840bbcca",
+      "sourceSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "rawSchemaSha256": "b66f708ae877283ec90fce1ebee26cb32e2a3ef21ae0571526e7917a8e07aabb",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": true,
+      "canonicalFailure": null,
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": true,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": false,
+      "p95Ms": 38.06555699999444,
+      "fixedWindowCpuFraction": 0.20334345,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 15.34221177944862,
+      "totalOwnedCpuMicroseconds": 12243085,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 7.105827721803507,
+      "peakInFlight": 6,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-4\\receipt\\role-cleanup.json",
+        "sha256": "a5fa8e93a938380701a523f0d520d2f8c35dd559d99c49a9efaca66a80a71d17"
+      },
+      "postgresCleanup": {
+        "file": "attempt-4\\receipt\\postgres-cleanup.json",
+        "sha256": "b8f99790b470a71483fbbdf1ccb420a77da99f06de5fe5f0503cacd133030639"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 5,
+      "arm": "B",
+      "run": "63d55f60058a",
+      "startedAt": "2026-10-04T20:27:41.310Z",
+      "finishedAt": "2026-10-04T20:29:26.819Z",
+      "manifest": {
+        "file": "attempt-5\\receipt\\receipt-manifest.json",
+        "sha256": "e131a03a07e61cb56ed4df078d27259444d323ce708badab9056ba9b9cfce84c"
+      },
+      "supplement": {
+        "file": "attempt-5\\supplemental-verification.json",
+        "sha256": "0e9aa8e177ea637e6b7a6b371988fb064b6098726854d25bcaf9130b227ca219"
+      },
+      "completedDisposition": {
+        "file": "attempt-5\\completed-disposition.json",
+        "sha256": "bad268e3847d9b3be2e6ebb0e3a6a7804e548b9fb5adecffdd972bf03c5cae71"
+      },
+      "metricsSha256": "c3207e1fc2fe056575cdb0f643c00754e605aa288dbbb5e2d50f2c9ba411c3df",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "helperImage": "sha256:1393f3fe55dbe8afb198004def67a427f0a2111642a5c4d15ece8158840bbcca",
+      "sourceSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "rawSchemaSha256": "b66f708ae877283ec90fce1ebee26cb32e2a3ef21ae0571526e7917a8e07aabb",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": true,
+      "canonicalFailure": null,
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": true,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": false,
+      "p95Ms": 40.55888599999889,
+      "fixedWindowCpuFraction": 0.21154976666666667,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 15.973901002506267,
+      "totalOwnedCpuMicroseconds": 12747173,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 1.685674075188217,
+      "peakInFlight": 3,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-5\\receipt\\role-cleanup.json",
+        "sha256": "910219f60b60fb77000a10a85163aa0a23b0fdc958b7269c578d6e735be13d42"
+      },
+      "postgresCleanup": {
+        "file": "attempt-5\\receipt\\postgres-cleanup.json",
+        "sha256": "0567f17c534aabff36f2b35ef3989381d7748064dbb75e153894ddb05185911c"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 6,
+      "arm": "A",
+      "run": "aef4397bdca8",
+      "startedAt": "2026-10-04T20:29:27.385Z",
+      "finishedAt": "2026-10-04T20:31:13.125Z",
+      "manifest": {
+        "file": "attempt-6\\receipt\\receipt-manifest.json",
+        "sha256": "55e8d545011314210154c85488f0c6c996535d708b43847da4c65eca581464f2"
+      },
+      "supplement": {
+        "file": "attempt-6\\supplemental-verification.json",
+        "sha256": "8be84ab0f7ea7e0a2b9e76c990b590c5d6a76a7cee072f99524bed126a466923"
+      },
+      "completedDisposition": {
+        "file": "attempt-6\\completed-disposition.json",
+        "sha256": "971902989208b0a194b2747d5a1579dd2404f9dda1c55215d89179e89706ed4c"
+      },
+      "metricsSha256": "58869c99984346d23b13b6523ded90cda25f9e710e588f6e24d1562e5904f980",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "sourceSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": false,
+      "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": false,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": true,
+      "p95Ms": 1525.6976840000007,
+      "fixedWindowCpuFraction": 0.7095069166666667,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 53.39306516290726,
+      "totalOwnedCpuMicroseconds": 42607666,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 1.93416542857085,
+      "peakInFlight": 26,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-6\\receipt\\role-cleanup.json",
+        "sha256": "dda89544300bdab22f2b2803827594bbf110a04102ff1bbeacfed878e0f37a7b"
+      },
+      "postgresCleanup": {
+        "file": "attempt-6\\receipt\\postgres-cleanup.json",
+        "sha256": "c6ed78ec32b5ede3c27e48e669d95054d5c7815c9f7436ecb8a494a5600cf43c"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 7,
+      "arm": "A",
+      "run": "2330c5640515",
+      "startedAt": "2026-10-04T20:31:13.766Z",
+      "finishedAt": "2026-10-04T20:33:08.055Z",
+      "manifest": {
+        "file": "attempt-7\\receipt\\receipt-manifest.json",
+        "sha256": "21e15cfbf0928614ae367dfc4153980fb1514bf1120572eb237604006d8b975c"
+      },
+      "supplement": {
+        "file": "attempt-7\\supplemental-verification.json",
+        "sha256": "ce5756b0c5d4fcffabebf89ba4973f6be45b89ed78ddcb2d4c17a7f7ec46f5ac"
+      },
+      "completedDisposition": {
+        "file": "attempt-7\\completed-disposition.json",
+        "sha256": "a6cef0a595845f0141f6c9877cf355357a3d97c02540db53a0c63f2fbdccdd8a"
+      },
+      "metricsSha256": "31cce14887961358e46086f06d741cb73c14df540b3c639ecd33bf115d69dbce",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "applicationImage": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8",
+      "helperImage": "sha256:91de7ee08e22f7e4ce780569232b680ee116496a45052c626021e2e2d6ab8a09",
+      "sourceSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "rawSchemaSha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": false,
+      "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": false,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": true,
+      "p95Ms": 2861.607688,
+      "fixedWindowCpuFraction": 0.78513945,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 59.13710275689223,
+      "totalOwnedCpuMicroseconds": 47191408,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 3.0000783909781603,
+      "peakInFlight": 48,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-7\\receipt\\role-cleanup.json",
+        "sha256": "cae544d27244bcd26c11b311692ec5dffd2ea02d90b2ff38aa01a0c189c30678"
+      },
+      "postgresCleanup": {
+        "file": "attempt-7\\receipt\\postgres-cleanup.json",
+        "sha256": "eb578d3d7d1fe21451258b2156063deeb780e9e52bde35bccea9128d6549eb54"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    },
+    {
+      "index": 8,
+      "arm": "B",
+      "run": "af434dfe455c",
+      "startedAt": "2026-10-04T20:33:08.714Z",
+      "finishedAt": "2026-10-04T20:35:03.470Z",
+      "manifest": {
+        "file": "attempt-8\\receipt\\receipt-manifest.json",
+        "sha256": "6cf2a6cecc29227d6219e47e9ff3e014688c4e3328da9e923ac157a56a25db51"
+      },
+      "supplement": {
+        "file": "attempt-8\\supplemental-verification.json",
+        "sha256": "8c11e8fe8c87ffb3fae5809898ad50ce54b2dc60c80a6a58b358c5537710e304"
+      },
+      "completedDisposition": {
+        "file": "attempt-8\\completed-disposition.json",
+        "sha256": "746fd5a7a266a8e289a18d92575b71f8a98a5eda85c3aacfa3d6823d8dd18afb"
+      },
+      "metricsSha256": "5ce126e08f6a285511a87487ce75719ca305240653859bdc9417193ba0c38da1",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "applicationImage": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+      "helperImage": "sha256:1393f3fe55dbe8afb198004def67a427f0a2111642a5c4d15ece8158840bbcca",
+      "sourceSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "rawSchemaSha256": "b66f708ae877283ec90fce1ebee26cb32e2a3ef21ae0571526e7917a8e07aabb",
+      "nodeVersion": "v22.23.3",
+      "canonicalRunPassed": true,
+      "canonicalFailure": null,
+      "canonicalChecks": {
+        "actualProfile": true,
+        "offering": true,
+        "reconnect": true,
+        "persistence": true,
+        "declaredStartAlignment": true,
+        "capabilityAcknowledgements": true,
+        "targetCounts": true,
+        "declaredDistribution": true,
+        "drains": true,
+        "cpuBound": true,
+        "latency": true,
+        "classroom": true,
+        "database": true
+      },
+      "diagnosticOnly": false,
+      "p95Ms": 47.6562959999992,
+      "fixedWindowCpuFraction": 0.20788283333333332,
+      "totalOwnedCpuMsPerSuccessfulHeartbeat": 15.684750626566416,
+      "totalOwnedCpuMicroseconds": 12516431,
+      "offered": 798,
+      "started": 798,
+      "http200": 798,
+      "failed": 0,
+      "lateOffers": 0,
+      "maxOfferLatenessMs": 1.6309084135355079,
+      "peakInFlight": 3,
+      "outstandingAfterDrain": 0,
+      "capabilityAcknowledgements200": 798,
+      "persisted": 798,
+      "invalidBindings": 0,
+      "allSafetySourceCustodyPassed": true,
+      "allCompleteLoggedErrors": 0,
+      "rawSqlFailureCountersAvailable": false,
+      "roleCleanup": {
+        "file": "attempt-8\\receipt\\role-cleanup.json",
+        "sha256": "564c8711eb191cde5464c6c95b9f14bedb0e4df0e724a2fc74e549e20ce37d61"
+      },
+      "postgresCleanup": {
+        "file": "attempt-8\\receipt\\postgres-cleanup.json",
+        "sha256": "9b9f6b1f937d15462ff7e16e2aabc46db508233e9fda9f2c54696bbc014939a4"
+      },
+      "allRoleAndPostgresExit0NoOomUnforcedAbsent": true
+    }
+  ],
+  "numericObservations": {
+    "comparisonAcceptance": false,
+    "pairs": [
+      {
+        "baselineIndex": 3,
+        "candidateIndex": 4,
+        "candidateToBaselineTotalCpuPerSuccessRatio": 0.28235460193870154,
+        "candidateToBaselineP95Ratio": 0.02431764184596467,
+        "candidateMinusBaselineP95Ms": -1527.2818250000055
+      },
+      {
+        "baselineIndex": 6,
+        "candidateIndex": 5,
+        "candidateToBaselineTotalCpuPerSuccessRatio": 0.29917557558773583,
+        "candidateToBaselineP95Ratio": 0.02658382877901706,
+        "candidateMinusBaselineP95Ms": -1485.1387980000018
+      },
+      {
+        "baselineIndex": 7,
+        "candidateIndex": 8,
+        "candidateToBaselineTotalCpuPerSuccessRatio": 0.2652269031684751,
+        "candidateToBaselineP95Ratio": 0.01665367904896375,
+        "candidateMinusBaselineP95Ms": -2813.951392000001
+      }
+    ],
+    "controlP95DifferenceMs": 1791.2547659999982,
+    "controlCpuPerSuccessMaxToMinRatio": 1.0347848519113432
+  },
+  "strictClosure": {
+    "passed": false,
+    "failure": "STRICT_PAIRED_CLOSURE_REJECTED",
+    "firstRejection": "validatePairs requires each canonical runPassed===true",
+    "baselineCpuExemptInUnchangedOriginalValidator": true,
+    "allFiveBaselineLatencyFailuresPreserved": true,
+    "validatorChanged": false,
+    "laterComparisonChecksNotReached": true,
+    "closureError": {
+      "file": "closure-error.private.json",
+      "sha256": "d84b7610273e19f6cee02c388c18a623b083beef15eb44d7ba0afa31a1cefdaf"
+    },
+    "closureFailure": {
+      "file": "closure-failure.json",
+      "sha256": "ec58d9b5a157d881d46b1caa043dc55230e0d937779f1fe67d2df5d48331bd2f"
+    }
+  },
+  "custody": {
+    "completedDisposition": {
+      "file": "completed-disposition.json",
+      "sha256": "b0ba7af3151df2a14acfdffdf79cc0dd17c6c969406a6cd4db723d9729852de2"
+    },
+    "contract": {
+      "file": "campaign\\contract.json",
+      "sha256": "46c90f177d3850878c807e66c722e2a364a731aae87f5f054e1c6354cd4d06be"
+    },
+    "journal": {
+      "file": "campaign\\journal.json",
+      "sha256": "62050c5042194347ff4a2da4a30287596b1636ddcf70c6d2481c97df90094d26"
+    },
+    "executionBinding": {
+      "file": "execution-binding.json",
+      "sha256": "417bcc6ef78f324b645e6c286b1481921151453a50a8f530a7e70254cc036df8"
+    },
+    "nativeSlotReturn": {
+      "file": "native-slot-return.json",
+      "sha256": "42e3427b41e8a103f12fb09179e06e703c85cd25b673f445f38d89532e35ff8e"
+    }
+  },
+  "originalStoppedBlockPreserved": {
+    "directory": "C:/Users/zinka/.codex/artifacts/release297-matched-133-production-default43-53-aaf95-20261004-01",
+    "disposition": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\completed-disposition.json",
+      "sha256": "23605833815005a6bdf36bf26e7cd33fc99275e98ab681e519d0cdfa87a33c9e"
+    },
+    "contract": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\campaign\\contract.json",
+      "sha256": "bc6e4004744f80348aa02d6461f8ffe9e29a4c9aabb819e15969e7fd493d596f"
+    },
+    "journal": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\campaign\\journal.json",
+      "sha256": "27a1a84270d716b6bc9d4a0cbd9807aed0dfe3d4768a0ee9b1fbeca895d35fab"
+    },
+    "attempt": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\attempt-1\\completed-disposition.json",
+      "sha256": "ddeed33adcb2c08d419a96e2509990482b5582b94ad880ccea28cf3bdbc162ca"
+    },
+    "receiptManifest": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-matched-133-production-default43-53-aaf95-20261004-01\\attempt-1\\receipt\\receipt-manifest.json",
+      "sha256": "d729b5516b9219bd1cca565054088d23360f0474127d277643ab198cfa186c6d"
+    },
+    "independentDiagnosis": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-matched-133-production-default-independent-failedA1-01/diagnosis.json",
+      "sha256": "207b1b0bc7ef84bb0a93e7bcca25c8c9f7f56059f9c6fac33f8de2f053975b48"
+    },
+    "canonicalRunPassed": false,
+    "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+    "wrapperFailure": "ERR_ASSERTION",
+    "heldAttempts": 7,
+    "originalBlockUnchanged": true,
+    "noRetrospectiveAcceptance": true
+  },
+  "policyApproved": false,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "limitations": [
+    "Unchanged strict paired closure rejected; no comparative policy amendment or release operations authorized.",
+    "All five baseline latency failures and the prior stopped A1 block remain FAILED.",
+    "Raw blackbox SQL/checkout failure counters are unavailable; final ErrorMonitor log replay is separate indirect supplementary evidence.",
+    "Native data is synthetic and source derived; no actual production database dump, ECS/ALB latency or live-school capacity is claimed.",
+    "This sole133 heartbeat comparison adds no classroom/staff/report workload; earlier250/fullmixed evidence retains its separate full54 schema scope.",
+    "CPU figures are actual fixed owned-container window fractions; caller SQL timing and server CPU attribution are not inferred."
+  ],
+  "priorSummary": {
+    "file": "public-summary.json",
+    "sha256": "020dfe59aa04846d1b819eec852e9875629b504aff267bc0aca41a7d573915e9"
+  },
+  "conservativeMaxCandidateToMinBaselineObservations": {
+    "comparisonAcceptance": false,
+    "minBaselineTotalOwnedCpuMsPerSuccessfulHeartbeat": 53.210944862155394,
+    "maxCandidateTotalOwnedCpuMsPerSuccessfulHeartbeat": 15.973901002506267,
+    "candidateToBaselineCpuPerSuccessRatio": 0.3001995368412862,
+    "minBaselineP95Ms": 1445.8670309999998,
+    "maxCandidateP95Ms": 47.6562959999992,
+    "candidateToBaselineP95Ratio": 0.03296035871779914,
+    "usesAllFiveBaselineAndAllThreeCandidateRuns": true
+  },
+  "controlObservations": {
+    "comparisonAcceptance": false,
+    "cpuPerSuccessMaxToMinRatio": 1.0347848519113432,
+    "p95DifferenceMs": 1791.2547659999982,
+    "originalCpuControlLimit": 1.05,
+    "originalP95ControlDifferenceLimitMs": 50,
+    "cpuControlNumericallyStable": true,
+    "p95ControlNumericallyStable": false,
+    "originalStrictClosureStillFailed": true,
+    "noHostAttribution": true
+  }
+}

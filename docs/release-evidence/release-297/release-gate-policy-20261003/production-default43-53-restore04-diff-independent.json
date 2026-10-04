@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_failed_restore04_exact_diff_classification",
+  "reviewer": "task_posture_review",
+  "reviewedAtUtc": "2026-10-04T19:03:36.5230589Z",
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "original04Passed": false,
+  "failure": "ERR_ASSERTION at unchanged strict baseline schema fingerprint comparison",
+  "nativeRestrictedProbeExecuted": false,
+  "candidateRestoreExecuted": false,
+  "readyHandoffVerified": false,
+  "references": [
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\execution.json",
+      "sha256": "72d284a8741480a196786b55c34835d307702b4060e2b6556fbd9e84bc694719",
+      "bytes": 9133
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\independent-owned-absence.json",
+      "sha256": "9b23319a64e5807dfa459f1234cb6df6ed74dce656e71aa0c4892346fe8bc41b",
+      "bytes": 656
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\baseline-canonical-restoration-comparison.json",
+      "sha256": "1461739a84191cafdf55683d39bbae0cab146b5ea65a1504d77857b37f34a81d",
+      "bytes": 1552
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\baseline43-schema.sql",
+      "sha256": "bfe05d7194f6a35e5c47693ce0ee46b6cfcd35139e9e79e44ac64c0a166c5693",
+      "bytes": 430334
+    },
+    {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\restored-baseline-schema.sql",
+      "sha256": "2bcd5293d4c8f17d2ce2c032bc90937381cc04c772f87446ae54b453f4af2859",
+      "bytes": 430328
+    }
+  ],
+  "canonicalHelperSha256": "90d90555cdd82fe2f8afb2ccd5cb573a56c073a956377b919fa38459908af853",
+  "sourceCanonicalSha256": "35339c1f2684f48ad89ccfcc0dbec5eb3b65955ae16fdb76901ac164c2e4b58c",
+  "restoredCanonicalSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+  "canonicalLineCount": 11433,
+  "differentCanonicalLines": 3,
+  "allOtherCanonicalSqlBytesEqual": true,
+  "differences": [
+    {
+      "constraint": "mydesk_import_items_bounds",
+      "canonicalLine": 2619,
+      "originalLineSha256": "d6bda942ceca14f4ed7e4bb93425dfaef687f021c434f3aff447c06c08f63e0e",
+      "restoredLineSha256": "e117783b4092bc9c6c8aeb0ffdedc6b23e9f34dc6e5aa432ca58ebd35c93daaa",
+      "classification": "Only the redundant parentheses grouping the first pair of adjacent AND comparisons are removed; predicates/operators/constants and remaining Boolean grouping are unchanged"
+    },
+    {
+      "constraint": "student_information_items_bounds",
+      "canonicalLine": 3728,
+      "originalLineSha256": "1de033d7e9a8d485d4be4bfe6865c64c9976c70994b92c35d0ad88f6cd14ae98",
+      "restoredLineSha256": "249a072a8f9ea0d528fd92e789a62b330682ff2e1a4c4b0c7969f0cd8b3c667a",
+      "classification": "Only the redundant parentheses grouping the first pair of adjacent AND comparisons are removed; predicates/operators/constants and remaining Boolean grouping are unchanged"
+    },
+    {
+      "constraint": "student_information_imports_bounds",
+      "canonicalLine": 3765,
+      "originalLineSha256": "89f558d4536fd45dcbe2b8d43aeab9b420e5bf57b4f82be380e6c985e73cf7d8",
+      "restoredLineSha256": "85ad09e8558535191fdf6e3d71ed0d67aa52db568220afd1f5ade43adeaffae1",
+      "classification": "Only the redundant parentheses grouping the first pair of adjacent AND comparisons are removed; predicates/operators/constants and remaining Boolean grouping are unchanged"
+    }
+  ],
+  "semanticClassification": "The three exact changes flatten only (a AND b) AND c into a AND b AND c. Their concrete Boolean operands and SQL NULL behavior are unchanged. This does not make the original strict fingerprint assertion pass.",
+  "retainedCleanup": {
+    "ownerPoolEnded": true,
+    "exactPostgresExitCode": 0,
+    "oomKilled": false,
+    "unforced": true,
+    "containerAbsent": true,
+    "volumeAbsent": true,
+    "networkAbsent": true,
+    "completedInsideAuthorizedWindow": true
+  },
+  "compositionVerdict": "No composed handoff may be accepted from04; strict comparison failed before restricted native proof",
+  "prospectiveStableExportRequirements": [
+    "Keep03 and04 failed executions immutable",
+    "Allow only exact old/new constraint-line strings or hashes for these three names; reject every other canonical byte difference",
+    "Declare the derived roundtrip export with its new raw and canonical identity, retaining original03 lineage",
+    "Restore that derived export into a second fresh restricted-owner database and require unchanged canonical helper equality",
+    "Require actual exact43/53 ledger, full FORCE RLS, tenant positives/negatives, optional-contract absence, function body+ACL, clean rollback/GUC and exact unforced cleanup",
+    "No generic Boolean or SQL normalizer relaxation, migration callback/service rerun, policy amendment or release acceptance"
+  ],
+  "limitations": [
+    "Full durable04 custody manifest/private material copy is pending; this classification verifies the listed raw records and retained cleanup assertions",
+    "No new Docker/SQL/native/test/build/CI/cloud action performed by this reviewer",
+    "This static semantic classification does not establish production raw schema equivalence or capacity acceptance"
+  ]
+}

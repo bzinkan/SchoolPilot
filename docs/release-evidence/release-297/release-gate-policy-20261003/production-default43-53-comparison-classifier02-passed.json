@@ -1,0 +1,77 @@
+{
+  "kind": "matched133_external_classifier_retained_record_red_green",
+  "recordedAtUtc": "2026-10-04T20:08:11.5758741Z",
+  "verified": true,
+  "nativeExecution": false,
+  "capacityAccepted": false,
+  "policyApproved": false,
+  "productionReadiness": false,
+  "driver": {
+    "originalSha256": "4d9443d77329ad1e5e1f4b206f0baddfb972fe507833fd6108d14ae6047e09c8",
+    "prospectiveSha256": "211c410d6f4d4f991178aacddc3a963272221bc6c81338bbb03db840469e3194",
+    "soleChange": "Classify exact canonical numerical failure after CPU/latency-only and existing safety guards",
+    "canonicalValidatorChanged": false,
+    "applicationChanged": false,
+    "helperChanged": false,
+    "profileChanged": false,
+    "schemaChanged": false
+  },
+  "retainedA1": {
+    "run": "b3cb7e356176",
+    "manifestSha256": "d729b5516b9219bd1cca565054088d23360f0474127d277643ab198cfa186c6d",
+    "canonicalRunPassed": false,
+    "canonicalFailure": "V2_NUMERICAL_ACCEPTANCE_FAILED",
+    "failedCanonicalChecks": [
+      "latency"
+    ],
+    "originalGuardRejected": true,
+    "prospectiveClassifierDiagnosticOnly": true,
+    "originalRecordUnchanged": true,
+    "http200": 798,
+    "persisted": 798,
+    "offeringFailures": 0,
+    "lateOffers": 0,
+    "p95Ms": 1812.5356030000003,
+    "fixedWindowCpuFraction": 0.7441712333333333,
+    "baselineCpuExemptInOriginalValidator": true,
+    "allExactOwnedResourcesAbsent": true,
+    "allExit0NoOomUnforced": true,
+    "failedBlockPreserved": true,
+    "heldAttempts": 7,
+    "closureInvoked": false
+  },
+  "pure": {
+    "runtime": "v22.18.0",
+    "deadlineMs": 20000,
+    "startedAt": "2026-10-04T20:06:16.073Z",
+    "completedAt": "2026-10-04T20:06:16.365Z",
+    "tests": 7,
+    "pass": 7,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "syntax": 2,
+    "stderrEmpty": true,
+    "ownedPidsAbsent": 4,
+    "forced": false,
+    "executionSha256": "78b78ef4ae6275eaa8a72530439c5de89a2b9521421c7e670cdd14e2680f13e7",
+    "sourceBindingsSha256": "71583f313f3aa6a1859c2a9bd7e3c4331bbdb8ec937178d44122c2dc4f72e224",
+    "tapSha256": "273121714e2cd2acef40565c51be878f92b0ff91a7a435afa35d73ee515a3592",
+    "absenceSha256": "ae44e61e2fbe18b7efc668d07ac5b85dd3ae652629d947e080e9971074aaad63"
+  },
+  "negativeProofs": [
+    "wrong canonical failure code",
+    "numerical marker with no failed metric",
+    "passing marker on failed metric",
+    "any failed safety check",
+    "source or cleanup failure",
+    "unavailable or nonzero error custody"
+  ],
+  "limitations": [
+    "Retained native A1 is still FAILED; seven remaining attempts held and no retrospective closure.",
+    "Pure diagnostic classification does not establish performance acceptance or authorize a new native block.",
+    "Raw blackbox checkout failure counters unavailable; complete logs and native outcomes retained separately.",
+    "New native block requires a fresh reviewed packet and root authorization."
+  ]
+}

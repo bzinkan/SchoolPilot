@@ -1,0 +1,301 @@
+{
+  "boundStagePlan": {
+    "sha256": "2974672bd159d065de73d8966d0ec6411fc908d4e05f202f36823a1051ed02f6",
+    "bytes": 15572,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\bound-stage-plan.json"
+  },
+  "cleanup": {
+    "ownedContainerVolumeNetworkAbsenceRecorded": true,
+    "postgresErrorFatalCount": 0,
+    "executorAbsentRecorded": true,
+    "insideWindow": true,
+    "exit0NoOomUnforced": true,
+    "owners": 5,
+    "poolEnded": true,
+    "absence": {
+      "sha256": "5d91a369bbdbd0dc5d82df9bd63e7ce958cc69c753f5578e4617f694f6ab173d",
+      "bytes": 2052,
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\independent-owned-absence.json"
+    }
+  },
+  "recordedAt": "2026-10-04T19:46:57.2120541+00:00",
+  "restrictedRestore": {
+    "sha256": "b3c2a92bbb25b3b1bdbe11c5981b533c2b3b2d34d24fae078ddd7bf2ab1c9380",
+    "bytes": 34410,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\execution.json"
+  },
+  "custody": {
+    "noReparseMembersOrParents": true,
+    "durableReferenceFallbacks": 0,
+    "allContainedBytesAndHashesMatch": true,
+    "bytes": 2685997,
+    "manifest": {
+      "sha256": "05ca5c82af16bffbcee07de0357f77c040049a900f8720139cb55481f623ba99",
+      "bytes": 13707,
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\custody-manifest.json"
+    },
+    "nestedReferenceChecks": 162,
+    "members": 63
+  },
+  "releaseOperationsAuthorized": false,
+  "productionRawSchemaExport": false,
+  "composition": {
+    "original03FullApiHealthCycles": 4,
+    "failed05Preserved": true,
+    "failed04Preserved": true,
+    "priorCompletedComponentsIndependentReview": {
+      "sha256": "812078a301ec2e46352a4623a25879c1567d0da320a8f33798fdd08c5ca336e3",
+      "bytes": 5106,
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-independent-partial03-01\\independent-partial-review.json"
+    },
+    "original03ActualServicePairs": 4,
+    "successful06RestrictedNativeChecks": 4,
+    "original03OverallFailed": true,
+    "original03ActualServiceProcesses": 8,
+    "original03GracefulSqlDrains": 8
+  },
+  "capacityAccepted": false,
+  "comparisonPolicyAmendmentApproved": false,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "component03": {
+    "sha256": "299ce57509e9f55d59d8fc3d0925c52fd152287d0eab2b4d5846e4c4d781e9bd",
+    "bytes": 43296,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\execution.json"
+  },
+  "failed05": {
+    "sha256": "ea66e2d8fd98a4a61a0c1c1b0816a0684e6db1d6eddd385e8c6dae5872371b8c",
+    "bytes": 13067,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\execution.json"
+  },
+  "readyHandoff": {
+    "sha256": "518a47efecf72ea9e60bcace6f803fe5d83788e395c8cf39d229674759053f6a",
+    "bytes": 16099,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\ready-handoff.json"
+  },
+  "schemaSerializationContinuity": {
+    "candidate": {
+      "original03Export": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\candidate53-schema.sql",
+        "sha256": "b425cdefba55debd440f1e0b6284468c9296416d683037b89d47efbc07ff1f79",
+        "bytes": 480808,
+        "canonicalSchemaSha256": "61fe0293d184fa23393497d5dce26032b9723d34ff0791d66e4163f937acd6fa"
+      },
+      "failed04": {
+        "execution": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\execution.json",
+          "sha256": "72d284a8741480a196786b55c34835d307702b4060e2b6556fbd9e84bc694719",
+          "bytes": 9133
+        },
+        "absence": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\independent-owned-absence.json",
+          "sha256": "9b23319a64e5807dfa459f1234cb6df6ed74dce656e71aa0c4892346fe8bc41b",
+          "bytes": 656
+        },
+        "custody": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\custody-manifest.json",
+          "sha256": "32c771d36af8d497c5f0af903014c16be74491051dcf028c385d9d3bf42db885",
+          "bytes": 3747
+        },
+        "publicSummary": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\public-summary.json",
+          "sha256": "4c75ded7d3aa770ba6899e4fa7a5310cfaf1be927d198782ce0e89a4caab0b5d",
+          "bytes": 3792
+        },
+        "originalComparison": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\baseline-canonical-restoration-comparison.json",
+          "sha256": "1461739a84191cafdf55683d39bbae0cab146b5ea65a1504d77857b37f34a81d",
+          "bytes": 1552
+        },
+        "actualRestoredDump": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\restored-baseline-schema.sql",
+          "sha256": "2bcd5293d4c8f17d2ce2c032bc90937381cc04c772f87446ae54b453f4af2859",
+          "bytes": 430328
+        },
+        "independentReview": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-independent-failed04-01\\failed04-custody-review.json",
+          "sha256": "fbcc6b9ff4e1929c74cd9b19ba780f56c6bb7110aedb8987e5bd73f73c1fa519",
+          "bytes": 4747
+        }
+      },
+      "exactThreeCheckLineFence": {
+        "module": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\exact-check-line-fence.mjs",
+          "sha256": "ac0d337caebca77ddf11b228eeebb63788fcad78fed481f7d122d78eca5fea03",
+          "bytes": 2486
+        },
+        "definition": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\exact-check-line-fence.json",
+          "sha256": "4f74be5677f49f566015eca1bcbd281ee794023c0ff172b4975ea38c841143b3",
+          "bytes": 4376
+        },
+        "unknownChangesRejected": true,
+        "genericSqlNormalization": false,
+        "normalizerUnchanged": true,
+        "verification": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\candidate-exact-three-check-equivalence.json",
+          "sha256": "b786af0756ddfc873cb402500ab89278e7f6ba1ed5f949df4dc2e63a2f265309"
+        }
+      },
+      "firstRestoredExport": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\restored-candidate-round1-schema.sql",
+        "sha256": "bd20b68106accd23ab5a09d2c500a1db4df17b36bbbc54458e96737e3389ba45",
+        "canonicalSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa"
+      },
+      "stableSecondExport": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\restored-candidate-round2-schema.sql",
+        "sha256": "b66f708ae877283ec90fce1ebee26cb32e2a3ef21ae0571526e7917a8e07aabb",
+        "canonicalSchemaSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa"
+      },
+      "secondRestorationComparison": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\candidate-round2-canonical-restoration-comparison.json",
+        "sha256": "c84104d81746cf2d60b2a6212adbfb836afc9a7ea8e363ab2a7db3017c340bc6"
+      },
+      "secondCanonicalMatchesFirst": true,
+      "original03And04OverallFailed": true,
+      "genericSqlNormalization": false
+    },
+    "baseline": {
+      "original03Export": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-executor-03\\execution-fe6ab53c8152\\baseline43-schema.sql",
+        "sha256": "bfe05d7194f6a35e5c47693ce0ee46b6cfcd35139e9e79e44ac64c0a166c5693",
+        "bytes": 430334,
+        "canonicalSchemaSha256": "35339c1f2684f48ad89ccfcc0dbec5eb3b65955ae16fdb76901ac164c2e4b58c"
+      },
+      "failed04": {
+        "execution": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\execution.json",
+          "sha256": "72d284a8741480a196786b55c34835d307702b4060e2b6556fbd9e84bc694719",
+          "bytes": 9133
+        },
+        "absence": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\independent-owned-absence.json",
+          "sha256": "9b23319a64e5807dfa459f1234cb6df6ed74dce656e71aa0c4892346fe8bc41b",
+          "bytes": 656
+        },
+        "custody": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\custody-manifest.json",
+          "sha256": "32c771d36af8d497c5f0af903014c16be74491051dcf028c385d9d3bf42db885",
+          "bytes": 3747
+        },
+        "publicSummary": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\public-summary.json",
+          "sha256": "4c75ded7d3aa770ba6899e4fa7a5310cfaf1be927d198782ce0e89a4caab0b5d",
+          "bytes": 3792
+        },
+        "originalComparison": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\baseline-canonical-restoration-comparison.json",
+          "sha256": "1461739a84191cafdf55683d39bbae0cab146b5ea65a1504d77857b37f34a81d",
+          "bytes": 1552
+        },
+        "actualRestoredDump": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\restored-baseline-schema.sql",
+          "sha256": "2bcd5293d4c8f17d2ce2c032bc90937381cc04c772f87446ae54b453f4af2859",
+          "bytes": 430328
+        },
+        "independentReview": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-independent-failed04-01\\failed04-custody-review.json",
+          "sha256": "fbcc6b9ff4e1929c74cd9b19ba780f56c6bb7110aedb8987e5bd73f73c1fa519",
+          "bytes": 4747
+        }
+      },
+      "exactThreeCheckLineFence": {
+        "module": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\exact-check-line-fence.mjs",
+          "sha256": "ac0d337caebca77ddf11b228eeebb63788fcad78fed481f7d122d78eca5fea03",
+          "bytes": 2486
+        },
+        "definition": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\exact-check-line-fence.json",
+          "sha256": "4f74be5677f49f566015eca1bcbd281ee794023c0ff172b4975ea38c841143b3",
+          "bytes": 4376
+        },
+        "unknownChangesRejected": true,
+        "genericSqlNormalization": false,
+        "normalizerUnchanged": true,
+        "verification": {
+          "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\baseline-exact-three-check-equivalence.json",
+          "sha256": "08577263c3c34a150aa9ebd43a44e9f7b67fe6ee8b7cb28afe4084bd93658686"
+        }
+      },
+      "firstRestoredExport": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\restored-baseline-round1-schema.sql",
+        "sha256": "8c4d1dc8e398683e47241abd6aeb367b634cfe9e6b8bc8b4427a47115c3176f8",
+        "canonicalSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363"
+      },
+      "stableSecondExport": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\restored-baseline-round2-schema.sql",
+        "sha256": "daa4489e0be1a7aa196dc4554e964e895c1f6d800b913c95d617d08a818a70ad",
+        "canonicalSchemaSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363"
+      },
+      "secondRestorationComparison": {
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\baseline-round2-canonical-restoration-comparison.json",
+        "sha256": "461d02b7d3a5f14898ddf49ca196cc80dc1f6c44eb41225a556fb01d90c21092"
+      },
+      "secondCanonicalMatchesFirst": true,
+      "original03And04OverallFailed": true,
+      "genericSqlNormalization": false
+    }
+  },
+  "kind": "independent_composed_default43_53_review",
+  "arms": [
+    {
+      "strictSecondCanonicalEquality": true,
+      "secondCanonicalSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "forcedRlsTables": 121,
+      "schemaReceipt": {
+        "sha256": "abca734140ec2da0e064d0c4d1abee9890226ce577742f40e7bb04a63534f761",
+        "bytes": 11641,
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\baseline-schema-receipt.json"
+      },
+      "exactThreeFirstRoundLines": 3,
+      "selectorProof": {
+        "sha256": "a94a86ffd36ca81fc0365f78f5a0c3a9b9e74cf9efec0eab2f8d66714b3f9fe5",
+        "bytes": 46314,
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\baseline-default-selector-proof.json"
+      },
+      "completedMigrations": 43,
+      "restrictedNativePasses": 2,
+      "allOtherFirstRoundCanonicalBytesEqual": true,
+      "arm": "baseline",
+      "firstCanonicalSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+      "source": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678"
+    },
+    {
+      "strictSecondCanonicalEquality": true,
+      "secondCanonicalSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "forcedRlsTables": 129,
+      "schemaReceipt": {
+        "sha256": "9ff4260b0809d9e81db1a5c74d201ae7185993195b822304b7a6d4388ffbb84d",
+        "bytes": 13722,
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\candidate-schema-receipt.json"
+      },
+      "exactThreeFirstRoundLines": 3,
+      "selectorProof": {
+        "sha256": "0050102f391c9556d897df9b7a0582237451360b8eabd472bcc40d95f2baf715",
+        "bytes": 52736,
+        "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-06\\execution-a1423e51df6c\\candidate-default-selector-proof.json"
+      },
+      "completedMigrations": 53,
+      "restrictedNativePasses": 2,
+      "allOtherFirstRoundCanonicalBytesEqual": true,
+      "arm": "candidate",
+      "firstCanonicalSha256": "cda14e1d9951a7b6df1844973eb9d5f4cee9b6c8c09b88b9b1196ad74a9a4aaa",
+      "source": "ddc5996b3b8645859fa51a9613486db52c481b7f"
+    }
+  ],
+  "failed04": {
+    "sha256": "72d284a8741480a196786b55c34835d307702b4060e2b6556fbd9e84bc694719",
+    "bytes": 9133,
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\execution.json"
+  },
+  "passed": true,
+  "limitations": [
+    "Synthetic source-derived schemas; no production raw DDL export or content SQL.",
+    "Original complete schema-owner map was not captured; new restored owners and restricted roles were verified.",
+    "First restoration changes only the three pinned CHECK serialization lines; generic canonical helper remains unchanged; second roundtrip is strictly equal.",
+    "Execution03, failed04 and failed05 remain FAILED. Only completed03 migration/export/service scopes compose with successful06 restoration.",
+    "Initial read-only network-absence collector wording failure is retained; subsequent exact network-ID absence was verified without a native retry.",
+    "This review replays retained receipts and bytes; it does not perform new Docker, database, cloud, test, build, performance or CI work.",
+    "No capacity acceptance, numerical-policy amendment or release-operation authorization."
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "kind": "failed_stable_source_derived_restoration05",
+  "attempt": "05",
+  "accepted": false,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "productionMutations": 0,
+  "capacityAccepted": false,
+  "productionRawSchemaExport": false,
+  "startedAt": "2026-10-04T19:16:38.14Z",
+  "completedAt": "2026-10-04T19:16:49.797Z",
+  "windowSha256": "6218bdce2f6718999ae7255fac3522d735b2edc502bc5ed1a8d61af998764950",
+  "boundPlanSha256": "8192b77d30de361ad86d9f404e3fdd91885c7bcbd1ebcc1533b2f5e4a3bb833d",
+  "execution": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\execution.json",
+    "sha256": "ea66e2d8fd98a4a61a0c1c1b0816a0684e6db1d6eddd385e8c6dae5872371b8c",
+    "bytes": 13067
+  },
+  "absence": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\independent-owned-absence.json",
+    "sha256": "1b20584096be0f60d1ad8602c6296d7cb572e50e338f7a9ba7ec6ecb324a147a",
+    "bytes": 832
+  },
+  "custody": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\custody-manifest.json",
+    "sha256": "32b67bac6dd7ae908dd23adf01e65262cd9edbe0032c0074e3c2f8f90b835409",
+    "bytes": 5465
+  },
+  "firstFence": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\baseline-exact-three-check-equivalence.json",
+    "sha256": "08577263c3c34a150aa9ebd43a44e9f7b67fe6ee8b7cb28afe4084bd93658686",
+    "bytes": 665
+  },
+  "firstComparison": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\baseline-round1-canonical-restoration-comparison.json",
+    "sha256": "f65b32c4b1e64126a84e65589ce7fc978d3ae244d3e006ebcbed48f9f7ec50d3",
+    "bytes": 1587
+  },
+  "restoredDump": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\restored-baseline-round1-schema.sql",
+    "sha256": "5056a3a52d6aa512703b4d190e3cb02ac11248f013328aea7a4b4ec319475842",
+    "bytes": 430328
+  },
+  "nativeFailure": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-stable-restore-only-05\\execution-7e96da399b60\\private-retained\\state\\default-restore-baseline-p1.json",
+    "sha256": "a4439f224488e0bec6421d4400734bb94c4e9a787256317b439c5bd1e54a44f2",
+    "bytes": 33134
+  },
+  "failure": {
+    "phase": "restricted native baseline round1 synthetic schools INSERT",
+    "sqlstate": "42P08",
+    "reason": "Same school-ID parameter inferred as varchar by schools.id and text by domain concatenation",
+    "nativeProbeExitCode": 1,
+    "clientEnded": true,
+    "fixtureTransactionRollbackAttempted": true
+  },
+  "verifiedPartial": {
+    "firstExactThreeCheckFencePassed": true,
+    "baselineNativeCatalogReached": true,
+    "nativeRestrictedTenantAcceptance": false,
+    "secondRestorationReached": false,
+    "candidateRestorationReached": false,
+    "readyHandoffEmitted": false
+  },
+  "cleanup": {
+    "allOwnedAbsent": true,
+    "executorAbsent": true,
+    "ownerPoolEnded": true,
+    "owners": 2,
+    "volumes": 1,
+    "forced": false,
+    "cleanupPassed": true,
+    "gracefulCleanupPassed": false,
+    "probeExit": 1,
+    "postgresExit": 0,
+    "noOom": true,
+    "completedInsideWindow": true
+  },
+  "limitations": [
+    "Overall05 FAILED; restricted native tenant proof did not pass",
+    "03 and04 overallFAILED remain preserved; no source/migration/service repeats",
+    "No generic SQL normalization, performance, deployment or production claim",
+    "Consumed05 window cannot be reused"
+  ]
+}

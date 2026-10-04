@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "independent_unused_anchor128_static_and_pure_review",
+  "reviewedAtUtc": "2026-10-04T20:21:27.8282679+00:00",
+  "passed": true,
+  "selectedCommitCleared": true,
+  "baseSource": "30b874753943ff357cd0f013d4239d22f627afaf",
+  "selectedFiles": {
+    "scripts/register-compatible-fallback-inactive.mjs": "c89dcae67b84b74e7f82acbddbb6554b5a76b8f9b9e4181ec2b8f1832670d334",
+    "tests/release297-compatible-fallback-inactive.test.mjs": "e04d35da381e5a1c81c3d31714b657597f1866b260ac73730486e97a6b7be876",
+    "docs/RELEASE_297_UNUSED_ANCHOR128_PREPARATION.md": "a21d44dc28b595b26347ea2daf41c60183b7c16149c9c553c6101b2ae812f4c5"
+  },
+  "proof": {
+    "executionSha256": "ad62812738be975f00808d7f8f25c3e878771ef55c1c6741f162b48c399febbf",
+    "historicalCases": 28,
+    "tests": 45,
+    "failureCancelSkipTodo": 0,
+    "syntaxChecks": 2,
+    "elapsedMs": 1778.6961000000001,
+    "wholeDeadlineMs": 20000,
+    "newCases": 17,
+    "absenceSha256": "1a900d520aa6ce2183d89d5b8dc7ebf1402713a1d35247a4fa578ee338d9579c",
+    "forced": false,
+    "publicSummarySha256": "f2a663254f12654f34282ebb94abd7959d094fd498f18a9c47fe5b6332778c09",
+    "exactRecordedPidsAbsent": 4,
+    "exactOrderedUniqueNamesVerified": true,
+    "sourceAndCustodyHashesVerified": true,
+    "tapSha256": "1730c3bd4d5025db7ec501c6ef6bddce4821e30d4b9c8ca4f0e512c198365d0a"
+  },
+  "staticChecks": {
+    "explicitOptInOperations": [
+      "PlanAnchor128",
+      "RegisterInactiveAnchor128"
+    ],
+    "maximumRegistrations": 2,
+    "canonicalAdmissionCounts": [
+      121,
+      125,
+      126,
+      127,
+      128
+    ],
+    "publishedSourceArchiveScanRegistryAndTagReplayRequired": true,
+    "windowCheckedAfterSourceGetBeforeEachMutation": true,
+    "onlyRuntimeRlsValueMayChange": true,
+    "serviceAndDeploymentAndTaskSetNonuseRequired": true,
+    "existingReviewedHelperUsedAtEveryStep": true,
+    "authorizationMustBindDistinctOperationAndExactPlan": true,
+    "actualRepliesAndReturnedArnsRetainedBeforePostReturnChecks": true,
+    "imageSourceResourcesRolesSecretsCommandsTagsSidecarsAndUnrelatedValuesPreserved": true,
+    "exactPrivateSourceAndToolCustodyRequired": true,
+    "allOtherCloudMutationsDisallowed": true,
+    "originalPlanAndRegisterBodiesUnchanged": true,
+    "partialOrUncertainRegistrationCannotPass": true,
+    "usageAndNewIssuanceOff": true
+  },
+  "limitations": [
+    "The absence assertion concerns references from the two observed services, deployments and task sets; no standalone-task inventory is claimed.",
+    "Registered unused definitions have ECS status ACTIVE; registered_inactive names operational nonuse.",
+    "Source/registry/archive/private-permission production replay was mocked in these tests; actual publication, captures, Plan and registration remain pending.",
+    "Historical full54 service compatibility evidence retains its original synthetic scope; fresh default43/53 evidence is separate."
+  ],
+  "actualCloudOrNativeOrBuildActions": 0,
+  "capacityAccepted": false,
+  "deploymentAccepted": false,
+  "actualRegistrationAccepted": false,
+  "releaseOperationsAuthorized": false
+}

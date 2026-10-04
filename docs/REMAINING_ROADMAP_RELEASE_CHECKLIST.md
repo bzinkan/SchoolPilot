@@ -7,7 +7,7 @@ and waived the two-Chromebook prerequisite in favor of documented live validatio
 The 2.10.0 package and managed-device requirements below describe the earlier
 candidate; retain them as history, not current execution instructions.
 
-The [October 4 preparation checkpoint](RELEASE_297_DEPLOY_READINESS.md#october-4-preparation-update) records three final-source 133-client headroom passes, retained higher-load failures, separate Usage acceptance and pending operational gates. No deployment or activation is recorded.
+The [October 4 preparation checkpoint](RELEASE_297_DEPLOY_READINESS.md#october-4-preparation-update) records three fresh candidate passes at DeSales's 133-client load on the ordinary 53-entry schema, completed local migration/service recovery and restricted restoration, the independently reviewed compatible-definition tool, retained higher-load failures and separate Usage acceptance. The completed strict comparison remains FAILED on the older baseline's latency and unstable controls. The [separate owner-approved bounded DeSales decision](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json) accepts current-school numerical criteria while preserving every historical failure. Operational gates remain pending. No deployment or activation is recorded.
 
 Status: preparation only, scope dated 2026-09-30; final local evidence through
 2026-10-01 UTC. No deployment, activation, Store upload,

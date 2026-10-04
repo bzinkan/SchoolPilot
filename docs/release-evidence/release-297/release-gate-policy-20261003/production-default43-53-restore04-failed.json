@@ -1,0 +1,79 @@
+{
+  "kind": "failed_exact_export_restricted_restoration04",
+  "attempt": "04",
+  "accepted": false,
+  "source": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "productionMutations": 0,
+  "capacityAccepted": false,
+  "productionRawSchemaExport": false,
+  "startedAt": "2026-10-04T18:58:01.25Z",
+  "completedAt": "2026-10-04T18:58:11.911Z",
+  "windowSha256": "a5ed7d8e0cdca62a33b4cfe0d38212cd294bd86a55f61eec7f2b0973489442ca",
+  "boundPlanSha256": "0e7f51c1aa0b7378178b1b2001cd48b96b4ad1fc354f81a92aa2421dc31ff803",
+  "execution": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\execution.json",
+    "sha256": "72d284a8741480a196786b55c34835d307702b4060e2b6556fbd9e84bc694719",
+    "bytes": 9133
+  },
+  "absence": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\independent-owned-absence.json",
+    "sha256": "9b23319a64e5807dfa459f1234cb6df6ed74dce656e71aa0c4892346fe8bc41b",
+    "bytes": 656
+  },
+  "custody": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\custody-manifest.json",
+    "sha256": "32c771d36af8d497c5f0af903014c16be74491051dcf028c385d9d3bf42db885",
+    "bytes": 3747
+  },
+  "comparison": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\baseline-canonical-restoration-comparison.json",
+    "sha256": "1461739a84191cafdf55683d39bbae0cab146b5ea65a1504d77857b37f34a81d",
+    "bytes": 1552
+  },
+  "restoredDump": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\restored-baseline-schema.sql",
+    "sha256": "2bcd5293d4c8f17d2ce2c032bc90937381cc04c772f87446ae54b453f4af2859",
+    "bytes": 430328
+  },
+  "sourceCanonicalSha256": "35339c1f2684f48ad89ccfcc0dbec5eb3b65955ae16fdb76901ac164c2e4b58c",
+  "restoredCanonicalSha256": "050aa6bdb8d4922eafdcc4ce4a542256f286fe5d96c216d8fd3579e471187363",
+  "canonicalEqual": false,
+  "verifiedRestoredSchemaOwnerPattern": "NOSUPERUSER/NOBYPASSRLS/NOINHERIT",
+  "completeOriginalOwnerMapAvailable": false,
+  "observedCanonicalDifferences": {
+    "count": 3,
+    "checkNames": [
+      "mydesk_import_items_bounds",
+      "student_information_items_bounds",
+      "student_information_imports_bounds"
+    ],
+    "change": "Only redundant grouping around the first two AND atoms removed; every other canonical byte retained",
+    "allOperandsAndOrderRetained": true,
+    "ownerCommentHypothesisRejected": true,
+    "normalizerUnchanged": true,
+    "actualDumpDiff": {
+      "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-production-default43-53-restore-only-04\\execution-b3b071c87c78\\static-diff-01\\raw-schema-diff.private.patch",
+      "sha256": "03031d12cdc50f323cd17de82a98339da3614af7b801b21dd5bb3c2b2e449932",
+      "bytes": 6413
+    }
+  },
+  "nativeRestrictedChecksExecuted": 0,
+  "candidateRestorationReached": false,
+  "readyHandoffEmitted": false,
+  "servicesOrMigrationsRepeated": 0,
+  "cleanup": {
+    "allOwnedAbsent": true,
+    "executorAbsent": true,
+    "ownerPoolEnded": true,
+    "allExit0NoOom": true,
+    "owners": 1,
+    "forced": false,
+    "completedInsideWindow": true
+  },
+  "limitations": [
+    "Overall04 FAILED at unchanged strict canonical assertion; no restricted-native or candidate-restoration acceptance",
+    "Raw restored dump/constraint difference is now retained;03 remains separately FAILED",
+    "No normalizer/source/schema/history modification or capacity/deployment claim",
+    "No retry under consumed04 window"
+  ]
+}
