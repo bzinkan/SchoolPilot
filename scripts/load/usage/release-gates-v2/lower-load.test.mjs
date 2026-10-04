@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {execFileSync} from 'node:child_process';
 import {mkdtempSync,writeFileSync,readFileSync,mkdirSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {fileURLToPath} from 'node:url';
-import {PROFILES,profileHash,assertOffering,hash} from './contracts.mjs';
+import {PROFILES,profileHash,assertOffering,hash,OLD_CONTRACT_SHA256,OLD_CLOSED_JOURNAL_SHA256} from './contracts.mjs';
 import {LOWER_LEVELS,LOWER_CONTRACT,lowerContractHash,assertLowerReservation,assertLowerPostRls,lowerCreateArguments,lowerHeadroom,assertLowerConfirmation,verifyLowerNativeCustody,verifyLowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 import {checkPersistence} from './persistence.mjs';
 import {checkLowerStaffRows,createLowerStaffReader} from './lower-staff.mjs';
@@ -18,6 +16,21 @@ function record(n=0){return{run:String(n).padStart(12,'0'),source:'a'.repeat(40)
   profile:PROFILES.lower133.name,contractSha256:profileHash(PROFILES.lower133),arm:'B',runPassed:true,cleanupPassed:true,sourceUnchanged:true,hostHarnessSourceUnchanged:true,expectedNegativeLogCoverage:true,errorCoverage:[{complete:true,available:true,errorCount:0},{complete:true,available:true,errorCount:0}],
   lowerAcquisitionLogEvidence:{passed:true},lowerLoad:{contractSha256:lowerContractHash()},postLowerRlsVerification:native(),databasePreparation:native(),p95Ms:200,rounds:[{acceptance:{checks:{cpuBound:true,latency:true,scopedTeacherReads:true,persistence:true,capabilityAcknowledgements:true,offering:true}},cpuByRole:[{}],apiCpuMeanFraction:.40,traffic:{lowerStaffReads:{passed:true}}}]};}
 const emf=()=>({_aws:{Timestamp:2000,CloudWatchMetrics:[{Namespace:'SchoolPilot/Monitoring'}]},Release:'a'.repeat(40),Service:'api',Environment:'test',InstanceId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',MonitorCaptured:0,MonitorCapturedInterval:0,DatabaseConnectivityMonitorCapturedInterval:0});
+async function historicalContracts(){
+  // Exact Git source snapshot from 05d745d5d695faf1d526bf31c44532ec43a0deb2.
+  // Normalize checkout CRLF only; canonical profile JSON and hashes remain exact.
+  const old=readFileSync(new URL('./fixtures/contracts-05d745d5.fixture.mjs',import.meta.url),'utf8');
+  assert.equal(hash(old.replaceAll('\r\n','\n')),'3de37a4d6170b0f0305118076df4614f78e02c1b7d98e24f1034fed10edd47af');
+  const before=await import('data:text/javascript;base64,'+Buffer.from(old).toString('base64'));
+  assert.equal(OLD_CONTRACT_SHA256,before.OLD_CONTRACT_SHA256);assert.equal(OLD_CLOSED_JOURNAL_SHA256,before.OLD_CLOSED_JOURNAL_SHA256);
+  return before;
+}
+function assertHistoricalProfiles(actual,before){
+  for(const [key,value] of Object.entries(before.PROFILES)){
+    assert.deepEqual(actual[key],value,key);
+    assert.equal(hash(JSON.stringify(actual[key])),before.profileHash(value),key+' canonical hash');
+  }
+}
 test('final source-defined monitor log proof accepts stable zero without optional lifetime',()=>{
   const proof=lowerAcquisitionLogProof(JSON.stringify(emf()),{source:'a'.repeat(40),measuredEndsAtMs:1000,complete:true});assert.equal(proof.passed,true);assert.equal(proof.rawAcquisitionCountersAvailable,false);
 });
@@ -33,9 +46,15 @@ test('recovered acquisition, readiness deferral and missing/invalid final EMF ar
 test('lower levels use one school, exact packaged cadence and preserved old profiles',async()=>{
   assert.deepEqual(LOWER_LEVELS.map(row=>row.offering.schoolDevices),[[133,0],[250,0],[340,0],[500,0]]);
   assert.deepEqual(LOWER_LEVELS.map(row=>row.offering.expected),[798,1500,2040,3000]);for(const profile of LOWER_LEVELS){assertOffering(profile.offering);assert.equal(profile.offering.deviceCadenceMs,10000);}
-  const root=fileURLToPath(new URL('../../../..',import.meta.url)),old=execFileSync('git',['-C',root,'show','05d745d5d695faf1d526bf31c44532ec43a0deb2:scripts/load/usage/release-gates-v2/contracts.mjs'],{encoding:'utf8',windowsHide:true});
-  const before=await import('data:text/javascript;base64,'+Buffer.from(old).toString('base64'));for(const [key,value] of Object.entries(before.PROFILES))assert.deepEqual(PROFILES[key],value,key);
+  assertHistoricalProfiles(PROFILES,await historicalContracts());
   assert.equal(LOWER_CONTRACT.queryRecorder,false);assert.equal(LOWER_CONTRACT.cpuProfiler,false);assert.equal(LOWER_CONTRACT.comparisonPolicyAmended,false);
+});
+test('historical profile snapshot rejects changed values and canonical key-order drift',async()=>{
+  const before=await historicalContracts(),changed=structuredClone(PROFILES);changed.usage.offering.expected-=1;
+  assert.throws(()=>assertHistoricalProfiles(changed,before),{code:'ERR_ASSERTION'});
+  const reordered={...PROFILES,usage:Object.fromEntries(Object.entries(PROFILES.usage).reverse())};
+  assert.deepEqual(reordered.usage,before.PROFILES.usage);
+  assert.throws(()=>assertHistoricalProfiles(reordered,before),{code:'ERR_ASSERTION'});
 });
 test('scoped teacher read replay accepts exact own authority and foreign denials',()=>assert.equal(checkLowerStaffRows(rows(),fixture,PROFILES.lower133).passed,true));
 test('scoped teacher reads reject wrong school, teacher, class and session',()=>{
