@@ -16,6 +16,7 @@ import { remapObservedEnvironment, roleEnvironment } from './environment.mjs';
 import { ownRole } from './owner.mjs';
 import { withPinnedBuildBase } from './build-helper.mjs';
 import { lostReconnectBindings } from './reconnect.mjs';
+import { gracefulSnapshotOverlay } from './restore.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
@@ -291,4 +292,15 @@ test('optional Usage CPU timing remains unavailable while dark mixed keeps stric
   const late={declaredDurationMs:60_000,startDelayMs:1000,endDelayMs:1000,start:{cpu:{usage_usec:0},hrtimeMicroseconds:0},end:{cpu:{usage_usec:40_000_000},hrtimeMicroseconds:60_000_000}};
   const optional=cpuObservation(late,{strict:false});assert.equal(optional.available,false);assert.equal(optional.acceptedAsCpuEvidence,false);assert.equal(optional.meanFraction,null);
   assert.throws(()=>cpuObservation(late));assert.throws(()=>cpuWindow(late));
+});
+
+
+test('v2 snapshot cleanup overlays only exact owned graceful cleanup and preserves frozen ABI bytes',async()=>{
+  const url=new URL('../roles/restore-snapshot.mjs',import.meta.url),original=readFileSync(url,'utf8'),before=hash(original),overlay=gracefulSnapshotOverlay(original,url);
+  assert.equal(hash(readFileSync(url,'utf8')),before);assert.ok(overlay.includes("call(['stop','--time','30',actualId]"));
+  assert.ok(overlay.includes("assert.equal(stopped.ExitCode,0)"));assert.ok(!overlay.includes("call(['rm','--force'"));assert.ok(overlay.includes("call(['rm','--volumes',actualId]"));
+  const native=await import(url),adapted=await import('data:text/javascript;base64,'+Buffer.from(overlay).toString('base64'));
+  assert.equal(typeof adapted.withRestoredSnapshot,'function');assert.equal(adapted.assertUnexpiredRestoreGate.toString(),native.assertUnexpiredRestoreGate.toString());
+  assert.equal(adapted.compareNativeSchemas.toString(),native.compareNativeSchemas.toString());assert.equal(adapted.verifyOwnedSnapshotContainer.toString(),native.verifyOwnedSnapshotContainer.toString());
+  assert.throws(()=>gracefulSnapshotOverlay(original.replace("remove:actualId=>call(['rm','--force','--volumes',actualId]","changed"),url));
 });

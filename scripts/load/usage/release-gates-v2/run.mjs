@@ -15,7 +15,7 @@ import { assertOutside, ownRole } from './owner.mjs';
 import { pause } from './application.mjs';
 import { roleEnvironment, remapObservedEnvironment, validateBaselineAdvertisement } from './environment.mjs';
 import { withCommonDatabase } from './common-database.mjs';
-import { withRestoredSnapshot } from '../roles/restore-snapshot.mjs';
+import { withUsageSnapshotV2 } from './restore.mjs';
 import { loadSnapshot } from '../roles/snapshot-contract.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 import { runHeavyUsageWorkers, completeUsageChecks } from './usage-checks.mjs';
@@ -253,7 +253,7 @@ export async function runV2(options) {
       const fixture = structuredClone(snapshot.data['cold-fixture-state.json']);
       const date = new Date(fixture.today + 'T12:00:00Z'), localDay = n => new Date(date.getTime() + n * 86400_000).toISOString().slice(0, 10);
       Object.assign(fixture, { heavyDate: localDay(-2), emptyDate: localDay(-3), gapDate: localDay(-5), from: localDay(-365), historyDays: 361 });
-      await withRestoredSnapshot({ ...options, source: options.source, evidenceDirectory: output, privateDirectory: control,
+      await withUsageSnapshotV2({ ...options, source: options.source, evidenceDirectory: output, privateDirectory: control,
         mode: 'diagnostic', planFile, planSha256, purpose: 'New v2 three-API synthetic campaign; original single-API contract is unchanged' }, async context => {
         const configuration = read(context.configurationFile); configuration.pgContainerId = context.ready.pgContainerId; configuration.schemaSha256 = snapshot.data['schema-fingerprint.json'].canonicalSha256;
         configuration.schemaInputSha256=options.schemaSha256;
