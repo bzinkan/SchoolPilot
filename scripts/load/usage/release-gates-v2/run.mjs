@@ -280,6 +280,7 @@ export async function runV2(options) {
       metrics.runPassed = !metrics.preparationSmoke && !failure && profile.kind !== 'diagnostic' && metrics.rounds.length === (profile.rounds ?? 1)
         && metrics.rounds.every(round => round.acceptance.passed === true) && metrics.cleanupPassed === true && metrics.sourceUnchanged
         && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0);
+      if(profile.kind==='blackbox')metrics.runPassed&&=Number.isFinite(metrics.wholeOwnedApiCpuMicroseconds)&&metrics.wholeOwnedApiCpuMicroseconds>0&&metrics.wholeOwnedCpuIncludesFinalClassificationFlush===true;
       metrics.failure = failure ?? null; metrics.finishedAt = new Date().toISOString();
       if (metrics.rounds.length) { metrics.cpuMsPer200 ??= metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }
       save(output, 'metrics.json', metrics);

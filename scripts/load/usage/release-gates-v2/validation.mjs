@@ -46,6 +46,8 @@ export function validatePairs(records, { profile, baselineSource, candidateSourc
     assert.equal(record.source, record.arm === 'A' ? baselineSource : candidateSource);
     assert.equal(record.runPassed, true); assert.equal(record.cleanupPassed, true); assert.equal(record.sourceUnchanged, true);
     assert.ok(record.cpuMsPer200 > 0 && Number.isFinite(record.cpuMsPer200)); assert.ok(record.p95Ms > 0 && record.p95Ms <= 500);
+    assert.equal(record.wholeOwnedCpuIncludesFinalClassificationFlush,true);assert.ok(Number.isFinite(record.wholeOwnedApiCpuMicroseconds)&&record.wholeOwnedApiCpuMicroseconds>0);
+    assert.equal(record.cpuMsPer200,record.wholeOwnedApiCpuMicroseconds/1000/profile.offering.expected);
     assert.match(record.verifiedReceiptManifestSha256, /^[a-f0-9]{64}$/);
   }
   assert.deepEqual(records.map(row => row.arm), ['A', 'A', 'A', 'B', 'B', 'A', 'A', 'B']);
