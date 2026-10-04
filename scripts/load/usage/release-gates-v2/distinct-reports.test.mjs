@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { DISTINCT_REPORT_CONTRACT, distinctReportCases, distinctCsvCases, distinctCanonicalKey,
   assertDistinctOracle, prepareDistinctReports, expectedDistinctReport, assertDistinctJson,
-  assertDistinctCsv, assertDistinctAuditRecords, countDistinctCurrentObservations, runDistinctReports } from './distinct-reports.mjs';
+  assertDistinctCsv, assertDistinctAuditRecords, countDistinctCurrentObservations, runDistinctReports, sanitizedDistinctReportFailure,
+  distinctPreparedStateHash, assertDistinctPreparedState } from './distinct-reports.mjs';
 
 const source = 'd'.repeat(40), today = '2026-10-04';
 const dateBefore = days => new Date(Date.parse(today + 'T12:00:00Z') - days * 86_400_000).toISOString().slice(0, 10);
@@ -137,6 +138,7 @@ test('all64 distinct requests and8CSV traverse concurrent staff endpoint calls w
   assert.equal(calls.length, 72); assert.ok(result.peakInFlight >= 16); assert.ok(calls.every(row => row.signal instanceof AbortSignal));
   assert.equal(new Set(result.reportCases.map(row => row.effectiveKeySha256)).size, 64);
   assert.equal(result.postOfferingNativeCoverageAuditAndOwnerDrainRequired, true);
+  assert.equal(result.startsAtMs, 1000);
 });
 test('busy/rejected reports cannot count as accepted capacity', async () => {
   const { result } = await virtualRun((response, item, format) => { if (item.ordinal === 0 && format === 'json') response.status = 503; });
@@ -163,7 +165,29 @@ test('mutated expected values cannot become authoritative by rebinding their sto
     clock: () => 1000, staffRequest: async () => { offered = true; return { status: 200, body: responseBody(expectations.get(0)) }; } }));
   assert.equal(offered, false);
 });
+test('prepared-state token derives from actual canonical generator state and rejects stale/rebound state before endpoints', () => {
+  const state = { run: 'a'.repeat(12), fixture, oracle, prepared }, preparedHash = distinctPreparedStateHash(state);
+  assert.equal(assertDistinctPreparedState({ ...state, preparedHash }), preparedHash);
+  assert.throws(() => assertDistinctPreparedState({ ...state, preparedHash: 'b'.repeat(64) }));
+  assert.throws(() => assertDistinctPreparedState({ ...state, run: 'b'.repeat(12), preparedHash }));
+  const expectations = new Map([...prepared.expectations].map(([ordinal, value]) => [ordinal, structuredClone(value)]));
+  expectations.get(0).totals.monitoredBrowserSeconds++;
+  const changed = { ...prepared, expectations, expectedReportsSha256: createHash('sha256').update(JSON.stringify([...expectations])).digest('hex') };
+  assert.throws(() => distinctPreparedStateHash({ ...state, prepared: changed }));
+  const shiftedOracle = { ...oracle, cutoff: '2026-10-04T07:00:01.000Z',
+    schools: oracle.schools.map(row => ({ ...row, coverage: row.coverage.map(day => day.date === fixture.today
+      ? { ...day, processedThrough: '2026-10-04T07:00:01.000Z' } : day) })) };
+  const shiftedState = { ...state, oracle: shiftedOracle, prepared: prepareDistinctReports(fixture, shiftedOracle) };
+  assert.notEqual(distinctPreparedStateHash(shiftedState), preparedHash);
+  assert.throws(() => assertDistinctPreparedState({ ...shiftedState, preparedHash }));
+});
 test('distinct contract is separately named and retains all public/report resources and deadlines', () => {
   assert.equal(DISTINCT_REPORT_CONTRACT.requests, 64); assert.equal(DISTINCT_REPORT_CONTRACT.publicDeadlineMs, 20000);
   assert.equal(DISTINCT_REPORT_CONTRACT.apiTasks, 3); assert.equal(DISTINCT_REPORT_CONTRACT.productPoolTimeoutDurabilityChanges, 0);
+});
+test('public report failures never copy arbitrary RPC error names or codes', () => {
+  assert.deepEqual(sanitizedDistinctReportFailure({ name: 'AbortError', code: 'REQUEST_FAILED' }), { name: 'AbortError', code: 'REQUEST_FAILED' });
+  assert.deepEqual(sanitizedDistinctReportFailure({ name: 'private student name', code: 'https://private.example/' }),
+    { name: 'Error', code: 'DISTINCT_REPORT_REJECTED' });
+  assert.deepEqual(sanitizedDistinctReportFailure({ name: 'TypeError', code: 'A'.repeat(65) }), { name: 'TypeError', code: 'DISTINCT_REPORT_REJECTED' });
 });

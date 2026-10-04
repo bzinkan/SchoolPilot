@@ -249,6 +249,32 @@ export function prepareDistinctReports(fixture, oracle) {
     contractSha256: distinctReportContractHash(), preparedBeforeTimedOffers: true };
 }
 
+// The generator retains this state locally. A caller-supplied token is checked
+// against its canonical contents before an authenticated endpoint is offered.
+export function distinctPreparedStateHash({ run, fixture, oracle, prepared }) {
+  assert.match(run, /^[a-f0-9]{12}$/);
+  const canonical = prepareDistinctReports(fixture, oracle);
+  assert.equal(prepared.preparedBeforeTimedOffers, true);
+  for (const key of ['source', 'fixtureKeySha256', 'oracleSha256', 'caseManifestSha256', 'expectedReportsSha256', 'contractSha256'])
+    assert.equal(prepared[key], canonical[key]);
+  assert.equal(digest(prepared.cases), canonical.caseManifestSha256);
+  assert.equal(digest([...prepared.expectations]), canonical.expectedReportsSha256);
+  return digest({ kind: 'distinct-report-generator-owned-state-v1', run, source: oracle.source,
+    fixtureKeySha256: canonical.fixtureKeySha256, cutoff: oracle.cutoff, oracleSha256: canonical.oracleSha256,
+    contractSha256: canonical.contractSha256, caseManifestSha256: canonical.caseManifestSha256,
+    expectedReportsSha256: canonical.expectedReportsSha256 });
+}
+export function assertDistinctPreparedState({ preparedHash, ...state }) {
+  const actual = distinctPreparedStateHash(state); assert.equal(preparedHash, actual); return actual;
+}
+
+const publicErrorNames = new Set(['Error', 'AssertionError', 'TypeError', 'RangeError', 'SyntaxError', 'AbortError', 'TimeoutError']);
+export function sanitizedDistinctReportFailure(error, fallback = 'DISTINCT_REPORT_REJECTED') {
+  assert.match(fallback, /^[A-Z_0-9]{1,64}$/);
+  return { name: publicErrorNames.has(error?.name) ? error.name : 'Error',
+    code: typeof error?.code === 'string' && /^[A-Z_0-9]{1,64}$/.test(error.code) ? error.code : fallback };
+}
+
 export async function runDistinctReports({ fixture, schools, staffRequest, oracle, startsAtMs,
   prepared, clock = () => performance.timeOrigin + performance.now(), pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)), signal }) {
   assertDistinctOracle(fixture, oracle); assert.deepEqual(schools.map(row => row.id), fixture.schools.map(row => row.id));
@@ -286,7 +312,7 @@ export async function runDistinctReports({ fixture, schools, staffRequest, oracl
         assert.equal(effective, row.requestKeySha256); assert.ok(!effectiveKeys.has(effective)); effectiveKeys.add(effective); row.effectiveKeySha256 = effective;
       } else { assertDistinctCsv(response.body, expected.get(item.ordinal)); row.csvSha256 = digest(response.body); }
       row.correct = true;
-    } catch (error) { row.error = { name: error?.name ?? 'Error', code: error?.code ?? 'DISTINCT_REPORT_REJECTED' }; }
+    } catch (error) { row.error = sanitizedDistinctReportFailure(error); }
     finally { row.durationMs = clock() - began; inFlight--; (format === 'json' ? rows : csv).push(row); }
   };
   await Promise.all(DISTINCT_REPORT_CONTRACT.waveOffsetsMs.map(async (offset, wave) => {
@@ -303,7 +329,7 @@ export async function runDistinctReports({ fixture, schools, staffRequest, oracl
     all8CsvCorrect: csv.length === 8 && csv.every(row => row.status === 200 && row.correct && /^[a-f0-9]{64}$/.test(row.csvSha256)),
     drainedClientOffers: inFlight === 0, concurrentEndpointWorkObserved: peakInFlight >= 16 };
   return { schemaVersion: 1, profile: DISTINCT_REPORT_CONTRACT.name, contractSha256: distinctReportContractHash(),
-    source: oracle.source, currentProcessedCutoff: oracle.cutoff, independentOracleSha256: digest(oracle),
+    source: oracle.source, startsAtMs, currentProcessedCutoff: oracle.cutoff, independentOracleSha256: digest(oracle),
     expectedReportsSha256: prepared.expectedReportsSha256, realStaffSessionCookies: true,
     reportCases: rows, csvCases: csv, peakInFlight, checks, passed: Object.values(checks).every(Boolean),
     databaseState: DISTINCT_REPORT_CONTRACT.databaseState,
