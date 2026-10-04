@@ -7,6 +7,7 @@ import { getIO } from "../realtime/socketio.js";
 import { isRedisEnabled } from "../realtime/ws-redis.js";
 import errorMonitor, { type ErrorCategory } from "./errorMonitor.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
+import { checkHealthDatabaseRoundTrip } from "./healthDbRoundTrip.js";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STARTUP_DELAY_MS = 15_000; // 15s to let DB pool warm up
@@ -34,27 +35,7 @@ async function checkPostgres(): Promise<CheckResult> {
 }
 
 async function checkDbRoundTrip(): Promise<CheckResult> {
-  const start = Date.now();
-  await pool.query(`CREATE TABLE IF NOT EXISTS _health_sentinel (
-    id SERIAL PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT NOW()
-  )`);
-  const { rows } = await pool.query(
-    "INSERT INTO _health_sentinel DEFAULT VALUES RETURNING id"
-  );
-  const id = rows[0].id;
-  const read = await pool.query(
-    "SELECT id FROM _health_sentinel WHERE id = $1",
-    [id]
-  );
-  if (read.rows.length === 0) {
-    throw new Error("Sentinel row not found on read-back");
-  }
-  await pool.query("DELETE FROM _health_sentinel WHERE id = $1", [id]);
-  // Cleanup orphans older than 1 hour
-  await pool.query(
-    "DELETE FROM _health_sentinel WHERE created_at < NOW() - INTERVAL '1 hour'"
-  );
-  return { ok: true, latencyMs: Date.now() - start };
+  return checkHealthDatabaseRoundTrip(pool);
 }
 
 async function checkDbPool(): Promise<CheckResult> {
