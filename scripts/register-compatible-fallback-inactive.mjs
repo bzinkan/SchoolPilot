@@ -1,0 +1,279 @@
+#!/usr/bin/env node
+// Preparation-only controller: rendering is offline; registration never launches
+// a task, updates a service, changes admission, or publishes an image.
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { createReadStream, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { archiveConfigDigest, scanCounts, SCANNER, runCommand, validateRegistryManifest } from './verify-legacy-deploy-image.mjs';
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const registry = JSON.parse(readFileSync(path.join(repositoryRoot, 'src/config/rlsRegistry.json'), 'utf8'));
+export const FALLBACK = Object.freeze({
+  source: 'c578120d980d4c2405a72f4f40b2d3c29a07e20b', tag: 'c578120d980d',
+  localIndex: 'sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08',
+  platform: 'sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1',
+  config: 'sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b',
+  application: 'ddc5996b3b8645859fa51a9613486db52c481b7f',
+  region: 'us-east-1', account: '135775632425', repository: 'schoolpilot-production-api',
+  stageSha256: 'cca18d0e2d122a2f21ffa6f66b7160636f0dfe6ebc1ffeb8c7f43c5ff5879c98',
+  identityHelperSha256: '328701028f7c36554bfc4ff0d4ede28c57a0c63ec4ff9584faa0b54e07eb9a4b',
+  identityHelperLfSha256: '75cf33ad0abc3e45217ff6c56802914d266db9daa6ea469296d77e7a96098c3f',
+  permissionHelperSha256: 'bcfd3f3575974c23fa958eaad8c46045ff536523f732fdcfb6d082d34bd08049',
+  permissionHelperLfSha256: '02552442f804a5b58777d844c7b0f0c3680c84e6b14cfe7a3410cb4426125b24',
+});
+const repoUri = `${FALLBACK.account}.dkr.ecr.${FALLBACK.region}.amazonaws.com/${FALLBACK.repository}`;
+const digestPattern = /^sha256:[a-f0-9]{64}$/;
+const identityNames = new Set(['GIT_SHA', 'SERVICE_NAME']);
+const controls = Object.freeze({ preciseRestrictionResourcesV1: 'CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1', focusTabV1: 'CLASSPILOT_CAP_FOCUS_TAB_V1', privateChatLifecycleV1: 'CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1' });
+const providerFields = new Set(['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'compatibilities', 'registeredAt', 'registeredBy', 'deregisteredAt']);
+const requestFields = new Set(['family', 'taskRoleArn', 'executionRoleArn', 'networkMode', 'containerDefinitions', 'volumes', 'placementConstraints', 'requiresCompatibilities', 'cpu', 'memory', 'runtimePlatform', 'ephemeralStorage', 'proxyConfiguration', 'inferenceAccelerators', 'pidMode', 'ipcMode', 'enableFaultInjection']);
+const canonical = value => JSON.stringify(sort(value));
+function sort(value) { return Array.isArray(value) ? value.map(sort) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sort(value[key])])) : value; }
+export const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
+function equal(actual, expected, message) { assert.ok(canonical(actual) === canonical(expected), message); }
+function checkString(value, pattern, message) { assert.ok(typeof value === 'string' && pattern.test(value), message); }
+function pinnedJson(record) {
+  assert.ok(record && path.isAbsolute(record.path), 'INPUT_PATH_REQUIRED'); checkString(record.sha256, /^[a-f0-9]{64}$/, 'INPUT_HASH_REQUIRED');
+  const bytes = readFileSync(record.path); assert.ok(bytes.length > 0 && bytes.length <= 8 * 1024 * 1024, 'INPUT_SIZE_INVALID');
+  equal(hash(bytes), record.sha256, 'INPUT_CHANGED'); return JSON.parse(bytes.toString('utf8'));
+}
+function env(container) {
+  assert.ok(Array.isArray(container.environment) && Array.isArray(container.secrets ?? []), 'ENVIRONMENT_INVALID');
+  const names = container.environment.map(item => item.name), secretNames = (container.secrets ?? []).map(item => item.name);
+  assert.ok(new Set(names).size === names.length && new Set(secretNames).size === secretNames.length, 'DUPLICATE_RUNTIME_NAME');
+  assert.ok(!names.some(name => secretNames.includes(name)), 'ENVIRONMENT_SECRET_COLLISION');
+  assert.ok(!secretNames.some(name => identityNames.has(name) || name === 'RLS_ENABLED_TABLES' || name === 'RLS_GUC_ENABLED' || name.startsWith('CLASSPILOT_CAP_') || name === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || name === 'CLASSPILOT_USAGE_ROLLUP_MODE' || name === 'CLASSPILOT_DIGITAL_USAGE_MODE'), 'CONTROL_SECRET_REJECTED');
+  return Object.fromEntries(container.environment.map(item => { assert.ok(typeof item.name === 'string' && typeof item.value === 'string', 'ENVIRONMENT_INVALID'); return [item.name, item.value]; }));
+}
+function runtimeContainer(task, role) { const matches = task?.containerDefinitions?.filter(item => item.name === role); assert.ok(matches?.length === 1, 'SOURCE_CONTAINER_INVALID'); return matches[0]; }
+export function validateSourceResponse(response, role, source, image, inventory) {
+  const task = response?.taskDefinition; assert.ok(task && task.status === 'ACTIVE', 'SOURCE_DEFINITION_INACTIVE');
+  const family = role === 'api' ? '(?:schoolpilot-production-api|schoolpilot-production-api-emergency)' : 'schoolpilot-production-scheduler-worker';
+  checkString(task.taskDefinitionArn, new RegExp(`^arn:aws:ecs:${FALLBACK.region}:${FALLBACK.account}:task-definition/${family}:[1-9][0-9]*$`), 'SOURCE_ARN_INVALID');
+  equal(task.family, task.taskDefinitionArn.split('/')[1].split(':')[0], 'SOURCE_FAMILY_INVALID');
+  equal([task.cpu, task.memory], role === 'api' ? ['1024', '2048'] : ['512', '1024'], 'SOURCE_RESOURCE_DRIFT');
+  assert.ok(task.networkMode === 'awsvpc' && task.requiresCompatibilities?.includes('FARGATE'), 'SOURCE_NETWORK_DRIFT');
+  const container = runtimeContainer(task, role); equal(container.image, `${repoUri}@${image}`, 'SOURCE_IMAGE_DRIFT');
+  assert.ok(container.memory === undefined || Number(container.memory) >= Number(task.memory), 'SOURCE_HARD_MEMORY_DRIFT');
+  const values = env(container); equal(values.GIT_SHA, source, 'SOURCE_IDENTITY_DRIFT'); equal(values.SERVICE_NAME, role, 'SOURCE_IDENTITY_DRIFT');
+  equal(values.RLS_GUC_ENABLED, 'true', 'TENANT_GUC_REQUIRED');
+  equal(values.RLS_ENABLED_TABLES?.split(','), inventory, 'ADMISSION_DRIFT');
+  for (const name of ['CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE']) equal(values[name], 'off', 'USAGE_MUST_BE_EXPLICITLY_OFF');
+  const rollouts = JSON.parse(values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON ?? '{}');
+  assert.ok(rollouts && !Array.isArray(rollouts) && typeof rollouts === 'object', 'ROLLOUTS_INVALID');
+  for (const [capability, name] of Object.entries(controls)) {
+    assert.ok(values[name] === undefined || values[name] === 'false', 'NEW_ISSUANCE_MUST_BE_OFF');
+    assert.ok(rollouts[capability] === undefined || rollouts[capability]?.mode === 'off', 'NEW_ROLLOUT_MUST_BE_OFF');
+  }
+  assert.ok(!Object.keys(task).some(key => !providerFields.has(key) && !requestFields.has(key)), 'UNKNOWN_TASK_FIELD');
+  return task;
+}
+export function inventoryFor(count) {
+  assert.ok(count === 128 || count === 129, 'EXACT_COMPATIBLE_FLOOR_REQUIRED');
+  const value = registry.inventories[count === 128 ? 'passpilotAppointmentsPostExpand' : 'classpilotPrivateChatLifecyclePostExpand'];
+  assert.ok(value.count === count && value.tables.length === count && new Set(value.tables).size === count, 'REGISTRY_INVENTORY_INVALID'); return [...value.tables];
+}
+export function renderRequest(response, role, source, sourceImage, targetImage, count) {
+  checkString(source, /^[a-f0-9]{40}$/, 'SOURCE_SHA_INVALID'); checkString(sourceImage, digestPattern, 'SOURCE_DIGEST_INVALID'); checkString(targetImage, digestPattern, 'TARGET_DIGEST_INVALID');
+  assert.ok(source !== '7af9d0dd5bc2bd3e13b96d35a577725e07f8b678' && source !== FALLBACK.source, 'COMPATIBLE_CANDIDATE_ANCHOR_REQUIRED');
+  const task = validateSourceResponse(response, role, source, sourceImage, inventoryFor(count));
+  const request = Object.fromEntries(Object.entries(structuredClone(task)).filter(([key]) => requestFields.has(key)));
+  if (response.tags !== undefined) { assert.ok(Array.isArray(response.tags), 'TASK_TAGS_INVALID'); request.tags = structuredClone(response.tags); }
+  runtimeContainer(request, role).image = `${repoUri}@${targetImage}`;
+  return request;
+}
+export function assertOnlyImageIdentityChanged(response, request, role, targetImage) {
+  const restored = structuredClone(request), container = runtimeContainer(restored, role);
+  equal(container.image, `${repoUri}@${targetImage}`, 'RENDERED_IMAGE_INVALID');
+  const values = env(container); equal(values.GIT_SHA, FALLBACK.source, 'RENDERED_SOURCE_INVALID'); equal(values.SERVICE_NAME, role, 'RENDERED_SERVICE_INVALID');
+  const originalContainer = runtimeContainer(response.taskDefinition, role);
+  container.image = originalContainer.image;
+  container.environment = [...container.environment.filter(item => !identityNames.has(item.name)), ...originalContainer.environment.filter(item => identityNames.has(item.name))];
+  const expected = structuredClone(Object.fromEntries(Object.entries(response.taskDefinition).filter(([key]) => requestFields.has(key)))); if (response.tags !== undefined) expected.tags = structuredClone(response.tags);
+  // The supported identity stamper only reorders its two identity entries.
+  for (const value of [restored, expected]) runtimeContainer(value, role).environment.sort((a, b) => a.name.localeCompare(b.name));
+  equal(restored, expected, 'UNRELATED_TASK_MUTATION');
+}
+export function validateImageEvidence(scan, proof) {
+  assert.ok(scan?.schemaVersion === 1 && scan.passed === true && proof?.schemaVersion === 1 && proof.passed === true, 'PASSED_REGISTRY_AND_SCAN_REQUIRED');
+  for (const value of [scan, proof]) { equal(value.sourceSha, FALLBACK.source, 'FALLBACK_SOURCE_CHANGED'); equal(value.scanner, SCANNER, 'PINNED_SCANNER_REQUIRED'); equal(value.configDigest, FALLBACK.config, 'FALLBACK_CONFIG_CHANGED'); }
+  equal(scan.imageId, FALLBACK.localIndex, 'FALLBACK_LOCAL_INDEX_CHANGED'); equal([scan.os, scan.architecture], ['linux', 'amd64'], 'FALLBACK_PLATFORM_INVALID');
+  equal(proof.platformDigest, FALLBACK.platform, 'FALLBACK_PLATFORM_CHANGED'); checkString(proof.digest, digestPattern, 'PUBLISHED_DIGEST_REQUIRED');
+  equal([proof.region, proof.repository], [FALLBACK.region, FALLBACK.repository], 'REGISTRY_CONTEXT_CHANGED');
+  assert.ok(scan.counts?.HIGH === 0 && scan.counts?.CRITICAL === 0, 'BLOCKING_SCAN_FINDINGS');
+}
+async function checked(run, executable, args, options) { const result = await run(executable, args, options); assert.ok(result.code === 0, 'BOUND_COMMAND_FAILED'); return result.stdout; }
+function writeNew(filename, value) { writeFileSync(filename, typeof value === 'string' ? value : JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 }); }
+async function sourceContract(directory, source, run) {
+  assert.ok(path.isAbsolute(directory), 'SOURCE_DIRECTORY_REQUIRED');
+  equal((await checked(run, 'git', ['-C', directory, 'rev-parse', 'HEAD'])).trim(), source, 'SOURCE_MOVED');
+  equal((await checked(run, 'git', ['-C', directory, 'status', '--porcelain'])).trim(), '', 'SOURCE_DIRTY');
+}
+async function checkAnchorSource(input, run) {
+  await sourceContract(input.anchorDirectory, input.anchorSource, run);
+  equal((await checked(run, 'git', ['-C', input.anchorDirectory, 'diff', '--name-only', FALLBACK.application, input.anchorSource, '--', 'src', 'package.json', 'package-lock.json', 'tsconfig.json', 'drizzle.config.ts', 'Dockerfile', '.dockerignore', 'config', 'docs/soc2'])).trim(), '', 'ANCHOR_APPLICATION_BYTES_CHANGED');
+  await sourceContract(input.fallbackDirectory, FALLBACK.source, run);
+  const protocol = async (directory, source) => {
+    const text = await checked(run, 'git', ['-C', directory, 'show', `${source}:src/services/classpilotProtocol.ts`]);
+    const list = text.match(/export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = \[([\s\S]*?)\] as const;/)?.[1]; assert.ok(list, 'CAPABILITY_REGISTRY_MISSING'); return [...list.matchAll(/"([A-Za-z0-9]+)"/g)].map(match => match[1]);
+  };
+  const capabilities = await protocol(input.anchorDirectory, input.anchorSource);
+  equal(capabilities, await protocol(input.fallbackDirectory, FALLBACK.source), 'CAPABILITY_REGISTRY_MISMATCH');
+  for (const [file, markers] of [ ['src/services/classpilotPrivateChatLifecycle.ts', ['export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;', 'export const PRIVATE_CHAT_BRIDGE_VERSION = 1;']], ['src/realtime/websocket.ts', ['export const PRIVATE_CHAT_RELAY_VERSION = 1;']] ]) {
+    const text = await checked(run, 'git', ['-C', input.fallbackDirectory, 'show', `${FALLBACK.source}:${file}`]); assert.ok(markers.every(marker => text.includes(marker)), 'PRIVATE_COMPATIBILITY_FLOOR_MISSING');
+  }
+  return capabilities;
+}
+async function privatePermissions(directory, inputFiles, run, initialize = false) {
+  const helper = path.join(repositoryRoot, 'scripts/deploy-classpilot-runtime-config.ps1'); assert.ok([FALLBACK.permissionHelperSha256, FALLBACK.permissionHelperLfSha256].includes(hash(readFileSync(helper))), 'PERMISSION_HELPER_CHANGED');
+  const bridge = path.join(directory, 'private-permissions.ps1');
+  const bridgeSource = 'param([string]$ToolPath,[string]$DirectoryPath,[string]$RepositoryPath,[string]$InputsPath,[switch]$Initialize)\n. $ToolPath\nAssert-NoReparsePointInExistingPath -Path $DirectoryPath\nif ($Initialize) { Set-PrivatePathPermissions -Path $DirectoryPath -Directory }\nAssert-PrivatePathPermissions -Path $DirectoryPath -Directory\nforeach ($entry in (Get-Content -LiteralPath $InputsPath -Raw | ConvertFrom-Json)) { [void](Assert-PrivateInputPath -Path $entry -RepositoryRoot $RepositoryPath) }\n';
+  if (initialize) { writeNew(bridge, bridgeSource); writeNew(path.join(directory, 'private-input-paths.json'), inputFiles); }
+  equal(readFileSync(bridge, 'utf8'), bridgeSource, 'PERMISSION_BRIDGE_CHANGED'); equal(JSON.parse(readFileSync(path.join(directory, 'private-input-paths.json'), 'utf8')), inputFiles, 'PERMISSION_INPUTS_CHANGED');
+  const args = ['-NoProfile', '-File', bridge, '-ToolPath', helper, '-DirectoryPath', directory, '-RepositoryPath', repositoryRoot, '-InputsPath', path.join(directory, 'private-input-paths.json')]; if (initialize) args.push('-Initialize');
+  await checked(run, 'pwsh', args);
+}
+export function validateCleanupCustody(scanSha256, record) {
+  assert.ok(record?.schemaVersion === 1 && record.complete === true && record.forced === false && record.exactOwned === true && record.scannerExitCode === 0 && record.ownedScannerAbsent === true, 'UNFORCED_SCANNER_CLEANUP_REQUIRED');
+  checkString(scanSha256, /^[a-f0-9]{64}$/, 'SCAN_HASH_REQUIRED'); equal(record.scanSha256, scanSha256, 'CLEANUP_SCAN_BINDING_CHANGED');
+  checkString(record.ownedScanner, /^schoolpilot-image-scan-[a-f0-9-]+$/, 'SCANNER_OWNER_INVALID');
+}
+export function validatePublishedTag(value, digest, source = FALLBACK.source) {
+  assert.ok(value?.imageDetails?.length === 1, 'EXACT_SOURCE_TAG_REQUIRED'); const details = value.imageDetails[0];
+  equal([details.registryId, details.repositoryName, details.imageDigest], [FALLBACK.account, FALLBACK.repository, digest], 'SOURCE_TAG_CONFLICT');
+  assert.ok(details.imageTags?.includes(source.slice(0, 12)), 'EXACT_SOURCE_TAG_REQUIRED');
+}
+export function validateAnchorEvidence(input, scan, proof, tag) {
+  assert.ok(scan?.schemaVersion === 1 && scan.passed === true && proof?.schemaVersion === 1 && proof.passed === true, 'PASSED_ANCHOR_SOURCE_PROOF_REQUIRED');
+  equal([scan.sourceSha, proof.sourceSha], [input.anchorSource, input.anchorSource], 'ANCHOR_SOURCE_PROOF_MISMATCH');
+  equal([scan.scanner, proof.scanner], [SCANNER, SCANNER], 'ANCHOR_SCANNER_MISMATCH');
+  equal([scan.os, scan.architecture], ['linux', 'amd64'], 'ANCHOR_PLATFORM_INVALID');
+  assert.ok(scan.counts?.HIGH === 0 && scan.counts?.CRITICAL === 0, 'ANCHOR_SCAN_FINDINGS');
+  checkString(scan.configDigest, digestPattern, 'ANCHOR_CONFIG_REQUIRED'); checkString(scan.imageId, digestPattern, 'ANCHOR_LOCAL_IMAGE_REQUIRED'); checkString(proof.platformDigest, digestPattern, 'ANCHOR_PLATFORM_REQUIRED');
+  equal([proof.receiptSha256, proof.configDigest, proof.digest, proof.region, proof.repository], [input.anchorScan.sha256, scan.configDigest, input.anchorImage, FALLBACK.region, FALLBACK.repository], 'ANCHOR_REGISTRY_PROOF_MISMATCH');
+  validatePublishedTag(tag, input.anchorImage, input.anchorSource);
+}
+export async function createPlan(input, { run = runCommand, now = Date.now } = {}) {
+  assert.ok(input?.schemaVersion === 1 && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  checkString(input.anchorSource, /^[a-f0-9]{40}$/, 'ANCHOR_SOURCE_REQUIRED'); checkString(input.anchorImage, digestPattern, 'ANCHOR_IMAGE_REQUIRED');
+  for (const root of [repositoryRoot, input.anchorDirectory, input.fallbackDirectory]) { assert.ok(path.isAbsolute(root), 'SOURCE_DIRECTORY_REQUIRED'); const relative = path.relative(root, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_STAY_OUTSIDE_SOURCE'); }
+  const scan = pinnedJson(input.scan), proof = pinnedJson(input.registryProof), stage = pinnedJson(input.syntheticStage), cleanup = pinnedJson(input.scanCleanup);
+  equal(input.syntheticStage.sha256, FALLBACK.stageSha256, 'STAGE_PROOF_CHANGED');
+  assert.ok(stage.passed === true && stage.servingSource === FALLBACK.application && stage.fallbackSource === FALLBACK.source && stage.retainedCompletedMigrationLedgerRows === 54 && stage.retainedScreenshotFunctionBodyAndAcl === true && stage.allDrainsExitZeroNoOomNoForceAndZeroNamedSqlConnections === true, 'SYNTHETIC_COMPATIBILITY_PROOF_INVALID');
+  validateImageEvidence(scan, proof); equal(proof.receiptSha256, input.scan.sha256, 'REGISTRY_SCAN_BINDING_CHANGED');
+  validatePublishedTag(pinnedJson(input.publishedTag), proof.digest);
+  validateAnchorEvidence(input, pinnedJson(input.anchorScan), pinnedJson(input.anchorRegistryProof), pinnedJson(input.anchorPublishedTag));
+  validateCleanupCustody(input.scan.sha256, cleanup);
+  const capabilities = await checkAnchorSource(input, run);
+  const toolSource = (await checked(run, 'git', ['-C', repositoryRoot, 'rev-parse', 'HEAD'])).trim(); checkString(toolSource, /^[a-f0-9]{40}$/, 'TOOL_SOURCE_REQUIRED'); await sourceContract(repositoryRoot, toolSource, run);
+  const sources = { api: pinnedJson(input.api), 'scheduler-worker': pinnedJson(input.worker) };
+  const capturedServices = pinnedJson(input.liveServices);
+  assert.ok(capturedServices.services?.length === 2 && (capturedServices.failures ?? []).length === 0, 'CAPTURED_BASELINE_REQUIRED');
+  equal(capturedServices.services.map(value => value.serviceName).sort(), ['schoolpilot-production-api', 'schoolpilot-production-scheduler-worker'], 'CAPTURED_SERVICES_INVALID');
+  const requests = Object.fromEntries(Object.entries(sources).map(([role, response]) => [role, renderRequest(response, role, input.anchorSource, input.anchorImage, proof.digest, input.admissionCount)]));
+  const states = Object.values(sources).map((value, index) => env(runtimeContainer(value.taskDefinition, index === 0 ? 'api' : 'scheduler-worker')));
+  const managed = value => Object.fromEntries(Object.entries(value).filter(([key]) => key.startsWith('CLASSPILOT_CAP_') || key === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || key === 'CLASSPILOT_PROTOCOL_V3_ENABLED'));
+  equal(managed(states[0]), managed(states[1]), 'PAIR_CAPABILITY_MISMATCH');
+  for (const state of states) assert.ok(Object.keys(JSON.parse(state.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON ?? '{}')).every(key => capabilities.includes(key)), 'UNKNOWN_CAPABILITY_KEY');
+  const helper = path.join(repositoryRoot, 'scripts/stamp-release-runtime-identity.mjs'); const identityHelperSha256 = hash(readFileSync(helper)); assert.ok([FALLBACK.identityHelperSha256, FALLBACK.identityHelperLfSha256].includes(identityHelperSha256), 'IDENTITY_HELPER_CHANGED');
+  const permissionHelperSha256 = hash(readFileSync(path.join(repositoryRoot, 'scripts/deploy-classpilot-runtime-config.ps1')));
+  mkdirSync(input.outputDirectory, { recursive: false, mode: 0o700 });
+  await privatePermissions(input.outputDirectory, [input.api.path, input.worker.path], run, true);
+  const generated = {};
+  for (const [role, request] of Object.entries(requests)) {
+    const filename = path.join(input.outputDirectory, `${role}.private.json`); writeNew(filename, request);
+    await checked(run, process.execPath, [helper, '--task-definition', filename, '--service', role, '--git-sha', FALLBACK.source, '--image-ref', `${repoUri}@${proof.digest}`]);
+    const stamped = JSON.parse(readFileSync(filename, 'utf8')); assertOnlyImageIdentityChanged(sources[role], stamped, role, proof.digest);
+    generated[role] = { path: filename, sha256: hash(readFileSync(filename)), request: stamped, source: role === 'api' ? input.api : input.worker, sourceArn: sources[role].taskDefinition.taskDefinitionArn };
+  }
+  const plan = { schemaVersion: 1, kind: 'compatible_fallback_inactive', createdAtUtc: new Date(now()).toISOString(), executableActions: ['RegisterInactive'], input, toolSource, identityHelperSha256, permissionHelperSha256, liveServicesSha256: hash(capturedServices.services), toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), identities: FALLBACK, registryDigest: proof.digest, generated, cloudMutationsDuringPlan: 0, servicesMayChange: false };
+  writeNew(path.join(input.outputDirectory, 'plan.private.json'), plan); return { path: path.join(input.outputDirectory, 'plan.private.json'), sha256: hash(JSON.stringify(plan, null, 2) + '\n'), admissionCount: input.admissionCount, registered: false };
+}
+async function hashFile(filename) { const digest = createHash('sha256'); for await (const chunk of createReadStream(filename)) digest.update(chunk); return digest.digest('hex'); }
+async function replayScan(plan) {
+  const scan = pinnedJson(plan.input.scan), proof = pinnedJson(plan.input.registryProof); validateImageEvidence(scan, proof);
+  const custody = pinnedJson(plan.input.scanCleanup);
+  validateCleanupCustody(plan.input.scan.sha256, custody);
+  const directory = path.dirname(plan.input.scan.path);
+  const legacyCleanup = JSON.parse(readFileSync(path.join(directory, 'cleanup.json'), 'utf8')); assert.ok(legacyCleanup.complete === true, 'SCANNER_CLEANUP_UNCONFIRMED'); equal(legacyCleanup.ownedScanner, custody.ownedScanner, 'SCANNER_OWNER_CHANGED');
+  const report = readFileSync(path.join(directory, 'reports/trivy.json')); equal(hash(report), scan.reportSha256, 'SCAN_REPORT_CHANGED');
+  equal(scanCounts(JSON.parse(report), FALLBACK.config), scan.counts, 'SCAN_COUNTS_CHANGED');
+  const archive = path.join(directory, 'input/image.tar'); equal(await hashFile(archive), scan.archiveSha256, 'SCAN_ARCHIVE_CHANGED'); equal(await archiveConfigDigest(archive, FALLBACK.source), FALLBACK.config, 'SCAN_CONFIG_CHANGED');
+  const anchorScan = pinnedJson(plan.input.anchorScan), anchorProof = pinnedJson(plan.input.anchorRegistryProof);
+  validateAnchorEvidence(plan.input, anchorScan, anchorProof, pinnedJson(plan.input.anchorPublishedTag));
+  const anchorDirectory = path.dirname(plan.input.anchorScan.path);
+  assert.ok(JSON.parse(readFileSync(path.join(anchorDirectory, 'cleanup.json'), 'utf8')).complete === true, 'ANCHOR_SCANNER_CLEANUP_UNCONFIRMED');
+  const anchorReport = readFileSync(path.join(anchorDirectory, 'reports/trivy.json')); equal(hash(anchorReport), anchorScan.reportSha256, 'ANCHOR_REPORT_CHANGED'); equal(scanCounts(JSON.parse(anchorReport), anchorScan.configDigest), anchorScan.counts, 'ANCHOR_SCAN_COUNTS_CHANGED');
+  const anchorArchive = path.join(anchorDirectory, 'input/image.tar'); equal(await hashFile(anchorArchive), anchorScan.archiveSha256, 'ANCHOR_ARCHIVE_CHANGED'); equal(await archiveConfigDigest(anchorArchive, plan.input.anchorSource), anchorScan.configDigest, 'ANCHOR_IMAGE_SOURCE_CHANGED');
+}
+async function verifyRemoteRegistry(plan, run, arm = 'fallback') {
+  const proof = pinnedJson(arm === 'anchor' ? plan.input.anchorRegistryProof : plan.input.registryProof);
+  return validateRegistryManifest(async digest => {
+    const response = JSON.parse(await checked(run, 'aws', ['ecr', 'batch-get-image', '--repository-name', FALLBACK.repository, '--image-ids', `imageDigest=${digest}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+    assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0 && response.images[0].repositoryName === FALLBACK.repository, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0];
+  }, proof.digest, proof.configDigest);
+}
+export async function registerInactive(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyLocalScan = replayScan, verifyRegistry = verifyRemoteRegistry } = {}) {
+  const plan = pinnedJson(planRecord), authorization = pinnedJson(authorizationRecord);
+  equal(plan.kind, 'compatible_fallback_inactive', 'PLAN_KIND_INVALID'); equal(plan.toolSha256, hash(readFileSync(fileURLToPath(import.meta.url))), 'TOOL_CHANGED'); equal(plan.identities, FALLBACK, 'PLAN_IDENTITIES_CHANGED');
+  assert.ok(authorization.schemaVersion === 1 && authorization.operation === 'RegisterInactive' && authorization.authorized === true && authorization.planSha256 === planRecord.sha256, 'EXACT_AUTHORIZATION_REQUIRED');
+  const start = Date.parse(authorization.startsAtUtc), end = Date.parse(authorization.expiresAtUtc); assert.ok(Number.isFinite(start) && Number.isFinite(end) && end > start && end - start <= 60 * 60_000, 'BOUNDED_WINDOW_REQUIRED');
+  const inWindow = () => assert.ok(now() >= start && now() < end, 'AUTHORIZED_WINDOW_EXPIRED'); inWindow();
+  assert.ok(now() - Date.parse(plan.createdAtUtc) >= 0 && now() - Date.parse(plan.createdAtUtc) <= 60 * 60_000, 'PLAN_EXPIRED');
+  const receiptPath = path.join(plan.input.outputDirectory, 'registration.private.json'); assert.ok(!existsSync(receiptPath), 'PLAN_ALREADY_USED');
+  await checkAnchorSource(plan.input, run); await verifyLocalScan(plan);
+  await sourceContract(repositoryRoot, plan.toolSource, run);
+  equal(hash(readFileSync(path.join(repositoryRoot, 'scripts/stamp-release-runtime-identity.mjs'))), plan.identityHelperSha256, 'IDENTITY_HELPER_BYTES_CHANGED');
+  equal(hash(readFileSync(path.join(repositoryRoot, 'scripts/deploy-classpilot-runtime-config.ps1'))), plan.permissionHelperSha256, 'PERMISSION_HELPER_BYTES_CHANGED');
+  await privatePermissions(plan.input.outputDirectory, [plan.input.api.path, plan.input.worker.path], run);
+  const originalRun = run; let commandIndex = 0;
+  run = async (executable, args, options) => {
+    assert.ok(executable === 'aws', 'REGISTRATION_TRANSPORT_MUST_BE_AWS');
+    const filename = path.join(plan.input.outputDirectory, `${String(++commandIndex).padStart(2, '0')}-${args[0]}-${args[1]}.private.json`);
+    const response = await originalRun(executable, args, options); writeNew(filename, { executable, args, code: response.code, stdout: response.stdout, stderr: response.stderr }); return response;
+  };
+  const identity = JSON.parse(await checked(run, 'aws', ['sts', 'get-caller-identity', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'])); equal(identity.Account, FALLBACK.account, 'AWS_ACCOUNT_CHANGED');
+  const tag = JSON.parse(await checked(run, 'aws', ['ecr', 'describe-images', '--repository-name', FALLBACK.repository, '--image-ids', `imageTag=${FALLBACK.tag}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+  validatePublishedTag(tag, plan.registryDigest);
+  const remote = await verifyRegistry(plan, run); equal([remote.digest, remote.configDigest, remote.platformDigest], [plan.registryDigest, FALLBACK.config, FALLBACK.platform], 'REGISTRY_IDENTITY_CHANGED');
+  const anchorScan = pinnedJson(plan.input.anchorScan), anchorProof = pinnedJson(plan.input.anchorRegistryProof); validateAnchorEvidence(plan.input, anchorScan, anchorProof, pinnedJson(plan.input.anchorPublishedTag));
+  const anchorTag = JSON.parse(await checked(run, 'aws', ['ecr', 'describe-images', '--repository-name', FALLBACK.repository, '--image-ids', `imageTag=${plan.input.anchorSource.slice(0, 12)}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'])); validatePublishedTag(anchorTag, plan.input.anchorImage, plan.input.anchorSource);
+  const anchorRemote = await verifyRegistry(plan, run, 'anchor'); equal([anchorRemote.digest, anchorRemote.configDigest, anchorRemote.platformDigest], [plan.input.anchorImage, anchorScan.configDigest, anchorProof.platformDigest], 'ANCHOR_REMOTE_IMAGE_CHANGED');
+  const serviceArgs = ['ecs', 'describe-services', '--cluster', 'schoolpilot-production-cluster', '--services', 'schoolpilot-production-api', 'schoolpilot-production-scheduler-worker', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'];
+  const live = JSON.parse(await checked(run, 'aws', serviceArgs)); assert.ok(live.services?.length === 2 && (live.failures ?? []).length === 0, 'BASELINE_UNAVAILABLE');
+  equal(hash(live.services), plan.liveServicesSha256, 'LIVE_BASELINE_DRIFT'); equal(hash(pinnedJson(plan.input.liveServices).services), plan.liveServicesSha256, 'CAPTURED_BASELINE_CHANGED');
+  const result = { schemaVersion: 1, planSha256: planRecord.sha256, status: 'started', registered: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 };
+  writeNew(receiptPath, result);
+  try {
+    for (const role of ['api', 'scheduler-worker']) {
+      inWindow(); const generated = plan.generated[role]; equal(hash(readFileSync(generated.path)), generated.sha256, 'GENERATED_REQUEST_CHANGED');
+      const source = JSON.parse(await checked(run, 'aws', ['ecs', 'describe-task-definition', '--task-definition', generated.sourceArn, '--include', 'TAGS', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+      equal(source, pinnedJson(generated.source), 'ANCHOR_DEFINITION_CHANGED');
+      const request = JSON.parse(readFileSync(generated.path, 'utf8')); equal(request, generated.request, 'PLANNED_REQUEST_CHANGED'); assertOnlyImageIdentityChanged(source, request, role, plan.registryDigest);
+      inWindow();
+      result.lastAttemptedRole = role; result.registrationOutcomeUncertain = true; writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });
+      const registered = JSON.parse(await checked(run, 'aws', ['ecs', 'register-task-definition', '--cli-input-json', `file://${generated.path.replaceAll('\\', '/')}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+      const arn = registered.taskDefinition?.taskDefinitionArn; checkString(arn, new RegExp(`^arn:aws:ecs:${FALLBACK.region}:${FALLBACK.account}:task-definition/${request.family}:[1-9][0-9]*$`), 'REGISTERED_ARN_INVALID');
+      result.registered.push({ role, arn, requestSha256: generated.sha256 }); result.registrationOutcomeUncertain = false; writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });
+      inWindow();
+      const actual = JSON.parse(await checked(run, 'aws', ['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+      validateSourceResponse(actual, role, FALLBACK.source, plan.registryDigest, inventoryFor(plan.input.admissionCount));
+      const actualRequest = Object.fromEntries(Object.entries(actual.taskDefinition).filter(([key]) => requestFields.has(key))); if (actual.tags !== undefined) actualRequest.tags = actual.tags; equal(actualRequest, request, 'REGISTERED_DEFINITION_DRIFT');
+    }
+    inWindow(); const after = JSON.parse(await checked(run, 'aws', serviceArgs)); equal(after.services, live.services, 'SERVICES_CHANGED_DURING_INACTIVE_REGISTRATION');
+    result.status = 'registered_inactive'; result.servicesUnchanged = true;
+  } catch { result.status = 'failed_retained_inactive'; result.errorCode = 'COMPATIBLE_INACTIVE_REGISTRATION_FAILED'; throw new Error(result.errorCode); }
+  finally { writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); }
+  return { registered: result.registered, receiptPath, receiptSha256: hash(readFileSync(receiptPath)), servicesUpdated: 0, tasksLaunched: 0 };
+}
+async function main(args) {
+  const [operation, inputPath, inputHash, authorizationPath, authorizationHash] = args;
+  if (operation === 'Plan' && args.length === 3) {
+    const result = await createPlan(pinnedJson({ path: inputPath, sha256: inputHash })); console.log(JSON.stringify(result));
+  } else if (operation === 'RegisterInactive' && args.length === 5) {
+    const result = await registerInactive({ path: inputPath, sha256: inputHash }, { path: authorizationPath, sha256: authorizationHash }); console.log(JSON.stringify(result));
+  } else throw new Error('EXPECTED_PLAN_OR_REGISTER_INACTIVE');
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2)).catch(() => { console.error('COMPATIBLE_FALLBACK_PREPARATION_FAILED'); process.exitCode = 1; });
