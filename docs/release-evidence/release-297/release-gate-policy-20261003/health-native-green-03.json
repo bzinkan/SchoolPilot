@@ -1,0 +1,103 @@
+{
+  "kind": "health-least-privilege-correction",
+  "commit": "58776732b71537cb5aa44ab1506fa9b4059211a4",
+  "integratedCommit": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "sourceBase": "631fb338d965730456869bdbeb215e070f53f225",
+  "files": [
+    "src/services/healthDbRoundTrip.ts",
+    "src/services/healthMonitor.ts",
+    "tests/health-monitor-round-trip.integration.test.ts",
+    "scripts/run-test-lane.mjs"
+  ],
+  "diff": {
+    "insertions": 120,
+    "files": 4,
+    "deletions": 21
+  },
+  "behavior": "Reuse the existing caller pool; check for the public sentinel before bootstrap; qualify all sentinel operations; retain missing-table and DML permission failures.",
+  "native": {
+    "oldNativeSqlState": "42501",
+    "gracefulExitCode": 0,
+    "newTestsPassed": 6,
+    "newTestsSkipped": 0,
+    "ownedFixtureAbsent": true,
+    "withinAuthorizedWindow": true,
+    "receiptSha256": "e0b09377538ddc344b3b6f9ff8446c06e8f8d91ed5f0a70ef5ae13be14d405d2",
+    "forcedCleanup": false,
+    "originalBodySha256": "33995c2ddcc819bea47d969a9a5c3cd412186728a44ae5868dc4cbc97119d883",
+    "newTestsFailed": 0
+  },
+  "runtimeIdentity": {
+    "receiptSha256": "ca9d8ae54d7062fdeacb30f19cbbc4028945171b5d8827f3abbe3fbdcb5e5a3d",
+    "nativeTestedSourceSha256": "361366acdccd302a7f6e493cae83cca77f0550bb5237881bb6e1224dcb656ea9",
+    "committedSourceSha256": "16b650fa72b2aa3ddf8c3ae1acf7644a9a1bf1e1d43834f614cdd94da3facba1",
+    "onlyPostNativeChange": "TypeScript non-null assertion erased at runtime",
+    "emittedJavaScriptEqual": true,
+    "emittedJavaScriptSha256": "a4b99b235ba0205f9100b2539d1d611ac4859fa2cff633bf4c9516c77e4c8696"
+  },
+  "units": {
+    "suite": "session-pool-isolation",
+    "failed": 0,
+    "skipped": 0,
+    "passed": 7
+  },
+  "typecheck": {
+    "standardLocalFailuresPreserved": [
+      "Initial helper TS2532 fixed by erased assertion",
+      "npm PowerShell shim execution failed",
+      "Borrowed node_modules junction caused three unrelated googleRosterConnector TS2742 declaration portability errors"
+    ],
+    "canonicalStandardCheck": "Required in parent checkout with regular dependencies",
+    "preserveSymlinksExitCode": 0
+  },
+  "preservedAttempts": [
+    {
+      "passed": false,
+      "receiptSha256": "cb25b8f6b36555eb8196f1340c0b0bca693d23eab6a79e694053b6309902130c",
+      "attempt": 1,
+      "nativeSqlReached": false
+    },
+    {
+      "passed": false,
+      "receiptSha256": "4db301201cac982fa17c19e0e9b633bedc2dd5e86ae99683fe49760b79dab666",
+      "attempt": 2,
+      "nativeSqlReached": false,
+      "ownedFixtureAbsent": true
+    }
+  ],
+  "logReceipts": [
+    {
+      "file": "typecheck-initial-tool-output.txt",
+      "sha256": "31e602c9ad4c1168edf7d3e4f6390f6588196cefaaa79da5ba8f1259be35ec8a"
+    },
+    {
+      "file": "typecheck-final.log",
+      "sha256": "d5852bb76112fa27cf30b9ea8dfd3240ca57a14749298d5ff127c09ee03384ec"
+    },
+    {
+      "file": "typecheck-final-02.log",
+      "sha256": "f483d57a09b59291e36267c2300686eea5f32f6a1bd62e3273d430c8a2c933fb"
+    },
+    {
+      "file": "typecheck-preserve-symlinks.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "session-pool-unit.log",
+      "sha256": "d87445369e96ba641c727b3b4e80cc1f50a2256c0d1f3af5ad4ef73e36dc7c06"
+    }
+  ],
+  "preservation": {
+    "timeoutsUnchanged": true,
+    "infraUnchanged": true,
+    "releaseProfilesUnchanged": true,
+    "schemaUnchanged": true,
+    "poolLimitsUnchanged": true,
+    "newCreateGrant": false,
+    "rolesUnchanged": true,
+    "frontendUnchanged": true
+  },
+  "capacityAcceptance": false,
+  "deploymentAcceptance": false,
+  "remaining": "Actual final-image service startup, combined final checks and fresh release measurements remain required."
+}

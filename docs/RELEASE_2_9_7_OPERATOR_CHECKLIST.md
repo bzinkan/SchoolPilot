@@ -22,7 +22,15 @@ A conditional skip is not a passed test.
 
 ## Current preparation status
 
-Application `ed026513` passes 2,032 local unit tests without skips and all 20
+Current application source is `ddc5996b3b8645859fa51a9613486db52c481b7f`.
+The combined standard backend type check passes. The narrow Redis correction
+passes [24 component checks, including four native regressions](release-evidence/release-297/release-gate-policy-20261003/realtime-native-green-02.json),
+and the [restricted-role health correction](release-evidence/release-297/release-gate-policy-20261003/health-native-green-03.json)
+passes six native checks. Final combined
+CI, freshly scanned serving/fallback artifacts and staged recovery remain pending.
+Earlier application images and measurements do not certify the revised source.
+
+Historical application `ed026513` passes 2,032 local unit tests without skips and all 20
 reported CI checks. Its fresh local API/worker image has zero HIGH/CRITICAL scan
 findings; the frontend is rebuilt and the 54-migration/129-table synthetic schema
 is verified. Exact hashes and verification limits are in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
@@ -41,7 +49,7 @@ The [subsequent real-heartbeat staging attempt](release-evidence/release-297/rel
 also failed overall. A [native Redis diagnostic](release-evidence/release-297/release-gate-policy-20261003/realtime-native-regression-ed026.json)
 confirms valid empty snapshots become unreadable and same-millisecond revisions
 lose ordering; its failed cleanup import remains recorded. Snapshot and
-health-monitor compatibility corrections are in progress. Refresh final serving
+health-monitor compatibility corrections are integrated with native proof. Refresh final serving
 and fallback artifacts, CI and measured acceptance after these source changes.
 The ed026 artifacts and previous measurements remain historical evidence.
 New paired/current-school acceptance and three continuous classroom runs remain
@@ -217,8 +225,9 @@ recipient, enforcement, tenancy or deployment health checks.
 
 ## Current release selection and evidence
 
-The prepared application artifact is bound to `ed026513`; later changes affect
-harness/tests/documentation only. Selection for execution still requires accepted
+The current application source is `ddc5996b`; the earlier prepared artifacts are
+bound to `ed026513` and are historical. Runtime corrections require refreshed
+serving and fallback images. Selection for execution still requires accepted
 release gates, final review-head and resulting-main checks, recovery and fresh
 production verification. Historical images and failed campaigns remain intact.
 
@@ -226,10 +235,10 @@ production verification. Historical images and failed campaigns remain intact.
 |---|---|
 | SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`; origin/main remains separate from the open integration PR |
 | Integration branch | `codex/release-stabilization-297`; [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603); preserve and later reconcile incorporated review branches |
-| Application source / CI | `ed0265133d4a87fd3d2477dd90884535b749ee7d`; [all 20 reported checks pass at review head 2110e269](release-evidence/release-297/release-gate-policy-20261003/ci-2110e269-complete.json), with unchanged application/frontend inputs. Later review heads and approved resulting main need their own checks and equivalence proof. |
+| Application source / CI | `ddc5996b3b8645859fa51a9613486db52c481b7f`; standard backend type check passes. New combined CI remains required. [The 20 green checks at ca388d10](release-evidence/release-297/release-gate-policy-20261003/ci-ca388d10-complete.json) cover the preceding application source; they do not cover the new runtime corrections. Approved resulting main also needs checks and equivalence proof. |
 | Current correction / local checks | [2,032 unit passes, no skips](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json). Bounded Usage heartbeat admission, pool fairness, delta rollup writes and tenant-owned atomic cleanup/audit are included. |
-| Local API / worker candidate | Fresh ed026 image: index `sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f`, amd64 manifest `sha256:1edf606c00d4abd931745449bb0b2d65770f424f80ba9e46f391d7c9718ca72d`. Pinned scanner reports zero HIGH/CRITICAL findings, including unfixed. Local preparation is not registry publication, a deployed task pair or release approval. |
-| Compatible fallback | `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27`; [focused/native checks and zero-finding scan pass](release-evidence/release-297/release-gate-policy-20261003/safe-fallback-6d1f3a7e-summary.json). Local image index `sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387`, amd64 manifest `sha256:e9980ae29fab107c2be86386059d35f180449cf85901ea832d911b9aef543114`. Both new Usage modes must remain off. The old production image is invalid after lifecycle adoption. |
+| Local API / worker candidate | Current-source build/scan pending. Historical ed026 image: index `sha256:ba6959ee552da2882eed57b857d026fc2c8fa1dc00ea79d67f6a000b4534d63f`, amd64 manifest `sha256:1edf606c00d4abd931745449bb0b2d65770f424f80ba9e46f391d7c9718ca72d`, with zero HIGH/CRITICAL findings including unfixed. Local preparation is not registry publication, a deployed task pair or release approval. |
+| Compatible fallback | Refresh with the Redis and health fixes pending. Historical source `6d1f3a7e737ebd2e3e266f2f571cdea811db5e27` has [focused/native checks and a zero-finding scan](release-evidence/release-297/release-gate-policy-20261003/safe-fallback-6d1f3a7e-summary.json), image index `sha256:f010658f7d38448f65e248b99437fad79a05fad86a90a42667ef28732767c387`, amd64 manifest `sha256:e9980ae29fab107c2be86386059d35f180449cf85901ea832d911b9aef543114`. Both new Usage modes must remain off. The old production image is invalid after lifecycle adoption. |
 | Schema / recovery | [Actual candidate → safe fallback → candidate recovery passes](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json): all 54 ledger entries, screenshot function body/ACL, chat expiration/history and exact Focus cleanup retained. Five containers and one volume removed gracefully. This is synthetic restricted-role image-function recovery; production catalog/data, Redis/browser delivery and service-traffic rollback remain separate. |
 | Frontend | Fresh ed026 lint/build artifact SHA-256 `7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675`. All four frontend release CI shards pass for the application. No frontend was published. |
 | ClassPilot integration / CI | [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123), #119 → #120 → #121 → #122 ancestry. Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d` has all 10 checks passing, including Chrome 120/133/152/stable. PR remains open/draft. |
@@ -348,6 +357,14 @@ ALB reported three healthy targets against `/readyz`. Record that limitation,
 not an independently fetched readiness body. Record backup readiness and a specific approved America/New_York
 operational interval. Do not infer permission from an old freeze note. Retain the
 weekday 04:45–05:59 deployment safeguards and public-ECS/no-NAT configuration.
+
+The separately authorized bounded catalog inspection must also verify
+`public._health_sentinel` exists and each actual API/worker runtime role has
+SELECT, INSERT and DELETE on it plus USAGE on its serial sequence. Record these
+catalog/privilege results and successful service health checks. Do not grant
+schema CREATE or dismiss a missing/denied sentinel as fixture noise. If repair
+is needed, prepare the exact owner-side table/privilege correction for approval
+before rollout; retain the least-privilege runtime roles.
 
 Check the public Store listing **and the developer dashboard's publication and
 pending-submission state** immediately before upload. If a higher version prevents
