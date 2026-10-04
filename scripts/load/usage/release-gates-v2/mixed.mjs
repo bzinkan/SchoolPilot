@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { pause } from './application.mjs';
 import { stageForRound, profileHash } from './contracts.mjs';
-import { cpuObservation, classifyLog, negativeProbes } from './measurements.mjs';
+import { cpuObservation, classifyLog, negativeProbes, retainCompletedGeneratorTraffic } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { validateRound } from './validation.mjs';
 import { runHeavyUsageWorkers,completeUsageChecks } from './usage-checks.mjs';
@@ -48,13 +48,19 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
     }
   })();
   const settled=await Promise.allSettled([phase,topology,workerOperation]);
+  retainCompletedGeneratorTraffic(settled,metrics,save);
   if(settled.some(row=>row.status==='rejected'))throw Error('CONTINUOUS_MIXED_OPERATION_FAILED');
   const traffic=settled[0].value;assert.equal(traffic.heartbeats.windows.length,profile.rounds);
   for(const [index,owner] of active){drains.push(await owner.rpc('drain'));terminal.set(index,await owner.rpc('snapshot'));}
   const after=await observer.rpc('snapshot',{since}), persistence=checkPersistence(before,after,traffic,fixture);
   const actualCounts=[...terminal].map(([index,state])=>({index,count:state.http?.seenHeartbeatOffers}));
   const targetCounts=actualCounts.every(({index,count})=>count===(traffic.heartbeats.targetHistogram[index]??0)+(traffic.reconnect.targetHistogram[index]??0));
-  const classroom=await observer.rpc('correctness',{classroom:true});
+  let classroom;
+  try { classroom=await observer.rpc('correctness',{classroom:true}); }
+  catch(error) {
+    if(error.classroomOracleFailure){metrics.classroomOracleFailure=error.classroomOracleFailure;save('classroom-oracle-failure.json',error.classroomOracleFailure);}
+    throw error;
+  }
   const usage=profile.usage?{...await completeUsageChecks({worker,observer,generator,fixture}),workers:settled[2].value,reports:traffic.reports,
     workerStartAtMs:profile.workerStartAtMs,workerStartedOffsetMs,startsAtMs}:null;
   if(usage)drains.push(usage.drain);

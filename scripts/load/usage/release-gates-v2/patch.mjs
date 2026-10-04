@@ -4,7 +4,7 @@ import { replaceOnce } from '../roles/patch-coordinator.mjs';
 // Hash-bound generated overlay: canonical historical files never change.
 export function patchGeneratorV2(source) {
   let text = source.replaceAll('\r\n', '\n');
-  text = replaceOnce(text, "import { offerOpenLoopHeartbeats, OPEN_LOOP_HEARTBEATS } from './open-loop-heartbeats.mjs';", "import { offerHeartbeats as offerOpenLoopHeartbeats, sealTimings } from './release-gates-v2/offering.mjs';\nimport { assertOffering, profileFor, stickyTarget, stageForRound } from './release-gates-v2/contracts.mjs';\nimport { lostReconnectBindings } from './release-gates-v2/reconnect.mjs';");
+  text = replaceOnce(text, "import { offerOpenLoopHeartbeats, OPEN_LOOP_HEARTBEATS } from './open-loop-heartbeats.mjs';", "import { offerHeartbeats as offerOpenLoopHeartbeats, sealTimings } from './release-gates-v2/offering.mjs';\nimport { assertOffering, profileFor, stickyTarget, stageForRound } from './release-gates-v2/contracts.mjs';\nimport { lostReconnectBindings } from './release-gates-v2/reconnect.mjs';\nimport { lifecycleAudience } from './release-gates-v2/lifecycle-audience.mjs';");
   text = replaceOnce(text, 'let fixture, base, schools;', `let fixture, base, schools;
 const v2Profile = profileFor(process.env.RELEASE297_PROFILE);
 let topology = { active: [0], distribution: 'uniform' }, apiBases, continuousStartsAtMs;
@@ -30,6 +30,7 @@ const endpointFor = (school, index) => {
   return { ...result, targetIndex };\n}\n\nexport function assertHistoricalReport`);
   text = replaceOnce(text, "`${base.replace('http:', 'ws:')}/ws`", "`${endpointFor(school, index).replace('http:', 'ws:')}/ws`");
   text = replaceOnce(text, '  return issued.body.command.id;', "  issuedRecipients.set('command:'+issued.body.command.id,school.students[index]);\n  return issued.body.command.id;");
+  text = replaceOnce(text, '    await sleep(1500);\n    for (const school of schools) {', '    await sleep(1500);\n    for (const school of schools.filter(item => lifecycleAudience(v2Profile, schools).schoolIndices.includes(item.index))) {');
   text = replaceOnce(text, 'const events = [], sockets = [];', 'const events = [], sockets = [], expectedNegativeProbes = [];');
   text = replaceOnce(text, "events.push('stale_private_reply_rejected');", "const requestId=stale.headers.get('x-request-id');assert.match(requestId,/^[a-f0-9-]{36}$/);assert.equal(stale.body.requestId,requestId);expectedNegativeProbes.push({requestId,status:stale.status,code:stale.body.code});events.push('stale_private_reply_rejected');");
   text = replaceOnce(text, 'return { passed: true, events, simulatedClientAcknowledgements:', 'return { passed: true, events, expectedNegativeProbes, simulatedClientAcknowledgements:');

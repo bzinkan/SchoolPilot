@@ -1,3 +1,4 @@
+import { sanitizedClassroomOracleFailure } from './lifecycle-audience.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
@@ -72,7 +73,11 @@ export async function ownRole({ docker, run, source, helperImage, helperConfigDi
       privateFile(join(control, `request-${requestId}.json`), { id: requestId, nonce: binding.nonce, operation, ...(value === undefined ? {} : { value }) });
       try {
         const message = await wait(`response-${requestId}.json`, timeoutMs); assert.equal(message.id, requestId); pending.delete(requestId); settled++;
-        if (message.error) throw Error(message.error.code); return message.value;
+        if (message.error) {
+          const failure=Error(message.error.code);
+          if(message.error.oracle)failure.classroomOracleFailure=sanitizedClassroomOracleFailure(message.error);
+          throw failure;
+        } return message.value;
       } catch (error) { if (pending.has(requestId)) expired++; throw error; }
     },
     async shutdown() {

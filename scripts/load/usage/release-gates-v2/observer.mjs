@@ -1,3 +1,4 @@
+import { verifyClassroomBindings } from './lifecycle-audience.mjs';
 import assert from 'node:assert/strict';
 import { requireFromApplication, moduleFromApplication } from './application.mjs';
 import { seedCommonFixture } from './common-fixture.mjs';
@@ -65,26 +66,10 @@ process.on('message', async request => {
           command.command_type,target.student_id,target.student_session_id,target.device_id,target.status,
           COUNT(target.id) OVER(PARTITION BY command.id)::int AS target_count
           FROM classpilot_commands command LEFT JOIN classpilot_command_targets target ON target.command_id=command.id ORDER BY command.id`)).rows;
-        assert.ok(commands.length>0);
-        for(const row of commands){
-          const school=fixture.schools.find(item=>item.id===row.school_id);assert.ok(school);
-          const index=['lock-screen','unlock-screen'].includes(row.command_type)?0:['focus-tab','stop-focus'].includes(row.command_type)?1:null;
-          assert.notEqual(index,null);assert.equal(row.teacher_id,school.teachers[0]);assert.equal(row.teaching_session_id,school.currentSession);
-          assert.equal(row.target_scope,'students');assert.equal(row.target_count,1);assert.equal(row.student_id,school.students[index]);
-          assert.equal(row.student_session_id,school.studentSessions[index]);assert.equal(row.device_id,school.devices[index]);assert.equal(row.status,'completed');
-        }
         const messages=(await pool.query(`SELECT school_id,session_id,student_id,student_session_id,device_id,recipient_id,sender_id,delivery_status
           FROM chat_messages WHERE sender_type='teacher' ORDER BY school_id,id`)).rows;
-        assert.ok(messages.length>0);
-        for(const row of messages){const school=fixture.schools.find(item=>item.id===row.school_id);assert.ok(school);
-          assert.equal(row.session_id,school.currentSession);assert.equal(row.sender_id,school.teachers[0]);assert.equal(row.student_id,school.students[2]);
-          assert.equal(row.recipient_id,school.students[2]);assert.equal(row.student_session_id,school.studentSessions[2]);assert.equal(row.device_id,school.devices[2]);
-          assert.ok(['delivered','expired'].includes(row.delivery_status));}
-        const currentProfile=profileFor(process.env.RELEASE297_PROFILE),repetitions=currentProfile.kind==='mixed'?currentProfile.rounds:1;
-        assert.equal(commands.length,repetitions*8);assert.equal(messages.length,repetitions*4);
-        assert.equal(messages.filter(row=>row.delivery_status==='delivered').length,repetitions*2);
-        assert.equal(messages.filter(row=>row.delivery_status==='expired').length,repetitions*2);
-        process.send({id:request.id,value:{passed:true,commandTargetsChecked:commands.length,privateBindingsChecked:messages.length,exactRecipientOnly:true}});return;
+        const result = verifyClassroomBindings({ commands, messages, fixture, profile: profileFor(process.env.RELEASE297_PROFILE) });
+        process.send({id:request.id,value:result});return;
       }
       if (request.value.audit) {
         const records = (await pool.query(`SELECT school_id,user_id,entity_type,entity_id,metadata FROM audit_logs
@@ -141,5 +126,5 @@ process.on('message', async request => {
     } else if (request.operation === 'shutdown') { await pool.end(); await (await moduleFromApplication('services/errorMonitor.js')).default.disposeAndWait(); process.send({ id: request.id, value: true }, () => process.exit(0)); return; }
     else throw Error('Unknown observer operation');
     process.send({ id: request.id, value });
-  } catch (error) { process.send({ id: request.id, error: { code: error.code || 'OBSERVER_FAILED', name: error.name } }); }
+  } catch (error) { process.send({ id: request.id, error: { code: error.code || 'OBSERVER_FAILED', name: error.name, ...(error.publicOracleEvidence ? { oracle: error.publicOracleEvidence } : {}) } }); }
 });

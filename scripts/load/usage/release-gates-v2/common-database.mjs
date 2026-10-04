@@ -1,9 +1,9 @@
+import { waitForPostgresReady } from './postgres-readiness.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
-import { pause } from './application.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 
 export async function withCommonDatabase(options, docker, use) {
@@ -30,11 +30,8 @@ export async function withCommonDatabase(options, docker, use) {
       '--cpus', '4', '--memory', '4g', '--memory-swap', '4g', '--env-file', envFile, options.postgresImage, 'postgres', '-p', '5437'])).trim(); }
     finally { const recovered = await find(); if (recovered) { await verify(recovered); id = recovered; } }
     assert.match(id, /^[a-f0-9]{64}$/);
-    let ready = false;
-    for (let attempt = 0; attempt < 60; attempt++) {
-      try { await docker(['exec', id, 'pg_isready', '-h', '127.0.0.1', '-p', '5437', '-U', owner, '-d', database]); ready = true; break; } catch { await pause(500); }
-    }
-    assert.equal(ready, true);
+    const initializedState=(await verify(id)).State;
+    await waitForPostgresReady({docker,id,owner,database,startedAt:initializedState.StartedAt,fresh:true});
     await docker(['exec', '-i', id, 'psql', '-p', '5437', '-U', owner, '-d', database, '-v', 'ON_ERROR_STOP=1'], { input: schema });
     assert.ok(Array.isArray(schemaReceipt.migrations) && schemaReceipt.migrations.length > 0);
     for (const migration of schemaReceipt.migrations) {
@@ -59,8 +56,9 @@ GRANT EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(tex
       await docker(['stop', '--time', '30', id]); const stopped = (await verify(id)).State;
       assert.equal(stopped.Running, false); assert.equal(stopped.ExitCode, 0);
       await docker(['start', id]);
-      let ready = false; for (let n = 0; n < 60; n++) { try { await docker(['exec', id, 'pg_isready', '-h', '127.0.0.1', '-p', '5437', '-U', owner, '-d', database]); ready = true; break; } catch { await pause(500); } }
-      assert.equal(ready, true); const after = (await verify(id)).State; assert.notEqual(before.StartedAt, after.StartedAt);
+      const restartedState=(await verify(id)).State;
+      await waitForPostgresReady({docker,id,owner,database,startedAt:restartedState.StartedAt,fresh:false});
+      const after = (await verify(id)).State; assert.notEqual(before.StartedAt, after.StartedAt);
       const receipt = { run, source: options.source, pgContainerId: id, before, stopped, after, startedAt: started,
         cleanStop: true, restarted: true, sharedBuffersCold: true, hostFilesystemCachesFlushed: false };
       writeFileSync(join(outputDirectory, 'cold-restart.json'), JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' }); return receipt;

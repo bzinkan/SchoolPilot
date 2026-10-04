@@ -8,7 +8,7 @@ export function negativeProbes(traffic) {
   return lifecycle?.rounds?lifecycle.rounds.flatMap(row=>row.expectedNegativeProbes??[]):lifecycle?.expectedNegativeProbes??[];
 }
 export function runNegativeProbes(metrics) {
-  return metrics.continuous?negativeProbes(metrics.continuous.traffic):metrics.preparationSmokeResult?negativeProbes(metrics.preparationSmokeResult.result):metrics.rounds.flatMap(row=>negativeProbes(row.traffic));
+  return metrics.continuous?negativeProbes(metrics.continuous.traffic):metrics.continuousTraffic?negativeProbes(metrics.continuousTraffic):metrics.preparationSmokeResult?negativeProbes(metrics.preparationSmokeResult.result):metrics.rounds.flatMap(row=>negativeProbes(row.traffic));
 }
 export function negativeLogCoverage(coverage,probes) {
   const actual=coverage.filter(row=>row.role?.startsWith('api')).flatMap(row=>row.expectedNegativeRequestIds??[]).sort();
@@ -44,4 +44,9 @@ export function cpuWindow(window) {
   // The denominator is the declared offering window. Later cleanup cannot
   // dilute it; CPU after that window is measured separately.
   return { usec, meanFraction: usec / 60_000_000, durationMs: (window.end.hrtimeMicroseconds - window.start.hrtimeMicroseconds) / 1000 };
+}
+
+export function retainCompletedGeneratorTraffic(settled,metrics,save){
+  const phase=settled[0];
+  if(phase?.status==='fulfilled'){metrics.continuousTraffic=phase.value;save('continuous-traffic.json',phase.value);}
 }
