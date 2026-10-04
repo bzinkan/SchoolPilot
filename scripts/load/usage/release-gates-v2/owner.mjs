@@ -54,7 +54,12 @@ export async function ownRole({ docker, run, source, helperImage, helperConfigDi
         if (message.resources) resources.push({ operation: name, ...message.resources });
         return message;
       }
-      await checkAlive();
+      // A role can atomically publish its final acknowledgement and exit
+      // between our first file check and the native state observation. Read
+      // that response through the normal binding checks before rejecting the
+      // exit; an exit without an actual response still fails immediately.
+      try { await checkAlive(); }
+      catch (error) { if (!existsSync(file)) throw error; continue; }
       await pause(25);
     }
     throw Error('V2_ROLE_RESPONSE_DEADLINE');

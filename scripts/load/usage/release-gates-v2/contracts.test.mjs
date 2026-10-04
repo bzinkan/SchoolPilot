@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -13,6 +13,7 @@ import { checkPersistence } from './persistence.mjs';
 import { declareCampaign, reserveAttempt, registerAttempt } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
 import { remapObservedEnvironment } from './environment.mjs';
+import { ownRole } from './owner.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 const digest='a'.repeat(64),source='a'.repeat(40),candidate='b'.repeat(40);
 test('new profiles pin real offerings and retain the failed single task separately',()=>{
@@ -73,6 +74,28 @@ test('missing logs and native error markers remain unavailable or fail; never be
   assert.equal(classifyLog('Unexpected error on idle client','api',{complete:true}).errorCount,1);
   assert.equal(classifyLog('ERROR: canceling statement due to statement timeout','postgres',{complete:true}).categories.statement,1);
   assert.equal(classifyLog('connection timeout exceeded','api',{complete:true}).categories.acquisition,1);
+});
+
+test('a final response published during exit is checked, while missing or foreign replies fail',async()=>{
+  for(const reply of ['bound','missing','foreign']){
+    const root=mkdtempSync(join(tmpdir(),'release297-final-response-')), privateDirectory=join(root,'private'),outputDirectory=join(root,'output');mkdirSync(privateDirectory);mkdirSync(outputDirectory);
+    const run='a'.repeat(12),id='c'.repeat(64),image='sha256:'+digest,containerImage='sha256:'+'e'.repeat(64),pgContainerId='d'.repeat(64),role='api0';
+    const control=join(privateDirectory,role);let running=true;
+    const frame=value=>JSON.stringify({...value,binding:{run,source,role,containerId:reply==='foreign'?'f'.repeat(64):id}});
+    const docker=async args=>{
+      if(args[0]==='create')return id;
+      if(args[0]==='start'){writeFileSync(join(control,'ready.json'),JSON.stringify({binding:{run,source,role,containerId:id}}));return '';}
+      if(args[0]==='inspect'){
+        if(running&&existsSync(join(control,'binding.json'))&&args[1]===id){
+          try{const request=JSON.parse(readFileSync(join(control,'request-1.json')));if(reply!=='missing')writeFileSync(join(control,'response-1.json'),frame({id:request.id,value:'final-ack'}));running=false;}catch(error){if(error.code!=='ENOENT')throw error;}
+        }
+        return JSON.stringify([{Id:id,Name:`/schoolpilot-release297-v2-${role}-${run}`,Image:containerImage,Config:{Image:image,Labels:{'codex.release297-v2':run,'codex.release297-role':role,'codex.release297-source':source}},HostConfig:{NetworkMode:'container:'+pgContainerId,NanoCpus:1e9,Memory:1024,MemorySwap:1024,Privileged:false,ReadonlyRootfs:true},State:{Running:running,ExitCode:0}}]);
+      }
+      throw Error('Unexpected test Docker operation');
+    };
+    const owner=await ownRole({docker,run,source,helperImage:image,helperConfigDigest:containerImage,helperContainerImage:containerImage,preparation:{executedFiles:{'scripts/load/usage/release-gates-v2/blackbox-api.mjs':digest}},pgContainerId,role,entryFile:'/harness/blackbox-api.mjs',environment:{NODE_ENV:'test'},privateDirectory,outputDirectory,cpu:1,memory:1024});
+    if(reply==='bound')assert.equal(await owner.rpc('shutdown'), 'final-ack');else await assert.rejects(owner.rpc('shutdown'));
+  }
 });
 test('CPU window cannot use late cleanup to dilute an overloaded offering',()=>{
   const window={declaredDurationMs:60_000,startDelayMs:0,endDelayMs:0,start:{cpu:{usage_usec:0},hrtimeMicroseconds:0},end:{cpu:{usage_usec:40_000_000},hrtimeMicroseconds:60_000_000}};
