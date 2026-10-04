@@ -8,11 +8,11 @@ import { PROFILES, assertOffering, profileHash, stageForRound, stickyTarget, has
 import { offerHeartbeats, sealTimings, targetFor } from './offering.mjs';
 import { patchGeneratorV2, patchProcessV2, patchDrainV2 } from './patch.mjs';
 import { validateRound, validatePairs, reportMatrix, validateMixedRuns } from './validation.mjs';
-import { classifyLog, cpuWindow } from './measurements.mjs';
+import { classifyLog, cpuWindow, negativeLogCoverage } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { declareCampaign, reserveAttempt, registerAttempt } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
-import { remapObservedEnvironment } from './environment.mjs';
+import { remapObservedEnvironment, roleEnvironment } from './environment.mjs';
 import { ownRole } from './owner.mjs';
 import { withPinnedBuildBase } from './build-helper.mjs';
 const file=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
@@ -75,6 +75,24 @@ test('missing logs and native error markers remain unavailable or fail; never be
   assert.equal(classifyLog('Unexpected error on idle client','api',{complete:true}).errorCount,1);
   assert.equal(classifyLog('ERROR: canceling statement due to statement timeout','postgres',{complete:true}).categories.statement,1);
   assert.equal(classifyLog('connection timeout exceeded','api',{complete:true}).categories.acquisition,1);
+});
+
+test('intentional lifecycle409 logs require the exact observed request, code and one occurrence',()=>{
+  const requestId='12345678-1234-4123-8123-123456789abc',probe={requestId,status:409,code:'PRIVATE_CHAT_LIFECYCLE_STALE'};
+  const line=`Error [req:${requestId}]: { errorType: 'Error', errorCode: 'PRIVATE_CHAT_LIFECYCLE_STALE' }`;
+  assert.equal(classifyLog(line,'api',{complete:true}).errorCount,1);
+  const permitted=classifyLog(line,'api',{complete:true,expectedNegativeProbes:[probe]});assert.equal(permitted.errorCount,0);assert.deepEqual(permitted.expectedNegativeRequestIds,[requestId]);
+  assert.equal(negativeLogCoverage([{role:'api0',...permitted}],[probe]),true);assert.equal(negativeLogCoverage([{role:'api0',expectedNegativeRequestIds:[]}],[probe]),false);
+  assert.equal(classifyLog(line+'\n'+line,'api',{complete:true,expectedNegativeProbes:[probe]}).errorCount,1);
+  assert.equal(classifyLog(line.replace(requestId,'a'.repeat(36)),'api',{complete:true,expectedNegativeProbes:[probe]}).errorCount,1);
+  assert.equal(classifyLog(line+' SQLSTATE 40P01','api',{complete:true,expectedNegativeProbes:[probe]}).errorCount,1);
+  assert.throws(()=>classifyLog(line,'api',{complete:true,expectedNegativeProbes:[{...probe,status:500}]}));
+});
+
+test('only the non-serving fixture seeder omits the not-yet-created Redis endpoint',()=>{
+  const args={base:{DB_POOL_MAX:'20',SCHEDULER_DB_POOL_MAX:'5'},source,run:'a'.repeat(12),appUrl:'synthetic',adminUrl:'synthetic',profile:PROFILES.classroom,tables:[],secrets:{},arm:'C'};
+  assert.equal(roleEnvironment({...args,role:'seeder'}).REDIS_URL,undefined);
+  for(const role of ['api0','worker','generator'])assert.equal(roleEnvironment({...args,role}).REDIS_URL,'redis://127.0.0.1:6387');
 });
 
 test('a final response published during exit is checked, while missing or foreign replies fail',async()=>{

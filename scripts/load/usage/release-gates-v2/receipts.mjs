@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { resolve, relative, isAbsolute, join } from 'node:path';
 import { hash, profileFor, profileHash } from './contracts.mjs';
 import { validateRound } from './validation.mjs';
-import { classifyLog } from './measurements.mjs';
+import { classifyLog, runNegativeProbes, negativeLogCoverage } from './measurements.mjs';
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const root=realpathSync(directory), path=join(root,'receipt-manifest.json'), bytes=readFileSync(path);
@@ -26,15 +26,18 @@ export function loadReceipt(directory, manifestSha256, privateDirectory) {
     const logs=readFileSync(join(privateDirectory,exit.role+'-log.private'),'utf8');assert.equal(hash(logs),exit.logsSha256);
     if(exit.role.startsWith('api')){
       const coverage=metrics.errorCoverage.find(row=>row.role===exit.role);assert.ok(coverage);
-      const actual=classifyLog(logs,'api',{complete:exit.clean});
+      const actual=classifyLog(logs,'api',{complete:exit.clean,expectedNegativeProbes:runNegativeProbes(metrics)});
       for(const key of ['sha256','errorCount','complete','available','bytes']) assert.equal(coverage[key],actual[key]);
+      assert.deepEqual(coverage.expectedNegativeRequestIds,actual.expectedNegativeRequestIds);
     }
   }
   const pgLog=readFileSync(join(privateDirectory,'postgres-log.private'),'utf8');
   const postgres=metrics.errorCoverage.find(row=>row.kind==='postgres');assert.equal(postgres.sha256,hash(pgLog));
   assert.equal(new Set(cleanup.exits.map(row=>row.containerId)).size,cleanup.exits.length);
+  assert.equal(metrics.expectedNegativeLogCoverage,negativeLogCoverage(metrics.errorCoverage,runNegativeProbes(metrics)));
   assert.equal(cleanup.confirmedAbsent,true);assert.equal(metrics.cleanupPassed,cleanup.cleanupPassed===true && json(join(root,manifest.records['postgres-cleanup.json']?'postgres-cleanup.json':'cleanup.json')).cleanupPassed===true);
   for(const round of metrics.rounds) assert.deepEqual(round.acceptance,validateRound(round,profile,{diagnostic:profile.kind==='diagnostic',baseline:metrics.arm==='A'}));
+  if(metrics.runPassed||metrics.smokePassed){assert.equal(metrics.expectedNegativeLogCoverage,true);assert.ok(metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0));}
   if(metrics.runPassed) {assert.equal(metrics.rounds.length,profile.rounds??1);assert.equal(metrics.sourceUnchanged,true);assert.equal(metrics.cleanupPassed,true);assert.ok(metrics.rounds.every(round=>round.acceptance.passed));}
   return {...metrics,verifiedReceiptManifestSha256:manifestSha256};
 }

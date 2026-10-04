@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { pause } from './application.mjs';
 import { stageForRound, profileHash } from './contracts.mjs';
-import { cpuWindow, classifyLog } from './measurements.mjs';
+import { cpuWindow, classifyLog, negativeProbes } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { validateRound } from './validation.mjs';
 
@@ -51,10 +51,10 @@ export async function runMixed({profile,active,startApi,stop,generator,observer,
   const errorCoverage=[];
   // Every serving role has actual complete logs, even API0 lost at minute10.
   for(const [index] of terminal){const owner=index===0?null:active.get(index);const bytes=owner?await owner.logs():null;
-    if(bytes!==null)errorCoverage.push({role:'api'+index,...classifyLog(bytes,'api',{complete:true})});}
+    if(bytes!==null)errorCoverage.push({role:'api'+index,...classifyLog(bytes,'api',{complete:true,expectedNegativeProbes:negativeProbes(traffic)})});}
   const api0Exit=metrics.transitions.at(-1).exit;
   // The stopped owner's complete private log is returned by the run owner.
-  errorCoverage.push({role:'api0',...classifyLog(readLog('api0'),'api',{complete:api0Exit.clean})});
+  errorCoverage.push({role:'api0',...classifyLog(readLog('api0'),'api',{complete:api0Exit.clean,expectedNegativeProbes:negativeProbes(traffic)})});
   errorCoverage.push(classifyLog(await docker(['logs',pgContainerId]),'postgres',{complete:true}));
   for(let minute=0;minute<15;minute++){
     const stage=stageForRound(minute), cpuByRole=[];

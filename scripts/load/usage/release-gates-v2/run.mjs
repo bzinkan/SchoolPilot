@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { profileFor, profileHash, hash, stageForRound } from './contracts.mjs';
 import { validateRound } from './validation.mjs';
-import { classifyLog, cpuWindow } from './measurements.mjs';
+import { classifyLog, cpuWindow, negativeProbes, runNegativeProbes, negativeLogCoverage } from './measurements.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { runMixed } from './mixed.mjs';
 import { assertOutside, ownRole } from './owner.mjs';
@@ -175,7 +175,7 @@ export async function runV2(options) {
         const cpuByRole = [...active.values()].map((owner, position) => ({ role: owner.role, window: windows[position], ...cpuWindow(windows[position]),
           wholeOwnedUsec: owner.resources.at(-1).cpu.usage_usec - resourceBefore[position].value.cpu.usage_usec }));
         const cpuUsec = cpuByRole.reduce((sum,row) => sum + row.usec,0), wholeCpuUsec = cpuByRole.reduce((sum,row) => sum + row.wholeOwnedUsec,0);
-        const errorCoverage = await Promise.all([...active.values()].map(async owner => ({ role: owner.role, ...classifyLog(await owner.logs(),'api',{complete:true}) })));
+        const errorCoverage = await Promise.all([...active.values()].map(async owner => ({ role: owner.role, ...classifyLog(await owner.logs(),'api',{complete:true,expectedNegativeProbes:negativeProbes(traffic)}) })));
         if(worker)errorCoverage.push({role:'worker',...classifyLog(await worker.logs(),'api',{complete:true})});
         errorCoverage.push(classifyLog(await dockerInput(['logs',configuration.pgContainerId]),'postgres',{complete:true}));
         const persistence = checkPersistence(before,after,traffic,fixture);
@@ -205,7 +205,7 @@ export async function runV2(options) {
           assert.ok(finalWorker.database?.acquisitions?.count>0);assert.equal(finalWorker.database.acquisitions.failures,0);
           assert.ok(Object.keys(finalWorker.database.statements).length>0);assert.ok(Object.values(finalWorker.database.statements).every(row=>row.failures===0));
           round.workerDatabase=finalWorker.database;
-          round.errorCoverage=await Promise.all([...active.values()].map(async owner=>({role:owner.role,...classifyLog(await owner.logs(),'api',{complete:true})})));
+          round.errorCoverage=await Promise.all([...active.values()].map(async owner=>({role:owner.role,...classifyLog(await owner.logs(),'api',{complete:true,expectedNegativeProbes:negativeProbes(traffic)})})));
           round.errorCoverage.push({role:'worker',...classifyLog(await worker.logs(),'api',{complete:true})},classifyLog(await dockerInput(['logs',configuration.pgContainerId]),'postgres',{complete:true}));
           round.databaseFailures=round.errorCoverage.reduce((sum,row)=>sum+row.errorCount,0);
         }
@@ -238,9 +238,10 @@ export async function runV2(options) {
         metrics.wholeOwnedCpuIncludesFinalClassificationFlush=true;
       }
       metrics.errorCoverage = owners.map(owner => ({ role:owner.role,
-        ...classifyLog(readFileSync(join(control,`${owner.role}-log.private`),'utf8'),'api',{complete:exits.find(exit => exit.containerId===owner.id)?.clean===true}) }));
+        ...classifyLog(readFileSync(join(control,`${owner.role}-log.private`),'utf8'),'api',{complete:exits.find(exit => exit.containerId===owner.id)?.clean===true,expectedNegativeProbes:owner.role.startsWith('api')?runNegativeProbes(metrics):[]}) }));
       const pgLog = await dockerInput(['logs',configuration.pgContainerId]); writeFileSync(join(control,'postgres-log.private'),pgLog,{flag:'wx',mode:0o600});
       metrics.errorCoverage.push(classifyLog(pgLog,'postgres',{complete:true}));
+      metrics.expectedNegativeLogCoverage=negativeLogCoverage(metrics.errorCoverage,runNegativeProbes(metrics));
       const ids = (await dockerInput(['container', 'ls', '-a', '--filter', `label=codex.release297-v2=${run}`, '--no-trunc', '--format', '{{.ID}}'])).trim().split(/\r?\n/).filter(Boolean);
       for (const id of ids) {
         if (id === configuration.pgContainerId) continue;
@@ -278,10 +279,11 @@ export async function runV2(options) {
       const pgCleanup = ['postgres-cleanup.json', 'cleanup.json'].map(name => join(output, name)).find(existsSync);
       metrics.cleanupPassed = metrics.roleCleanup?.cleanupPassed === true && pgCleanup && read(pgCleanup).cleanupPassed === true;
       metrics.diagnosticCompleted = !failure && profile.kind === 'diagnostic' && metrics.rounds.length === 1 && metrics.cleanupPassed===true && metrics.sourceUnchanged;
-      metrics.smokePassed=!failure&&metrics.preparationSmoke===true&&metrics.preparationSmokeResult?.passed===true&&metrics.cleanupPassed===true&&metrics.sourceUnchanged;
+      metrics.smokePassed=!failure&&metrics.preparationSmoke===true&&metrics.preparationSmokeResult?.passed===true&&metrics.cleanupPassed===true&&metrics.sourceUnchanged
+        &&metrics.expectedNegativeLogCoverage===true&&metrics.errorCoverage?.every(row=>row.complete&&row.available&&row.errorCount===0);
       metrics.runPassed = !metrics.preparationSmoke && !failure && profile.kind !== 'diagnostic' && metrics.rounds.length === (profile.rounds ?? 1)
         && metrics.rounds.every(round => round.acceptance.passed === true) && metrics.cleanupPassed === true && metrics.sourceUnchanged
-        && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0);
+        && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0)&&metrics.expectedNegativeLogCoverage===true;
       if(profile.kind==='blackbox')metrics.runPassed&&=Number.isFinite(metrics.wholeOwnedApiCpuMicroseconds)&&metrics.wholeOwnedApiCpuMicroseconds>0&&metrics.wholeOwnedCpuIncludesFinalClassificationFlush===true;
       metrics.failure = failure ?? null; metrics.finishedAt = new Date().toISOString();
       if (metrics.rounds.length) { metrics.cpuMsPer200 ??= metrics.rounds[0].cpuMsPer200; metrics.p95Ms = (metrics.rounds[0].traffic.heartbeats ?? metrics.rounds[0].traffic).timings?.p95Ms ?? null; }

@@ -3,15 +3,32 @@ import { hash } from './contracts.mjs';
 
 // Common public logs, not candidate-only SQL wrappers, provide this paired
 // error oracle. Missing/partial logs are unavailable rather than zero errors.
-export function classifyLog(bytes, kind, { complete = false } = {}) {
+export function negativeProbes(traffic) {
+  const lifecycle=traffic?.lifecycle;
+  return lifecycle?.rounds?lifecycle.rounds.flatMap(row=>row.expectedNegativeProbes??[]):lifecycle?.expectedNegativeProbes??[];
+}
+export function runNegativeProbes(metrics) {
+  return metrics.continuous?negativeProbes(metrics.continuous.traffic):metrics.preparationSmokeResult?negativeProbes(metrics.preparationSmokeResult.result):metrics.rounds.flatMap(row=>negativeProbes(row.traffic));
+}
+export function negativeLogCoverage(coverage,probes) {
+  const actual=coverage.filter(row=>row.role?.startsWith('api')).flatMap(row=>row.expectedNegativeRequestIds??[]).sort();
+  const expected=probes.map(row=>row.requestId).sort();
+  return new Set(expected).size===expected.length&&JSON.stringify(actual)===JSON.stringify(expected);
+}
+export function classifyLog(bytes, kind, { complete = false, expectedNegativeProbes=[] } = {}) {
   assert.ok(['api', 'postgres'].includes(kind)); assert.equal(typeof bytes, 'string');
-  const lines = bytes.split(/\r?\n/), errors = [];
+  const probes=new Map();
+  for(const probe of expectedNegativeProbes){assert.match(probe.requestId,/^[a-f0-9-]{36}$/);assert.equal(probe.status,409);assert.equal(probe.code,'PRIVATE_CHAT_LIFECYCLE_STALE');assert.equal(probes.has(probe.requestId),false);probes.set(probe.requestId,probe);}
+  const lines = bytes.split(/\r?\n/), errors = [],expectedNegativeRequestIds=[];
   const category = line => /acquir|connect.*timeout|pool.*timeout|too many clients|remaining connection slots/i.test(line) ? 'acquisition'
     : /statement timeout|canceling statement|deadlock|SQLSTATE|\b(?:ERROR|FATAL|PANIC):/i.test(line) ? 'statement'
     : 'unknown-foreground';
-  for (const line of lines) if (/\b(?:error|fatal|panic|uncaught|unhandled)\b|timeout exceeded|connection terminated|canceling statement/i.test(line)) errors.push(category(line));
+  for (const line of lines) if (/\b(?:error|fatal|panic|uncaught|unhandled)\b|timeout exceeded|connection terminated|canceling statement/i.test(line)) {
+    const known=kind==='api'&&line.match(/^Error \[req:([a-f0-9-]{36})\]: \{ errorType: 'Error', errorCode: 'PRIVATE_CHAT_LIFECYCLE_STALE' \}$/);
+    if(known&&probes.has(known[1])&&!expectedNegativeRequestIds.includes(known[1]))expectedNegativeRequestIds.push(known[1]);else errors.push(category(line));
+  }
   return { kind, complete, available: complete, bytes: Buffer.byteLength(bytes), sha256: hash(bytes),
-    errorCount: errors.length, categories: Object.fromEntries([...new Set(errors)].map(value => [value, errors.filter(item => item === value).length])) };
+    errorCount: errors.length, expectedNegativeRequestIds, categories: Object.fromEntries([...new Set(errors)].map(value => [value, errors.filter(item => item === value).length])) };
 }
 export function cpuWindow(window) {
   assert.equal(window.declaredDurationMs, 60_000); assert.ok(window.start && window.end);

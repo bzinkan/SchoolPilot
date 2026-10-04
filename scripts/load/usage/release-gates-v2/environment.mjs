@@ -41,6 +41,9 @@ export function roleEnvironment({ base, source, run, appUrl, adminUrl, profile, 
     RELEASE297_CLIENT_CAPABILITIES: JSON.stringify(clientCapabilities??[]),
   };
   if (arm !== 'A') for (const [cap, flag] of Object.entries(newCaps)) env['CLASSPILOT_CAP_' + flag] = maps[cap].mode === 'on' ? 'true' : 'false';
+  // This fixture-only writer serves no requests. Avoid initializing the
+  // storage module's rate limiter before the serving Redis namespace exists.
+  if(role==='seeder')delete env.REDIS_URL;
   return env;
 }
 export function validateBaselineAdvertisement(receipt){

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { profileFor, profileHash, NONREGRESSION, PROFILES } from './contracts.mjs';
-import { cpuWindow } from './measurements.mjs';
+import { cpuWindow, negativeProbes } from './measurements.mjs';
 const median = values => { const rows = [...values].sort((a, b) => a - b); return rows.length % 2 ? rows[(rows.length - 1) / 2] : (rows[rows.length / 2 - 1] + rows[rows.length / 2]) / 2; };
 export function validateRound(round, profile, { diagnostic = false, baseline = false } = {}) {
   assert.deepEqual(profile, profileFor(profile.name)); const traffic = round.traffic?.heartbeats ?? round.traffic;
@@ -22,7 +22,7 @@ export function validateRound(round, profile, { diagnostic = false, baseline = f
       && round.cpuByRole.every(row=>cpuWindow(row.window).meanFraction < NONREGRESSION.meanCpuFraction)
       && round.apiCpuMeanFraction===Math.max(...round.cpuByRole.map(row=>cpuWindow(row.window).meanFraction))),
     latency: traffic?.timings?.p95Ms <= NONREGRESSION.p95Ms,
-    classroom: ['classroom', 'mixed', 'usage'].includes(profile.kind) ? round.traffic?.lifecycle?.passed === true : true,
+    classroom: ['classroom', 'mixed', 'usage'].includes(profile.kind) ? round.traffic?.lifecycle?.passed === true&&negativeProbes(round.traffic).length===2 : true,
     database: round.errorCoverage?.length === round.topology.active.length+1+(profile.usage?1:0)
       && round.errorCoverage.every(row=>row.available===true && row.complete===true && row.errorCount===0 && /^[a-f0-9]{64}$/.test(row.sha256))
       && round.databaseFailures===0 };

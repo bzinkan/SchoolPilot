@@ -24,6 +24,10 @@ const endpointFor = (school, index) => {
   text = replaceOnce(text, '  return result;\n}\n\nexport function assertHistoricalReport', '  return { ...result, targetIndex: apiBases.indexOf(actualEndpoint) };\n}\n\nexport function assertHistoricalReport');
   text = replaceOnce(text, "`${base.replace('http:', 'ws:')}/ws`", "`${endpointFor(school, index).replace('http:', 'ws:')}/ws`");
   text = replaceOnce(text, '  return issued.body.command.id;', "  issuedRecipients.set('command:'+issued.body.command.id,school.students[index]);\n  return issued.body.command.id;");
+  text = replaceOnce(text, 'const events = [], sockets = [];', 'const events = [], sockets = [], expectedNegativeProbes = [];');
+  text = replaceOnce(text, "events.push('stale_private_reply_rejected');", "const requestId=stale.headers.get('x-request-id');assert.match(requestId,/^[a-f0-9-]{36}$/);assert.equal(stale.body.requestId,requestId);expectedNegativeProbes.push({requestId,status:stale.status,code:stale.body.code});events.push('stale_private_reply_rejected');");
+  text = replaceOnce(text, 'return { passed: true, events, simulatedClientAcknowledgements:', 'return { passed: true, events, expectedNegativeProbes, simulatedClientAcknowledgements:');
+  text = replaceOnce(text, 'return { passed: false, events, error:', 'return { passed: false, events, expectedNegativeProbes, error:');
   text = replaceOnce(text, "const sent = await send(); assert.equal(sent.status, 202);", "const sent = await send(); assert.equal(sent.status, 202); issuedRecipients.set('message:'+sent.body.message.id,school.students[2]);");
   text = replaceOnce(text, "const pending = await send(); assert.equal(pending.status, 202);", "const pending = await send(); assert.equal(pending.status, 202); issuedRecipients.set('message:'+pending.body.message.id,school.students[2]);");
   text = replaceOnce(text, 'socket.close(); const reconnected = await connectStudent(school, 2); sockets.push(reconnected); await reconnected.drain();',
