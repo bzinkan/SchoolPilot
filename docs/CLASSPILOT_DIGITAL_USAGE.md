@@ -93,6 +93,10 @@ successful empty or unchanged computations and advances their processed cutoff. 
 remain in one transaction on the scheduler pool under the existing per-school advisory lock; every statement
 filters `school_id = $1` itself because the scheduler bypasses RLS. The grain reconciliation uses the same
 COALESCE keys as the unique index and a hashable full join rather than one full-day scan per grain.
+Administrator cleanup takes that same school lock before its raw-input deletion and removes inputs,
+aggregates and coverage atomically with its audit. Retention takes the lock in each existing short
+5,000-observation batch and in its aggregate/coverage removal transaction; yields remain outside
+those transactions. This prevents a paused writer from recreating completion after removal.
 
 Retention safety: the job never rewrites a day that starts before the purge horizon (the top of the
 current UTC hour before :30, or now after it, or when this process last finished the purge if later,

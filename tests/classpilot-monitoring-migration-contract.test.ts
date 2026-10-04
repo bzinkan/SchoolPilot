@@ -193,7 +193,7 @@ test("retention covers every school, removes report identity, and defaults only 
   // statement cannot skip the school's remaining retention steps.
   assert.match(
     retention,
-    /WITH removed AS \(DELETE FROM classpilot_usage_rollups WHERE school_id = \$1 AND usage_date < \$2::date\) DELETE FROM classpilot_usage_rollup_days WHERE school_id = \$1 AND usage_date < \$2::date`, \[school\.id, cutoffLocalDate\]\)\.catch\(/
+    /withClasspilotUsageSchoolWrite\(schedulerPool, school\.id, \(client\) => client\.query\(`WITH removed AS \(DELETE FROM classpilot_usage_rollups WHERE school_id = \$1 AND usage_date < \$2::date\) DELETE FROM classpilot_usage_rollup_days WHERE school_id = \$1 AND usage_date < \$2::date`, \[school\.id, cutoffLocalDate\]\)\)\.catch\(/
   );
   assert.match(retention, /USING devices AS device/);
   assert.match(retention, /Pre-report delivery rows can exist from an older release/);

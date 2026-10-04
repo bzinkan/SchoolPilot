@@ -7,6 +7,7 @@ import {
 } from "./classpilotHeartbeatCoverage.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
 import { withClasspilotUsageRollupOperation } from "./classpilotUsageRollupAdmission.js";
+import { CLASSPILOT_USAGE_SCHOOL_WRITE_LOCK_SQL } from "./classpilotUsageWriteLock.js";
 import {
   addLocalDays,
   localDateInTimeZone,
@@ -66,8 +67,7 @@ const RECOMPUTE_LOOKBACK_MS = 5 * 60 * 1000;
 export const CLASSPILOT_USAGE_ROLLUP_BUDGET_END_MINUTE = 25;
 const DEFAULT_CONCURRENCY = 2;
 
-export const CLASSPILOT_USAGE_ROLLUP_LOCK_SQL =
-  "SELECT pg_advisory_xact_lock(hashtext('classpilot_usage_rollup'), hashtext($1))";
+export const CLASSPILOT_USAGE_ROLLUP_LOCK_SQL = CLASSPILOT_USAGE_SCHOOL_WRITE_LOCK_SQL;
 
 /** Historical benchmark helper; the production writer never deletes a whole day. */
 export const CLASSPILOT_USAGE_ROLLUP_DELETE_SQL =

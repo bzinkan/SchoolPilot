@@ -104,6 +104,7 @@ import {
   type ClasspilotUsageRollupOutcome,
 } from "./classpilotUsageRollup.js";
 import { readClasspilotUsageRollupMode } from "../config/classpilotUsageModes.js";
+import { withClasspilotUsageSchoolWrite } from "./classpilotUsageWriteLock.js";
 import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
 import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 import { discoverScheduleBoundarySchools, runDueClasspilotScheduleBoundaries, SCHEDULE_BOUNDARY_POLL_MS } from "./classpilotScheduleBoundaries.js";
@@ -1184,12 +1185,12 @@ async function purgeExpiredHeartbeats() {
       let totalDeleted = 0;
       let batchDeleted = 0;
       do {
-        const result = await schedulerPool.query(
+        const result = await withClasspilotUsageSchoolWrite(schedulerPool, school.id, (client) => client.query(
           `DELETE FROM heartbeats WHERE id IN (
             SELECT id FROM heartbeats WHERE school_id = $1 AND timestamp < $2 LIMIT 5000
           )`,
           [school.id, cutoff]
-        );
+        ));
         batchDeleted = result.rowCount || 0;
         totalDeleted += batchDeleted;
         if (batchDeleted > 0) {
@@ -1287,7 +1288,7 @@ async function purgeExpiredHeartbeats() {
       await schedulerPool.query(`DELETE FROM daily_usage WHERE school_id = $1 AND date < $2`, [school.id, cutoffLocalDate]);
       // Monitored Browser Time rollups share the daily aggregate horizon. A
       // failure here must not skip this school's remaining retention steps.
-      await schedulerPool.query(`WITH removed AS (DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date) DELETE FROM classpilot_usage_rollup_days WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate]).catch((error) => {
+      await withClasspilotUsageSchoolWrite(schedulerPool, school.id, (client) => client.query(`WITH removed AS (DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date) DELETE FROM classpilot_usage_rollup_days WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate])).catch((error) => {
         errorMonitor.trackError("scheduler_failure", error as Error, {
           job: "purgeExpiredHeartbeats", errorCode: "USAGE_ROLLUP_RETENTION_FAILED",
         });

@@ -273,4 +273,25 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.equal(other.dataState, "final");
     assert.equal(other.totals.monitoredBrowserSeconds, 210);
   });
+
+  it("cleanup removes only its authorized school's inputs and coverage with an atomic audit", async () => {
+    const a = await createTenant("Cleanup C", "c.example.edu"), b = await createTenant("Cleanup D", "d.example.edu");
+    await rollupDay(a.schoolId); await rollupDay(b.schoolId);
+    // Cleanup's established authority is the legacy admin role, not school_admin.
+    await system!.query("UPDATE school_memberships SET role='admin' WHERE school_id=$1 AND user_id=$2", [a.schoolId, a.adminId]);
+    const foreign = (await system!.query("SELECT id,ctid::text,xmin::text,computed_at FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY id", [b.schoolId])).rows;
+    const foreignCoverage = (await system!.query("SELECT * FROM classpilot_usage_rollup_days WHERE school_id=$1", [b.schoolId])).rows;
+    const response = await fetch(`${baseUrl}/admin/cleanup-students`, { method: "POST", headers: {
+      authorization: `Bearer ${signUserToken({ userId: a.adminId, email: a.adminEmail, isSuperAdmin: false })}`,
+      "x-school-id": a.schoolId,
+    } });
+    assert.equal(response.status, 200, await response.text());
+    const own = await inSchool(a.schoolId, () => read.getClasspilotDigitalUsage({ schoolId: a.schoolId, scope: "school", id: null, from: day, to: day }));
+    assert.equal(own.dataState, "unavailable"); assert.deepEqual(own.byDay, []); assert.deepEqual(own.range.unavailableDates, [day]);
+    assert.equal((await system!.query("SELECT 1 FROM heartbeats WHERE school_id=$1", [a.schoolId])).rowCount, 0);
+    assert.equal((await system!.query("SELECT count(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='students.cleanup'", [a.schoolId])).rows[0].count, 1);
+    assert.deepEqual((await system!.query("SELECT id,ctid::text,xmin::text,computed_at FROM classpilot_usage_rollups WHERE school_id=$1 ORDER BY id", [b.schoolId])).rows, foreign);
+    assert.deepEqual((await system!.query("SELECT * FROM classpilot_usage_rollup_days WHERE school_id=$1", [b.schoolId])).rows, foreignCoverage);
+    assert.equal((await system!.query("SELECT count(*)::int AS count FROM heartbeats WHERE school_id=$1", [b.schoolId])).rows[0].count, 20);
+  });
 });

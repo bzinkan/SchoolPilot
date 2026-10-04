@@ -44,6 +44,8 @@ import {
   upsertAdminClassroomClass,
 } from "../services/storage.js";
 import db from "../db.js";
+import { classpilotUsageSchoolWriteLock } from "../services/classpilotUsageWriteLock.js";
+import { auditLogs } from "../schema/shared.js";
 import { heartbeats, devices as deviceTable, dailyUsage, classpilotUsageRollups, classpilotUsageRollupDays } from "../schema/classpilot.js";
 import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
@@ -721,21 +723,26 @@ router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async 
 router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    // Delete heartbeats, devices and the usage aggregates derived from them
-    // (daily_usage and the Monitored Browser Time rollups) for this school
-    await db.delete(heartbeats).where(eq(heartbeats.schoolId, schoolId));
-    await db.delete(dailyUsage).where(eq(dailyUsage.schoolId, schoolId));
-    await db.delete(classpilotUsageRollups).where(eq(classpilotUsageRollups.schoolId, schoolId));
-    await db.delete(classpilotUsageRollupDays).where(eq(classpilotUsageRollupDays.schoolId, schoolId));
-    await db.delete(deviceTable).where(eq(deviceTable.schoolId, schoolId));
-    await logAudit({
-      schoolId,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "students.cleanup",
-      entityType: "school",
-      entityId: schoolId,
+    await db.transaction(async (tx) => {
+      // Take the same school lock before deleting a rollup's raw inputs. A
+      // paused unchanged recompute must not restore coverage after cleanup.
+      await tx.execute(classpilotUsageSchoolWriteLock(schoolId));
+      await tx.delete(heartbeats).where(eq(heartbeats.schoolId, schoolId));
+      await tx.delete(dailyUsage).where(eq(dailyUsage.schoolId, schoolId));
+      await tx.delete(classpilotUsageRollups).where(eq(classpilotUsageRollups.schoolId, schoolId));
+      await tx.delete(classpilotUsageRollupDays).where(eq(classpilotUsageRollupDays.schoolId, schoolId));
+      await tx.delete(deviceTable).where(eq(deviceTable.schoolId, schoolId));
+      // The privileged mutation and its server-derived audit share this
+      // exact transaction, including when a local fixture has RLS disabled.
+      await tx.insert(auditLogs).values({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.membershipRole,
+        action: "students.cleanup",
+        entityType: "school",
+        entityId: schoolId,
+      });
     });
     return res.json({ ok: true });
   } catch (err) {

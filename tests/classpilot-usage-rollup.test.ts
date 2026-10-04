@@ -773,6 +773,131 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
 });
 
 describe("computation coverage ledger (DB lane)", { concurrency: false }, () => {
+  it("serializes HTTP cleanup behind a paused unchanged snapshot and leaves coverage unavailable", async () => {
+    const schoolId = await createSchool("Cleanup during delta", "720");
+    const studentId = await createStudent(schoolId, "Cleanup");
+    const admin = await createUser(schoolId, "admin", "cleanup-admin");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const firstCutoff = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://same.example.edu", category: "educational" });
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    let computed!: () => void, resume!: () => void;
+    const snapshotComputed = new Promise<void>(resolve => { computed = resolve; });
+    const releaseSnapshot = new Promise<void>(resolve => { resume = resolve; });
+    const pausedPool: Parameters<typeof rollup.rollupClasspilotUsageDay>[0] = {
+      query: (text, values) => system.query(text, values),
+      async connect() {
+        const client = await system.connect();
+        return { async query(text, values) {
+          const result = await client.query(text, values);
+          if (text === rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL) { computed(); await releaseSnapshot; }
+          return result;
+        }, release(error) { client.release(error); } };
+      },
+    };
+    const writer = rollup.rollupClasspilotUsageDay(pausedPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    let cleanup: Promise<Response> | undefined;
+    try {
+      await snapshotComputed;
+      cleanup = fetch(`${baseUrl}/admin/cleanup-students`, { method: "POST", headers: headers(admin, schoolId) });
+      let blocked = false;
+      const deadline = Date.now() + 5000;
+      while (!blocked && Date.now() < deadline) {
+        blocked = (await system.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND wait_event='advisory' AND query LIKE '%classpilot_usage_rollup%') AS blocked")).rows[0].blocked;
+        if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(blocked, true, "cleanup must wait for the actual writer transaction, before deleting its inputs");
+      assert.equal((await rows(schoolId)).length, 1);
+      resume(); await writer;
+      const response = await cleanup;
+      assert.equal(response.status, 200, await response.text());
+      assert.deepEqual(await rows(schoolId), []);
+      assert.equal((await system.query("SELECT 1 FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rowCount, 0);
+      assert.equal((await system.query("SELECT count(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='students.cleanup'", [schoolId])).rows[0].count, 1);
+      await withEnv(MODES_ON, async () => {
+        const report = await usage(`?from=${day.date}&to=${day.date}`, admin, schoolId);
+        assert.equal(report.status, 200);
+        assert.equal(report.body.dataState, "unavailable");
+        assert.deepEqual(report.body.byDay, []);
+        assert.deepEqual(report.body.range.unavailableDates, [day.date]);
+      });
+    } finally { resume(); await writer; if (cleanup) await (await cleanup).arrayBuffer().catch(() => undefined); }
+  });
+
+  it("rolls back raw data, devices, aggregates and coverage when the cleanup audit fails", async () => {
+    const schoolId = await createSchool("Cleanup audit rollback", "720");
+    const studentId = await createStudent(schoolId, "Audit rollback");
+    const admin = await createUser(schoolId, "admin", "cleanup-audit-admin");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://same.example.edu", category: "educational" });
+    await system.query("INSERT INTO devices(device_id,school_id,class_id) VALUES($1,$2,'synthetic')", [`audit-${schoolId}`, schoolId]);
+    await system.query("INSERT INTO daily_usage(school_id,student_id,date,total_seconds,heartbeat_count) VALUES($1,$2,$3,15,1)", [schoolId, studentId, day.date]);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    const priorRows = await rows(schoolId);
+    const priorCoverage = (await system.query("SELECT * FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows;
+    const name = `usage_cleanup_audit_${randomUUID().replaceAll("-", "")}`;
+    await system.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.school_id = '${schoolId}' AND NEW.action = 'students.cleanup' THEN RAISE EXCEPTION 'synthetic cleanup audit failure'; END IF;
+      RETURN NEW; END $$;
+      CREATE TRIGGER ${name} BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+    try {
+      const response = await fetch(`${baseUrl}/admin/cleanup-students`, { method: "POST", headers: headers(admin, schoolId) });
+      assert.equal(response.status, 500, await response.text());
+      assert.deepEqual(await rows(schoolId), priorRows);
+      assert.deepEqual((await system.query("SELECT * FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows, priorCoverage);
+      assert.equal((await system.query("SELECT count(*)::int AS count FROM heartbeats WHERE school_id=$1", [schoolId])).rows[0].count, 1);
+      assert.equal((await system.query("SELECT count(*)::int AS count FROM devices WHERE school_id=$1", [schoolId])).rows[0].count, 1);
+      assert.equal((await system.query("SELECT count(*)::int AS count FROM daily_usage WHERE school_id=$1", [schoolId])).rows[0].count, 1);
+      assert.equal((await system.query("SELECT count(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='students.cleanup'", [schoolId])).rows[0].count, 0);
+    } finally { await system.query(`DROP TRIGGER ${name} ON audit_logs; DROP FUNCTION ${name}()`); }
+  });
+
+  it("serializes short retention batches behind a paused snapshot and removes empty coverage too", async () => {
+    const { withClasspilotUsageSchoolWrite } = await import("../src/services/classpilotUsageWriteLock.js");
+    const schoolId = await createSchool("Retention during delta", "720");
+    const studentId = await createStudent(schoolId, "Retention");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const empty = rollup.classpilotUsageRollupDay("2026-09-13", TIME_ZONE);
+    const firstCutoff = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://same.example.edu", category: "educational" });
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day: empty, windowEndUtc: empty.dayEndUtc, exclusions: [] });
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    let computed!: () => void, resume!: () => void;
+    const snapshotComputed = new Promise<void>(resolve => { computed = resolve; });
+    const releaseSnapshot = new Promise<void>(resolve => { resume = resolve; });
+    const pausedPool: Parameters<typeof rollup.rollupClasspilotUsageDay>[0] = {
+      query: (text, values) => system.query(text, values),
+      async connect() {
+        const client = await system.connect();
+        return { async query(text, values) {
+          const result = await client.query(text, values);
+          if (text === rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL) { computed(); await releaseSnapshot; }
+          return result;
+        }, release(error) { client.release(error); } };
+      },
+    };
+    const writer = rollup.rollupClasspilotUsageDay(pausedPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    let retention: Promise<unknown> | undefined;
+    try {
+      await snapshotComputed;
+      retention = withClasspilotUsageSchoolWrite(system, schoolId, client => client.query(
+        "DELETE FROM heartbeats WHERE id IN (SELECT id FROM heartbeats WHERE school_id=$1 AND timestamp<$2::timestamp LIMIT 5000)", [schoolId, wall(day.dayEndUtc.getTime())]))
+        .then(() => withClasspilotUsageSchoolWrite(system, schoolId, client => client.query(
+          "WITH removed AS (DELETE FROM classpilot_usage_rollups WHERE school_id=$1 AND usage_date<$2::date) DELETE FROM classpilot_usage_rollup_days WHERE school_id=$1 AND usage_date<$2::date", [schoolId, "2026-09-15"])));
+      let blocked = false;
+      const deadline = Date.now() + 5000;
+      while (!blocked && Date.now() < deadline) {
+        blocked = (await system.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND wait_event='advisory' AND query LIKE '%classpilot_usage_rollup%') AS blocked")).rows[0].blocked;
+        if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(blocked, true);
+      resume(); await writer; await retention;
+      assert.deepEqual(await rows(schoolId), []);
+      assert.equal((await system.query("SELECT 1 FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rowCount, 0);
+      assert.equal((await system.query("SELECT 1 FROM heartbeats WHERE school_id=$1", [schoolId])).rowCount, 0);
+    } finally { resume(); await writer; await retention; }
+  });
+
   it("advances unchanged coverage without replacing, updating or WAL-writing aggregate rows", async () => {
     const schoolId = await createSchool("Unchanged delta", "720");
     const studentId = await createStudent(schoolId, "Unchanged");
