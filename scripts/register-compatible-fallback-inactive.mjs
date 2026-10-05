@@ -75,7 +75,14 @@ export function validateSourceResponse(response, role, source, image, inventory)
   assert.ok(container.memory === undefined || Number(container.memory) >= Number(task.memory), 'SOURCE_HARD_MEMORY_DRIFT');
   const values = env(container); equal(values.GIT_SHA, source, 'SOURCE_IDENTITY_DRIFT'); equal(values.SERVICE_NAME, role, 'SOURCE_IDENTITY_DRIFT');
   equal(values.RLS_GUC_ENABLED, 'true', 'TENANT_GUC_REQUIRED');
-  equal(values.RLS_ENABLED_TABLES?.split(','), inventory, 'ADMISSION_DRIFT');
+  // Admission uses table membership. Preserve the captured CSV serialization;
+  // ordered registry stages and reviewed bundle appends remain unchanged.
+  const admitted = values.RLS_ENABLED_TABLES?.split(',');
+  const tableName = value => typeof value === 'string' && /^[a-z][a-z0-9_]*$/.test(value);
+  assert.ok(Array.isArray(inventory) && inventory.length > 0 && inventory.every(tableName)
+    && new Set(inventory).size === inventory.length, 'ADMISSION_DRIFT');
+  assert.ok(Array.isArray(admitted) && admitted.length === inventory.length && admitted.every(tableName)
+    && new Set(admitted).size === admitted.length && inventory.every(table => admitted.includes(table)), 'ADMISSION_DRIFT');
   for (const name of ['CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE']) equal(values[name], 'off', 'USAGE_MUST_BE_EXPLICITLY_OFF');
   const rollouts = JSON.parse(values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON ?? '{}');
   assert.ok(rollouts && !Array.isArray(rollouts) && typeof rollouts === 'object', 'ROLLOUTS_INVALID');
