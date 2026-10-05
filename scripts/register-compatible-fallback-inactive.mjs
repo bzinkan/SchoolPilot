@@ -35,8 +35,29 @@ function sort(value) { return Array.isArray(value) ? value.map(sort) : value && 
 export const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
 function equal(actual, expected, message) { assert.ok(canonical(actual) === canonical(expected), message); }
 function checkString(value, pattern, message) { assert.ok(typeof value === 'string' && pattern.test(value), message); }
+export function ecsRequestTags(tags) {
+  if (tags === undefined) return undefined;
+  assert.ok(Array.isArray(tags), 'TASK_TAGS_INVALID');
+  const keys = new Set();
+  for (const tag of tags) {
+    assert.ok(tag && !Array.isArray(tag) && typeof tag === 'object'
+      && Object.keys(tag).every(key => key === 'key' || key === 'value')
+      && typeof tag.key === 'string' && tag.key.length > 0 && !keys.has(tag.key)
+      && (!Object.hasOwn(tag, 'value') || typeof tag.value === 'string'), 'TASK_TAGS_INVALID');
+    keys.add(tag.key);
+  }
+  // ECS rejects explicit tags:[]; preserve every nonempty tag in its raw order.
+  return tags.length === 0 ? undefined : structuredClone(tags);
+}
+function responseTagProjection(response) {
+  const value = structuredClone(response), tags = ecsRequestTags(value.tags);
+  if (tags === undefined) delete value.tags; else value.tags = tags;
+  return value;
+}
 export function registrationEnvironmentProjection(request) {
   const value = structuredClone(request);
+  const tags = ecsRequestTags(value.tags);
+  if (tags === undefined) delete value.tags; else value.tags = tags;
   assert.ok(Array.isArray(value?.containerDefinitions), 'REGISTERED_CONTAINERS_INVALID');
   for (const container of value.containerDefinitions) {
     if (!Object.hasOwn(container, 'environment')) continue;
@@ -66,6 +87,7 @@ function env(container) {
 function runtimeContainer(task, role) { const matches = task?.containerDefinitions?.filter(item => item.name === role); assert.ok(matches?.length === 1, 'SOURCE_CONTAINER_INVALID'); return matches[0]; }
 export function validateSourceResponse(response, role, source, image, inventory) {
   const task = response?.taskDefinition; assert.ok(task && task.status === 'ACTIVE', 'SOURCE_DEFINITION_INACTIVE');
+  ecsRequestTags(response.tags);
   const family = role === 'api' ? '(?:schoolpilot-production-api|schoolpilot-production-api-emergency)' : 'schoolpilot-production-scheduler-worker';
   checkString(task.taskDefinitionArn, new RegExp(`^arn:aws:ecs:${FALLBACK.region}:${FALLBACK.account}:task-definition/${family}:[1-9][0-9]*$`), 'SOURCE_ARN_INVALID');
   equal(task.family, task.taskDefinitionArn.split('/')[1].split(':')[0], 'SOURCE_FAMILY_INVALID');
@@ -111,7 +133,7 @@ export function anchor128Stages() {
 }
 function requestProjection(response) {
   const request = Object.fromEntries(Object.entries(structuredClone(response.taskDefinition)).filter(([key]) => requestFields.has(key)));
-  if (response.tags !== undefined) { assert.ok(Array.isArray(response.tags), 'TASK_TAGS_INVALID'); request.tags = structuredClone(response.tags); }
+  const tags = ecsRequestTags(response.tags); if (tags !== undefined) request.tags = tags;
   return request;
 }
 export function renderAnchor128Pair(sources, source, image) {
@@ -148,14 +170,14 @@ function assertUnusedSources(sources, services) {
   }
 }
 function responseEnvironmentProjection(response) {
-  return { ...structuredClone(response), taskDefinition: registrationEnvironmentProjection(response.taskDefinition) };
+  return { ...responseTagProjection(response), taskDefinition: registrationEnvironmentProjection(response.taskDefinition) };
 }
 export function renderRequest(response, role, source, sourceImage, targetImage, count) {
   checkString(source, /^[a-f0-9]{40}$/, 'SOURCE_SHA_INVALID'); checkString(sourceImage, digestPattern, 'SOURCE_DIGEST_INVALID'); checkString(targetImage, digestPattern, 'TARGET_DIGEST_INVALID');
   assert.ok(source !== '7af9d0dd5bc2bd3e13b96d35a577725e07f8b678' && source !== FALLBACK.source, 'COMPATIBLE_CANDIDATE_ANCHOR_REQUIRED');
   const task = validateSourceResponse(response, role, source, sourceImage, inventoryFor(count));
   const request = Object.fromEntries(Object.entries(structuredClone(task)).filter(([key]) => requestFields.has(key)));
-  if (response.tags !== undefined) { assert.ok(Array.isArray(response.tags), 'TASK_TAGS_INVALID'); request.tags = structuredClone(response.tags); }
+  const tags = ecsRequestTags(response.tags); if (tags !== undefined) request.tags = tags;
   runtimeContainer(request, role).image = `${repoUri}@${targetImage}`;
   return request;
 }
@@ -166,7 +188,7 @@ export function assertOnlyImageIdentityChanged(response, request, role, targetIm
   const originalContainer = runtimeContainer(response.taskDefinition, role);
   container.image = originalContainer.image;
   container.environment = [...container.environment.filter(item => !identityNames.has(item.name)), ...originalContainer.environment.filter(item => identityNames.has(item.name))];
-  const expected = structuredClone(Object.fromEntries(Object.entries(response.taskDefinition).filter(([key]) => requestFields.has(key)))); if (response.tags !== undefined) expected.tags = structuredClone(response.tags);
+  const expected = requestProjection(response);
   // The supported identity stamper only reorders its two identity entries.
   for (const value of [restored, expected]) runtimeContainer(value, role).environment.sort((a, b) => a.name.localeCompare(b.name));
   equal(restored, expected, 'UNRELATED_TASK_MUTATION');
@@ -325,7 +347,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
     for (const role of ['api', 'scheduler-worker']) {
       inWindow(); const generated = plan.generated[role]; equal(hash(readFileSync(generated.path)), generated.sha256, 'GENERATED_REQUEST_CHANGED');
       const source = JSON.parse(await checked(run, 'aws', ['ecs', 'describe-task-definition', '--task-definition', generated.sourceArn, '--include', 'TAGS', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
-      equal(source, pinnedJson(generated.source), 'ANCHOR_DEFINITION_CHANGED');
+      equal(responseTagProjection(source), responseTagProjection(pinnedJson(generated.source)), 'ANCHOR_DEFINITION_CHANGED');
       const request = JSON.parse(readFileSync(generated.path, 'utf8')); equal(request, generated.request, 'PLANNED_REQUEST_CHANGED'); assertOnlyImageIdentityChanged(source, request, role, plan.registryDigest);
       inWindow();
       result.lastAttemptedRole = role; result.registrationOutcomeUncertain = true; writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });

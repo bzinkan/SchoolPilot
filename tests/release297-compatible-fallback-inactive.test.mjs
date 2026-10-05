@@ -190,3 +190,91 @@ test('source admission rejects empty duplicate or malformed expected inventories
     assert.throws(() => validateSourceResponse(value, 'api', FALLBACK.application, sourceImage, inventory), /ADMISSION_DRIFT/);
   }
 });
+
+test('all three renderers omit exact empty ECS tags and preserve source captures', () => {
+  const sources = Object.fromEntries(['api', 'scheduler-worker'].map(role => {
+    const value = anchor121(role); value.tags = []; setEnv(value, 'RLS_ENABLED_TABLES', observedAdmissionOrder().join(',')); return [role, value];
+  }));
+  const before = structuredClone(sources);
+  const live = { services: Object.entries(sources).map(([role, value]) => ({ serviceName: `schoolpilot-production-${role}`, taskDefinition: value.taskDefinition.taskDefinitionArn, status: 'ACTIVE', desiredCount: 1, runningCount: 1, pendingCount: 0, deployments: [{ status: 'PRIMARY', rolloutState: 'COMPLETED' }] })), failures: [] };
+  const unused = renderUnused121Pair(sources, live, FALLBACK.application, sourceImage), anchors = renderAnchor128Pair(sources, FALLBACK.application, sourceImage);
+  for (const role of ['api', 'scheduler-worker']) {
+    assert.equal(Object.hasOwn(unused[role], 'tags'), false);
+    assert.equal(Object.hasOwn(anchors[role], 'tags'), false);
+    const compatible = { ...structuredClone(sources[role]), taskDefinition: structuredClone(anchors[role]) };
+    compatible.taskDefinition = { ...compatible.taskDefinition, ...Object.fromEntries(Object.entries(sources[role].taskDefinition).filter(([key]) => ['taskDefinitionArn', 'revision', 'status', 'registeredBy', 'registeredAt'].includes(key))) };
+    const fallback = renderRequest(compatible, role, FALLBACK.application, sourceImage, targetImage, 128); stamp(fallback, role);
+    assert.equal(Object.hasOwn(fallback, 'tags'), false); assertOnlyImageIdentityChanged(compatible, fallback, role, targetImage);
+  }
+  assert.deepEqual(sources, before);
+});
+
+test('all three renderers reject malformed ECS tags without changing source data', () => {
+  for (const tags of [null, {}, 'tags', [null], [{ key: '', value: 'x' }], [{ key: 'a', value: 1 }], [{ key: 'a', extra: 'x' }], [{ key: 'a' }, { key: 'a', value: 'x' }]]) {
+    const sources = { api: anchor121('api'), 'scheduler-worker': anchor121('scheduler-worker') }; sources.api.tags = structuredClone(tags);
+    const before = structuredClone(sources), live = { services: Object.entries(sources).map(([role, value]) => ({ serviceName: `schoolpilot-production-${role}`, taskDefinition: value.taskDefinition.taskDefinitionArn, status: 'ACTIVE', desiredCount: 1, runningCount: 1, pendingCount: 0, deployments: [{ status: 'PRIMARY', rolloutState: 'COMPLETED' }] })), failures: [] };
+    assert.throws(() => renderUnused121Pair(sources, live, FALLBACK.application, sourceImage), /TASK_TAGS_INVALID/);
+    assert.throws(() => renderAnchor128Pair(sources, FALLBACK.application, sourceImage), /TASK_TAGS_INVALID/);
+    const fallback = definition('api', 128); fallback.tags = structuredClone(tags);
+    assert.throws(() => renderRequest(fallback, 'api', FALLBACK.application, sourceImage, targetImage, 128), /TASK_TAGS_INVALID/);
+    assert.deepEqual(sources, before);
+  }
+});
+
+test('registration projection equates absent and empty tags while preserving nonempty ordering', () => {
+  const request = renderRequest(definition('api'), 'api', FALLBACK.application, sourceImage, targetImage, 129);
+  delete request.tags; const empty = { ...structuredClone(request), tags: [] };
+  assert.deepEqual(registrationEnvironmentProjection(empty), registrationEnvironmentProjection(request));
+  assert.deepEqual(empty.tags, []);
+  const tagged = { ...structuredClone(request), tags: [{ key: 'z', value: '' }, { key: 'a' }] };
+  assert.deepEqual(registrationEnvironmentProjection(tagged).tags, tagged.tags);
+  assert.notDeepEqual(registrationEnvironmentProjection(tagged), registrationEnvironmentProjection({ ...tagged, tags: [...tagged.tags].reverse() }));
+  assert.throws(() => registrationEnvironmentProjection({ ...request, tags: null }), /TASK_TAGS_INVALID/);
+});
+
+function emptyTagProvider(run) {
+  return async (executable, args, options) => {
+    if (executable === 'aws' && args[1] === 'register-task-definition') {
+      const request = JSON.parse(readFileSync(args[args.indexOf('--cli-input-json') + 1].replace(/^file:\/\//, '')));
+      if (Array.isArray(request.tags) && request.tags.length === 0) return { code: 254, stdout: '', stderr: 'ClientException: Tags cannot be empty' };
+      assert.equal(Object.hasOwn(request, 'tags'), false);
+    }
+    const result = await run(executable, args, options);
+    if (executable === 'aws' && args[1] === 'describe-task-definition') {
+      const value = JSON.parse(result.stdout); value.tags = [];
+      return { ...result, stdout: JSON.stringify(value) };
+    }
+    return result;
+  };
+}
+
+test('fallback registration omits empty tags and accepts exact provider empty readback', async () => {
+  const f = fixture(); try {
+    for (const [role, field] of [['api', 'api'], ['scheduler-worker', 'worker']]) { const value = definition(role); value.tags = []; f.input[field] = f.record(`empty-${role}.json`, value); }
+    f.options.run = emptyTagProvider(f.options.run);
+    const plan = await createPlan(f.input, f.options), result = await registerInactive(plan, f.authorization(plan), f.options);
+    assert.equal(result.registered.length, 2); assert.equal(result.servicesUpdated, 0); assert.equal(result.tasksLaunched, 0);
+    assert.equal(f.commands.filter(value => value.args[1] === 'register-task-definition').length, 2);
+  } finally { f.clean(); }
+});
+
+test('anchor registration omits empty tags and accepts absent source with empty readback', async () => {
+  const f = anchorFixture(); try {
+    for (const [role, field] of [['api', 'api'], ['scheduler-worker', 'worker']]) { const value = anchor121(role); value.tags = []; f.input[field] = f.record(`empty-anchor-${role}.json`, value); }
+    f.behavior.anchorSourceMutation = value => { delete value.tags; };
+    const original = f.options.run;
+    f.options.run = async (executable, args, options) => {
+      if (executable === 'aws' && args[1] === 'register-task-definition') {
+        const request = JSON.parse(readFileSync(args[args.indexOf('--cli-input-json') + 1].replace(/^file:\/\//, '')));
+        if (Array.isArray(request.tags) && request.tags.length === 0) return { code: 254, stdout: '', stderr: 'ClientException: Tags cannot be empty' };
+        assert.equal(Object.hasOwn(request, 'tags'), false);
+      }
+      const result = await original(executable, args, options);
+      if (executable === 'aws' && args[1] === 'describe-task-definition' && args[args.indexOf('--task-definition') + 1].endsWith(':201')) { const value = JSON.parse(result.stdout); value.tags = []; return { ...result, stdout: JSON.stringify(value) }; }
+      return result;
+    };
+    const plan = await createAnchor128Plan(f.input, f.options), result = await registerAnchor128Inactive(plan, f.authorization(plan), f.options);
+    assert.equal(result.registered.length, 2); assert.equal(f.commands.filter(value => value.args[1] === 'register-task-definition').length, 2);
+    assert.equal(f.commands.some(value => ['run-task', 'update-service', 'deregister-task-definition'].includes(value.args[1])), false);
+  } finally { f.clean(); }
+});

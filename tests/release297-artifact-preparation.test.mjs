@@ -94,3 +94,47 @@ test('legacy scan cleanup owner mismatch and post-plan cleanup-byte change rejec
 test('source alias appearing between inspection and mutation stops publication', async () => { const f = fixture(); try { const plan = await planPublication(f.input, f.options); let tagReads = 0; const run = async (exe, args, options) => { if (exe === 'aws' && args[1] === 'batch-get-image' && args.includes(`imageTag=${source.slice(0, 12)}`)) { tagReads++; if (tagReads === 2) f.tags.set(source.slice(0, 12), f.image(source.slice(0, 12))); } return f.options.run(exe, args, options); }; await assert.rejects(publishImage(plan, f.authorization(plan, 'PublishImage'), { ...f.options, run })); assert.equal(f.commands.some(value => value.executable === 'docker' && value.args[2] === 'push'), false); } finally { f.clean(); } });
 test('source and archive labels must bind exact linux amd64 scanned config', async () => { const f = fixture(); try { const changed = { ...f.scan, architecture: 'arm64' }; f.input.scan = f.pin('wrong-platform.json', changed); await assert.rejects(planPublication(f.input, f.options), /SCAN_IDENTITY_INVALID/); } finally { f.clean(); } });
 test('C578 publication binds its exact platform and existing registry proofs remain immutable', async () => { const proof = { digest: `sha256:${'e'.repeat(64)}`, platformDigest: FALLBACK.platform, configDigest: FALLBACK.config }; validatePublicationPlatform('fallback', proof, FALLBACK.config); assert.throws(() => validatePublicationPlatform('fallback', { ...proof, platformDigest: `sha256:${'d'.repeat(64)}` }, FALLBACK.config), /EXACT_FALLBACK_PLATFORM_REQUIRED/); const f = fixture(); try { const filename = path.join(path.dirname(f.input.scan.path), 'registry-proof.json'), bytes = 'retained prior proof'; writeFileSync(filename, bytes); await assert.rejects(planPublication(f.input, f.options), /FRESH_REGISTRY_PROOF_REQUIRED/); assert.equal(readFileSync(filename, 'utf8'), bytes); assert.equal(f.commands.length, 0); } finally { f.clean(); } });
+
+test('unused121 omits empty request tags and accepts absent source and empty provider readback', async () => {
+  const f = fixture(); try {
+    for (const role of roles()) f.sources[role].tags = [];
+    const original = f.options.run;
+    f.options.run = async (executable, args, options) => {
+      if (executable === 'aws' && args[1] === 'register-task-definition') {
+        const request = JSON.parse(readFileSync(args[args.indexOf('--cli-input-json') + 1].replace(/^file:\/\//, '')));
+        if (Array.isArray(request.tags) && request.tags.length === 0) return { code: 254, stdout: '', stderr: 'ClientException: Tags cannot be empty' };
+        assert.equal(Object.hasOwn(request, 'tags'), false);
+      }
+      const result = await original(executable, args, options);
+      if (executable === 'aws' && args[1] === 'describe-task-definition') {
+        const value = JSON.parse(result.stdout);
+        if (args[args.indexOf('--task-definition') + 1].endsWith(':100')) delete value.tags; else value.tags = [];
+        return { ...result, stdout: JSON.stringify(value) };
+      }
+      return result;
+    };
+    const publication = await published(f), plan = await planUnused121(f.registrationInput(publication), f.options), data = JSON.parse(readFileSync(plan.path));
+    for (const role of roles()) assert.equal(Object.hasOwn(data.generated[role].request, 'tags'), false);
+    const result = await registerUnused121(plan, f.authorization(plan, 'RegisterUnused121'), f.options), receipt = JSON.parse(readFileSync(result.path));
+    assert.equal(receipt.status, 'registered_unused121'); assert.equal(receipt.registered.length, 2); noOperationalCommands(f);
+    assert.equal(f.commands.filter(value => value.executable === 'aws' && value.args[1] === 'register-task-definition').length, 2);
+    for (const role of roles()) assert.deepEqual(f.sources[role].tags, []);
+  } finally { f.clean(); }
+});
+
+test('unused121 preserves nonempty ordered tags and rejects changed provider tag values with ARN retained', async () => {
+  const f = fixture(); try {
+    for (const role of roles()) f.sources[role].tags = [{ key: 'z', value: '' }, { key: 'a' }];
+    const requests = renderUnused121Pair(f.sources, f.services, source, f.registryDigest);
+    for (const role of roles()) assert.deepEqual(requests[role].tags, f.sources[role].tags);
+    const publication = await published(f), plan = await planUnused121(f.registrationInput(publication), f.options), original = f.options.run;
+    f.options.run = async (executable, args, options) => {
+      const result = await original(executable, args, options);
+      if (executable === 'aws' && args[1] === 'describe-task-definition' && args[args.indexOf('--task-definition') + 1].endsWith(':201')) { const value = JSON.parse(result.stdout); value.tags[0].value = 'changed'; return { ...result, stdout: JSON.stringify(value) }; }
+      return result;
+    };
+    await assert.rejects(registerUnused121(plan, f.authorization(plan, 'RegisterUnused121'), f.options));
+    const receipt = JSON.parse(readFileSync(path.join(f.directory, 'registration/registration.private.json')));
+    assert.equal(receipt.registered.length, 1); assert.equal(receipt.registrationOutcomeUncertain, false); noOperationalCommands(f);
+  } finally { f.clean(); }
+});
