@@ -7,7 +7,7 @@ import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, realp
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { archiveConfigDigest, inspectImage, runCommand, scanCounts, SCANNER, validateRegistryManifest, verifyPublishedImage } from './verify-legacy-deploy-image.mjs';
-import { anchor128Stages, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse } from './register-compatible-fallback-inactive.mjs';
+import { anchor128Stages, ecsRequestTags, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse } from './register-compatible-fallback-inactive.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REGISTRY = Object.freeze({ account: '135775632425', region: 'us-east-1', repository: 'schoolpilot-production-api' });
@@ -101,7 +101,7 @@ export async function planPublication(input, { run = runCommand, verifyScan = va
   plan.tags = [input.source, input.source.slice(0, 12)];
   const filename = path.join(input.outputDirectory, 'publication-plan.private.json'); writeNew(filename, plan); return record(filename);
 }
-function projection(response) { const request = Object.fromEntries(Object.entries(structuredClone(response.taskDefinition)).filter(([key]) => !providerFields.has(key))); if (response.tags !== undefined) request.tags = structuredClone(response.tags); return request; }
+function projection(response) { const request = Object.fromEntries(Object.entries(structuredClone(response.taskDefinition)).filter(([key]) => !providerFields.has(key))); const tags = ecsRequestTags(response.tags); if (tags !== undefined) request.tags = tags; return request; }
 export function renderUnused121Pair(sources, live, source, image) {
   assert.match(source, sha); assert.match(image, digest); const inventory = anchor128Stages()[0];
   assert.ok(live?.services?.length === 2 && (live.failures ?? []).length === 0, 'LIVE_SERVICES_REQUIRED');
@@ -275,7 +275,7 @@ export async function registerUnused121(planRecord, authorizationRecord, { run =
     for (const tag of [plan.input.source, plan.input.source.slice(0, 12)]) equal((await remoteTag(tag, call))?.imageId.imageDigest, plan.registryDigest, 'SOURCE_TAG_CONFLICT');
     const before = JSON.parse(await call('aws', serviceArgs)); equal(hash(before.services), plan.liveServicesSha256, 'LIVE_SERVICES_DRIFT');
     const sources = {};
-    for (const role of roles) { const generated = plan.generated[role]; sources[role] = JSON.parse(await call('aws', aws(['ecs', 'describe-task-definition', '--task-definition', generated.sourceArn, '--include', 'TAGS']))); equal(registrationEnvironmentProjection(sources[role].taskDefinition), registrationEnvironmentProjection(pinned(generated.source).taskDefinition), 'SOURCE_DEFINITION_DRIFT'); equal(sources[role].tags, pinned(generated.source).tags, 'SOURCE_TAGS_DRIFT'); }
+    for (const role of roles) { const generated = plan.generated[role]; sources[role] = JSON.parse(await call('aws', aws(['ecs', 'describe-task-definition', '--task-definition', generated.sourceArn, '--include', 'TAGS']))); equal(registrationEnvironmentProjection(sources[role].taskDefinition), registrationEnvironmentProjection(pinned(generated.source).taskDefinition), 'SOURCE_DEFINITION_DRIFT'); equal(ecsRequestTags(sources[role].tags), ecsRequestTags(pinned(generated.source).tags), 'SOURCE_TAGS_DRIFT'); }
     const requests = renderUnused121Pair(sources, before, plan.input.source, plan.registryDigest);
     for (const role of roles) {
       const generated = plan.generated[role]; equal(hash(readFileSync(ordinaryFile(generated.path))), generated.sha256, 'GENERATED_REQUEST_CHANGED'); equal(pinned(generated), requests[role], 'GENERATED_REQUEST_DRIFT'); equal(generated.request, requests[role], 'PLANNED_REQUEST_DRIFT');

@@ -4,11 +4,21 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FALLBACK, hash, inventoryFor, renderRequest, assertOnlyImageIdentityChanged, validateImageEvidence, validateCleanupCustody, validatePublishedTag, validateAnchorEvidence, createPlan, registerInactive, registrationEnvironmentProjection, anchor128Stages, renderAnchor128Pair, assertOnlyAnchorAdmissionChanged, createAnchor128Plan, registerAnchor128Inactive } from '../scripts/register-compatible-fallback-inactive.mjs';
+import { FALLBACK, hash, inventoryFor, renderRequest, assertOnlyImageIdentityChanged, validateImageEvidence, validateCleanupCustody, validatePublishedTag, validateAnchorEvidence, createPlan, registerInactive, registrationEnvironmentProjection, anchor128Stages, renderAnchor128Pair, assertOnlyAnchorAdmissionChanged, createAnchor128Plan, registerAnchor128Inactive, validateSourceResponse } from '../scripts/register-compatible-fallback-inactive.mjs';
+import { renderUnused121Pair } from '../scripts/prepare-release-artifacts.mjs';
 import { SCANNER } from '../scripts/verify-legacy-deploy-image.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceImage = `sha256:${'7'.repeat(64)}`, targetImage = `sha256:${'8'.repeat(64)}`;
 const fixedNow = Date.parse('2026-10-04T16:00:00Z');
+// Sanitized production serialization: the same 121 admitted names, with the
+// observed zero-based positions 72 and 74 reversed. No production identifiers.
+function observedAdmissionOrder(tables = anchor128Stages()[0]) {
+  const value = [...tables];
+  assert.equal(value[72], 'classpilot_evidence_capture_requests');
+  assert.equal(value[74], 'passpilot_kiosk_sessions');
+  [value[72], value[74]] = [value[74], value[72]];
+  return value;
+}
 function definition(role, count = 129) {
   const family = role === 'api' ? 'schoolpilot-production-api-emergency' : 'schoolpilot-production-scheduler-worker';
   return { taskDefinition: { taskDefinitionArn: `arn:aws:ecs:us-east-1:135775632425:task-definition/${family}:200`, family, status: 'ACTIVE', revision: 200, registeredBy: 'synthetic', registeredAt: 'synthetic', networkMode: 'awsvpc', requiresCompatibilities: ['FARGATE'], cpu: role === 'api' ? '1024' : '512', memory: role === 'api' ? '2048' : '1024', executionRoleArn: 'synthetic-execution-role', taskRoleArn: 'synthetic-task-role', volumes: [], runtimePlatform: { cpuArchitecture: 'X86_64', operatingSystemFamily: 'LINUX' }, containerDefinitions: [{ name: role, image: `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@${sourceImage}`, cpu: 0, essential: true, command: ['node', role === 'api' ? 'dist/index.js' : 'dist/worker.js'], logConfiguration: { logDriver: 'awslogs', options: { 'awslogs-group': 'synthetic' } }, secrets: [{ name: 'DATABASE_URL', valueFrom: 'synthetic-secret-ref' }], environment: Object.entries({ GIT_SHA: FALLBACK.application, SERVICE_NAME: role, RLS_GUC_ENABLED: 'true', RLS_ENABLED_TABLES: inventoryFor(count).join(','), CLASSPILOT_USAGE_ROLLUP_MODE: 'off', CLASSPILOT_DIGITAL_USAGE_MODE: 'off', CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1: 'false', CLASSPILOT_CAP_FOCUS_TAB_V1: 'false', CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1: 'false', CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: 'true', CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({ scopedAuthorityChecksV1: { mode: 'on', schoolIds: [] }, privateChatLifecycleV1: { mode: 'off' } }), DB_POOL_MAX: '20', SCHEDULER_DB_POOL_MAX: '5', UNRELATED_VALUE: 'preserve-me' }).map(([name, value]) => ({ name, value })) }] }, tags: [{ key: 'Project', value: 'SchoolPilot' }] };
@@ -96,7 +106,7 @@ function anchorFixture() {
 }
 test('anchor uses exactly the ordered121 125 126 127 128 reviewed inventories', () => { const stages = anchor128Stages(); assert.deepEqual(stages.map(value => value.length), [121, 125, 126, 127, 128]); assert.deepEqual(stages[1].slice(121), ['passpilot_destination_policies', 'passpilot_pass_limits', 'passpilot_encounter_restrictions', 'passpilot_pass_denials']); assert.deepEqual(stages[4], inventoryFor(128)); const returned = anchor128Stages(); returned[0].reverse(); assert.notDeepEqual(returned[0], anchor128Stages()[0]); });
 test('anchor rendering changes only admission preserving source image tags sidecars and every other field', () => { const sources = { api: anchor121('api'), 'scheduler-worker': anchor121('scheduler-worker') }; sources.api.taskDefinition.containerDefinitions.unshift({ name: 'synthetic-sidecar', image: 'synthetic-other-image', command: ['unchanged', 'order'], environment: [{ name: 'sidecar', value: 'preserved' }], secrets: [] }); const before = structuredClone(sources), requests = renderAnchor128Pair(sources, FALLBACK.application, sourceImage); assert.deepEqual(sources, before); for (const role of ['api', 'scheduler-worker']) { assertOnlyAnchorAdmissionChanged(sources[role], requests[role], role, FALLBACK.application, sourceImage); const original = sources[role].taskDefinition.containerDefinitions.find(value => value.name === role), actual = requests[role].containerDefinitions.find(value => value.name === role); assert.equal(actual.image, original.image); assert.equal(actual.environment.find(value => value.name === 'GIT_SHA').value, FALLBACK.application); } assert.deepEqual(requests.api.containerDefinitions[0], sources.api.taskDefinition.containerDefinitions[0]); });
-test('anchor rejects old source bad digest non121 order and narrowed admission', () => { const sources = { api: anchor121('api'), 'scheduler-worker': anchor121('scheduler-worker') }; for (const source of ['7af9d0dd5bc2bd3e13b96d35a577725e07f8b678', FALLBACK.source]) assert.throws(() => renderAnchor128Pair(sources, source, sourceImage)); assert.throws(() => renderAnchor128Pair(sources, FALLBACK.application, targetImage), /SOURCE_IMAGE_DRIFT/); for (const tables of [anchor128Stages()[0].slice().reverse(), anchor128Stages()[0].slice(1), inventoryFor(128)]) { const copy = structuredClone(sources); setEnv(copy.api, 'RLS_ENABLED_TABLES', tables.join(',')); assert.throws(() => renderAnchor128Pair(copy, FALLBACK.application, sourceImage), /ADMISSION_DRIFT/); } });
+test('anchor rejects old source bad digest duplicate121 and narrowed admission', () => { const sources = { api: anchor121('api'), 'scheduler-worker': anchor121('scheduler-worker') }; for (const source of ['7af9d0dd5bc2bd3e13b96d35a577725e07f8b678', FALLBACK.source]) assert.throws(() => renderAnchor128Pair(sources, source, sourceImage)); assert.throws(() => renderAnchor128Pair(sources, FALLBACK.application, targetImage), /SOURCE_IMAGE_DRIFT/); for (const tables of [anchor128Stages()[0].map((table, index, tables) => index === 72 ? tables[74] : table), anchor128Stages()[0].slice(1), inventoryFor(128)]) { const copy = structuredClone(sources); setEnv(copy.api, 'RLS_ENABLED_TABLES', tables.join(',')); assert.throws(() => renderAnchor128Pair(copy, FALLBACK.application, sourceImage), /ADMISSION_DRIFT/); } });
 test('anchor rejects Usage issuance resource pair and secret control drift', () => { for (const mutate of [value => setEnv(value, 'CLASSPILOT_DIGITAL_USAGE_MODE', 'on'), value => setEnv(value, 'CLASSPILOT_CAP_FOCUS_TAB_V1', 'true'), value => { value.taskDefinition.cpu = '2048'; }, value => { value.taskDefinition.containerDefinitions[0].secrets.push({ name: 'RLS_ENABLED_TABLES', valueFrom: 'synthetic' }); }, value => setEnv(value, 'CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1', 'false')]) { const sources = { api: anchor121('api'), 'scheduler-worker': anchor121('scheduler-worker') }; mutate(sources.api); assert.throws(() => renderAnchor128Pair(sources, FALLBACK.application, sourceImage)); } });
 test('anchor structural fence rejects image stamp command tag secret sidecar or pool changes', () => { const source = anchor121('api'); source.taskDefinition.containerDefinitions.push({ name: 'synthetic-sidecar', image: 'unchanged', environment: [] }); const request = renderAnchor128Pair({ api: source, 'scheduler-worker': anchor121('scheduler-worker') }, FALLBACK.application, sourceImage).api; for (const mutate of [copy => { copy.containerDefinitions[0].image = 'changed'; }, copy => { copy.containerDefinitions[0].environment.find(entry => entry.name === 'GIT_SHA').value = FALLBACK.source; }, copy => { copy.containerDefinitions[0].command.reverse(); }, copy => { copy.tags.reverse(); copy.tags.push({ key: 'added', value: 'changed' }); }, copy => { copy.containerDefinitions[0].secrets[0].valueFrom = 'changed'; }, copy => { copy.containerDefinitions[1].image = 'changed'; }, copy => { copy.containerDefinitions[0].environment.find(entry => entry.name === 'DB_POOL_MAX').value = '32'; }]) { const copy = structuredClone(request); mutate(copy); assert.throws(() => assertOnlyAnchorAdmissionChanged(source, copy, 'api', FALLBACK.application, sourceImage)); } });
 test('anchor offline Plan requires actual source scan custody and creates no AWS operation', async () => { const f = anchorFixture(); try { const plan = await createAnchor128Plan(f.input, f.options), value = JSON.parse(readFileSync(plan.path)); assert.equal(plan.admissionCount, 128); assert.equal(f.commands.some(entry => entry.executable === 'aws'), false); assert.equal(f.commands.some(entry => entry.executable === process.execPath), false); assert.equal(value.kind, 'compatible_anchor128_inactive'); assert.deepEqual(value.executableActions, ['RegisterInactiveAnchor128']); assert.deepEqual(value.admissionCounts, [121, 125, 126, 127, 128]); } finally { f.clean(); } });
@@ -111,3 +121,160 @@ test('anchor source and registered exact environment permutations remain accepte
 test('anchor registered duplicate changed missing environment and ordered tags commands reject', async () => { for (const change of [value => { const entries = value.taskDefinition.containerDefinitions[0].environment; entries.push(structuredClone(entries[0])); }, value => { value.taskDefinition.containerDefinitions[0].environment.find(entry => entry.name === 'UNRELATED_VALUE').value = 'changed'; }, value => { value.taskDefinition.containerDefinitions[0].environment.pop(); }, value => { value.taskDefinition.containerDefinitions[0].command.reverse(); }, value => { value.tags.push({ key: 'unexpected', value: 'changed' }); }]) { const f = anchorFixture(); try { const plan = await createAnchor128Plan(f.input, f.options); f.behavior.registeredMutation = change; await assert.rejects(registerAnchor128Inactive(plan, f.authorization(plan), f.options), /COMPATIBLE_ANCHOR128_REGISTRATION_FAILED/); assert.equal(JSON.parse(readFileSync(path.join(f.input.outputDirectory, 'registration.private.json'))).registered.length, 1); } finally { f.clean(); } } });
 test('anchor remote config drift and generated request drift fail without registration', async () => { for (const change of ['remote', 'request']) { const f = anchorFixture(); try { const plan = await createAnchor128Plan(f.input, f.options); if (change === 'remote') f.options.verifyRegistry = async () => ({ digest: sourceImage, configDigest: FALLBACK.config, platformDigest: FALLBACK.platform }); else { const p = JSON.parse(readFileSync(plan.path)); writeFileSync(p.generated.api.path, '{}'); } await assert.rejects(registerAnchor128Inactive(plan, f.authorization(plan), f.options)); assert.equal(f.commands.some(entry => entry.args[1] === 'register-task-definition'), false); } finally { f.clean(); } } });
 test('anchor post-registration service drift records failure without rollback or deregistration', async () => { const f = anchorFixture(); try { const plan = await createAnchor128Plan(f.input, f.options); f.behavior.afterServicesChanged = true; await assert.rejects(registerAnchor128Inactive(plan, f.authorization(plan), f.options), /COMPATIBLE_ANCHOR128_REGISTRATION_FAILED/); const receipt = JSON.parse(readFileSync(path.join(f.input.outputDirectory, 'registration.private.json'))); assert.equal(receipt.registered.length, 2); assert.equal(receipt.status, 'failed_retained_inactive'); assert.equal(f.commands.some(entry => ['update-service', 'deregister-task-definition'].includes(entry.args[1])), false); } finally { f.clean(); } });
+
+// Source admission is a set; rendering must retain its original CSV bytes.
+test('production121 serialization order is accepted and preserved in unused image clones', () => {
+  const sources = Object.fromEntries(['api', 'scheduler-worker'].map(role => {
+    const value = definition(role, 128);
+    setEnv(value, 'RLS_ENABLED_TABLES', observedAdmissionOrder().join(','));
+    value.taskDefinition.containerDefinitions.push({ name: 'synthetic-sidecar', image: 'preserved-sidecar', essential: false, environment: [{ name: 'UNRELATED', value: 'unchanged' }] });
+    return [role, value];
+  }));
+  const before = structuredClone(sources);
+  const live = { failures: [], services: Object.entries(sources).map(([role, value]) => ({ serviceName: `schoolpilot-production-${role}`, taskDefinition: value.taskDefinition.taskDefinitionArn, status: 'ACTIVE', desiredCount: 1, runningCount: 1, pendingCount: 0, deployments: [{ status: 'PRIMARY', rolloutState: 'COMPLETED' }] })) };
+  const targetSource = 'a'.repeat(40);
+  const requests = renderUnused121Pair(sources, live, targetSource, targetImage);
+  assert.deepEqual(sources, before);
+  for (const role of ['api', 'scheduler-worker']) {
+    const { taskDefinitionArn, revision, status, registeredAt, registeredBy, ...expected } = structuredClone(sources[role].taskDefinition);
+    expected.tags = structuredClone(sources[role].tags);
+    expected.containerDefinitions[0].image = `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@${targetImage}`;
+    expected.containerDefinitions[0].environment.find(entry => entry.name === 'GIT_SHA').value = targetSource;
+    assert.deepEqual(requests[role], expected);
+    assert.equal(requests[role].containerDefinitions[0].environment.find(entry => entry.name === 'RLS_ENABLED_TABLES').value, observedAdmissionOrder().join(','));
+  }
+});
+test('anchor128 appends reviewed bundles without rewriting production121 serialization', () => {
+  const sources = Object.fromEntries(['api', 'scheduler-worker'].map(role => {
+    const value = definition(role, 128); setEnv(value, 'RLS_ENABLED_TABLES', observedAdmissionOrder().join(',')); return [role, value];
+  }));
+  const before = structuredClone(sources);
+  const requests = renderAnchor128Pair(sources, FALLBACK.application, sourceImage);
+  assert.deepEqual(sources, before);
+  const expected = [...observedAdmissionOrder(), ...inventoryFor(128).slice(121)].join(',');
+  for (const role of ['api', 'scheduler-worker']) {
+    assert.equal(requests[role].containerDefinitions[0].environment.find(entry => entry.name === 'RLS_ENABLED_TABLES').value, expected);
+    assertOnlyAnchorAdmissionChanged(sources[role], requests[role], role, FALLBACK.application, sourceImage);
+  }
+  assert.deepEqual(anchor128Stages()[0], inventoryFor(128).slice(0, 121));
+});
+test('fallback128 and129 preserve permuted admission and every unrelated field', () => {
+  for (const count of [128, 129]) for (const role of ['api', 'scheduler-worker']) {
+    const value = definition(role, count), raw = observedAdmissionOrder(inventoryFor(count)).join(',');
+    setEnv(value, 'RLS_ENABLED_TABLES', raw); const before = structuredClone(value);
+    const request = renderRequest(value, role, FALLBACK.application, sourceImage, targetImage, count);
+    stamp(request, role); assertOnlyImageIdentityChanged(value, request, role, targetImage);
+    assert.equal(request.containerDefinitions[0].environment.find(entry => entry.name === 'RLS_ENABLED_TABLES').value, raw);
+    assert.deepEqual(value, before);
+  }
+});
+test('source admission rejects missing extra changed and duplicate table membership', () => {
+  const canonical = anchor128Stages()[0];
+  const changed = [...canonical]; changed[72] = 'unreviewed_extra_table';
+  const duplicate = [...canonical]; duplicate[72] = duplicate[74];
+  for (const tables of [canonical.slice(0, -1), [...canonical, 'unreviewed_extra_table'], changed, duplicate]) {
+    const value = definition('api', 128); setEnv(value, 'RLS_ENABLED_TABLES', tables.join(','));
+    assert.throws(() => validateSourceResponse(value, 'api', FALLBACK.application, sourceImage, canonical), /ADMISSION_DRIFT/);
+  }
+});
+test('source admission rejects empty malformed and whitespace CSV names', () => {
+  const canonical = anchor128Stages()[0];
+  for (const raw of [undefined, '', `${canonical.join(',')},`, canonical.map((name, index) => index === 72 ? 'Bad-Table' : name).join(','), canonical.map((name, index) => index === 72 ? ` ${name}` : name).join(',')]) {
+    const value = definition('api', 128); setEnv(value, 'RLS_ENABLED_TABLES', raw);
+    assert.throws(() => validateSourceResponse(value, 'api', FALLBACK.application, sourceImage, canonical), /ADMISSION_DRIFT/);
+  }
+});
+test('source admission rejects empty duplicate or malformed expected inventories', () => {
+  const value = definition('api', 128), expected = inventoryFor(128);
+  for (const inventory of [[], [...expected.slice(0, -1), expected[0]], expected.map((name, index) => index === 0 ? '' : name)]) {
+    assert.throws(() => validateSourceResponse(value, 'api', FALLBACK.application, sourceImage, inventory), /ADMISSION_DRIFT/);
+  }
+});
+
+test('all three renderers omit exact empty ECS tags and preserve source captures', () => {
+  const sources = Object.fromEntries(['api', 'scheduler-worker'].map(role => {
+    const value = anchor121(role); value.tags = []; setEnv(value, 'RLS_ENABLED_TABLES', observedAdmissionOrder().join(',')); return [role, value];
+  }));
+  const before = structuredClone(sources);
+  const live = { services: Object.entries(sources).map(([role, value]) => ({ serviceName: `schoolpilot-production-${role}`, taskDefinition: value.taskDefinition.taskDefinitionArn, status: 'ACTIVE', desiredCount: 1, runningCount: 1, pendingCount: 0, deployments: [{ status: 'PRIMARY', rolloutState: 'COMPLETED' }] })), failures: [] };
+  const unused = renderUnused121Pair(sources, live, FALLBACK.application, sourceImage), anchors = renderAnchor128Pair(sources, FALLBACK.application, sourceImage);
+  for (const role of ['api', 'scheduler-worker']) {
+    assert.equal(Object.hasOwn(unused[role], 'tags'), false);
+    assert.equal(Object.hasOwn(anchors[role], 'tags'), false);
+    const compatible = { ...structuredClone(sources[role]), taskDefinition: structuredClone(anchors[role]) };
+    compatible.taskDefinition = { ...compatible.taskDefinition, ...Object.fromEntries(Object.entries(sources[role].taskDefinition).filter(([key]) => ['taskDefinitionArn', 'revision', 'status', 'registeredBy', 'registeredAt'].includes(key))) };
+    const fallback = renderRequest(compatible, role, FALLBACK.application, sourceImage, targetImage, 128); stamp(fallback, role);
+    assert.equal(Object.hasOwn(fallback, 'tags'), false); assertOnlyImageIdentityChanged(compatible, fallback, role, targetImage);
+  }
+  assert.deepEqual(sources, before);
+});
+
+test('all three renderers reject malformed ECS tags without changing source data', () => {
+  for (const tags of [null, {}, 'tags', [null], [{ key: '', value: 'x' }], [{ key: 'a', value: 1 }], [{ key: 'a', extra: 'x' }], [{ key: 'a' }, { key: 'a', value: 'x' }]]) {
+    const sources = { api: anchor121('api'), 'scheduler-worker': anchor121('scheduler-worker') }; sources.api.tags = structuredClone(tags);
+    const before = structuredClone(sources), live = { services: Object.entries(sources).map(([role, value]) => ({ serviceName: `schoolpilot-production-${role}`, taskDefinition: value.taskDefinition.taskDefinitionArn, status: 'ACTIVE', desiredCount: 1, runningCount: 1, pendingCount: 0, deployments: [{ status: 'PRIMARY', rolloutState: 'COMPLETED' }] })), failures: [] };
+    assert.throws(() => renderUnused121Pair(sources, live, FALLBACK.application, sourceImage), /TASK_TAGS_INVALID/);
+    assert.throws(() => renderAnchor128Pair(sources, FALLBACK.application, sourceImage), /TASK_TAGS_INVALID/);
+    const fallback = definition('api', 128); fallback.tags = structuredClone(tags);
+    assert.throws(() => renderRequest(fallback, 'api', FALLBACK.application, sourceImage, targetImage, 128), /TASK_TAGS_INVALID/);
+    assert.deepEqual(sources, before);
+  }
+});
+
+test('registration projection equates absent and empty tags while preserving nonempty ordering', () => {
+  const request = renderRequest(definition('api'), 'api', FALLBACK.application, sourceImage, targetImage, 129);
+  delete request.tags; const empty = { ...structuredClone(request), tags: [] };
+  assert.deepEqual(registrationEnvironmentProjection(empty), registrationEnvironmentProjection(request));
+  assert.deepEqual(empty.tags, []);
+  const tagged = { ...structuredClone(request), tags: [{ key: 'z', value: '' }, { key: 'a' }] };
+  assert.deepEqual(registrationEnvironmentProjection(tagged).tags, tagged.tags);
+  assert.notDeepEqual(registrationEnvironmentProjection(tagged), registrationEnvironmentProjection({ ...tagged, tags: [...tagged.tags].reverse() }));
+  assert.throws(() => registrationEnvironmentProjection({ ...request, tags: null }), /TASK_TAGS_INVALID/);
+});
+
+function emptyTagProvider(run) {
+  return async (executable, args, options) => {
+    if (executable === 'aws' && args[1] === 'register-task-definition') {
+      const request = JSON.parse(readFileSync(args[args.indexOf('--cli-input-json') + 1].replace(/^file:\/\//, '')));
+      if (Array.isArray(request.tags) && request.tags.length === 0) return { code: 254, stdout: '', stderr: 'ClientException: Tags cannot be empty' };
+      assert.equal(Object.hasOwn(request, 'tags'), false);
+    }
+    const result = await run(executable, args, options);
+    if (executable === 'aws' && args[1] === 'describe-task-definition') {
+      const value = JSON.parse(result.stdout); value.tags = [];
+      return { ...result, stdout: JSON.stringify(value) };
+    }
+    return result;
+  };
+}
+
+test('fallback registration omits empty tags and accepts exact provider empty readback', async () => {
+  const f = fixture(); try {
+    for (const [role, field] of [['api', 'api'], ['scheduler-worker', 'worker']]) { const value = definition(role); value.tags = []; f.input[field] = f.record(`empty-${role}.json`, value); }
+    f.options.run = emptyTagProvider(f.options.run);
+    const plan = await createPlan(f.input, f.options), result = await registerInactive(plan, f.authorization(plan), f.options);
+    assert.equal(result.registered.length, 2); assert.equal(result.servicesUpdated, 0); assert.equal(result.tasksLaunched, 0);
+    assert.equal(f.commands.filter(value => value.args[1] === 'register-task-definition').length, 2);
+  } finally { f.clean(); }
+});
+
+test('anchor registration omits empty tags and accepts absent source with empty readback', async () => {
+  const f = anchorFixture(); try {
+    for (const [role, field] of [['api', 'api'], ['scheduler-worker', 'worker']]) { const value = anchor121(role); value.tags = []; f.input[field] = f.record(`empty-anchor-${role}.json`, value); }
+    f.behavior.anchorSourceMutation = value => { delete value.tags; };
+    const original = f.options.run;
+    f.options.run = async (executable, args, options) => {
+      if (executable === 'aws' && args[1] === 'register-task-definition') {
+        const request = JSON.parse(readFileSync(args[args.indexOf('--cli-input-json') + 1].replace(/^file:\/\//, '')));
+        if (Array.isArray(request.tags) && request.tags.length === 0) return { code: 254, stdout: '', stderr: 'ClientException: Tags cannot be empty' };
+        assert.equal(Object.hasOwn(request, 'tags'), false);
+      }
+      const result = await original(executable, args, options);
+      if (executable === 'aws' && args[1] === 'describe-task-definition' && args[args.indexOf('--task-definition') + 1].endsWith(':201')) { const value = JSON.parse(result.stdout); value.tags = []; return { ...result, stdout: JSON.stringify(value) }; }
+      return result;
+    };
+    const plan = await createAnchor128Plan(f.input, f.options), result = await registerAnchor128Inactive(plan, f.authorization(plan), f.options);
+    assert.equal(result.registered.length, 2); assert.equal(f.commands.filter(value => value.args[1] === 'register-task-definition').length, 2);
+    assert.equal(f.commands.some(value => ['run-task', 'update-service', 'deregister-task-definition'].includes(value.args[1])), false);
+  } finally { f.clean(); }
+});
