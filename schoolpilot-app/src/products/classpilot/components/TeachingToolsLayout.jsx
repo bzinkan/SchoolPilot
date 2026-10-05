@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from 'react';
+import { Suspense, useLayoutEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -26,5 +26,11 @@ export default function TeachingToolsLayout() {
     };
   }, [client, scopeKey]);
   if (ready !== scopeKey) return <p role="status" className="p-6 text-sm text-muted-foreground">Checking teaching access…</p>;
-  return <AdminNavigationProvider key={scopeKey} scopeKey={scopeKey} shell={false}><Outlet /></AdminNavigationProvider>;
+  // Keep this identity boundary mounted while a teaching page loads lazily.
+  // An outer Suspense fallback would replay its cleanup after child queries mount.
+  return <AdminNavigationProvider key={scopeKey} scopeKey={scopeKey} shell={false}>
+    <Suspense fallback={<p role="status" className="p-6 text-sm text-muted-foreground">Loading Teaching tools…</p>}>
+      <Outlet />
+    </Suspense>
+  </AdminNavigationProvider>;
 }

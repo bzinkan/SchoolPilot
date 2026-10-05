@@ -89,12 +89,15 @@ import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/
 import{FixtureAuth}from'/src/contexts/AuthContext.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';
 import{Toaster}from'/src/components/ui/toaster.jsx';
 import TeachingToolsLayout from'/src/products/classpilot/components/TeachingToolsLayout.jsx';
-import MySettings from'/src/products/classpilot/pages/MySettings.jsx';import'/src/index.css';
+import'/src/index.css';
+// Match AppRoutes: the page loads lazily inside an outer Suspense boundary.
+// A static import cannot expose layout-effect cleanup when that page suspends.
+const MySettings=React.lazy(async()=>{await new Promise(resolve=>setTimeout(resolve,250));return import('/src/products/classpilot/pages/MySettings.jsx');});
 const h=React.createElement,params=new URLSearchParams(location.search),role=params.get('role')||'teacher';
 history.replaceState({idx:0,key:'initial'},'','/classpilot/my-settings');
 function Location(){window.fixtureLocation=useLocation();return null;}
 const value={user:{id:'teacher-a',firstName:'Taylor',lastName:'Woods'},activeSchoolId:'school-a',activeMembership:{schoolId:'school-a',schoolName:'Cedar Grove School',roles:[role],role,status:'active'},loading:false,logout:async()=>{}};
-createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(FixtureAuth.Provider,{value},h(Location),h(Routes,null,h(Route,{element:h(TeachingToolsLayout)},h(Route,{path:'/classpilot/my-settings',element:h(MySettings)}))),h(Toaster))))));
+createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(FixtureAuth.Provider,{value},h(Location),h(React.Suspense,{fallback:h('p',null,'Loading teaching page…')},h(Routes,null,h(Route,{element:h(TeachingToolsLayout)},h(Route,{path:'/classpilot/my-settings',element:h(MySettings)})))),h(Toaster))))));
 `;
 
 let vite;
@@ -153,7 +156,7 @@ function blockLists(role) {
   };
 }
 
-async function open({ role = 'teacher', library = true } = {}) {
+async function open({ role = 'teacher', library = true, empty = false, precise = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const state = { requests: [], errors: [], refuseNext: null };
   page.on('pageerror', (error) => state.errors.push(error.message));
@@ -167,9 +170,11 @@ async function open({ role = 'teacher', library = true } = {}) {
       return route.fulfill({ status: refusal.status, json: { error: refusal.error, code: refusal.code } });
     }
     if (url.pathname === '/api/flight-paths') {
+      if (empty) return route.fulfill({ json: { flightPaths: [], library: [], features: { sharedTeachingResources: library, preciseRestrictionResources: precise } } });
       return route.fulfill({ json: library ? flightPaths(role) : { flightPaths: [{ id: 'own-private', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'] }] } });
     }
     if (url.pathname === '/api/block-lists') {
+      if (empty) return route.fulfill({ json: { blockLists: [], library: [], features: { sharedTeachingResources: library } } });
       return route.fulfill({ json: library ? blockLists(role) : { blockLists: [{ id: 'own-list', name: 'Independent work', blockedDomains: ['games.example.test'] }] } });
     }
     if (/^\/api\/(flight-paths|block-lists)\/[^/]+\/(visibility|official|copy)$/.test(url.pathname)) {
@@ -181,7 +186,8 @@ async function open({ role = 'teacher', library = true } = {}) {
   });
   await page.goto(`${base}/__teaching_library?${new URLSearchParams({ role })}`);
   await page.waitForFunction(() => window.fixtureLocation);
-  await page.getByText('Research destinations', { exact: true }).waitFor();
+  if (empty) await page.getByTestId('card-flight-paths').waitFor();
+  else await page.getByText('Research destinations', { exact: true }).waitFor();
   return { page, state };
 }
 
@@ -189,6 +195,19 @@ const posts = (state) => state.requests.filter((row) => row.method !== 'GET');
 const gets = (state, pathname) => state.requests.filter((row) => row.method === 'GET' && row.path === pathname).length;
 
 describe('Teaching tools School Library', { concurrency: false }, () => {
+  test('keeps the School Library after lazy loading for an administrator with empty lists and precise resources', async () => {
+    const { page, state } = await open({ role: 'admin', empty: true, precise: true });
+    try {
+      await page.getByTestId('card-school-library').waitFor({ timeout: 5_000 });
+      assert.equal(await page.getByText('No shared Flight Paths yet.', { exact: true }).count(), 1);
+      assert.equal(await page.getByText('No shared Block Lists yet.', { exact: true }).count(), 1);
+      assert.ok(gets(state, '/api/flight-paths') > 0);
+      assert.ok(gets(state, '/api/block-lists') > 0);
+      assert.deepEqual(posts(state), []);
+      assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+  });
+
   test('shows the School Library, badges, owner sharing and copies for a teacher, and posts only scoped library actions', async () => {
     const { page, state } = await open();
     try {
