@@ -28,6 +28,16 @@ function registryImage(configDigest, changes = {}) {
   const imageManifest = JSON.stringify({ schemaVersion: 2, mediaType: 'application/vnd.oci.image.manifest.v1+json', config: { digest: configDigest }, layers: [], ...changes });
   return { imageId: { imageDigest: `sha256:${sha256(imageManifest)}` }, imageManifest, imageManifestMediaType: JSON.parse(imageManifest).mediaType, repositoryName: 'schoolpilot-production-api' };
 }
+function registryIndex(configDigest) {
+  const platform = registryImage(configDigest);
+  const imageManifest = JSON.stringify({ schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', manifests: [
+    { mediaType: platform.imageManifestMediaType, digest: platform.imageId.imageDigest, platform: { os: 'linux', architecture: 'amd64' } },
+    { mediaType: platform.imageManifestMediaType, digest: `sha256:${'e'.repeat(64)}`, platform: { os: 'unknown', architecture: 'unknown' },
+      annotations: { 'vnd.docker.reference.type': 'attestation-manifest' } },
+  ] });
+  return { platform, index: { ...platform, imageId: { imageDigest: `sha256:${sha256(imageManifest)}` },
+    imageManifest, imageManifestMediaType: 'application/vnd.oci.image.index.v1+json' } };
+}
 function fixture(t, options = {}) {
   const parent = mkdtempSync(path.join(os.tmpdir(), 'deploy image gate test '));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
@@ -37,8 +47,16 @@ function fixture(t, options = {}) {
   const run = async (executable, args) => {
     commands.push({ executable, args });
     if (executable === 'aws') {
-      const row = registryImage(options.wrongConfig ? `sha256:${'c'.repeat(64)}` : saved.configDigest);
-      return { code: 0, stdout: JSON.stringify({ images: [row], failures: [] }), stderr: '' };
+      const configDigest = options.wrongConfig ? `sha256:${'c'.repeat(64)}` : saved.configDigest;
+      const index = registryIndex(configDigest);
+      const requestedDigest = args[args.indexOf('--image-ids') + 1];
+      const row = options.registryIndex && requestedDigest === `imageDigest=${index.index.imageId.imageDigest}`
+        ? index.index : index.platform;
+      const images = options.registryAliases
+        ? ['commit-sha', 'latest'].map(imageTag => ({ ...row, imageId: { ...row.imageId, imageTag } })) : [row];
+      if (options.aliasChange) Object.assign(images[1], options.aliasChange);
+      return { code: 0, stdout: JSON.stringify({ images: options.emptyRegistry ? [] : images,
+        failures: options.registryFailure ? [{ failureCode: 'ImageNotFound' }] : [] }), stderr: '' };
     }
     assert.equal(executable, 'docker');
     if (args[0] === 'context') {
@@ -83,6 +101,31 @@ test('complete local scan binds Docker index ID, saved config, scanner report, r
   const proof = await verifyPublishedImage({ ...scan, sourceSha, repository: 'schoolpilot-production-api', region: 'us-east-1', digest: row.imageId.imageDigest }, { run: f.run });
   assert.equal(proof.passed, true); assert.equal(proof.configDigest, f.saved.configDigest);
   assert.ok(f.commands.filter(value => value.executable === 'aws').every(value => value.args[0] === 'ecr' && value.args[1] === 'batch-get-image'));
+});
+for (const registryIndexResponse of [false, true]) test(`identical ECR tag aliases preserve exact image verification (index=${registryIndexResponse})`, async t => {
+  const f = fixture(t, { registryAliases: true, registryIndex: registryIndexResponse }), scan = await f.scan();
+  const row = registryIndexResponse ? registryIndex(f.saved.configDigest).index : registryImage(f.saved.configDigest);
+  const proof = await verifyPublishedImage({ ...scan, sourceSha, repository: 'schoolpilot-production-api', region: 'us-east-1', digest: row.imageId.imageDigest }, { run: f.run });
+  assert.equal(proof.passed, true);
+  assert.equal(proof.digest, row.imageId.imageDigest);
+  assert.equal(proof.configDigest, f.saved.configDigest);
+  assert.equal(f.commands.filter(value => value.executable === 'aws').length, registryIndexResponse ? 2 : 1);
+});
+for (const aliasChange of [
+  { repositoryName: 'other-repository' },
+  { imageId: { imageDigest: `sha256:${'f'.repeat(64)}`, imageTag: 'latest' } },
+  { imageManifestMediaType: 'application/vnd.docker.distribution.manifest.v2+json' },
+  { imageManifest: '{}' },
+]) test(`conflicting ECR aliases fail closed: ${Object.keys(aliasChange)[0]}`, async t => {
+  const f = fixture(t, { registryAliases: true, aliasChange }), scan = await f.scan();
+  await assert.rejects(verifyPublishedImage({ ...scan, sourceSha, repository: 'schoolpilot-production-api', region: 'us-east-1',
+    digest: registryImage(f.saved.configDigest).imageId.imageDigest }, { run: f.run }), /Registry/);
+  assert.equal(existsSync(path.join(f.directory, 'registry-proof.json')), false);
+});
+for (const options of [{ emptyRegistry: true }, { registryFailure: true }]) test(`unavailable ECR response still blocks publication: ${Object.keys(options)[0]}`, async t => {
+  const f = fixture(t, options), scan = await f.scan();
+  await assert.rejects(verifyPublishedImage({ ...scan, sourceSha, repository: 'schoolpilot-production-api', region: 'us-east-1',
+    digest: registryImage(f.saved.configDigest).imageId.imageDigest }, { run: f.run }), /Exact registry image unavailable/);
 });
 test('Docker context environment precedence matches the actual build and pins later operations', async t => {
   const f = fixture(t, { context: true }); await f.scan();
