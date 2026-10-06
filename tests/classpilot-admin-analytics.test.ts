@@ -22,6 +22,7 @@ import {
   resolveSchoolLocalPeriod,
 } from "../dist/services/classpilotAdminAnalytics.js";
 import { coerceSchedulerTimestamp } from "../dist/util/schedulerTimestamp.js";
+import { classpilotSessionUsage } from "../dist/schema/classpilot.js";
 
 const TAG = `admin_analytics_${Date.now()}`;
 
@@ -91,6 +92,51 @@ async function insertHeartbeat(student: any, deviceId: string, timestamp: Date, 
     INSERT INTO heartbeats (device_id, student_id, student_email, school_id, active_tab_title, active_tab_url, timestamp)
     VALUES (${deviceId}, ${student.id}, ${student.email}, ${school.id}, 'Lesson', ${url}, ${ts(timestamp)})
   `);
+}
+
+async function createUsageClass(name: string, studentIds: string[] = [studentA.id, studentB.id]) {
+  return inSchool(school.id, async () => {
+    const group = await createGroup({
+      schoolId: school.id,
+      teacherId: teacherA.id,
+      name: `${TAG}_${name}`,
+      groupType: "admin_class",
+      status: "active",
+    });
+    await addGroupStudents(group.id, studentIds);
+    return group;
+  });
+}
+
+async function insertRecordedUsage(
+  group: { id: string; schoolId: string; teacherId: string },
+  localDate: string,
+  students: Array<{ studentId: string; totalSeconds: number }>
+) {
+  await inSchool(group.schoolId, async () => {
+    const session = await createTeachingSession({ groupId: group.id, teacherId: group.teacherId });
+    const startTime = new Date(`${localDate}T15:00:00.000Z`);
+    const durationSeconds = Math.max(4200, ...students.map((student) => student.totalSeconds));
+    const endTime = new Date(startTime.getTime() + durationSeconds * 1000);
+    await db.execute(sql`
+      UPDATE teaching_sessions SET start_time = ${ts(startTime)}, end_time = ${ts(endTime)}
+      WHERE id = ${session.id} AND school_id = ${group.schoolId}
+    `);
+    await db.insert(classpilotSessionUsage).values(students.map((student) => ({
+      schoolId: group.schoolId,
+      teachingSessionId: session.id,
+      groupId: group.id,
+      localDate,
+      ...student,
+    })));
+  });
+}
+
+async function readUsageClass(groupId: string, period = "7d", now = new Date("2026-01-15T18:00:00.000Z")) {
+  const result = await inSchool(school.id, () => getClasspilotAdminAnalyticsByGroup(school.id, period, { now }));
+  const row = result.groups.find((group) => group.groupId === groupId);
+  assert.ok(row, "Recorded class must appear in analytics");
+  return row;
 }
 
 before(async () => {
@@ -259,6 +305,11 @@ describe("ClassPilot admin analytics", () => {
 
     const activeOfficialRows = result.groups.filter((group: any) => [officialA.name, officialB.name].includes(group.groupName));
     assert(activeOfficialRows.every((group: any) => group.totalBrowsingMinutes === 2));
+    for (const row of activeOfficialRows) {
+      assert.equal(row.avgDailyMinutesPerActiveStudent, null);
+      assert.equal(row.activeStudentDayCount, null);
+      assert.equal(row.activeClassDayCount, null);
+    }
   });
 
   it("attributes class usage to session snapshots, not current rosters", async () => {
@@ -272,6 +323,9 @@ describe("ClassPilot admin analytics", () => {
         await insertHeartbeat(studentA, `${TAG}-session-a-${i}`, new Date(Date.UTC(2026, 0, 15, 14, i, 0)), "https://session.edu/a");
         await insertHeartbeat(studentB, `${TAG}-session-b-${i}`, new Date(Date.UTC(2026, 0, 15, 14, i, 0)), "https://session.edu/b");
       }
+      await insertHeartbeat(studentA, `${TAG}-outside-before`, new Date("2026-01-15T13:59:50.000Z"));
+      await insertHeartbeat(studentA, `${TAG}-outside-end`, new Date("2026-01-15T15:00:00.000Z"));
+      await insertHeartbeat(studentA, `${TAG}-outside-after`, new Date("2026-01-15T15:00:10.000Z"));
       await db.execute(sql`
         UPDATE teaching_sessions
         SET start_time = ${ts(new Date("2026-01-15T14:00:00.000Z"))},
@@ -304,9 +358,139 @@ describe("ClassPilot admin analytics", () => {
     assert.equal(result.attributionMode, "session");
     const rowA = result.groups.find((group: any) => group.groupId === officialA.id);
     const rowB = result.groups.find((group: any) => group.groupId === officialB.id);
+    assert.ok(rowA);
     assert.equal(rowA.totalBrowsingMinutes, 1);
     assert.equal(rowA.activeStudentCount, 1);
+    assert.equal(rowA.avgDailyMinutesPerActiveStudent, 1);
+    assert.equal(rowA.activeStudentDayCount, 1);
+    assert.equal(rowA.activeClassDayCount, 1);
     assert.equal(rowB, undefined);
+  });
+
+  it("shows 42 daily minutes for 80h 1m across 23 students and five recorded class days", async () => {
+    const studentIds: string[] = [];
+    for (let i = 0; i < 23; i++) {
+      const student = await inSchool(school.id, () => createStudent({
+        schoolId: school.id,
+        firstName: "Daily",
+        lastName: `Student ${i}`,
+        email: `daily-${i}@${TAG}.example.edu`,
+      }));
+      studentIds.push(student.id);
+    }
+    const group = await createUsageClass("Screenshot", studentIds);
+    const dates = ["2026-01-09", "2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15"];
+    const totalSeconds = (80 * 60 + 1) * 60;
+    const studentDays = studentIds.length * dates.length;
+    for (const [dayIndex, date] of dates.entries()) {
+      await insertRecordedUsage(group, date, studentIds.map((studentId, studentIndex) => ({
+        studentId,
+        totalSeconds: Math.floor(totalSeconds / studentDays)
+          + (dayIndex * studentIds.length + studentIndex < totalSeconds % studentDays ? 1 : 0),
+      })));
+    }
+    const row = await readUsageClass(group.id);
+    assert.equal(row.totalBrowsingMinutes, 4801);
+    assert.equal(row.activeStudentCount, 23);
+    assert.equal(row.avgMinutesPerStudent, 209, "Legacy cumulative average remains available");
+    assert.equal(row.activeStudentDayCount, 115);
+    assert.equal(row.activeClassDayCount, 5);
+    assert.equal(row.avgDailyMinutesPerActiveStudent, 42);
+  });
+
+  it("keeps full 70-minute usage at 70 minutes for Today, Last 7 days, and Last 30 days", async () => {
+    const group = await createUsageClass("Full_Lessons");
+    for (const date of ["2026-01-09", "2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15"]) {
+      await insertRecordedUsage(group, date, [studentA, studentB].map((student) => ({ studentId: student.id, totalSeconds: 4200 })));
+    }
+    for (const period of ["today", "7d", "30d"]) {
+      const row = await readUsageClass(group.id, period);
+      assert.equal(row.avgDailyMinutesPerActiveStudent, 70);
+      assert.equal(row.activeClassDayCount, period === "today" ? 1 : 5);
+      assert.equal(row.activeStudentDayCount, period === "today" ? 2 : 10);
+    }
+  });
+
+  it("weights changing attendance by active student-days and excludes zero-usage days and students", async () => {
+    const group = await createUsageClass("Changing_Attendance");
+    await insertRecordedUsage(group, "2026-01-12", [
+      { studentId: studentA.id, totalSeconds: 4200 },
+      { studentId: studentB.id, totalSeconds: 0 },
+    ]);
+    await insertRecordedUsage(group, "2026-01-14", [
+      { studentId: studentA.id, totalSeconds: 600 },
+      { studentId: studentB.id, totalSeconds: 600 },
+    ]);
+    await insertRecordedUsage(group, "2026-01-15", [
+      { studentId: studentA.id, totalSeconds: 0 },
+      { studentId: studentB.id, totalSeconds: 0 },
+    ]);
+    const row = await readUsageClass(group.id);
+    assert.equal(row.totalBrowsingMinutes, 90);
+    assert.equal(row.activeStudentDayCount, 3);
+    assert.equal(row.activeClassDayCount, 2);
+    assert.equal(row.avgDailyMinutesPerActiveStudent, 30);
+  });
+
+  it("combines repeated sessions into one student-day and rounds only the final daily average", async () => {
+    const group = await createUsageClass("Repeated_Sessions");
+    await insertRecordedUsage(group, "2026-01-14", [{ studentId: studentA.id, totalSeconds: 44 }]);
+    await insertRecordedUsage(group, "2026-01-14", [{ studentId: studentA.id, totalSeconds: 45 }]);
+    await insertRecordedUsage(group, "2026-01-15", [{ studentId: studentA.id, totalSeconds: 90 }]);
+    const row = await readUsageClass(group.id);
+    assert.equal(row.totalBrowsingMinutes, 3);
+    assert.equal(row.activeStudentDayCount, 2);
+    assert.equal(row.activeClassDayCount, 2);
+    assert.equal(row.avgDailyMinutesPerActiveStudent, 1, "179 seconds / 2 / 60 rounds to 1, without first rounding the total");
+  });
+
+  it("returns an unavailable daily average when no student-days have positive usage", async () => {
+    const group = await createUsageClass("No_Usage");
+    await insertRecordedUsage(group, "2026-01-15", [{ studentId: studentA.id, totalSeconds: 0 }]);
+    const row = await readUsageClass(group.id);
+    assert.equal(row.totalBrowsingMinutes, 0);
+    assert.equal(row.activeStudentDayCount, 0);
+    assert.equal(row.activeClassDayCount, 0);
+    assert.equal(row.avgDailyMinutesPerActiveStudent, null);
+  });
+
+  it("uses recorded local dates and inclusive date ranges even near UTC midnight", async () => {
+    const group = await createUsageClass("Local_Date_Ranges");
+    for (const [date, totalSeconds] of [
+      ["2025-12-16", 4200], ["2025-12-17", 1800], ["2026-01-08", 1200],
+      ["2026-01-09", 600], ["2026-01-15", 4200], ["2026-01-16", 4200],
+    ] as const) {
+      await insertRecordedUsage(group, date, [{ studentId: studentA.id, totalSeconds }]);
+    }
+    const now = new Date("2026-01-16T04:30:00.000Z"); // Still January 15 in New York.
+    for (const [period, days, totalMinutes, average] of [
+      ["today", 1, 70, 70], ["7d", 2, 80, 40], ["30d", 4, 130, 33],
+    ] as const) {
+      const row = await readUsageClass(group.id, period, now);
+      assert.equal(row.totalBrowsingMinutes, totalMinutes);
+      assert.equal(row.activeClassDayCount, days);
+      assert.equal(row.activeStudentDayCount, days);
+      assert.equal(row.avgDailyMinutesPerActiveStudent, average);
+    }
+  });
+
+  it("does not impose a fixed 70-minute cap on classes with longer recorded lessons", async () => {
+    const group = await createUsageClass("Longer_Lesson");
+    await insertRecordedUsage(group, "2026-01-15", [{ studentId: studentA.id, totalSeconds: 5400 }]);
+    assert.equal((await readUsageClass(group.id)).avgDailyMinutesPerActiveStudent, 90);
+  });
+
+  it("does not expose another school's usage even with system database access", async () => {
+    const otherSchool = await createSchool({ name: `${TAG}_Other`, domain: `other-${TAG}.example.edu`, slug: `other-${TAG}` });
+    try {
+      const result = await asSystem(() => getClasspilotAdminAnalyticsByGroup(otherSchool.id, "30d", {
+        now: new Date("2026-01-15T18:00:00.000Z"),
+      }));
+      assert.deepEqual(result.groups, []);
+    } finally {
+      // School history is retained by the staff identity lifecycle contract.
+      await db.execute(sql`UPDATE schools SET deleted_at = now(), is_active = false WHERE id = ${otherSchool.id}`);
+    }
   });
 
   it("clamps teacher session duration to the selected school-local period", async () => {
