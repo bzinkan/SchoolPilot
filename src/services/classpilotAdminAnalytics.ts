@@ -28,6 +28,8 @@ type TopDomain = {
 type ClassUsageAccumulator = {
   totalSeconds: number;
   activeStudentIds: Set<string>;
+  activeStudentDayCount: number;
+  activeClassDates: Set<string>;
 };
 
 export { resolveSchoolLocalPeriod };
@@ -293,7 +295,12 @@ async function getOfficialClassRows(schoolId: string) {
 }
 
 function ensureClassUsage(map: Map<string, ClassUsageAccumulator>, groupId: string): ClassUsageAccumulator {
-  const existing = map.get(groupId) || { totalSeconds: 0, activeStudentIds: new Set<string>() };
+  const existing = map.get(groupId) || {
+    totalSeconds: 0,
+    activeStudentIds: new Set<string>(),
+    activeStudentDayCount: 0,
+    activeClassDates: new Set<string>(),
+  };
   map.set(groupId, existing);
   return existing;
 }
@@ -366,6 +373,7 @@ async function getSessionModeUsage(schoolId: string, period: SchoolLocalPeriod) 
     .select({
       groupId: classpilotSessionUsage.groupId,
       studentId: classpilotSessionUsage.studentId,
+      localDate: classpilotSessionUsage.localDate,
       totalSeconds: sql<number>`COALESCE(SUM(${classpilotSessionUsage.totalSeconds}), 0)::int`,
     })
     .from(classpilotSessionUsage)
@@ -379,12 +387,18 @@ async function getSessionModeUsage(schoolId: string, period: SchoolLocalPeriod) 
         sql`${classpilotSessionUsage.localDate} <= ${period.todayLocalDate}`
       )
     )
-    .groupBy(classpilotSessionUsage.groupId, classpilotSessionUsage.studentId);
+    .groupBy(classpilotSessionUsage.groupId, classpilotSessionUsage.studentId, classpilotSessionUsage.localDate);
 
   for (const row of rows) {
     const usage = ensureClassUsage(map, row.groupId);
     usage.totalSeconds += Number(row.totalSeconds) || 0;
     if (row.studentId) usage.activeStudentIds.add(row.studentId);
+    // Each row combines all sessions for one student on one recorded class day.
+    // Zero-usage rows stay out of the daily denominator, but retain legacy totals.
+    if (Number(row.totalSeconds) > 0) {
+      usage.activeStudentDayCount++;
+      usage.activeClassDates.add(row.localDate);
+    }
   }
 
   return map;
@@ -408,7 +422,7 @@ export async function getClasspilotAdminAnalyticsByGroup(
     : classRows;
 
   const groupsList = rowsForResponse.map((row) => {
-    const usage = usageMap.get(row.groupId) || { totalSeconds: 0, activeStudentIds: new Set<string>() };
+    const usage = ensureClassUsage(usageMap, row.groupId);
     const totalMinutes = Math.round(usage.totalSeconds / 60);
     const activeStudentCount = usage.activeStudentIds.size;
     return {
@@ -421,6 +435,11 @@ export async function getClasspilotAdminAnalyticsByGroup(
       activeStudentCount,
       totalBrowsingMinutes: totalMinutes,
       avgMinutesPerStudent: activeStudentCount > 0 ? Math.round(totalMinutes / activeStudentCount) : 0,
+      avgDailyMinutesPerActiveStudent: attributionMode === "session" && usage.activeStudentDayCount > 0
+        ? Math.round(usage.totalSeconds / usage.activeStudentDayCount / 60)
+        : null,
+      activeStudentDayCount: attributionMode === "session" ? usage.activeStudentDayCount : null,
+      activeClassDayCount: attributionMode === "session" ? usage.activeClassDates.size : null,
     };
   });
 

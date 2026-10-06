@@ -59,7 +59,8 @@ export default function AdminAnalytics() {
   const topWebsites = Array.isArray(summaryData?.topWebsites) ? summaryData.topWebsites : [];
   const teachersList = Array.isArray(teacherData?.teachers) ? teacherData.teachers : [];
   const groupsList = Array.isArray(groupData?.groups) ? groupData.groups : [];
-  const classUsageTitle = groupData?.attributionMode === "roster"
+  const isRosterBrowsing = groupData?.attributionMode === "roster";
+  const classUsageTitle = isRosterBrowsing
     ? "Roster Browsing by Official Class"
     : "Class Session Usage by Official Class";
 
@@ -308,7 +309,7 @@ export default function AdminAnalytics() {
       </Card>
 
       {/* Class Usage */}
-      <div className="flex items-center justify-between mt-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-8">
         <h2 className="text-xl font-semibold flex items-center gap-2">
           <Layers className="h-5 w-5" />
           {classUsageTitle}
@@ -327,12 +328,17 @@ export default function AdminAnalytics() {
 
       <Card>
         <CardContent className="pt-6">
+          {!isRosterBrowsing ? (
+            <p className="mb-4 text-sm text-muted-foreground">
+              Daily average includes only students with recorded class usage on each day. Total Usage covers the selected date range.
+            </p>
+          ) : null}
           {groupLoading ? (
             <div className="text-center py-8 text-muted-foreground">Loading class data...</div>
           ) : groupIsError ? (
             <ErrorState title="Could not load class usage" error={groupError} />
           ) : groupsList.length > 0 ? (
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted">
                   <tr>
@@ -340,7 +346,12 @@ export default function AdminAnalytics() {
                     <th className="px-4 py-3 text-left font-medium">Teacher</th>
                     <th className="px-4 py-3 text-left font-medium">Active / Enrolled</th>
                     <th className="px-4 py-3 text-left font-medium">Total Usage</th>
-                    <th className="px-4 py-3 text-left font-medium">Avg / Active Student</th>
+                    {!isRosterBrowsing ? (
+                      <th className="px-4 py-3 text-left font-medium">Days with Usage</th>
+                    ) : null}
+                    <th className="px-4 py-3 text-left font-medium">
+                      {isRosterBrowsing ? "Avg / Active Student" : "Daily Avg / Active Student"}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -359,7 +370,16 @@ export default function AdminAnalytics() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3">{formatMinutes(group.totalBrowsingMinutes)}</td>
-                      <td className="px-4 py-3">{formatMinutes(group.avgMinutesPerStudent)}</td>
+                      {!isRosterBrowsing ? (
+                        <td className="px-4 py-3">{group.activeClassDayCount ?? "—"}</td>
+                      ) : null}
+                      <td className="px-4 py-3">
+                        {isRosterBrowsing
+                          ? formatMinutes(group.avgMinutesPerStudent)
+                          : Number.isFinite(group.avgDailyMinutesPerActiveStudent)
+                            ? formatMinutes(group.avgDailyMinutesPerActiveStudent)
+                            : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
