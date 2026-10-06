@@ -1274,6 +1274,11 @@ worker revisions with exactly one `COMPLETED` deployment each; a circuit-breaker
 rollback to old stable revisions fails closed while the autoscaling hold is
 still active.
 
+When ECR returns multiple tag aliases for a digest, the legacy verifier requires
+every entry to have the requested digest, repository, media type, and identical
+manifest bytes before checking the scanned config digest. Tag aliases do not
+permit a second executable image or bypass the vulnerability scan.
+
 The immutable CI image workflow is intentionally opt-in with the repository
 variable `IMMUTABLE_RELEASE_IMAGE_ENABLED=true`. Leave it disabled until the
 `release-image` GitHub environment, `AWS_RELEASE_IMAGE_ROLE_ARN`, and the

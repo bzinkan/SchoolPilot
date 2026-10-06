@@ -247,9 +247,17 @@ export async function verifyPublishedImage({ receiptPath, receiptSha256, sourceS
   const proof = await validateRegistryManifest(async imageDigest => {
     const result = JSON.parse(await checked(run, 'aws', ['ecr', 'batch-get-image', '--repository-name', repository,
       '--image-ids', `imageDigest=${imageDigest}`, '--region', region, '--output', 'json', '--no-cli-pager']));
-    assert.ok(Array.isArray(result.images) && result.images.length === 1 && (result.failures ?? []).length === 0, 'Exact registry image unavailable');
-    assert.equal(result.images[0].repositoryName, repository);
-    return result.images[0];
+    assert.ok(Array.isArray(result.images) && result.images.length > 0 && (result.failures ?? []).length === 0, 'Exact registry image unavailable');
+    const image = result.images[0];
+    // ECR can return one entry per tag even when queried by an immutable digest.
+    // Admit aliases only when every entry describes exactly the same manifest.
+    for (const alias of result.images) {
+      assert.equal(alias.repositoryName, repository, 'Registry repository mismatch');
+      assert.equal(alias.imageId?.imageDigest, imageDigest, 'Registry response digest mismatch');
+      assert.equal(alias.imageManifestMediaType, image.imageManifestMediaType, 'Registry alias media type mismatch');
+      assert.equal(alias.imageManifest, image.imageManifest, 'Registry alias manifest mismatch');
+    }
+    return image;
   }, digest, receipt.configDigest);
   const result = { schemaVersion: 1, passed: true, sourceSha, receiptSha256, scanner: SCANNER,
     repository, region, ...proof, verifiedAt: new Date().toISOString() };
