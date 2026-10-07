@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "kind": "local_preparation_artifact_observation",
+  "observedAtUtc": "2026-10-07T17:34:01.248Z",
+  "baseline": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+  "preparationSource": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+  "frozenReleaseReference": null,
+  "intendedAudience": {
+    "school": "DeSales",
+    "clients": 133
+  },
+  "backend": {
+    "status": "passed",
+    "schemaVersion": 1,
+    "passed": true,
+    "createdAt": "2026-10-07T17:30:53.713Z",
+    "imageId": "sha256:6040dbd2044b0a2564f4a9ce861b1bf53b87b9af422060eec65984b3a95ee393",
+    "os": "linux",
+    "architecture": "amd64",
+    "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+    "configDigest": "sha256:a35bf3d4a087752d9cd1fadd2f2d4e7965d69f7e2a4a850d8ba0c8e3894e1e79",
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 2,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "archiveSha256": "15e7bcbffa7ca6447b051428bea2c7f2eb62e434ea6820f9aec4229368a4f9af",
+    "reportSha256": "a0afc4f8b7354efb8b08a6492f337a5c7aa1275f4de5f572bd021a4440afeaff",
+    "localOnly": true,
+    "registryVerification": "unknown",
+    "retainedReceiptSha256": "ca2b259b9b282ec2b6b2cfae8dddaafad5420832ace995ff6925eeacb98eea6e",
+    "retainedCustodySha256": "021580b651ce3d5a3e15a27669fec2f9816decf8579d93ab29572cf77275ef1e",
+    "custody": {
+      "scannerExitCode": 0,
+      "scannerFinishedAtUtc": "2026-10-07T17:30:53.294097291Z",
+      "exactOwnedContainer": true,
+      "forcedRemoval": false,
+      "unforcedRemoval": true,
+      "removalExitCode": 0
+    },
+    "blockingFindings": []
+  },
+  "retainedFallback": {
+    "status": "failed",
+    "schemaVersion": 1,
+    "passed": false,
+    "createdAt": "2026-10-07T17:32:59.633Z",
+    "imageId": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+    "os": "linux",
+    "architecture": "amd64",
+    "sourceSha": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "configDigest": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 2,
+      "HIGH": 1,
+      "CRITICAL": 1
+    },
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "archiveSha256": "caf76a165cc1b21af0917a3b4b80fdc969f784add20acc21cef6994cc069ca7c",
+    "reportSha256": "73620e0b5704491e004b04c3f7c1a4f9438240444d850ff6c2fa23c3ea18491f",
+    "localOnly": true,
+    "registryVerification": "unknown",
+    "retainedReceiptSha256": "e9582e3271f4a6d0e6ea4645a52d3ec74ab8ba9892fd7368acd88b924bb89cbf",
+    "retainedCustodySha256": "fe675bec3d7d5d7f8a6d95787410f2dc5144bdbd4de169b9f7c20e129099fc80",
+    "custody": {
+      "scannerExitCode": 0,
+      "scannerFinishedAtUtc": "2026-10-07T17:32:59.197863393Z",
+      "exactOwnedContainer": true,
+      "forcedRemoval": false,
+      "unforcedRemoval": true,
+      "removalExitCode": 0
+    },
+    "blockingFindings": [
+      {
+        "target": "Node.js",
+        "id": "CVE-2026-90711",
+        "severity": "CRITICAL",
+        "package": "proxy-addr",
+        "installed": "2.0.7",
+        "fixed": "2.0.8"
+      },
+      {
+        "target": "Node.js",
+        "id": "GHSA-wq5f-xc86-pv6w",
+        "severity": "HIGH",
+        "package": "sharp",
+        "installed": "0.35.4",
+        "fixed": "0.35.5"
+      }
+    ]
+  },
+  "frontend": {
+    "status": "passed",
+    "archiveSha256": "93d96b5eeeec7e44bada12dcf827efd6c642e08f40e8b08a1542332e0086057d",
+    "fileInventorySha256": "835607afa14045aa0fc31b64180f628ffc87b50b79137098207e322e50366f25",
+    "builtFrom": "1cb459cc19001996ced307ee203c199d9f334929",
+    "sourceEquivalentAt": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+    "equivalenceQualification": "Only tests/classpilot-provider-boundary-audit.test.ts changed between build source and preparation source; frontend and backend image inputs are identical.",
+    "localOnly": true,
+    "deployed": false
+  },
+  "screenshotProcessing": {
+    "schemaVersion": 1,
+    "kind": "image_synthetic_screenshot_processing",
+    "source": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+    "observedAtUtc": "2026-10-07T17:33:06.748Z",
+    "passed": true,
+    "sharpVersion": "0.35.5",
+    "vipsVersion": "8.18.7",
+    "platform": "linux",
+    "architecture": "x64",
+    "fixture": "synthetic-solid-rgb",
+    "jpegBytes": 277,
+    "pngBytes": 110,
+    "width": 24,
+    "height": 16,
+    "productionVerified": false
+  },
+  "applicability": {
+    "releaseReady": false,
+    "preparationSourceIsCurrentMain": false,
+    "requiresMergeAndFreshMainCi": true,
+    "candidateRuntimeEvidence": "pending",
+    "fallbackGate": "failed",
+    "historicalFallbackScanRetained": true,
+    "nextAction": "Review required PRs and resulting main. Rebuild source-labelled final-main artifacts after proven input equivalence. Resolve retained-fallback scan blocker by a separately reviewed decision; do not substitute a fallback or treat historical scan as current pass. Then collect source-bound ordinary recovery and classroom acceptance."
+  },
+  "custodyAccess": "Raw archives, full reports, receipts, cleanup records, wrapper and logs are retained privately in the local preparation workspace. This content-safe summary cannot replace the raw receipts required by release controllers.",
+  "commandsFailedBeforeSuccessfulFallbackScan": [
+    {
+      "stage": "fallback_init",
+      "reason": "Attempt from baseline checkout rejected source mismatch; no mutation."
+    },
+    {
+      "stage": "fallback_init",
+      "reason": "Retained fallback checkout predates scanner helper; missing local module. Rerun used unchanged current-main helper by absolute path after clean-source verification."
+    }
+  ]
+}
