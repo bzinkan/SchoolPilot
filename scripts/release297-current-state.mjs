@@ -144,8 +144,14 @@ export function validateIndex(index, root = ROOT) {
     const gate = index.gates.find(entry => entry.id === 'current-main-preparation-ci');
     assert.ok(gate, 'CURRENT_MAIN_CI_GATE_REQUIRED');
     assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [ci.status, 'current_baseline', ci.source, ['reconciliation']], 'CURRENT_MAIN_CI_GATE_CHANGED');
-    assert.deepEqual([reconciliation.recordedAsOf.kind, reconciliation.recordedAsOf.closingPullRequest, reconciliation.recordedAsOf.closingMergeSha, reconciliation.recordedAsOf.resultingMainCiStatus], ['before_closing_pr_merge', 619, null, 'pending'], 'FUTURE_CLOSING_MERGE_REJECTED');
-    assert.deepEqual(reconciliation.recordedAsOf.pendingMergePullRequests, [619, 620], 'PENDING_SOURCE_MERGE_SCOPE_CHANGED');
+    const afterClosing = reconciliation.recordedAsOf.kind === 'after_closing_pr_merge';
+    if (afterClosing) {
+      assert.deepEqual([reconciliation.recordedAsOf.closingPullRequest, reconciliation.recordedAsOf.resultingMainCiStatus, reconciliation.recordedAsOf.pendingMergePullRequests], [619, ci.status, []], 'CLOSING_OBSERVATION_SCOPE_CHANGED');
+      assert.match(reconciliation.recordedAsOf.closingMergeSha ?? '', sha, 'CLOSING_MERGE_SOURCE_REQUIRED');
+    } else {
+      assert.deepEqual([reconciliation.recordedAsOf.kind, reconciliation.recordedAsOf.closingPullRequest, reconciliation.recordedAsOf.closingMergeSha, reconciliation.recordedAsOf.resultingMainCiStatus], ['before_closing_pr_merge', 619, null, 'pending'], 'FUTURE_CLOSING_MERGE_REJECTED');
+      assert.deepEqual(reconciliation.recordedAsOf.pendingMergePullRequests, [619, 620], 'PENDING_SOURCE_MERGE_SCOPE_CHANGED');
+    }
     assert.deepEqual(reconciliation.preparationPullRequests.map(pr => pr.number).sort((a, b) => a - b), [616, 617, 619, 620], 'PREPARATION_PR_SCOPE_CHANGED');
     for (const pr of reconciliation.preparationPullRequests) {
       assert.ok(['OPEN', 'MERGED'].includes(pr.state), 'PREPARATION_PR_STATE_INVALID');
@@ -156,9 +162,16 @@ export function validateIndex(index, root = ROOT) {
       } else assert.deepEqual([pr.mergeCommit, pr.mergedAt], [null, null], 'PENDING_PR_CANNOT_BE_MERGED');
     }
     const closing = reconciliation.preparationPullRequests.find(pr => pr.number === 619);
-    assert.deepEqual([closing.state, closing.mergeCommit, closing.mergedAt], ['OPEN', null, null], 'FUTURE_CLOSING_MERGE_REJECTED');
     const tooling = reconciliation.preparationPullRequests.find(pr => pr.number === 620);
-    assert.deepEqual([tooling.state, tooling.mergeCommit, tooling.mergedAt], ['OPEN', null, null], 'FUTURE_TOOLING_MERGE_REJECTED');
+    if (afterClosing) {
+      assert.ok(reconciliation.preparationPullRequests.every(pr => pr.state === 'MERGED'), 'CLOSING_MERGES_REQUIRED');
+      assert.equal(closing.mergeCommit.oid, reconciliation.recordedAsOf.closingMergeSha, 'CLOSING_MERGE_OBSERVATION_CHANGED');
+      assert.equal(reconciliation.schoolpilotRemoteMain, closing.mergeCommit.oid, 'CLOSING_MAIN_SOURCE_CHANGED');
+      assert.ok(tooling.mergeCommit.oid !== closing.mergeCommit.oid, 'DISTINCT_TOOLING_MERGE_REQUIRED');
+    } else {
+      assert.deepEqual([closing.state, closing.mergeCommit, closing.mergedAt], ['OPEN', null, null], 'FUTURE_CLOSING_MERGE_REJECTED');
+      assert.deepEqual([tooling.state, tooling.mergeCommit, tooling.mergedAt], ['OPEN', null, null], 'FUTURE_TOOLING_MERGE_REJECTED');
+    }
   }
   for (const entry of index.inclusionMatrix) {
     const observed = entry.repository === 'SchoolPilot' ? reconciliation.schoolpilotPullRequests.find(pr => pr.number === entry.number) : reconciliation.classpilotPullRequest;
@@ -228,6 +241,20 @@ export function validateIndex(index, root = ROOT) {
     assert.ok(gate, 'AUTHORITY_GATE_REQUIRED');
     assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [status, applicability, source, evidence], 'AUTHORITY_GATE_APPLICABILITY_CHANGED');
   }
+  if (index.evidence.successorSourceReview) {
+    const review = receipt('successorSourceReview');
+    assert.deepEqual([review.schemaVersion, review.kind, review.status, review.passed, review.baseSource, review.successorSource, review.referencePatchSource], [1, 'release297_successor_source_delta_independent_review', 'passed', true, 'c578120d980d4c2405a72f4f40b2d3c29a07e20b', 'd75fc1c48d0a3918857508d3965904c69023a153', '86ea5c5ca5f76406300f5170d2ecb3e3554baeb3'], 'SUCCESSOR_SOURCE_REVIEW_CHANGED');
+    assert.deepEqual(review.changedPaths, ['package-lock.json'], 'SUCCESSOR_SOURCE_SCOPE_BROADENED');
+    assert.equal(review.changedPackageCount, 28, 'SUCCESSOR_DEPENDENCY_DELTA_CHANGED');
+    assert.deepEqual(review.dependencyVersions, { 'proxy-addr': '2.0.8', sharp: '0.35.5', sharpNative: '0.35.5', sharpLibvips: '1.3.4' }, 'SUCCESSOR_PATCH_VERSIONS_CHANGED');
+    assert.deepEqual([review.parentIsExactC578, review.cleanSourceVerified, review.referencePackageRecordsMatchExactly, review.unrelatedLockfileRecordsAndMetadataUnchanged, review.entireCurrentMainLockfileCopied], [true, true, true, true, false], 'SUCCESSOR_LOCKFILE_REVIEW_INCOMPLETE');
+    assert.ok(Object.values(review.unchangedInputs).every(value => value === true), 'SUCCESSOR_APPLICATION_INPUTS_CHANGED');
+    assert.deepEqual([review.releaseReady, review.operationalAuthorization, review.humanReplacementSelectionRecorded], [false, false, false], 'SUCCESSOR_SOURCE_REVIEW_IS_NOT_SELECTION');
+    assert.ok(stamp(review.observedAt) && Date.parse(review.observedAt) <= Date.parse(index.observedAtUtc), 'SUCCESSOR_SOURCE_OBSERVATION_TIME_REQUIRED');
+    const gate = index.gates.find(entry => entry.id === 'fallback-successor-source');
+    assert.ok(gate, 'SUCCESSOR_SOURCE_GATE_REQUIRED');
+    assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', 'preparation_only', review.successorSource, ['successorSourceReview']], 'SUCCESSOR_SOURCE_GATE_CHANGED');
+  }
   return index;
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
@@ -236,7 +263,10 @@ export function renderStatus(index) {
   const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
   if (index.gates.find(entry => entry.id === 'fallback-scan-current')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**', '');
   for (const [repository, source] of Object.entries(index.sources)) lines.push(`| ${repository} | ${short(source.remoteMainObserved)} | ${short(source.testedHistorical)} | ${short(source.frozenApplicationReference)} |`);
-  if (index.evidence.mergeRequest) lines.push('', 'The operator requested source merges **#616, #617, #619 and #620** after their preparation checks. Every release-operation authorization flag remains false. The observed main is a dated snapshot; [live main checks](https://github.com/bzinkan/SchoolPilot/actions?query=branch%3Amain) and the closing merge/resulting-main receipt must be verified separately.');
+  if (index.evidence.mergeRequest) {
+    const merged = index.gates.find(entry => entry.id === 'preparation-merges')?.status === 'passed';
+    lines.push('', `${merged ? 'All four authorized source preparation PRs **#616, #617, #619 and #620** are merged, with exact resulting-main push checks recorded.' : 'The operator requested source merges **#616, #617, #619 and #620** after their preparation checks.'} Every release-operation authorization flag remains false. The observed main is a dated snapshot; refresh [live main checks](https://github.com/bzinkan/SchoolPilot/actions?query=branch%3Amain) before later release operations.`);
+  }
   if (index.evidence.operatorStoreVersion) lines.push('', '**Store version 2.9.7 is operator-reported live.** Uploaded ZIP identity and pending submissions remain unknown; managed adoption remains pending and managed validation `waived_not_passed`. The unchanged candidate does not require another upload.');
   lines.push('', '| Stage | Status | Applicability | Next action |', '|---|---|---|---|');
   for (const entry of index.stages) lines.push(`| ${cell(entry.label)} | ${entry.status} | ${cell(entry.applicability)} | ${cell(entry.nextAction)} |`);

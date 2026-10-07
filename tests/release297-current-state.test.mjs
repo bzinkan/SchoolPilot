@@ -33,7 +33,7 @@ function advancedObservation(candidate, read, write) {
   current.schoolpilotRemoteMain = source;
   current.currentMainCi = { source, event: 'push', branch: 'main', status: 'pending', checks: [], workflowRuns: {} };
   current.recordedAsOf = { kind: 'before_closing_pr_merge', closingPullRequest: 619, closingMergeSha: null, pendingMergePullRequests: [619, 620], resultingMainCiStatus: 'pending' };
-  current.preparationPullRequests ??= [616, 617, 619, 620].map(number => ({ number, state: 'OPEN', headRefOid: candidate.sources.schoolpilot.planningReference, mergeCommit: null, mergedAt: null }));
+  current.preparationPullRequests = [616, 617, 619, 620].map(number => ({ number, state: 'OPEN', headRefOid: candidate.sources.schoolpilot.planningReference, mergeCommit: null, mergedAt: null }));
   candidate.sources.schoolpilot.remoteMainObserved = source;
   for (const pr of candidate.inclusionMatrix) if (pr.repository === 'SchoolPilot') pr.includedInSource = source;
   const gate = candidate.gates.find(entry => entry.id === 'current-main-preparation-ci');
@@ -106,6 +106,33 @@ test('PR workflow evidence and invented closing merge cannot satisfy exact-push 
     ci.status = 'pending'; current.recordedAsOf.closingMergeSha = 'f'.repeat(40); write('reconciliation', current);
     assert.throws(() => validateIndex(candidate, fixture), /FUTURE_CLOSING_MERGE_REJECTED/);
   });
+});
+
+test('post-closing observations require every actual merge and the exact closing main', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = read('reconciliation');
+    assert.equal(current.recordedAsOf.kind, 'after_closing_pr_merge');
+    assert.equal(current.currentMainCi.status, 'passed');
+    validateIndex(candidate, fixture);
+    current.recordedAsOf.closingMergeSha = 'f'.repeat(40); write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CLOSING_MERGE_OBSERVATION_CHANGED/);
+  });
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = read('reconciliation'), tooling = current.preparationPullRequests.find(pr => pr.number === 620);
+    Object.assign(tooling, { state: 'OPEN', mergeCommit: null, mergedAt: null }); write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CLOSING_MERGES_REQUIRED/);
+  });
+});
+
+test('dependency-only successor source evidence cannot broaden the patch or select an artifact', () => {
+  for (const [field, value, error] of [['changedPaths', ['package-lock.json', 'src/app.ts'], 'SUCCESSOR_SOURCE_SCOPE_BROADENED'], ['entireCurrentMainLockfileCopied', true, 'SUCCESSOR_LOCKFILE_REVIEW_INCOMPLETE'], ['humanReplacementSelectionRecorded', true, 'SUCCESSOR_SOURCE_REVIEW_IS_NOT_SELECTION']]) {
+    receiptFixture((candidate, fixture, read, write) => {
+      const review = read('successorSourceReview'); review[field] = value; write('successorSourceReview', review);
+      assert.throws(() => validateIndex(candidate, fixture), new RegExp(error));
+    });
+  }
+  const candidate = index(); candidate.gates.find(entry => entry.id === 'fallback-successor-source').applicability = 'current_baseline';
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_SOURCE_GATE_CHANGED/);
 });
 test('new Usage activation, absent daily mode and unknown evidence fail validation', () => {
   let candidate = index(); candidate.usageModes.CLASSPILOT_USAGE_ROLLUP_MODE.requiredValue = 'on';

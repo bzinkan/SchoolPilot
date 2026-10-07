@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-07T21:29:13.642Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-07T23:37:27.239Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
 
@@ -13,10 +13,10 @@ Observed **2026-10-07T21:29:13.642Z**. The [machine-readable index](releases/rel
 
 | Source | Current main observed | Historical tested application | Frozen successor |
 |---|---|---|---|
-| schoolpilot | `eecf85f4` | `ddc5996b` | pending |
+| schoolpilot | `a5161eb1` | `ddc5996b` | pending |
 | classpilot | `03a9c363` | `065be165` | pending |
 
-The operator requested source merges **#616, #617, #619 and #620** after their preparation checks. Every release-operation authorization flag remains false. The observed main is a dated snapshot; [live main checks](https://github.com/bzinkan/SchoolPilot/actions?query=branch%3Amain) and the closing merge/resulting-main receipt must be verified separately.
+All four authorized source preparation PRs **#616, #617, #619 and #620** are merged, with exact resulting-main push checks recorded. Every release-operation authorization flag remains false. The observed main is a dated snapshot; refresh [live main checks](https://github.com/bzinkan/SchoolPilot/actions?query=branch%3Amain) before later release operations.
 
 **Store version 2.9.7 is operator-reported live.** Uploaded ZIP identity and pending submissions remain unknown; managed adoption remains pending and managed validation `waived_not_passed`. The unchanged candidate does not require another upload.
 
@@ -41,8 +41,8 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Gate | Status | Applicability/source | Evidence and next action |
 |---|---|---|---|
 | Original baseline exact-main CI | passed | historical; `56df7a4f` | [reconciliationHistorical](releases/release297/source-reconciliation-20261007.json). Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass. |
-| Dated observed main push preparation CI | pending | current_baseline; `eecf85f4` | [reconciliation](releases/release297/source-reconciliation-20261007T212913Z.json). Verify live main check links and retain fresh resulting-main evidence after the closing merges. |
-| Remaining scoped preparation merges | pending | preparation_only; pending | [reconciliation](releases/release297/source-reconciliation-20261007T212913Z.json). Complete applicable checks and remaining authorized source merges; verify their resulting main separately. |
+| Dated observed main push preparation CI | passed | current_baseline; `a5161eb1` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Use this exact source for successor recovery preparation; verify any later application/tooling main and its applicable checks before release operations. |
+| Remaining scoped preparation merges | passed | current_baseline; `a5161eb1` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Use this exact source for successor recovery preparation; verify any later application/tooling main and its applicable checks before release operations. |
 | Operator request for source merges 616/617/619/620 | passed | policy_definition; pending | [mergeRequest](releases/release297/operator-merge-request-20261007.json). Complete and review the named PRs; publication, deployment, activation and settings need separate authorization. |
 | Local baseline build, unit and governance preparation | passed | preparation_only; `56df7a4f` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review skips/warnings and refresh applicable checks on final source; these local checks do not establish runtime acceptance. |
 | Original full Windows infrastructure lane | failed | preparation_only; `56df7a4f` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Retain this attempt. Merge the reviewed tooling fix and require a fresh complete applicable infrastructure lane before closing this preparation dependency. |
@@ -74,10 +74,11 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Live DeSales acceptance and adoption | pending | candidate_pending; pending | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Verify already-open pages, sign-in, IXL/precise/mixed paths, Focus/Attention, actions, messaging, reconnect and relevant PassPilot/GoPilot workflows. |
 | Fresh canonical extension package verification | passed | current_baseline; `03a9c363` | [extensionFresh](releases/release297/extension-verification-20261007.json), [extensionMerged](release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json). Retain unchanged version 2.9.7; the operator reports it live, so no repeat upload is needed. Uploaded ZIP identity and managed adoption remain unverified. |
 | Raw packaged text versus Git blobs | failed | current_baseline; `03a9c363` | [extensionFresh](releases/release297/extension-verification-20261007.json). Preserve raw failure and newline qualification; never claim byte equality with LF Git blobs or reclassify this failure. |
-| Observed published PR #616 CI | passed | preparation_only; `5cb78dfa` | [reconciliation](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve exact-head PR history separately from current/final main checks. |
-| Observed published PR #617 CI | passed | preparation_only; `3b7fe064` | [reconciliation](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve exact-head PR history separately from current/final main checks. |
-| Observed published PR #619 CI | failed | preparation_only; `9122b61b` | [reconciliation](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve the cancelled older-head attempt; validate the completed closing commit before merge and retain resulting-main CI externally. |
-| Observed published PR #620 CI | pending | preparation_only; `f9bf0f49` | [reconciliation](releases/release297/source-reconciliation-20261007T212913Z.json). Wait for this exact published head to complete applicable PR checks before merge. |
+| Observed published PR #616 CI | passed | preparation_only; `5cb78dfa` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Preserve exact-head PR history separately from current/final main checks. |
+| Observed published PR #617 CI | passed | preparation_only; `3b7fe064` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Preserve exact-head PR history separately from current/final main checks. |
+| Observed published PR #619 CI | failed | preparation_only; `9122b61b` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Preserve the cancelled older-head attempt; validate the completed closing commit before merge and retain resulting-main CI externally. |
+| Observed published PR #620 CI | pending | preparation_only; `f9bf0f49` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Wait for this exact published head to complete applicable PR checks before merge. |
+| Dependency-only successor source review | passed | preparation_only; `d75fc1c4` | [successorSourceReview](release-evidence/release297-successor-20261007/source-delta-independent-review.json). Complete exact-image scan, native processing and ordinary recovery; source review does not approve fallback selection. |
 
 ### Inclusion and evidence invalidation
 
@@ -93,9 +94,11 @@ Every listed merge is included in the observed main. CI and historical receipts 
 | [SchoolPilot #613](https://github.com/bzinkan/SchoolPilot/pull/613) `ae41d885` | Simplify ClassPilot usage analytics report | frontend | Backend/extension evidence only if source equivalence is proven. | Analytics browser scenarios and frontend artifact/build. |
 | [SchoolPilot #614](https://github.com/bzinkan/SchoolPilot/pull/614) `a14759a2` | Restore Focus and Bring Forward availability on the dashboard | backend, frontend | Existing Focus status/enforcement stays implemented; extension source is unchanged. | Focus/Bring Forward capability availability, current assignment, hydration/recipient regression and refreshed native acceptance. |
 | [SchoolPilot #615](https://github.com/bzinkan/SchoolPilot/pull/615) `56df7a4f` | Fix hourly activity chart sizing and readable values | frontend | Backend/extension evidence only if source equivalence is proven. | Hourly activity sizing, labels/readable values and final browser/build gates. |
-| [SchoolPilot #616](https://github.com/bzinkan/SchoolPilot/pull/616) `d35e3821` | Reconcile release297 current state and preserve dated evidence | release documentation, release tooling | Immutable historical measurements and failures remain source-bound; no changed application acceptance is implied by documentation preparation. | Generated index/checklist validation, source reconciliation and fresh final-main checks after the closing merges. |
-| [SchoolPilot #617](https://github.com/bzinkan/SchoolPilot/pull/617) `eecf85f4` | Correct ClassPilot AI disclosures and record provider-boundary audit | backend governance inputs, frontend public copy | Synthetic boundary fixtures and the claim-to-implementation table explain current behavior; prior runtime acceptance remains source-bound. | Freeze only after these merged public/governance inputs; verify final application inventories, exact artifacts and applicable regression/native acceptance. |
+| [SchoolPilot #616](https://github.com/bzinkan/SchoolPilot/pull/616) `d35e3821` | Release index, generated checklist and historical evidence reconciliation | release-tooling, release-evidence | Retained immutable historical records; no application acceptance is transferred. | Refresh exact candidate evidence and resulting-main CI for applicable later changes. |
+| [SchoolPilot #617](https://github.com/bzinkan/SchoolPilot/pull/617) `eecf85f4` | Correct AI/privacy claims and add bounded provider-boundary audit | backend-governance, frontend-public-copy | Source-only copy and audit evidence; issue #618 remains a separate applicability decision. | Fresh candidate image, scan and native acceptance; governance documents are image inputs. |
 | [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) `03a9c363` | Prepare consolidated ClassPilot 2.9.7 release candidate | extension | Fresh canonical package verification passes all 24 files against clean source with identical merged extension tree; raw Git differences remain explicitly CRLF-only. | Reverify package/tree on source drift; fresh Store/pending submissions and actual installed-client capability/adoption checks remain pending. |
+| [SchoolPilot #619](https://github.com/bzinkan/SchoolPilot/pull/619) `a5161eb1` | Operator packet, source-specific status and protection proposal | release-tooling, release-evidence | Preparation-only records and reviewed settings proposal; no operational approval. | Refresh source/evidence binding and applicable CI after any tool or source change. |
+| [SchoolPilot #620](https://github.com/bzinkan/SchoolPilot/pull/620) `03fbd0fc` | Version 2 binding controller and bounded CI installation correction | release-tooling, ci | Reviewed tooling regressions and passing PR/main CI; v2 profile remains pending. | Refresh tool/binding hashes and exact-main CI; native candidate acceptance remains required. |
 
 ### Artifact selection
 

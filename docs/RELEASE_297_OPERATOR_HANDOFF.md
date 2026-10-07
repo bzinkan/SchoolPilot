@@ -4,6 +4,13 @@ The bounded audience is DeSales's 133 clients. The release remains gated: the
 fresh scan of the exact retained C578 fallback failed. Preserve that image and
 the failure; another image cannot replace it under the existing contract.
 
+The operator subsequently requested preparation of one dependency-only C578
+security successor. Use the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md)
+and the index's separate successor gates for that work. Preparation does not
+select the replacement artifact or clear the original failed scan. Schema 3
+keeps publication and registration blocked while original release acceptance
+and exact-artifact selection remain pending.
+
 Use the [current-release index](releases/release297/current-release.json) as the
 single current-status authority and the generated section of the
 [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for its candidate matrix,
