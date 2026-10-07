@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 2,
+  "kind": "reviewed_release_source_binding",
+  "id": "release-297-current-school-v2",
+  "status": "pending",
+  "applicationSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+  "reviewedBaselineSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "imageInputs": [
+    "src",
+    "package*.json",
+    "tsconfig.json",
+    "drizzle.config.ts",
+    "Dockerfile",
+    ".dockerignore",
+    "config",
+    "docs/soc2"
+  ],
+  "inventory": {
+    "sha256": "037cca482cea87d69acb358f8087faa22a24b61dd267ceb63f938076f7d446e3",
+    "fileCount": 563
+  },
+  "fallback": {
+    "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "localIndex": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+    "config": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+    "platform": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1"
+  },
+  "schema": {
+    "staffIdentityContract": "deferred",
+    "baselineMigrations": 43,
+    "candidateMigrations": 53,
+    "fallbackDeclaredMigrations": 52,
+    "retainedCompletedMigrations": 53,
+    "admissionCounts": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ]
+  },
+  "scope": {
+    "school": "St. Francis DeSales",
+    "clients": 133,
+    "usageRollupMode": "off",
+    "digitalUsageMode": "off",
+    "managedChromebookGate": "waived_not_passed",
+    "liveAcceptanceMinutes": 30
+  },
+  "policy": {
+    "path": "docs/release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json",
+    "sha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95"
+  },
+  "sourceApplicability": {
+    "status": "pending",
+    "path": null,
+    "sha256": null
+  },
+  "evidence": {
+    "currentSchoolAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "classroomAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "normalLoadAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "headroomAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "ordinaryRecovery": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "restrictedRestoration": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "screenshotRuntime": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    }
+  },
+  "operationalAuthorization": false,
+  "notes": [
+    "The approved numeric criteria remain historical policy; applicability to the changed application awaits an explicit owner decision.",
+    "No fresh acceptance, recovery, native screenshot or restricted restoration is claimed.",
+    "A reviewed follow-up must seal fresh source-bound receipts; a caller cannot supply a replacement binding file.",
+    "This record does not authorize publication, registration, deployment, Store upload or activation.",
+    "Fresh pinned-scanner replay of the exact retained C578 image failed on October 7, 2026 (Critical proxy-addr CVE-2026-90711; High sharp GHSA-wq5f-xc86-pv6w). The exact fallback identity and zero High/Critical scan guard remain unchanged; no approved binding can be sealed while this blocker remains.",
+    "The applicationSource and inventories record main 56df7a4 only as a provisional reference, not the future tested candidate. Final freeze, source-specific native runner preparation, owner applicability and fresh evidence remain pending; no native acceptance campaigns were run for this repair."
+  ],
+  "frontendInputs": [
+    "schoolpilot-app"
+  ],
+  "frontendInventory": {
+    "sha256": "357c940820f08653cc2626d994fea99ef4d4e9b100994b3422f2c168460762e6",
+    "fileCount": 633
+  },
+  "extension": {
+    "version": "2.9.7",
+    "id": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "source": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "mergedSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+    "tree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "zipBytes": 376052
+  },
+  "testedApplicationImage": null,
+  "blockers": [
+    "final-candidate-source-not-frozen",
+    "owner-source-applicability-pending",
+    "fresh-native-acceptance-and-ordinary53-recovery-pending",
+    "exact-c578-fresh-scan-failed"
+  ],
+  "sourceStatus": "provisional-main-inventory-not-acceptance",
+  "testedApplicationConfig": null,
+  "fallbackScan": {
+    "status": "failed",
+    "scan": null,
+    "report": null,
+    "cleanup": null
+  }
+}

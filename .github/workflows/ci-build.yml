@@ -94,7 +94,11 @@ jobs:
       - name: Use npm 11 for the dependency audit
         run: npm install -g npm@11 && npm --version
 
+      - name: Bound Ubuntu dependency downloads
+        run: sudo "$(command -v node)" scripts/configure-ci-apt.mjs
+
       - name: Install bounded PDF processing runtime
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y poppler-utils util-linux fonts-liberation
@@ -243,7 +247,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Bound Ubuntu dependency downloads
+        run: sudo "$(command -v node)" scripts/configure-ci-apt.mjs
+
       - name: Install bounded PDF processing runtime
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y poppler-utils util-linux fonts-liberation
@@ -277,6 +285,7 @@ jobs:
           sparse-checkout: extension
 
       - name: Install preview browser dependencies
+        timeout-minutes: 10
         run: |
           npm ci --prefix schoolpilot-app
           cd schoolpilot-app
@@ -349,7 +358,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Bound Ubuntu dependency downloads
+        run: sudo "$(command -v node)" scripts/configure-ci-apt.mjs
+
       - name: Install bounded PDF processing runtime
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y poppler-utils util-linux fonts-liberation
@@ -629,7 +642,11 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run build
 
+      - name: Bound Ubuntu dependency downloads
+        run: sudo "$(command -v node)" scripts/configure-ci-apt.mjs
+
       - name: Install Chromium for production-preview smoke
+        timeout-minutes: 10
         working-directory: schoolpilot-app
         run: npx playwright install --with-deps chromium
 
@@ -775,7 +792,11 @@ jobs:
         working-directory: schoolpilot-app
         run: npm ci
 
+      - name: Bound Ubuntu dependency downloads
+        run: sudo "$(command -v node)" scripts/configure-ci-apt.mjs
+
       - name: Install Chromium for release-focused browser gates
+        timeout-minutes: 10
         working-directory: schoolpilot-app
         run: npx playwright install --with-deps chromium
 

@@ -10,7 +10,7 @@ import {createOwnedRole,startOwnedRole,collectExitReceipt,cleanupOwnedRoles} fro
 import {createDockerHostAdapter} from './docker-host-adapter.mjs';
 import {rolePlan} from './role-plan.mjs';
 import {makeRoleEnvironment,inheritWorkloadContract} from './role-environment.mjs';
-import {patchCoordinator} from './patch-coordinator.mjs';
+import {hash,patchCoordinator} from './patch-coordinator.mjs';
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import {join} from 'node:path';
@@ -110,6 +110,19 @@ test('generated coordinator preserves canonical full workload constants and fals
  assert.ok(patched.text.includes("generator.rpc('phase'"));assert.ok(patched.text.includes('metrics.capacityAccepted = false;'));
  const {RELEASE_ENABLED_PROFILE}=await import('../release-enabled-profile.mjs');const {OPEN_LOOP_HEARTBEATS}=await import('../open-loop-heartbeats.mjs');
  const contract=inheritWorkloadContract(RELEASE_ENABLED_PROFILE,OPEN_LOOP_HEARTBEATS);assert.equal(contract.httpOffering.maxInFlight,1000);assert.equal(contract.httpOffering.durationMs*contract.httpOffering.requestsPerSecond/1000,6000);assert.equal(contract.reportOffers.total,64);assert.equal(contract.fullWorkerAcceptanceMs,48000);
+});
+
+test('LF and CRLF coordinator overlays preserve equivalent code and distinct exact-byte receipts',()=>{
+ const canonical=readFileSync(new URL('../release-enabled-scale.mjs',import.meta.url),'utf8').replaceAll('\r\n','\n');
+ const windows=canonical.replaceAll('\n','\r\n'),lf=patchCoordinator(canonical),crlf=patchCoordinator(windows);
+ assert.equal(crlf.text.replaceAll('\r\n','\n'),lf.text);
+ assert.equal(lf.receipt.inputSha256,hash(canonical));assert.equal(crlf.receipt.inputSha256,hash(windows));
+ assert.notEqual(lf.receipt.inputSha256,crlf.receipt.inputSha256);
+ assert.equal(lf.receipt.outputSha256,hash(lf.text));assert.equal(crlf.receipt.outputSha256,hash(crlf.text));
+ assert.notEqual(lf.receipt.outputSha256,crlf.receipt.outputSha256);
+ assert.equal(crlf.receipt.workloadChanged,false);assert.equal(crlf.receipt.applicationModulesChanged,0);
+ // Line endings alone are tolerated; a changed structural anchor still fails.
+ assert.throws(()=>patchCoordinator(windows.replace('  const snapshot =','  const changedSnapshot =')));
 });
 
 test('control credentials never overlap shared evidence on Windows paths or mixed separators',()=>{

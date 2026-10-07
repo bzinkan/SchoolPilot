@@ -1,5 +1,10 @@
 # Release image and unused121 anchor preparation
 
+This page describes the historical version-1 DDC path. Changed application
+candidates require the additive [version-2 source binding](RELEASE_SOURCE_BINDING_V2.md).
+Its committed profile is pending and blocks all v2 operations; no fresh native
+acceptance or release authorization is implied by the tooling repair.
+
 `scripts/prepare-release-artifacts.mjs` provides two separately authorized
 artifact operations. `PublishImage` publishes a previously built and scanned
 image. `RegisterUnused121` registers an API/worker pair from the current live121
