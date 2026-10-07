@@ -70,16 +70,15 @@ test("class analytics shows daily averages across date selectors without cumulat
       ] } });
     }
     if (url.pathname.endsWith("/admin/analytics/summary")) return route.fulfill({ json: { summary: {}, topWebsites: [], hourlyActivity: [] } });
-    if (url.pathname.endsWith("/admin/analytics/by-teacher")) return route.fulfill({ json: { teachers: [] } });
     return route.fulfill({ json: {} });
   });
   const url = `http://127.0.0.1:${vite.httpServer.address().port}/__analytics-test`;
   await page.goto(url);
   await page.getByRole("cell", { name: "42m", exact: true }).waitFor();
   const table = page.locator("table").last();
-  assert.deepEqual(await table.getByRole("columnheader").allTextContents(), ["Class", "Teacher", "Active / Enrolled", "Total Usage", "Days with Usage", "Daily Avg / Active Student"]);
+  assert.deepEqual(await table.getByRole("columnheader").allTextContents(), ["Class", "Teacher", "Total Usage", "Days with Usage", "Daily Avg / Active Student"]);
   const mathRow = table.getByRole("row").filter({ hasText: "Grade 5 Math" });
-  assert.deepEqual((await mathRow.getByRole("cell").allTextContents()).slice(-3), ["80h 1m", "5", "42m"]);
+  assert.deepEqual((await mathRow.getByRole("cell").allTextContents()).slice(1), ["Mr. Zinkan", "80h 1m", "5", "42m"]);
   assert.equal(await table.getByRole("row").filter({ hasText: "Unavailable daily data" }).getByRole("cell").last().textContent(), "—");
   assert.equal(await table.getByRole("row").filter({ hasText: "No recorded usage" }).getByRole("cell").last().textContent(), "—");
   await page.getByText("Daily average includes only students with recorded class usage on each day. Total Usage covers the selected date range.", { exact: true }).waitFor();
@@ -90,7 +89,7 @@ test("class analytics shows daily averages across date selectors without cumulat
     await page.getByRole("combobox").last().click();
     await page.getByRole("option", { name: label, exact: true }).click();
     await mathRow.getByRole("cell", { name: dailyAverage, exact: true }).waitFor();
-    assert.equal(await mathRow.getByRole("cell").nth(4).textContent(), dayCount);
+    assert.equal(await mathRow.getByRole("cell").nth(3).textContent(), dayCount);
   }
   assert.ok(["today", "7d", "30d"].every((period) => periodsRead.includes(period)));
   await page.setViewportSize({ width: 390, height: 844 });
@@ -105,5 +104,7 @@ test("class analytics shows daily averages across date selectors without cumulat
   assert.equal(await page.getByRole("columnheader", { name: "Daily Avg / Active Student", exact: true }).count(), 0);
   assert.equal(await page.getByRole("columnheader", { name: "Days with Usage", exact: true }).count(), 0);
   await page.getByRole("columnheader", { name: "Avg / Active Student", exact: true }).waitFor();
+  assert.deepEqual(await table.getByRole("columnheader").allTextContents(), ["Class", "Teacher", "Total Usage", "Avg / Active Student"]);
+  assert.deepEqual((await mathRow.getByRole("cell").allTextContents()).slice(1), ["Mr. Zinkan", "80h 1m", "3h 29m"]);
   assert.deepEqual(errors, []);
 });

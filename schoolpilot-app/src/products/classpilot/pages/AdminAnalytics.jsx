@@ -5,7 +5,6 @@ import { apiRequest } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
-import { Badge } from "../../../components/ui/badge";
 import { AlertCircle, ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp, Layers } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 
@@ -29,17 +28,11 @@ export default function AdminAnalytics() {
   const adminShell = useAdminShell();
   const { navigate } = useAdminNavigation();
   const [summaryPeriod, setSummaryPeriod] = useState("today");
-  const [teacherPeriod, setTeacherPeriod] = useState("7d");
   const [groupPeriod, setGroupPeriod] = useState("7d");
 
   const { data: summaryData, isLoading: summaryLoading, isError: summaryIsError, error: summaryError } = useQuery({
     queryKey: ["/api/admin/analytics/summary", summaryPeriod],
     queryFn: () => apiRequest("GET", `/admin/analytics/summary?period=${summaryPeriod}`),
-  });
-
-  const { data: teacherData, isLoading: teacherLoading, isError: teacherIsError, error: teacherError } = useQuery({
-    queryKey: ["/api/admin/analytics/by-teacher", teacherPeriod],
-    queryFn: () => apiRequest("GET", `/admin/analytics/by-teacher?period=${teacherPeriod}`),
   });
 
   const { data: groupData, isLoading: groupLoading, isError: groupIsError, error: groupError } = useQuery({
@@ -57,7 +50,6 @@ export default function AdminAnalytics() {
 
   const hourlyActivity = Array.isArray(summaryData?.hourlyActivity) ? summaryData.hourlyActivity : [];
   const topWebsites = Array.isArray(summaryData?.topWebsites) ? summaryData.topWebsites : [];
-  const teachersList = Array.isArray(teacherData?.teachers) ? teacherData.teachers : [];
   const groupsList = Array.isArray(groupData?.groups) ? groupData.groups : [];
   const isRosterBrowsing = groupData?.attributionMode === "roster";
   const classUsageTitle = isRosterBrowsing
@@ -247,67 +239,6 @@ export default function AdminAnalytics() {
         </>
       ) : null}
 
-      {/* Teacher Activity */}
-      <div className="flex items-center justify-between mt-8">
-        <h2 className="text-xl font-semibold">Teacher Activity</h2>
-        <Select value={teacherPeriod} onValueChange={setTeacherPeriod}>
-          <SelectTrigger className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="today">Today</SelectItem>
-            <SelectItem value="7d">Last 7 days</SelectItem>
-            <SelectItem value="30d">Last 30 days</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Card>
-        <CardContent className="pt-6">
-          {teacherLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading teacher data...</div>
-          ) : teacherIsError ? (
-            <ErrorState title="Could not load teacher activity" error={teacherError} />
-          ) : teachersList.length > 0 ? (
-            <div className="border rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-medium">Teacher</th>
-                    <th className="px-4 py-3 text-left font-medium">Sessions</th>
-                    <th className="px-4 py-3 text-left font-medium">Class Session Duration</th>
-                    <th className="px-4 py-3 text-left font-medium" title="Distinct official classes with a teaching session during this period.">Classes Used</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {teachersList.map((teacher) => (
-                    <tr key={teacher.id} className="border-t">
-                      <td className="px-4 py-3">
-                        <div className="font-medium">{teacher.name}</div>
-                        <div className="text-xs text-muted-foreground">{teacher.email}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="secondary">{teacher.sessionCount}</Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        {formatMinutes(teacher.totalSessionMinutes)}
-                      </td>
-                      <td className="px-4 py-3">
-                        {teacher.groupCount}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No teacher activity data available for this period.
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Class Usage */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-8">
         <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -344,7 +275,6 @@ export default function AdminAnalytics() {
                   <tr>
                     <th className="px-4 py-3 text-left font-medium">Class</th>
                     <th className="px-4 py-3 text-left font-medium">Teacher</th>
-                    <th className="px-4 py-3 text-left font-medium">Active / Enrolled</th>
                     <th className="px-4 py-3 text-left font-medium">Total Usage</th>
                     {!isRosterBrowsing ? (
                       <th className="px-4 py-3 text-left font-medium">Days with Usage</th>
@@ -364,11 +294,6 @@ export default function AdminAnalytics() {
                         </div>
                       </td>
                       <td className="px-4 py-3">{group.teacherName}</td>
-                      <td className="px-4 py-3">
-                        <Badge variant="secondary">
-                          {group.activeStudentCount}/{group.studentCount}
-                        </Badge>
-                      </td>
                       <td className="px-4 py-3">{formatMinutes(group.totalBrowsingMinutes)}</td>
                       {!isRosterBrowsing ? (
                         <td className="px-4 py-3">{group.activeClassDayCount ?? "—"}</td>
