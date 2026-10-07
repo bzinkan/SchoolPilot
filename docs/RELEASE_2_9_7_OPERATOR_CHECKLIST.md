@@ -1,86 +1,103 @@
 # Coordinated SchoolPilot release and ClassPilot 2.9.7
 
-**Latest merge status:** the owner authorized reviewed release merges after final CI. [ClassPilot #123 is merged with five green resulting-main checks and unchanged package bytes](release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json). SchoolPilot #603 is held on its concrete test-only mock timing correction and the artifact-preparation follow-up; fresh combined-head/main checks remain required. Use the [latest follow-up](RELEASE_297_DEPLOY_READINESS.md#october-4-merge-and-operator-tool-follow-up) and [artifact-only interfaces](RELEASE_ARTIFACT_PREPARATION.md). Historical no-merge statements below describe their dated checkpoints. Publication, deployment and activation remain separate operations.
+The [current release index](releases/release297/current-release.json) binds the generated status below. [Historical preparation checkpoints](RELEASE_2_9_7_PREPARATION_HISTORY.md) preserve earlier source/artifact selections and every failed attempt. Operational steps below require separate current source, evidence and authorization.
 
-**October 4 update:** use [current deploy-readiness evidence](RELEASE_297_DEPLOY_READINESS.md#october-4-preparation-update), the [operator preparation addendum](RELEASE_297_OPERATOR_PREPARATION_AUDIT.md) and the [compatible fallback supplement](RELEASE_297_COMPATIBLE_FALLBACK_PREPARATION.md). The selected 250-client heartbeat/staff-read envelope retains its full-manifest fixture scope; deployment remains DeSales's 133 clients. The corrected, separately approved catalog inspection completed with 121 protected tables and 43 completed production migrations. The source-derived ordinary 43-to-53 migration/service recovery and restricted restoration now have accepted completed components, with original failures preserved. All three fresh candidate comparison runs on that 53-entry schema pass, but the strict comparison remains FAILED on the older baseline's latency and unstable controls. The [current-school gate amendment](RELEASE_297_DEPLOY_READINESS.md#approved-current-school-gate-correction) is separately owner-approved, and its bounded numerical criteria pass. It adds no merge, deployment, publication or activation permission. The missing unused 128-table preparation path is implemented and independently reviewed. All 20 SchoolPilot checks pass at `30b87475` and all ten ClassPilot checks at unchanged `8069a9c9`; later preparation heads/main still need checks. Published/registered recovery artifacts and operational gates remain pending. Both new Usage modes stay off. Historical checkpoints retain their original outcomes and do not establish a deployment green light.
+<!-- release297-current-state:start -->
+## Current release status
 
-The shared distinct-report slice is integrated as `1091eaeb` from reviewed `e330c39a`. [Source binding](release-evidence/release-297/release-gate-policy-20261003/harness-integration-1091-source-binding.json) verifies the 11 identical reviewed Git blobs and unchanged application/schema/build/infrastructure inputs; CRLF-only working differences remain explicit. The [focused component proof](release-evidence/release-297/release-gate-policy-20261003/usage-distinct-shared-pure-passed-02.json) passes 48 unique cases and 11 syntax checks, with [independent review](release-evidence/release-297/release-gate-policy-20261003/usage-distinct-shared-independent-review.json). The [full primary aggregate](release-evidence/release-297/release-gate-policy-20261003/harness-integrated-1091-pure.json) passes all 139 unique cases (133 harness plus six report-cost cases), no skips/cancellations/TODOs, in 14.496 seconds with the configured 20-second test timeout, with [independent aggregate/source review](release-evidence/release-297/release-gate-policy-20261003/harness-integrated-1091-independent-review.json). The [earlier dependency failure](release-evidence/release-297/release-gate-policy-20261003/usage-distinct-shared-pure-failed-01.json) remains failed. At that historical 1091 checkpoint, helper/protocol-native verification, distinct-report capacity and new-head CI remained pending. Later native proofs and the exact 28f CI checkpoint are recorded above; actual distinct-report capacity remains pending, and later heads still require applicable checks.
+Observed **2026-10-07T18:14:08.678Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
-The [fresh final-source Usage attempt `df9199c13d82`](release-evidence/release-297/release-gate-policy-20261003/usage-native-ddc5996b-df919-failed-03.json) failed: 2,655/6,000 heartbeats succeeded, 3,345 returned HTTP 503, and 56 offers were late. All 64 generator reports and 26 original lifecycle events passed, but final independent current-day/coverage/CSV/audit oracles were not reached. One heavy worker completed in 39.268 seconds; the second hit PostgreSQL statement timeout. [Status/ownership review](release-evidence/release-297/release-gate-policy-20261003/usage-native-df919-status-ownership-review.json) verifies admission denials match the 503 count, no acquisition failures and complete unforced drain. [Worker budget review](release-evidence/release-297/release-gate-policy-20261003/usage-native-df919-worker-budget-review.json) records the shared FIFO admission and 60-second whole-operation budget, including waiting; no standalone 60-second SQL execution is established. The retained CPU capture also failed its unchanged timing guard. All five PostgreSQL errors remain included. This is a failed capacity attempt with zero accepted cold runs and two later attempts held. Host interference, a connection leak and a causal query bottleneck are unproven. Both new Usage modes remain off. The original strict dark comparison remains FAILED; the later approved bounded DeSales numerical criteria pass. Final CI, artifacts and operational/live gates still prevent a deployment green light. Targeted fresh-fixture diagnostics are preparation, not replacement acceptance.
+**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
 
-Status: release stabilization and separate Usage activation work in progress.
-The owner's October 3 amended [release policy and acceptance gates](RELEASE_297_DEPLOY_READINESS.md)
-are authoritative for current preparation; earlier dated checkpoints below
-preserve their original outcomes and superseded gate wording. No deployment green
-light, merge, production deployment, capability activation or Store publication
-is recorded by this document. The current release inventory is
-[here](RELEASE_2_9_7_PR_INVENTORY.md). Preserve the historical September 30 evidence;
-its 2.10.0 package results do not certify this successor.
+**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**
 
-The dated October 2 [read-only production snapshot](release-evidence/release-297/readonly-production-20261002.json)
-records existing-service health, the bounded metrics window and verification
-limits at its recorded time. It is not current health verification, candidate
-capacity evidence or approval for an operational window.
-The historical [combined CI checkpoint](release-evidence/release-297/ci-app-checkpoint-d69322ef.json)
-preserves exact successful logs, test counts, conditional skips, source-tree
-equivalence and deployment-tool results. The current Usage contention changes
-have separate [incremental evidence](release-evidence/release-297/usage-contention/README.md)
-and still require frozen-source acceptance. Earlier CI does not cover them.
-A conditional skip is not a passed test.
+| Source | Current main observed | Historical tested application | Frozen successor |
+|---|---|---|---|
+| schoolpilot | `56df7a4f` | `ddc5996b` | pending |
+| classpilot | `03a9c363` | `065be165` | pending |
 
-## Current preparation status
+| Stage | Status | Applicability | Next action |
+|---|---|---|---|
+| Implementation | passed | current_baseline | Review stabilization PRs, merge separately, then select the final application reference. |
+| Testing | pending | candidate_pending | Run final source regression, recovery and bounded acceptance after freeze; verify resulting-main CI. |
+| Packaging | pending | candidate_pending | Resolve the exact fallback blocker, freeze application A, build/test its exact image and frontend, then seal reviewed binding on equivalent final-main B with fresh CI. |
+| Publication | pending | candidate_pending | Operator separately authorizes exact artifact publication after acceptance and final-main binding. |
+| Deployment | unknown | candidate_pending | Operator refreshes exact serving state and authorizes migration-first deployment. |
+| Activation | pending | candidate_pending | Authorize DeSales pilot only after source/image/admission and participating capabilities are verified. |
+| Live verification | pending | candidate_pending | Collect at least 30 qualifying minutes on each actual task pair and preserve per-capability promotion freshness. |
 
-Current application source is `ddc5996b3b8645859fa51a9613486db52c481b7f`.
+| Usage setting | Required value | Fresh observed value | Next action |
+|---|---|---|---|
+| `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | preserve_observed_value | unknown | Read and preserve actual API/worker daily mode separately; do not infer disabled workload. |
+| `CLASSPILOT_USAGE_ROLLUP_MODE` | off | unknown | Verify off on every actual API/worker definition before the separately authorized release. |
+| `CLASSPILOT_DIGITAL_USAGE_MODE` | off | unknown | Verify off on every actual API/worker definition before the separately authorized release. |
 
-The [three full 900-second classroom runs](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-passed-block.json) and [complete independent review](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-independent-review.json) pass on application `ddc5996b` and frozen helper `7238c17c`, with both new Usage modes off. All 36,309 heartbeat offers have exact persisted bindings; 180 commands and 90 private messages pass native recipient/lifecycle checks. All 45 minute acceptance sets pass. Worst minute p95 is 115.317 ms and highest API minute CPU is 24.7454%; exact physical API loss precedes reconnect and all resources clean up without force. This is current-school synthetic classroom acceptance. The strict dark comparison, separate Usage capacity, broader 800-client capacity and operational/live gates remain separate.
+The existing daily/shadow rollup can still run with both new modes off. Preserve its actual observed setting separately.
 
-The [fresh read-only production observation](release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json) finds unchanged serving versions/settings, one API and one worker, a healthy API target, and 121 configured admission tables. RDS is available with 14-day backup retention and a restorable point about three minutes before the check. Sunday metrics do not establish school-day capacity; actual catalog/ledger/privileges, successful restore evidence and an approved operational window remain unverified. No production database connection or cloud mutation occurred.
-The combined standard backend type check passes. The narrow Redis correction
-passes [24 component checks, including four native regressions](release-evidence/release-297/release-gate-policy-20261003/realtime-native-green-02.json),
-and the [restricted-role health correction](release-evidence/release-297/release-gate-policy-20261003/health-native-green-03.json)
-passes six native checks. [Fresh serving/fallback builds and scans](release-evidence/release-297/release-gate-policy-20261003/runtime-artifacts-ddc5996b-c578120d.json) pass with zero HIGH/CRITICAL findings. The [actual API/worker staged recovery](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json) passes bridge, adoption, compatible fallback and return, preserving all 54 completed migrations, function permissions and chat expiration. Eight services drain gracefully and the exact synthetic resources are absent. Its synthetic schema/protocol limitations remain explicit; it does not verify the production catalog or ECS/ALB drain. [Combined CI at `dd6d54c0`](release-evidence/release-297/release-gate-policy-20261003/ci-dd6d54c0-complete.json) passes all 20 SchoolPilot checks and all 10 unchanged ClassPilot checks. Measured release acceptance remains pending.
-Earlier application images and measurements do not certify the revised source.
+| Gate | Status | Applicability/source | Evidence and next action |
+|---|---|---|---|
+| Observed baseline CI | passed | current_baseline; `56df7a4f` | [reconciliation](releases/release297/source-reconciliation-20261007.json). Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass. |
+| Local baseline build, unit and governance preparation | passed | preparation_only; `56df7a4f` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review skips/warnings and refresh applicable checks on final source; these local checks do not establish runtime acceptance. |
+| Original full Windows infrastructure lane | failed | preparation_only; `56df7a4f` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Retain this attempt. Merge the reviewed tooling fix and require a fresh complete applicable infrastructure lane before closing this preparation dependency. |
+| Focused coordinator and role-adapter reruns | passed | preparation_only; `5dfef86c` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Review tooling PR #620; a focused rerun does not turn the original full infrastructure attempt into a pass. |
+| Full infrastructure after reviewed tooling fix | pending | preparation_only; `5dfef86c` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Require fresh complete applicable CI for the resulting main; preserve the original failed full-lane record. |
+| Public-copy PR preparation CI | passed | preparation_only; `2b7b5dc0` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review/merge the copy PR before freezing application A; require fresh resulting-main B CI and proven A/B application equivalence. |
+| Disposable full-schema database and restricted-role preparation | passed | preparation_only; `2b7b5dc0` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review canonical receipt and skips; run actual ordinary 43→53 restoration and candidate→fallback→candidate recovery on the exact frozen image. Existing 2.9.3 CI capture does not establish 2.9.7 adoption. |
+| Retained C578 fresh scan release blocker | failed | current_baseline; `c578120d` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized. |
+| Local preparation backend scan | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Build/test the exact frozen application A artifact after review; reuse its accepted image/config only with proven final-main B equivalence and fresh CI. Local preparation is not publication. |
+| Local Linux screenshot processing | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Refresh final-candidate screenshot/runtime acceptance alongside ordinary recovery and classroom behavior. |
+| Frozen source and final main CI | pending | candidate_pending; pending | Require clean current remote main, application equivalence and green exact-main CI. |
+| Bounded criteria approval | passed | policy_definition; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Review successor binding/applicability explicitly and rerun the approved fixed-order campaign. |
+| Historical bounded numerical acceptance | passed | historical; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json), [fixedComparison](release-evidence/release-297/release-gate-policy-20261003/production-default43-53-fixed8-canonical-independent.json). Preserve original receipts; require fresh successor evidence before assigning a current pass. |
+| Successor bounded numerical acceptance | pending | candidate_pending; pending | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Use the same amended criteria, fixed order, thresholds, safety checks and stop policy. |
+| Historical strict comparison | failed | historical; `ddc5996b` | [fixedComparison](release-evidence/release-297/release-gate-policy-20261003/production-default43-53-fixed8-canonical-independent.json). Retain original failure; the superseding approved bounded policy does not reclassify it. |
+| Historical three classroom runs | passed | historical; `ddc5996b` | [classroomHistorical](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-passed-block.json), [classroomReview](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-independent-review.json). Rerun three consecutive 900-second runs against frozen successor application inputs. |
+| Successor classroom, normal and headroom acceptance | pending | candidate_pending; pending | [normalHistorical](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json), [headroomHistorical](release-evidence/release-297/release-gate-policy-20261003/lower-250-aaf95-ddc-confirmation-passed.json). Rerun mixed block, capability-on normal-load and accepted 250-client gate with original scope retained. |
+| Historical ordinary recovery/restoration | passed | historical; `ddc5996b` | [recoveryOrdinaryHistorical](release-evidence/release-297/release-gate-policy-20261003/production-default43-53-composed06-independent.json). Refresh actual local candidate-to-C578-to-candidate recovery on the ordinary schema/admission chain. |
+| Historical full-manifest rehearsal | passed | historical; `ddc5996b` | [recoveryFullHistorical](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json). Never relabel its54-entry evidence as the ordinary 53-entry successor proof. |
+| Successor recovery compatibility | pending | candidate_pending; pending | [artifactsHistorical](release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json), [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Resolve retained-fallback scan blocker by separate review; preserve exact C578. Then verify capability equality, private-chat floors and53-entry recovery without shrinking admission. |
+| Historical production catalog | passed | historical; `7af9d0dd` | [catalogHistorical](release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json). Refresh via a new authorized bounded inspection on source/context/window drift. |
+| Fresh production, backups, flags and window | unknown | candidate_pending; pending | [productionHistorical](release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json), [catalogHistorical](release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json). Operator supplies fresh current task/image/flags/catalog/backups/health and exact authorized window. |
+| Two managed Chromebooks | waived_not_passed | policy_definition; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately. |
+| Store listing and pending submissions | unknown | equivalence_required; `03a9c363` | [extensionMerged](release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json). Recheck live version and pending submissions immediately before separately authorized upload. |
+| Separate Usage capacity | failed | historical; `ddc5996b` | [usageFailure](release-evidence/release-297/release-gate-policy-20261003/usage-native-ddc5996b-df919-failed-03.json). Keep both new modes off; diagnostics and Usage activation remain separate follow-up work. |
+| Broader800-client capacity | not_applicable | candidate_pending; pending | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). No broader rollout; require a separately reviewed capacity campaign if scope expands. |
+| Live DeSales acceptance and adoption | pending | candidate_pending; pending | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Verify already-open pages, sign-in, IXL/precise/mixed paths, Focus/Attention, actions, messaging, reconnect and relevant PassPilot/GoPilot workflows. |
+| Fresh canonical extension package verification | passed | current_baseline; `03a9c363` | [extensionFresh](releases/release297/extension-verification-20261007.json), [extensionMerged](release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json). Retain version 2.9.7; reverify source/package on drift and check fresh Store state before separately authorized upload. Adoption remains unknown. |
+| Raw packaged text versus Git blobs | failed | current_baseline; `03a9c363` | [extensionFresh](releases/release297/extension-verification-20261007.json). Preserve raw failure and newline qualification; never claim byte equality with LF Git blobs or reclassify this failure. |
 
-The [fresh capability-on 34/s run](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-c1a09-ddc-summary.json), bound to `ddc5996b`, passes all 2,040 offers and exact persistence/recipient checks, p95 179.874 ms and 55.386% fixed-window API CPU. Its [native oracle preparation proof](release-evidence/release-297/release-gate-policy-20261003/classroom-native-oracle-c1a09-ddc-proof.json) separately verifies produced delivery/thread rows and rejects wrong-binding mutations. Both new Usage modes are off. Neither accepts a failed continuous mixed attempt or replaces the required dark comparison/three mixed passes.
+### Inclusion and evidence invalidation
 
-The [refreshed helper-13 normal-load check](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json) passes all 2,040 offers and exact persistence, p95 162.860 ms and fixed-window CPU 54.886%, with eight commands/four messages, complete error coverage and unforced cleanup. The [short native loss-boundary proof](release-evidence/release-297/release-gate-policy-20261003/classroom-loss-boundary-7238-ddc-native-proof.json) verifies all 399 requests/rows and physical API0 absence before reconnect. It is preparation-only and cannot replace a full 900-second run. The complete three-run block and independent evidence review above now pass.
+Every listed merge is included in the observed main. CI and historical receipts do not transfer measured acceptance to changed application inputs.
 
-The [next native mixed attempt remains failed](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-c1a09-ddc-failed-summary.json): all 12,103 offers and exact persistence, 60 commands/30 messages and cleanup pass; one loss-minute ordinary offer went to API0 instead of a declared survivor. Two subsequent attempts were held. The correction from `7238c17c`, integrated as `15100dc3`, uses exact declared offsets for routing, records actual dispatch, requires independently counted pre-loss ingress and clean physical shutdown before reconnect. [All 81 focused checks and exact generated-wrapper red/green](release-evidence/release-297/release-gate-policy-20261003/harness-boundary-7238c17c-public-summary.json) pass. Native preparation, the refreshed normal-load check and the separate fresh full mixed acceptance above now pass. The historical individual skew is inferred, not recorded. No failed run is accepted and no workload/limit is reduced.
+| Merge | Included change | Affected artifacts | Reusable evidence | Required reruns |
+|---|---|---|---|---|
+| [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603) `047bc64f` | Stabilize coordinated roadmap release for ClassPilot 2.9.7 | backend, frontend, release tooling | DDC measurements, failures and policy remain historical; package/runtime changes cannot reuse its image acceptance. | Fresh backend/frontend artifacts, scans, native regression, ordinary recovery and bounded campaigns. |
+| [SchoolPilot #606](https://github.com/bzinkan/SchoolPilot/pull/606) `400e71d4` | Preserve admission CSV order in inactive release preparation | release tooling | Application evidence only after final-source equivalence; preserve ordered admission behavior. | Artifact/fallback controller tests and final tool dependency hashes. |
+| [SchoolPilot #609](https://github.com/bzinkan/SchoolPilot/pull/609) `a406735c` | Fix School Library loading on lazy Teaching tools routes | frontend | Unchanged backend/extension evidence only with exact-source equivalence. | TeachingTools/School Library lazy-route tests, lint/build and final frontend browser gates. |
+| [SchoolPilot #610](https://github.com/bzinkan/SchoolPilot/pull/610) `13420736` | Show daily Chromebook usage averages for each class | backend, frontend, backend dependencies | Policy definitions; source-specific DDC capacity remains historical. | Analytics calculations/browser scenarios, backend scan, screenshot processing, regression/recovery/capacity. |
+| [SchoolPilot #612](https://github.com/bzinkan/SchoolPilot/pull/612) `048b0e94` | Accept identical ECR tag aliases during image verification | release tooling | Reviewed image aliases do not authorize a second image; other evidence remains source-bound. | Legacy image verification regression and final tool hashes. |
+| [SchoolPilot #613](https://github.com/bzinkan/SchoolPilot/pull/613) `ae41d885` | Simplify ClassPilot usage analytics report | frontend | Backend/extension evidence only if source equivalence is proven. | Analytics browser scenarios and frontend artifact/build. |
+| [SchoolPilot #614](https://github.com/bzinkan/SchoolPilot/pull/614) `a14759a2` | Restore Focus and Bring Forward availability on the dashboard | backend, frontend | Existing Focus status/enforcement stays implemented; extension source is unchanged. | Focus/Bring Forward capability availability, current assignment, hydration/recipient regression and refreshed native acceptance. |
+| [SchoolPilot #615](https://github.com/bzinkan/SchoolPilot/pull/615) `56df7a4f` | Fix hourly activity chart sizing and readable values | frontend | Backend/extension evidence only if source equivalence is proven. | Hourly activity sizing, labels/readable values and final browser/build gates. |
+| [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) `03a9c363` | Prepare consolidated ClassPilot 2.9.7 release candidate | extension | Fresh canonical package verification passes all 24 files against clean source with identical merged extension tree; raw Git differences remain explicitly CRLF-only. | Reverify package/tree on source drift; fresh Store/pending submissions and actual installed-client capability/adoption checks remain pending. |
 
-Historical application `ed026513` passes 2,032 local unit tests without skips and all 20
-reported CI checks. Its fresh local API/worker image has zero HIGH/CRITICAL scan
-findings; the frontend is rebuilt and the 54-migration/129-table synthetic schema
-is verified. Exact hashes and verification limits are in the [application record](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json)
-and [CI/package checkpoint](release-evidence/release-297/release-gate-policy-20261003/ready-checkpoint-ed026-20261004-01.json).
-The [fresh review-head checkpoint](release-evidence/release-297/release-gate-policy-20261003/ci-ca388d10-complete.json)
-also verifies all 20 SchoolPilot checks at `ca388d10`, all 10 ClassPilot checks,
-and unchanged application/frontend/package inputs. Resulting-main checks remain
-required after separately authorized merges.
-The corrected safe fallback passes its scan and [actual image recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json).
-The earlier [staged service rehearsal remains failed overall](release-evidence/release-297/release-gate-policy-20261003/staging128129-partial-05.json).
-Its actual 128-admission bridge, worker appointment maintenance and SQL drains are
-verified; that attempt did not establish 129-adoption/fallback. The earlier synthetic advertised-capability
-telemetry setup is recorded as a limitation, not accepted client support.
-The [subsequent real-heartbeat staging attempt](release-evidence/release-297/release-gate-policy-20261003/staging128129-failed-06.json)
-also failed overall. A [native Redis diagnostic](release-evidence/release-297/release-gate-policy-20261003/realtime-native-regression-ed026.json)
-confirms valid empty snapshots become unreadable and same-millisecond revisions
-lose ordering; its failed cleanup import remains recorded. Snapshot and
-health-monitor compatibility corrections are integrated with native proof. Fresh source-bound serving/fallback scans and complete local service recovery now pass; later review heads and resulting main still require CI, and the remaining comparison/operational gates still require acceptance.
-The ed026 artifacts and previous measurements remain historical evidence.
-New paired/current-school comparison remains pending; the three continuous classroom runs now pass as recorded above. Usage capacity has zero accepted runs and both new Usage modes remain off.
-The [initial continuous mixed block](release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-6afc8-failed-held.json)
-retains two failed attempts and an unreserved third attempt. Its positive
-classroom fixture included an idle school; a new reviewed harness revision and
-fresh three-pass campaign are required. Completed heartbeat traffic is partial
-evidence and does not accept the failed classroom checks.
-The [new harness correction](release-evidence/release-297/release-gate-policy-20261003/harness-active-audience-631fb338-summary.json)
-passes 53 focused checks, including regressions that fail on the preceding
-harness. It is integrated as `0691cdb8`; helper refresh and measured acceptance
-are still pending.
-The [October 4 synthetic fixture and restricted-role restoration](release-evidence/release-297/release-gate-policy-20261003/usage-oct4-snapshot-preparation.json)
-pass preparation checks; their authority expires at 11:12:21 Eastern that day.
-They do not count as a capacity run or a production catalog inspection.
-The owner is waiting to submit ClassPilot until preparation is complete.
+### Artifact selection
+
+| Artifact | Status | Source | Identity and limitation |
+|---|---|---|---|
+| Successor API/worker image | pending | pending | A local preparation image exists, but no exact frozen application A image/config, fresh acceptance or final-main B binding is recorded. Produce a fresh source/scan/archive/manifest/config receipt after freeze. |
+| Successor frontend archive | pending | pending | A local preparation archive exists; TeachingTools, Focus and analytics changed from historical inputs. Final-main source is not frozen. Build from frozen source, identify and hash the archive; publication remains separate. |
+| Local preparation API/worker image | passed | `2b7b5dc0` | Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release. Retain preparation receipts. Build/test exact frozen application A, then reuse that exact image/config under reviewed final-main B only after proven A/B application equivalence. |
+| Local preparation frontend archive | passed | `1cb459cc` | Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred. Build/hash the matched frozen application frontend after review; bind it to equivalent final-main B. This archive is preparation-only. |
+| Historical DDC API/worker | passed | `ddc5996b` | Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment. Keep as historical evidence; do not select it as the successor image. |
+| Retained compatible fallback C578 | passed | `c578120d` | Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment. Preserve exact identity; fresh compatibility/scan checks must pass before operational use. |
+| Historical frontend archive | passed | `ed026513` | Retained archive SHA256 7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675 describes earlier frontend inputs. Rebuild successor frontend; retain the old artifact as history. |
+| ClassPilot 2.9.7 retained ZIP | passed | `03a9c363` | Fresh canonical verifier passes all 24 packaged files byte-for-byte with clean 8069 source; its extension Git tree equals merged 03a9. Raw Git comparison still has 20 CRLF-only differences and remains failed. Retain version 2.9.7; reverify source/package on drift and check fresh Store state before separately authorized upload. Adoption remains unknown. |
+
+Ordinary migration/recovery uses **43 → 53** completed entries and admission **121 → 125 → 126 → 127 → 128 → 129**. The earlier 54-entry rehearsal remains historical. Preserve C578, equal capabilities and private-chat compatibility floors; never shrink admission during recovery.
+
+<!-- release297-current-state:end -->
 
 ## Historical preparation checkpoints
 
@@ -237,60 +254,9 @@ and Focus only and must bind the final source, serving image, extension identity
 ZIP hash and automated evidence. It does not waive confidentiality, authority,
 recipient, enforcement, tenancy or deployment health checks.
 
-## Current release selection and evidence
+## Release selection and evidence
 
-The current application source is `ddc5996b`; the earlier prepared artifacts are
-bound to `ed026513` and are historical. Runtime corrections require refreshed
-serving and fallback images. Selection for execution still requires accepted
-release gates, final review-head and resulting-main checks, recovery and fresh
-production verification. Historical images and failed campaigns remain intact.
-
-| Item | Current selection / evidence limitation |
-|---|---|
-| SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`; origin/main remains separate from the open integration PR |
-| Integration branch | `codex/release-stabilization-297`; [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603); preserve and later reconcile incorporated review branches |
-| Application source / CI | `ddc5996b3b8645859fa51a9613486db52c481b7f`; standard backend type check passes. [Combined CI at dd6d54c0](release-evidence/release-297/release-gate-policy-20261003/ci-dd6d54c0-complete.json) passes all 20 SchoolPilot and 10 ClassPilot checks, with exact application/build input binding and ten named native runtime regressions. Later harness/test/documentation heads and approved resulting main also need checks and equivalence proof. The [ca388d10 checkpoint](release-evidence/release-297/release-gate-policy-20261003/ci-ca388d10-complete.json) remains historical. |
-| Current correction / local checks | [2,032 unit passes, no skips](release-evidence/release-297/release-gate-policy-20261003/application-correction-summary.json). Bounded Usage heartbeat admission, pool fairness, delta rollup writes and tenant-owned atomic cleanup/audit are included. |
-| Local API / worker candidate | Source `ddc5996b`; index `sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835`; amd64 manifest `sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d`. Build/scan pass with zero HIGH/CRITICAL findings including unfixed. [Exact local artifact/operator bindings](release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json) distinguish index, platform and config. Local preparation is not registry publication, a deployed task pair or release approval. |
-| Compatible fallback | Source `c578120d980d4c2405a72f4f40b2d3c29a07e20b`; index `sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08`; amd64 manifest `sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1`. The fresh scan and actual staged recovery pass. Its declared 53 migrations preserve all 54 completed database entries and the added screenshot function. Both new Usage modes must remain off. The old production image is invalid after lifecycle adoption. |
-| Schema / recovery | [Actual API/worker staging and recovery passes](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json), with [independent review](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-independent-review.json): all 54 ledger entries, screenshot function body/ACL and chat expiration/history retained; eight actual services drain gracefully. Sixteen containers, two volumes and network are absent. Synthetic copied-ledger/schema and protocol clients do not establish production migration history, Chrome/SSO, exact Focus/combined Classroom acceptance or ECS/ALB drain. The [historical image-function recovery](release-evidence/release-297/release-gate-policy-20261003/recovery-ed026-6d1f3a7e-summary.json) remains separate. |
-| Frontend | Fresh ed026 lint/build artifact SHA-256 `7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675`. All four frontend release CI shards pass for the application. No frontend was published. |
-| ClassPilot integration / CI | [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123), #119 → #120 → #121 → #122 ancestry. Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d` has all 10 checks passing, including Chrome 120/133/152/stable. PR remains open/draft. |
-| Extension identity / package | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7; packaged source `065be165b5df704d84eb716e3fb914c1fed17f98`; ZIP SHA-256 `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`. Unchanged 24-file verification passes; copy is at C:/GitHub/ClassPilot/dist/ClassPilot-v2.9.7.zip. |
-| Heartbeat retry compatibility | [Four packaged-function controls pass](release-evidence/release-297/release-gate-policy-20261003/packaged-heartbeat-retry-297-summary.json): heartbeat retries at most twice, honors 503 Retry-After, cancels retired auth and excludes overlapping heartbeats. No ZIP bytes changed. |
-| Store state | Last public observation: 2.9.6, updated September 27. Pending developer submissions remain unverified. Repeat both checks immediately before separately authorized upload; submission is held. |
-| Release capacity | [Fresh helper-13/ddc5996b capability-on34/s](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json) passes all 2,040 offers and exact recipient/persistence, p95 162.860 ms and fixed-window CPU 54.886%. The [short native physical-loss proof](release-evidence/release-297/release-gate-policy-20261003/classroom-loss-boundary-7238-ddc-native-proof.json) passes all 399 requests/rows, but cannot replace full acceptance. Historical [candidate sole133 measurements](release-evidence/release-297/release-gate-policy-20261003/sole-f8af7-completed-failed.json) do not accept the failed strict paired comparison; the normal comparison remains incomplete/failed. Three full mixed passes and their independent review now pass; the dark production-capability comparison remains pending. All prior failures remain preserved. |
-| Usage capacity | Zero accepted runs. Separate three-API campaign and deployed observation gate Usage activation. A faster unchanged-grain component is not capacity acceptance. DeSales is the only live school; all load schools are synthetic. |
-| Live pilot / validation | DeSales screenshot showed 133 students; current production UUID, eligibility and participating clients remain unverified. No live acceptance has started. Require at least 30 sample-bearing minutes after separately authorized staged release. Managed two-Chromebook gate remains waived_not_passed. |
-| Deployed / activated | No changes performed by this release preparation |
-
-The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)
-records exact heads, dependency bases, disposition and inclusion proofs. Its
-checkpoint is a review snapshot, not a final artifact identity. Final evidence
-must retain failed attempts and identify their source, environment and repair;
-never substitute a later passing run for an earlier failure.
-
-For the new 2.9.7 profiles, the legacy field names `RequiredMergeSha` and
-`classPilotMergeSha` identify the **exact packaged source** above. They do not
-prove a merge. Preserve that commit through a separately authorized merge and
-record the actual merge commit independently. After that merge, the version tag
-must point to the packaged ancestor, not to a different build. Before any upload
-or activation, run these checks in the ClassPilot repository and verify the ZIP
-hash against the value above:
-
-```powershell
-git fetch origin main --tags
-git merge-base --is-ancestor 065be165b5df704d84eb716e3fb914c1fed17f98 origin/main
-git rev-parse 'v2.9.7^{commit}'
-Get-FileHash -Algorithm SHA256 -LiteralPath .\dist\ClassPilot-v2.9.7.zip
-```
-
-Require the ancestry command to exit zero and the tag output to equal that exact
-40-character source SHA. The runtime receipt compares pinned literals; it does
-not resolve the ClassPilot tag itself. A missing tag, squash/rebase that loses
-the source ancestry, changed source or changed ZIP requires reconciliation and
-new acceptance/bindings. These checks do not authorize creating or publishing a
-tag, and no 2.9.7 tag or merged status is claimed here.
+Use the [generated current status](#current-release-status) and [current index](releases/release297/current-release.json). The [dated source/package selection](RELEASE_2_9_7_PREPARATION_HISTORY.md#archived-checklist-selection--superseded-as-current-state-on-october-7) retains exact historical artifact/tag verification commands and their original results. Reverify source ancestry, tagged packaged commit, retained ZIP and current remote main before reuse; no historical plan/authorization transfers to a successor.
 
 ## Acceptance before an operator green light
 

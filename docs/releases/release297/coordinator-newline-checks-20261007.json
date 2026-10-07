@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "kind": "focused_coordinator_newline_tooling_check",
+  "observedAtUtc": "2026-10-07T17:44:48.417Z",
+  "baselineSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+  "toolCheckoutClean": false,
+  "toolCommit": null,
+  "platform": "win32",
+  "nodeVersion": "v22.18.0",
+  "qualification": "Uncommitted bounded tooling fix under review. Initial full infrastructure lane remains failed; these focused and all-role-adapter reruns do not establish a complete infrastructure pass or candidate acceptance.",
+  "patchFiles": [
+    {
+      "path": "scripts/load/usage/roles/patch-coordinator.mjs",
+      "gitBlobSha256": "92c642c06bdbcdde4e133cd17e4789cddde3b655194c1969d171ddbe4631b077"
+    },
+    {
+      "path": "scripts/load/usage/roles/adapters.test.mjs",
+      "gitBlobSha256": "9dd536d4bd1759bda90cd0a1a0bc4b9234d918ca31c81064b85c7a396856baee"
+    }
+  ],
+  "change": "Only structural LF/CRLF end-marker search is tolerant. Original input and exact output hashes remain distinct; workload, application modules and acceptance constants are unchanged.",
+  "regression": "LF and CRLF overlays have identical normalized code, distinct exact-byte input/output receipts, and changed structural anchors still fail.",
+  "checks": [
+    {
+      "id": "focused-adapters-runtime",
+      "status": "passed",
+      "command": "node --test scripts/load/usage/roles/adapters.test.mjs scripts/load/usage/roles/runtime-contract.test.mjs",
+      "counts": {
+        "tests": 35,
+        "pass": 35,
+        "fail": 0,
+        "skipped": 0
+      },
+      "rawLogSha256": "9af1adf34eb83564576661356170794dbc90a4592fb8ac5e26d7fd990e976140"
+    },
+    {
+      "id": "all-role-adapters",
+      "status": "passed",
+      "command": "node --test all scripts/load/usage/roles/*.test.mjs",
+      "counts": {
+        "tests": 339,
+        "pass": 339,
+        "fail": 0,
+        "skipped": 0
+      },
+      "rawLogSha256": "bbdd991174be5f451fe19a273765025d4ea64a74539eed640ae73f62f387c20c"
+    }
+  ],
+  "fullInfrastructureRerun": "pending",
+  "releaseReadiness": false,
+  "originalInfrastructure": {
+    "source": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+    "observedAtUtc": "2026-10-07T17:42:22.057Z",
+    "id": "infrastructure",
+    "command": "npm run test:infrastructure",
+    "status": "failed",
+    "counts": {
+      "tests": 1051,
+      "pass": 1048,
+      "fail": 3,
+      "skipped": 0
+    },
+    "skippedCases": [],
+    "rawLogSha256": "78006ddd9ac8761f73811b9603ece47971be3d8ac318ef534780684fcf6a3ee5",
+    "canonicalEvidence": {
+      "repository": "bzinkan/SchoolPilot",
+      "commit": "392996ccd9a0c01a26ac15a1f9383db9b18e1973",
+      "path": "docs/release-evidence/release297-operator-20261007/preparation-checks.json",
+      "gitBlobSha256": "3207b987732a5831aab9207f3769ae9b4857feb4163cef629865b5544a77aaff",
+      "url": "https://github.com/bzinkan/SchoolPilot/blob/392996ccd9a0c01a26ac15a1f9383db9b18e1973/docs/release-evidence/release297-operator-20261007/preparation-checks.json"
+    }
+  },
+  "committedToolReference": {
+    "repository": "bzinkan/SchoolPilot",
+    "commit": "5dfef86cb82b79f681e528176d572f2ec3e418be",
+    "pullRequest": 620,
+    "url": "https://github.com/bzinkan/SchoolPilot/pull/620",
+    "exactTestedPatchFilesMatch": true,
+    "qualification": "The focused tests ran before commit; exact tested patch-file Git bytes were subsequently verified in this committed tooling PR. No post-commit full infrastructure rerun is claimed."
+  }
+}

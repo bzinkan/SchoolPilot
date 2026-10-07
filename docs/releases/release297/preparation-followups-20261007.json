@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "kind": "cross_pr_preparation_summary",
+  "observedAtUtc": "2026-10-07T18:14:08.678Z",
+  "operationalAuthorization": false,
+  "canonicalReferences": {
+    "baseline": {
+      "repository": "bzinkan/SchoolPilot",
+      "commit": "9122b61b76f2e8a8e146877604ec63752575dc53",
+      "path": "docs/release-evidence/release297-operator-20261007/preparation-checks.json",
+      "gitBlobSha256": "3207b987732a5831aab9207f3769ae9b4857feb4163cef629865b5544a77aaff",
+      "url": "https://github.com/bzinkan/SchoolPilot/blob/9122b61b76f2e8a8e146877604ec63752575dc53/docs/release-evidence/release297-operator-20261007/preparation-checks.json"
+    },
+    "publicCopyCi": {
+      "repository": "bzinkan/SchoolPilot",
+      "commit": "9122b61b76f2e8a8e146877604ec63752575dc53",
+      "path": "docs/release-evidence/release297-operator-20261007/copy-pr-ci.json",
+      "gitBlobSha256": "8e46aee8b850e1adb8b118d7badc1e86fc5a0b91faa88ad1f1fce9de2b30ad50",
+      "url": "https://github.com/bzinkan/SchoolPilot/blob/9122b61b76f2e8a8e146877604ec63752575dc53/docs/release-evidence/release297-operator-20261007/copy-pr-ci.json"
+    },
+    "database": {
+      "repository": "bzinkan/SchoolPilot",
+      "commit": "9122b61b76f2e8a8e146877604ec63752575dc53",
+      "path": "docs/release-evidence/release297-operator-20261007/database-preparation.json",
+      "gitBlobSha256": "4d53cfe7fb9d89c5caa22bebb7dde8cf1892947683a07dc65a5275441c6c9a2c",
+      "url": "https://github.com/bzinkan/SchoolPilot/blob/9122b61b76f2e8a8e146877604ec63752575dc53/docs/release-evidence/release297-operator-20261007/database-preparation.json"
+    }
+  },
+  "baseline": {
+    "source": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+    "scope": "baseline_preparation_only",
+    "observedAtUtc": "2026-10-07T17:42:22.057Z",
+    "backendType": "passed",
+    "backendBuild": "passed",
+    "unit": {
+      "id": "unit",
+      "command": "npm run test:unit",
+      "status": "passed",
+      "counts": {
+        "tests": 2276,
+        "pass": 2272,
+        "fail": 0,
+        "skipped": 4
+      },
+      "skippedCases": [
+        "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+        "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+        "ok 3 - parses inspected index key columns as a text array # SKIP",
+        "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+      ],
+      "rawLogSha256": "37f30484751fe5efb313e6a32bd59832a94818ad5c1beda17cf0716b265524d0"
+    },
+    "governance": {
+      "id": "governance",
+      "command": "npm run soc2:check",
+      "status": "passed",
+      "qualification": "Existing missing private evidence, pending human decisions/MFA warnings and draft risk records remain unresolved.",
+      "rawLogSha256": "a6ef270568cefaea4d3cc77ed9f94a6d99da6c3db4e1778e587dc73b4f3f766d"
+    }
+  },
+  "publicCopyCi": {
+    "pullRequest": 617,
+    "headSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+    "observedAtUtc": "2026-10-07T17:50:07.331Z",
+    "event": "pull_request",
+    "exactMainCi": false,
+    "applicableChecksPassed": true,
+    "emittedChecks": 19,
+    "successes": 18,
+    "failures": 0,
+    "skipped": 1,
+    "skips": "AWS rollout safety legitimately skipped after successful negative path detection; whole path-filtered Trivy and opt-in publication are not emitted for this copy-only PR.",
+    "qualification": "PR check results cover preparation only. Checkout may use the GitHub PR merge ref; this is not a frozen current-main runtime or live release acceptance."
+  },
+  "database": {
+    "source": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+    "observedAtUtc": "2026-10-07T18:00:36.193Z",
+    "scope": "source_bound_full_schema_fixture_only",
+    "productionAccess": false,
+    "originalOrdinary": {
+      "pass": 1550,
+      "fail": 4,
+      "skips": "RLS-only checks deferred to restricted lane",
+      "failures": "Native Redis tests rejected non-loopback fixture URL",
+      "exit": 1,
+      "tests": 1562,
+      "skipped": 8
+    },
+    "correctedRedis": {
+      "pass": 4,
+      "fail": 0,
+      "change": "Owned Redis sidecar in the same isolated namespace, TEST_REDIS_URL localhost",
+      "exit": 0,
+      "tests": 4,
+      "skipped": 0
+    },
+    "restrictedLocal": {
+      "rolsuper": false,
+      "uniqueAllowlist": 129,
+      "allowlist": 129,
+      "pass": 513,
+      "rolbypassrls": false,
+      "tests": 513,
+      "skipped": 0,
+      "fail": 0,
+      "exit": 0,
+      "role": "schoolpilot_rls_test_user"
+    },
+    "ciOrdinary": {
+      "skipped": 8,
+      "tests": 1562,
+      "pass": 1554,
+      "fail": 0
+    },
+    "ciRestricted": {
+      "skipReason": "Redis 7 integration service unavailable in CI RLS lane",
+      "skipped": 1,
+      "tests": 513,
+      "pass": 512,
+      "fail": 0
+    },
+    "extensionCaptureFixture": {
+      "version": "2.9.3",
+      "source": "ccaf2c8d1b0df3aa1f8ea74754e457990a74498a",
+      "qualification": "Existing CI real-capture regression; not a 2.9.7 package or managed-adoption pass."
+    },
+    "cleanup": "complete: verified owner labels; removed owned containers, workspace volume, and private network",
+    "qualification": "Fresh full-schema database/RLS regression does not establish ordinary 43-to53 migration/restoration or candidate-to-fallback-to-candidate recovery. Those native release gates remain pending."
+  },
+  "implementationPullRequests": [
+    {
+      "number": 617,
+      "purpose": "Public copy and bounded provider-boundary audit",
+      "headSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "state": "DRAFT",
+      "merged": false,
+      "preparationCi": "passed"
+    },
+    {
+      "number": 619,
+      "purpose": "Operator packet and proposed repository protection payloads",
+      "headSha": "9122b61b76f2e8a8e146877604ec63752575dc53",
+      "state": "DRAFT",
+      "merged": false,
+      "preparationCi": "pending"
+    },
+    {
+      "number": 620,
+      "purpose": "Versioned release binding and bounded coordinator newline parser fix",
+      "headSha": "5dfef86cb82b79f681e528176d572f2ec3e418be",
+      "state": "DRAFT",
+      "merged": false,
+      "preparationCi": "pending"
+    }
+  ],
+  "qualification": "These are preparation observations with immutable references to the canonical operator-packet receipts. The offline index checker hashes this summary; it does not refetch external Git blobs. Original failures/skips, ordinary recovery, frozen-image acceptance and resulting-main CI remain separate."
+}
