@@ -1,0 +1,772 @@
+{
+  "schemaVersion": 1,
+  "kind": "current_release_index",
+  "releaseId": "release297-desales133-usage-off",
+  "observedAtUtc": "2026-10-07T17:25:39.074Z",
+  "audience": {
+    "school": "DeSales",
+    "clients": 133,
+    "validationLevel": "synthetic_only",
+    "managedValidation": "waived_not_passed"
+  },
+  "authorization": {
+    "merge": false,
+    "productionDeployment": false,
+    "registryPublication": false,
+    "inactiveRegistration": false,
+    "storeSubmission": false,
+    "runtimeActivation": false,
+    "githubSettings": false
+  },
+  "sources": {
+    "schoolpilot": {
+      "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "remoteMainObserved": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
+      "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "frozenApplicationReference": null,
+      "evidence": [
+        "reconciliation",
+        "classroomHistorical"
+      ]
+    },
+    "classpilot": {
+      "planningReference": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "remoteMainObserved": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "reviewedHistorical": "8069a9c9bd50352e187847158b356a69edc4e45d",
+      "testedHistorical": "065be165b5df704d84eb716e3fb914c1fed17f98",
+      "frozenApplicationReference": null,
+      "evidence": [
+        "extensionMerged",
+        "reconciliation"
+      ]
+    }
+  },
+  "usageModes": {
+    "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": {
+      "requiredValue": "preserve_observed_value",
+      "observedValue": null,
+      "status": "unknown",
+      "rationale": "Daily rollup is independent; missing configuration defaults to shadow and can still incur work with new modes off.",
+      "evidence": [
+        "productionHistorical"
+      ],
+      "nextAction": "Read and preserve actual API/worker daily mode separately; do not infer disabled workload."
+    },
+    "CLASSPILOT_USAGE_ROLLUP_MODE": {
+      "requiredValue": "off",
+      "observedValue": null,
+      "status": "unknown",
+      "rationale": "Bounded release requires writer off; no fresh runtime observation is recorded.",
+      "evidence": [
+        "productionHistorical"
+      ],
+      "nextAction": "Verify off on every actual API/worker definition before the separately authorized release."
+    },
+    "CLASSPILOT_DIGITAL_USAGE_MODE": {
+      "requiredValue": "off",
+      "observedValue": null,
+      "status": "unknown",
+      "rationale": "Bounded release requires reader off; no fresh runtime observation is recorded.",
+      "evidence": [
+        "productionHistorical"
+      ],
+      "nextAction": "Verify off on every actual API/worker definition before the separately authorized release."
+    }
+  },
+  "compatibility": {
+    "ordinaryMigrationPath": [
+      43,
+      53
+    ],
+    "admissionPath": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ],
+    "historicalFullManifestLedger": 54,
+    "retainedFallbackSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "neverShrinkAdmission": true,
+    "preservePrivateChatFloor": true,
+    "capabilityEqualityRequired": true,
+    "phase128Before129": "Compatible API/worker writer/bridge/relay with issuance off; fully drain incompatible tasks and old ALB targets before thread admission.",
+    "privateChatFloor": {
+      "lifecycleWriterVersion": 1,
+      "bridgeVersion": 1,
+      "relayVersion": 1
+    },
+    "optionalStaffIdentityContract": "deferred",
+    "screenshotFunction": "Install/verify via supported migration before serving; preserve body and scoped EXECUTE through recovery."
+  },
+  "artifacts": [
+    {
+      "id": "backend-successor",
+      "label": "Successor API/worker image",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No frozen-source build, image identity, scan or archive is recorded.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [],
+      "nextAction": "Produce a fresh source/scan/archive/manifest/config receipt after freeze."
+    },
+    {
+      "id": "frontend-successor",
+      "label": "Successor frontend archive",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "TeachingTools, Focus and analytics UI changed from the retained frontend inputs.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Build from frozen source, identify and hash the archive; publication remains separate."
+    },
+    {
+      "id": "backend-ddc",
+      "label": "Historical DDC API/worker",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "artifactsHistorical"
+      ],
+      "nextAction": "Keep as historical evidence; do not select it as the successor image.",
+      "identity": {
+        "indexDigest": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "platformManifestDigest": "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+        "configDigest": "sha256:8b66f44e342194c35c36cf50e30cdc0ae7e467ab0b52aa9c50d1a0d6c370f799",
+        "archiveSha256": "78dfee093d214208e01e8d5c3776f46df6d66eda144c1352f25b113b3dd02ec8"
+      }
+    },
+    {
+      "id": "fallback-c578",
+      "label": "Retained compatible fallback C578",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "rationale": "Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "artifactsHistorical"
+      ],
+      "nextAction": "Preserve exact identity; fresh compatibility/scan checks must pass before operational use.",
+      "identity": {
+        "indexDigest": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "platformManifestDigest": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+        "configDigest": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+        "archiveSha256": "1cbedd3fda3b18e806a8f56a82342e80a48107d13030265918d2d19fd8bc2fa3"
+      }
+    },
+    {
+      "id": "frontend-historical",
+      "label": "Historical frontend archive",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+      "rationale": "Retained archive SHA256 7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675 describes earlier frontend inputs.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "frontendHistorical"
+      ],
+      "nextAction": "Rebuild successor frontend; retain the old artifact as history.",
+      "identity": {
+        "archiveSha256": "7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675"
+      }
+    },
+    {
+      "id": "extension",
+      "label": "ClassPilot 2.9.7 retained ZIP",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Fresh canonical verifier passes all 24 packaged files byte-for-byte with clean 8069 source; its extension Git tree equals merged 03a9. Raw Git comparison still has 20 CRLF-only differences and remains failed.",
+      "observedAtUtc": "2026-10-07T17:24:35.148Z",
+      "evidence": [
+        "extensionFresh",
+        "extensionMerged"
+      ],
+      "nextAction": "Retain version 2.9.7; reverify source/package on drift and check fresh Store state before separately authorized upload. Adoption remains unknown.",
+      "identity": {
+        "version": "2.9.7",
+        "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
+        "bytes": 376052,
+        "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+        "gitTree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+      }
+    }
+  ],
+  "stages": [
+    {
+      "id": "implementation",
+      "label": "Implementation",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "The coordinated integration and listed successors are merged and present in observed main; new stabilization PRs remain reviewable work.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Review stabilization PRs, merge separately, then select the final application reference."
+    },
+    {
+      "id": "testing",
+      "label": "Testing",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Observed main has 19 successful checks and the intentional push-only path-detection skip; successor native acceptance is not recorded.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Run final source regression, recovery and bounded acceptance after freeze; verify resulting-main CI."
+    },
+    {
+      "id": "packaging",
+      "label": "Packaging",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "DDC backend/frontend identities are historical; unchanged extension bytes have source-equivalence evidence.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "artifactsHistorical",
+        "extensionMerged"
+      ],
+      "nextAction": "Build/scan/hash fresh successor backend and frontend; reverify extension source and retained ZIP."
+    },
+    {
+      "id": "publication",
+      "label": "Publication",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No successor registry or frontend publication receipt is available.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [],
+      "nextAction": "Operator separately authorizes exact artifact publication after acceptance and final-main binding."
+    },
+    {
+      "id": "deployment",
+      "label": "Deployment",
+      "status": "unknown",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Last production observations are dated October 4; current production state was not read.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "productionHistorical"
+      ],
+      "nextAction": "Operator refreshes exact serving state and authorizes migration-first deployment."
+    },
+    {
+      "id": "activation",
+      "label": "Activation",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Pilot issuance and later global promotion require separate source/task-pair-bound operations.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [],
+      "nextAction": "Authorize DeSales pilot only after source/image/admission and participating capabilities are verified."
+    },
+    {
+      "id": "live",
+      "label": "Live verification",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No fresh sample-bearing live DeSales acceptance is recorded; managed validation remains waived, not passed.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Collect at least 30 qualifying minutes on each actual task pair and preserve per-capability promotion freshness."
+    }
+  ],
+  "gates": [
+    {
+      "id": "baseline-ci",
+      "label": "Observed baseline CI",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "19 emitted checks succeed; Detect changed paths is intentionally skipped on main push.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass."
+    },
+    {
+      "id": "final-main-ci",
+      "label": "Frozen source and final main CI",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Candidate is not frozen and preparation changes have not merged.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [],
+      "nextAction": "Require clean current remote main, application equivalence and green exact-main CI."
+    },
+    {
+      "id": "criteria",
+      "label": "Bounded criteria approval",
+      "status": "passed",
+      "applicability": "policy_definition",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Existing approval defines DeSales 133/Usage-off numerical criteria, historically evaluated on DDC; it adds no operations permission.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Review successor binding/applicability explicitly and rerun the approved fixed-order campaign."
+    },
+    {
+      "id": "historical-bounded",
+      "label": "Historical bounded numerical acceptance",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Accepted measurements apply to DDC only; successor application inputs changed.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval",
+        "fixedComparison"
+      ],
+      "nextAction": "Preserve original receipts; require fresh successor evidence before assigning a current pass."
+    },
+    {
+      "id": "successor-bounded",
+      "label": "Successor bounded numerical acceptance",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No new measurements bound to a frozen successor are recorded.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Use the same amended criteria, fixed order, thresholds, safety checks and stop policy."
+    },
+    {
+      "id": "strict-comparison",
+      "label": "Historical strict comparison",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Five baseline latency failures and unstable controls remain failed under the original comparison contract.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "fixedComparison"
+      ],
+      "nextAction": "Retain original failure; the superseding approved bounded policy does not reclassify it."
+    },
+    {
+      "id": "mixed-history",
+      "label": "Historical three classroom runs",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Three consecutive 900-second synthetic classroom runs pass on DDC.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "classroomHistorical",
+        "classroomReview"
+      ],
+      "nextAction": "Rerun three consecutive 900-second runs against frozen successor application inputs."
+    },
+    {
+      "id": "mixed-successor",
+      "label": "Successor classroom, normal and headroom acceptance",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Changed dependencies/backend and UI require refreshed capacity and classroom behavior evidence.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "normalHistorical",
+        "headroomHistorical"
+      ],
+      "nextAction": "Rerun mixed block, capability-on normal-load and accepted 250-client gate with original scope retained."
+    },
+    {
+      "id": "recovery-history",
+      "label": "Historical ordinary recovery/restoration",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Accepted composed components cover ordinary 43-to53 local migration/service recovery and restricted restoration; earlier failures remain immutable.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "recoveryOrdinaryHistorical"
+      ],
+      "nextAction": "Refresh actual local candidate-to-C578-to-candidate recovery on the ordinary schema/admission chain."
+    },
+    {
+      "id": "full-ledger-history",
+      "label": "Historical full-manifest rehearsal",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "The synthetic 54-entry staging rehearsal is a separate historical fixture.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "recoveryFullHistorical"
+      ],
+      "nextAction": "Never relabel its54-entry evidence as the ordinary 53-entry successor proof."
+    },
+    {
+      "id": "recovery-successor",
+      "label": "Successor recovery compatibility",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "C578 is retained; current candidate capabilities, scans and recovery have not been paired.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "artifactsHistorical"
+      ],
+      "nextAction": "Verify C578 exact identity/scan, capability equality, private-chat floors and53-entry recovery without shrinking admission."
+    },
+    {
+      "id": "catalog-history",
+      "label": "Historical production catalog",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "rationale": "October4 approved inspection observed121 forced-RLS tables and43 completed migrations; that window was consumed.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "catalogHistorical"
+      ],
+      "nextAction": "Refresh via a new authorized bounded inspection on source/context/window drift."
+    },
+    {
+      "id": "production-fresh",
+      "label": "Fresh production, backups, flags and window",
+      "status": "unknown",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "October4 receipts do not establish current health, catalog, admission, successful restore or an approved future window.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "productionHistorical",
+        "catalogHistorical"
+      ],
+      "nextAction": "Operator supplies fresh current task/image/flags/catalog/backups/health and exact authorized window."
+    },
+    {
+      "id": "managed",
+      "label": "Two managed Chromebooks",
+      "status": "waived_not_passed",
+      "applicability": "policy_definition",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "The approved synthetic-only exception is waived_not_passed; it is not managed-device evidence.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately."
+    },
+    {
+      "id": "store",
+      "label": "Store listing and pending submissions",
+      "status": "unknown",
+      "applicability": "equivalence_required",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "October4 operator report described2.9.6 and no pending drafts; no fresh listing/dashboard read was performed.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "extensionMerged"
+      ],
+      "nextAction": "Recheck live version and pending submissions immediately before separately authorized upload."
+    },
+    {
+      "id": "usage-capacity",
+      "label": "Separate Usage capacity",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Zero accepted cold runs; the retained 6000-offer attempt failed. This is separate from the bounded Usage-off release.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "usageFailure"
+      ],
+      "nextAction": "Keep both new modes off; diagnostics and Usage activation remain separate follow-up work."
+    },
+    {
+      "id": "broader-fleet",
+      "label": "Broader800-client capacity",
+      "status": "not_applicable",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Broader fleet capacity is outside this DeSales 133 preparation and is not accepted.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "No broader rollout; require a separately reviewed capacity campaign if scope expands."
+    },
+    {
+      "id": "live-acceptance",
+      "label": "Live DeSales acceptance and adoption",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No current task-pair-bound live samples or installed-client capability confirmation are recorded.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Verify already-open pages, sign-in, IXL/precise/mixed paths, Focus/Attention, actions, messaging, reconnect and relevant PassPilot/GoPilot workflows."
+    },
+    {
+      "id": "extension-canonical-fresh",
+      "label": "Fresh canonical extension package verification",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Fresh canonical verifier passes all 24 packaged files byte-for-byte with clean 8069 source; its extension Git tree equals merged 03a9. Raw Git comparison still has 20 CRLF-only differences and remains failed.",
+      "observedAtUtc": "2026-10-07T17:24:35.148Z",
+      "evidence": [
+        "extensionFresh",
+        "extensionMerged"
+      ],
+      "nextAction": "Retain version 2.9.7; reverify source/package on drift and check fresh Store state before separately authorized upload. Adoption remains unknown."
+    },
+    {
+      "id": "extension-raw-git",
+      "label": "Raw packaged text versus Git blobs",
+      "status": "failed",
+      "applicability": "current_baseline",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Raw packaged bytes differ on 20 CRLF-only text files. Canonical verification is a separate pass; initial buffer-limited failures are retained.",
+      "observedAtUtc": "2026-10-07T17:24:35.148Z",
+      "evidence": [
+        "extensionFresh"
+      ],
+      "nextAction": "Preserve raw failure and newline qualification; never claim byte equality with LF Git blobs or reclassify this failure."
+    }
+  ],
+  "inclusionMatrix": [
+    {
+      "repository": "SchoolPilot",
+      "number": 603,
+      "title": "Stabilize coordinated roadmap release for ClassPilot 2.9.7",
+      "state": "MERGED",
+      "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
+      "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
+      "mergedAtUtc": "2026-10-04T22:45:00Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "backend",
+        "frontend",
+        "release tooling"
+      ],
+      "reusableEvidence": "DDC measurements, failures and policy remain historical; package/runtime changes cannot reuse its image acceptance.",
+      "requiredReruns": "Fresh backend/frontend artifacts, scans, native regression, ordinary recovery and bounded campaigns."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 606,
+      "title": "Preserve admission CSV order in inactive release preparation",
+      "state": "MERGED",
+      "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
+      "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
+      "mergedAtUtc": "2026-10-05T03:23:01Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "release tooling"
+      ],
+      "reusableEvidence": "Application evidence only after final-source equivalence; preserve ordered admission behavior.",
+      "requiredReruns": "Artifact/fallback controller tests and final tool dependency hashes."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 609,
+      "title": "Fix School Library loading on lazy Teaching tools routes",
+      "state": "MERGED",
+      "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
+      "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
+      "mergedAtUtc": "2026-10-05T11:23:21Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Unchanged backend/extension evidence only with exact-source equivalence.",
+      "requiredReruns": "TeachingTools/School Library lazy-route tests, lint/build and final frontend browser gates."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 610,
+      "title": "Show daily Chromebook usage averages for each class",
+      "state": "MERGED",
+      "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
+      "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
+      "mergedAtUtc": "2026-10-06T22:31:47Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "backend",
+        "frontend",
+        "backend dependencies"
+      ],
+      "reusableEvidence": "Policy definitions; source-specific DDC capacity remains historical.",
+      "requiredReruns": "Analytics calculations/browser scenarios, backend scan, screenshot processing, regression/recovery/capacity."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 612,
+      "title": "Accept identical ECR tag aliases during image verification",
+      "state": "MERGED",
+      "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
+      "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
+      "mergedAtUtc": "2026-10-06T23:19:16Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "release tooling"
+      ],
+      "reusableEvidence": "Reviewed image aliases do not authorize a second image; other evidence remains source-bound.",
+      "requiredReruns": "Legacy image verification regression and final tool hashes."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 613,
+      "title": "Simplify ClassPilot usage analytics report",
+      "state": "MERGED",
+      "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
+      "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
+      "mergedAtUtc": "2026-10-07T00:30:35Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Backend/extension evidence only if source equivalence is proven.",
+      "requiredReruns": "Analytics browser scenarios and frontend artifact/build."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 614,
+      "title": "Restore Focus and Bring Forward availability on the dashboard",
+      "state": "MERGED",
+      "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
+      "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
+      "mergedAtUtc": "2026-10-07T14:17:37Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "backend",
+        "frontend"
+      ],
+      "reusableEvidence": "Existing Focus status/enforcement stays implemented; extension source is unchanged.",
+      "requiredReruns": "Focus/Bring Forward capability availability, current assignment, hydration/recipient regression and refreshed native acceptance."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 615,
+      "title": "Fix hourly activity chart sizing and readable values",
+      "state": "MERGED",
+      "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
+      "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "mergedAtUtc": "2026-10-07T16:21:39Z",
+      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Backend/extension evidence only if source equivalence is proven.",
+      "requiredReruns": "Hourly activity sizing, labels/readable values and final browser/build gates."
+    },
+    {
+      "repository": "ClassPilot",
+      "number": 123,
+      "title": "Prepare consolidated ClassPilot 2.9.7 release candidate",
+      "state": "MERGED",
+      "headSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+      "mergeSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "mergedAtUtc": "2026-10-04T21:14:57Z",
+      "includedInSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "affectedArtifacts": [
+        "extension"
+      ],
+      "reusableEvidence": "Fresh canonical package verification passes all 24 files against clean source with identical merged extension tree; raw Git differences remain explicitly CRLF-only.",
+      "requiredReruns": "Reverify package/tree on source drift; fresh Store/pending submissions and actual installed-client capability/adoption checks remain pending."
+    }
+  ],
+  "evidence": {
+    "reconciliation": {
+      "path": "docs/releases/release297/source-reconciliation-20261007.json",
+      "gitBlobSha256": "c710674f59a20224ff998b4e0592f67ac03a5f416c48f7cde8c68f2b105a6de6"
+    },
+    "extensionMerged": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json",
+      "gitBlobSha256": "576c63665a48a6cb3a9a5d20c0d77162d2536ff9eb53b9ac8484491297a1848e"
+    },
+    "artifactsHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json",
+      "gitBlobSha256": "f1eb27e03e21ab434665d3ee6682af954dd4c6e72af1b9fe08b9b3d72d258e94"
+    },
+    "scansHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/runtime-artifacts-ddc5996b-c578120d.json",
+      "gitBlobSha256": "fde5d6bbd20e1e7f922ef86e56aeed4efffb7ff72fafbdfe79277b73d441ab4a"
+    },
+    "policyApproval": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json",
+      "gitBlobSha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95"
+    },
+    "fixedComparison": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/production-default43-53-fixed8-canonical-independent.json",
+      "gitBlobSha256": "d232c9ea2d4ca95ae4f84026d6f014e332d5e8193dca47f47d64ad8a869b4ffd"
+    },
+    "classroomHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-passed-block.json",
+      "gitBlobSha256": "f4f6ff8aa6d714dad17963f225817e0f0a5a8d06d659bddde2ce8972498d3e57"
+    },
+    "classroomReview": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-independent-review.json",
+      "gitBlobSha256": "c01874825b6555c0b3e3421fca361f5d8e4f443dbbb6e9c2c9c4f0f4176198cf"
+    },
+    "normalHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json",
+      "gitBlobSha256": "9181f40e62f535a8a4c695bfa323d1080acff6dd40210ae70ef09d977c2f5785"
+    },
+    "headroomHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/lower-250-aaf95-ddc-confirmation-passed.json",
+      "gitBlobSha256": "2b41ddc138058106be49cfcfaebcd65a27f54667deee28fc4706b9e28b00ff45"
+    },
+    "recoveryOrdinaryHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/production-default43-53-composed06-independent.json",
+      "gitBlobSha256": "a7e4072f7c24346151d5bd71550db99cabeca3a6f02e9bb8323f08c63f4332a2"
+    },
+    "recoveryFullHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json",
+      "gitBlobSha256": "cca18d0e2d122a2f21ffa6f66b7160636f0dfe6ebc1ffeb8c7f43c5ff5879c98"
+    },
+    "catalogHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json",
+      "gitBlobSha256": "4f256678907298f703774c03823b35a47e18c75bd154105b9a18f595a2113f50"
+    },
+    "productionHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json",
+      "gitBlobSha256": "b3bf32e86fdf110790837bbb568bec374a1a5da44d28077e128842f4382b8f11"
+    },
+    "usageFailure": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/usage-native-ddc5996b-df919-failed-03.json",
+      "gitBlobSha256": "55b1bed648c97c42fe56747d0421036fa92fa0309b115128c734ec92e3fc906a"
+    },
+    "frontendHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/operator-preparation-audit-b5d59130.json",
+      "gitBlobSha256": "24cab8230cbed9d9ca0ef637f107946ef225c06f6e070f3df15eac0909787179"
+    },
+    "extensionFresh": {
+      "path": "docs/releases/release297/extension-verification-20261007.json",
+      "gitBlobSha256": "5489afa7da5d0c1f10a074ad8250aef0d80b15c5132052c0e7be9a05dee8cfe7"
+    }
+  }
+}

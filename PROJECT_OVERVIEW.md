@@ -6,7 +6,7 @@ SchoolPilot is a unified K-12 school operations platform. It combines three scho
 
 - ClassPilot: Chromebook classroom monitoring, web filtering, teacher controls, class sessions, student analytics, and workspace safety tools.
 - PassPilot: digital hall passes, class-based pass assignment, pass history, and public kiosk mode.
-- GoPilot: dismissal management, parent/student pickup flows, family groups, bus/walker handling, dismissal queueing, and parent notifications.
+- GoPilot: school-operated dismissal management for administrators, office staff and assigned teachers, family groups, bus/walker handling and dismissal queueing.
 
 The project is built for schools that want a single account, roster, license, and admin surface across these workflows.
 
@@ -25,7 +25,7 @@ The project is built for schools that want a single account, roster, license, an
 - School admins can create and manage schools, staff, rosters, licenses, billing, Google imports, and product setup.
 - Teachers can run classroom sessions, monitor Chromebook activity, issue hall passes, and manage class-specific settings.
 - Office staff can manage dismissal and schoolwide operational views where roles allow it.
-- Parents can connect to GoPilot and manage pickup/dismissal interactions for approved children.
+- GoPilot parent registration, pickup interactions, parent portal and parent sockets are retired; retained historical parent records do not grant product access.
 - Students interact indirectly through managed Chromebooks, kiosk mode, and dismissal/pass workflows.
 
 ## Top-Level Structure
@@ -58,9 +58,10 @@ The project is built for schools that want a single account, roster, license, an
 
 - Backend routes: `src/routes/classpilot/`.
 - Frontend pages: `schoolpilot-app/src/products/classpilot/`.
-- My Desk is an included private staff workspace with notes/attachments, seating charts and teacher-reviewed AI paperwork imports. It needs no teaching session or school-specific enrollment; active qualifying membership and ClassPilot entitlement grant access when the relevant global operational modes are on. Administrators cannot read another author's notebook. New schools inherit availability automatically. See [the teacher guide](docs/MYDESK_TEACHER_GUIDE.md) and [release runbook](docs/MYDESK_PRODUCTION_RELEASE.md).
+- My Desk has been shelved since September 28, 2026. Its frontend entry points are unmounted, AI imports are paused, and backend/data/cleanup remain retained. See the shelving boundary in [CLAUDE.md](CLAUDE.md#my-desk-private-notebook--shelved-not-live-until-further-notice).
 - Main data: devices, exact student sessions, heartbeats/realtime status, daily usage, groups and rosters, teaching sessions/staff, revisioned student control state, command targets/results, Flight Paths, block lists, FAB/chat delivery, polls, attendance, and teacher settings.
 - Realtime path: `/ws` raw WebSocket for teacher and student/device messages.
+- Live View is retired; legacy signaling stays gated off and TURN nodes remain parked. Screen monitoring uses exact-authority screenshots. Do not enable legacy media or decommission retained infrastructure as part of this release. See [the legacy media audit](docs/CLASSPILOT_LEGACY_MEDIA_AUDIT.md).
 - External dependency: the Chrome extension lives in the separate `C:\GitHub\ClassPilot` repo and is released independently through Chrome Web Store. This API owns registration/exact binding, entitlement, heartbeat/screenshot ingest, command authority/results, FAB/chat/poll persistence, and WebSocket delivery.
 
 ### PassPilot
@@ -113,7 +114,7 @@ The project is built for schools that want a single account, roster, license, an
 Chrome extension
   -> /extension/register or /extension/student-login for exact student binding
   -> /api/device/heartbeat (canonical /api/classpilot/device/heartbeat)
-  -> /ws for exact-bound classroom/FAB/chat/Live View messages and ACK receipts
+  -> /ws for exact-bound classroom/FAB/chat messages and ACK receipts
   -> /api/device/screenshot -> Redis latest-screenshot cache
   -> Postgres heartbeats, commands/targets, control state, FAB/chat, polls, sessions
   -> scheduler rollups to daily_usage
@@ -137,11 +138,11 @@ Public kiosk
 ### GoPilot
 
 ```text
-Office/teacher/parent UI
+Office/teacher UI
   -> /api/gopilot/* and school-scoped compatibility routes
   -> Postgres dismissal sessions, queue, changes, homerooms, families
   -> Socket.io rooms for live dismissal updates
-  -> parent/teacher/office views update in realtime
+  -> authorized teacher/office views update in realtime
 ```
 
 ## Incomplete Or Unclear Functionality Noticed
@@ -152,7 +153,7 @@ Office/teacher/parent UI
 - `src/routes/index.ts` and `src/routes/compat.ts` carry many legacy aliases. Useful for compatibility, but they obscure the canonical API surface.
 - Production migrations run as an explicit `RUN_MIGRATIONS_ONLY=true` task before API/worker rollout; optional startup migrations are awaited before sockets, schedulers, or the HTTP listener start.
 - Backend, frontend, and extension suites are configured. ClassPilot releases require the SchoolPilot checks plus the separate extension repo's typecheck, Vitest, build, and real-Chrome resilience gate.
-- The ClassPilot extension remains a separately versioned release. The operator and public listing confirmed Web Store `2.6.1` live on August 19, 2026; no higher unpublished package is currently prepared.
+- The ClassPilot extension is released separately from SchoolPilot. The selected 2.9.7 ZIP and merged source are historical verified preparation; fresh source/package, Store listing, pending submissions and participating-client adoption checks remain distinct gates. See the [current release status](docs/RELEASE_2_9_7_OPERATOR_CHECKLIST.md#current-release-status). SchoolPilot deployment never uploads the extension.
 
 ## Missing Clarity Questions
 
