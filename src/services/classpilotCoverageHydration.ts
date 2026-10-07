@@ -10,6 +10,7 @@ import {
 } from "./classpilotRealtimeStatus.js";
 import { getActiveSessionsForStudents } from "./storage.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+import { focusStatusSchema, type ClasspilotFocusStatus } from "./classpilotFocus.js";
 
 import { classpilotPublicRealtimeBinding } from "./classpilotRealtimeStatus.js";
 
@@ -50,7 +51,9 @@ export type ClasspilotCoverageStatus = {
     scheduledClassroomV1: boolean;
     scopedAuthorityChecksV1: boolean;
     preciseRestrictionResourcesV1: boolean;
+    focusTabV1: boolean;
   };
+  focus?: ClasspilotFocusStatus;
   screenshotHealth: ClasspilotRealtimeStatus["screenshotHealth"];
   operatorCapabilities: {
     studentAuthGatePresenceV1: boolean;
@@ -128,6 +131,7 @@ function coverageAcceptedCapabilities(status: ClasspilotRealtimeStatus | null) {
     scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
     scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
     preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
+    focusTabV1: acceptedCapabilities.has("focusTabV1"),
   };
 }
 
@@ -177,6 +181,8 @@ function publicStatus(
     clientProtocolVersion: realtime?.clientProtocolVersion ?? null,
     capabilities: coverageRealtimeCapabilities(realtime),
     acceptedCapabilities: coverageAcceptedCapabilities(realtime),
+    focus: realtime?.focus !== undefined && focusStatusSchema.safeParse(realtime.focus).success
+      ? realtime.focus : undefined,
     screenshotHealth: realtime?.screenshotHealth,
     operatorCapabilities,
     studentAuthGatePresenceV1Enabled: operatorCapabilities.studentAuthGatePresenceV1,

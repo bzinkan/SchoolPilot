@@ -113,6 +113,7 @@ import {
 } from "../services/classpilotClassroomState.js";
 import { requestHasAnySchoolRole } from "../services/schoolAuthorization.js";
 import { isClasspilotCapabilityActive } from "../services/classpilotProtocol.js";
+import { focusStatusSchema } from "../services/classpilotFocus.js";
 import {
   isScheduledClassroomEnabled,
   parseClasspilotActivityAuthority,
@@ -199,6 +200,8 @@ function publicClasspilotExtensionContract(
     tabSnapshotRevision,
     extensionVersion: snapshot?.extensionVersion ?? null,
     clientProtocolVersion: snapshot?.clientProtocolVersion ?? null,
+    focus: snapshot?.state === "active" && snapshot.focus !== undefined
+      && focusStatusSchema.safeParse(snapshot.focus).success ? snapshot.focus : undefined,
     capabilities: {
       exactTabCloseV1: extensionCapabilities.has("exactTabCloseV1"),
       exactTabCloseV2: acceptedCapabilities.has("exactTabCloseV2"),
@@ -233,6 +236,9 @@ function publicClasspilotExtensionContract(
       // Precise Waypoints and Flight Paths reach only students whose extension
       // negotiated this; the dashboard counts the rest as needing the update.
       preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
+      // Both exact Bring Forward and persistent Focus require this negotiated
+      // capability. The extension's raw advertisement never enables controls.
+      focusTabV1: acceptedCapabilities.has("focusTabV1"),
     },
   };
 }

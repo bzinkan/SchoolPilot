@@ -5,7 +5,7 @@ import {
   hydrateClasspilotCoverageStatuses,
   snapshotClasspilotCoverageHydrationMetrics,
 } from "../src/services/classpilotCoverageHydration.js";
-import { writeClasspilotRealtimeStatus } from "../src/services/classpilotRealtimeStatus.js";
+import { markClasspilotRealtimeSignedOut, writeClasspilotRealtimeStatus } from "../src/services/classpilotRealtimeStatus.js";
 
 describe("ClassPilot coverage bulk hydration", () => {
   it("hydrates 500 known exact bindings with no SQL and one Redis batch", async () => {
@@ -77,7 +77,7 @@ describe("ClassPilot coverage bulk hydration", () => {
     assert.equal(metrics.realtimeRedisCommands, 1);
   });
 
-  it("projects the scheduled-classroom capabilities from the accepted set, never the advertisement", async () => {
+  it("projects scheduled-classroom and Focus support from the accepted set, never the advertisement", async () => {
     // The Claimed view gates tiles, tools and Live View on these two flags and
     // reads them from this projection. A device that has negotiated both must
     // read true; one that merely advertises them must stay false, because the
@@ -96,7 +96,7 @@ describe("ClassPilot coverage bulk hydration", () => {
       deviceId: "coverage-hydration-scheduled-advertised-device",
     };
     for (const [target, acceptedCapabilities] of [
-      [negotiated, ["scopedAuthorityChecksV1", "scheduledClassroomV1"]],
+      [negotiated, ["scopedAuthorityChecksV1", "scheduledClassroomV1", "focusTabV1"]],
       [advertisedOnly, []],
     ] as const) {
       const write = await writeClasspilotRealtimeStatus({
@@ -105,8 +105,10 @@ describe("ClassPilot coverage bulk hydration", () => {
         heartbeatId: `${target.studentId}-heartbeat`,
         observedAt: now,
         trackingStatus: "ACTIVE",
-        extensionCapabilities: ["scopedAuthorityChecksV1", "scheduledClassroomV1"],
+        extensionCapabilities: ["scopedAuthorityChecksV1", "scheduledClassroomV1", "focusTabV1"],
         acceptedCapabilities: [...acceptedCapabilities],
+        tabSnapshotRevision: 7,
+        allOpenTabs: [{ tabRef: "coverage-exact-tab", title: "Example", url: "https://example.test/", active: true }],
       });
       assert.ok(write.snapshot);
     }
@@ -126,10 +128,14 @@ describe("ClassPilot coverage bulk hydration", () => {
     const accepted = result.get(negotiated.studentId)?.acceptedCapabilities;
     assert.equal(accepted?.scheduledClassroomV1, true);
     assert.equal(accepted?.scopedAuthorityChecksV1, true);
+    assert.equal(accepted?.focusTabV1, true);
+    assert.equal(result.get(negotiated.studentId)?.tabSnapshotRevision, 7);
+    assert.equal(result.get(negotiated.studentId)?.allOpenTabs[0]?.tabRef, "coverage-exact-tab");
     const advertised = result.get(advertisedOnly.studentId)?.acceptedCapabilities;
     assert.equal(advertised?.scheduledClassroomV1, false,
       "an advertisement alone must not read as negotiated");
     assert.equal(advertised?.scopedAuthorityChecksV1, false);
+    assert.equal(advertised?.focusTabV1, false);
   });
 
   it("projects domain preservation from the raw extension advertisement", async () => {
@@ -182,5 +188,53 @@ describe("ClassPilot coverage bulk hydration", () => {
     );
     assert.equal(result.get(studentId)?.studentAuthGatePresenceV1Enabled, false);
     assert.equal(result.get(studentId)?.lateSignInRestrictionSsoV1Enabled, false);
+  });
+
+  it("retains Focus confirmation only for valid active exact-session bindings", async () => {
+    const now = Date.now();
+    const schoolId = "coverage-focus-status-school";
+    const samples = [
+      { studentId: "active", focus: { state: "active", assignmentId: "focus-a" }, signedOut: false },
+      { studentId: "paused", focus: { state: "suspended", assignmentId: "focus-b", reason: "attention" }, signedOut: false },
+      { studentId: "invalidated", focus: { state: "invalidated", assignmentId: "focus-c", reason: "focus_tab_closed" }, signedOut: false },
+      { studentId: "malformed", focus: { state: "active", assignmentId: "focus-d", deviceId: "must-not-leak" }, signedOut: false },
+      { studentId: "missing", focus: undefined, signedOut: false },
+      { studentId: "signed-out", focus: { state: "active", assignmentId: "focus-e" }, signedOut: true },
+      { studentId: "replacement", focus: { state: "active", assignmentId: "focus-f" }, signedOut: false },
+    ] as const;
+    for (const sample of samples) {
+      const written = await writeClasspilotRealtimeStatus({
+        schoolId, studentId: sample.studentId,
+        studentSessionId: `${sample.studentId}-session`, deviceId: `${sample.studentId}-device`,
+        heartbeatId: `${sample.studentId}-heartbeat`, observedAt: now,
+        trackingStatus: "ACTIVE", focus: sample.focus,
+      });
+      assert.ok(written.snapshot);
+      if (sample.signedOut) {
+        const signedOut = await markClasspilotRealtimeSignedOut({
+          schoolId, studentId: sample.studentId,
+          studentSessionId: `${sample.studentId}-session`, deviceId: `${sample.studentId}-device`,
+          observedAt: now + 1, reason: "explicit_sign_out",
+        });
+        assert.equal(signedOut.snapshot?.state, "signed_out");
+      }
+    }
+    const result = await hydrateClasspilotCoverageStatuses({
+      schoolId, studentIds: samples.map(sample => sample.studentId), now,
+      knownSessions: samples.map(sample => ({
+        id: sample.studentId === "replacement" ? "replacement-new-session" : `${sample.studentId}-session`,
+        studentId: sample.studentId, deviceId: `${sample.studentId}-device`, lastSeenAt: new Date(now),
+      })),
+    });
+    assert.deepEqual(result.get("active")?.focus, samples[0].focus);
+    assert.deepEqual(result.get("paused")?.focus, samples[1].focus);
+    assert.deepEqual(result.get("invalidated")?.focus, samples[2].focus);
+    for (const studentId of ["malformed", "missing", "signed-out", "replacement"]) {
+      assert.equal(result.get(studentId)?.focus, undefined, `${studentId} must not acquire Focus confirmation`);
+    }
+    const serialized = JSON.stringify([...result.values()]);
+    assert.equal(serialized.includes("must-not-leak"), false);
+    assert.equal(serialized.includes("studentSessionId"), false);
+    assert.equal(serialized.includes("deviceId"), false);
   });
 });

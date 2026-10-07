@@ -31,6 +31,7 @@ const REALTIME_FIELDS = Object.freeze([
   'openTabCount',
   'tabsTruncated',
   'classroomState',
+  'focus',
   'enforcementHealth',
   'fabSyncPending',
   'status',
@@ -98,6 +99,7 @@ function resetForRealtimeBinding(row, binding) {
     extensionVersion: null,
     capabilities: {},
     acceptedCapabilities: {},
+    focus: undefined,
     screenLocked: false,
     isSharing: false,
     cameraActive: false,
@@ -292,6 +294,7 @@ function mapStudentUpdate(row, event) {
   copy('flightPathActive');
   copy('activeFlightPathName');
   copy('classroomState');
+  copy('focus');
   copy('enforcementHealth');
   copy('fabSyncPending');
 
@@ -369,6 +372,7 @@ function mapSignedOut(row, event) {
     extensionVersion: null,
     capabilities: {},
     acceptedCapabilities: {},
+    focus: undefined,
     isSharing: false,
     cameraActive: false,
     activityFresh: false,

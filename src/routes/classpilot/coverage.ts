@@ -846,6 +846,7 @@ function coverageStatusPayload(status: ClasspilotCoverageStatus) {
     realtimeBinding: status.realtimeBinding,
     capabilities: status.capabilities,
     acceptedCapabilities: status.acceptedCapabilities,
+    focus: status.focus,
     operatorCapabilities: status.operatorCapabilities,
     studentAuthGatePresenceV1Enabled: status.studentAuthGatePresenceV1Enabled,
     lateSignInRestrictionSsoV1Enabled: status.lateSignInRestrictionSsoV1Enabled,
