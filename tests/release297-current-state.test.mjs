@@ -68,6 +68,27 @@ test('artifact metadata cannot detach from the retained receipt or reclassify a 
   candidate = index(); candidate.gates.find(entry => entry.id === 'extension-raw-git').status = 'passed';
   assert.throws(() => validateIndex(candidate), /RAW_PACKAGE_FAILURE_RECLASSIFIED/);
 });
+
+test('fresh retained-fallback failure remains a blocker beside historical scan evidence', () => {
+  let candidate = index();
+  assert.equal(candidate.artifacts.find(entry => entry.id === 'fallback-c578').status, 'passed');
+  assert.equal(candidate.gates.find(entry => entry.id === 'fallback-scan-current').status, 'failed');
+  candidate.gates.find(entry => entry.id === 'fallback-scan-current').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /FALLBACK_SCAN_HISTORY_RECLASSIFIED/);
+  candidate = index(); candidate.artifacts.find(entry => entry.id === 'fallback-c578').status = 'failed';
+  assert.throws(() => validateIndex(candidate), /FALLBACK_SCAN_HISTORY_RECLASSIFIED/);
+  assert.match(renderStatus(index()), /Release blocker: the exact retained C578 fallback freshly fails/);
+});
+
+test('preparation artifacts and screenshot checks cannot become frozen-candidate evidence', () => {
+  let candidate = index();
+  candidate.artifacts.find(entry => entry.id === 'backend-preparation').sourceSha = candidate.sources.schoolpilot.remoteMainObserved;
+  assert.throws(() => validateIndex(candidate), /PREPARATION_BACKEND_RECEIPT_CHANGED/);
+  candidate = index(); candidate.artifacts.find(entry => entry.id === 'frontend-preparation').identity.archiveSha256 = '0'.repeat(64);
+  assert.throws(() => validateIndex(candidate), /PREPARATION_FRONTEND_RECEIPT_CHANGED/);
+  candidate = index(); candidate.gates.find(entry => entry.id === 'screenshot-preparation').applicability = 'current_baseline';
+  assert.throws(() => validateIndex(candidate), /PREPARATION_GATE_RECEIPT_CHANGED/);
+});
 test('moved dated summaries retain their recorded canonical content hashes', () => {
   const history = readFileSync(path.join(ROOT, 'docs/RELEASE_2_9_7_PREPARATION_HISTORY.md'), 'utf8').replaceAll('\r\n', '\n');
   const pattern = /Canonical block SHA-256: `([a-f0-9]{64})`\. Only line endings are normalized\.\n\n<!-- historical-block:([^:]+):start -->\n([\s\S]*?)<!-- historical-block:\2:end -->/g;

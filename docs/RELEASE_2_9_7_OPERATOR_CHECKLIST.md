@@ -5,9 +5,11 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-07T17:25:39.074Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-07T17:34:01.248Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
+
+**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**
 
 | Source | Current main observed | Historical tested application | Frozen successor |
 |---|---|---|---|
@@ -18,7 +20,7 @@ Observed **2026-10-07T17:25:39.074Z**. The [machine-readable index](releases/rel
 |---|---|---|---|
 | Implementation | passed | current_baseline | Review stabilization PRs, merge separately, then select the final application reference. |
 | Testing | pending | candidate_pending | Run final source regression, recovery and bounded acceptance after freeze; verify resulting-main CI. |
-| Packaging | pending | candidate_pending | Build/scan/hash fresh successor backend and frontend; reverify extension source and retained ZIP. |
+| Packaging | pending | candidate_pending | Resolve exact retained-fallback blocker and produce final-main source-labelled builds/scans/hashes after review/freeze. |
 | Publication | pending | candidate_pending | Operator separately authorizes exact artifact publication after acceptance and final-main binding. |
 | Deployment | unknown | candidate_pending | Operator refreshes exact serving state and authorizes migration-first deployment. |
 | Activation | pending | candidate_pending | Authorize DeSales pilot only after source/image/admission and participating capabilities are verified. |
@@ -35,6 +37,9 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Gate | Status | Applicability/source | Evidence and next action |
 |---|---|---|---|
 | Observed baseline CI | passed | current_baseline; `56df7a4f` | [reconciliation](releases/release297/source-reconciliation-20261007.json). Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass. |
+| Retained C578 fresh scan release blocker | failed | current_baseline; `c578120d` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized. |
+| Local preparation backend scan | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Rebuild final-main source-labelled artifacts after review/freeze and replay final scan/custody proof; do not treat local preparation as publication. |
+| Local Linux screenshot processing | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Refresh final-candidate screenshot/runtime acceptance alongside ordinary recovery and classroom behavior. |
 | Frozen source and final main CI | pending | candidate_pending; pending | Require clean current remote main, application equivalence and green exact-main CI. |
 | Bounded criteria approval | passed | policy_definition; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Review successor binding/applicability explicitly and rerun the approved fixed-order campaign. |
 | Historical bounded numerical acceptance | passed | historical; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json), [fixedComparison](release-evidence/release-297/release-gate-policy-20261003/production-default43-53-fixed8-canonical-independent.json). Preserve original receipts; require fresh successor evidence before assigning a current pass. |
@@ -44,7 +49,7 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Successor classroom, normal and headroom acceptance | pending | candidate_pending; pending | [normalHistorical](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json), [headroomHistorical](release-evidence/release-297/release-gate-policy-20261003/lower-250-aaf95-ddc-confirmation-passed.json). Rerun mixed block, capability-on normal-load and accepted 250-client gate with original scope retained. |
 | Historical ordinary recovery/restoration | passed | historical; `ddc5996b` | [recoveryOrdinaryHistorical](release-evidence/release-297/release-gate-policy-20261003/production-default43-53-composed06-independent.json). Refresh actual local candidate-to-C578-to-candidate recovery on the ordinary schema/admission chain. |
 | Historical full-manifest rehearsal | passed | historical; `ddc5996b` | [recoveryFullHistorical](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json). Never relabel its54-entry evidence as the ordinary 53-entry successor proof. |
-| Successor recovery compatibility | pending | candidate_pending; pending | [artifactsHistorical](release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json). Verify C578 exact identity/scan, capability equality, private-chat floors and53-entry recovery without shrinking admission. |
+| Successor recovery compatibility | pending | candidate_pending; pending | [artifactsHistorical](release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json), [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Resolve retained-fallback scan blocker by separate review; preserve exact C578. Then verify capability equality, private-chat floors and53-entry recovery without shrinking admission. |
 | Historical production catalog | passed | historical; `7af9d0dd` | [catalogHistorical](release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json). Refresh via a new authorized bounded inspection on source/context/window drift. |
 | Fresh production, backups, flags and window | unknown | candidate_pending; pending | [productionHistorical](release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json), [catalogHistorical](release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json). Operator supplies fresh current task/image/flags/catalog/backups/health and exact authorized window. |
 | Two managed Chromebooks | waived_not_passed | policy_definition; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately. |
@@ -75,8 +80,10 @@ Every listed merge is included in the observed main. CI and historical receipts 
 
 | Artifact | Status | Source | Identity and limitation |
 |---|---|---|---|
-| Successor API/worker image | pending | pending | No frozen-source build, image identity, scan or archive is recorded. Produce a fresh source/scan/archive/manifest/config receipt after freeze. |
-| Successor frontend archive | pending | pending | TeachingTools, Focus and analytics UI changed from the retained frontend inputs. Build from frozen source, identify and hash the archive; publication remains separate. |
+| Successor API/worker image | pending | pending | A local preparation image exists, but no frozen resulting-main build, scan or final artifact binding is recorded. Produce a fresh source/scan/archive/manifest/config receipt after freeze. |
+| Successor frontend archive | pending | pending | A local preparation archive exists; TeachingTools, Focus and analytics changed from historical inputs. Final-main source is not frozen. Build from frozen source, identify and hash the archive; publication remains separate. |
+| Local preparation API/worker image | passed | `2b7b5dc0` | Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release. Retain archive/report receipts; rebuild and relabel from reviewed resulting main with proven input equivalence. |
+| Local preparation frontend archive | passed | `1cb459cc` | Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred. Build/hash matched final-main frontend after review and freeze; this archive is preparation-only. |
 | Historical DDC API/worker | passed | `ddc5996b` | Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment. Keep as historical evidence; do not select it as the successor image. |
 | Retained compatible fallback C578 | passed | `c578120d` | Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment. Preserve exact identity; fresh compatibility/scan checks must pass before operational use. |
 | Historical frontend archive | passed | `ed026513` | Retained archive SHA256 7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675 describes earlier frontend inputs. Rebuild successor frontend; retain the old artifact as history. |

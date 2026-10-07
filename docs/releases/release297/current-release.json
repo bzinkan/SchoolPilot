@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-07T17:25:39.074Z",
+  "observedAtUtc": "2026-10-07T17:34:01.248Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -108,7 +108,7 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "No frozen-source build, image identity, scan or archive is recorded.",
+      "rationale": "A local preparation image exists, but no frozen resulting-main build, scan or final artifact binding is recorded.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [],
       "nextAction": "Produce a fresh source/scan/archive/manifest/config receipt after freeze."
@@ -119,12 +119,48 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "TeachingTools, Focus and analytics UI changed from the retained frontend inputs.",
+      "rationale": "A local preparation archive exists; TeachingTools, Focus and analytics changed from historical inputs. Final-main source is not frozen.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [
         "reconciliation"
       ],
       "nextAction": "Build from frozen source, identify and hash the archive; publication remains separate."
+    },
+    {
+      "id": "backend-preparation",
+      "label": "Local preparation API/worker image",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Retain archive/report receipts; rebuild and relabel from reviewed resulting main with proven input equivalence.",
+      "identity": {
+        "localImageId": "sha256:6040dbd2044b0a2564f4a9ce861b1bf53b87b9af422060eec65984b3a95ee393",
+        "configDigest": "sha256:a35bf3d4a087752d9cd1fadd2f2d4e7965d69f7e2a4a850d8ba0c8e3894e1e79",
+        "archiveSha256": "15e7bcbffa7ca6447b051428bea2c7f2eb62e434ea6820f9aec4229368a4f9af",
+        "reportSha256": "a0afc4f8b7354efb8b08a6492f337a5c7aa1275f4de5f572bd021a4440afeaff"
+      }
+    },
+    {
+      "id": "frontend-preparation",
+      "label": "Local preparation frontend archive",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "1cb459cc19001996ced307ee203c199d9f334929",
+      "rationale": "Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Build/hash matched final-main frontend after review and freeze; this archive is preparation-only.",
+      "identity": {
+        "archiveSha256": "93d96b5eeeec7e44bada12dcf827efd6c642e08f40e8b08a1542332e0086057d",
+        "fileInventorySha256": "835607afa14045aa0fc31b64180f628ffc87b50b79137098207e322e50366f25"
+      }
     },
     {
       "id": "backend-ddc",
@@ -235,13 +271,14 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "DDC backend/frontend identities are historical; unchanged extension bytes have source-equivalence evidence.",
+      "rationale": "Preparation backend/frontend artifacts exist; frozen final-main packaging remains pending and retained fallback fresh scan is failed.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [
         "artifactsHistorical",
-        "extensionMerged"
+        "extensionMerged",
+        "localArtifactsFresh"
       ],
-      "nextAction": "Build/scan/hash fresh successor backend and frontend; reverify extension source and retained ZIP."
+      "nextAction": "Resolve exact retained-fallback blocker and produce final-main source-labelled builds/scans/hashes after review/freeze."
     },
     {
       "id": "publication",
@@ -305,6 +342,45 @@
         "reconciliation"
       ],
       "nextAction": "Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass."
+    },
+    {
+      "id": "fallback-scan-current",
+      "label": "Retained C578 fresh scan release blocker",
+      "status": "failed",
+      "applicability": "current_baseline",
+      "sourceSha": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "rationale": "Exact retained image freshly fails: Critical CVE-2026-90711 proxy-addr 2.0.7 (fixed in 2.0.8) and High GHSA-wq5f-xc86-pv6w sharp 0.35.4 (fixed in 0.35.5). Historical pass remains historical; unforced scanner cleanup passes.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized."
+    },
+    {
+      "id": "backend-scan-preparation",
+      "label": "Local preparation backend scan",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Fresh Linux scan records0 High / 0 Critical / 2 Medium, source/image/config/archive/report hashes and unforced owned cleanup. Registry verification is unknown.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Rebuild final-main source-labelled artifacts after review/freeze and replay final scan/custody proof; do not treat local preparation as publication."
+    },
+    {
+      "id": "screenshot-preparation",
+      "label": "Local Linux screenshot processing",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Synthetic JPEG/resizePNG processing passes inside the Linux preparation image with sharp 0.35.5 / vips 8.18.7; no production validation occurred.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Refresh final-candidate screenshot/runtime acceptance alongside ordinary recovery and classroom behavior."
     },
     {
       "id": "final-main-ci",
@@ -430,12 +506,13 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "C578 is retained; current candidate capabilities, scans and recovery have not been paired.",
+      "rationale": "Current candidate capabilities and ordinary recovery remain unpaired; the fresh exact-C578 scan has a separate failed release-blocking gate.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [
-        "artifactsHistorical"
+        "artifactsHistorical",
+        "localArtifactsFresh"
       ],
-      "nextAction": "Verify C578 exact identity/scan, capability equality, private-chat floors and53-entry recovery without shrinking admission."
+      "nextAction": "Resolve retained-fallback scan blocker by separate review; preserve exact C578. Then verify capability equality, private-chat floors and53-entry recovery without shrinking admission."
     },
     {
       "id": "catalog-history",
@@ -767,6 +844,10 @@
     "extensionFresh": {
       "path": "docs/releases/release297/extension-verification-20261007.json",
       "gitBlobSha256": "5489afa7da5d0c1f10a074ad8250aef0d80b15c5132052c0e7be9a05dee8cfe7"
+    },
+    "localArtifactsFresh": {
+      "path": "docs/releases/release297/local-artifact-observation-20261007.json",
+      "gitBlobSha256": "267941fe88a906531468c3e582d07f56c5840ae3dee5506e0b7c20101140e10d"
     }
   }
 }

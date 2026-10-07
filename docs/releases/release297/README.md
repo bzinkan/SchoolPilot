@@ -19,6 +19,13 @@ replace raw artifact/archive/scan hashes or erase CRLF differences in a packaged
 extension. The fresh extension record carries the canonical verification pass
 and the distinct retained raw-Git comparison failure.
 
+The fresh local artifact observation records preparation-only backend/frontend
+identities and a Linux screenshot-processing pass. These sources are not frozen
+resulting main. The exact retained C578 fallback's fresh scan is **failed** with
+one Critical and one High finding. Its historical passing scan remains dated
+evidence; resolve the failure through separate review before executable release
+plans. This index does not authorize substituting another fallback.
+
 Generate the operator checklist's current section offline:
 
 ```text
