@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-07T23:37:27.239Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-07T23:49:34.842Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
 
@@ -22,7 +22,7 @@ All four authorized source preparation PRs **#616, #617, #619 and #620** are mer
 
 | Stage | Status | Applicability | Next action |
 |---|---|---|---|
-| Observed merged implementation | passed | current_baseline | Complete the remaining scoped preparation merges and verify the final resulting main before selecting a frozen application reference. |
+| Observed merged implementation | passed | current_baseline | Review the bounded successor tooling/state PR; verify exact resulting-main CI after any separately authorized merge. |
 | Testing | pending | candidate_pending | Verify the final resulting-main push checks after closing merges; freeze and run the exact-source recovery and bounded acceptance campaign. |
 | Packaging | pending | candidate_pending | Resolve the exact fallback blocker, freeze application A, build/test its exact image and frontend, then seal reviewed binding on equivalent final-main B with fresh CI. |
 | Publication | pending | candidate_pending | Operator separately authorizes exact artifact publication after acceptance and final-main binding. |
@@ -50,7 +50,7 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Initial local full-infrastructure rerun observation | pending | preparation_only; `5dfef86c` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Require fresh complete applicable CI for the resulting main; preserve the original failed full-lane record. |
 | Original public-copy PR preparation CI | passed | preparation_only; `2b7b5dc0` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review/merge the copy PR before freezing application A; require fresh resulting-main B CI and proven A/B application equivalence. |
 | Disposable full-schema database and restricted-role preparation | passed | preparation_only; `2b7b5dc0` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review canonical receipt and skips; run actual ordinary 43→53 restoration and candidate→fallback→candidate recovery on the exact frozen image. Existing 2.9.3 CI capture does not establish 2.9.7 adoption. |
-| Retained C578 fresh scan release blocker | failed | current_baseline; `c578120d` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized. |
+| Retained C578 fresh scan release blocker | failed | current_baseline; `c578120d` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Preserve the failed exact C578 scan. Review the dependency-only successor packet and record an exact-artifact selection before any original release acceptance or operational Plan. |
 | Local preparation backend scan | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Build/test the exact frozen application A artifact after review; reuse its accepted image/config only with proven final-main B equivalence and fresh CI. Local preparation is not publication. |
 | Local Linux screenshot processing | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Refresh final-candidate screenshot/runtime acceptance alongside ordinary recovery and classroom behavior. |
 | Frozen source and final main CI | pending | candidate_pending; pending | After the closing merges, retain exact resulting-main push CI; after freeze/sealing, verify fresh applicable CI for final-main B. |
@@ -74,10 +74,10 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Live DeSales acceptance and adoption | pending | candidate_pending; pending | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Verify already-open pages, sign-in, IXL/precise/mixed paths, Focus/Attention, actions, messaging, reconnect and relevant PassPilot/GoPilot workflows. |
 | Fresh canonical extension package verification | passed | current_baseline; `03a9c363` | [extensionFresh](releases/release297/extension-verification-20261007.json), [extensionMerged](release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json). Retain unchanged version 2.9.7; the operator reports it live, so no repeat upload is needed. Uploaded ZIP identity and managed adoption remain unverified. |
 | Raw packaged text versus Git blobs | failed | current_baseline; `03a9c363` | [extensionFresh](releases/release297/extension-verification-20261007.json). Preserve raw failure and newline qualification; never claim byte equality with LF Git blobs or reclassify this failure. |
-| Observed published PR #616 CI | passed | preparation_only; `5cb78dfa` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Preserve exact-head PR history separately from current/final main checks. |
-| Observed published PR #617 CI | passed | preparation_only; `3b7fe064` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Preserve exact-head PR history separately from current/final main checks. |
-| Observed published PR #619 CI | failed | preparation_only; `9122b61b` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Preserve the cancelled older-head attempt; validate the completed closing commit before merge and retain resulting-main CI externally. |
-| Observed published PR #620 CI | pending | preparation_only; `f9bf0f49` | [reconciliation](releases/release297/source-reconciliation-20261007T233558Z.json). Wait for this exact published head to complete applicable PR checks before merge. |
+| Historical published PR #616 CI | passed | preparation_only; `5cb78dfa` | [reconciliationBeforeClosing](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status. |
+| Historical published PR #617 CI | passed | preparation_only; `3b7fe064` | [reconciliationBeforeClosing](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status. |
+| Historical published PR #619 CI | failed | preparation_only; `9122b61b` | [reconciliationBeforeClosing](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status. |
+| Historical published PR #620 CI | pending | preparation_only; `f9bf0f49` | [reconciliationBeforeClosing](releases/release297/source-reconciliation-20261007T212913Z.json). Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status. |
 | Dependency-only successor source review | passed | preparation_only; `d75fc1c4` | [successorSourceReview](release-evidence/release297-successor-20261007/source-delta-independent-review.json). Complete exact-image scan, native processing and ordinary recovery; source review does not approve fallback selection. |
 
 ### Inclusion and evidence invalidation

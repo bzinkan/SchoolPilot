@@ -255,6 +255,45 @@ export function validateIndex(index, root = ROOT) {
     assert.ok(gate, 'SUCCESSOR_SOURCE_GATE_REQUIRED');
     assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', 'preparation_only', review.successorSource, ['successorSourceReview']], 'SUCCESSOR_SOURCE_GATE_CHANGED');
   }
+  if (index.evidence.successorPreparationObservation) {
+    const proof = receipt('successorPreparationObservation');
+    metadataOnly(proof);
+    assert.deepEqual([proof.schemaVersion, proof.kind, proof.releaseBindingId, proof.preparationPassed, proof.releaseReady, proof.operationalAuthorization, proof.successorSelection], [1, 'release297_successor_preparation_observation', 'release-297-current-school-fallback-v3', true, false, false, 'pending_exact_artifact_review'], 'SUCCESSOR_PREPARATION_IS_NOT_SELECTION');
+    assert.ok(stamp(proof.observedAtUtc) && Date.parse(proof.observedAtUtc) <= Date.parse(index.observedAtUtc), 'SUCCESSOR_PREPARATION_TIME_REQUIRED');
+    for (const value of [proof.bindingSha256, proof.validatorSha256, proof.validationResultSha256]) assert.match(value, hash, 'SUCCESSOR_PREPARATION_HASH_REQUIRED');
+    assert.match(proof.testedToolingSource, sha, 'SUCCESSOR_TOOLING_SOURCE_REQUIRED');
+    const binding = receipt('successorBinding');
+    metadataOnly(binding);
+    assert.equal(index.evidence.successorBinding.gitBlobSha256, proof.bindingSha256, 'SUCCESSOR_BINDING_HASH_CHANGED');
+    assert.deepEqual([binding.schemaVersion, binding.id, binding.status, binding.preparation.status, binding.operationalAuthorization, binding.successorSelection.status], [3, proof.releaseBindingId, 'pending', 'passed', false, 'pending'], 'SUCCESSOR_BINDING_IS_NOT_RELEASE_ACCEPTANCE');
+    assert.deepEqual(Object.keys(proof.artifactPair).sort(), ['fallback', 'serving-anchor'], 'SUCCESSOR_ARTIFACT_ROLES_REQUIRED');
+    assert.equal(proof.artifactPair.fallback.source, 'd75fc1c48d0a3918857508d3965904c69023a153', 'SUCCESSOR_FALLBACK_SOURCE_CHANGED');
+    assert.equal(proof.artifactPair['serving-anchor'].source, 'a5161eb14939132776e0b77eac8e3c485091432c', 'SUCCESSOR_APPLICATION_SOURCE_CHANGED');
+    const kinds = ['successorScan', 'screenshotRuntime', 'requestIpRateLimit', 'ordinaryRecovery', 'restrictedRestoration'];
+    assert.deepEqual(Object.keys(proof.preparationEvidence).sort(), kinds.sort(), 'SUCCESSOR_PREPARATION_EVIDENCE_REQUIRED');
+    for (const kind of kinds) {
+      const ref = proof.preparationEvidence[kind], native = receipt(ref);
+      metadataOnly(native);
+      assert.deepEqual([binding.preparation.evidence[kind].path, binding.preparation.evidence[kind].sha256, binding.preparation.evidence[kind].status], [index.evidence[ref].path, index.evidence[ref].gitBlobSha256, 'passed'], 'SUCCESSOR_BINDING_RECEIPT_CHANGED');
+      assert.deepEqual([native.schemaVersion, native.kind, native.releaseBindingId, native.evidenceKind, native.artifactPair, native.passed], [1, 'release_successor_preparation_evidence', proof.releaseBindingId, kind, proof.artifactPair, true], 'SUCCESSOR_PREPARATION_ROLE_OR_RECEIPT_CHANGED');
+      assert.ok(stamp(native.observedAtUtc) && Date.parse(native.observedAtUtc) <= Date.parse(proof.observedAtUtc), 'SUCCESSOR_NATIVE_OBSERVATION_TIME_REQUIRED');
+      assert.deepEqual(Object.keys(native.retainedEvidence).sort(), ['independentReview', 'nativeResult'], 'SUCCESSOR_NATIVE_REVIEW_REQUIRED');
+      for (const evidence of Object.values(native.retainedEvidence)) assert.match(evidence.sha256, hash, 'SUCCESSOR_NATIVE_REVIEW_HASH_REQUIRED');
+      const gate = index.gates.find(entry => entry.id === `fallback-successor-${kind}`);
+      assert.ok(gate, 'SUCCESSOR_PREPARATION_GATE_REQUIRED');
+      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', 'preparation_only', proof.artifactPair.fallback.source, [ref]], 'SUCCESSOR_PREPARATION_GATE_CHANGED');
+    }
+    for (const [role, id] of [['serving-anchor', 'backend-successor-anchor'], ['fallback', 'fallback-successor-artifact']]) {
+      const artifact = index.artifacts.find(entry => entry.id === id), exact = proof.artifactPair[role];
+      assert.ok(artifact, 'SUCCESSOR_ARTIFACT_REQUIRED');
+      assert.deepEqual([artifact.status, artifact.applicability, artifact.sourceSha, artifact.evidence, artifact.identity], ['passed', 'preparation_only', exact.source, ['successorPreparationObservation'], { indexDigest: exact.localIndex, platformManifestDigest: exact.platform, configDigest: exact.config, archiveSha256: exact.archiveSha256 }], 'SUCCESSOR_ARTIFACT_ROLE_CHANGED');
+    }
+    for (const [id, status] of [['fallback-successor-preparation', 'passed'], ['fallback-successor-selection', 'pending']]) {
+      const gate = index.gates.find(entry => entry.id === id);
+      assert.ok(gate, 'SUCCESSOR_SELECTION_GATE_REQUIRED');
+      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [status, 'preparation_only', proof.artifactPair.fallback.source, ['successorPreparationObservation']], 'SUCCESSOR_SELECTION_CANNOT_BE_INFERRED');
+    }
+  }
   return index;
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
@@ -262,6 +301,7 @@ const short = value => value === null ? 'pending' : `\`${value.slice(0, 8)}\``;
 export function renderStatus(index) {
   const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
   if (index.gates.find(entry => entry.id === 'fallback-scan-current')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**', '');
+  if (index.evidence.successorPreparationObservation) lines.splice(7, 0, '**The dependency-only C578 successor has passed bounded security/native recovery preparation. Exact-artifact selection and the original release acceptance remain pending.** See the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md).', '');
   for (const [repository, source] of Object.entries(index.sources)) lines.push(`| ${repository} | ${short(source.remoteMainObserved)} | ${short(source.testedHistorical)} | ${short(source.frozenApplicationReference)} |`);
   if (index.evidence.mergeRequest) {
     const merged = index.gates.find(entry => entry.id === 'preparation-merges')?.status === 'passed';

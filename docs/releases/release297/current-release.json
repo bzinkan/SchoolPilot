@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-07T23:37:27.239Z",
+  "observedAtUtc": "2026-10-07T23:49:34.842Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -244,13 +244,13 @@
       "label": "Observed merged implementation",
       "status": "passed",
       "applicability": "current_baseline",
-      "sourceSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
-      "rationale": "The coordinated integration, successors and preparation PRs #616/#617 are observed merged in eecf main. Binding tooling #620 and closing packet #619 are still open.",
-      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "rationale": "All scoped preparation PRs #616/#617/#619/#620 are merged in exact A main; the successor tooling/state PR remains a separate reviewable change.",
+      "observedAtUtc": "2026-10-07T23:49:34.842Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Complete the remaining scoped preparation merges and verify the final resulting main before selecting a frozen application reference."
+      "nextAction": "Review the bounded successor tooling/state PR; verify exact resulting-main CI after any separately authorized merge."
     },
     {
       "id": "testing",
@@ -471,7 +471,7 @@
       "evidence": [
         "localArtifactsFresh"
       ],
-      "nextAction": "Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized."
+      "nextAction": "Preserve the failed exact C578 scan. Review the dependency-only successor packet and record an exact-artifact selection before any original release acceptance or operational Plan."
     },
     {
       "id": "backend-scan-preparation",
@@ -779,55 +779,55 @@
     },
     {
       "id": "preparation-pr-616-ci",
-      "label": "Observed published PR #616 CI",
+      "label": "Historical published PR #616 CI",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
       "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Preserve exact-head PR history separately from current/final main checks."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "preparation-pr-617-ci",
-      "label": "Observed published PR #617 CI",
+      "label": "Historical published PR #617 CI",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
       "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Preserve exact-head PR history separately from current/final main checks."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "preparation-pr-619-ci",
-      "label": "Observed published PR #619 CI",
+      "label": "Historical published PR #619 CI",
       "status": "failed",
       "applicability": "preparation_only",
       "sourceSha": "9122b61b76f2e8a8e146877604ec63752575dc53",
       "rationale": "Read-only published-head PR checks: 17 success, 1 skip, 1 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance. They refer to the older published head, not the unfinished closing packet.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Preserve the cancelled older-head attempt; validate the completed closing commit before merge and retain resulting-main CI externally."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "preparation-pr-620-ci",
-      "label": "Observed published PR #620 CI",
+      "label": "Historical published PR #620 CI",
       "status": "pending",
       "applicability": "preparation_only",
       "sourceSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
       "rationale": "Read-only published-head PR checks: 8 success, 0 skip, 0 cancelled; 5 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Wait for this exact published head to complete applicable PR checks before merge."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "fallback-successor-source",
