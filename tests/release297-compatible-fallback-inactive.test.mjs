@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FALLBACK, hash, inventoryFor, renderRequest, assertOnlyImageIdentityChanged, validateImageEvidence, validateCleanupCustody, validatePublishedTag, validateAnchorEvidence, createPlan, registerInactive, registrationEnvironmentProjection, anchor128Stages, renderAnchor128Pair, assertOnlyAnchorAdmissionChanged, createAnchor128Plan, registerAnchor128Inactive, validateSourceResponse } from '../scripts/register-compatible-fallback-inactive.mjs';
+import { FALLBACK, hash, inventoryFor, renderRequest, assertOnlyImageIdentityChanged, validateImageEvidence, validateCleanupCustody, validatePublishedTag, validateAnchorEvidence, createPlan, registerInactive, registrationEnvironmentProjection, anchor128Stages, renderAnchor128Pair, assertOnlyAnchorAdmissionChanged, createAnchor128Plan, registerAnchor128Inactive, validateSourceResponse, verifyRecoveryMutationSource } from '../scripts/register-compatible-fallback-inactive.mjs';
 import { renderUnused121Pair } from '../scripts/prepare-release-artifacts.mjs';
 import { SCANNER } from '../scripts/verify-legacy-deploy-image.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -277,4 +277,54 @@ test('anchor registration omits empty tags and accepts absent source with empty 
     assert.equal(result.registered.length, 2); assert.equal(f.commands.filter(value => value.args[1] === 'register-task-definition').length, 2);
     assert.equal(f.commands.some(value => ['run-task', 'update-service', 'deregister-task-definition'].includes(value.args[1])), false);
   } finally { f.clean(); }
+});
+
+
+test('v2 pending binding blocks both recovery registration replays before AWS', async () => {
+  for (const anchor of [false, true]) {
+    const f = anchor ? anchorFixture() : fixture();
+    try {
+      const legacy = await (anchor ? createAnchor128Plan : createPlan)(f.input, f.options);
+      const value = JSON.parse(readFileSync(legacy.path));
+      value.schemaVersion = 2;
+      value.input.schemaVersion = 2;
+      value.input.releaseBindingId = 'release-297-current-school-v2';
+      const plan = f.record('pending-v2-plan.json', value);
+      f.commands.length = 0;
+      await assert.rejects((anchor ? registerAnchor128Inactive : registerInactive)(plan, f.authorization(plan), f.options), /RELEASE_BINDING_EVIDENCE_PENDING/);
+      assert.equal(f.commands.some(entry => entry.executable === 'aws'), false);
+    } finally { f.clean(); }
+  }
+});
+
+
+test('v2 per-write source guard stops the worker after a first inactive registration if source or tool moves', async () => {
+  for (const lane of ['fallback', 'anchor128']) for (const drift of ['dirty-source', 'moved-source', 'dirty-tool', 'moved-tool']) {
+    const f = lane === 'fallback' ? fixture() : anchorFixture();
+    try {
+      const record = await (lane === 'fallback' ? createPlan : createAnchor128Plan)(f.input, f.options), plan = JSON.parse(readFileSync(record.path));
+      plan.input.schemaVersion = 2; plan.input.releaseBindingId = 'release-297-current-school-v2';
+      let moved = false;
+      const run = async (command, args) => {
+        if (command === 'gh') return { code: 0, stdout: JSON.stringify(args[0] === 'api' ? { commit: { sha: plan.input.anchorSource } } : [{ headSha: plan.input.anchorSource, headBranch: 'main', event: 'push', status: 'completed', conclusion: 'success', workflowName: 'CI' }]), stderr: '' };
+        if (moved && command === 'git' && args[1] === (drift.endsWith('tool') ? root : plan.input.anchorDirectory)) {
+          if (drift.startsWith('dirty') && args[2] === 'status') return { code: 0, stdout: ' M changed', stderr: '' };
+          if (drift.startsWith('moved') && args[2] === 'rev-parse') return { code: 0, stdout: 'b'.repeat(40), stderr: '' };
+        }
+        return f.options.run(command, args);
+      };
+      const retained = [];
+      for (const role of ['api', 'scheduler-worker']) {
+        if (role === 'scheduler-worker') {
+          await assert.rejects(verifyRecoveryMutationSource(plan, { id: plan.input.releaseBindingId }, run), /SOURCE_DIRTY|SOURCE_MOVED/);
+          break;
+        }
+        await verifyRecoveryMutationSource(plan, { id: plan.input.releaseBindingId }, run);
+        const response = await run('aws', ['ecs', 'register-task-definition', '--cli-input-json', `file://${plan.generated[role].path.replaceAll('\\', '/')}`]);
+        retained.push(JSON.parse(response.stdout).taskDefinition.taskDefinitionArn); moved = true;
+      }
+      assert.equal(retained.length, 1); assert.match(retained[0], /:201$/);
+      assert.equal(f.commands.filter(command => command.executable === 'aws' && command.args[1] === 'register-task-definition').length, 1);
+    } finally { f.clean(); }
+  }
 });

@@ -57,7 +57,10 @@ assert.equal(diagnosticBinding.applicationSource, process.env.USAGE_SOURCE_REVIS
   text = replaceOnce(text, 'sourceRevision: source, sourceClean, sourceHashes,', 'sourceRevision: source, sourceClean, sourceHashes, diagnosticBinding, execution,');
   text = replaceOnce(text, 'Generator, API and worker use separate Node processes with512MiB heap caps; Windows process CPU and RSS are not hard-limited.', 'Separate Linux role containers use the exact candidate Node runtime and default V8 flags under fixed CPU/memory ceilings; observed V8 facts are recorded.');
   const start = text.indexOf('async function child(name, file, extraEnv) {');
-  const end = text.indexOf('\ntry {\n  const snapshot =', start);
+  // Locate either Git LF or Windows CRLF without rewriting source bytes. The
+  // receipt continues to hash the original input and the exact emitted overlay.
+  const tail = /\r?\ntry \{\r?\n  const snapshot =/.exec(text.slice(start));
+  const end = tail ? start + tail.index : -1;
   assert.ok(start > 0 && end > start);
   text = text.slice(0, start) + `async function child(name, file, extraEnv) {
   const owner = await getOwnedRoleCoordinator().child(name, file, extraEnv);
