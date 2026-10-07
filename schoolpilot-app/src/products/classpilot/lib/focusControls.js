@@ -30,11 +30,15 @@ export function focusPayloadForStudents(payload, studentIds) {
 
 export function focusStatusLabel(student) {
   const state = student?.focus;
+  const requested = student?.classroomState?.restrictions?.focus;
+  if (requested?.active === true && typeof requested.assignmentId === 'string'
+    && requested.assignmentId && requested.assignmentId !== state?.assignmentId)
+    return 'Focus requested; awaiting confirmation';
   if (state?.state === 'active') return 'Focus confirmed';
   if (state?.state === 'suspended') return state.reason === 'attention' ? 'Focus paused for Attention'
     : state.reason === 'authentication' ? 'Focus paused for sign-in' : 'Focus waiting for the browser';
   if (state?.state === 'invalidated') return 'Focus ended: target unavailable';
-  return student?.classroomState?.restrictions?.focus?.active === true ? 'Focus requested; awaiting confirmation' : 'No Focus confirmed';
+  return requested?.active === true ? 'Focus requested; awaiting confirmation' : 'No Focus confirmed';
 }
 
 export function focusCommandFeedback(value, commandType) {

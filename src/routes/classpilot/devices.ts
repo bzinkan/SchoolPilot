@@ -1046,6 +1046,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
       scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
       preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
+      focusTabV1: acceptedCapabilities.has("focusTabV1"),
     },
     activityFresh,
     activityState: snapshot.activityState,
@@ -1073,7 +1074,8 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     aiClassification: snapshot.aiClassification ?? null,
     screenshotHealth: snapshot.screenshotHealth,
     classroomState: snapshot.classroomState,
-    focus: snapshot.focus !== undefined && focusStatusSchema.safeParse(snapshot.focus).success ? snapshot.focus : undefined,
+    focus: snapshot.state === "active" && snapshot.focus !== undefined
+      && focusStatusSchema.safeParse(snapshot.focus).success ? snapshot.focus : undefined,
     enforcementHealth: snapshot.enforcementHealth,
     appliedFabRevision: snapshot.appliedFabRevision ?? null,
   };
