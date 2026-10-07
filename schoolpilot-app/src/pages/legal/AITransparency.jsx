@@ -28,66 +28,76 @@ export default function AITransparency() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">AI Transparency</h1>
-        <p className="text-slate-600 mb-8">Last updated: September 28, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: October 7, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">AI-Powered Content Classification</h2>
             <p className="text-slate-700 leading-relaxed">
-              SchoolPilot uses <strong>Google's Gemini API</strong> to support student-safety
-              classification in ClassPilot. When a school separately enables MailPilot, SchoolPilot
-              uses Anthropic's Claude API for email safety classification. These features help schools
-              identify unsafe content while keeping AI use limited to the specific safety workflows the
-              school has enabled.
+              Schoolpilot uses <strong>Google's Gemini API</strong> to help classify browser activity
+              and identify potential safety concerns in ClassPilot. When a school separately enables
+              MailPilot, Schoolpilot uses Anthropic's Claude API for email safety classification.
+              Classification supports school staff review; it does not establish whether a student
+              is learning or whether a safety concern is confirmed.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              When a student visits a website on a monitored Chromebook during a class session, SchoolPilot
-              may send the URL and page title to Google's Gemini API for classification. The AI determines
-              whether the content is:
+              During authorized Chromebook monitoring, Schoolpilot may send the active page's URL and
+              page title to Google's Gemini API. This can also occur when a school's configured
+              after-hours safety monitoring is active. Reviewed website and search rules handle some
+              observations without a model request. Browser activity categories are:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
               <li><strong>Educational</strong> — Content related to learning, research, or school work</li>
-              <li><strong>Non-educational</strong> — Content that is not harmful but unrelated to school work (e.g., sports, entertainment)</li>
-              <li><strong>Unsafe</strong> — Content that is inappropriate or harmful for students</li>
+              <li><strong>Non-educational</strong> — Activity classified as unrelated to school work (e.g., sports or entertainment)</li>
+              <li><strong>Unknown</strong> — Activity that cannot be confidently categorized, including when classification is unavailable</li>
             </ul>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              Potential safety concerns are recorded separately from these categories. A category
+              alone does not confirm or rule out a safety concern.
+            </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">What Data Is Sent</h2>
             <p className="text-slate-700 leading-relaxed">
-              For ClassPilot website classification, only the <strong>URL and page title</strong> of the
-              website being visited are sent to the AI service. No student names, personal information,
-              full browsing history, or other personally identifiable information (PII) is included in that
-              URL-classification request.
+              The browsing inputs in a ClassPilot website-classification request are the
+              <strong> URL and page title</strong>, alongside classification instructions. Schoolpilot
+              does not attach student roster names, student IDs, device IDs, screenshots, page bodies,
+              or full browsing history to that request. However, URLs and titles can themselves contain
+              names, email addresses, search terms, or access tokens. Those embedded values may reach
+              the provider; the inputs are not guaranteed to be anonymous or free of personal information.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Safety Protections</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              When a website is classified as unsafe, the following actions are taken automatically:
+              A detected safety concern can create an alert in Safety Center and queue a notification
+              to authorized school administrators. Repeated observations may be combined, and an
+              administrator's exact-URL safety approval can suppress subsequent alerts for that URL.
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
-              <li>The tab is closed immediately on the student's device</li>
-              <li>A safety alert is sent to the school administrator</li>
+              <li>Administrators review the concern and choose an appropriate response.</li>
+              <li>Administrators can approve an exact URL for safety review or explicitly block a website.</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
-              Additionally, a curated list of known unsafe domains is maintained for instant blocking
-              without needing AI classification.
+              AI classifications and reviewed unsafe-domain rules do not automatically close tabs or
+              add website blocks. School website policies and authorized classroom restrictions are
+              enforced separately. Notification delivery and staff review are not guaranteed to be immediate.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Teacher Controls</h2>
             <p className="text-slate-700 leading-relaxed">
-              Teachers have full control over their classroom. If a website is flagged as off-task but is
-              relevant to the lesson, teachers can allow the domain through Flight Path (allowed sites list)
-              or by opening the tab directly for the student. Teacher intent always takes priority over
-              AI classification.
+              Teachers can use authorized classroom tools, including Flight Paths and opening a site
+              for a student, to express that a site is relevant to a lesson. These teacher-intent
+              exemptions affect off-task classification. They do not suppress safety alerts or override
+              independent school website restrictions. Safety approvals are an administrator review action.
             </p>
           </section>
 
@@ -118,11 +128,11 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Provider</h2>
             <p className="text-slate-700 leading-relaxed">
-              ClassPilot website classification is powered by <strong>Google Gemini</strong>. Google’s
-              Gemini API paid-tier data-use terms and privacy practices can be found at{" "}
+              ClassPilot website classification uses <strong>Google Gemini</strong>. Provider terms are
+              described in the{" "}
               <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Gemini API Terms
-              </a>. SchoolPilot uses Anthropic's API. Anthropic's{" "}
+              </a>. Schoolpilot also uses Anthropic's API. Anthropic's{" "}
               <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 Commercial Terms
               </a>{" "}
@@ -131,6 +141,11 @@ export default function AITransparency() {
                 Privacy Center
               </a>{" "}
               explain the terms for MailPilot email safety classification and the optional staff assistant.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              Applicable provider/account settings and agreements determine provider retention, access,
+              and training-use terms. Removing data from Schoolpilot does not itself delete a provider's
+              retained copy. This page does not promise provider-side deletion or zero retention.
             </p>
           </section>
 

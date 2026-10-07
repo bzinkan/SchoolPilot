@@ -23,7 +23,7 @@ export default function Subprocessors() {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-4">Subprocessors</h1>
-        <p className="text-slate-600 mb-8">Last updated: September 28, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: October 7, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -154,8 +154,8 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Google LLC</strong> (Gemini API)</td>
-                    <td className="px-4 py-3 text-slate-700">ClassPilot URL/title classification for student safety</td>
-                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification</td>
+                    <td className="px-4 py-3 text-slate-700">ClassPilot browser-activity classification and potential safety concerns</td>
+                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification, which may contain personal information, search terms, or access tokens embedded in those fields</td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>

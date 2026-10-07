@@ -28,7 +28,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: September 28, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: October 7, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -196,6 +196,15 @@ export default function PrivacyPolicy() {
               <li>When required by law or to protect rights and safety</li>
               <li>With your explicit consent</li>
             </ul>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              For ClassPilot browser classification, the URL and page title may be sent to Google's
+              Gemini API during authorized monitoring, including configured after-hours safety monitoring.
+              Student roster identities are not attached to that request, but URLs and titles can contain
+              personal information, search terms, or access tokens. See our{" "}
+              <a href="/ai-transparency" className="text-blue-600 underline">AI Transparency</a> and{" "}
+              <a href="/subprocessors" className="text-blue-600 underline">Subprocessors</a> pages for the
+              disclosed data flows. Schoolpilot's deletion of data does not itself delete provider-retained data.
+            </p>
           </section>
 
           <section>
@@ -204,15 +213,15 @@ export default function PrivacyPolicy() {
               Schoolpilot is designed with student privacy in mind:
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2">
-              <li>Monitoring occurs only during designated school hours</li>
+              <li>Monitoring follows the school's configured policy, which may permit full monitoring or limited safety monitoring outside designated school hours</li>
               <li>Students receive clear visual indicators when monitoring is active</li>
-              <li>Teachers can only monitor students in their assigned classes</li>
+              <li>Teachers can monitor students only within their current authorized classroom or supervision context; class assignment alone does not grant active monitoring access</li>
               <li>Personal devices are not monitored outside of school-managed contexts</li>
               <li>In observation-lease mode, ambient screenshots are captured only while an authorized teacher or administrator is actively observing; an exact-bound safety capture may be requested separately</li>
-              <li>For managed extensions using tracking-window leases, capture-health checks may continue without an open teacher dashboard while the student is authenticated and school tracking policy permits it. Outside an authorized live class, Schoolpilot discards the image pixels immediately and retains only non-image operational timing evidence</li>
-              <li>Every class-readable preview is newly captured and bound to that exact class session and authorization revision; images from an earlier class or an out-of-class interval are not shown</li>
+              <li>For managed extensions using tracking-window leases, capture-health checks may continue without an open teacher dashboard while the student is authenticated and school tracking policy permits it. Previews are retained temporarily only for an authorized classroom, supervision, or administrator observation context; other capture-health checks retain non-image timing evidence and discard pixels. Separately authorized safety evidence follows its own retention rules</li>
+              <li>Readable previews are bound to the current student's session and exact authorized context and revision; a prior context's preview cannot supply the current view</li>
               <li>During mixed-version rollout, a school may explicitly retain the legacy scheduled-screenshot mode for older managed extensions</li>
-              <li>Authorized Live View streams are not recorded by the extension or Schoolpilot servers; an authorized teacher can explicitly save a local recording or still image, which the school controls</li>
+              <li>Live View streaming is retired and unavailable; authorized screenshot previews are a separate feature</li>
             </ul>
           </section>
 
