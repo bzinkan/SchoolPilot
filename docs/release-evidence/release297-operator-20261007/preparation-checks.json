@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "kind": "local_preparation_check_observation",
+  "observedAtUtc": "2026-10-07T17:42:22.057Z",
+  "source": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+  "scope": "baseline_preparation_only",
+  "platform": "win32",
+  "nodeVersion": "v22.18.0",
+  "checks": [
+    {
+      "id": "backend-type",
+      "command": "npm run check",
+      "status": "passed"
+    },
+    {
+      "id": "backend-build",
+      "command": "npm run build",
+      "status": "passed"
+    },
+    {
+      "id": "unit",
+      "command": "npm run test:unit",
+      "status": "passed",
+      "counts": {
+        "tests": 2276,
+        "pass": 2272,
+        "fail": 0,
+        "skipped": 4
+      },
+      "skippedCases": [
+        "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+        "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+        "ok 3 - parses inspected index key columns as a text array # SKIP",
+        "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+      ],
+      "rawLogSha256": "37f30484751fe5efb313e6a32bd59832a94818ad5c1beda17cf0716b265524d0"
+    },
+    {
+      "id": "infrastructure",
+      "command": "npm run test:infrastructure",
+      "status": "failed",
+      "counts": {
+        "tests": 1051,
+        "pass": 1048,
+        "fail": 3,
+        "skipped": 0
+      },
+      "skippedCases": [],
+      "rawLogSha256": "78006ddd9ac8761f73811b9603ece47971be3d8ac318ef534780684fcf6a3ee5"
+    },
+    {
+      "id": "governance",
+      "command": "npm run soc2:check",
+      "status": "passed",
+      "qualification": "Existing missing private evidence, pending human decisions/MFA warnings and draft risk records remain unresolved.",
+      "rawLogSha256": "a6ef270568cefaea4d3cc77ed9f94a6d99da6c3db4e1778e587dc73b4f3f766d"
+    },
+    {
+      "id": "protection-payloads",
+      "status": "passed",
+      "payloads": [
+        {
+          "path": "docs/release-protections/schoolpilot.ruleset.proposed.json",
+          "sha256": "1ab11000b6d68071b448b0478e87614c1f25dfacdb4a3f776bf0569900318b54",
+          "requiredCheckCount": 18
+        },
+        {
+          "path": "docs/release-protections/classpilot.ruleset.proposed.json",
+          "sha256": "57b81c505d27095b73aa93d7fde7b7c190a1c4763f340d5ba157f1e25cba444c",
+          "requiredCheckCount": 5
+        }
+      ],
+      "qualification": "Static proposed payloads match observed emitted checks; API support independently reviewed. Settings/enforcement were not applied or verified."
+    }
+  ],
+  "releaseReadiness": false,
+  "infrastructureFailure": {
+    "cases": [
+      "generated coordinator preserves canonical full workload constants and false per-run capacity",
+      "exact current canonical harness produces parseable source-bound overlay without changing offered traffic",
+      "current-day expectation binds raw rows to exact same school persistence before rollup"
+    ],
+    "location": "scripts/load/usage/roles/patch-coordinator.mjs:61",
+    "error": "assert.ok(start > 0 && end > start)",
+    "nextAction": "Investigate exact Windows CRLF input marker mismatch, preserve initial failed full lane, then run focused adapters and runtime regressions after a reviewed tooling correction."
+  }
+}
