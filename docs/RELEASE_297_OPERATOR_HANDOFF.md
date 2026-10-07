@@ -17,7 +17,7 @@ remaining dependencies; it is not a deployment plan or authorization receipt.
 |---|---|---|
 | Source/evidence reconciliation and generated current status | [Draft PR #616](https://github.com/bzinkan/SchoolPilot/pull/616) | Retains #603/#609 and every merged successor through #615, with inclusion and invalidation matrix |
 | Public AI/privacy claims and bounded synthetic audit | [Draft PR #617](https://github.com/bzinkan/SchoolPilot/pull/617) | Merge intended copy/governance changes before freeze; `docs/soc2` changes image content |
-| Versioned successor binding | Separate tooling PR, linked on completion | Schema 1 remains historical; allowlisted schema 2 stays pending until reviewed, fresh source-bound receipts exist |
+| Versioned successor binding and Windows coordinator parsing | [Draft PR #620](https://github.com/bzinkan/SchoolPilot/pull/620) | Schema 1 remains historical; allowlisted schema 2 stays pending until reviewed, fresh source-bound receipts exist |
 | Protection proposal and this handoff | This PR | Proposed settings for both repositories; no settings application or CI redesign |
 | Demonstrated provider-boundary egress | [CP-AI-001 / issue #618](https://github.com/bzinkan/SchoolPilot/issues/618) | Separate narrow remediation and release-applicability review; the copy PR does not fix egress |
 
@@ -33,9 +33,15 @@ separate, unobserved states.
 Baseline preparation checks are recorded in the
 [check observation](release-evidence/release297-operator-20261007/preparation-checks.json).
 The unit lane passed with four explicit environment-dependent skips. The full
-infrastructure lane retained three Windows coordinator-parser failures; a focused
-tooling correction and rerun must be recorded separately. These local checks do
-not replace resulting-main CI or source-bound runtime acceptance.
+infrastructure lane retained three Windows coordinator-parser failures; #620's
+bounded repair passed the separate 35-case focused and 339-case role reruns.
+Its 103-case controller/binding suite passed, including a real Git source fixture.
+The [copy PR CI observation](release-evidence/release297-operator-20261007/copy-pr-ci.json)
+records successful applicable checks, including all four frontend browser shards.
+The [database observation](release-evidence/release297-operator-20261007/database-preparation.json)
+retains local fixture failures/correction, CI skips, and 513 local restricted-role
+passes. That full-schema fixture is not ordinary-53 native recovery. These checks
+do not replace resulting-main CI or source-bound runtime acceptance.
 
 ## Closing preparation gates
 
@@ -47,17 +53,23 @@ not replace resulting-main CI or source-bound runtime acceptance.
 2. Resolve the failed exact-fallback scan through a separately reviewed decision.
    Its historical scan pass is not current evidence. Do not waive the scan, alter
    the retained identity, or generate plans that assume it passed.
-3. Freeze the tested application reference, deterministic backend and frontend
-   Git input inventories, unchanged extension source/package, policy receipt and
-   explicit source-applicability/waiver review. Seal the allowlisted
-   `release-297-current-school-v2` binding in a reviewed tooling/document follow-up.
+3. Select and freeze the application reference for validation, deterministic
+   backend/frontend Git input inventories, unchanged extension source/package, policy receipt and
+   explicit source-applicability/waiver review. Prepare the allowlisted
+   `release-297-current-school-v2` binding for a reviewed tooling/document follow-up.
    Historical approval of DDC measurements does not approve changed artifacts.
-4. Build fresh source-labelled final-main backend and matched frontend artifacts.
-   Obtain successful exact-main CI, fresh scan with exact owned/unforced scanner
-   custody, native screenshot validation, and the source-bound recovery and
+4. Build fresh source-labelled backend and matched frontend artifacts at frozen
+   application reference A. Obtain successful applicable CI, a fresh scan with
+   exact owned/unforced scanner custody, native screenshot validation, and the source-bound recovery and
    acceptance receipts below. If main moves, stop affected plans. Application
    changes require new evidence; tool/document-only changes require proven input
    equivalence, refreshed tool/binding hashes and fresh applicable CI.
+   Seal the reviewed binding only after the exact tested image/config, all fresh
+   native receipts and source-applicability review satisfy its validator. A later
+   documentation/tool sealing main B must prove both application inventories
+   equal A and pass fresh exact-main CI. Version 2 retains the exact A-labelled
+   tested image and records both A and current-main B; a rebuilt image cannot
+   inherit acceptance from A merely because Git inputs match.
 
 Keep `CLASSPILOT_USAGE_ROLLUP_MODE=off` and
 `CLASSPILOT_DIGITAL_USAGE_MODE=off`. Read the independent
