@@ -138,3 +138,24 @@ test('unused121 preserves nonempty ordered tags and rejects changed provider tag
     assert.equal(receipt.registered.length, 1); assert.equal(receipt.registrationOutcomeUncertain, false); noOperationalCommands(f);
   } finally { f.clean(); }
 });
+
+
+test('v2 pending binding blocks publication and unused121 replay before any cloud call', async () => {
+  for (const operation of ['PublishImage', 'RegisterUnused121']) {
+    const f = fixture();
+    try {
+      const publicationPlan = await planPublication(f.input, f.options);
+      const legacy = operation === 'PublishImage' ? publicationPlan : await planUnused121(
+        f.registrationInput(await publishImage(publicationPlan, f.authorization(publicationPlan, 'PublishImage'), f.options)), f.options);
+      const value = JSON.parse(readFileSync(legacy.path));
+      value.schemaVersion = 2;
+      value.input.schemaVersion = 2;
+      value.input.releaseBindingId = 'release-297-current-school-v2';
+      const plan = f.pin('pending-v2-plan.json', value);
+      f.commands.length = 0;
+      const execute = operation === 'PublishImage' ? publishImage : registerUnused121;
+      await assert.rejects(execute(plan, f.authorization(plan, operation), f.options), /RELEASE_BINDING_EVIDENCE_PENDING/);
+      assert.equal(f.commands.some(entry => ['aws', 'docker', 'gh'].includes(entry.executable)), false);
+    } finally { f.clean(); }
+  }
+});

@@ -39,6 +39,11 @@ must not include production DB exports, grants, policies, or customer data.
 AI/privacy evidence packets are written to `soc2-evidence/ai-privacy/` and
 must not include prompt bodies, API keys, raw logs, transcripts, customer
 records, or student records.
+The [ClassPilot public-claim audit](../CLASSPILOT_AI_CLAIM_AUDIT.md) and
+`tests/classpilot-provider-boundary-audit.test.ts` use exclusively synthetic
+fixtures and a mocked provider. CP-AI-001 records unredacted inputs in that
+boundary test; a passing characterization is not completed minimization,
+production exposure evidence, or provider-account approval.
 Paperwork import tests establish behavior and recovery, not model accuracy.
 Keep model output reports and human correction-effort reviews outside this
 repository; record only non-content evidence pointers. Source cleanup does not
