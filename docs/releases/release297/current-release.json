@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-07T18:14:08.678Z",
+  "observedAtUtc": "2026-10-07T21:29:13.642Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -21,7 +21,7 @@
   "sources": {
     "schoolpilot": {
       "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
-      "remoteMainObserved": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "remoteMainObserved": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
       "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
       "frozenApplicationReference": null,
@@ -228,7 +228,7 @@
         "extensionFresh",
         "extensionMerged"
       ],
-      "nextAction": "Retain version 2.9.7; reverify source/package on drift and check fresh Store state before separately authorized upload. Adoption remains unknown.",
+      "nextAction": "Retain unchanged version 2.9.7; the operator reports it live, so no repeat upload is needed. Uploaded ZIP identity and managed adoption remain unverified.",
       "identity": {
         "version": "2.9.7",
         "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
@@ -241,16 +241,16 @@
   "stages": [
     {
       "id": "implementation",
-      "label": "Implementation",
+      "label": "Observed merged implementation",
       "status": "passed",
       "applicability": "current_baseline",
-      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
-      "rationale": "The coordinated integration and listed successors are merged and present in observed main; new stabilization PRs remain reviewable work.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "sourceSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "rationale": "The coordinated integration, successors and preparation PRs #616/#617 are observed merged in eecf main. Binding tooling #620 and closing packet #619 are still open.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Review stabilization PRs, merge separately, then select the final application reference."
+      "nextAction": "Complete the remaining scoped preparation merges and verify the final resulting main before selecting a frozen application reference."
     },
     {
       "id": "testing",
@@ -258,12 +258,12 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Observed main has 19 successful checks and the intentional push-only path-detection skip; successor native acceptance is not recorded.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "rationale": "Merged preparation PR CI and the dated observed-main push checks are separate from a frozen candidate. Final-main and successor native acceptance remain pending.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Run final source regression, recovery and bounded acceptance after freeze; verify resulting-main CI."
+      "nextAction": "Verify the final resulting-main push checks after closing merges; freeze and run the exact-source recovery and bounded acceptance campaign."
     },
     {
       "id": "packaging",
@@ -332,16 +332,55 @@
   "gates": [
     {
       "id": "baseline-ci",
-      "label": "Observed baseline CI",
+      "label": "Original baseline exact-main CI",
       "status": "passed",
-      "applicability": "current_baseline",
+      "applicability": "historical",
       "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
       "rationale": "19 emitted checks succeed; Detect changed paths is intentionally skipped on main push.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationHistorical"
       ],
       "nextAction": "Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass."
+    },
+    {
+      "id": "current-main-preparation-ci",
+      "label": "Dated observed main push preparation CI",
+      "status": "pending",
+      "applicability": "current_baseline",
+      "sourceSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "rationale": "This exact eecf source has independently recorded push/main workflow provenance; checks are pending at the snapshot, separately from PR CI and future resulting-main CI.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Verify live main check links and retain fresh resulting-main evidence after the closing merges."
+    },
+    {
+      "id": "preparation-merges",
+      "label": "Remaining scoped preparation merges",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "PRs #616/#617 are observed merged. #620 and #619 are still open; human authorization is limited to exactly these four source PRs.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Complete applicable checks and remaining authorized source merges; verify their resulting main separately."
+    },
+    {
+      "id": "merge-request",
+      "label": "Operator request for source merges 616/617/619/620",
+      "status": "passed",
+      "applicability": "policy_definition",
+      "sourceSha": null,
+      "rationale": "The human operator requested these four preparation merges after completing their applicable checks. All operational authorization flags remain false.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "evidence": [
+        "mergeRequest"
+      ],
+      "nextAction": "Complete and review the named PRs; publication, deployment, activation and settings need separate authorization."
     },
     {
       "id": "baseline-local-checks",
@@ -384,11 +423,11 @@
     },
     {
       "id": "full-infrastructure-after-fix",
-      "label": "Full infrastructure after reviewed tooling fix",
+      "label": "Initial local full-infrastructure rerun observation",
       "status": "pending",
       "applicability": "preparation_only",
       "sourceSha": "5dfef86cb82b79f681e528176d572f2ec3e418be",
-      "rationale": "Only focused and all-role-adapter reruns have been recorded locally; the entire infrastructure lane has not been rerun after the fix.",
+      "rationale": "At this immutable receipt time only focused and all-role-adapter reruns were recorded. Later CI/full-lane observations must be retained separately; this pending historical preparation observation is not relabeled.",
       "observedAtUtc": "2026-10-07T18:14:08.678Z",
       "evidence": [
         "coordinatorNewline"
@@ -397,11 +436,11 @@
     },
     {
       "id": "public-copy-preparation-ci",
-      "label": "Public-copy PR preparation CI",
+      "label": "Original public-copy PR preparation CI",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
-      "rationale": "Exact PR #617 head emits 19 completed checks: 18 successes and 1 legitimate AWS rollout path skip. This is pull-request preparation CI, not exact-main CI.",
+      "rationale": "The original exact #617 head emitted 18 successes and 1 legitimate AWS rollout path skip. This earlier PR preparation receipt remains source-bound; refreshed merged-head PR CI is recorded separately.",
       "observedAtUtc": "2026-10-07T18:14:08.678Z",
       "evidence": [
         "preparationFollowups"
@@ -466,10 +505,10 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Candidate is not frozen and preparation changes have not merged.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "rationale": "Application reference is not frozen; #619/#620 remain open at this snapshot. The final resulting-main push CI cannot be inferred from prior PR or main checks.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [],
-      "nextAction": "Require clean current remote main, application equivalence and green exact-main CI."
+      "nextAction": "After the closing merges, retain exact resulting-main push CI; after freeze/sealing, verify fresh applicable CI for final-main B."
     },
     {
       "id": "criteria",
@@ -633,17 +672,44 @@
       "nextAction": "Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately."
     },
     {
-      "id": "store",
-      "label": "Store listing and pending submissions",
-      "status": "unknown",
+      "id": "store-live-version",
+      "label": "Operator-confirmed live Store version 2.9.7",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": null,
+      "rationale": "The human operator reports version 2.9.7 live. Verification method is operator_report; package identity and managed adoption are not inferred.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "evidence": [
+        "operatorStoreVersion"
+      ],
+      "nextAction": "Retain the operator report separately from uploaded ZIP, pending-submission and managed-adoption evidence."
+    },
+    {
+      "id": "store-unchanged-upload",
+      "label": "New Store upload for unchanged 2.9.7 candidate",
+      "status": "not_applicable",
       "applicability": "equivalence_required",
       "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
-      "rationale": "October4 operator report described2.9.6 and no pending drafts; no fresh listing/dashboard read was performed.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "rationale": "Existing canonical package verification and the reported live version do not require a duplicate upload for the unchanged candidate.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
       "evidence": [
-        "extensionMerged"
+        "operatorStoreVersion",
+        "extensionFresh"
       ],
-      "nextAction": "Recheck live version and pending submissions immediately before separately authorized upload."
+      "nextAction": "Recheck source/package if it changes; managed adoption still requires actual sample-bearing live evidence."
+    },
+    {
+      "id": "store",
+      "label": "Store uploaded ZIP identity and pending submissions",
+      "status": "unknown",
+      "applicability": "equivalence_required",
+      "sourceSha": null,
+      "rationale": "The operator reports live version 2.9.7. Uploaded ZIP identity and pending submission state remain unknown; this was not a fresh dashboard/listing capture.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "evidence": [
+        "operatorStoreVersion"
+      ],
+      "nextAction": "No repeat upload for the unchanged candidate. Verify pending submissions and exact uploaded identity before any separately reviewed successor upload."
     },
     {
       "id": "usage-capacity",
@@ -696,7 +762,7 @@
         "extensionFresh",
         "extensionMerged"
       ],
-      "nextAction": "Retain version 2.9.7; reverify source/package on drift and check fresh Store state before separately authorized upload. Adoption remains unknown."
+      "nextAction": "Retain unchanged version 2.9.7; the operator reports it live, so no repeat upload is needed. Uploaded ZIP identity and managed adoption remain unverified."
     },
     {
       "id": "extension-raw-git",
@@ -710,6 +776,58 @@
         "extensionFresh"
       ],
       "nextAction": "Preserve raw failure and newline qualification; never claim byte equality with LF Git blobs or reclassify this failure."
+    },
+    {
+      "id": "preparation-pr-616-ci",
+      "label": "Observed published PR #616 CI",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
+      "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Preserve exact-head PR history separately from current/final main checks."
+    },
+    {
+      "id": "preparation-pr-617-ci",
+      "label": "Observed published PR #617 CI",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
+      "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Preserve exact-head PR history separately from current/final main checks."
+    },
+    {
+      "id": "preparation-pr-619-ci",
+      "label": "Observed published PR #619 CI",
+      "status": "failed",
+      "applicability": "preparation_only",
+      "sourceSha": "9122b61b76f2e8a8e146877604ec63752575dc53",
+      "rationale": "Read-only published-head PR checks: 17 success, 1 skip, 1 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance. They refer to the older published head, not the unfinished closing packet.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Preserve the cancelled older-head attempt; validate the completed closing commit before merge and retain resulting-main CI externally."
+    },
+    {
+      "id": "preparation-pr-620-ci",
+      "label": "Observed published PR #620 CI",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
+      "rationale": "Read-only published-head PR checks: 8 success, 0 skip, 0 cancelled; 5 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Wait for this exact published head to complete applicable PR checks before merge."
     }
   ],
   "inclusionMatrix": [
@@ -721,7 +839,7 @@
       "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
       "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
       "mergedAtUtc": "2026-10-04T22:45:00Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -738,7 +856,7 @@
       "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
       "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
       "mergedAtUtc": "2026-10-05T03:23:01Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -753,7 +871,7 @@
       "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
       "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
       "mergedAtUtc": "2026-10-05T11:23:21Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -768,7 +886,7 @@
       "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
       "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
       "mergedAtUtc": "2026-10-06T22:31:47Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -785,7 +903,7 @@
       "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
       "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
       "mergedAtUtc": "2026-10-06T23:19:16Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -800,7 +918,7 @@
       "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
       "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
       "mergedAtUtc": "2026-10-07T00:30:35Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -815,7 +933,7 @@
       "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
       "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
       "mergedAtUtc": "2026-10-07T14:17:37Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "backend",
         "frontend"
@@ -831,12 +949,44 @@
       "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
       "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
       "mergedAtUtc": "2026-10-07T16:21:39Z",
-      "includedInSource": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "affectedArtifacts": [
         "frontend"
       ],
       "reusableEvidence": "Backend/extension evidence only if source equivalence is proven.",
       "requiredReruns": "Hourly activity sizing, labels/readable values and final browser/build gates."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 616,
+      "title": "Reconcile release297 current state and preserve dated evidence",
+      "state": "MERGED",
+      "headSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
+      "mergeSha": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b",
+      "mergedAtUtc": "2026-10-07T20:57:54Z",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "affectedArtifacts": [
+        "release documentation",
+        "release tooling"
+      ],
+      "reusableEvidence": "Immutable historical measurements and failures remain source-bound; no changed application acceptance is implied by documentation preparation.",
+      "requiredReruns": "Generated index/checklist validation, source reconciliation and fresh final-main checks after the closing merges."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 617,
+      "title": "Correct ClassPilot AI disclosures and record provider-boundary audit",
+      "state": "MERGED",
+      "headSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
+      "mergeSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "mergedAtUtc": "2026-10-07T21:14:48Z",
+      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "affectedArtifacts": [
+        "backend governance inputs",
+        "frontend public copy"
+      ],
+      "reusableEvidence": "Synthetic boundary fixtures and the claim-to-implementation table explain current behavior; prior runtime acceptance remains source-bound.",
+      "requiredReruns": "Freeze only after these merged public/governance inputs; verify final application inventories, exact artifacts and applicable regression/native acceptance."
     },
     {
       "repository": "ClassPilot",
@@ -856,8 +1006,8 @@
   ],
   "evidence": {
     "reconciliation": {
-      "path": "docs/releases/release297/source-reconciliation-20261007.json",
-      "gitBlobSha256": "c710674f59a20224ff998b4e0592f67ac03a5f416c48f7cde8c68f2b105a6de6"
+      "path": "docs/releases/release297/source-reconciliation-20261007T212913Z.json",
+      "gitBlobSha256": "2e6736dd09d7fb64a5ef8d13e4c0fb71561d2e58905eea2506014269447fae49"
     },
     "extensionMerged": {
       "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json",
@@ -934,6 +1084,18 @@
     "preparationFollowups": {
       "path": "docs/releases/release297/preparation-followups-20261007.json",
       "gitBlobSha256": "512f2058daeab630771ade07f2593cb87357f8c8616fda6d685cff604a868f79"
+    },
+    "reconciliationHistorical": {
+      "path": "docs/releases/release297/source-reconciliation-20261007.json",
+      "gitBlobSha256": "c710674f59a20224ff998b4e0592f67ac03a5f416c48f7cde8c68f2b105a6de6"
+    },
+    "mergeRequest": {
+      "path": "docs/releases/release297/operator-merge-request-20261007.json",
+      "gitBlobSha256": "92a38b4943316f378e55ea0afd8f10a501395f2fc6daa6835c5b95bc403accf8"
+    },
+    "operatorStoreVersion": {
+      "path": "docs/releases/release297/operator-store-version-20261007.json",
+      "gitBlobSha256": "b66d654c7c925347a8215f6a235e246c4e9bf4777e05aedfccab1fb4ab1e7105"
     }
   }
 }

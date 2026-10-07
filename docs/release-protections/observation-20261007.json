@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "settingsMutated": false,
+  "kind": "read_only_github_merge_protection_observation",
+  "observedAtUtc": "2026-10-07T17:16:55.8143036Z",
+  "repositories": [
+    {
+      "rulesets": [],
+      "repository": "bzinkan/SchoolPilot",
+      "mainProtected": false,
+      "source": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "checks": [
+        {
+          "name": "Analyze (javascript-typescript)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "AWS rollout safety (PowerShell + Terraform)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Backend (TypeScript + Build)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Cross-tenant isolation tests",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Detect changed paths",
+          "status": "completed",
+          "conclusion": "skipped",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Frontend (Vite Build)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 1)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 2)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 3)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Frontend release-focused gates (shard 4)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "RLS-enabled cross-tenant tests",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Scan Docker image",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "Scan for secrets",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 AI/privacy evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 approval queue",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 deployment evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 incident evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 monitoring evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 privileged access evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "SOC 2 tenant isolation evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        }
+      ]
+    },
+    {
+      "rulesets": [],
+      "repository": "bzinkan/ClassPilot",
+      "mainProtected": false,
+      "source": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "checks": [
+        {
+          "name": "chrome-compatibility (120.0.6099.109)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "chrome-compatibility (133.0.6943.141)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "chrome-compatibility (152.0.7977.82)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "chrome-compatibility (stable)",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        },
+        {
+          "name": "test",
+          "status": "completed",
+          "conclusion": "success",
+          "integrationId": 15368,
+          "app": "github-actions"
+        }
+      ]
+    }
+  ],
+  "enforcementStatus": "pending"
+}

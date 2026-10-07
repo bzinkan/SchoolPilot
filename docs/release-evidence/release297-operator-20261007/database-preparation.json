@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "kind": "disposable_database_preparation",
+  "observedAtUtc": "2026-10-07T18:00:36.193Z",
+  "scope": "source_bound_full_schema_fixture_only",
+  "source": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+  "runId": "ai-copy-2b7b5dc0-319efab7",
+  "productionAccess": false,
+  "sourceChanges": false,
+  "platform": "Linux node:22-alpine, Node v22.23.3, PostgreSQL16, Redis7",
+  "publishedPorts": [],
+  "ordinaryLocal": {
+    "pass": 1550,
+    "fail": 4,
+    "skips": "RLS-only checks deferred to restricted lane",
+    "failures": "Native Redis tests rejected non-loopback fixture URL",
+    "exit": 1,
+    "tests": 1562,
+    "skipped": 8
+  },
+  "redisLocalCorrected": {
+    "pass": 4,
+    "fail": 0,
+    "change": "Owned Redis sidecar in the same isolated namespace, TEST_REDIS_URL localhost",
+    "exit": 0,
+    "tests": 4,
+    "skipped": 0
+  },
+  "restrictedLocal": {
+    "rolsuper": false,
+    "uniqueAllowlist": 129,
+    "allowlist": 129,
+    "pass": 513,
+    "rolbypassrls": false,
+    "tests": 513,
+    "skipped": 0,
+    "fail": 0,
+    "exit": 0,
+    "role": "schoolpilot_rls_test_user"
+  },
+  "prerequisites": {
+    "legacyConvergence": true,
+    "freshSchema": true,
+    "screenshotInstall": true,
+    "appointmentInstall": true,
+    "backendBuild": true,
+    "boundedPdfinfo": true,
+    "restrictedScreenshotVerify": true,
+    "boundedPdftoppm": true
+  },
+  "ci": {
+    "head": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+    "status": "completed",
+    "restricted": {
+      "skipReason": "Redis 7 integration service unavailable in CI RLS lane",
+      "skipped": 1,
+      "tests": 513,
+      "pass": 512,
+      "fail": 0
+    },
+    "ordinary": {
+      "skipped": 8,
+      "tests": 1562,
+      "pass": 1554,
+      "fail": 0
+    },
+    "realExtensionCapture": "PASS",
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37659544944",
+    "conclusion": "success"
+  },
+  "initialAttempt": "Screenshot installer rejected Docker DNS database hostname; retained logs. Corrected to loopback through owned database network namespace without source changes.",
+  "cleanup": "complete: verified owner labels; removed owned containers, workspace volume, and private network",
+  "retainedSummarySha256": "fbffd4663ef4c3de328476b8545d423efec146973fa1a9a13d79519ccaa1436e",
+  "retainedRawEvidenceInventorySha256": "aa38f4cfa1277e4cd186f4e17bdba08e79b6a7601128c8f7be11644ee13fbda2",
+  "retainedCleanupSha256": "bd989bf23b8f4fbbf1eafdad8dd9bda87c551cac70d9c4924b5329a4adab3ce4",
+  "qualification": "Fresh full-schema database/RLS regression does not establish ordinary 43-to53 migration/restoration or candidate-to-fallback-to-candidate recovery. Those native release gates remain pending.",
+  "extensionCaptureFixture": {
+    "version": "2.9.3",
+    "source": "ccaf2c8d1b0df3aa1f8ea74754e457990a74498a",
+    "qualification": "Existing CI real-capture regression; not a 2.9.7 package or managed-adoption pass."
+  }
+}
