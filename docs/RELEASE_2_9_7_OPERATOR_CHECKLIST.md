@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-07T17:34:01.248Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-07T18:14:08.678Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
 
@@ -20,7 +20,7 @@ Observed **2026-10-07T17:34:01.248Z**. The [machine-readable index](releases/rel
 |---|---|---|---|
 | Implementation | passed | current_baseline | Review stabilization PRs, merge separately, then select the final application reference. |
 | Testing | pending | candidate_pending | Run final source regression, recovery and bounded acceptance after freeze; verify resulting-main CI. |
-| Packaging | pending | candidate_pending | Resolve exact retained-fallback blocker and produce final-main source-labelled builds/scans/hashes after review/freeze. |
+| Packaging | pending | candidate_pending | Resolve the exact fallback blocker, freeze application A, build/test its exact image and frontend, then seal reviewed binding on equivalent final-main B with fresh CI. |
 | Publication | pending | candidate_pending | Operator separately authorizes exact artifact publication after acceptance and final-main binding. |
 | Deployment | unknown | candidate_pending | Operator refreshes exact serving state and authorizes migration-first deployment. |
 | Activation | pending | candidate_pending | Authorize DeSales pilot only after source/image/admission and participating capabilities are verified. |
@@ -37,8 +37,14 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Gate | Status | Applicability/source | Evidence and next action |
 |---|---|---|---|
 | Observed baseline CI | passed | current_baseline; `56df7a4f` | [reconciliation](releases/release297/source-reconciliation-20261007.json). Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass. |
+| Local baseline build, unit and governance preparation | passed | preparation_only; `56df7a4f` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review skips/warnings and refresh applicable checks on final source; these local checks do not establish runtime acceptance. |
+| Original full Windows infrastructure lane | failed | preparation_only; `56df7a4f` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Retain this attempt. Merge the reviewed tooling fix and require a fresh complete applicable infrastructure lane before closing this preparation dependency. |
+| Focused coordinator and role-adapter reruns | passed | preparation_only; `5dfef86c` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Review tooling PR #620; a focused rerun does not turn the original full infrastructure attempt into a pass. |
+| Full infrastructure after reviewed tooling fix | pending | preparation_only; `5dfef86c` | [coordinatorNewline](releases/release297/coordinator-newline-checks-20261007.json). Require fresh complete applicable CI for the resulting main; preserve the original failed full-lane record. |
+| Public-copy PR preparation CI | passed | preparation_only; `2b7b5dc0` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review/merge the copy PR before freezing application A; require fresh resulting-main B CI and proven A/B application equivalence. |
+| Disposable full-schema database and restricted-role preparation | passed | preparation_only; `2b7b5dc0` | [preparationFollowups](releases/release297/preparation-followups-20261007.json). Review canonical receipt and skips; run actual ordinary 43→53 restoration and candidate→fallback→candidate recovery on the exact frozen image. Existing 2.9.3 CI capture does not establish 2.9.7 adoption. |
 | Retained C578 fresh scan release blocker | failed | current_baseline; `c578120d` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized. |
-| Local preparation backend scan | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Rebuild final-main source-labelled artifacts after review/freeze and replay final scan/custody proof; do not treat local preparation as publication. |
+| Local preparation backend scan | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Build/test the exact frozen application A artifact after review; reuse its accepted image/config only with proven final-main B equivalence and fresh CI. Local preparation is not publication. |
 | Local Linux screenshot processing | passed | preparation_only; `2b7b5dc0` | [localArtifactsFresh](releases/release297/local-artifact-observation-20261007.json). Refresh final-candidate screenshot/runtime acceptance alongside ordinary recovery and classroom behavior. |
 | Frozen source and final main CI | pending | candidate_pending; pending | Require clean current remote main, application equivalence and green exact-main CI. |
 | Bounded criteria approval | passed | policy_definition; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Review successor binding/applicability explicitly and rerun the approved fixed-order campaign. |
@@ -80,10 +86,10 @@ Every listed merge is included in the observed main. CI and historical receipts 
 
 | Artifact | Status | Source | Identity and limitation |
 |---|---|---|---|
-| Successor API/worker image | pending | pending | A local preparation image exists, but no frozen resulting-main build, scan or final artifact binding is recorded. Produce a fresh source/scan/archive/manifest/config receipt after freeze. |
+| Successor API/worker image | pending | pending | A local preparation image exists, but no exact frozen application A image/config, fresh acceptance or final-main B binding is recorded. Produce a fresh source/scan/archive/manifest/config receipt after freeze. |
 | Successor frontend archive | pending | pending | A local preparation archive exists; TeachingTools, Focus and analytics changed from historical inputs. Final-main source is not frozen. Build from frozen source, identify and hash the archive; publication remains separate. |
-| Local preparation API/worker image | passed | `2b7b5dc0` | Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release. Retain archive/report receipts; rebuild and relabel from reviewed resulting main with proven input equivalence. |
-| Local preparation frontend archive | passed | `1cb459cc` | Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred. Build/hash matched final-main frontend after review and freeze; this archive is preparation-only. |
+| Local preparation API/worker image | passed | `2b7b5dc0` | Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release. Retain preparation receipts. Build/test exact frozen application A, then reuse that exact image/config under reviewed final-main B only after proven A/B application equivalence. |
+| Local preparation frontend archive | passed | `1cb459cc` | Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred. Build/hash the matched frozen application frontend after review; bind it to equivalent final-main B. This archive is preparation-only. |
 | Historical DDC API/worker | passed | `ddc5996b` | Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment. Keep as historical evidence; do not select it as the successor image. |
 | Retained compatible fallback C578 | passed | `c578120d` | Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment. Preserve exact identity; fresh compatibility/scan checks must pass before operational use. |
 | Historical frontend archive | passed | `ed026513` | Retained archive SHA256 7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675 describes earlier frontend inputs. Rebuild successor frontend; retain the old artifact as history. |

@@ -89,6 +89,22 @@ test('preparation artifacts and screenshot checks cannot become frozen-candidate
   candidate = index(); candidate.gates.find(entry => entry.id === 'screenshot-preparation').applicability = 'current_baseline';
   assert.throws(() => validateIndex(candidate), /PREPARATION_GATE_RECEIPT_CHANGED/);
 });
+test('focused newline reruns preserve original full infrastructure failure and pending full rerun', () => {
+  let candidate = index();
+  candidate.gates.find(entry => entry.id === 'baseline-infrastructure').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /FULL_INFRASTRUCTURE_FAILURE_RECLASSIFIED/);
+  candidate = index(); candidate.gates.find(entry => entry.id === 'full-infrastructure-after-fix').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /FOCUSED_RERUN_IS_NOT_FULL_INFRASTRUCTURE/);
+  candidate = index(); candidate.gates.find(entry => entry.id === 'focused-role-rerun').sourceSha = candidate.sources.schoolpilot.remoteMainObserved;
+  assert.throws(() => validateIndex(candidate), /FOCUSED_RERUN_APPLICABILITY_CHANGED/);
+});
+test('PR CI and full-schema RLS fixture passes cannot establish exact-main or release recovery', () => {
+  let candidate = index();
+  candidate.gates.find(entry => entry.id === 'public-copy-preparation-ci').applicability = 'current_baseline';
+  assert.throws(() => validateIndex(candidate), /PR_CI_IS_NOT_EXACT_MAIN/);
+  candidate = index(); candidate.gates.find(entry => entry.id === 'restricted-database-preparation').applicability = 'current_baseline';
+  assert.throws(() => validateIndex(candidate), /DATABASE_FIXTURE_IS_NOT_RELEASE_RECOVERY/);
+});
 test('moved dated summaries retain their recorded canonical content hashes', () => {
   const history = readFileSync(path.join(ROOT, 'docs/RELEASE_2_9_7_PREPARATION_HISTORY.md'), 'utf8').replaceAll('\r\n', '\n');
   const pattern = /Canonical block SHA-256: `([a-f0-9]{64})`\. Only line endings are normalized\.\n\n<!-- historical-block:([^:]+):start -->\n([\s\S]*?)<!-- historical-block:\2:end -->/g;

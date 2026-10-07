@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-07T17:34:01.248Z",
+  "observedAtUtc": "2026-10-07T18:14:08.678Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -108,7 +108,7 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "A local preparation image exists, but no frozen resulting-main build, scan or final artifact binding is recorded.",
+      "rationale": "A local preparation image exists, but no exact frozen application A image/config, fresh acceptance or final-main B binding is recorded.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [],
       "nextAction": "Produce a fresh source/scan/archive/manifest/config receipt after freeze."
@@ -137,7 +137,7 @@
       "evidence": [
         "localArtifactsFresh"
       ],
-      "nextAction": "Retain archive/report receipts; rebuild and relabel from reviewed resulting main with proven input equivalence.",
+      "nextAction": "Retain preparation receipts. Build/test exact frozen application A, then reuse that exact image/config under reviewed final-main B only after proven A/B application equivalence.",
       "identity": {
         "localImageId": "sha256:6040dbd2044b0a2564f4a9ce861b1bf53b87b9af422060eec65984b3a95ee393",
         "configDigest": "sha256:a35bf3d4a087752d9cd1fadd2f2d4e7965d69f7e2a4a850d8ba0c8e3894e1e79",
@@ -156,7 +156,7 @@
       "evidence": [
         "localArtifactsFresh"
       ],
-      "nextAction": "Build/hash matched final-main frontend after review and freeze; this archive is preparation-only.",
+      "nextAction": "Build/hash the matched frozen application frontend after review; bind it to equivalent final-main B. This archive is preparation-only.",
       "identity": {
         "archiveSha256": "93d96b5eeeec7e44bada12dcf827efd6c642e08f40e8b08a1542332e0086057d",
         "fileInventorySha256": "835607afa14045aa0fc31b64180f628ffc87b50b79137098207e322e50366f25"
@@ -271,14 +271,14 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Preparation backend/frontend artifacts exist; frozen final-main packaging remains pending and retained fallback fresh scan is failed.",
+      "rationale": "Preparation artifacts exist; exact frozen application A packaging/acceptance and final-main B binding remain pending. The retained fallback fresh scan is failed.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [
         "artifactsHistorical",
         "extensionMerged",
         "localArtifactsFresh"
       ],
-      "nextAction": "Resolve exact retained-fallback blocker and produce final-main source-labelled builds/scans/hashes after review/freeze."
+      "nextAction": "Resolve the exact fallback blocker, freeze application A, build/test its exact image and frontend, then seal reviewed binding on equivalent final-main B with fresh CI."
     },
     {
       "id": "publication",
@@ -344,6 +344,84 @@
       "nextAction": "Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass."
     },
     {
+      "id": "baseline-local-checks",
+      "label": "Local baseline build, unit and governance preparation",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "Backend type/build pass; unit 2272 pass / 4 skip; governance pass retains private evidence, owner decision and MFA warnings. Full infrastructure failure is recorded separately.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "preparationFollowups"
+      ],
+      "nextAction": "Review skips/warnings and refresh applicable checks on final source; these local checks do not establish runtime acceptance."
+    },
+    {
+      "id": "baseline-infrastructure",
+      "label": "Original full Windows infrastructure lane",
+      "status": "failed",
+      "applicability": "preparation_only",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "1051 tests: 1048 pass / 3 fail / 0 skip. Exact CRLF coordinator end-marker defect reproduced; the failed full-lane receipt is preserved.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "coordinatorNewline"
+      ],
+      "nextAction": "Retain this attempt. Merge the reviewed tooling fix and require a fresh complete applicable infrastructure lane before closing this preparation dependency."
+    },
+    {
+      "id": "focused-role-rerun",
+      "label": "Focused coordinator and role-adapter reruns",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "5dfef86cb82b79f681e528176d572f2ec3e418be",
+      "rationale": "35/35 adapters/runtime and 339/339 role tests pass after the bounded LF/CRLF marker fix. Raw input/output hashes remain distinct; the committed patch files match tested bytes.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "coordinatorNewline"
+      ],
+      "nextAction": "Review tooling PR #620; a focused rerun does not turn the original full infrastructure attempt into a pass."
+    },
+    {
+      "id": "full-infrastructure-after-fix",
+      "label": "Full infrastructure after reviewed tooling fix",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": "5dfef86cb82b79f681e528176d572f2ec3e418be",
+      "rationale": "Only focused and all-role-adapter reruns have been recorded locally; the entire infrastructure lane has not been rerun after the fix.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "coordinatorNewline"
+      ],
+      "nextAction": "Require fresh complete applicable CI for the resulting main; preserve the original failed full-lane record."
+    },
+    {
+      "id": "public-copy-preparation-ci",
+      "label": "Public-copy PR preparation CI",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Exact PR #617 head emits 19 completed checks: 18 successes and 1 legitimate AWS rollout path skip. This is pull-request preparation CI, not exact-main CI.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "preparationFollowups"
+      ],
+      "nextAction": "Review/merge the copy PR before freezing application A; require fresh resulting-main B CI and proven A/B application equivalence."
+    },
+    {
+      "id": "restricted-database-preparation",
+      "label": "Disposable full-schema database and restricted-role preparation",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Local restricted-role 513/513 pass with 129 tables, non-superuser/non-bypass role. Original ordinary Redis fixture 4 failures and corrected 4 passes are retained; CI DB 1554 pass/8 skip and RLS 512 pass/1 skip.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "preparationFollowups"
+      ],
+      "nextAction": "Review canonical receipt and skips; run actual ordinary 43→53 restoration and candidate→fallback→candidate recovery on the exact frozen image. Existing 2.9.3 CI capture does not establish 2.9.7 adoption."
+    },
+    {
       "id": "fallback-scan-current",
       "label": "Retained C578 fresh scan release blocker",
       "status": "failed",
@@ -367,7 +445,7 @@
       "evidence": [
         "localArtifactsFresh"
       ],
-      "nextAction": "Rebuild final-main source-labelled artifacts after review/freeze and replay final scan/custody proof; do not treat local preparation as publication."
+      "nextAction": "Build/test the exact frozen application A artifact after review; reuse its accepted image/config only with proven final-main B equivalence and fresh CI. Local preparation is not publication."
     },
     {
       "id": "screenshot-preparation",
@@ -848,6 +926,14 @@
     "localArtifactsFresh": {
       "path": "docs/releases/release297/local-artifact-observation-20261007.json",
       "gitBlobSha256": "267941fe88a906531468c3e582d07f56c5840ae3dee5506e0b7c20101140e10d"
+    },
+    "coordinatorNewline": {
+      "path": "docs/releases/release297/coordinator-newline-checks-20261007.json",
+      "gitBlobSha256": "125dad4750cbd55291536dd5452ea504c2ad63da342081fe336ec30e8843dc35"
+    },
+    "preparationFollowups": {
+      "path": "docs/releases/release297/preparation-followups-20261007.json",
+      "gitBlobSha256": "512f2058daeab630771ade07f2593cb87357f8c8616fda6d685cff604a868f79"
     }
   }
 }

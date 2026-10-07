@@ -26,6 +26,22 @@ one Critical and one High finding. Its historical passing scan remains dated
 evidence; resolve the failure through separate review before executable release
 plans. This index does not authorize substituting another fallback.
 
+The focused coordinator record preserves the original failed Windows infrastructure
+lane and the later 35-test/339-test reruns. It pins the exact tested patch files to
+tooling PR #620 without claiming a complete infrastructure rerun. A compact
+preparation summary links immutable canonical operator-packet receipts for local
+baseline checks, public-copy PR CI and disposable full-schema database/RLS tests.
+The external Git blob hashes were verified when the summary was prepared; the
+offline checker verifies the retained local summary and link structure without
+refetching those external commits. PR CI is separate from resulting-main CI;
+full-schema fixture checks are separate from ordinary migration/recovery, and the
+existing 2.9.3 CI capture is separate from 2.9.7 managed adoption.
+
+Freeze application A after required copy/governance merges, build/test its exact
+image/config and matched frontend, then seal the reviewed tooling/document binding
+on final main B. Require proven A/B backend and frontend input equivalence and fresh
+exact-main CI; reuse the exact tested image/config for later authorized publication.
+
 Generate the operator checklist's current section offline:
 
 ```text
