@@ -58,7 +58,9 @@ describe("ClassPilot provider-boundary audit (synthetic; remediation pending)", 
       const result = await classifyUrl(fixture.url, fixture.title);
       assert.equal(result?.source, "ai");
       assert.equal(requests.length, 1);
-      const body = JSON.parse(String(requests[0].body));
+      const request = requests[0];
+      assert.ok(request);
+      const body = JSON.parse(String(request.body));
       assert.deepEqual(Object.keys(body).sort(), ["contents", "generationConfig"]);
       assert.equal(body.contents.length, 1);
       assert.equal(body.contents[0].parts.length, 1);
@@ -78,12 +80,11 @@ describe("ClassPilot provider-boundary audit (synthetic; remediation pending)", 
 
   it("does not read or log the mocked provider's HTTP error body", async (context) => {
     let bodyReads = 0;
-    class ErrorResponse extends Response {
-      override async json(): Promise<never> { bodyReads++; throw new Error("unexpected error-body read"); }
-      override async text(): Promise<string> { bodyReads++; return "synthetic@example.test SYNTHETIC_NOT_A_CREDENTIAL"; }
-    }
+    const errorResponse = new Response("synthetic provider failure", { status: 503 });
+    context.mock.method(errorResponse, "json", async () => { bodyReads++; throw new Error("unexpected error-body read"); });
+    context.mock.method(errorResponse, "text", async () => { bodyReads++; return "synthetic@example.test SYNTHETIC_NOT_A_CREDENTIAL"; });
     const logs = ["log", "warn", "error"].map(method => context.mock.method(console, method as "log" | "warn" | "error", () => {}));
-    respond = () => new ErrorResponse("synthetic provider failure", { status: 503 });
+    respond = () => errorResponse;
     const result = await classifyUrl("https://audit-http-error.test/work", "Synthetic error fixture");
     assert.equal(result?.source, "unknown");
     assert.equal(result?.safetyAlert, null);
