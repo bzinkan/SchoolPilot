@@ -235,7 +235,7 @@ export default function AdminAnalytics() {
                         >
                           <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col justify-between">
                             {[0, 1, 2, 3, 4].map((line) => (
-                              <div key={line} className="border-t border-border/60" />
+                              <div key={line} className="border-t border-muted-foreground/20" />
                             ))}
                           </div>
                           <div aria-hidden="true" className="relative flex h-full items-end gap-1">
