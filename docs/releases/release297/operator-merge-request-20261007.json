@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "operator_scoped_source_merge_request",
+  "observedAtUtc": "2026-10-07T21:16:58.907Z",
+  "verificationMethod": "operator_report",
+  "repository": "bzinkan/SchoolPilot",
+  "pullRequests": [
+    616,
+    617,
+    619,
+    620
+  ],
+  "completionRequiredBeforeMerge": true,
+  "releaseOperationsAuthorized": false,
+  "qualification": "The human operator requested merging these four preparation PRs after completing their applicable preparation checks. This request does not authorize publication, task registration, deployment, Store upload, runtime activation or repository settings changes.",
+  "operatorReportDate": "2026-10-07",
+  "observationTimeMeaning": "time_of_recording_operator_report"
+}

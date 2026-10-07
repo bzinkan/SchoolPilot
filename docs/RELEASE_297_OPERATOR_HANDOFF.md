@@ -11,14 +11,14 @@ gate states and source/evidence applicability. Historical passes, failures and
 approvals remain immutable. This packet provides the actions needed to close the
 remaining dependencies; it is not a deployment plan or authorization receipt.
 
-## Reviewable changes
+## Preparation changes
 
 | Slice | Review artifact | Release dependency |
 |---|---|---|
-| Source/evidence reconciliation and generated current status | [Draft PR #616](https://github.com/bzinkan/SchoolPilot/pull/616) | Retains #603/#609 and every merged successor through #615, with inclusion and invalidation matrix |
-| Public AI/privacy claims and bounded synthetic audit | [Draft PR #617](https://github.com/bzinkan/SchoolPilot/pull/617) | Merge intended copy/governance changes before freeze; `docs/soc2` changes image content |
-| Versioned successor binding and Windows coordinator parsing | [Draft PR #620](https://github.com/bzinkan/SchoolPilot/pull/620) | Schema 1 remains historical; allowlisted schema 2 stays pending until reviewed, fresh source-bound receipts exist |
-| Protection proposal and this handoff | This PR | Proposed settings for both repositories; no settings application or CI redesign |
+| Source/evidence reconciliation and generated current status | [PR #616](https://github.com/bzinkan/SchoolPilot/pull/616) | Retains #603/#609 and every merged successor through #615, with inclusion and invalidation matrix |
+| Public AI/privacy claims and bounded synthetic audit | [PR #617](https://github.com/bzinkan/SchoolPilot/pull/617) | Intended copy/governance changes must land before freeze; `docs/soc2` changes image content |
+| Versioned successor binding, Windows coordinator parsing and bounded CI installation repair | [PR #620](https://github.com/bzinkan/SchoolPilot/pull/620) | Schema 1 remains historical; allowlisted schema 2 stays pending until reviewed, fresh source-bound receipts exist. The CI repair preserves every validation step and check order |
+| Protection proposal, current-state refresh and this handoff | [PR #619](https://github.com/bzinkan/SchoolPilot/pull/619) | Proposed settings for both repositories; no settings application or CI redesign |
 | Demonstrated provider-boundary egress | [CP-AI-001 / issue #618](https://github.com/bzinkan/SchoolPilot/issues/618) | Separate narrow remediation and release-applicability review; the copy PR does not fix egress |
 
 The exact source/artifact values and scan findings are in the immutable
@@ -27,8 +27,11 @@ Those backend/frontend artifacts were prepared on the clean copy-PR source,
 not a frozen resulting-main release. Their hashes do not authorize publication.
 The retained extension's source/package evidence is in the
 [fresh extension verification](releases/release297/extension-verification-20261007.json).
-Version 2.9.7 remains the candidate; Store publication and managed adoption are
-separate, unobserved states.
+Version 2.9.7 remains the unchanged candidate. The operator confirmed that
+2.9.7 is live on October 7, 2026. Record that as operator-reported publication;
+the uploaded ZIP identity, pending-submission state and managed adoption remain
+separate unverified facts. No new extension upload is needed for this unchanged
+candidate.
 
 Baseline preparation checks are recorded in the
 [check observation](release-evidence/release297-operator-20261007/preparation-checks.json).
@@ -45,8 +48,11 @@ do not replace resulting-main CI or source-bound runtime acceptance.
 
 ## Closing preparation gates
 
-1. Review the PRs and CP-AI-001 release applicability. Required merges are operator
-   actions. Re-read both remote mains and all intended release changes. Select an
+1. The operator authorized merging exactly #616, #617, #619 and #620 in this
+   session. Use the current-release index for the recorded merge/main observation;
+   that authorization does not cover future PRs or release operations. Review
+   CP-AI-001 release applicability. Re-read both remote mains and all intended
+   release changes. Select an
    exact application reference only after copy/governance changes land. Preserve
    already-implemented Focus status and availability unless a remaining defect
    can be reproduced.
@@ -112,7 +118,7 @@ unit checks do not establish native recovery, production health or adoption.
 | 2. Fresh production prerequisites | Read health, catalog/ledger/admission, backups, all three Usage settings, API/worker environment and task/ALB state in an approved quiet window | Fresh private read-only captures, backup/restoration prerequisites, preserved environment and compatible capability equality |
 | 3. Publication and unused definitions | Publish exact scanned artifacts, verify registry index/platform/config mapping; prepare/register only explicitly approved unused121, Anchor128 and compatible fallback definitions | Approved private paths and time-bounded authority; binding ID/hash, final tool hashes, publication receipts and every returned identity; uncertain outcomes stop replay |
 | 4. Deployment | Perform documented migration-first backend/worker deployment, then matched frontend deployment | Ordinary phases validated; compatible 128 writer/bridge/relay with issuance off; incompatible tasks and old targets fully drained before 129 admission; fresh health and exact task-pair evidence |
-| 5. Extension release and adoption | Recheck live Store listing and pending submissions immediately before exact ZIP upload; separately review a successor only if source/Store state requires it | Fresh Store state, exact uploaded package identity and actual sample-bearing managed version/capability/adoption evidence |
+| 5. Existing extension verification and adoption | Verify the operator-reported live 2.9.7 listing, published-package identity and pending submissions; obtain managed adoption evidence. Only a separately reviewed successor requires a new upload, with a fresh listing/pending-submission check immediately beforehand | Fresh Store state, exact published package identity and actual sample-bearing managed version/capability/adoption evidence |
 | 6. Pilot activation and live acceptance | Activate only DeSales after the prior gates pass and authority is current | At least 30 minutes of actual live evidence bound to the exact API/worker task pair, including the workflows below |
 
 The [operator prerequisite template](releases/release297/operator-prerequisites.template.json)

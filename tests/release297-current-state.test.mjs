@@ -8,6 +8,40 @@ import { createHash } from 'node:crypto';
 import { BEGIN, END, CHECKLIST, INDEX, ROOT, validateIndex, renderStatus, updateChecklist } from '../scripts/release297-current-state.mjs';
 
 const index = () => JSON.parse(readFileSync(path.join(ROOT, INDEX), 'utf8'));
+function receiptFixture(work) {
+  const candidate = index(), fixture = mkdtempSync(path.join(tmpdir(), 'release297-state-refresh-'));
+  try {
+    for (const entry of Object.values(candidate.evidence)) {
+      const filename = path.join(fixture, entry.path); mkdirSync(path.dirname(filename), { recursive: true });
+      copyFileSync(path.join(ROOT, entry.path), filename);
+    }
+    const read = id => JSON.parse(readFileSync(path.join(fixture, candidate.evidence[id].path), 'utf8'));
+    const write = (id, value, relative = candidate.evidence[id].path) => {
+      const bytes = JSON.stringify(value, null, 2) + '\n', filename = path.join(fixture, relative);
+      mkdirSync(path.dirname(filename), { recursive: true }); writeFileSync(filename, bytes);
+      candidate.evidence[id] = { path: relative, gitBlobSha256: createHash('sha256').update(bytes).digest('hex') };
+    };
+    work(candidate, fixture, read, write);
+  } finally {
+    assert.equal(path.dirname(path.resolve(fixture)), path.resolve(tmpdir()));
+    assert.ok(path.basename(fixture).startsWith('release297-state-refresh-'));
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+function advancedObservation(candidate, read, write) {
+  const source = 'a'.repeat(40), current = read('reconciliation');
+  current.schoolpilotRemoteMain = source;
+  current.currentMainCi = { source, event: 'push', branch: 'main', status: 'pending', checks: [], workflowRuns: {} };
+  current.recordedAsOf = { kind: 'before_closing_pr_merge', closingPullRequest: 619, closingMergeSha: null, pendingMergePullRequests: [619, 620], resultingMainCiStatus: 'pending' };
+  current.preparationPullRequests ??= [616, 617, 619, 620].map(number => ({ number, state: 'OPEN', headRefOid: candidate.sources.schoolpilot.planningReference, mergeCommit: null, mergedAt: null }));
+  candidate.sources.schoolpilot.remoteMainObserved = source;
+  for (const pr of candidate.inclusionMatrix) if (pr.repository === 'SchoolPilot') pr.includedInSource = source;
+  const gate = candidate.gates.find(entry => entry.id === 'current-main-preparation-ci');
+  const next = { id: 'current-main-preparation-ci', label: 'Observed main preparation CI', status: 'pending', applicability: 'current_baseline', sourceSha: source, rationale: 'Fixture main changed; exact-push checks pending.', observedAtUtc: candidate.observedAtUtc, evidence: ['reconciliation'], nextAction: 'Wait for actual main push checks.' };
+  if (gate) Object.assign(gate, next); else candidate.gates.push(next);
+  write('reconciliation', current, 'docs/releases/release297/fixture-current-source.json');
+  return current;
+}
 test('canonical current state verifies receipt hashes and generated checklist without writes', () => {
   const before = readFileSync(path.join(ROOT, CHECKLIST));
   validateIndex(index());
@@ -31,6 +65,47 @@ test('current-state record cannot authorize an operation or substitute a fallbac
   candidate.authorization.registryPublication = false;
   candidate.compatibility.retainedFallbackSource = candidate.sources.schoolpilot.remoteMainObserved;
   assert.throws(() => validateIndex(candidate), /FALLBACK_SUBSTITUTED/);
+});
+test('fresh main observations do not relabel the immutable original baseline receipts', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    advancedObservation(candidate, read, write);
+    validateIndex(candidate, fixture);
+    assert.notEqual(read('localArtifactsFresh').baseline, candidate.sources.schoolpilot.remoteMainObserved);
+    candidate.gates.find(entry => entry.id === 'baseline-ci').applicability = 'current_baseline';
+    assert.throws(() => validateIndex(candidate, fixture), /ORIGINAL_BASELINE_CI_RECLASSIFIED/);
+    candidate.gates.find(entry => entry.id === 'baseline-ci').applicability = 'historical';
+    candidate.gates.find(entry => entry.id === 'baseline-ci').sourceSha = candidate.sources.schoolpilot.remoteMainObserved;
+    assert.throws(() => validateIndex(candidate, fixture), /ORIGINAL_BASELINE_CI_RECLASSIFIED/);
+  });
+});
+test('scoped human merge request cannot authorize another PR or release operations', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const request = read('mergeRequest'); request.pullRequests.push(621); write('mergeRequest', request);
+    assert.throws(() => validateIndex(candidate, fixture), /MERGE_REQUEST_SCOPE_CHANGED/);
+  });
+  const candidate = index(); candidate.authorization.merge = true;
+  assert.throws(() => validateIndex(candidate), /INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION/);
+});
+test('operator Store version does not establish uploaded ZIP, independent capture or managed adoption', () => {
+  for (const [field, value, error] of [['uploadedZipSha256', 'f'.repeat(64), 'STORE_REPORT_IS_NOT_PACKAGE_OR_ADOPTION_PROOF'], ['managedAdoptionState', 'passed', 'STORE_REPORT_IS_NOT_PACKAGE_OR_ADOPTION_PROOF'], ['verificationMethod', 'fresh_store_capture', 'STORE_OPERATOR_REPORT_CHANGED']]) {
+    receiptFixture((candidate, fixture, read, write) => {
+      const store = read('operatorStoreVersion'); store[field] = value; write('operatorStoreVersion', store);
+      assert.throws(() => validateIndex(candidate, fixture), new RegExp(error));
+    });
+  }
+});
+test('PR workflow evidence and invented closing merge cannot satisfy exact-push main CI', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = advancedObservation(candidate, read, write), ci = current.currentMainCi;
+    ci.checks.push({ name: 'Backend (TypeScript + Build)', headSha: ci.source, status: 'completed', conclusion: 'success', url: 'https://github.com/bzinkan/SchoolPilot/actions/runs/123/job/456' });
+    ci.workflowRuns['123'] = { id: 123, event: 'pull_request', head_branch: 'main', head_sha: ci.source, html_url: 'https://github.com/bzinkan/SchoolPilot/actions/runs/123' };
+    write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CURRENT_MAIN_WORKFLOW_IS_NOT_PUSH_MAIN/);
+    ci.workflowRuns['123'].event = 'push'; ci.status = 'passed'; write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CURRENT_MAIN_CI_OUTCOME_CHANGED/);
+    ci.status = 'pending'; current.recordedAsOf.closingMergeSha = 'f'.repeat(40); write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /FUTURE_CLOSING_MERGE_REJECTED/);
+  });
 });
 test('new Usage activation, absent daily mode and unknown evidence fail validation', () => {
   let candidate = index(); candidate.usageModes.CLASSPILOT_USAGE_ROLLUP_MODE.requiredValue = 'on';

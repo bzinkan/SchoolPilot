@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "operator_confirmed_extension_store_version",
+  "observedAtUtc": "2026-10-07T21:16:58.907Z",
+  "verificationMethod": "operator_report",
+  "product": "ClassPilot",
+  "liveVersion": "2.9.7",
+  "independentStoreCapture": false,
+  "uploadedZipSha256": null,
+  "pendingSubmissionState": "unknown",
+  "managedAdoptionState": "pending",
+  "managedValidation": "waived_not_passed",
+  "unchangedCandidateUploadRequired": false,
+  "releaseOperationsAuthorized": false,
+  "qualification": "The human operator reported that extension 2.9.7 is live. No fresh Store capture was performed. The report does not bind uploaded package bytes, pending submissions or managed-client adoption; older cached listing versions are historical observations.",
+  "operatorReportDate": "2026-10-07",
+  "observationTimeMeaning": "time_of_recording_operator_report"
+}
