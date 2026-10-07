@@ -241,7 +241,7 @@
       "status": "Implementing",
       "frequency": "Continuous",
       "nextReviewDue": "2026-07-31",
-      "automationImpact": "Evidence generation does not enable AI. Separately gated teacher-started My Desk imports add selected page-image processing, private review and cleanup; provider-account retention and extraction quality require human review before activation.",
+      "automationImpact": "Evidence generation does not enable AI. Public disclosure corrections change frontend wording only; CP-AI-001 in docs/CLASSPILOT_AI_CLAIM_AUDIT.md characterizes synthetic URL/title identity and credential-bearing inputs at a mocked provider boundary, with minimization and provider-account review pending. Separately gated teacher-started My Desk imports add selected page-image processing, private review and cleanup; provider-account retention and extraction quality require human review before activation.",
       "evidence": [
         {
           "name": "AI/privacy evidence packet",
