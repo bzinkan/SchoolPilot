@@ -8,6 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { AlertCircle, ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp, Layers } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 
+function hourLabel(hour) {
+  return `${hour % 12 || 12}${hour < 12 ? "am" : "pm"}`;
+}
+
 function errorMessage(error) {
   return error?.response?.data?.error || error?.message || "Request failed";
 }
@@ -164,7 +168,7 @@ export default function AdminAnalytics() {
             </Card>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-start gap-6">
             {/* Top Domains */}
             <Card>
               <CardHeader>
@@ -210,29 +214,87 @@ export default function AdminAnalytics() {
                   <BarChart3 className="h-5 w-5" />
                   Activity by Hour
                 </CardTitle>
-                <CardDescription>Selected period by school-local hour</CardDescription>
+                <CardDescription>Recorded activity samples by school-local hour</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex items-end gap-1 h-32">
-                  {hourlyActivity.map((hour) => (
-                    <div key={hour.hour} className="flex-1 flex flex-col items-center">
-                      <div
-                        className="w-full bg-primary/80 rounded-t"
-                        style={{
-                          height: `${Math.max((hour.count / maxHourlyCount) * 100, 2)}%`,
-                          minHeight: hour.count > 0 ? '4px' : '2px'
-                        }}
-                      />
+                {hourlyActivity.length === 0 ? (
+                  <p className="py-8 text-center text-muted-foreground">No hourly activity data available for this period.</p>
+                ) : (
+                  <>
+                    <p className="mb-3 text-xs text-muted-foreground">Activity samples</p>
+                    <div className="flex gap-3">
+                      <div aria-hidden="true" className="relative h-60 w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                        <span className="absolute right-0 top-0 -translate-y-1/2">{maxHourlyCount.toLocaleString()}</span>
+                        <span className="absolute right-0 bottom-0 translate-y-1/2">0</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div
+                          role="img"
+                          aria-label="Activity samples by hour for the selected period. Exact counts are available in View hourly counts below."
+                          className="relative h-60"
+                        >
+                          <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                            {[0, 1, 2, 3, 4].map((line) => (
+                              <div key={line} className="border-t border-muted-foreground/20" />
+                            ))}
+                          </div>
+                          <div aria-hidden="true" className="relative flex h-full items-end gap-1">
+                            {hourlyActivity.map((hour) => (
+                              <div
+                                key={hour.hour}
+                                className="flex h-full min-w-0 flex-1 items-end"
+                                title={`${hourLabel(hour.hour)}–${hourLabel((hour.hour + 1) % 24)}: ${hour.count.toLocaleString()} activity samples`}
+                              >
+                                <div
+                                  className="w-full rounded-t bg-primary/80"
+                                  style={{
+                                    height: `${(hour.count / maxHourlyCount) * 100}%`,
+                                    minHeight: hour.count > 0 ? "2px" : "0px",
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div aria-hidden="true" className="mt-2 flex gap-1 text-xs text-muted-foreground">
+                          {hourlyActivity.map((hour) => (
+                            <div key={hour.hour} className="relative h-4 min-w-0 flex-1">
+                              {[0, 6, 12, 18, 23].includes(hour.hour) ? (
+                                <span className={`absolute whitespace-nowrap ${hour.hour === 0 ? "left-0" : hour.hour === 23 ? "right-0" : "left-1/2 -translate-x-1/2"}`}>
+                                  {hourLabel(hour.hour)}
+                                </span>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
-                <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-                  <span>12am</span>
-                  <span>6am</span>
-                  <span>12pm</span>
-                  <span>6pm</span>
-                  <span>11pm</span>
-                </div>
+                    {hourlyActivity.every((hour) => hour.count === 0) ? (
+                      <p className="mt-4 text-sm text-muted-foreground">No recorded activity samples for this period.</p>
+                    ) : null}
+                    <details className="mt-4 text-sm">
+                      <summary className="cursor-pointer rounded-sm py-2 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">View hourly counts</summary>
+                      <p className="mb-3 text-xs text-muted-foreground">Each sample is a Chromebook check-in. Counts cover the selected period.</p>
+                      <table className="w-full text-sm">
+                        <caption className="sr-only">Activity samples by school-local hour</caption>
+                        <thead>
+                          <tr className="border-b">
+                            <th scope="col" className="py-2 text-left font-medium">Hour</th>
+                            <th scope="col" className="py-2 text-right font-medium">Activity samples</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {hourlyActivity.map((hour) => (
+                            <tr key={hour.hour} className="border-b border-border/60">
+                              <th scope="row" className="py-2 text-left font-normal">{hourLabel(hour.hour)}–{hourLabel((hour.hour + 1) % 24)}</th>
+                              <td className="py-2 text-right tabular-nums">{hour.count.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
