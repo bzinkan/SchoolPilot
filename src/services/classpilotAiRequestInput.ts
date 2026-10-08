@@ -228,10 +228,21 @@ export function prepareClasspilotAiRequestInput(url: string, title?: string): Cl
     }
     const allParameters = [...queryParameters, ...fragmentParameters];
     const authRoute = pathForms.some((form) => AUTH_ROUTE.test(form));
+    // URL and title are one observation. A code in one field can be an OAuth
+    // credential because of a route or explicit authentication field in another.
+    // Reuse already bounded inspection copies; this adds no decoding passes.
+    const contextForms = [
+      ...pathForms, ...titleForms, ...fragmentForms,
+      ...allParameters.flatMap((parameter) => parameter.valueForms),
+    ];
+    const hasCodeAssignment = contextForms.some((form) => CODE_ASSIGNMENT.test(form))
+      || allParameters.some((parameter) => parameter.key === "code" && parameter.hasEquals);
     const hasOAuthContext = authRoute || hasCredentials
+      || contextForms.some((form) => AUTH_ROUTE.test(form) || OAUTH_CONTEXT_ASSIGNMENT.test(form)
+        || CREDENTIAL_ASSIGNMENT.test(form) || BEARER.test(form))
       || allParameters.some((parameter) => OAUTH_CONTEXT_KEYS.has(parameter.key)
         || REDACTABLE_KEYS.has(parameter.key) || forbiddenKey(parameter.key));
-    if (allParameters.some((parameter) => parameter.key === "code" && parameter.hasEquals) && hasOAuthContext) {
+    if (hasCodeAssignment && hasOAuthContext) {
       unavailable("authentication_context");
     }
 

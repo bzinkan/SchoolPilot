@@ -136,7 +136,7 @@ describe("ClassPilot browser AI request credential policy", () => {
     for (const inner of [
       "https://auth.test/oauth/callback?code=SYNTHETIC_CODE&state=unit",
       "https://auth.test/work?code=SYNTHETIC_CODE&client_id=application",
-    ]) withheld(`https://ordinary.test/lesson?next=${encodeURIComponent(inner)}`, "Lesson", "credential_context");
+    ]) withheld(`https://ordinary.test/lesson?next=${encodeURIComponent(inner)}`, "Lesson", "authentication_context");
     withheld("https://ordinary.test/lesson#/callback?code=SYNTHETIC_CODE", "Lesson", "credential_context");
     withheld("https://ordinary.test/lesson#/work?code=SYNTHETIC_CODE&client_id=application", "Lesson", "credential_context");
     withheld("https://ordinary.test/lesson", "https://auth.test/callback?code=SYNTHETIC_CODE", "credential_context");
@@ -157,6 +157,20 @@ describe("ClassPilot browser AI request credential policy", () => {
     withheld("https://ordinary.test/callback?code=SYNTHETIC_CREDENTIAL&state=unit", "Lesson", "authentication_context");
     const ordinary = "https://ordinary.test/lesson?code=algebra&key=math&id=2&state=unit";
     assert.equal(ready(ordinary, "Lesson").url, ordinary);
+  });
+
+  it("combines contextual OAuth code recognition across URL and title fields", () => {
+    withheld("https://ordinary.test/oauth/callback", "code=SYNTHETIC_OAUTH_CODE", "authentication_context");
+    withheld("https://ordinary.test/work?client_id=synthetic-client", "code=SYNTHETIC_OAUTH_CODE", "authentication_context");
+    withheld("https://ordinary.test/work?code=SYNTHETIC_OAUTH_CODE", "client_id=synthetic-client", "authentication_context");
+    withheld("https://ordinary.test/work?description=client%255Fid%253Dsynthetic-client", "code=SYNTHETIC_OAUTH_CODE", "authentication_context");
+    withheld("https://ordinary.test/lesson#description=code%3DSYNTHETIC_OAUTH_CODE", "client_id=synthetic-client", "authentication_context");
+    assert.equal(ready("https://ordinary.test/lesson?code=lesson-2", "Classroom exercise").url,
+      "https://ordinary.test/lesson?code=lesson-2");
+    assert.equal(ready("https://ordinary.test/lesson", "Exercise code=lesson-2").title,
+      "Exercise code=lesson-2");
+    const ordinaryNested = "https://ordinary.test/lesson?next=https%3A%2F%2Fresource.test%2Flesson%3Fcode%3Dlesson-2";
+    assert.equal(ready(ordinaryNested, "Classroom exercise").url, ordinaryNested);
   });
 
   it("withholds authentication routes when credentials exist, even with a descriptive title", () => {
@@ -239,9 +253,10 @@ describe("ClassPilot browser AI request credential policy", () => {
   });
 
   it("returns bounded unavailable shapes for unexpected runtime input types without throwing", () => {
-    const invalidUrl = undefined as unknown as string;
-    const invalidTitle = { title: "synthetic" } as unknown as string;
-    assert.deepEqual(prepareClasspilotAiRequestInput(invalidUrl), { kind: "unavailable", reasonCode: "invalid_input" });
-    assert.deepEqual(prepareClasspilotAiRequestInput("https://ordinary.test/lesson", invalidTitle), { kind: "unavailable", reasonCode: "invalid_input" });
+    assert.deepEqual(Reflect.apply(prepareClasspilotAiRequestInput, undefined, [undefined]),
+      { kind: "unavailable", reasonCode: "invalid_input" });
+    assert.deepEqual(Reflect.apply(prepareClasspilotAiRequestInput, undefined,
+      ["https://ordinary.test/lesson", { title: "synthetic" }]),
+    { kind: "unavailable", reasonCode: "invalid_input" });
   });
 });

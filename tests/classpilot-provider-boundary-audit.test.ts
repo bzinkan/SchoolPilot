@@ -54,6 +54,8 @@ const allowedFixtures = [
 const unavailableFixtures = [
   { name: "credential assignment in title", url: "https://audit-title.test/work", title: `Synthetic Student synthetic@example.test token=${credential}` },
   { name: "quoted credential key in title", url: "https://audit-title-quoted-key.test/work", title: `{"access_token":"${credential}"}` },
+  { name: "quoted credential key in query", url: `https://audit-query-quoted-key.test/work?"access_token"=${credential}` },
+  { name: "quoted credential key in fragment", url: `https://audit-fragment-quoted-key.test/work#"access_token"=${credential}` },
   { name: "Bearer credential in title", url: "https://audit-bearer.test/work", title: `Authorization: Bearer ${credential}` },
   { name: "credential-bearing path", url: `https://audit-path.test/access_token=${credential}/lesson` },
   { name: "credential-bearing nested redirect", url: `https://audit-nested.test/work?next=${encodeURIComponent(`https://nested.test/lesson?access_token=${credential}`)}` },
@@ -68,6 +70,9 @@ const unavailableFixtures = [
   { name: "OAuth code in hash route", url: `https://audit-hash-oauth.test/work#/oauth/callback?code=${credential}` },
   { name: "OAuth code and client context in hash route", url: `https://audit-hash-oauth-context.test/work#/lesson?code=${credential}&client_id=synthetic-client` },
   { name: "OAuth code in title URL", url: "https://audit-title-oauth.test/work", title: `https://auth.test/oauth/callback?code=${credential}` },
+  { name: "OAuth title code with URL authentication route", url: "https://audit-cross-oauth-route.test/oauth/callback", title: `code=${credential}` },
+  { name: "OAuth title code with URL client context", url: "https://audit-cross-oauth-client.test/work?client_id=synthetic-client", title: `code=${credential}` },
+  { name: "OAuth URL code with title client context", url: `https://audit-cross-oauth-title.test/work?code=${credential}`, title: "client_id=synthetic-client" },
   { name: "authentication-only context", url: `https://audit-auth-only.test/login?access_token=${credential}`, title: "Sign in" },
   { name: "malformed escape", url: `https://audit-malformed.test/work?access_token=${credential}&q=%ZZ` },
   { name: "third encoded credential form", url: "https://audit-encoded-deep.test/work?%252561ccess%25255ftoken=SYNTHETIC_DEEP" },

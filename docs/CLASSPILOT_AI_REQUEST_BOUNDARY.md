@@ -37,6 +37,8 @@ and `authorization`. Match complete decoded names case-insensitively and accept
 hyphen/underscore aliases. Ambiguous assignment names `token`, `auth`, `secret`,
 `signature` and `sig` withhold the request. AWS/Google signed-link fields, SAML
 payloads and OAuth authorization codes with authentication context also withhold.
+OAuth code and authentication context are evaluated across the complete URL/title
+observation, including when the code and its context occur in different fields.
 An ordinary resource code alone is not an OAuth credential.
 Quoted assignment keys, including JSON-shaped credential fields, are not a way
 to evade recognition. Where a redaction-eligible scalar uses a Bearer form, the
