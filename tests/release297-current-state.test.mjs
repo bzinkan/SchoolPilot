@@ -66,6 +66,63 @@ test('current-state record cannot authorize an operation or substitute a fallbac
   candidate.compatibility.retainedFallbackSource = candidate.sources.schoolpilot.remoteMainObserved;
   assert.throws(() => validateIndex(candidate), /FALLBACK_SUBSTITUTED/);
 });
+test('CP-AI preparation renders the new observed main while preserving dated source reconciliation', () => {
+  const candidate = index();
+  const originalMain = candidate.sources.schoolpilot.remoteMainObserved;
+  const cp = JSON.parse(readFileSync(path.join(ROOT, candidate.evidence.cpAiBoundaryPreparation.path), 'utf8'));
+  const rendered = renderStatus(validateIndex(candidate));
+  assert.match(rendered, new RegExp(`Newly observed SchoolPilot main baseline:.*${cp.observedMainBaseline.slice(0, 8)}`));
+  assert.match(rendered, /Historical reconciled main snapshot/);
+  assert.match(rendered, /Unchanged F restores the prior provider boundary/);
+  assert.equal(candidate.sources.schoolpilot.remoteMainObserved, originalMain);
+});
+test('CP-AI source-only preparation cannot approve deployment, live protection or a changed historical recovery pair', () => {
+  for (const field of ['reviewStatus', 'deploymentStatus', 'liveVerificationStatus']) {
+    receiptFixture((candidate, fixture, read, write) => {
+      const cp = read('cpAiBoundaryPreparation'); cp[field] = 'passed'; write('cpAiBoundaryPreparation', cp);
+      const id = field === 'reviewStatus' ? 'review' : field === 'deploymentStatus' ? 'deployment' : 'live';
+      const gate = candidate.gates.find(entry => entry.id === `cp-ai-001-${id}`);
+      Object.assign(gate, {status: 'passed', applicability: 'preparation_only'});
+      assert.throws(() => validateIndex(candidate, fixture), /CP_AI_PREPARATION_CANNOT_APPROVE_OPERATION/);
+    });
+  }
+  receiptFixture((candidate, fixture, read, write) => {
+    const cp = read('cpAiBoundaryPreparation'); cp.unchangedFallbackSourceF = 'f'.repeat(40); write('cpAiBoundaryPreparation', cp);
+    assert.throws(() => validateIndex(candidate, fixture), /CP_AI_HISTORICAL_PAIR_CHANGED/);
+  });
+});
+test('CP-AI synthetic success requires exact-source positive boundary execution and source hashes', () => {
+  const completed = (candidate, read) => {
+    const cp = read('cpAiBoundaryPreparation');
+    cp.testedSource = 'a'.repeat(40);
+    cp.syntheticValidationStatus = 'passed';
+    cp.sourceAndTestHashes = Object.fromEntries(['src/services/classpilotAiRequestInput.ts', 'src/services/aiClassification.ts', 'tests/classpilot-provider-boundary-audit.test.ts'].map(filename => [filename, 'b'.repeat(64)]));
+    cp.steps = [{id: 'boundary-focused', source: cp.testedSource, command: 'node --import tsx --test tests/classpilot-provider-boundary-audit.test.ts', status: 'passed', exitCode: 0, tests: 5, passed: 5, failed: 0, skipped: 0, logSha256: 'c'.repeat(64)}];
+    for (const id of ['implementation', 'synthetic', 'review', 'deployment', 'live']) candidate.gates.find(entry => entry.id === `cp-ai-001-${id}`).sourceSha = cp.testedSource;
+    candidate.gates.find(entry => entry.id === 'cp-ai-001-synthetic').status = 'passed';
+    return cp;
+  };
+  receiptFixture((candidate, fixture, read, write) => {
+    write('cpAiBoundaryPreparation', completed(candidate, read));
+    validateIndex(candidate, fixture);
+  });
+  for (const [mutation, expected] of [
+    [cp => { cp.steps = []; }, /CP_AI_SYNTHETIC_BOUNDARY_STEP_REQUIRED/],
+    [cp => { cp.steps[0].source = 'd'.repeat(40); }, /CP_AI_SYNTHETIC_BOUNDARY_OUTCOME_CHANGED/],
+    [cp => { cp.steps[0].failed = 1; }, /CP_AI_SYNTHETIC_BOUNDARY_OUTCOME_CHANGED/],
+    [cp => { cp.steps[0].skipped = 1; }, /CP_AI_SYNTHETIC_BOUNDARY_OUTCOME_CHANGED/],
+    [cp => { cp.steps[0].exitCode = 1; }, /CP_AI_SYNTHETIC_BOUNDARY_OUTCOME_CHANGED/],
+    [cp => { cp.steps[0].tests = 0; cp.steps[0].passed = 0; }, /CP_AI_SYNTHETIC_POSITIVE_COUNTS_REQUIRED/],
+    [cp => { cp.steps[0].command = 'node --test tests/unrelated.test.ts'; }, /CP_AI_SYNTHETIC_BOUNDARY_COMMAND_REQUIRED/],
+    [cp => { delete cp.sourceAndTestHashes['src/services/classpilotAiRequestInput.ts']; }, /CP_AI_SYNTHETIC_SOURCE_HASH_REQUIRED/],
+    [cp => { cp.sourceAndTestHashes['tests/classpilot-provider-boundary-audit.test.ts'] = 'invalid'; }, /CP_AI_SYNTHETIC_SOURCE_HASH_REQUIRED/],
+  ]) {
+    receiptFixture((candidate, fixture, read, write) => {
+      const cp = completed(candidate, read); mutation(cp); write('cpAiBoundaryPreparation', cp);
+      assert.throws(() => validateIndex(candidate, fixture), expected);
+    });
+  }
+});
 test('fresh main observations do not relabel the immutable original baseline receipts', () => {
   receiptFixture((candidate, fixture, read, write) => {
     advancedObservation(candidate, read, write);

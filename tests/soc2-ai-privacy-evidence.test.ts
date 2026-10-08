@@ -22,7 +22,12 @@ function tempRoot() {
   write(root, "src/services/chatService.ts", "@anthropic-ai/sdk AI_CHAT_ENABLED conversationMatchesContext confirmationRequired logAudit ai.tool.requested");
   write(root, "src/services/chatTools.ts", "requiredRoles licensedProducts get_student_browsing_history requiredRoles: []");
   write(root, "src/services/chatToolExecutor.ts", "executeTool source");
-  write(root, "src/services/aiClassification.ts", "@anthropic-ai/sdk classifyUrl classifyUrlWithGemini classifyEmail KNOWN_EDUCATIONAL KNOWN_NON_EDUCATIONAL useAiFallback === false MAX_EMAIL_BODY_CHARS");
+  write(root, "src/services/aiClassification.ts", "@anthropic-ai/sdk classifyUrl classifyUrlWithGemini classifyEmail KNOWN_EDUCATIONAL KNOWN_NON_EDUCATIONAL useAiFallback === false MAX_EMAIL_BODY_CHARS prepareClasspilotAiRequestInput");
+  write(root, "src/services/classpilotAiRequestInput.ts", "CLASSPILOT_AI_REQUEST_INPUT_POLICY_VERSION PRIVATE_PROMPT_BODY GEMINI_SECRET_VALUE");
+  write(root, "tests/classpilot-ai-request-input.test.ts", "Synthetic credential preparation cases");
+  write(root, "tests/classpilot-provider-boundary-audit.test.ts", "Synthetic outgoing model-request cases");
+  write(root, "tests/gemini-url-classification.test.ts", "Exact-original cache and model failure cases");
+  write(root, "docs/CLASSPILOT_AI_REQUEST_BOUNDARY.md", "Bounded credential/token policy; ordinary email/search context preserved; review and deployment pending");
   write(root, "src/services/mydeskImportProcessing.ts", "@anthropic-ai/sdk PRIVATE_IMPORT_PROMPT_BODY");
   write(root, "src/config/mydeskModes.ts", "MYDESK_AI_IMPORT_MODE");
   write(root, "src/services/mydeskImports.ts", "private author ownership and approval service");
@@ -134,6 +139,35 @@ describe("SOC2-002 AI/privacy evidence", () => {
     assert.ok(packet.publicClaimReviewFindings.some((finding) => finding.findingId === "AI-CLAIM-OPENAI-PUBLIC-REFERENCE"));
     assert.ok(packet.publicClaimReviewFindings.some((finding) => finding.findingId === "AI-CLAIM-MAILPILOT-DISCLOSURE-REVIEW"));
     assert.ok(packet.publicClaimReviewFindings.every((finding) => finding.status === "review_required"));
+  });
+
+  it("records the browser boundary as source presence while retaining broader review and data limitations", () => {
+    const root = tempRoot();
+    const { packet } = buildAiPrivacyEvidence({ rootDir: root, env: githubEnv() });
+    const browser = packet.aiFeatures.find((feature: { featureId: string; controls: string[]; modelBoundDataSummary: string }) => feature.featureId === "classpilot_url_classification");
+    const flow = packet.dataFlows.find((entry: { flowId: string; inputCategories: string[]; privateReviewRequired: boolean }) => entry.flowId === "classpilot_url_classification");
+
+    assert.ok(browser?.controls.includes("browser_credential_preparation_source_present_execution_and_review_separate"));
+    assert.match(browser?.modelBoundDataSummary || "", /ordinary email addresses and search context may remain/);
+    assert.match(browser?.modelBoundDataSummary || "", /do not establish deployment/);
+    assert.deepEqual(flow?.inputCategories, ["prepared_browser_url_string", "prepared_browser_page_title"]);
+    assert.equal(flow?.privateReviewRequired, true);
+    assert.equal(packet.humanReview.status, "pending_human_approval");
+    assert.match(packet.appImpact, /later authorized backend deployment/);
+    for (const key of ["classpilotAiRequestInput", "classpilotAiRequestInputTests", "classpilotProviderBoundaryTests", "geminiClassificationTests", "classpilotAiRequestPolicy"]) {
+      assert.match(packet.sourceHashes[key].sha256 || "", /^[a-f0-9]{64}$/);
+    }
+    assert.doesNotMatch(JSON.stringify(packet), /GEMINI_SECRET_VALUE|PRIVATE_PROMPT_BODY/);
+    assert.ok(packet.testEvidence.some((entry: { path: string; present: boolean }) => entry.path === "tests/classpilot-provider-boundary-audit.test.ts" && entry.present));
+  });
+
+  it("does not infer credential preparation from the classifier name alone", () => {
+    const root = tempRoot();
+    write(root, "src/services/classpilotAiRequestInput.ts", "unreviewed unrelated helper");
+    const { packet } = buildAiPrivacyEvidence({ rootDir: root, env: githubEnv() });
+    const browser = packet.aiFeatures.find((feature: { featureId: string; controls: string[] }) => feature.featureId === "classpilot_url_classification");
+    assert.ok(browser?.controls.includes("review_required"));
+    assert.ok(!browser?.controls.includes("browser_credential_preparation_source_present_execution_and_review_separate"));
   });
 
   it("excludes private prompts, logs, transcripts, customer data, and student data markers", () => {

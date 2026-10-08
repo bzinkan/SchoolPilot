@@ -13,7 +13,7 @@ const executable = ts.transpileModule(`async function heartbeatAfterPersistence(
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 type Fields = Record<string, unknown>;
-function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: boolean; failPublish?: "student-update" | "ai-classification"; safety?: boolean; delayedClassification?: boolean; delayedForeground?: boolean; failBeforeForeground?: boolean; denied?: boolean; persistedImmediate?: boolean; nullClassification?: boolean } = {}) {
+function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: boolean; failPublish?: "student-update" | "ai-classification"; safety?: boolean; delayedClassification?: boolean; delayedForeground?: boolean; failBeforeForeground?: boolean; denied?: boolean; persistedImmediate?: boolean; nullClassification?: boolean; observedUrl?: string; classificationResult?: Awaited<ReturnType<typeof import("../src/services/aiClassification.js").classifyUrl>> } = {}) {
   const order: string[] = [], historical: Fields[] = [], published: Fields[] = [], tracked: Promise<unknown>[] = [];
   let releaseClassification!: () => void;
   let releaseForeground!: () => void;
@@ -21,10 +21,10 @@ function fixture(options: { staleAtWrite?: boolean; staleAtClassification?: bool
   const foregroundReady = options.delayedForeground ? new Promise<void>(resolve => { releaseForeground = resolve; }) : Promise.resolve();
   const counters: string[] = [];
   const phaseCounters: Array<{ counter: string; operation: string }> = [];
-  const snapshot = { revision: 3, observedAt: 1000, activeTabUrl: "https://www.ixl.com/math", heartbeatId: "heartbeat",
+  const snapshot = { revision: 3, observedAt: 1000, activeTabUrl: options.observedUrl ?? "https://www.ixl.com/math", heartbeatId: "heartbeat",
     state: "active", schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device",
     allOpenTabs: [], classroomState: { teachingSessionId: "class" } };
-  const classification = { category: "educational", contentCategory: "education", safetyAlert: options.safety ? "violence" : null, domain: "www.ixl.com" };
+  const classification = options.classificationResult ?? { category: "educational", contentCategory: "education", safetyAlert: options.safety ? "violence" : null, domain: "www.ixl.com" };
   const context = {
     Promise, Date, trackingWindowScreenshotLeaseNegotiated: false, schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", studentEmail: "synthetic@example.invalid",
     school: { domain: "example.invalid", planStatus: "active" }, heartbeat: { id: "heartbeat" }, controlState: { revision: 3 },
@@ -176,4 +176,41 @@ test("null-classification completion also waits for foreground metadata and drai
   assert.ok(f.order.includes("realtime-classification"));
   assert.equal(f.published.length, 0);
   assert.deepEqual(f.counters, ["heartbeatOptionalTelemetryFailures"]);
+});
+
+test("privacy-unavailable classification completes heartbeat history and realtime without safety effects", async () => {
+  const priorKey = process.env.GEMINI_API_KEY;
+  const priorAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const priorFetch = globalThis.fetch;
+  let providerCalls = 0;
+  process.env.GEMINI_API_KEY = "synthetic-delivery-provider-key";
+  delete process.env.ANTHROPIC_API_KEY;
+  globalThis.fetch = async () => { providerCalls += 1; throw new Error("Privacy denial must precede fetch"); };
+  try {
+    const { classifyUrl } = await import("../src/services/aiClassification.js");
+    const observedUrl = "https://privacy-delivery.test/lesson?token=SYNTHETIC_DELIVERY_CREDENTIAL";
+    const result = await classifyUrl(observedUrl, "Synthetic lesson");
+    assert.equal(result?.source, "unknown");
+    assert.equal(result?.category, "unknown");
+    assert.equal(result?.safetyAlert, null);
+    assert.equal(providerCalls, 0);
+    const f = fixture({ observedUrl, classificationResult: result });
+    await f.run(); await f.drain();
+    assert.equal(f.historical.length, 1);
+    assert.equal(f.historical[0]?.aiCategory, "unknown");
+    assert.equal(f.historical[0]?.safetyAlert, null);
+    assert.ok(f.order.includes("realtime-classification"));
+    assert.ok(f.order.includes("memory-classification"));
+    const completion = f.published.find(frame => frame.type === "ai-classification");
+    assert.ok(completion, "normal completion clears the existing client pending state");
+    assert.equal(completion.classifiedUrl, observedUrl, "the provider projection never replaces local navigation");
+    assert.deepEqual(completion.classification, result);
+    for (const step of ["safety-timeline", "safety-local-alert", "safety-remote-alert"]) assert.equal(f.order.includes(step), false, step);
+  } finally {
+    globalThis.fetch = priorFetch;
+    if (priorKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = priorKey;
+    if (priorAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorAnthropicKey;
+  }
 });

@@ -150,6 +150,76 @@ describe("Gemini Flash-Lite URL classification", () => {
     assert.equal(results[3]?.safetyAlert, null);
   });
 
+  it("keeps distinct original credentials in separate model cache entries even when prepared requests match", async () => {
+    const firstUrl = "https://redacted-cache.test/lesson?access_token=SYNTHETIC_CACHE_FIRST&resource=fractions";
+    const secondUrl = "https://redacted-cache.test/lesson?access_token=SYNTHETIC_CACHE_SECOND&resource=fractions";
+    respond = () => modelResponse("violence", "non-educational");
+    const first = await classifyUrl(firstUrl, "Lesson resource");
+    respond = () => modelResponse("none", "educational");
+    const second = await classifyUrl(secondUrl, "Lesson resource");
+    assert.equal(first?.safetyAlert, "violence");
+    assert.equal(second?.safetyAlert, null);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0]?.init?.body, requests[1]?.init?.body, "provider representations match after credential redaction");
+    for (const request of requests) {
+      assert.ok(!String(request.init?.body).includes("SYNTHETIC_CACHE_FIRST"));
+      assert.ok(!String(request.init?.body).includes("SYNTHETIC_CACHE_SECOND"));
+    }
+    assert.equal(await classifyUrl(firstUrl, "Lesson resource"), first);
+    assert.equal(await classifyUrl(secondUrl, "Lesson resource"), second);
+    assert.equal(requests.length, 2, "cached results belong to their exact original observation");
+  });
+
+  it("coalesces the same original while keeping identical redacted representations independent in flight", async () => {
+    const releases: Array<() => void> = [];
+    respond = () => new Promise<Response>((resolve) => {
+      const index = requests.length;
+      releases.push(() => resolve(modelResponse(index === 1 ? "violence" : "none")));
+    });
+    const firstUrl = "https://redacted-inflight.test/lesson?access_token=SYNTHETIC_INFLIGHT_FIRST&resource=fractions";
+    const secondUrl = "https://redacted-inflight.test/lesson?access_token=SYNTHETIC_INFLIGHT_SECOND&resource=fractions";
+    const pending = [classifyUrl(firstUrl, "Lesson resource"), classifyUrl(firstUrl, "Lesson resource"),
+      classifyUrl(secondUrl, "Lesson resource")];
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(requests.length, 2, "same original shares work; a changed credential still belongs to a distinct observation");
+      assert.equal(requests[0]?.init?.body, requests[1]?.init?.body);
+    } finally {
+      for (const release of releases) release();
+    }
+    const results = await Promise.all(pending);
+    assert.equal(results[0]?.safetyAlert, "violence");
+    assert.equal(results[1], results[0]);
+    assert.equal(results[2]?.safetyAlert, null);
+  });
+
+  it("keeps absent, empty, and literal Unknown original titles independent despite identical provider inputs", async () => {
+    const releases: Array<() => void> = [];
+    respond = () => new Promise<Response>((resolve) => {
+      const index = requests.length;
+      releases.push(() => resolve(modelResponse(index === 1 ? "violence" : index === 2 ? "self-harm" : "none")));
+    });
+    const url = "https://exact-optional-title.test/lesson";
+    const pending = [classifyUrl(url), classifyUrl(url), classifyUrl(url, ""), classifyUrl(url, "Unknown")];
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(requests.length, 3, "only identical originals coalesce; provider placeholder titles do not define identity");
+      assert.equal(requests[0]?.init?.body, requests[1]?.init?.body);
+      assert.equal(requests[1]?.init?.body, requests[2]?.init?.body);
+    } finally {
+      for (const release of releases) release();
+    }
+    const results = await Promise.all(pending);
+    assert.equal(results[0]?.safetyAlert, "violence");
+    assert.equal(results[1], results[0], "identical absent-title originals share work");
+    assert.equal(results[2]?.safetyAlert, "self-harm");
+    assert.equal(results[3]?.safetyAlert, null);
+    assert.equal(await classifyUrl(url), results[0]);
+    assert.equal(await classifyUrl(url, ""), results[2]);
+    assert.equal(await classifyUrl(url, "Unknown"), results[3]);
+    assert.equal(requests.length, 3, "each original title form reuses only its own cached result");
+  });
+
   it("retains school-domain authority and fallback-mode separation", async () => {
     const url = "https://school-context.test/page";
     const school = await classifyUrl(url, "Resource", { schoolDomain: "school-context.test" });

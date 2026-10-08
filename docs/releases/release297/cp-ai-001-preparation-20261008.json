@@ -1,0 +1,410 @@
+{
+  "schemaVersion": 1,
+  "kind": "classpilot_ai_browser_boundary_preparation",
+  "observedAtUtc": "2026-10-08T15:12:42.674Z",
+  "issue": "https://github.com/bzinkan/SchoolPilot/issues/618",
+  "observedMainBaseline": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+  "testedSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+  "implementationStatus": "passed",
+  "syntheticValidationStatus": "passed",
+  "reviewStatus": "pending",
+  "deploymentStatus": "pending",
+  "liveVerificationStatus": "pending",
+  "policyVersion": "classpilot-ai-request-input-2026-10-08.1",
+  "policyPath": "docs/CLASSPILOT_AI_REQUEST_BOUNDARY.md",
+  "sourceScope": "ClassPilot browser URL/title Gemini request preparation for ordinary heartbeat and configured after-hours classification; MailPilot/chat/imports are outside this remediation.",
+  "credentialAndTokenScopeOnly": true,
+  "ordinaryEmailsAndSearchTermsRemain": true,
+  "originalInputsRetainedForLocalClassificationAndRestrictions": true,
+  "applicationInputsChanged": true,
+  "priorApplicationReferenceA": "a5161eb14939132776e0b77eac8e3c485091432c",
+  "unchangedFallbackSourceF": "d75fc1c48d0a3918857508d3965904c69023a153",
+  "recoveryEvidenceApplicability": "historical_A_F_pair_only",
+  "fallbackRollbackRestoresPriorProviderBoundary": true,
+  "sourceAndTestHashes": {
+    "src/services/classpilotAiRequestInput.ts": "042d179384825149f87e23b4f26ac3f263c922d481ecafdc49b968a9910c2ca0",
+    "src/services/aiClassification.ts": "695ced5fec6e6d51dd2ef6186158e5b5886c20e9c94b3c29ae939cf845a3aa1d",
+    "tests/classpilot-ai-request-input.test.ts": "c36e8a3913292ab9302bf06b17e10c0a52117304603918e20f6e33fabf330860",
+    "tests/classpilot-provider-boundary-audit.test.ts": "64a4b7d32191c3e66b9ba470b45d10db3355030c9a6bf9d2032aa5b03481cee1",
+    "tests/gemini-url-classification.test.ts": "e5447a26d22cf991694b965a55d334a695d43d54ec0de83d4ae4c8791a67d30d",
+    "tests/gemini-url-classification-budget.test.ts": "8f9176ba8fbd7966e2d2b6948167ddb203bfc017cee96de872f619b2d563cb7c",
+    "tests/classpilot-heartbeat-classification-delivery.test.ts": "b75085a53f55fb190de3fd0bcc48e3893f4e392c93d5f1fafe7a9b6774336bf8",
+    "tests/classpilot-after-hours-ai-boundary.test.ts": "6f2aed01aa4ce5cfb0b208f0257f0ccc7bd72ca7bc4aa7e21ac2e8e82be78f66",
+    "tests/release297-current-state.test.mjs": "1c08a98b4f6b9b545bd65797f90fd8af076f274128d9ee99582dbc44a8d1410e",
+    "tests/soc2-ai-privacy-evidence.test.ts": "a561c07d9fc34aaa02d04693414eeac1d4a2e6fd6d5c2e776f69af9674f799ae",
+    "scripts/soc2/collect-ai-privacy-evidence.mjs": "74f7ab277b7ba16366a25428e7efe7e4b513074ad4d474843f588f19907ce3b8",
+    "scripts/release297-current-state.mjs": "146e6817c07a80bf6bf520f900b50f935b3e1c089125679c4e49d45ad4a5d2c9",
+    "docs/CLASSPILOT_AI_REQUEST_BOUNDARY.md": "00f454328e5a42ba554a1bd87cf225da42c50e95a362922b2c44685e3bfa7319",
+    "tests/ai-classification.test.ts": "52e851535d03725b687ec3a3e5847ba4c7a8645816a6ada95ba4b9e23379025a",
+    "tests/restriction-resources.test.ts": "facb14a9f03afe6ee8c9170bb2b9dc72bb9c8df21ff35dfe7d8cbe8cc8291fa9",
+    "tests/safety-url.test.ts": "d7b59acea703ab540d620a60804ad886bfecb1092c584cf1d68d326175b0290f",
+    "tests/classpilot-precise-restriction-projection.test.ts": "45e09cc88a7ad14005494449d29129da994e83625a1b206a9532375671b528e9",
+    "tests/fixtures/restriction-resource-matcher-cases.json": "4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243"
+  },
+  "steps": [
+    {
+      "id": "boundary-focused",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "node --import tsx --test --test-concurrency=1 tests/classpilot-ai-request-input.test.ts tests/classpilot-provider-boundary-audit.test.ts tests/gemini-url-classification.test.ts tests/gemini-url-classification-budget.test.ts tests/classpilot-after-hours-ai-boundary.test.ts tests/classpilot-heartbeat-classification-delivery.test.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "a9a946fbc1561810d9094ffe6ca90437001d64cc1eb5344fe13a3b09c5ae1376",
+      "tests": 108,
+      "passed": 108,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "compiled-boundary",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run build; replay the three committed helper/provider/Gemini suites with only module locations changed to the fresh dist output",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "4dcc654a4fdc56592f4b1c8ab55faa95df203f7daaf45fa55b9467bc72e7bec2",
+      "tests": 92,
+      "passed": 92,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "backend-typecheck",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run check",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58"
+    },
+    {
+      "id": "backend-build",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run build",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76"
+    },
+    {
+      "id": "test-type-ratchet",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run check:tests",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "84aae2850656e26d2ca114cf26283e83e5ab6a0e765fc646c760769f3904a70d"
+    },
+    {
+      "id": "unsafe-test-cast-ratchet",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run check:test-casts",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104"
+    },
+    {
+      "id": "governance-tests",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "node --import tsx --test --test-concurrency=1 tests/release297-current-state.test.mjs tests/soc2-ai-privacy-evidence.test.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "ae431fa402949e999faf4068ae814134773678ee8095a7f8ae6a7a14c21219cb",
+      "tests": 34,
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "id": "governance-validator",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run soc2:check",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "a22c5a87e23c39383e1053c9d7f3553af3713dca8ab69a6bf9ee9e715c6ff40a"
+    },
+    {
+      "id": "ai-privacy-collector",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "npm run soc2:ai-privacy-evidence",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "7fa3b4e9fa17354beab95d7c9c6bc27d2228ca5fbbd3a92f7b0cd23e05d8418a"
+    },
+    {
+      "id": "local-matching-safety-regressions",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "command": "node --import tsx --test --test-concurrency=1 tests/ai-classification.test.ts tests/restriction-resources.test.ts tests/safety-url.test.ts tests/classpilot-precise-restriction-projection.test.ts",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "4592125e9589eb38eee053f28e489fc4470f6cbf46d660e793e08e9dd371a751",
+      "tests": 292,
+      "passed": 292,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "skipsAndLimitations": [
+    "The exact-source focused, compiled and governance suites have no skips or failures; normal exact-PR CI remains separately observable on PR #622.",
+    "No live provider, student or production data is used. The provider authentication credential is distinct from browser-supplied credentials covered by this policy.",
+    "Finite assignment/context recognizers do not establish universal secret detection or unchanged model judgment; ordinary email/search context remains.",
+    "Designated review, broader personal-data minimization and private provider-account guarantees remain pending.",
+    "New frozen candidate image, scan, applicable native/recovery/classroom acceptance and resulting-main CI remain required for changed application inputs.",
+    "F is unchanged; selection must review restoration of its prior credential-egress behavior on rollback.",
+    "ClassPilot 2.9.7 is unchanged and requires no new Store upload for this backend change."
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionMutations": 0,
+  "inventories": {
+    "backend": {
+      "sha256": "91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b",
+      "fileCount": 564
+    },
+    "frontend": {
+      "sha256": "3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0",
+      "fileCount": 633
+    },
+    "baselineBackend": {
+      "sha256": "11ab2736ad2c4fc7a75da1d00b15168c8f5d297c39e6e269808301b961cf669d",
+      "fileCount": 563
+    },
+    "baselineFrontend": {
+      "sha256": "3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0",
+      "fileCount": 633
+    }
+  },
+  "independentCodeReview": {
+    "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+    "status": "passed_within_bounded_scope",
+    "summary": "Independent mocked-provider review confirmed cross-field OAuth denials and ordinary resource-code preservation after correction; no remaining blocker in the reviewed finite policy.",
+    "designatedReviewApproval": false
+  },
+  "developmentAttempts": [
+    {
+      "source": "f70ff1e0ae8bfc3818aaa718345943fc71179fa4",
+      "check": "test type ratchet",
+      "status": "failed",
+      "reason": "Four new implicit callback parameter types increased existing diagnostic debt.",
+      "correctionSource": "a05dbc2d34ce1ae81d7d05858da77ad8a80d5743"
+    },
+    {
+      "source": "f70ff1e0ae8bfc3818aaa718345943fc71179fa4",
+      "check": "unsafe test cast ratchet",
+      "status": "failed",
+      "evidence": "https://github.com/bzinkan/SchoolPilot/actions/runs/37793524074",
+      "reason": "Two double casts were added for invalid-runtime-input tests; replaced with explicit JavaScript Reflect.apply calls.",
+      "correctionSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60"
+    },
+    {
+      "source": "a05dbc2d34ce1ae81d7d05858da77ad8a80d5743",
+      "check": "independent cross-field OAuth probe",
+      "status": "failed",
+      "reason": "Authentication context and code in separate URL/title fields reached the mocked provider.",
+      "correctionSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60"
+    },
+    {
+      "source": null,
+      "sourceState": "uncommitted_development",
+      "check": "earlier adversarial credential probes",
+      "status": "failed",
+      "reason": "Quoted assignments, ambiguous credential values, echoes and nested/hash/title OAuth cases required corrections before the first immutable acceptance source."
+    },
+    {
+      "source": null,
+      "check": "initial local database fixture setup",
+      "status": "failed",
+      "failureCode": "28P01",
+      "reason": "Existing development container credentials did not match its retained volume; validation moved to isolated temporary PostgreSQL and Redis."
+    },
+    {
+      "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+      "check": "exact-original optional-title identity review",
+      "status": "failed",
+      "reason": "Missing, empty and literal Unknown original titles shared cache and in-flight identity despite identical prepared provider text.",
+      "correctionSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60"
+    }
+  ],
+  "broadValidation": {
+    "status": "pending",
+    "action": "Finish normal exact-PR CI including unit/database/restricted-role gates; preserve local broad development-run results separately because the source changed while it was running.",
+    "localDevelopmentRunStartedSource": "a05dbc2d34ce1ae81d7d05858da77ad8a80d5743",
+    "localDevelopmentRunSourceChanged": true,
+    "localDevelopmentRunIsExactCandidateEvidence": false,
+    "pullRequest": "https://github.com/bzinkan/SchoolPilot/pull/622",
+    "localDevelopmentResult": {
+      "status": "passed",
+      "tests": 4107,
+      "passed": 4099,
+      "failed": 0,
+      "skipped": 8,
+      "skippedAnnotationScope": "Restricted-role/FORCE-RLS suites and tests require the separate RLS_GUC_ENABLED lane; exact-source CI must cover those lanes.",
+      "logSha256": "a28c5cd75f48f43177fc45aeabd56a2fa0eeee4d41218e54acb35ceab0ce6e27",
+      "completedBeforeSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "applicability": "Mixed-source local development validation only; not exact-candidate evidence."
+    }
+  },
+  "validationHistory": [
+    {
+      "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
+      "inventories": {
+        "backend": {
+          "sha256": "178babbe95bb63992af0627a7782ed24d71c01b50d7e2658c7127888fb22623b",
+          "fileCount": 564
+        },
+        "frontend": {
+          "sha256": "3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0",
+          "fileCount": 633
+        },
+        "baselineBackend": {
+          "sha256": "11ab2736ad2c4fc7a75da1d00b15168c8f5d297c39e6e269808301b961cf669d",
+          "fileCount": 563
+        },
+        "baselineFrontend": {
+          "sha256": "3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0",
+          "fileCount": 633
+        }
+      },
+      "sourceAndTestHashes": {
+        "src/services/classpilotAiRequestInput.ts": "042d179384825149f87e23b4f26ac3f263c922d481ecafdc49b968a9910c2ca0",
+        "src/services/aiClassification.ts": "13458d373a23ec889a0a055a828fa9add03c74fd15aa5b47edb2038ef30d0338",
+        "tests/classpilot-ai-request-input.test.ts": "c36e8a3913292ab9302bf06b17e10c0a52117304603918e20f6e33fabf330860",
+        "tests/classpilot-provider-boundary-audit.test.ts": "64a4b7d32191c3e66b9ba470b45d10db3355030c9a6bf9d2032aa5b03481cee1",
+        "tests/gemini-url-classification.test.ts": "10bac7247a7c651d5971b5cd6aac0a6d13faacff312faeeb595b590140add47c",
+        "tests/gemini-url-classification-budget.test.ts": "8f9176ba8fbd7966e2d2b6948167ddb203bfc017cee96de872f619b2d563cb7c",
+        "tests/classpilot-heartbeat-classification-delivery.test.ts": "b75085a53f55fb190de3fd0bcc48e3893f4e392c93d5f1fafe7a9b6774336bf8",
+        "tests/classpilot-after-hours-ai-boundary.test.ts": "6f2aed01aa4ce5cfb0b208f0257f0ccc7bd72ca7bc4aa7e21ac2e8e82be78f66",
+        "tests/release297-current-state.test.mjs": "1c08a98b4f6b9b545bd65797f90fd8af076f274128d9ee99582dbc44a8d1410e",
+        "tests/soc2-ai-privacy-evidence.test.ts": "a561c07d9fc34aaa02d04693414eeac1d4a2e6fd6d5c2e776f69af9674f799ae",
+        "scripts/soc2/collect-ai-privacy-evidence.mjs": "74f7ab277b7ba16366a25428e7efe7e4b513074ad4d474843f588f19907ce3b8",
+        "scripts/release297-current-state.mjs": "146e6817c07a80bf6bf520f900b50f935b3e1c089125679c4e49d45ad4a5d2c9",
+        "docs/CLASSPILOT_AI_REQUEST_BOUNDARY.md": "00f454328e5a42ba554a1bd87cf225da42c50e95a362922b2c44685e3bfa7319"
+      },
+      "steps": [
+        {
+          "id": "boundary-focused",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "node --import tsx --test --test-concurrency=1 tests/classpilot-ai-request-input.test.ts tests/classpilot-provider-boundary-audit.test.ts tests/gemini-url-classification.test.ts tests/gemini-url-classification-budget.test.ts tests/classpilot-after-hours-ai-boundary.test.ts tests/classpilot-heartbeat-classification-delivery.test.ts",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "89ce1a3a3fc0a7cea36742169c6e9ad8df2c1e6095b1f5967e9d0ffdaefe9abc",
+          "tests": 107,
+          "passed": 107,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "id": "compiled-boundary",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run build -- --outDir soc2-evidence/cp-ai-001-preparation/dist-final; replay the three committed helper/provider/Gemini suites with only module locations changed to that compiled output",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "8941134de2353b8c7855e76648a193e66240866bb28337f7c98a33bc66ce75a2",
+          "tests": 91,
+          "passed": 91,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "id": "backend-typecheck",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run check",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58"
+        },
+        {
+          "id": "backend-build",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run build -- --outDir soc2-evidence/cp-ai-001-preparation/dist-final",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "1a077f7170da4e35ac8832246875b4d2b72757ed058a07921741a1be90792580"
+        },
+        {
+          "id": "test-type-ratchet",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run check:tests",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "84aae2850656e26d2ca114cf26283e83e5ab6a0e765fc646c760769f3904a70d"
+        },
+        {
+          "id": "unsafe-test-cast-ratchet",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run check:test-casts",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104"
+        },
+        {
+          "id": "governance-tests",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "node --import tsx --test --test-concurrency=1 tests/release297-current-state.test.mjs tests/soc2-ai-privacy-evidence.test.ts",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "0f4d2747ce254ce9f0b397c4e55959d24d09edbc4684a00b4f4f31ad40eab058",
+          "tests": 34,
+          "passed": 34,
+          "failed": 0,
+          "skipped": 0
+        },
+        {
+          "id": "governance-validator",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run soc2:check",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "e7567cd77774ebb51f6b27765c6cd317f73b3452eb2f89da49f14e992d94b420"
+        },
+        {
+          "id": "ai-privacy-collector",
+          "source": "1064e800a9c174745a3924a0bc7713388fa586d4",
+          "command": "npm run soc2:ai-privacy-evidence",
+          "status": "passed",
+          "exitCode": 0,
+          "logSha256": "7fa3b4e9fa17354beab95d7c9c6bc27d2228ca5fbbd3a92f7b0cd23e05d8418a"
+        }
+      ],
+      "applicability": "Historical successful validation before the exact-original optional-title cache correction; not acceptance of the new source."
+    }
+  ],
+  "normativeRegressionFixtures": [
+    {
+      "path": "tests/ai-classification.test.ts",
+      "baselineSource": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "sha256": "52e851535d03725b687ec3a3e5847ba4c7a8645816a6ada95ba4b9e23379025a",
+      "unchanged": true
+    },
+    {
+      "path": "tests/restriction-resources.test.ts",
+      "baselineSource": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "sha256": "facb14a9f03afe6ee8c9170bb2b9dc72bb9c8df21ff35dfe7d8cbe8cc8291fa9",
+      "unchanged": true
+    },
+    {
+      "path": "tests/safety-url.test.ts",
+      "baselineSource": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "sha256": "d7b59acea703ab540d620a60804ad886bfecb1092c584cf1d68d326175b0290f",
+      "unchanged": true
+    },
+    {
+      "path": "tests/classpilot-precise-restriction-projection.test.ts",
+      "baselineSource": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "sha256": "45e09cc88a7ad14005494449d29129da994e83625a1b206a9532375671b528e9",
+      "unchanged": true
+    },
+    {
+      "path": "tests/fixtures/restriction-resource-matcher-cases.json",
+      "baselineSource": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "source": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "sha256": "4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243",
+      "unchanged": true
+    }
+  ],
+  "localCleanup": {
+    "status": "passed",
+    "residualNamedSqlConnections": 0,
+    "action": "Removed the two exact-ID isolated synthetic database/cache containers after the local suite, and the empty task-created database in the existing development container; existing development services were preserved."
+  }
+}
