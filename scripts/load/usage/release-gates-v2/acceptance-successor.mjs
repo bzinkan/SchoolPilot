@@ -35,6 +35,22 @@ const git = (root, args) => execFileSync('git', ['-C', root, ...args], { encodin
 const json = bytes => JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
 const digest = value => assert.match(value, /^[a-f0-9]{64}$/);
 const image = value => assert.match(value, /^(?:sha256:|[a-zA-Z0-9./:_-]+@sha256:)[a-f0-9]{64}$/);
+function evidenceTime(value) {
+  assert.equal(typeof value, 'string'); assert.match(value, /^\d{4}-\d{2}-\d{2}T.*Z$/);
+  const time = Date.parse(value); assert.ok(Number.isFinite(time)); return time;
+}
+function evidenceWindow(binding, at = Date.now()) {
+  const floor = evidenceTime(binding.evidenceNotBefore), ceiling = evidenceTime(binding.recordedAt);
+  assert.ok(Number.isFinite(at) && floor <= ceiling && ceiling <= at); return { floor, ceiling };
+}
+function withinEvidence(value, binding, at) {
+  const time = evidenceTime(value), { floor, ceiling } = evidenceWindow(binding, at);
+  assert.ok(time >= floor && time <= ceiling); return time;
+}
+function evidenceInterval(value, binding, at) {
+  const start = withinEvidence(value.startedAt, binding, at), end = withinEvidence(value.completedAt, binding, at);
+  assert.ok(start < end); return { start, end };
+}
 export function readPinnedSuccessorInput(input) {
   const bytes = readPinnedSuccessorBytes(input);
   return { bytes, value: json(bytes) };
@@ -98,12 +114,14 @@ function assertPreparedEvidence(input, binding, kind) {
   assert.equal(proof.passed, true); assert.equal(proof.cleanupPassed, true); assert.equal(proof.forcedCleanup, false);
   assert.ok(Array.isArray(proof.inputs) && proof.inputs.length > 0);
   for (const reference of proof.inputs) readPinnedSuccessorBytes(reference);
-  assert.ok(Date.parse(proof.completedAt) >= Date.parse(binding.evidenceNotBefore));
-  assert.ok(Date.parse(proof.completedAt) <= Date.parse(binding.recordedAt));
+  withinEvidence(proof.completedAt, binding);
   return proof;
 }
 export function assertNativeSuccessorPreparation(proof, binding) {
   const result = readPinnedSuccessorInput(proof.nativeResult).value, execution = readPinnedSuccessorInput(proof.execution).value;
+  const run = evidenceInterval(execution, binding), probe = evidenceInterval(result, binding);
+  assert.ok(run.start <= probe.start && probe.end <= run.end);
+  assert.ok(run.end <= withinEvidence(proof.completedAt, binding));
   for (const value of [result, execution]) {
     assert.equal(value.source, binding.candidate.source); assert.equal(value.image, binding.candidate.image); assert.equal(value.artifactRole, 'serving-anchor');
     assert.equal(value.passed, true); assert.equal(value.syntheticFixturesOnly, true); assert.equal(value.providerRequests, 0); assert.equal(value.productionMutations, 0);
@@ -120,12 +138,17 @@ export function assertNativeSuccessorPreparation(proof, binding) {
   assert.equal(result.cleanup.localHttpServersClosed, true); assert.equal(result.cleanup.dbQueries, 0); assert.equal(result.cleanup.remainingDatabaseConnections, 0); assert.equal(result.cleanup.privateTempDirectoriesRemoved, true);
   assert.equal(execution.cleanup.forced, false); assert.equal(execution.cleanup.containerAbsent, true); assert.equal(execution.cleanup.exactOwned, true); assert.equal(execution.cleanup.complete, true);
   assert.deepEqual(execution.exit, { attachCode: 0, daemonExitCode: 0, running: false, oomKilled: false });
-  const inspect = readPinnedSuccessorInput(proof.imageInspect).value[0];
+  const inspection = readPinnedSuccessorInput(proof.imageInspect).value;
+  if (Array.isArray(inspection)) assert.equal(inspection.length, 1);
+  const inspect = Array.isArray(inspection) ? inspection[0] : inspection;
+  assert.ok(inspect && typeof inspect === 'object');
   assert.equal(inspect.Id, binding.candidate.image); assert.equal(inspect.Config.Labels['org.opencontainers.image.revision'], binding.candidate.source);
   return true;
 }
 export function assertOrdinarySuccessorRecovery(proof, binding) {
   const native = readPinnedSuccessorInput(proof.nativeResult).value, review = readPinnedSuccessorInput(proof.independentReview).value, execution = readPinnedSuccessorInput(proof.execution).value;
+  const run = evidenceInterval(execution, binding), observed = withinEvidence(native.observedAtUtc, binding), reviewed = withinEvidence(review.observedAtUtc, binding);
+  assert.ok(run.end <= observed && observed <= reviewed && reviewed <= withinEvidence(proof.completedAt, binding));
   const pair = { 'serving-anchor': { source: binding.candidate.source, localIndex: binding.candidate.image, config: binding.candidate.config, platform: binding.candidate.platform, archiveSha256: binding.candidate.archiveSha256 },
     fallback: { source: binding.fallback.source, localIndex: binding.fallback.image, config: binding.fallback.config, platform: binding.fallback.platform, archiveSha256: binding.fallback.archiveSha256 } };
   for (const value of [native, review]) { assert.equal(value.evidenceKind, 'ordinaryRecovery'); assert.equal(value.passed, true); assert.deepEqual(value.artifactPair, pair); }
@@ -133,33 +156,55 @@ export function assertOrdinarySuccessorRecovery(proof, binding) {
   assert.equal(review.nativeResultSha256, proof.nativeResult.sha256); assert.equal(review.fullIndependentReviewComplete, true); assert.equal(review.independentFromProducer, true);
   assert.deepEqual(review.rawEvidenceSha256s, native.rawEvidence.map(row => row.sha256));
   assertOutside(binding.candidate.sourceDirectory, proof.retainedEvidenceDirectory); assertOutside(binding.harness.directory, proof.retainedEvidenceDirectory);
-  for (const row of native.rawEvidence) {
-    assert.equal(row.storage, 'private'); assert.ok(['json', 'text'].includes(row.format));
+  const retainedInput = (row, requireFormat = true) => {
+    assert.equal(row.storage, 'private');
+    if (requireFormat || row.format !== undefined) assert.ok(['json', 'text'].includes(row.format));
+    else assert.match(row.path, /\.(json|log|mjs|sql)$/);
     const path = resolve(proof.retainedEvidenceDirectory, row.path), rel = relative(resolve(proof.retainedEvidenceDirectory), path);
     assert.ok(rel && !isAbsolute(rel) && !rel.startsWith('..'));
-    readPinnedSuccessorBytes({ file: path, sha256: row.sha256 });
-  }
+    return { file: path, sha256: row.sha256 };
+  };
+  for (const row of native.rawEvidence) readPinnedSuccessorBytes(retainedInput(row));
+  const migrationPin = native.restrictedMigrationEvidence;
+  assert.ok(native.rawEvidence.some(row => row.path === migrationPin.path && row.sha256 === migrationPin.sha256));
+  const migration = readPinnedSuccessorInput(retainedInput(migrationPin)).value;
+  assert.equal(migration.kind, 'release_migration_role_independent_review'); assert.equal(migration.passed, true); assert.deepEqual(migration.artifactPair, pair);
+  const migrationAt = withinEvidence(migration.observedAtUtc, binding); assert.ok(run.end <= migrationAt && migrationAt <= observed);
+  assert.deepEqual(migration.verified.migrationConnectionRole, { superuser: false, bypassRls: false, inherit: false, schemaOwner: true, schemaUsageAndCreate: true });
+  assert.equal(migration.verified.actualVersionedMigrationExecutions, 8); assert.equal(migration.verified.ordinary43to53AndFallbackRetains53, true);
+  assert.equal(migration.verified.zeroNamedMigrationSqlConnections, true); assert.ok(migration.rawEvidence.length > 0);
+  for (const row of migration.rawEvidence) readPinnedSuccessorBytes(retainedInput(row, false));
   for (const key of ['restrictedRoleVerified', 'retainedScreenshotFunctionBodyAndAcl', 'privateChatHistoryAndFencesPreserved', 'exactFocusCleanupPassed', 'capabilityEqualityPassed',
     'privateChatCompatibilityFloorsPassed', 'allDrainsExitZeroNoOomNoForceAndZeroNamedSqlConnections']) assert.equal(native.checks[key], true);
   assert.deepEqual(native.recovery, { baselineMigrations: 43, candidateMigrations: 53, fallbackDeclaredMigrations: 52, retainedCompletedMigrations: 53,
     admissionCounts: [121, 125, 126, 127, 128, 129], phases: ['baseline43', 'candidate53-dark128', 'candidate53-adopt129', 'fallback-retains53', 'candidate-return53'],
     sequence: [binding.candidate.source, binding.fallback.source, binding.candidate.source] });
   assert.equal(native.actualApiWorkerProcesses, 8); assert.equal(native.gracefulDrains, 8); assert.equal(native.migration.role.rolsuper, false); assert.equal(native.migration.role.rolbypassrls, false);
-  assert.equal(native.migration.ordinaryPath, true); assert.equal(native.migration.completedMigrations, 53);
+  assert.equal(native.migration.ordinaryPath, true); assert.equal(native.migration.baselineMigrations, 43); assert.equal(native.migration.completedMigrations, 53);
+  for (const [arm, count, source] of [['baseline', 43, ACCEPTANCE_BASELINE], ['candidate', 53, binding.candidate.source]]) {
+    const actual = execution.sourceSpecificNative[arm]; assert.equal(actual.passed, true); assert.equal(actual.source, source);
+    assert.equal(actual.applicationImage, arm === 'baseline' ? binding.baseline.image : binding.candidate.image);
+    const rows = actual.nativeCompletedMigrations; assert.equal(rows.length, count); assert.equal(new Set(rows.map(row => row.id)).size, count);
+    for (const row of rows) { assert.equal(row.status, 'complete'); digest(row.checksum); }
+  }
   assert.equal(execution.source, binding.candidate.source); assert.equal(execution.passed, true); assert.equal(execution.productionMutations, 0);
   assert.equal(execution.cleanupPassed, true); assert.equal(execution.gracefulCleanupPassed, true); assert.equal(execution.networkCleanupPassed, true); assert.equal(execution.completedInsideAuthorizedWindow, true);
-  assert.equal(execution.actualApiWorkerProcesses, 8); assert.equal(execution.services.length, 8); assert.equal(execution.drains.length, 8);
+  assert.equal(execution.actualApiWorkerProcesses, true); assert.equal(execution.services.length, 8); assert.equal(execution.drains.length, 8);
+  assert.equal(new Set(execution.services.map(row => row.containerId)).size, 8);
   for (const phase of ['bridge128', 'adopt129', 'fallback129', 'return129']) {
     const role = phase === 'fallback129' ? binding.fallback : binding.candidate, rows = execution.services.filter(row => row.phase === phase);
     assert.deepEqual(rows.map(row => row.service).sort(), ['api', 'worker']);
     for (const row of rows) { assert.equal(row.source, role.source); assert.equal(row.image, role.image); assert.equal(row.runtimeImage, role.image); assert.equal(row.inventoryCount, phase === 'bridge128' ? 128 : 129); }
   }
-  for (const drain of execution.drains) { const role = drain.phase === 'fallback129' ? binding.fallback : binding.candidate;
-    assert.equal(drain.sourceImage, role.image); assert.equal(drain.exitCode, 0); assert.equal(drain.oomKilled, false); assert.equal(drain.sqlConnections, 0); assert.equal(drain.forced, false); }
+  for (const row of execution.services) {
+    assert.equal(typeof row.containerId, 'string'); assert.ok(row.containerId.length > 0);
+    const drains = execution.drains.filter(drain => drain.phase === row.phase && drain.service === row.service && drain.containerId === row.containerId); assert.equal(drains.length, 1);
+    const drain = drains[0]; assert.equal(drain.sourceImage, row.image); assert.equal(drain.exitCode, 0); assert.equal(drain.oomKilled, false); assert.equal(drain.sqlConnections, 0); assert.equal(drain.forced, false);
+  }
   assert.ok(execution.cleanup.length > 0 && execution.cleanup.every(row => row.graceful === true && row.removed === true && row.forced === false && row.exitCode === 0 && row.oomKilled === false));
   return true;
 }
-export function assertFreshSecurityScan(input, role, binding) {
+export function assertFreshSecurityScan(input, role, binding, at = Date.now()) {
   const proof = readPinnedSuccessorInput(input).value;
   assert.equal(proof.kind, 'exact_artifact_security_scan'); assert.equal(proof.source, role.source); assert.equal(proof.applicationImage, role.image);
   assert.equal(proof.config, role.config); assert.equal(proof.platform, role.platform);
@@ -167,7 +212,7 @@ export function assertFreshSecurityScan(input, role, binding) {
   for (const severity of ['medium', 'low', 'unknown']) assert.ok(Number.isSafeInteger(proof[severity]) && proof[severity] >= 0);
   assert.equal(proof.scannerIdentity, SCANNER);
   assert.deepEqual(proof.databaseMetadata, readPinnedSuccessorInput(proof.databaseMetadataInput).value);
-  assert.ok(Date.parse(proof.completedAt) >= Date.parse(binding.evidenceNotBefore)); assert.ok(Date.parse(proof.completedAt) <= Date.parse(binding.recordedAt));
+  const completed = withinEvidence(proof.completedAt, binding, at);
   const raw = readPinnedSuccessorInput(proof.rawScan).value;
   const counts = scanCounts(raw, role.config);
   for (const severity of ['critical', 'high', 'medium', 'low', 'unknown']) assert.equal(proof[severity], counts[severity.toUpperCase()]);
@@ -175,10 +220,29 @@ export function assertFreshSecurityScan(input, role, binding) {
   assert.equal(receipt.sourceSha, role.source); assert.equal(receipt.imageId, role.image); assert.equal(receipt.configDigest, role.config);
   assert.equal(receipt.scanner, SCANNER); assert.equal(receipt.passed, true); assert.equal(receipt.os, 'linux'); assert.equal(receipt.architecture, 'amd64');
   assert.equal(receipt.reportSha256, proof.rawScan.sha256); assert.equal(receipt.archiveSha256, role.archiveSha256); assert.deepEqual(receipt.counts, counts);
+  const scanned = withinEvidence(receipt.createdAt, binding, at), database = proof.databaseMetadata;
+  assert.equal(database.Version, 2);
+  const updated = evidenceTime(database.UpdatedAt), downloaded = withinEvidence(database.DownloadedAt, binding, at), next = evidenceTime(database.NextUpdate);
+  assert.ok(updated <= downloaded && downloaded <= scanned && scanned <= completed && scanned < next && at < next);
   assert.equal(proof.archive.sha256, role.archiveSha256); readPinnedSuccessorBytes(proof.archive);
   assert.equal(proof.rawConfig.sha256, role.config.slice(7));
   const config = readPinnedSuccessorInput(proof.rawConfig).value;
   assert.equal(config.os, 'linux'); assert.equal(config.architecture, 'amd64'); assert.equal(config.config.Labels['org.opencontainers.image.revision'], role.source);
+  return true;
+}
+// Separate from historical validateMixedRuns: only the reviewed successor
+// requires fresh, distinct, sequential attempts from one declared campaign.
+export function assertSuccessorMixedSequence(records, binding, completedAt) {
+  assert.equal(records.length, 3);
+  for (const field of ['run', 'verifiedReceiptManifestSha256', 'reservationSha256']) assert.equal(new Set(records.map(row => row[field])).size, 3);
+  const campaign = records[0].campaignContractSha256; digest(campaign);
+  let previousEnd = null;
+  for (const row of records) {
+    assert.match(row.run, /^[a-f0-9]{12}$/); digest(row.verifiedReceiptManifestSha256); digest(row.reservationSha256); assert.equal(row.campaignContractSha256, campaign);
+    const start = evidenceTime(row.startedAt), end = evidenceTime(row.finishedAt);
+    assert.ok(start >= evidenceTime(binding.evidenceNotBefore) && start < end && end <= evidenceTime(completedAt));
+    if (previousEnd !== null) assert.ok(previousEnd <= start); previousEnd = end;
+  }
   return true;
 }
 export function assertAcceptanceSuccessorIdentity(binding, at = Date.now()) {
@@ -202,11 +266,11 @@ export function validateAcceptanceSuccessor(input, { at = Date.now() } = {}) {
   const { value: binding } = readPinnedSuccessorInput(input);
   assertAcceptanceSuccessorIdentity(binding, at);
   // Failed exact fallback security evidence is fatal before Git or Docker work.
-  assertFreshSecurityScan(binding.securityScans.fallback, binding.fallback, binding);
+  assertFreshSecurityScan(binding.securityScans.fallback, binding.fallback, binding, at);
   assertOutside(binding.candidate.sourceDirectory, input.file); assertOutside(binding.harness.directory, input.file);
   assertFrozenAcceptanceHarness(binding.harness);
   assertRole(binding.candidate, 53, 129); assertRole(binding.baseline, 43, 121);
-  assertFreshSecurityScan(binding.securityScans.candidate, binding.candidate, binding);
+  assertFreshSecurityScan(binding.securityScans.candidate, binding.candidate, binding, at);
   assertHelper(binding.helpers.candidate, binding.candidate, binding.harness);
   assertHelper(binding.helpers.baseline, binding.baseline, binding.harness);
   assert.equal(binding.policy.sha256, ACCEPTANCE_POLICY_SHA256);

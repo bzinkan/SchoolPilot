@@ -23,6 +23,8 @@ hash-pinned, source-specific and present:
 - Fresh scans of the exact candidate and exact fallback with zero High/Critical
   findings. Counts are independently recomputed from hash-pinned Trivy JSON;
   lower-severity findings stay explicit. A failed fallback scan holds execution.
+  Raw scan receipt timestamps and the Version 2 database download/update/expiry
+  timeline must be current; a newly dated wrapper cannot refresh an old scan.
 - A clean committed host harness with a complete tracked workload-tool byte
   inventory; each newly built helper must bind that same inventory and host SHA.
 - Fresh candidate screenshot/private-file/PDF preparation and actual ordinary
@@ -45,6 +47,11 @@ hash-pinned, source-specific and present:
 Unknown inputs must remain null in non-executable templates. Such templates
 cannot pass validation or launch a workload. Evidence wrappers must describe
 actual hash-pinned raw evidence; their booleans are not substitutes for a run.
+Native probe intervals must be contained in their actual execution. Recovery
+execution, restricted migration review, aggregate and independent review must
+occur in that order within the preparation evidence window. Recovery consumes
+the actual eight service/drain pairs and the sealed, query-backed restricted
+migration proof; it does not invent a different producer schema.
 
 ## Bounded execution and evidence
 
@@ -61,6 +68,10 @@ and quiet-window file/hash. It supports only these existing profiles:
 | `headroom250` | `release297-usage-off-one-api-250-heartbeat-envelope-v1` | Three fresh passes with accepted headroom |
 
 Normal and mixed blocks require the fresh source/image/helper-bound loss proof.
+The three mixed receipts must have distinct run, manifest and reservation
+identities, occur chronologically without overlap and belong to the same
+declared campaign. Lower-load preparation additionally replays its closed
+three-attempt campaign journal; a repeated successful receipt cannot qualify.
 The 250 block additionally requires fresh exact-source normal, mixed and ordinary
 recovery prerequisites. It retains CPU/p95 headroom, scoped teacher reads, native
 persistence/RLS custody, complete final monitor/error logs and unforced cleanup.

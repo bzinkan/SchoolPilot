@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {PROFILES,profileHash,hash} from './contracts.mjs';
 import {checkLowerStaffRows} from './lower-staff.mjs';
 import {checkPersistence} from './persistence.mjs';
-import {validateAcceptanceSuccessor,assertSuccessorRunBinding,readPinnedSuccessorInput} from './acceptance-successor.mjs';
+import {validateAcceptanceSuccessor,assertSuccessorRunBinding,readPinnedSuccessorInput,assertSuccessorMixedSequence} from './acceptance-successor.mjs';
 import {loadReceipt} from './receipts.mjs';
 import {validateMixedRuns} from './validation.mjs';
 
@@ -59,7 +59,13 @@ export function assertLowerSafetyPrerequisites(inputs,successor){
       if(input.kind==='mixed'){
         assert.equal(proof.passed,true);assert.equal(proof.currentSchoolOnly,true);assert.equal(proof.profile,PROFILES.mixedNative.name);assert.equal(proof.profileSha256,profileHash(PROFILES.mixedNative));assert.equal(proof.runs.length,3);
         const records=proof.runs.map(row=>loadReceipt(row.receiptDirectory,row.receiptManifestSha256,row.privateDirectory));
+        assertSuccessorMixedSequence(records,binding,proof.completedAt);
         for(const record of records){assert.equal(record.source,binding.candidate.source);assert.equal(record.applicationImage,binding.candidate.image);assert.equal(record.acceptanceSuccessor.sha256,successor.input.sha256);}
+        const contract=readPinnedSuccessorInput(proof.campaignContract).value,journal=readPinnedSuccessorInput(proof.campaignJournal).value;
+        assert.equal(proof.campaignContract.sha256,records[0].campaignContractSha256);assert.equal(journal.contractSha256,proof.campaignContract.sha256);
+        assert.equal(contract.kind,'mixed');assert.equal(contract.profile,PROFILES.mixedNative.name);assert.equal(contract.candidateSource,binding.candidate.source);assert.deepEqual(contract.order,['C','C','C']);
+        assert.equal(journal.closed,true);assert.equal(journal.attempts.length,3);
+        for(const [index,attempt]of journal.attempts.entries()){assert.equal(attempt.index,index);assert.equal(attempt.state,'recorded');assert.equal(attempt.run,records[index].run);assert.equal(attempt.receiptManifestSha256,records[index].verifiedReceiptManifestSha256);assert.equal(attempt.reservationSha256,records[index].reservationSha256);assert.equal(attempt.receipt.runPassed,true);assert.equal(attempt.receipt.failure,null);}
         assert.deepEqual(proof.aggregate,validateMixedRuns(records));assert.equal(proof.aggregate.passed,true);
         const review=readPinnedSuccessorInput(proof.independentFullReview).value;assert.equal(review.fullIndependentReviewComplete,true);assert.equal(review.passed,true);assert.equal(review.source,binding.candidate.source);assert.equal(review.applicationImage,binding.candidate.image);assert.deepEqual(review.receiptManifestSha256s,proof.runs.map(row=>row.receiptManifestSha256));
       }

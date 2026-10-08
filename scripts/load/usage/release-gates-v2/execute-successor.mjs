@@ -5,7 +5,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { PROFILES, profileHash, hash } from './contracts.mjs';
 import { validateRound, validatePairs } from './validation.mjs';
-import { validateAcceptanceSuccessor, readPinnedSuccessorInput, assertFrozenAcceptanceHarness, assertSuccessorRunBinding, FIXED_ORDER } from './acceptance-successor.mjs';
+import { validateAcceptanceSuccessor, readPinnedSuccessorInput, assertFrozenAcceptanceHarness, assertSuccessorRunBinding, assertSuccessorMixedSequence, FIXED_ORDER } from './acceptance-successor.mjs';
 import { runV2 } from './run.mjs';
 import { declareCampaign, reserveAttempt, registerAttempt, closeCampaign } from './campaign.mjs';
 import { loadReceipt } from './receipts.mjs';
@@ -173,7 +173,10 @@ export async function executeSuccessorBlock(input) {
       result = evaluateApprovedCurrentSchool(replay, successor);
       save(join(root, 'approved-policy-evaluation.json'), result); assert.equal(result.passed, true, 'Approved current-school comparison failed');
     } else if (lower) result = { ...assertLowerConfirmation(replay, profile), passed: true };
-    else { result = closeCampaign({ directory: campaignDirectory, privateDirectories }); assert.equal(result.passed, true); }
+    else {
+      if (profile.name === PROFILES.mixedNative.name) assertSuccessorMixedSequence(replay, binding, new Date().toISOString());
+      result = closeCampaign({ directory: campaignDirectory, privateDirectories }); assert.equal(result.passed, true);
+    }
   } catch { failure = 'SUCCESSOR_BLOCK_FAILED_REMAINING_ATTEMPTS_HELD'; }
   finally {
     journal.closed = true; journal.failure = failure; journal.remainingAttemptsHeld = order.length - journal.attempts.length; journal.completedAt = new Date().toISOString(); checkpoint();
