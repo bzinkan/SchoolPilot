@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_current_artifact_scan_observation",
+  "observedAtUtc": "2026-10-08T21:39:36.135Z",
+  "candidate": {
+    "artifactRole": "serving-anchor",
+    "source": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+    "localIndex": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+    "config": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+    "platform": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+    "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41",
+    "observedAtUtc": "2026-10-08T21:35:53.409Z",
+    "status": "passed",
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "database": {
+      "Version": 2,
+      "NextUpdate": "2026-10-09T19:05:21.721408648Z",
+      "UpdatedAt": "2026-10-08T19:05:21.721409049Z",
+      "DownloadedAt": "2026-10-08T21:35:30.883926898Z"
+    },
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 1,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "findings": [
+      {
+        "id": "CVE-2026-97058",
+        "package": "sprintf-js",
+        "installedVersion": "1.0.3",
+        "fixedVersion": null,
+        "severity": "MEDIUM",
+        "title": "sprintf-js: sprintf-js: Denial of Service via unbounded precision specifiers",
+        "reportedReference": "https://avd.aquasec.com/nvd/cve-2026-97058"
+      }
+    ],
+    "exactOwnedScannerCleanup": {
+      "exitCode": 0,
+      "unforced": true,
+      "containerAbsentAfterRemoval": true
+    },
+    "retainedEvidence": {
+      "scanReceipt": {
+        "storage": "private",
+        "path": "candidate-A-scan-02/scan-receipt.json",
+        "sha256": "5ecf72695225bb00226bd7193911c054d43d26de21f7f557e047ffbf37f84499"
+      },
+      "report": {
+        "storage": "private",
+        "path": "candidate-A-scan-02/reports/trivy.json",
+        "sha256": "1ff4b2fd0e3cdbc2c87f4d3a2f521fdd3f82f7c8b5d6bbd9e1ff9ffce571c0c2"
+      },
+      "scannerCustody": {
+        "storage": "private",
+        "path": "candidate-A-scan-02/independent-custody.json",
+        "sha256": "7c6793d9995c414bb7b6cf96f1dfb195b1cf51ec71395266295cf129ad59791a"
+      }
+    }
+  },
+  "fallback": {
+    "artifactRole": "fallback",
+    "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+    "localIndex": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+    "config": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+    "platform": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+    "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58",
+    "observedAtUtc": "2026-10-08T21:36:12.886Z",
+    "status": "failed",
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "database": {
+      "Version": 2,
+      "NextUpdate": "2026-10-09T19:05:21.721408648Z",
+      "UpdatedAt": "2026-10-08T19:05:21.721409049Z",
+      "DownloadedAt": "2026-10-08T21:35:52.573129466Z"
+    },
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 2,
+      "HIGH": 1,
+      "CRITICAL": 0
+    },
+    "findings": [
+      {
+        "id": "CVE-2026-4775",
+        "package": "tiff",
+        "installedVersion": "4.7.1-r0",
+        "fixedVersion": "4.7.2-r0",
+        "severity": "HIGH",
+        "title": "libtiff: libtiff: Arbitrary code execution or denial of service via signed integer overflow in TIFF file processing",
+        "reportedReference": "https://avd.aquasec.com/nvd/cve-2026-4775"
+      },
+      {
+        "id": "CVE-2026-85091",
+        "package": "zlib",
+        "installedVersion": "1.3.2-r0",
+        "fixedVersion": "1.3.2-r1",
+        "severity": "MEDIUM",
+        "title": "zlib versions 1.3.1.2 through 1.3.2 contain a heap buffer overflow vul ...",
+        "reportedReference": "https://avd.aquasec.com/nvd/cve-2026-85091"
+      },
+      {
+        "id": "CVE-2026-97058",
+        "package": "sprintf-js",
+        "installedVersion": "1.0.3",
+        "fixedVersion": null,
+        "severity": "MEDIUM",
+        "title": "sprintf-js: sprintf-js: Denial of Service via unbounded precision specifiers",
+        "reportedReference": "https://avd.aquasec.com/nvd/cve-2026-97058"
+      }
+    ],
+    "exactOwnedScannerCleanup": {
+      "exitCode": 0,
+      "unforced": true,
+      "containerAbsentAfterRemoval": true
+    },
+    "retainedEvidence": {
+      "scanReceipt": {
+        "storage": "private",
+        "path": "fallback-F-scan-01/scan-receipt.json",
+        "sha256": "70135f163e9d73c7f8d5398c343d4b1f14e26350c6fcc80bfe47d3e4fc0e96fa"
+      },
+      "report": {
+        "storage": "private",
+        "path": "fallback-F-scan-01/reports/trivy.json",
+        "sha256": "9b5419dcdc1101a43b3e72d6b35363797eb7e1fe037c943d518e69a92462be34"
+      },
+      "scannerCustody": {
+        "storage": "private",
+        "path": "fallback-F-scan-01/independent-custody.json",
+        "sha256": "f910658a55d5aba4c2a88ea9a3a780f88350c1c7529afe154bf279a06abecd3e"
+      }
+    }
+  },
+  "earlierAttempts": [
+    {
+      "id": "candidate-A-scan-01",
+      "status": "failed",
+      "reason": "The fresh wrapper omitted the verifier-required build-image-id.txt; it failed before any Docker/scanner operation. The corrected attempt uses the exact returned built image ID.",
+      "retainedCustodySha256": "2cdb0a7b4c544de6a346a5b471e0e593b8f28831f0a74b60188ef468118d40bb"
+    }
+  ],
+  "historicalEvidence": {
+    "c578October7FailedScan": "preserved_failed",
+    "fOctober7PassedScan": "preserved_historical_pass_not_current"
+  },
+  "acceptanceDisposition": {
+    "ordinaryRecovery": "held_before_execution",
+    "currentSchoolCampaign": "held_before_execution",
+    "classroomCampaign": "held_before_execution",
+    "normalLoad": "held_before_execution",
+    "headroom": "held_before_execution",
+    "reason": "Fresh exact F has one High finding; original zero High/Critical criterion blocks selection and acceptance. No scan waiver or artifact substitution is made."
+  },
+  "remediation": {
+    "id": "F-TIFF-20261008",
+    "finding": "CVE-2026-4775",
+    "installed": "tiff 4.7.1-r0",
+    "scannerReportedFix": "tiff 4.7.2-r0",
+    "nextAction": "Prepare and review a replacement fallback artifact that passes a fresh scan; preserve exact failed F. Explicitly review whether its source must also retain CP-AI-001 protection. New-source/image recovery evidence and exact replacement selection are required."
+  },
+  "limitations": [
+    "Reported vulnerabilities and fix versions come from the pinned scanner database; external advisory pages were unavailable to the browser during this observation.",
+    "The current A scan and source proof do not establish classroom/capacity acceptance, registry publication or live behavior.",
+    "A source/config/archive hash identifies an artifact; historical proof cannot be silently relabelled for it."
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionMutations": 0
+}

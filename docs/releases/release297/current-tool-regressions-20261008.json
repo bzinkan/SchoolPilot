@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_current_tool_regression_observation",
+  "observedAtUtc": "2026-10-08T22:05:51.757Z",
+  "verificationMethod": "completed_root_run_and_retained_private_log",
+  "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "toolingReferenceObserved": "62dcfbe840983818419fe6cbbcf6f50fde5df97d",
+  "toolingReferenceMeaning": "Observed branch reference; current release-index next-action corrections are uncommitted metadata. Listed regression code hashes identify executed unchanged controller/test files.",
+  "fileHashBasis": "UTF-8 text with CRLF normalized to LF, matching canonical Git blob content.",
+  "fileHashes": {
+    "scripts/release-source-binding.mjs": "fbfd35ed25cfc36ed155bbd39a1fdae5e26c2d230c66b0b667b66f826b56e54d",
+    "scripts/prepare-release-artifacts.mjs": "a11bad5ca3516a43058476a29bd67a61f2e09fd588635460e536df3e31b6a31b",
+    "scripts/register-compatible-fallback-inactive.mjs": "aa579cfdb187f44b956fb5110d6895a8674a56eb5e692821e146ef10186cbe33",
+    "scripts/verify-legacy-deploy-image.mjs": "34572ad4087edaaba79eafb2f7ac97dd692305fda7a210f719a6aaa65cee6783",
+    "tests/release297-artifact-preparation.test.mjs": "3325a27afdaf5fcc2d4fc17ea9118f790a7c6af92c688d555e225d8afbee2c6a",
+    "tests/release297-compatible-fallback-inactive.test.mjs": "ef7a77ffae554f8acc06a94aa1ec43607ba38656f35128c075d8285c6406d170",
+    "tests/release-source-binding.test.mjs": "f6e291653a9464ba82fff9542e3308628b9ea7cfbb0009c75c206207954cfc1f",
+    "tests/release-fallback-successor-binding.test.mjs": "d73fbdd6b4b390c4e1b15711372990280707b945e2e31b969a05a4e27c198082"
+  },
+  "steps": [
+    {
+      "command": "node --test tests/release297-artifact-preparation.test.mjs tests/release297-compatible-fallback-inactive.test.mjs tests/release-source-binding.test.mjs tests/release-fallback-successor-binding.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 119,
+      "passed": 119,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 162874.7575,
+      "retainedLog": {
+        "storage": "private",
+        "path": "release-tool-regressions-01.log",
+        "sha256": "8173fbc8eefd45a7d0ac3f137f3a0c3b8dc059c9f1b207e3c7764957f6248706"
+      }
+    },
+    {
+      "command": "node scripts/release297-current-state.mjs --check",
+      "status": "passed",
+      "verificationMethod": "root_report_and_reverified_on_current_record"
+    },
+    {
+      "command": "npm run soc2:check",
+      "status": "passed",
+      "verificationMethod": "root_report",
+      "existingEvidenceAndHumanApprovalWarningsPreserved": true,
+      "newApprovalsGranted": false
+    }
+  ],
+  "privatePathRepairSummarySha256": "eac0cb08c3bbb80e6b5952f336cca36793a595b6429eea53ad9923207eb70d1a",
+  "actualAcceptanceRun": false,
+  "registryPublication": false,
+  "cloudRegistration": false,
+  "productionDeployment": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

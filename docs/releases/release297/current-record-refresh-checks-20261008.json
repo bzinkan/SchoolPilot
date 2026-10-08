@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_current_record_refresh_checks",
+  "observedAtUtc": "2026-10-08T21:53:56.768Z",
+  "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "testedToolingGitSource": null,
+  "testedToolingScope": "Current-state generator/test patch over frozen A; canonical LF/Git content hashes and exact raw tested working-file hashes are recorded separately. Future reviewed tooling/evidence main B requires fresh CI and tool binding.",
+  "testedToolFiles": {
+    "scripts/release297-current-state.mjs": "4a54c39a8eb39fca6119260aaa66ea11a716cc9d27639b5030df900f6586ec8d",
+    "tests/release297-current-state.test.mjs": "465ba3dda77ed77bcd5e81bb4f5b1bcc69c15c07554397d30638e43449d825fd"
+  },
+  "checks": [
+    {
+      "command": "node --test tests/release297-current-state.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 34,
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "7d43d03f71b78c28febf304d8f3b90a4a29e9b154553bc1c72cd8fa693f0c7a1"
+    },
+    {
+      "command": "node --test tests/release297-current-state.test.mjs tests/release-source-binding.test.mjs tests/release-fallback-successor-binding.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 66,
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "dba18f7dcfcbf030fb148bae106ec9571f3ed84cd796fb3b1648d20b55b45deb",
+      "scope": "32 current-state tests plus34 unchanged v1/v2/v3 source-binding regressions at execution. The final current-state suite subsequently added actual-default-pending and unchanged-extension failure/applicability guards and is separately rerun34/34; release-source-binding/controller code remains unchanged."
+    },
+    {
+      "command": "node scripts/release297-current-state.mjs --check",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed",
+      "exitCode": 0
+    }
+  ],
+  "historicalReceiptsChanged": false,
+  "applicationInputsChanged": false,
+  "sourceFreezeIsArtifactAcceptance": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionDeploymentExecuted": false,
+  "testedToolFilesHashBasis": "SHA-256 of UTF-8 text with CRLF normalized to LF, matching canonical Git blob content; this preserves explicit checkout-byte distinctions below.",
+  "testedWorkingBytesHashBasis": "SHA-256 of exact raw working files used in the last completed tests; mixed Windows line endings are preserved.",
+  "testedWorkingFiles": {
+    "scripts/release297-current-state.mjs": "9936b7ed23e50cb218139291e56150e0232b3f42a4276418da425deb11286589",
+    "tests/release297-current-state.test.mjs": "e2efae04a51e1ca32b5b93b33b92bb86744cd04505f5657f6cab00f0051b2f59"
+  }
+}

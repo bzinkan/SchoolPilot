@@ -3,7 +3,7 @@
   "kind": "reviewed_release_source_binding",
   "id": "release-297-current-school-fallback-v3",
   "status": "pending",
-  "applicationSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+  "applicationSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
   "reviewedBaselineSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
   "imageInputs": [
     "src",
@@ -16,8 +16,8 @@
     "docs/soc2"
   ],
   "inventory": {
-    "sha256": "11ab2736ad2c4fc7a75da1d00b15168c8f5d297c39e6e269808301b961cf669d",
-    "fileCount": 563
+    "sha256": "91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b",
+    "fileCount": 564
   },
   "fallback": {
     "source": "d75fc1c48d0a3918857508d3965904c69023a153",
@@ -96,17 +96,19 @@
   },
   "operationalAuthorization": false,
   "notes": [
-    "Exact historical C578 identity and its October 7 failed scan remain unchanged.",
-    "This profile proposes one reviewed dependency-only successor, without selecting it or granting operational authority.",
-    "Application A is a recovery reference; the 133-client campaign, three 900-second classroom runs, normal-load and 250-client headroom acceptance remain pending.",
-    "ValidateSuccessorPreparation is offline and cannot make an operational Plan executable."
+    "Exact C578 and its October7 failed scan remain unchanged; historical F pass and a516/F native proof remain separately archived.",
+    "Current frozen A includes CP-AI remediation and frontend623; its image is identified and scanned but releaseReady remains false.",
+    "Fresh unchanged F fails zero High/Critical because of High TIFF finding; no scan waiver or substituted artifact is made.",
+    "Current A/F ordinary recovery, restricted restoration and original campaigns are held before execution. Candidate-only native processing does not satisfy F or pair preparation.",
+    "F rollback restores previous provider credential boundary. Explicit replacement/source/privacy applicability review and exact-artifact selection remain pending.",
+    "Prior direct deployment request is recorded separately and does not supply a controller receipt or waive preparation/operational prerequisites."
   ],
   "frontendInputs": [
     "schoolpilot-app"
   ],
   "frontendInventory": {
-    "sha256": "3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0",
-    "fileCount": 633
+    "sha256": "9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac",
+    "fileCount": 635
   },
   "extension": {
     "version": "2.9.7",
@@ -117,34 +119,42 @@
     "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
     "zipBytes": 376052
   },
-  "testedApplicationImage": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+  "testedApplicationImage": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
   "blockers": [
+    "fresh-fallback-high-tiff-finding",
     "owner-source-applicability-pending",
-    "fresh-original-candidate-campaigns-pending",
-    "exact-successor-selection-pending"
+    "current-A-F-native-recovery-held-before-execution",
+    "fresh-original-candidate-campaigns-held-before-execution",
+    "exact-successor-selection-pending",
+    "future-tooling-main-B-CI-pending"
   ],
-  "sourceStatus": "recovery-reference-native-acceptance-pending",
-  "testedApplicationConfig": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+  "sourceStatus": "frozen-current-candidate-fallback-scan-failed",
+  "testedApplicationConfig": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
   "fallbackScan": {
-    "status": "passed",
+    "status": "failed",
     "scan": {
       "storage": "private",
-      "path": "fallback-F/scan-receipt.json",
-      "sha256": "e209c6bfa7b3156d8558e0f466612ba7cae088fd4ee383dc14087e8992a1eb4b",
-      "format": "json"
+      "path": "fallback-F-scan-01/scan-receipt.json",
+      "sha256": "70135f163e9d73c7f8d5398c343d4b1f14e26350c6fcc80bfe47d3e4fc0e96fa"
     },
     "report": {
       "storage": "private",
-      "path": "fallback-F/reports/trivy.json",
-      "sha256": "1c24585528f3731e314e33852e1e51e65d45536e9f52030abbc77a52e24d0158",
-      "format": "json"
+      "path": "fallback-F-scan-01/reports/trivy.json",
+      "sha256": "9b5419dcdc1101a43b3e72d6b35363797eb7e1fe037c943d518e69a92462be34"
     },
     "cleanup": {
       "storage": "private",
-      "path": "fallback-F/typed-custody.json",
-      "sha256": "8bf02d89000450a8e73a23c46026ac2a06702342a4e5e56dd967344f0d8eea38",
-      "format": "json"
-    }
+      "path": "fallback-F-scan-01/independent-custody.json",
+      "sha256": "f910658a55d5aba4c2a88ea9a3a780f88350c1c7529afe154bf279a06abecd3e"
+    },
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 2,
+      "HIGH": 1,
+      "CRITICAL": 0
+    },
+    "observedAtUtc": "2026-10-08T21:36:12.886Z"
   },
   "historicalFallback": {
     "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
@@ -155,11 +165,11 @@
   "correctionSource": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
   "artifacts": {
     "serving-anchor": {
-      "source": "a5161eb14939132776e0b77eac8e3c485091432c",
-      "localIndex": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
-      "config": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
-      "platform": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
-      "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+      "source": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "localIndex": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+      "config": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+      "platform": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+      "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41"
     },
     "fallback": {
       "source": "d75fc1c48d0a3918857508d3965904c69023a153",
@@ -182,32 +192,32 @@
     "correctionSource": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3"
   },
   "preparation": {
-    "status": "passed",
+    "status": "pending",
     "evidence": {
       "successorScan": {
-        "status": "passed",
-        "path": "docs/release-evidence/release297-successor-20261007/successorScan.json",
-        "sha256": "27507ca7afc2d1fe74c827b9fdc01754d34e06a3de0cc6a34ad0bc4d6dff620c"
+        "status": "failed",
+        "path": "docs/release-evidence/release297-current-candidate-20261008/current-artifacts-scan-20261008.json",
+        "sha256": "677a9a064d3f6bb6d0b66753507a26893f00a3802df7bcdf0182f630ee42073a"
       },
       "screenshotRuntime": {
-        "status": "passed",
-        "path": "docs/release-evidence/release297-successor-20261007/screenshotRuntime.json",
-        "sha256": "d24f76b171d48b72cae1a3975ca17ebf5b572c603b75502677a25081804c2a65"
+        "status": "pending",
+        "path": null,
+        "sha256": null
       },
       "requestIpRateLimit": {
-        "status": "passed",
-        "path": "docs/release-evidence/release297-successor-20261007/requestIpRateLimit.json",
-        "sha256": "380e75e618aa2f56b8db0a2245eb99d7e257a257ac204e29e7d7471019274371"
+        "status": "pending",
+        "path": null,
+        "sha256": null
       },
       "ordinaryRecovery": {
-        "status": "passed",
-        "path": "docs/release-evidence/release297-successor-20261007/ordinaryRecovery.json",
-        "sha256": "e7874f2427257d71b37d0d832529420d4c6e3df4d383028a3786ab16c1fefcd3"
+        "status": "pending",
+        "path": null,
+        "sha256": null
       },
       "restrictedRestoration": {
-        "status": "passed",
-        "path": "docs/release-evidence/release297-successor-20261007/restrictedRestoration.json",
-        "sha256": "5351566f28af9e8efe85390e837ee18e31f2163aabe8504f223daa6d3fc14628"
+        "status": "pending",
+        "path": null,
+        "sha256": null
       }
     }
   },
@@ -215,5 +225,60 @@
     "status": "pending",
     "path": null,
     "sha256": null
+  },
+  "historicalPreparation": {
+    "profile": {
+      "path": "docs/releases/release297/release-297-current-school-fallback-v3-before-current-freeze-20261008.json",
+      "sha256": "6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c"
+    },
+    "applicationSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+    "artifactPair": {
+      "serving-anchor": {
+        "source": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "localIndex": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+        "config": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+        "platform": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
+        "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+      },
+      "fallback": {
+        "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+        "localIndex": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+        "config": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+        "platform": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+        "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+      }
+    },
+    "preparation": {
+      "status": "passed",
+      "evidence": {
+        "successorScan": {
+          "status": "passed",
+          "path": "docs/release-evidence/release297-successor-20261007/successorScan.json",
+          "sha256": "27507ca7afc2d1fe74c827b9fdc01754d34e06a3de0cc6a34ad0bc4d6dff620c"
+        },
+        "screenshotRuntime": {
+          "status": "passed",
+          "path": "docs/release-evidence/release297-successor-20261007/screenshotRuntime.json",
+          "sha256": "d24f76b171d48b72cae1a3975ca17ebf5b572c603b75502677a25081804c2a65"
+        },
+        "requestIpRateLimit": {
+          "status": "passed",
+          "path": "docs/release-evidence/release297-successor-20261007/requestIpRateLimit.json",
+          "sha256": "380e75e618aa2f56b8db0a2245eb99d7e257a257ac204e29e7d7471019274371"
+        },
+        "ordinaryRecovery": {
+          "status": "passed",
+          "path": "docs/release-evidence/release297-successor-20261007/ordinaryRecovery.json",
+          "sha256": "e7874f2427257d71b37d0d832529420d4c6e3df4d383028a3786ab16c1fefcd3"
+        },
+        "restrictedRestoration": {
+          "status": "passed",
+          "path": "docs/release-evidence/release297-successor-20261007/restrictedRestoration.json",
+          "sha256": "5351566f28af9e8efe85390e837ee18e31f2163aabe8504f223daa6d3fc14628"
+        }
+      }
+    },
+    "applicableToCurrentA": false,
+    "originalScanNotCurrent": true
   }
 }

@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_current_candidate_observation",
+  "observedAtUtc": "2026-10-08T21:33:46.754Z",
+  "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "extensionSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+  "extensionVersion": "2.9.7",
+  "cleanSourceAtFreeze": true,
+  "cleanSourceObservation": "Root verified a clean isolated branch at exact A before documentation/tooling updates; artifacts build from a separate clean A checkout.",
+  "backendInventory": {
+    "sha256": "91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b",
+    "fileCount": 564
+  },
+  "frontendInventory": {
+    "sha256": "9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac",
+    "fileCount": 635
+  },
+  "cpAiPullRequest": 622,
+  "cpAiMergeSource": "092f8fbfe96dd7deed52c279d0b916676e0fc102",
+  "cpAiTestedSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+  "cpAiReviewStatus": "passed",
+  "cpAiReviewMeaning": "Observed exact PR #622 merged after green preparation checks; this is source review/merge status, not risk acceptance or production protection.",
+  "cpAiTestedInputs": {
+    "backendMatchesCurrentA": true,
+    "frontendMatchesCurrentA": false
+  },
+  "authorization": {
+    "verificationMethod": "direct_user_request",
+    "directUserInstruction": "confirm Cl, merge to main, deploy, clean/remove branch",
+    "productionDeployment": true,
+    "executionCompleted": false,
+    "controllerReceiptGenerated": false,
+    "scope": "Prior direct user deployment instruction persists; release gates, separately bounded publication/unused registration/activation/settings decisions and controller authorization prerequisites remain required."
+  },
+  "fallbackSourceF": "d75fc1c48d0a3918857508d3965904c69023a153",
+  "fallbackSelection": "pending_exact_artifact_and_applicability_review",
+  "fallbackRollbackRestoresPriorProviderBoundary": true,
+  "fallbackReviewMeaning": "Preparation and independent historical A/F recovery are retained. Security predecessor scan remains failed. Selecting unchanged F for current A requires exact-artifact compatibility and explicit rollback/privacy applicability review.",
+  "productionObservation": {
+    "observedAtUtc": "2026-10-08T21:31:02.5767117Z",
+    "provenance": "Fresh read-only ECS/task metadata summarized by the root agent; private operational captures remain outside public records.",
+    "metadataOnly": true,
+    "api": {
+      "family": "schoolpilot-production-api-emergency",
+      "revision": 179,
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "primaryRolloutState": "COMPLETED",
+      "cpu": 1024,
+      "memory": 2048,
+      "source": "a14759a231ef47ad01951e8b9519c87de39433bc",
+      "imageDigest": "sha256:6519ac858e3163263adb85a77c68dde5b8cacffa7bed8de6a6cb6d7ca3e0bc43"
+    },
+    "worker": {
+      "family": "schoolpilot-production-scheduler-worker",
+      "revision": 195,
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "primaryRolloutState": "COMPLETED",
+      "cpu": 512,
+      "memory": 1024,
+      "source": "a14759a231ef47ad01951e8b9519c87de39433bc",
+      "imageDigest": "sha256:6519ac858e3163263adb85a77c68dde5b8cacffa7bed8de6a6cb6d7ca3e0bc43"
+    },
+    "source": "a14759a231ef47ad01951e8b9519c87de39433bc",
+    "imageDigest": "sha256:6519ac858e3163263adb85a77c68dde5b8cacffa7bed8de6a6cb6d7ca3e0bc43",
+    "configuredRlsMaster": true,
+    "configuredAdmissionCount": 129,
+    "catalogVerified": false,
+    "ledgerVerified": false,
+    "restoreVerified": false,
+    "usageModes": {
+      "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": {
+        "configuredValue": null,
+        "effectiveDefault": "shadow"
+      },
+      "CLASSPILOT_USAGE_ROLLUP_MODE": {
+        "configuredValue": "off"
+      },
+      "CLASSPILOT_DIGITAL_USAGE_MODE": {
+        "configuredValue": "off"
+      }
+    },
+    "usageObservationAppliesTo": [
+      "api179",
+      "worker195"
+    ]
+  },
+  "repositorySettings": {
+    "observedAtUtc": "2026-10-08T21:33:46.754Z",
+    "verificationMethod": "readonly_github_branches_api",
+    "schoolpilotMainProtected": false,
+    "classpilotMainProtected": false,
+    "settingsApplied": false,
+    "settingsAuthorization": false
+  },
+  "releaseReady": false,
+  "operationalAuthorizationReceipt": false,
+  "productionDeploymentExecuted": false,
+  "limitations": [
+    "Freeze identifies sources only; no current-A image/config, archive, scan/native/campaign receipt is inferred.",
+    "Merged CP-AI synthetic evidence proves only the bounded tested credentials absent from intercepted synthetic provider requests/diagnostics; broader privacy/provider-account review remains pending.",
+    "F rollback restores previous credential-boundary behavior. A/F historical evidence cannot certify changed application inputs.",
+    "Both new Usage settings are off in dated API/worker metadata; omitted independent daily mode defaults to shadow and can incur work. Re-read immediately before operations.",
+    "Production metadata does not verify SQL catalog/ledger, restore success, quiet window, actual managed adoption or sample-bearing live acceptance."
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_private_artifact_readability_repair",
+  "observedAtUtc": "2026-10-08T22:00:18.8152279Z",
+  "priorAttemptLimitation": "Earlier only-allowed-principals assertion accepted empty file DACLs; original receipt does not establish replay readability.",
+  "failedAccessOnlyRepairAttemptPreserved": true,
+  "privateRawReceiptSha256": "dddd5ab60682872221cc9fad9a12d26ba1990f2c51bacbf3a17da3c971c17ea1",
+  "checkedExistingItems": 1019,
+  "reparsePoints": 0,
+  "protectedDacls": true,
+  "requiredAllowPrincipals": [
+    "current_owner",
+    "SYSTEM",
+    "Administrators"
+  ],
+  "allRequiredExplicitFullControlAcesPresent": true,
+  "actualNodeCriticalFileReadsPassed": true,
+  "broadenedToAdditionalPrincipals": false,
+  "rawOperationalContentsPublished": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

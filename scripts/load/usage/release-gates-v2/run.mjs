@@ -25,6 +25,7 @@ import {assertUsagePostVerificationReservation,verifyUsageClassroomAfterLoad} fr
 import { assertDistinctGeneratedBinding, verifyOriginalUsagePrerequisites, executeDistinctProfile, verifyDistinctCompletedRun } from './distinct-report-run.mjs';
 import { sanitizedDistinctOperationFailure } from './distinct-report-operation.mjs';
 import {assertLowerRun,lowerCreateArguments,assertLowerReservation,assertLowerPostRls,lowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
+import {validateAcceptanceSuccessor,assertSuccessorRunBinding} from './acceptance-successor.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -33,6 +34,8 @@ const git = (directory, args) => execFileSync('git', ['-C', directory, ...args],
 
 export async function runV2(options) {
   const profile = profileFor(options.profile), output = resolve(options.outputDirectory), control = resolve(options.privateDirectory);
+  const successor=options.acceptanceSuccessor?validateAcceptanceSuccessor(options.acceptanceSuccessor):null;
+  const successorBinding=successor?assertSuccessorRunBinding(options,profile,successor):null;
   const lower=profile.lowerLoadEnvelope?assertLowerRun(options,profile):null;
   if(profile.preparationOnly)assert.equal(options.preparationSmoke,true,'Preparation-only profiles cannot be release runs');
   assert.match(options.source, /^[a-f0-9]{40}$/); assert.match(options.run, /^[a-f0-9]{12}$/);
@@ -99,6 +102,7 @@ export async function runV2(options) {
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
     operationalFixtureBootstrapRequired: true,
+    ...(successorBinding?{acceptanceSuccessor:successorBinding,hostHarnessSource:options.hostHarnessSource}:{}),
     ...(lower?{lowerLoad:lower,hostHarnessSource:options.hostHarnessSource,lowerAuthorizedWindow:{startsAt:window.startsAt,expiresAt:window.expiresAt}}:{}),
     sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false,
     ...(options.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:options.usagePostVerificationContractSha256,hostHarnessSource:options.hostHarnessSource}:{}),
@@ -263,7 +267,7 @@ export async function runV2(options) {
         assert.ok(Date.now() < Date.parse(window.expiresAt), 'Declared quiet window expired during measured work');
       }
       canary.disable();
-      if(lower){metrics.postLowerRlsVerification=await observer.rpc('verify');save(output,'lower-post-rls-verification.json',metrics.postLowerRlsVerification);assertLowerPostRls(metrics.postLowerRlsVerification,metrics.databasePreparation);metrics.lowerPersistenceCustody=lowerPersistenceCustody(control);}
+      if(lower){metrics.postLowerRlsVerification=await observer.rpc('verify');save(output,'lower-post-rls-verification.json',metrics.postLowerRlsVerification);assertLowerPostRls(metrics.postLowerRlsVerification,metrics.databasePreparation,lower);metrics.lowerPersistenceCustody=lowerPersistenceCustody(control);}
       if(profile.usage&&options.reportCostCases){
         metrics.reportCostDiagnostic=await observer.rpc('queryPlans',{source:options.source,schemaSha256:metrics.schemaSha256,profile:profile.name,cases:options.reportCostCases},120_000);
         assert.equal(metrics.reportCostDiagnostic.capacityAcceptance,false);save(output,'report-cost-diagnostic.json',metrics.reportCostDiagnostic);
@@ -340,7 +344,7 @@ export async function runV2(options) {
   finally {
     if (existsSync(output)) {
       metrics.sourceUnchanged = git(options.sourceDirectory, ['rev-parse', 'HEAD']) === options.source && git(options.sourceDirectory, ['status', '--porcelain']) === '';
-      if(options.usagePostVerificationContractSha256||lower)metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===options.hostHarnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
+      if(options.usagePostVerificationContractSha256||lower||successor)metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===options.hostHarnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
       const pgCleanup = ['postgres-cleanup.json', 'cleanup.json'].map(name => join(output, name)).find(existsSync);
       metrics.cleanupPassed = metrics.roleCleanup?.cleanupPassed === true && pgCleanup && read(pgCleanup).cleanupPassed === true;
       metrics.diagnosticCompleted = !failure && profile.kind === 'diagnostic' && metrics.rounds.length === 1 && metrics.cleanupPassed===true && metrics.sourceUnchanged;
@@ -351,6 +355,7 @@ export async function runV2(options) {
         && metrics.errorCoverage?.length > 1 && metrics.errorCoverage.every(row=>row.complete&&row.available&&row.errorCount===0)&&metrics.expectedNegativeLogCoverage===true;
       if(profile.kind==='blackbox')metrics.runPassed&&=Number.isFinite(metrics.wholeOwnedApiCpuMicroseconds)&&metrics.wholeOwnedApiCpuMicroseconds>0&&metrics.wholeOwnedCpuIncludesFinalClassificationFlush===true;
       if(options.usagePostVerificationContractSha256)metrics.runPassed&&=metrics.usagePostVerification?.passed===true&&metrics.hostHarnessSourceUnchanged===true;
+      if(successor)metrics.runPassed&&=metrics.hostHarnessSourceUnchanged===true;
       if(profile.distinctReports){
         metrics.hostHarnessSourceUnchanged=git(hostHarnessDirectory,['rev-parse','HEAD'])===preparation.harnessSource&&git(hostHarnessDirectory,['status','--porcelain'])==='';
         metrics.runPassed=!failure&&metrics.distinctOperation?.passed===true&&metrics.distinctClassroomBindings?.passed===true

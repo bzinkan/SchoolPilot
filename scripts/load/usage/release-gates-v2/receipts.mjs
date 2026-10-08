@@ -9,6 +9,7 @@ import { verifyClassroomNativeCustody } from './classroom-bindings.mjs';
 import {verifyUsagePostVerificationCustody} from './usage-post-verification.mjs';
 import {verifyDistinctReceiptCustody} from './distinct-report-custody.mjs';
 import {lowerContractHash,assertLowerPostRls,verifyLowerNativeCustody,verifyLowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
+import {assertSuccessorReceiptBinding} from './acceptance-successor.mjs';
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const root=realpathSync(directory), path=join(root,'receipt-manifest.json'), bytes=readFileSync(path);
@@ -26,13 +27,14 @@ export function loadReceipt(directory, manifestSha256, privateDirectory) {
   if(profile.distinctReports)assert.deepEqual(metrics.roleCleanup,cleanup);
   assert.equal(metrics.profile,profile.name);assert.equal(metrics.contractSha256,profileHash(profile));
   assert.equal(metrics.source,manifest.source);assert.equal(metrics.run,manifest.run);assert.equal(metrics.planSha256,manifest.planSha256);
+  assertSuccessorReceiptBinding(metrics);
   if(profile.lowerLoadEnvelope){assert.equal(metrics.lowerLoad?.contractSha256,lowerContractHash());assert.ok(manifest.records['lower-post-rls-verification.json']);
     assert.equal(metrics.lowerLoad.detailedQueryRecorder,false);assert.equal(metrics.lowerLoad.cpuProfiler,false);assert.equal(metrics.arm,'B');
     assert.deepEqual(json(join(root,'lower-post-rls-verification.json')),metrics.postLowerRlsVerification);
     assert.ok(Date.parse(metrics.startedAt)>=Date.parse(metrics.lowerAuthorizedWindow?.startsAt));assert.ok(Date.parse(metrics.finishedAt)<Date.parse(metrics.lowerAuthorizedWindow?.expiresAt));
     assert.equal(metrics.lowerLogCustodyFailure===true,false);assert.equal(metrics.lowerRecoveredOwner===true,false);
     assert.deepEqual(cleanup.exits.map(row=>row.role).sort(),['api0','generator','observer','seeder']);
-    assertLowerPostRls(metrics.postLowerRlsVerification,metrics.databasePreparation);assert.equal(metrics.hostHarnessSourceUnchanged,true);
+    assertLowerPostRls(metrics.postLowerRlsVerification,metrics.databasePreparation,metrics.lowerLoad,Date.parse(metrics.startedAt));assert.equal(metrics.hostHarnessSourceUnchanged,true);
     verifyLowerNativeCustody(privateDirectory,metrics,profile);verifyLowerPersistenceCustody(privateDirectory,metrics);}
   if(profile.lowerLoadEnvelope)assert.deepEqual(metrics.lowerAcquisitionLogEvidence,lowerAcquisitionLogProof(readFileSync(join(privateDirectory,'api0-log.private'),'utf8'),{
     source:metrics.source,measuredEndsAtMs:metrics.rounds[0].traffic.actualStartedAtMs+profile.offering.durationMs,complete:cleanup.exits.find(exit=>exit.role==='api0')?.clean===true}));

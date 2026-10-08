@@ -1,8 +1,9 @@
 # Release 2.9.7 preparation handoff
 
-The bounded audience is DeSales's 133 clients. The release remains gated: the
-fresh scan of the exact retained C578 fallback failed. Preserve that image and
-the failure; another image cannot replace it under the existing contract.
+The bounded audience is DeSales's 133 clients. The original C578 scan remains
+failed and its image remains preserved. The allowlisted schema-3 successor
+contract provides a separately reviewed replacement path; preparation alone
+does not select that replacement or establish release readiness.
 
 The operator subsequently requested preparation of one dependency-only C578
 security successor. Use the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md)
@@ -10,6 +11,16 @@ and the index's separate successor gates for that work. Preparation does not
 select the replacement artifact or clear the original failed scan. Schema 3
 keeps publication and registration blocked while original release acceptance
 and exact-artifact selection remain pending.
+The [latest exact-artifact scan observation](release-evidence/release297-current-candidate-20261008/current-artifacts-scan-20261008.json)
+records a new High TIFF finding in unchanged F. Its earlier passing preparation
+remains historical. Stop current A/F recovery and classroom/capacity acceptance
+until a concrete reviewed security correction and fresh replacement evidence pass.
+
+The preparation tooling receipt's `testedFiles` hashes identify the exact
+`f636cab9` producer working bytes, including its mixed line endings. Its content
+is canonically equal to integrated Git content after LF normalization; those
+hashes do not identify raw bytes of a later assembled Windows checkout. Preserve
+the original receipt and its 168/16 test results as dated evidence.
 
 Use the [current-release index](releases/release297/current-release.json) as the
 single current-status authority and the generated section of the
@@ -17,6 +28,11 @@ single current-status authority and the generated section of the
 gate states and source/evidence applicability. Historical passes, failures and
 approvals remain immutable. This packet provides the actions needed to close the
 remaining dependencies; it is not a deployment plan or authorization receipt.
+The [current candidate observation](releases/release297/candidate-freeze-observation-20261008.json)
+records the source freeze, merged CP-AI remediation, exact-main CI and the
+operator's existing direct deployment request. That request remains distinct
+from actual execution, controller authority and the separately bounded
+publication, unused-registration, activation and repository-settings decisions.
 
 ## Preparation changes
 
@@ -26,7 +42,9 @@ remaining dependencies; it is not a deployment plan or authorization receipt.
 | Public AI/privacy claims and bounded synthetic audit | [PR #617](https://github.com/bzinkan/SchoolPilot/pull/617) | Intended copy/governance changes must land before freeze; `docs/soc2` changes image content |
 | Versioned successor binding, Windows coordinator parsing and bounded CI installation repair | [PR #620](https://github.com/bzinkan/SchoolPilot/pull/620) | Schema 1 remains historical; allowlisted schema 2 stays pending until reviewed, fresh source-bound receipts exist. The CI repair preserves every validation step and check order |
 | Protection proposal, current-state refresh and this handoff | [PR #619](https://github.com/bzinkan/SchoolPilot/pull/619) | Proposed settings for both repositories; no settings application or CI redesign |
-| Demonstrated provider-boundary egress | [CP-AI-001 / issue #618](https://github.com/bzinkan/SchoolPilot/issues/618) | Separate narrow remediation and release-applicability review; the copy PR does not fix egress |
+| C578 dependency-only security successor and guarded binding | [PR #621](https://github.com/bzinkan/SchoolPilot/pull/621) | Merged preparation tooling/evidence; exact F selection and current-source applicability remain separate |
+| Provider-boundary credential remediation | [PR #622](https://github.com/bzinkan/SchoolPilot/pull/622), [CP-AI-001 / issue #618](https://github.com/bzinkan/SchoolPilot/issues/618) | Merged bounded backend remediation; issue remains open until deployment and actual live protection verification |
+| Browsing labels when tab titles are unavailable | [PR #623](https://github.com/bzinkan/SchoolPilot/pull/623) | Merged frontend input change; included in the exact current freeze and matched frontend validation |
 
 The exact source/artifact values and scan findings are in the immutable
 [local artifact observation](releases/release297/local-artifact-observation-20261007.json).
@@ -34,6 +52,10 @@ Those backend/frontend artifacts were prepared on the clean copy-PR source,
 not a frozen resulting-main release. Their hashes do not authorize publication.
 The retained extension's source/package evidence is in the
 [fresh extension verification](releases/release297/extension-verification-20261007.json).
+The [current extension applicability observation](releases/release297/extension-current-applicability-20261008.json)
+retains that dated pass only for the unchanged exact ZIP/tree and records the
+fresh canonical byte-verifier attempt as failed. Its 24-file normalized Git
+comparison has only declared CRLF differences; it is separate from raw equality.
 Version 2.9.7 remains the unchanged candidate. The operator confirmed that
 2.9.7 is live on October 7, 2026. Record that as operator-reported publication;
 the uploaded ZIP identity, pending-submission state and managed adoption remain
@@ -55,21 +77,27 @@ do not replace resulting-main CI or source-bound runtime acceptance.
 
 ## Closing preparation gates
 
-1. The operator authorized merging exactly #616, #617, #619 and #620 in this
-   session. Use the current-release index for the recorded merge/main observation;
-   that authorization does not cover future PRs or release operations. Review
-   CP-AI-001 release applicability. Re-read both remote mains and all intended
-   release changes. Select an
-   exact application reference only after copy/governance changes land. Preserve
+1. Use the current-release index for merged source identities and exact-main CI.
+   The historical four-PR merge request remains preserved; later direct operator
+   requests covered successor merges and deployment. CP-AI-001 is merged, and
+   the current application/unchanged extension sources are frozen for validation.
+   This source freeze is not artifact, acceptance or production-protection proof.
+   Re-read both remote mains and intended release changes before operations. Preserve
    already-implemented Focus status and availability unless a remaining defect
    can be reproduced.
-2. Resolve the failed exact-fallback scan through a separately reviewed decision.
+2. Review a concrete TIFF correction/replacement decision before any selection;
+   unchanged F cannot satisfy the fresh zero High/Critical criterion. Preserve
+   both failed images/scans and the exact historical passing F preparation.
+   Review the replacement's source/contract and rollback/privacy applicability:
+   unchanged F restores the prior provider credential boundary. A changed pair
+   needs fresh actual recovery evidence and exact-artifact selection review.
    Its historical scan pass is not current evidence. Do not waive the scan, alter
    the retained identity, or generate plans that assume it passed.
-3. Select and freeze the application reference for validation, deterministic
-   backend/frontend Git input inventories, unchanged extension source/package, policy receipt and
-   explicit source-applicability/waiver review. Prepare the allowlisted
-   `release-297-current-school-v2` binding for a reviewed tooling/document follow-up.
+3. Retain the frozen application reference and deterministic backend/frontend
+   Git inventories, unchanged extension source/package, policy receipt and
+   explicit source-applicability/waiver review. Refresh the allowlisted
+   `release-297-current-school-fallback-v3` binding for the reviewed current A/F
+   pair after the actual required evidence exists. Preserve historical v1/v2 pins.
    Historical approval of DDC measurements does not approve changed artifacts.
 4. Build fresh source-labelled backend and matched frontend artifacts at frozen
    application reference A. Obtain successful applicable CI, a fresh scan with
@@ -80,7 +108,7 @@ do not replace resulting-main CI or source-bound runtime acceptance.
    Seal the reviewed binding only after the exact tested image/config, all fresh
    native receipts and source-applicability review satisfy its validator. A later
    documentation/tool sealing main B must prove both application inventories
-   equal A and pass fresh exact-main CI. Version 2 retains the exact A-labelled
+   equal A and pass fresh exact-main CI. The versioned binding retains the exact A-labelled
    tested image and records both A and current-main B; a rebuilt image cannot
    inherit acceptance from A merely because Git inputs match.
 
@@ -124,13 +152,14 @@ unit checks do not establish native recovery, production health or adoption.
 | 1. Merges and resulting main | Review and merge required changes; refresh both mains and source-specific criteria | Exact merged/head/source identities, proven application equivalence, clean source and green exact-main CI |
 | 2. Fresh production prerequisites | Read health, catalog/ledger/admission, backups, all three Usage settings, API/worker environment and task/ALB state in an approved quiet window | Fresh private read-only captures, backup/restoration prerequisites, preserved environment and compatible capability equality |
 | 3. Publication and unused definitions | Publish exact scanned artifacts, verify registry index/platform/config mapping; prepare/register only explicitly approved unused121, Anchor128 and compatible fallback definitions | Approved private paths and time-bounded authority; binding ID/hash, final tool hashes, publication receipts and every returned identity; uncertain outcomes stop replay |
-| 4. Deployment | Perform documented migration-first backend/worker deployment, then matched frontend deployment | Ordinary phases validated; compatible 128 writer/bridge/relay with issuance off; incompatible tasks and old targets fully drained before 129 admission; fresh health and exact task-pair evidence |
+| 4. Deployment | The direct operator deployment request is recorded; perform documented migration-first backend/worker deployment, then matched frontend deployment only after the required gates pass | Ordinary phases validated; compatible 128 writer/bridge/relay with issuance off; incompatible tasks and old targets fully drained before 129 admission; fresh health and exact task-pair evidence |
 | 5. Existing extension verification and adoption | Verify the operator-reported live 2.9.7 listing, published-package identity and pending submissions; obtain managed adoption evidence. Only a separately reviewed successor requires a new upload, with a fresh listing/pending-submission check immediately beforehand | Fresh Store state, exact published package identity and actual sample-bearing managed version/capability/adoption evidence |
 | 6. Pilot activation and live acceptance | Activate only DeSales after the prior gates pass and authority is current | At least 30 minutes of actual live evidence bound to the exact API/worker task pair, including the workflows below |
 
 The [operator prerequisite template](releases/release297/operator-prerequisites.template.json)
 contains missing inputs explicitly as null/pending. It cannot be submitted to a
-controller as an executable Plan. The version 2 binding is likewise pending and
+controller as an executable Plan. The schema-3 current A/F successor binding remains pending;
+the historical version-2 binding remains pending as well. Each
 fails closed. Only create a Plan after actual prerequisites satisfy its controller.
 Never invent ARNs, registry proof, timestamps, approvals, receipts or live samples.
 Retain returned identities even if partial registration subsequently fails;
