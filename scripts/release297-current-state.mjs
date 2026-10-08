@@ -259,6 +259,7 @@ export function validateIndex(index, root = ROOT) {
     const proof = receipt('successorPreparationObservation');
     metadataOnly(proof);
     assert.deepEqual([proof.schemaVersion, proof.kind, proof.releaseBindingId, proof.preparationPassed, proof.releaseReady, proof.operationalAuthorization, proof.successorSelection], [1, 'release297_successor_preparation_observation', 'release-297-current-school-fallback-v3', true, false, false, 'pending_exact_artifact_review'], 'SUCCESSOR_PREPARATION_IS_NOT_SELECTION');
+    assert.equal(proof.cloudMutations, 0, 'SUCCESSOR_PREPARATION_MUST_REMAIN_OFFLINE');
     assert.ok(stamp(proof.observedAtUtc) && Date.parse(proof.observedAtUtc) <= Date.parse(index.observedAtUtc), 'SUCCESSOR_PREPARATION_TIME_REQUIRED');
     for (const value of [proof.bindingSha256, proof.validatorSha256, proof.validationResultSha256]) assert.match(value, hash, 'SUCCESSOR_PREPARATION_HASH_REQUIRED');
     assert.match(proof.testedToolingSource, sha, 'SUCCESSOR_TOOLING_SOURCE_REQUIRED');
@@ -275,6 +276,7 @@ export function validateIndex(index, root = ROOT) {
     for (const kind of kinds) {
       const ref = proof.preparationEvidence[kind], native = receipt(ref);
       metadataOnly(native);
+      assert.equal(native.operationalAuthorization, false, 'SUCCESSOR_WRAPPER_IS_NOT_AUTHORIZATION');
       assert.deepEqual([binding.preparation.evidence[kind].path, binding.preparation.evidence[kind].sha256, binding.preparation.evidence[kind].status], [index.evidence[ref].path, index.evidence[ref].gitBlobSha256, 'passed'], 'SUCCESSOR_BINDING_RECEIPT_CHANGED');
       assert.deepEqual([native.schemaVersion, native.kind, native.releaseBindingId, native.evidenceKind, native.artifactPair, native.passed], [1, 'release_successor_preparation_evidence', proof.releaseBindingId, kind, proof.artifactPair, true], 'SUCCESSOR_PREPARATION_ROLE_OR_RECEIPT_CHANGED');
       assert.ok(stamp(native.observedAtUtc) && Date.parse(native.observedAtUtc) <= Date.parse(proof.observedAtUtc), 'SUCCESSOR_NATIVE_OBSERVATION_TIME_REQUIRED');
@@ -294,6 +296,54 @@ export function validateIndex(index, root = ROOT) {
       assert.ok(gate, 'SUCCESSOR_SELECTION_GATE_REQUIRED');
       assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [status, 'preparation_only', proof.artifactPair.fallback.source, ['successorPreparationObservation']], 'SUCCESSOR_SELECTION_CANNOT_BE_INFERRED');
     }
+    if (index.evidence.successorOperationalRejections) {
+      const rejected = receipt('successorOperationalRejections');
+      metadataOnly(rejected);
+      assert.deepEqual([rejected.schemaVersion, rejected.kind, rejected.bindingSha256, rejected.preparationCanPassWhileOperationalPlansReject, rejected.releaseReady, rejected.operationalAuthorization], [1, 'pending_successor_operational_plan_rejections', proof.bindingSha256, true, false, false], 'SUCCESSOR_OPERATIONAL_REJECTIONS_CHANGED');
+      assert.deepEqual(rejected.records.map(entry => [entry.operation, entry.rejected, entry.reason, entry.externalCommands, entry.cloudMutations]), ['PlanPublicationServing', 'PlanPublicationFallback', 'PlanUnused121', 'PlanAnchor128', 'PlanCompatibleFallback'].map(operation => [operation, true, 'SUCCESSOR_SELECTION_PENDING', 0, 0]), 'SUCCESSOR_PENDING_PLANS_MUST_REJECT_OFFLINE');
+    }
+  }
+  if (index.evidence.successorSourceChecks) {
+    const checks = receipt('successorSourceChecks'), proof = receipt('successorPreparationObservation');
+    metadataOnly(checks);
+    assert.deepEqual([checks.schemaVersion, checks.kind, checks.source, checks.artifactPair, checks.releaseReady, checks.operationalAuthorization, checks.productionMutations], [1, 'release297_fallback_successor_source_specific_checks', proof.artifactPair.fallback.source, proof.artifactPair, false, false, 0], 'SUCCESSOR_SOURCE_CHECKS_IDENTITY_CHANGED');
+    assert.ok(stamp(checks.observedAtUtc) && Date.parse(checks.observedAtUtc) <= Date.parse(index.observedAtUtc), 'SUCCESSOR_SOURCE_CHECK_TIME_REQUIRED');
+    assert.deepEqual(checks.sourceDelta.changedPaths, ['package-lock.json'], 'SUCCESSOR_LOCK_ONLY_DELTA_REQUIRED');
+    assert.equal(checks.sourceDelta.applicationMigrationsDockerfileAndBuildUnchanged, true, 'SUCCESSOR_LOCK_ONLY_DELTA_REQUIRED');
+    const step = command => {
+      const matches = checks.steps.filter(entry => entry.command === command);
+      assert.equal(matches.length, 1, 'SUCCESSOR_CHECK_COMMAND_REQUIRED');
+      assert.match(matches[0].evidence.sha256, hash, 'SUCCESSOR_CHECK_HASH_REQUIRED');
+      return matches[0];
+    };
+    for (const [id, command, outcome, exitCode, gateStatus] of [
+      ['type', 'npm run check', 'passed', 0, 'passed'],
+      ['build', 'npm run build', 'passed', 0, 'passed'],
+      ['unit', 'npm run test:unit', 'passed_with_explicit_skips', 0, 'passed'],
+      ['db', 'npm run test:db-serial', 'failed', 1, 'failed'],
+      ['rls', 'npm run test:rls-serial', 'passed', 0, 'passed'],
+      ['full-audit', 'npm audit --json', 'failed', 1, 'failed'],
+      ['production-default-audit', 'npm audit --omit=dev --json', 'failed', 1, 'failed'],
+      ['production-high-audit', 'npm audit --omit=dev --audit-level=high --json', 'passed', 0, 'passed']
+    ]) {
+      assert.deepEqual([step(command).status, step(command).exitCode], [outcome, exitCode], 'SUCCESSOR_ORIGINAL_CHECK_OUTCOME_CHANGED');
+      const gate = index.gates.find(entry => entry.id === `fallback-successor-f-${id}`);
+      assert.ok(gate, 'SUCCESSOR_SOURCE_CHECK_GATE_REQUIRED');
+      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [gateStatus, 'preparation_only', checks.source, ['successorSourceChecks']], 'SUCCESSOR_SOURCE_CHECK_GATE_RECLASSIFIED');
+    }
+    for (const [command, counts] of [['npm run test:unit', [1732, 0, 4]], ['npm run test:db-serial', [1400, 1, 8]], ['npm run test:rls-serial', [383, 0, 0]]]) {
+      const recorded = step(command).counts;
+      assert.deepEqual([recorded.pass, recorded.fail, recorded.skipped], counts, 'SUCCESSOR_ORIGINAL_TEST_COUNTS_CHANGED');
+    }
+    const fixture = checks.correctedScreenshotFixture, review = receipt('successorDatabaseFixtureReview');
+    metadataOnly(review);
+    assert.deepEqual([fixture.status, fixture.applicationSource, fixture.fixtureSource, fixture.reviewedCorrection, fixture.exitCode, fixture.counts.pass, fixture.counts.fail, fixture.counts.skipped, fixture.fullExactFDatabaseCommandRelabeled], ['passed', checks.source, proof.artifactPair['serving-anchor'].source, 'bcded1cfeea7b2b10f3d239eceec09d41748486c', 0, 8, 0, 0, false], 'SUCCESSOR_TARGETED_FIXTURE_IS_SEPARATE');
+    assert.deepEqual([fixture.compiledModuleIdentity.byteExactCompiledFiles, fixture.compiledModuleIdentity.hostInventorySha256, fixture.compiledModuleIdentity.imageInventorySha256, fixture.ownedCleanupPassed], [1571, '8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4', '8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4', true], 'SUCCESSOR_FIXTURE_REQUIRES_IMAGE_EQUIVALENCE');
+    assert.deepEqual([review.kind, review.passed, review.applicationSource, review.applicationImage, review.reviewedFixtureSource, review.reviewedCorrection, review.fullExactFDatabase.status, review.fullExactFDatabase.fail, review.releaseReady, review.operationalAuthorization], ['exact_f_database_fixture_correction_independent_review', true, checks.source, proof.artifactPair.fallback.localIndex, fixture.fixtureSource, fixture.reviewedCorrection, 'failed', 1, false, false], 'SUCCESSOR_FIXTURE_REVIEW_CHANGED');
+    assert.equal(review.verified.FRemainsC578PlusLockfile, true, 'SUCCESSOR_LOCK_ONLY_DELTA_REQUIRED');
+    const fixtureGate = index.gates.find(entry => entry.id === 'fallback-successor-f-reviewed-fixture');
+    assert.ok(fixtureGate, 'SUCCESSOR_FIXTURE_GATE_REQUIRED');
+    assert.deepEqual([fixtureGate.status, fixtureGate.applicability, fixtureGate.sourceSha, fixtureGate.evidence], ['passed', 'preparation_only', checks.source, ['successorSourceChecks', 'successorDatabaseFixtureReview']], 'SUCCESSOR_FIXTURE_IS_NOT_FULL_DATABASE');
   }
   return index;
 }

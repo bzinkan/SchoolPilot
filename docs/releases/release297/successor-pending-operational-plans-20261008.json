@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "kind": "pending_successor_operational_plan_rejections",
+  "observedAtUtc": "2026-10-08T00:20:33.762Z",
+  "bindingSha256": "6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c",
+  "preparationCanPassWhileOperationalPlansReject": true,
+  "records": [
+    {
+      "operation": "PlanPublicationServing",
+      "rejected": true,
+      "reason": "SUCCESSOR_SELECTION_PENDING",
+      "externalCommands": 0,
+      "cloudMutations": 0
+    },
+    {
+      "operation": "PlanPublicationFallback",
+      "rejected": true,
+      "reason": "SUCCESSOR_SELECTION_PENDING",
+      "externalCommands": 0,
+      "cloudMutations": 0
+    },
+    {
+      "operation": "PlanUnused121",
+      "rejected": true,
+      "reason": "SUCCESSOR_SELECTION_PENDING",
+      "externalCommands": 0,
+      "cloudMutations": 0
+    },
+    {
+      "operation": "PlanAnchor128",
+      "rejected": true,
+      "reason": "SUCCESSOR_SELECTION_PENDING",
+      "externalCommands": 0,
+      "cloudMutations": 0
+    },
+    {
+      "operation": "PlanCompatibleFallback",
+      "rejected": true,
+      "reason": "SUCCESSOR_SELECTION_PENDING",
+      "externalCommands": 0,
+      "cloudMutations": 0
+    }
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

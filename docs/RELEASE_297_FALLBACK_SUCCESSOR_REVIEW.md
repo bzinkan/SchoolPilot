@@ -15,6 +15,13 @@ registering or deploying an artifact.
 | Recovery successor F | `d75fc1c48d0a3918857508d3965904c69023a153` | C578 plus only the reviewed dependency-lock corrections |
 | Tooling reference B | Exact final reviewed tooling commit | Coordinator reference recorded separately from A and F; later main requires proven application equivalence and fresh applicable CI |
 
+The actual offline preparation replay uses clean tooling commit
+`0ed0511307dff9a2b72895e1096cc40148413451`; its
+[immutable observation](releases/release297/successor-preparation-observation-20261008.json)
+records exact binding/validator/result hashes. Subsequent state/packet edits are
+outside the application inventories. The eventual resulting-main B and its
+exact push/main CI remain operator prerequisites after a separately reviewed merge.
+
 The [independent source review](release-evidence/release297-successor-20261007/source-delta-independent-review.json)
 verifies the complete C578→F Git object/mode/path comparison and all 28 changed
 package records. The correction applies the lockfile patch from
@@ -135,6 +142,46 @@ A successful result reports `preparationPassed: true`, `releaseReady: false`
 and `operationalAuthorization: false`. Its output cannot serve as a publication,
 registration or deployment Plan. The operational profile remains pending until
 all original candidate acceptance and owner-applicability requirements pass.
+
+The [allowlisted profile](release-bindings/release-297-current-school-fallback-v3.json)
+pins the five public envelopes:
+[scan](release-evidence/release297-successor-20261007/successorScan.json),
+[processing](release-evidence/release297-successor-20261007/screenshotRuntime.json),
+[client-IP/rate limiting](release-evidence/release297-successor-20261007/requestIpRateLimit.json),
+[ordinary recovery](release-evidence/release297-successor-20261007/ordinaryRecovery.json)
+and [restricted restoration](release-evidence/release297-successor-20261007/restrictedRestoration.json).
+The binding SHA-256 is
+`6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c`.
+[Direct operational-controller probes](releases/release297/successor-pending-operational-plans-20261008.json)
+reject all five pending Plan paths with `SUCCESSOR_SELECTION_PENDING`, before
+any external command. The successful preparation result cannot be used as
+an executable operational Plan.
+
+The integrated release-tool suite passes **119/119**, including preserved legacy
+behavior and 15 schema-3 regressions. Independent review repeats all 15 new
+tests on clean sources. Current-state regressions pass **23/23**, including
+role, binding, cloud-mutation and false-authorization changes. Normal PR CI is
+tracked on the exact PR head; resulting-main CI remains a separate later gate.
+
+Exact-F type/build checks pass; the unit lane passes 1,732 tests with four
+initial service-dependent skips, followed by 65/65 passing tests on those four
+files with local services, clearing all four skips. Restricted-role RLS passes
+383/383, with no failures or skips and complete owned cleanup. The
+[immutable source-specific check summary](releases/release297/source-specific-successor-checks-20261008.json)
+retains the full exact-F database command as **failed: 1,400 passed, 1 failed,
+8 skipped**. The sole failure is C578's old text-matching Redis mock for
+screenshot classification. Main already contains the reviewed test-only
+correction `bcded1cfeea7b2b10f3d239eceec09d41748486c`; a private copy passes
+**8/8** against F's compiled application modules. Independent verification
+proves all 1,571 compiled files byte-equivalent to F's exact image and
+[causally reproduces the original mock mismatch](release-evidence/release297-successor-20261007/database-fixture-independent-review.json).
+F's tracked source remains lockfile-only. This targeted pass does not relabel
+the failed complete command or claim a complete corrected-lane rerun.
+All 18 skip markers from the eight original database skips have matching
+actual passes in the restricted RLS lane. Earlier database timeout/assertion
+and fixture-convergence failures are retained; no partial ordinal is represented
+as a successful complete test count. Every owned check container is removed
+without force and the existing local services remain untouched.
 
 Native recovery must use migrations **43→53**, admission
 **121→125→126→127→128→129**, and **A→F→A**. It must preserve all 53 completed

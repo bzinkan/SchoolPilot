@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_successor_preparation_observation",
+  "observedAtUtc": "2026-10-08T00:18:49.670Z",
+  "releaseBindingId": "release-297-current-school-fallback-v3",
+  "testedToolingSource": "0ed0511307dff9a2b72895e1096cc40148413451",
+  "bindingSha256": "6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c",
+  "validatorSha256": "31ae611d568dd39a5a82d02ae7bb7ad472bb668fb8ead73d7ce88c222a61d0f1",
+  "validationResultSha256": "f3871d66b15c9573e0d6c14873b9ccc00c7ba3db4423a12fc76716cb621d99ef",
+  "preparationPassed": true,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "successorSelection": "pending_exact_artifact_review",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "localIndex": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+      "config": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+      "platform": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
+      "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+    },
+    "fallback": {
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "localIndex": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+      "config": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+      "platform": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+      "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+    }
+  },
+  "preparationEvidence": {
+    "successorScan": "successorScan",
+    "screenshotRuntime": "successorScreenshotRuntime",
+    "requestIpRateLimit": "successorRequestIpRateLimit",
+    "ordinaryRecovery": "successorOrdinaryRecovery",
+    "restrictedRestoration": "successorRestrictedRestoration"
+  },
+  "pendingAcceptance": [
+    "currentSchoolAcceptance",
+    "classroomAcceptance",
+    "normalLoadAcceptance",
+    "headroomAcceptance",
+    "ordinaryRecovery",
+    "restrictedRestoration",
+    "screenshotRuntime"
+  ],
+  "cloudMutations": 0
+}

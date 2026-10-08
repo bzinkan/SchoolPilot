@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "kind": "exact_f_database_fixture_correction_independent_review",
+  "reviewer": "independent-successor-review-agent",
+  "observedAtUtc": "2026-10-08T00:31:02.778Z",
+  "passed": true,
+  "applicationSource": "d75fc1c48d0a3918857508d3965904c69023a153",
+  "applicationImage": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+  "reviewedFixtureSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+  "reviewedCorrection": "bcded1cfeea7b2b10f3d239eceec09d41748486c",
+  "fullExactFDatabase": {
+    "status": "failed",
+    "tests": 1409,
+    "pass": 1400,
+    "fail": 1,
+    "skipped": 8,
+    "cancelled": 0
+  },
+  "reviewedFixtureTargetedRerun": {
+    "status": "passed",
+    "tests": 8,
+    "pass": 8,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "causalReplay": {
+    "compiledModule": "dist/services/classpilotRealtimeStatus.js",
+    "compiledModuleSha256": "6ad457ebf02de37df18d2ec4a8f9c857cc7ff0ff6ea0c50f50c7b72d5b36cad8",
+    "actualCompiledFStoreCalled": true,
+    "realRedisLuaExecuted": false,
+    "providerCalls": 0,
+    "databaseQueries": 0,
+    "cases": [
+      {
+        "fixture": "original",
+        "emittedArgumentCount": 12,
+        "keyCount": "1",
+        "oldLuaTextMarkerAbsent": true,
+        "patchStatus": "local",
+        "remoteClassificationPresent": false,
+        "bindingAndNullSemanticsVerified": false
+      },
+      {
+        "fixture": "reviewed",
+        "emittedArgumentCount": 12,
+        "keyCount": "1",
+        "oldLuaTextMarkerAbsent": true,
+        "patchStatus": "stored",
+        "remoteClassificationPresent": true,
+        "bindingAndNullSemanticsVerified": true
+      }
+    ]
+  },
+  "verified": {
+    "onlyReviewedFixtureDelta": true,
+    "privateFixtureOnlyImportLocatorsChanged": true,
+    "FTrackedSourceUnchanged": true,
+    "FRemainsC578PlusLockfile": true,
+    "fullDatabaseFailureNotRelabelled": true,
+    "cleanFVerifiedBeforeAndAfter": true,
+    "ownedRerunCleanupPassed": true,
+    "hostCompiledFilesByteEquivalentToExactFImage": true,
+    "byteExactCompiledFiles": 1571,
+    "compiledInventorySha256": "8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4",
+    "ownedEquivalenceContainerExitZero": true,
+    "ownedEquivalenceContainerUnforcedCleanup": true,
+    "independentLiveContainerAbsence": true
+  },
+  "rawEvidence": [
+    {
+      "storage": "private",
+      "path": "independent-review/exact-F-db-fixture.review.json",
+      "sha256": "9872cd2bb8a024fc3d227b0b69baba83c0d80f3e6389fa7b459b7282b6d3e149"
+    },
+    {
+      "storage": "private",
+      "path": "reviewed-fixture/compiled-equivalence.json",
+      "sha256": "cffa13d331347e4679d202da45015696011a9d2b8f2ff2678a9f7d0655ded3ac"
+    },
+    {
+      "storage": "private",
+      "path": "reviewed-fixture/compiled-container-before.json",
+      "sha256": "ccc13e3503e80d0d1537805b35c302d1ea8fbce260b59cce019a2ba47b73b6b4"
+    },
+    {
+      "storage": "private",
+      "path": "reviewed-fixture/compiled-container-final.json",
+      "sha256": "33024d1b3551a3b2e8c6d91cb9946a0037f015a427c082562d8811ae4818b460"
+    },
+    {
+      "storage": "private",
+      "path": "reviewed-fixture/compiled-host-inventory.json",
+      "sha256": "8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4"
+    },
+    {
+      "storage": "private",
+      "path": "reviewed-fixture/compiled-image-inventory.json",
+      "sha256": "8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4"
+    },
+    {
+      "storage": "private",
+      "path": "verify-f-compiled-module-equivalence.mjs",
+      "sha256": "370175af51f3c1201cc88a750e654c7a4a9311cfcf23382103620a0a9cf4fa8c"
+    }
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false
+}
