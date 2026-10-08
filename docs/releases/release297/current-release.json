@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-08T21:53:56.768Z",
+  "observedAtUtc": "2026-10-08T22:11:58.018Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -116,7 +116,7 @@
       "evidence": [
         "currentArtifactsScan"
       ],
-      "nextAction": "Retain this exact tested image/config; refresh standalone native checks. Current A/F recovery and release campaigns stop for the fresh F High finding.",
+      "nextAction": "Retain the exact built A image/config/archive and completed fresh scan/nine-check native evidence. Resolve the fresh F High finding before current A/F recovery or release campaigns.",
       "identity": {
         "indexDigest": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
         "platformManifestDigest": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
@@ -307,7 +307,7 @@
       "evidence": [
         "currentArtifactsScan"
       ],
-      "nextAction": "Prepare and review a replacement fallback artifact that passes a fresh scan; preserve exact failed F. Explicitly review whether its source must also retain CP-AI-001 protection. New-source/image recovery evidence and exact replacement selection are required."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver."
     }
   ],
   "stages": [
@@ -331,14 +331,14 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
-      "rationale": "Exact A CI/security workflows and fresh candidate image scan pass. Mandatory fresh F High TIFF finding holds A/F recovery and current-school/classroom/normal/headroom acceptance before execution.",
+      "rationale": "Exact A CI/security workflows, identified backend/frontend artifacts, fresh candidate image scan and nine standalone native-processing checks pass. The fresh F High TIFF finding still holds A/F recovery and current-school/classroom/normal/headroom acceptance before execution.",
       "observedAtUtc": "2026-10-08T21:41:15.866Z",
       "evidence": [
         "reconciliation",
         "candidateRefresh",
         "currentArtifactsScan"
       ],
-      "nextAction": "Review/remediate the exact fallback TIFF security blocker; standalone A native checks may proceed, but pair/campaign acceptance stays held until fresh security and source applicability pass."
+      "nextAction": "Retain completed standalone A evidence; review/remediate the exact F TIFF security blocker before pair recovery/campaign acceptance can run under unchanged approved thresholds."
     },
     {
       "id": "packaging",
@@ -627,7 +627,7 @@
         "policyApproval",
         "currentArtifactsScan"
       ],
-      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver. Only after reviewed selection/security pass, refresh actual pair/campaign evidence under the fixed approved run order and thresholds."
     },
     {
       "id": "strict-comparison",
@@ -669,7 +669,7 @@
         "headroomHistorical",
         "currentArtifactsScan"
       ],
-      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver. Only after reviewed selection/security pass, refresh actual pair/campaign evidence under the fixed approved run order and thresholds."
     },
     {
       "id": "recovery-history",
@@ -709,7 +709,7 @@
         "successorPreparationObservation",
         "currentArtifactsScan"
       ],
-      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver. Only after reviewed selection/security pass, refresh actual pair/campaign evidence under the fixed approved run order and thresholds."
     },
     {
       "id": "catalog-history",
@@ -1011,7 +1011,7 @@
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Review the concrete TIFF correction and CP-AI rollback risk, then explicitly select an exact fresh-scanned replacement through a separate reviewed contract."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver."
     },
     {
       "id": "fallback-successor-operational-guards",
@@ -1168,7 +1168,7 @@
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
-      "nextAction": "Record exact committed source, executed checks, failures and skips using synthetic mocked providers only."
+      "nextAction": "Retain exact9f synthetic prevention results and proven equivalent current-A backend inputs. Complete separately gated deployment/live verification; do not broaden the credential-detection claim."
     },
     {
       "id": "cp-ai-001-review",
@@ -1222,7 +1222,7 @@
         "successorPreparationObservation",
         "currentArtifactsScan"
       ],
-      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver. Only after reviewed selection/security pass, refresh actual pair/campaign evidence under the fixed approved run order and thresholds."
     },
     {
       "id": "candidate-freeze",
@@ -1235,7 +1235,7 @@
       "evidence": [
         "candidateRefresh"
       ],
-      "nextAction": "Build exact A artifacts; retain F unchanged and refresh affected source/artifact-bound evidence. Prove final B input equivalence and fresh CI."
+      "nextAction": "Retain frozen A, identified backend/frontend artifacts, completed standalone A security/native checks and unchanged2.9.7 identities. Review the F security correction, then refresh affected pair/campaign evidence and final B equivalence/CI."
     },
     {
       "id": "repository-protections",
@@ -1274,7 +1274,7 @@
       "evidence": [
         "currentRecordRefreshChecks"
       ],
-      "nextAction": "Review/commit this tool/document patch, bind its final dependencies and verify fresh exact-main B CI without transferring old artifact/native acceptance."
+      "nextAction": "Review the committed tooling/evidence PR; bind final tool dependencies and verify fresh resulting-main B CI without transferring historical artifact/native acceptance."
     },
     {
       "id": "backend-successor-scan-fresh",
@@ -1287,7 +1287,7 @@
       "evidence": [
         "currentArtifactsScan"
       ],
-      "nextAction": "Retain exact source/image/config/archive/scan receipt; execute only standalone A native checks while the F security blocker remains."
+      "nextAction": "Retain exact source/image/config/archive/scan plus completed nine-check standalone native receipt. Keep A/F recovery and release campaigns held while the fresh F High finding remains."
     },
     {
       "id": "fallback-successor-scan-fresh",
@@ -1300,7 +1300,7 @@
       "evidence": [
         "currentArtifactsScan"
       ],
-      "nextAction": "Prepare and review a replacement fallback artifact that passes a fresh scan; preserve exact failed F. Explicitly review whether its source must also retain CP-AI-001 protection. New-source/image recovery evidence and exact replacement selection are required."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver."
     },
     {
       "id": "candidate-native-processing-fresh",
@@ -1327,7 +1327,7 @@
         "currentSuccessorBinding",
         "currentArtifactsScan"
       ],
-      "nextAction": "Review the concrete F correction and explicit replacement/privacy applicability. Obtain fresh pair/campaign evidence and final B CI before sealing; never relabel archived a516/F receipts."
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver."
     },
     {
       "id": "extension-current-identity-applicability",
@@ -1354,6 +1354,45 @@
         "currentExtensionApplicability"
       ],
       "nextAction": "Preserve failed attempt/log; do not relabel normalized equality as raw canonical success. No source/package change or repeat upload is authorized."
+    },
+    {
+      "id": "private-path-control-repair",
+      "label": "Private artifact path readability repair",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "Actual repair verifies1019 existing entries, protected DACLs, required explicit current-owner/SYSTEM/Administrators allow ACE classes and real Node critical-file reads. Earlier empty-DACL assertion and failed repair attempt remain preserved; no local principal names/SIDs or raw operational contents are public.",
+      "observedAtUtc": "2026-10-08T22:00:18.8152279Z",
+      "evidence": [
+        "currentPrivatePathControlRepair"
+      ],
+      "nextAction": "Retain corrected readability/ACL proof and prior erroneous assertion. Each later Plan still needs its actual approved private paths, fresh controls/window and controller validation; this repair grants no operational authority."
+    },
+    {
+      "id": "release-tool-regressions-current",
+      "label": "Additional current release controller regressions",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "62dcfbe840983818419fe6cbbcf6f50fde5df97d",
+      "rationale": "119 current artifact/fallback/v1/v2/v3 controller regressions pass with zero failures/skips, including real Git fixtures and offline invalid-input/partial-outcome safeguards. Governance validation passes with existing evidence/human warnings; no approval or acceptance is inferred.",
+      "observedAtUtc": "2026-10-08T22:05:51.757Z",
+      "evidence": [
+        "currentToolRegressions"
+      ],
+      "nextAction": "Retain executed code/log identities and review integrated tooling/template changes. Fresh resulting-main CI and operational prerequisites remain pending; controller regressions do not certify native pair/campaign acceptance."
+    },
+    {
+      "id": "acceptance-preparation-tooling",
+      "label": "Current acceptance tooling and non-executable templates",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "f636cab9b7f6dd07ab1b763a8bcd85d931f82c27",
+      "rationale": "Reviewable preparation tooling passes168 pure regressions and independent16-case review/native-byte timestamp/object replay. Six actual-rehashed templates are explicitly non-executable with unknown operational inputs null; old provisional templates are preserved. This is tooling review/preparation only; actual A/F recovery/helper/classroom/capacity runs remain held by F security.",
+      "observedAtUtc": "2026-10-08T22:11:10.879Z",
+      "evidence": [
+        "acceptancePreparationTooling"
+      ],
+      "nextAction": "Integrate reviewed tooling, complete combined PR/resulting-main CI and fresh A/B equivalence, then regenerate exact harness templates. Resolve F TIFF security and replacement/privacy selection before obtaining real missing inputs or executing held acceptance."
     }
   ],
   "inclusionMatrix": [
@@ -1786,6 +1825,18 @@
     "currentExtensionApplicability": {
       "path": "docs/releases/release297/extension-current-applicability-20261008.json",
       "gitBlobSha256": "646b800c850e02095e5b59d160d736b2943b2012613df77c438984202f6b7761"
+    },
+    "currentPrivatePathControlRepair": {
+      "path": "docs/releases/release297/private-path-control-repair-20261008.json",
+      "gitBlobSha256": "26d53e9d3f0f147e767300de9fb314daf6218a3cbb9e3af907070cba198e573f"
+    },
+    "currentToolRegressions": {
+      "path": "docs/releases/release297/current-tool-regressions-20261008.json",
+      "gitBlobSha256": "20b663d787f333d326859b25e728150dab5dc648aee75510ca07b2d720e4a66a"
+    },
+    "acceptancePreparationTooling": {
+      "path": "docs/releases/release297/acceptance-preparation-20261008.json",
+      "gitBlobSha256": "57914c8bd06c33991471d06452565aa4c9ed4d2011023e39a3fbbe1c566cd8a0"
     }
   }
 }
