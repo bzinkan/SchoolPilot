@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "release_successor_preparation_evidence",
+  "releaseBindingId": "release-297-current-school-fallback-v3",
+  "evidenceKind": "screenshotRuntime",
+  "observedAtUtc": "2026-10-07T23:46:15.844Z",
+  "passed": true,
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "localIndex": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+      "config": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+      "platform": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
+      "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+    },
+    "fallback": {
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "localIndex": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+      "config": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+      "platform": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+      "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+    }
+  },
+  "retainedEvidence": {
+    "nativeResult": {
+      "storage": "private",
+      "path": "screenshotRuntime.native.json",
+      "sha256": "ab4d2cea3a42b9812a96f25048ba9d98add52688b714741758749d2a44a0f7a8"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "screenshotRuntime.review.json",
+      "sha256": "9a1b6ad4d49edc0a1c1cfc91ae0e1048dcc55113164e1d7a8c03cb9573b435ec"
+    }
+  },
+  "releaseReady": false,
+  "operationalAuthorization": false
+}
