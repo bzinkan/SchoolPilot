@@ -144,8 +144,8 @@ describe("SOC2-002 AI/privacy evidence", () => {
   it("records the browser boundary as source presence while retaining broader review and data limitations", () => {
     const root = tempRoot();
     const { packet } = buildAiPrivacyEvidence({ rootDir: root, env: githubEnv() });
-    const browser = packet.aiFeatures.find((feature) => feature.featureId === "classpilot_url_classification");
-    const flow = packet.dataFlows.find((entry) => entry.flowId === "classpilot_url_classification");
+    const browser = packet.aiFeatures.find((feature: { featureId: string; controls: string[]; modelBoundDataSummary: string }) => feature.featureId === "classpilot_url_classification");
+    const flow = packet.dataFlows.find((entry: { flowId: string; inputCategories: string[]; privateReviewRequired: boolean }) => entry.flowId === "classpilot_url_classification");
 
     assert.ok(browser?.controls.includes("browser_credential_preparation_source_present_execution_and_review_separate"));
     assert.match(browser?.modelBoundDataSummary || "", /ordinary email addresses and search context may remain/);
@@ -158,14 +158,14 @@ describe("SOC2-002 AI/privacy evidence", () => {
       assert.match(packet.sourceHashes[key].sha256 || "", /^[a-f0-9]{64}$/);
     }
     assert.doesNotMatch(JSON.stringify(packet), /GEMINI_SECRET_VALUE|PRIVATE_PROMPT_BODY/);
-    assert.ok(packet.testEvidence.some((entry) => entry.path === "tests/classpilot-provider-boundary-audit.test.ts" && entry.present));
+    assert.ok(packet.testEvidence.some((entry: { path: string; present: boolean }) => entry.path === "tests/classpilot-provider-boundary-audit.test.ts" && entry.present));
   });
 
   it("does not infer credential preparation from the classifier name alone", () => {
     const root = tempRoot();
     write(root, "src/services/classpilotAiRequestInput.ts", "unreviewed unrelated helper");
     const { packet } = buildAiPrivacyEvidence({ rootDir: root, env: githubEnv() });
-    const browser = packet.aiFeatures.find((feature) => feature.featureId === "classpilot_url_classification");
+    const browser = packet.aiFeatures.find((feature: { featureId: string; controls: string[] }) => feature.featureId === "classpilot_url_classification");
     assert.ok(browser?.controls.includes("review_required"));
     assert.ok(!browser?.controls.includes("browser_credential_preparation_source_present_execution_and_review_separate"));
   });
