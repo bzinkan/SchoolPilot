@@ -4,7 +4,7 @@
   "observedAtUtc": "2026-10-08T21:48:17.972Z",
   "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
   "testedToolingGitSource": null,
-  "testedToolingScope": "Uncommitted current-state generator/test patch over frozen A; exact file hashes identify tested bytes. Future reviewed tooling/evidence main B requires fresh CI and tool binding.",
+  "testedToolingScope": "Current-state generator/test patch over frozen A; canonical LF/Git content hashes and exact raw tested working-file hashes are recorded separately. Future reviewed tooling/evidence main B requires fresh CI and tool binding.",
   "testedToolFiles": {
     "scripts/release297-current-state.mjs": "460cb6ca78ef92fe3a84bc2b4ee6fa65ae2b2ce1aa76e71fa74fbf44c459e3ad",
     "tests/release297-current-state.test.mjs": "b84f305f8881d0779bc08cc440258fb9a07f4c61c027b805f72d3ab25872e7da"
@@ -47,5 +47,11 @@
   "sourceFreezeIsArtifactAcceptance": false,
   "releaseReady": false,
   "operationalAuthorization": false,
-  "productionDeploymentExecuted": false
+  "productionDeploymentExecuted": false,
+  "testedToolFilesHashBasis": "SHA-256 of UTF-8 text with CRLF normalized to LF, matching canonical Git blob content; this preserves explicit checkout-byte distinctions below.",
+  "testedWorkingBytesHashBasis": "SHA-256 of exact raw working files used in the last completed tests; mixed Windows line endings are preserved.",
+  "testedWorkingFiles": {
+    "scripts/release297-current-state.mjs": "899cd034f69644e8ec53614bd0427f3592de6ec654274d5a6f5123d7daf6a84a",
+    "tests/release297-current-state.test.mjs": "c70234bb353e86fa04454636b894f195da6ffb14a541878dc1c79bddee63181d"
+  }
 }

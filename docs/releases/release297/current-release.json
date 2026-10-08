@@ -1739,7 +1739,7 @@
     },
     "currentRecordRefreshChecks": {
       "path": "docs/releases/release297/current-record-refresh-checks-20261008.json",
-      "gitBlobSha256": "03eff6651ccd576adcfa18f7f1e88a37c484a4849555107f5b051bac0018b22d"
+      "gitBlobSha256": "4e1f320e15fdac08218e6ecf69522ac54a5fb59e55596aed4eeb343e0a68d75d"
     },
     "currentArtifactsScan": {
       "path": "docs/release-evidence/release297-current-candidate-20261008/current-artifacts-scan-20261008.json",
