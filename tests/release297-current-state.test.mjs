@@ -34,6 +34,7 @@ const historicalIndex = () => {
   candidate.gates = candidate.gates.filter(gate => !['candidate-freeze', 'repository-protections', 'backend-successor-scan-fresh', 'fallback-successor-scan-fresh', 'candidate-native-processing-fresh', 'current-v3-binding', 'extension-current-identity-applicability', 'extension-current-canonical-attempt'].includes(gate.id));
   candidate.artifacts = candidate.artifacts.filter(artifact => artifact.id !== 'fallback-successor-current-scan');
   for (const group of ['artifacts', 'stages', 'gates']) for (const record of candidate[group]) record.evidence = record.evidence.map(id => ['candidateRefresh', 'currentArtifactsScan', 'currentCandidateNative', 'currentFrontend'].includes(id) ? 'reconciliation' : id);
+  for (const group of ['artifacts', 'gates']) for (const record of candidate[group]) if (record.applicability === 'historical' && (record.id.startsWith('fallback-successor-') || record.id === 'backend-successor-anchor')) record.applicability = 'preparation_only';
   candidate.gates.find(gate => gate.id === 'current-main-preparation-ci').sourceSha = historic.schoolpilotRemoteMain;
   Object.assign(candidate.gates.find(gate => gate.id === 'cp-ai-001-review'), { status: 'pending', evidence: ['cpAiBoundaryPreparation'] });
   for (const mode of Object.values(candidate.usageModes)) Object.assign(mode, { observedValue: null, status: 'unknown', evidence: ['productionHistorical'] });
@@ -214,6 +215,29 @@ test('unchanged extension applicability cannot relabel a fresh canonical failure
     const current = read('currentExtensionApplicability'); mutate(current); write('currentExtensionApplicability', current);
     assert.throws(() => validateIndex(candidate, fixture), expected);
   }, true);
+});
+
+test('current overlay marks exact prior a516/F preparation historical while legacy outcomes remain unchanged', () => {
+  const current = index();
+  validateIndex(current);
+  for (const id of ['fallback-successor-successorScan', 'fallback-successor-ordinaryRecovery', 'fallback-successor-restrictedRestoration', 'fallback-successor-preparation']) {
+    const gate = current.gates.find(entry => entry.id === id);
+    assert.equal(gate.status, 'passed');
+    assert.equal(gate.applicability, 'historical');
+    assert.match(gate.label, /Historical a516\/F/);
+    assert.match(gate.nextAction, /Current ecf6\/F recovery\/campaign acceptance remains held/);
+  }
+  assert.equal(current.artifacts.find(entry => entry.id === 'backend-successor-anchor').sourceSha, 'a5161eb14939132776e0b77eac8e3c485091432c');
+  const rendered = renderStatus(current);
+  assert.match(rendered, /Historical a516\/F: Ordinary A\/F recovery.*historical/);
+  receiptFixture((legacy, fixture, read) => {
+    validateIndex(legacy, fixture);
+    assert.equal(legacy.gates.find(entry => entry.id === 'fallback-successor-ordinaryRecovery').applicability, 'preparation_only');
+    assert.equal(read('successorPreparationObservation').preparationPassed, true);
+    assert.deepEqual(legacy.evidence.successorOrdinaryRecovery, current.evidence.successorOrdinaryRecovery);
+  });
+  current.gates.find(entry => entry.id === 'fallback-successor-ordinaryRecovery').applicability = 'preparation_only';
+  assert.throws(() => validateIndex(current), /SUCCESSOR_PREPARATION_GATE_CHANGED/);
 });
 test('CP-AI source-only preparation cannot approve deployment, live protection or a changed historical recovery pair', () => {
   for (const field of ['reviewStatus', 'deploymentStatus', 'liveVerificationStatus']) {

@@ -31,6 +31,7 @@ function metadataOnly(value) {
   }
 }
 export function validateIndex(index, root = ROOT) {
+  const successorReceiptApplicability = index.evidence?.candidateRefresh ? 'historical' : 'preparation_only';
   sameKeys(index, ['schemaVersion', 'kind', 'releaseId', 'observedAtUtc', 'audience', 'authorization', 'sources', 'usageModes', 'compatibility', 'artifacts', 'stages', 'gates', 'inclusionMatrix', 'evidence']);
   assert.equal(index.schemaVersion, 1, 'INDEX_SCHEMA_INVALID');
   assert.equal(index.kind, 'current_release_index', 'INDEX_KIND_INVALID');
@@ -266,7 +267,7 @@ export function validateIndex(index, root = ROOT) {
     assert.ok(stamp(review.observedAt) && Date.parse(review.observedAt) <= Date.parse(index.observedAtUtc), 'SUCCESSOR_SOURCE_OBSERVATION_TIME_REQUIRED');
     const gate = index.gates.find(entry => entry.id === 'fallback-successor-source');
     assert.ok(gate, 'SUCCESSOR_SOURCE_GATE_REQUIRED');
-    assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', 'preparation_only', review.successorSource, ['successorSourceReview']], 'SUCCESSOR_SOURCE_GATE_CHANGED');
+    assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', successorReceiptApplicability, review.successorSource, ['successorSourceReview']], 'SUCCESSOR_SOURCE_GATE_CHANGED');
   }
   if (index.evidence.successorPreparationObservation) {
     const proof = receipt('successorPreparationObservation');
@@ -297,17 +298,17 @@ export function validateIndex(index, root = ROOT) {
       for (const evidence of Object.values(native.retainedEvidence)) assert.match(evidence.sha256, hash, 'SUCCESSOR_NATIVE_REVIEW_HASH_REQUIRED');
       const gate = index.gates.find(entry => entry.id === `fallback-successor-${kind}`);
       assert.ok(gate, 'SUCCESSOR_PREPARATION_GATE_REQUIRED');
-      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', 'preparation_only', proof.artifactPair.fallback.source, [ref]], 'SUCCESSOR_PREPARATION_GATE_CHANGED');
+      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], ['passed', successorReceiptApplicability, proof.artifactPair.fallback.source, [ref]], 'SUCCESSOR_PREPARATION_GATE_CHANGED');
     }
     for (const [role, id] of [['serving-anchor', 'backend-successor-anchor'], ['fallback', 'fallback-successor-artifact']]) {
       const artifact = index.artifacts.find(entry => entry.id === id), exact = proof.artifactPair[role];
       assert.ok(artifact, 'SUCCESSOR_ARTIFACT_REQUIRED');
-      assert.deepEqual([artifact.status, artifact.applicability, artifact.sourceSha, artifact.evidence, artifact.identity], ['passed', 'preparation_only', exact.source, ['successorPreparationObservation'], { indexDigest: exact.localIndex, platformManifestDigest: exact.platform, configDigest: exact.config, archiveSha256: exact.archiveSha256 }], 'SUCCESSOR_ARTIFACT_ROLE_CHANGED');
+      assert.deepEqual([artifact.status, artifact.applicability, artifact.sourceSha, artifact.evidence, artifact.identity], ['passed', successorReceiptApplicability, exact.source, ['successorPreparationObservation'], { indexDigest: exact.localIndex, platformManifestDigest: exact.platform, configDigest: exact.config, archiveSha256: exact.archiveSha256 }], 'SUCCESSOR_ARTIFACT_ROLE_CHANGED');
     }
     for (const [id, status] of [['fallback-successor-preparation', 'passed'], ['fallback-successor-selection', 'pending']]) {
       const gate = index.gates.find(entry => entry.id === id);
       assert.ok(gate, 'SUCCESSOR_SELECTION_GATE_REQUIRED');
-      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [status, 'preparation_only', proof.artifactPair.fallback.source, ['successorPreparationObservation']], 'SUCCESSOR_SELECTION_CANNOT_BE_INFERRED');
+      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [status, id === 'fallback-successor-preparation' ? successorReceiptApplicability : 'preparation_only', proof.artifactPair.fallback.source, ['successorPreparationObservation']], 'SUCCESSOR_SELECTION_CANNOT_BE_INFERRED');
     }
     if (index.evidence.successorOperationalRejections) {
       const rejected = receipt('successorOperationalRejections');
@@ -342,7 +343,7 @@ export function validateIndex(index, root = ROOT) {
       assert.deepEqual([step(command).status, step(command).exitCode], [outcome, exitCode], 'SUCCESSOR_ORIGINAL_CHECK_OUTCOME_CHANGED');
       const gate = index.gates.find(entry => entry.id === `fallback-successor-f-${id}`);
       assert.ok(gate, 'SUCCESSOR_SOURCE_CHECK_GATE_REQUIRED');
-      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [gateStatus, 'preparation_only', checks.source, ['successorSourceChecks']], 'SUCCESSOR_SOURCE_CHECK_GATE_RECLASSIFIED');
+      assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [gateStatus, successorReceiptApplicability, checks.source, ['successorSourceChecks']], 'SUCCESSOR_SOURCE_CHECK_GATE_RECLASSIFIED');
     }
     for (const [command, counts] of [['npm run test:unit', [1732, 0, 4]], ['npm run test:db-serial', [1400, 1, 8]], ['npm run test:rls-serial', [383, 0, 0]]]) {
       const recorded = step(command).counts;
@@ -356,7 +357,7 @@ export function validateIndex(index, root = ROOT) {
     assert.equal(review.verified.FRemainsC578PlusLockfile, true, 'SUCCESSOR_LOCK_ONLY_DELTA_REQUIRED');
     const fixtureGate = index.gates.find(entry => entry.id === 'fallback-successor-f-reviewed-fixture');
     assert.ok(fixtureGate, 'SUCCESSOR_FIXTURE_GATE_REQUIRED');
-    assert.deepEqual([fixtureGate.status, fixtureGate.applicability, fixtureGate.sourceSha, fixtureGate.evidence], ['passed', 'preparation_only', checks.source, ['successorSourceChecks', 'successorDatabaseFixtureReview']], 'SUCCESSOR_FIXTURE_IS_NOT_FULL_DATABASE');
+    assert.deepEqual([fixtureGate.status, fixtureGate.applicability, fixtureGate.sourceSha, fixtureGate.evidence], ['passed', successorReceiptApplicability, checks.source, ['successorSourceChecks', 'successorDatabaseFixtureReview']], 'SUCCESSOR_FIXTURE_IS_NOT_FULL_DATABASE');
   }
   if (index.evidence.cpAiBoundaryPreparation) {
     const cp = receipt('cpAiBoundaryPreparation');

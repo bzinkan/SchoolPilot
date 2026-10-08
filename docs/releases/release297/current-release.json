@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-08T22:11:58.018Z",
+  "observedAtUtc": "2026-10-08T22:22:22.336Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -254,16 +254,16 @@
     },
     {
       "id": "backend-successor-anchor",
-      "label": "Recovery-test application A image",
+      "label": "Historical a516/F: Recovery-test application A image",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
-      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending.",
+      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Review this exact artifact and pair-specific evidence; later A/F input changes invalidate applicability.",
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair.",
       "identity": {
         "indexDigest": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
         "platformManifestDigest": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
@@ -273,16 +273,16 @@
     },
     {
       "id": "fallback-successor-artifact",
-      "label": "Dependency-only recovery successor F",
+      "label": "Historical a516/F: Dependency-only recovery successor F",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending.",
+      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Review this exact artifact and pair-specific evidence; later A/F input changes invalidate applicability.",
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair.",
       "identity": {
         "indexDigest": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
         "platformManifestDigest": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
@@ -911,94 +911,94 @@
     },
     {
       "id": "fallback-successor-source",
-      "label": "Dependency-only successor source review",
+      "label": "Historical a516/F: Dependency-only successor source review",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Independent Git object and dependency review confirms only the reviewed package-lock corrections; C578 application, build and schema inputs are preserved.",
+      "rationale": "Independent Git object and dependency review confirms only the reviewed package-lock corrections; C578 application, build and schema inputs are preserved. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-07T23:35:58.510Z",
       "evidence": [
         "successorSourceReview"
       ],
-      "nextAction": "Source, scan and bounded recovery preparation are complete; separately review the exact replacement artifact before selection."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-successorScan",
-      "label": "Successor image security scan",
+      "label": "Historical a516/F: Successor image security scan",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorScan"
       ],
-      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-screenshotRuntime",
-      "label": "Native image/private-file/PDF processing",
+      "label": "Historical a516/F: Native image/private-file/PDF processing",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorScreenshotRuntime"
       ],
-      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-requestIpRateLimit",
-      "label": "Express client-IP and rate limiting",
+      "label": "Historical a516/F: Express client-IP and rate limiting",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorRequestIpRateLimit"
       ],
-      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-ordinaryRecovery",
-      "label": "Ordinary A/F recovery",
+      "label": "Historical a516/F: Ordinary A/F recovery",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorOrdinaryRecovery"
       ],
-      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-restrictedRestoration",
-      "label": "Restricted-owner restoration",
+      "label": "Historical a516/F: Restricted-owner restoration",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorRestrictedRestoration"
       ],
-      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-preparation",
-      "label": "Bounded C578 security successor preparation",
+      "label": "Historical a516/F: Bounded C578 security successor preparation",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Actual offline ValidateSuccessorPreparation passes while releaseReady=false, operationalAuthorization=false and all original acceptance/applicability gates remain pending.",
+      "rationale": "Actual offline ValidateSuccessorPreparation passes while releaseReady=false, operationalAuthorization=false and all original acceptance/applicability gates remain pending. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Review the exact source/artifact/evidence packet; this does not authorize successor selection or any release operation."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-selection",
@@ -1015,134 +1015,134 @@
     },
     {
       "id": "fallback-successor-operational-guards",
-      "label": "Pending binding operational Plan guards",
+      "label": "Historical a516/F: Pending binding operational Plan guards",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Both publication roles, unused121, Anchor128 and compatible fallback reject the pending successor selection with zero external commands and zero cloud mutations.",
+      "rationale": "Both publication roles, unused121, Anchor128 and compatible fallback reject the pending successor selection with zero external commands and zero cloud mutations. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:20:33.762Z",
       "evidence": [
         "successorOperationalRejections"
       ],
-      "nextAction": "Do not create executable operational Plans until exact-artifact selection, original candidate acceptance, source applicability and current-main prerequisites pass."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-type",
-      "label": "Exact-F TypeScript",
+      "label": "Historical a516/F: Exact-F TypeScript",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact clean-F type check exits zero.",
+      "rationale": "Exact clean-F type check exits zero. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Retain source-specific evidence; changes to F invalidate it."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-build",
-      "label": "Exact-F build",
+      "label": "Historical a516/F: Exact-F build",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Exact clean-F compile/build exits zero; Docker build is separately identified.",
+      "rationale": "Exact clean-F compile/build exits zero; Docker build is separately identified. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Retain exact build/artifact identities for replacement review."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-unit",
-      "label": "Exact-F unit and conditional service checks",
+      "label": "Historical a516/F: Exact-F unit and conditional service checks",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Original unit lane passes 1732 with four explicit skips; all four skipped service cases are separately re-exercised in a 65/65 zero-skip run.",
+      "rationale": "Original unit lane passes 1732 with four explicit skips; all four skipped service cases are separately re-exercised in a 65/65 zero-skip run. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Preserve both complete receipts and skip coverage; do not rewrite original counts."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-db",
-      "label": "Exact-F original complete database lane",
+      "label": "Historical a516/F: Exact-F original complete database lane",
       "status": "failed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Complete exact-F DB lane finishes 1400 passed, 1 failed, 8 skipped. The old Redis text-matching screenshot fixture causes the sole failure; the separate reviewed correction passes 8/8 against image-equivalent F compiled modules. This complete failed command remains failed.",
+      "rationale": "Complete exact-F DB lane finishes 1400 passed, 1 failed, 8 skipped. The old Redis text-matching screenshot fixture causes the sole failure; the separate reviewed correction passes 8/8 against image-equivalent F compiled modules. This complete failed command remains failed. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Review the independent fixture diagnosis and separate targeted receipt when selecting F; do not relabel the full lane or merge test changes into the lock-only source."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-rls",
-      "label": "Exact-F restricted-role database lane",
+      "label": "Historical a516/F: Exact-F restricted-role database lane",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Separate exact-F RLS lane passes 383/383 with no failures/skips; public receipt maps all 18 skip markers from eight original DB skips to actual restricted-lane passes.",
+      "rationale": "Separate exact-F RLS lane passes 383/383 with no failures/skips; public receipt maps all 18 skip markers from eight original DB skips to actual restricted-lane passes. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Retain actual role/skip coverage evidence; full-schema fixture checks do not replace ordinary recovery."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-full-audit",
-      "label": "Exact-F development-inclusive dependency audit",
+      "label": "Historical a516/F: Exact-F development-inclusive dependency audit",
       "status": "failed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Original full audit exits 1 with 7 Moderate and 6 High findings in unchanged development dependencies; the runtime image has zero High/Critical.",
+      "rationale": "Original full audit exits 1 with 7 Moderate and 6 High findings in unchanged development dependencies; the October7 runtime scan recorded zero High/Critical; the fresh unchanged F October8 scan failed one High. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Review/remediate the existing development tool-chain advisories separately; preserve this failure and do not present the full audit as clean."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-production-default-audit",
-      "label": "Exact-F default production dependency audit",
+      "label": "Historical a516/F: Exact-F default production dependency audit",
       "status": "failed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Default production audit exits 1 for three Moderate mammoth/argparse/sprintf-js findings; no production High/Critical.",
+      "rationale": "Default production audit exits 1 for three Moderate mammoth/argparse/sprintf-js findings; no production High/Critical. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Track the Moderate dependency follow-ups and preserve the audit failure without a scan waiver."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-production-high-audit",
-      "label": "Exact-F production High/Critical audit gate",
+      "label": "Historical a516/F: Exact-F production High/Critical audit gate",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "Production audit with audit-level=high exits zero, with 0 High/Critical and three explicit Moderate findings.",
+      "rationale": "Production audit with audit-level=high exits zero, with 0 High/Critical and three explicit Moderate findings. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks"
       ],
-      "nextAction": "Retain lower findings and compare the independently bound runtime image scan."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "fallback-successor-f-reviewed-fixture",
-      "label": "Reviewed screenshot fixture against exact-F compiled modules",
+      "label": "Historical a516/F: Reviewed screenshot fixture against exact-F compiled modules",
       "status": "passed",
-      "applicability": "preparation_only",
+      "applicability": "historical",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "The existing bcded1c main test-only ABI correction passes 8/8 against all 1571 byte-equivalent F image/host compiled files. Independent causal replay reproduces the old mock mismatch and verifies corrected binding/null semantics. Original DB1400/1/8 remains failed.",
+      "rationale": "The existing bcded1c main test-only ABI correction passes 8/8 against all 1571 byte-equivalent F image/host compiled files. Independent causal replay reproduces the old mock mismatch and verifies corrected binding/null semantics. Original DB1400/1/8 remains failed. Dated a516/F evidence only; current ecf6/F preparation is held.",
       "observedAtUtc": "2026-10-08T00:33:00.773Z",
       "evidence": [
         "successorSourceChecks",
         "successorDatabaseFixtureReview"
       ],
-      "nextAction": "Review the precise fixture-only distinction with F replacement selection; no full corrected-lane or broader product pass is inferred."
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
     },
     {
       "id": "cp-ai-001-implementation",
@@ -1265,7 +1265,7 @@
     },
     {
       "id": "current-record-refresh-checks",
-      "label": "Current-state generator/reconciliation patch checks",
+      "label": "Dated original reconciliation checks (34/66)",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": null,
@@ -1274,7 +1274,7 @@
       "evidence": [
         "currentRecordRefreshChecks"
       ],
-      "nextAction": "Review the committed tooling/evidence PR; bind final tool dependencies and verify fresh resulting-main B CI without transferring historical artifact/native acceptance."
+      "nextAction": "Preserve this immutable dated receipt and its exact original code/hash basis. The later historical applicability correction has a separate fresh focused check receipt; resulting-main CI remains required."
     },
     {
       "id": "backend-successor-scan-fresh",
@@ -1393,6 +1393,19 @@
         "acceptancePreparationTooling"
       ],
       "nextAction": "Integrate reviewed tooling, complete combined PR/resulting-main CI and fresh A/B equivalence, then regenerate exact harness templates. Resolve F TIFF security and replacement/privacy selection before obtaining real missing inputs or executing held acceptance."
+    },
+    {
+      "id": "historical-successor-overlay-checks",
+      "label": "Current historical a516/F applicability overlay checks",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "35 focused generator regressions pass with zero failures/skips against exact recorded uncommitted patch bytes. Current a516/F source/artifact/scan/recovery/preparation records are historical; original outcomes and native receipt hashes are unchanged. The original 34/66, root119 and author168/16 receipts remain dated evidence.",
+      "observedAtUtc": "2026-10-08T22:22:22.336Z",
+      "evidence": [
+        "historicalSuccessorOverlayChecks"
+      ],
+      "nextAction": "Review this bounded generator/status correction and obtain fresh integrated PR/resulting-main CI. These checks establish documentation/tooling correctness only; failed fresh F security still holds actual current-pair recovery and campaigns."
     }
   ],
   "inclusionMatrix": [
@@ -1837,6 +1850,10 @@
     "acceptancePreparationTooling": {
       "path": "docs/releases/release297/acceptance-preparation-20261008.json",
       "gitBlobSha256": "57914c8bd06c33991471d06452565aa4c9ed4d2011023e39a3fbbe1c566cd8a0"
+    },
+    "historicalSuccessorOverlayChecks": {
+      "path": "docs/releases/release297/historical-successor-overlay-checks-20261008.json",
+      "gitBlobSha256": "0f48cfab50b6d3d35bf66e8905b00274abc3b5b81f25211884e411e0238f47b9"
     }
   }
 }

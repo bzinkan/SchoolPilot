@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_historical_successor_overlay_checks",
+  "observedAtUtc": "2026-10-08T22:22:22.336Z",
+  "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "testedToolingBase": "e6896347eb86f4c3ed7da56528cf6c4b18d0189b",
+  "testedToolingGitSource": null,
+  "testedToolingScope": "Uncommitted current-state generator/test patch over the recorded tooling base. This receipt binds the actual tested working bytes separately from canonical LF/Git content; it does not assert that the base Git commit includes the patch.",
+  "testedToolFilesHashBasis": "SHA-256 of UTF-8 text with CRLF normalized to LF, matching canonical Git blob content.",
+  "testedToolFiles": {
+    "scripts/release297-current-state.mjs": "7008b8316567234287981d1d8718c02f7bcb76ea4005f6e399f97fee367c26f4",
+    "tests/release297-current-state.test.mjs": "e9ed1614c159d3f23b1353081b54a9e02b41ce4f83f0f62aff6c5e8efdcf2791"
+  },
+  "testedWorkingBytesHashBasis": "SHA-256 of exact raw working files used by the completed focused suite; mixed Windows line endings are preserved.",
+  "testedWorkingFiles": {
+    "scripts/release297-current-state.mjs": "589d48f022241852c4eef000ec13d2bdbdd366a6997a179081f4bfbb3413a4e9",
+    "tests/release297-current-state.test.mjs": "4ffe373199b9a2dbf9543d478579d7c13814f3b1c61e138b19354957a8d442b8"
+  },
+  "checks": [
+    {
+      "command": "node --test tests/release297-current-state.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 35,
+      "passed": 35,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "91a8e2c25897a04de156646054bb39be45fc45772df1e1fca1324ac1eda3386e",
+      "logBasename": "historical-overlay-focused-02.log",
+      "scope": "Current overlay preserves exact old a516/F outcomes/hashes but requires historical applicability. The legacy overlay retains preparation-only behavior; assigning historical ordinary recovery to current preparation is rejected. The final repeat verifies the assembled index with the separate new check receipt; the first successful attempt log is preserved.",
+      "retainedEarlierAttempt": {
+        "logBasename": "historical-overlay-focused-01.log",
+        "logSha256": "19bd57784cee7bc450fb009fc6ea607eaae290f7d9abfddbb47cab4b1bfe0f90",
+        "tests": 35,
+        "passed": 35,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "command": "node scripts/release297-current-state.mjs --check",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed",
+      "exitCode": 0
+    }
+  ],
+  "priorImmutableCheckReceipt": {
+    "path": "docs/releases/release297/current-record-refresh-checks-20261008.json",
+    "gitBlobSha256": "a1822357ba2b45027994c23e4bfb5f94f187e896fa3f083d587714540cf92d43"
+  },
+  "priorImmutableCheckReceiptPreserved": true,
+  "historicalNativeRecoveryReceiptsChanged": false,
+  "controllerVersionContractsChanged": false,
+  "applicationInputsChanged": false,
+  "sourceFreezeIsArtifactAcceptance": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionDeploymentExecuted": false,
+  "cloudMutations": 0
+}

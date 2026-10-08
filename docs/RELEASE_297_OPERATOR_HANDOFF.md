@@ -16,6 +16,12 @@ records a new High TIFF finding in unchanged F. Its earlier passing preparation
 remains historical. Stop current A/F recovery and classroom/capacity acceptance
 until a concrete reviewed security correction and fresh replacement evidence pass.
 
+The preparation tooling receipt's `testedFiles` hashes identify the exact
+`f636cab9` producer working bytes, including its mixed line endings. Its content
+is canonically equal to integrated Git content after LF normalization; those
+hashes do not identify raw bytes of a later assembled Windows checkout. Preserve
+the original receipt and its 168/16 test results as dated evidence.
+
 Use the [current-release index](releases/release297/current-release.json) as the
 single current-status authority and the generated section of the
 [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for its candidate matrix,
