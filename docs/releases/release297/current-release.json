@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-08T14:23:02.901Z",
+  "observedAtUtc": "2026-10-08T15:03:30.599Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -1104,11 +1104,11 @@
     {
       "id": "cp-ai-001-implementation",
       "label": "CP-AI-001 source implementation",
-      "status": "pending",
+      "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": null,
-      "rationale": "Browser-only credential preparation is being implemented; exact committed tested source is pending.",
-      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "sourceSha": "1064e800a9c174745a3924a0bc7713388fa586d4",
+      "rationale": "Reviewed bounded implementation is present at the exact tested source; designated approval and production protection remain separate.",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
@@ -1117,11 +1117,11 @@
     {
       "id": "cp-ai-001-synthetic",
       "label": "CP-AI-001 synthetic provider prevention",
-      "status": "pending",
+      "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": null,
-      "rationale": "Exact-source outgoing request, unavailable, semantic/cache/error and caller regression validation is pending.",
-      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "sourceSha": "1064e800a9c174745a3924a0bc7713388fa586d4",
+      "rationale": "107 source-bound focused tests and 91 compiled helper/provider/cache replay tests passed without skips; no live provider or production data was used.",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
@@ -1132,9 +1132,9 @@
       "label": "CP-AI-001 designated policy/source review",
       "status": "pending",
       "applicability": "preparation_only",
-      "sourceSha": null,
+      "sourceSha": "1064e800a9c174745a3924a0bc7713388fa586d4",
       "rationale": "Synthetic preparation does not constitute designated review or risk acceptance.",
-      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
@@ -1145,9 +1145,9 @@
       "label": "CP-AI-001 production backend protection",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
+      "sourceSha": "1064e800a9c174745a3924a0bc7713388fa586d4",
       "rationale": "No deployment or live task identity is recorded for the new browser boundary. Source changes require a new candidate image.",
-      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
@@ -1158,9 +1158,9 @@
       "label": "CP-AI-001 live protection verification",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
+      "sourceSha": "1064e800a9c174745a3924a0bc7713388fa586d4",
       "rationale": "No sample-bearing live verification of the new browser boundary is available.",
-      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
@@ -1171,9 +1171,9 @@
       "label": "CP-AI-001 changed candidate/recovery applicability",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
+      "sourceSha": "1064e800a9c174745a3924a0bc7713388fa586d4",
       "rationale": "Backend and governance image inputs changed. Historical A-to-F-to-A and scan receipts remain source-specific; unchanged F restores the previous provider boundary on rollback.",
-      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "observedAtUtc": "2026-10-08T15:03:30.599Z",
       "evidence": [
         "cpAiBoundaryPreparation",
         "successorPreparationObservation"
@@ -1530,7 +1530,7 @@
     },
     "cpAiBoundaryPreparation": {
       "path": "docs/releases/release297/cp-ai-001-preparation-20261008.json",
-      "gitBlobSha256": "3de8d1e8c9e4ca6a5e8a698ecea2804e11fd1754d49425bff31b185303872f82"
+      "gitBlobSha256": "b4d1f04462f0bdfeffc594194a57f77ebb3ab36c347e6c9bea76f5dedda561a5"
     }
   }
 }

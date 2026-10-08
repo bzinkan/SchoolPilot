@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-08T14:23:02.901Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-08T15:03:30.599Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
 
@@ -13,7 +13,7 @@ Observed **2026-10-08T14:23:02.901Z**. The [machine-readable index](releases/rel
 
 **Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**
 
-**Newly observed SchoolPilot main baseline: `bb8db8c5`. CP-AI-001 tested source: pending.** The source rows below retain dated historical reconciliation. The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; new candidate equivalence, image/scan and applicable recovery/classroom acceptance remain pending. Unchanged F restores the prior provider boundary on rollback and requires selection/applicability review.
+**Newly observed SchoolPilot main baseline: `bb8db8c5`. CP-AI-001 tested source: `1064e800`.** The source rows below retain dated historical reconciliation. The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; new candidate equivalence, image/scan and applicable recovery/classroom acceptance remain pending. Unchanged F restores the prior provider boundary on rollback and requires selection/applicability review.
 
 | Source | Historical reconciled main snapshot | Historical tested application | Frozen successor |
 |---|---|---|---|
@@ -100,12 +100,12 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Exact-F default production dependency audit | failed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json). Track the Moderate dependency follow-ups and preserve the audit failure without a scan waiver. |
 | Exact-F production High/Critical audit gate | passed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json). Retain lower findings and compare the independently bound runtime image scan. |
 | Reviewed screenshot fixture against exact-F compiled modules | passed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json), [successorDatabaseFixtureReview](release-evidence/release297-successor-20261007/database-fixture-independent-review.json). Review the precise fixture-only distinction with F replacement selection; no full corrected-lane or broader product pass is inferred. |
-| CP-AI-001 source implementation | pending | preparation_only; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Review the bounded source change and exact committed synthetic results; no merge is authorized by this record. |
-| CP-AI-001 synthetic provider prevention | pending | preparation_only; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Record exact committed source, executed checks, failures and skips using synthetic mocked providers only. |
-| CP-AI-001 designated policy/source review | pending | preparation_only; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Review the exact credential policy, retained email/search context, classification tradeoffs and F rollback applicability. |
-| CP-AI-001 production backend protection | pending | candidate_pending; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Complete new candidate gates and fresh production prerequisites, then separately authorize exact migration-first API/worker deployment. |
-| CP-AI-001 live protection verification | pending | candidate_pending; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). After separately authorized deployment, bind approved live evidence to exact serving task/image identities. |
-| CP-AI-001 changed candidate/recovery applicability | pending | candidate_pending; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json), [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Freeze a new application reference; produce fresh image/scan and applicable native, recovery and classroom acceptance. Review unchanged F selection explicitly. |
+| CP-AI-001 source implementation | passed | preparation_only; `1064e800` | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Review the bounded source change and exact committed synthetic results; no merge is authorized by this record. |
+| CP-AI-001 synthetic provider prevention | passed | preparation_only; `1064e800` | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Record exact committed source, executed checks, failures and skips using synthetic mocked providers only. |
+| CP-AI-001 designated policy/source review | pending | preparation_only; `1064e800` | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Review the exact credential policy, retained email/search context, classification tradeoffs and F rollback applicability. |
+| CP-AI-001 production backend protection | pending | candidate_pending; `1064e800` | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Complete new candidate gates and fresh production prerequisites, then separately authorize exact migration-first API/worker deployment. |
+| CP-AI-001 live protection verification | pending | candidate_pending; `1064e800` | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). After separately authorized deployment, bind approved live evidence to exact serving task/image identities. |
+| CP-AI-001 changed candidate/recovery applicability | pending | candidate_pending; `1064e800` | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json), [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Freeze a new application reference; produce fresh image/scan and applicable native, recovery and classroom acceptance. Review unchanged F selection explicitly. |
 
 ### Inclusion and evidence invalidation
 
