@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef } from "react";
+import { getBrowsingActivityTitle } from "../../../lib/browsing-activity";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -325,7 +326,7 @@ function StudentTile({
           acc.push({
             url: hb.activeTabUrl,
             favicon: hb.favicon,
-            title: hb.activeTabTitle
+            title: getBrowsingActivityTitle(hb.activeTabTitle, hb.activeTabUrl)
           });
         }
       } catch {
@@ -810,7 +811,7 @@ function StudentTile({
                     />
                   )}
                   <span className="text-xs text-white/90 truncate font-medium">
-                    {decodedScreenshotData.tabTitle || 'No active tab'}
+                    {getBrowsingActivityTitle(decodedScreenshotData.tabTitle, decodedScreenshotData.tabUrl)}
                   </span>
                   {screenshotHealthOverlay ? (
                     <span
@@ -930,13 +931,13 @@ function StudentTile({
                 </div>
               )}
               <span className="text-xs text-muted-foreground truncate flex-1 font-mono" data-testid={`text-tab-url-${student.studentId}`}>
-                {student.activeTabUrl ? (() => { try { return new URL(student.activeTabUrl).hostname; } catch { return student.activeTabUrl; } })() : 'No tab'}
+                {student.activeTabUrl ? (() => { try { return new URL(student.activeTabUrl).hostname; } catch { return student.activeTabUrl; } })() : 'No page URL recorded'}
               </span>
             </div>
             <div className="flex-shrink-0 border-t border-border/20 bg-muted/40 px-3 py-1.5">
               <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Current site</p>
-              <p className="font-medium text-sm leading-snug truncate" title={student.activeTabTitle || 'No active tab'} data-testid={`text-tab-title-${student.studentId}`}>
-                {student.activeTabTitle || <span className="text-muted-foreground italic">No active tab</span>}
+              <p className="font-medium text-sm leading-snug truncate" title={getBrowsingActivityTitle(student.activeTabTitle, student.activeTabUrl)} data-testid={`text-tab-title-${student.studentId}`}>
+                {getBrowsingActivityTitle(student.activeTabTitle, student.activeTabUrl)}
               </p>
             </div>
           </div>

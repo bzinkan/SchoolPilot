@@ -33,6 +33,7 @@ import { Textarea } from '../../../components/ui/textarea';
 import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
+import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
 import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
@@ -442,7 +443,7 @@ function AvailableStudentActivity({ student, nowMs }) {
   if (display.telemetryCurrent) {
     return (
       <div className="mt-3 rounded-md bg-muted/40 p-3">
-        <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
+        <p className="truncate text-xs font-medium text-muted-foreground">{getBrowsingActivityTitle(student.activeTabTitle, student.activeTabUrl)}</p>
         <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
       </div>
     );
@@ -4861,7 +4862,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           .filter((tab) => tab.url && !tab.url.startsWith('chrome://'))
           .map((tab) => ({
             ...tab,
-            title: tab.title || 'Untitled',
+            title: getBrowsingActivityTitle(tab.title, tab.url),
             studentName: s.studentName,
             studentId: s.studentId,
             observedRevision: tab.observedRevision ?? s.tabSnapshotRevision ?? s.tabSnapshot?.revision,

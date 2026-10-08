@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 import { Monitor, Search } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import {
@@ -103,9 +104,9 @@ export default function ScreenshotPreviewDialog({
                     ? `Updated ${captureAge}${captureTime ? ` · Captured ${captureTime}` : ''}`
                     : 'Current screenshot'}
             </span>
-            {decodedScreenshotData?.tabTitle ? (
+            {decodedScreenshotData?.tabTitle || decodedScreenshotData?.tabUrl ? (
               <span className="hidden max-w-[32rem] truncate text-muted-foreground lg:inline">
-                · {decodedScreenshotData.tabTitle}
+                · {getBrowsingActivityTitle(decodedScreenshotData.tabTitle, decodedScreenshotData.tabUrl)}
               </span>
             ) : null}
           </div>

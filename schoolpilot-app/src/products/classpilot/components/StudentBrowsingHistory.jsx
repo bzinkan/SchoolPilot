@@ -5,6 +5,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { formatDuration } from '../../../lib/classpilot-utils';
+import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 
 const historyFailure = error => error?.response?.data?.state || ([403, 404].includes(error?.response?.status) ? 'denied' : error?.response?.status === 503 ? 'unavailable' : 'failed');
 const stateText = {
@@ -48,7 +49,7 @@ export default function StudentBrowsingHistory({ studentId }) {
     <section className="space-y-2" aria-label="Observed browsing"><h4 className="text-sm font-medium">Observed browsing</h4><p className="text-xs text-muted-foreground">Durations estimate time between observations at most 60 seconds apart. Gaps, unsupported intervals and the final observation add no time.</p>
       {history.isPending && !invalidRange && <p role="status" className="text-sm">Loading observations…</p>}
       {!history.isPending && !invalidRange && entries.length === 0 && stateText[state] && <p role={history.error ? 'alert' : 'status'} className="rounded-lg border p-5 text-sm text-muted-foreground">{stateText[state]}</p>}
-      {entries.map(entry => { const link = safeLink(entry.activeTabUrl); return <article key={entry.id} className="space-y-1 rounded-lg border p-3" data-testid="history-observation"><div className="flex flex-wrap items-start justify-between gap-2"><p className="min-w-0 break-words text-sm font-medium">{entry.activeTabTitle || 'Browser observation'}</p>{entry.aiCategory === 'non-educational' && <Badge variant="destructive">Off-task{entry.contentCategory ? `: ${entry.contentCategory}` : ''}</Badge>}</div>
+      {entries.map(entry => { const link = safeLink(entry.activeTabUrl); return <article key={entry.id} className="space-y-1 rounded-lg border p-3" data-testid="history-observation"><div className="flex flex-wrap items-start justify-between gap-2"><p className="min-w-0 break-words text-sm font-medium">{getBrowsingActivityTitle(entry.activeTabTitle, entry.activeTabUrl)}</p>{entry.aiCategory === 'non-educational' && <Badge variant="destructive">Off-task{entry.contentCategory ? `: ${entry.contentCategory}` : ''}</Badge>}</div>
         {link ? <a href={link} target="_blank" rel="noopener noreferrer" className="block break-all text-xs text-primary underline">{entry.activeTabUrl}</a> : <p className="break-all text-xs text-muted-foreground">{entry.activeTabUrl || 'No page URL recorded'}</p>}
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{observationTime(entry.timestamp, timeZone)}</span><span>{entry.estimatedSeconds > 0 ? `~${formatDuration(entry.estimatedSeconds)}` : 'Observation only'}</span>{entry.screenLocked && <span>Waypoint</span>}{entry.cameraActive && <span>Camera active</span>}</div>
       </article>; })}
