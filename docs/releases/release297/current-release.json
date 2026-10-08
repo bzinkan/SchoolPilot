@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-08T00:33:00.773Z",
+  "observedAtUtc": "2026-10-08T14:23:02.901Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -108,10 +108,10 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "A local preparation image exists, but no exact frozen application A image/config, fresh acceptance or final-main B binding is recorded.",
+      "rationale": "Historical exact A/F preparation images exist. CP-AI-001 changes backend/governance image inputs; no new frozen candidate image/config or refreshed acceptance is recorded.",
       "observedAtUtc": "2026-10-07T17:21:12.006Z",
       "evidence": [],
-      "nextAction": "Produce a fresh source/scan/archive/manifest/config receipt after freeze."
+      "nextAction": "Freeze the changed application reference; build and identify a fresh source/scan/archive/manifest/config receipt before operational Plans."
     },
     {
       "id": "frontend-successor",
@@ -279,16 +279,16 @@
   "stages": [
     {
       "id": "implementation",
-      "label": "Observed merged implementation",
+      "label": "Historical merged preparation implementation",
       "status": "passed",
-      "applicability": "current_baseline",
+      "applicability": "historical",
       "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
-      "rationale": "All scoped preparation PRs #616/#617/#619/#620 are merged in exact A main; the successor tooling/state PR remains a separate reviewable change.",
+      "rationale": "PRs #616/#617/#619/#620 are merged in historical exact A main; PR621 is included in the newly observed bb8 baseline. The CP-AI-001 runtime change remains separately reviewable and unmerged.",
       "observedAtUtc": "2026-10-07T23:49:34.842Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Review the bounded successor tooling/state PR; verify exact resulting-main CI after any separately authorized merge."
+      "nextAction": "Review CP-AI-001 exact-source implementation; separately authorize merge and verify resulting-main CI."
     },
     {
       "id": "testing",
@@ -296,13 +296,13 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Exact A/F security/native recovery preparation passes; final-main tooling CI, candidate campaigns and live acceptance are separate gates.",
+      "rationale": "Historical exact A/F security/native recovery preparation passes for that pair. CP-AI-001 changes application inputs, so a new tested application reference and affected acceptance are required.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "reconciliation",
         "successorPreparationObservation"
       ],
-      "nextAction": "Verify reviewed tooling/resulting-main CI; complete the bounded 133-client, classroom endurance, normal-load and headroom campaign before release acceptance."
+      "nextAction": "Complete CP-AI-001 preparation checks; freeze a new application reference and refresh applicable recovery and bounded 133-client/classroom/normal-load/headroom acceptance."
     },
     {
       "id": "packaging",
@@ -310,13 +310,13 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Exact local A/F backend archives are identified and tested for successor preparation. Matched frontend, full acceptance, replacement selection and operational publication remain pending.",
+      "rationale": "Historical exact A/F archives remain identified. CP-AI-001 backend and governance image inputs require a new candidate image/scan; matched frontend, acceptance and F selection remain separate.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorPreparationObservation",
         "extensionFresh"
       ],
-      "nextAction": "Review and select the exact F successor separately; finish matched candidate frontend and full acceptance before operational publication Plans."
+      "nextAction": "Build and scan the newly frozen candidate; review F rollback/privacy applicability and retain original artifacts unchanged."
     },
     {
       "id": "publication",
@@ -661,12 +661,12 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "The preparation-only exact A/F ordinary recovery and restricted restoration now pass. Full release applicability, original acceptance campaigns and successor selection remain pending.",
+      "rationale": "Actual ordinary A-to-F-to-A preparation remains historical evidence for its exact pair; CP-AI-001 source changes invalidate reuse for a new candidate.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Record exact-source applicability and F selection after review; complete original candidate campaigns without relabelling preparation as full release acceptance."
+      "nextAction": "Refresh actual new-candidate-to-F-to-new-candidate recovery on ordinary 43-to53 and 121-to129 phases; explicitly review F restoring the prior provider boundary."
     },
     {
       "id": "catalog-history",
@@ -968,7 +968,7 @@
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Record an explicit review of the exact F artifact and amendment to the original exact-C578 requirement. Do not infer approval from preparation, scans or source review."
+      "nextAction": "Review exact F replacement selection, compatibility and CP-AI-001 rollback applicability: unchanged F restores the prior credential-egress risk. Keep selection pending until recorded review."
     },
     {
       "id": "fallback-successor-operational-guards",
@@ -1100,6 +1100,85 @@
         "successorDatabaseFixtureReview"
       ],
       "nextAction": "Review the precise fixture-only distinction with F replacement selection; no full corrected-lane or broader product pass is inferred."
+    },
+    {
+      "id": "cp-ai-001-implementation",
+      "label": "CP-AI-001 source implementation",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "Browser-only credential preparation is being implemented; exact committed tested source is pending.",
+      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Review the bounded source change and exact committed synthetic results; no merge is authorized by this record."
+    },
+    {
+      "id": "cp-ai-001-synthetic",
+      "label": "CP-AI-001 synthetic provider prevention",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "Exact-source outgoing request, unavailable, semantic/cache/error and caller regression validation is pending.",
+      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Record exact committed source, executed checks, failures and skips using synthetic mocked providers only."
+    },
+    {
+      "id": "cp-ai-001-review",
+      "label": "CP-AI-001 designated policy/source review",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "Synthetic preparation does not constitute designated review or risk acceptance.",
+      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Review the exact credential policy, retained email/search context, classification tradeoffs and F rollback applicability."
+    },
+    {
+      "id": "cp-ai-001-deployment",
+      "label": "CP-AI-001 production backend protection",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No deployment or live task identity is recorded for the new browser boundary. Source changes require a new candidate image.",
+      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Complete new candidate gates and fresh production prerequisites, then separately authorize exact migration-first API/worker deployment."
+    },
+    {
+      "id": "cp-ai-001-live",
+      "label": "CP-AI-001 live protection verification",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "No sample-bearing live verification of the new browser boundary is available.",
+      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "After separately authorized deployment, bind approved live evidence to exact serving task/image identities."
+    },
+    {
+      "id": "cp-ai-001-candidate-applicability",
+      "label": "CP-AI-001 changed candidate/recovery applicability",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Backend and governance image inputs changed. Historical A-to-F-to-A and scan receipts remain source-specific; unchanged F restores the previous provider boundary on rollback.",
+      "observedAtUtc": "2026-10-08T14:23:02.901Z",
+      "evidence": [
+        "cpAiBoundaryPreparation",
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Freeze a new application reference; produce fresh image/scan and applicable native, recovery and classroom acceptance. Review unchanged F selection explicitly."
     }
   ],
   "inclusionMatrix": [
@@ -1448,6 +1527,10 @@
     "successorDatabaseFixtureReview": {
       "path": "docs/release-evidence/release297-successor-20261007/database-fixture-independent-review.json",
       "gitBlobSha256": "b611d1e6609992bfee7115a1c2b8b48a2f0d34c8ff057ae3b17ce61ab98be1f8"
+    },
+    "cpAiBoundaryPreparation": {
+      "path": "docs/releases/release297/cp-ai-001-preparation-20261008.json",
+      "gitBlobSha256": "3de8d1e8c9e4ca6a5e8a698ecea2804e11fd1754d49425bff31b185303872f82"
     }
   }
 }

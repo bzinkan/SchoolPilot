@@ -1,6 +1,7 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { snapshotRuntimePerformanceMetrics } from "../src/services/runtimePerformanceMetrics.js";
 
 type ClassifyUrl = typeof import("../src/services/aiClassification.js").classifyUrl;
 type Classification = Awaited<ReturnType<ClassifyUrl>>;
@@ -160,6 +161,62 @@ describe("Gemini URL classification provider budget", () => {
       await firstCompletion;
       assert.equal(provider.active, 0);
     } finally {
+      provider.drain();
+      await Promise.allSettled(work);
+    }
+  });
+
+  it("privacy-withheld observations consume no provider budget even while every permit is occupied", async () => {
+    provider = controlledProvider();
+    const work: Array<Promise<Classification>> = [];
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        work.push(classifyUrl(`https://provider-privacy-budget.test/lesson/${index}`, "Synthetic lesson"));
+      }
+      await nextTurn();
+      assert.equal(provider.active, 10);
+      const before = snapshotRuntimePerformanceMetrics();
+      const denied = await classifyUrl("https://provider-privacy-budget.test/lesson?token=SYNTHETIC_BUDGET_CREDENTIAL", "Synthetic lesson");
+      const after = snapshotRuntimePerformanceMetrics();
+      assert.equal(denied?.source, "unknown");
+      assert.equal(denied?.safetyAlert, null);
+      assert.equal(provider.requests.length, 10);
+      assert.equal(after.counters.aiProviderCalls, before.counters.aiProviderCalls);
+      assert.equal(after.counters.aiProviderSaturated, before.counters.aiProviderSaturated);
+    } finally {
+      provider.drain();
+      await Promise.allSettled(work);
+    }
+  });
+
+  it("aborts a timed-out provider request and releases its permit for an uncached retry", async (context) => {
+    provider = controlledProvider();
+    const work: Array<Promise<Classification>> = [];
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const url = "https://provider-timeout-recovery.test/lesson";
+      const first = classifyUrl(url, "Synthetic lesson");
+      work.push(first);
+      await nextTurn();
+      assert.equal(provider.active, 1);
+      const before = snapshotRuntimePerformanceMetrics();
+      context.mock.timers.tick(10_000);
+      const timedOut = await first;
+      assert.equal(timedOut?.source, "unknown");
+      assert.equal(timedOut?.safetyAlert, null);
+      assert.equal(provider.active, 0);
+      const after = snapshotRuntimePerformanceMetrics();
+      assert.equal(after.counters.aiProviderTimeouts, (before.counters.aiProviderTimeouts ?? 0) + 1);
+      const retry = classifyUrl(url, "Synthetic lesson");
+      work.push(retry);
+      await nextTurn();
+      assert.equal(provider.active, 1);
+      assert.equal(provider.requests.length, 2, "the unavailable result was not cached");
+      provider.finishWave();
+      assert.equal((await retry)?.source, "ai");
+      assert.equal(provider.active, 0);
+    } finally {
+      context.mock.timers.reset();
       provider.drain();
       await Promise.allSettled(work);
     }

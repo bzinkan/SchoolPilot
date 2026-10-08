@@ -345,14 +345,52 @@ export function validateIndex(index, root = ROOT) {
     assert.ok(fixtureGate, 'SUCCESSOR_FIXTURE_GATE_REQUIRED');
     assert.deepEqual([fixtureGate.status, fixtureGate.applicability, fixtureGate.sourceSha, fixtureGate.evidence], ['passed', 'preparation_only', checks.source, ['successorSourceChecks', 'successorDatabaseFixtureReview']], 'SUCCESSOR_FIXTURE_IS_NOT_FULL_DATABASE');
   }
+  if (index.evidence.cpAiBoundaryPreparation) {
+    const cp = receipt('cpAiBoundaryPreparation');
+    metadataOnly(cp);
+    assert.deepEqual([cp.schemaVersion, cp.kind, cp.releaseReady, cp.operationalAuthorization, cp.productionMutations], [1, 'classpilot_ai_browser_boundary_preparation', false, false, 0], 'CP_AI_PREPARATION_IS_NOT_AUTHORIZATION');
+    assert.ok(stamp(cp.observedAtUtc) && Date.parse(cp.observedAtUtc) <= Date.parse(index.observedAtUtc), 'CP_AI_OBSERVATION_TIME_REQUIRED');
+    assert.match(cp.observedMainBaseline, sha, 'CP_AI_MAIN_SOURCE_REQUIRED');
+    assert.ok(cp.testedSource === null || sha.test(cp.testedSource), 'CP_AI_TESTED_SOURCE_REQUIRED');
+    assert.deepEqual([cp.credentialAndTokenScopeOnly, cp.ordinaryEmailsAndSearchTermsRemain, cp.originalInputsRetainedForLocalClassificationAndRestrictions, cp.applicationInputsChanged, cp.fallbackRollbackRestoresPriorProviderBoundary], [true, true, true, true, true], 'CP_AI_SCOPE_OR_APPLICABILITY_CHANGED');
+    assert.deepEqual([cp.priorApplicationReferenceA, cp.unchangedFallbackSourceF, cp.recoveryEvidenceApplicability], [receipt('successorPreparationObservation').artifactPair['serving-anchor'].source, receipt('successorPreparationObservation').artifactPair.fallback.source, 'historical_A_F_pair_only'], 'CP_AI_HISTORICAL_PAIR_CHANGED');
+    assert.equal(cp.policyVersion, 'classpilot-ai-request-input-2026-10-08.1', 'CP_AI_POLICY_VERSION_CHANGED');
+    if (cp.syntheticValidationStatus === 'passed') {
+      for (const filename of ['src/services/classpilotAiRequestInput.ts', 'src/services/aiClassification.ts', 'tests/classpilot-provider-boundary-audit.test.ts']) {
+        assert.match(cp.sourceAndTestHashes?.[filename] ?? '', hash, 'CP_AI_SYNTHETIC_SOURCE_HASH_REQUIRED');
+      }
+      assert.ok(Array.isArray(cp.steps), 'CP_AI_SYNTHETIC_STEPS_REQUIRED');
+      const focused = cp.steps.filter(step => step.id === 'boundary-focused');
+      assert.equal(focused.length, 1, 'CP_AI_SYNTHETIC_BOUNDARY_STEP_REQUIRED');
+      const step = focused[0];
+      assert.deepEqual([step.source, step.status, step.exitCode, step.failed, step.skipped], [cp.testedSource, 'passed', 0, 0, 0], 'CP_AI_SYNTHETIC_BOUNDARY_OUTCOME_CHANGED');
+      assert.ok(text(step.command) && step.command.includes('tests/classpilot-provider-boundary-audit.test.ts'), 'CP_AI_SYNTHETIC_BOUNDARY_COMMAND_REQUIRED');
+      assert.ok(Number.isInteger(step.tests) && step.tests > 0 && step.passed === step.tests, 'CP_AI_SYNTHETIC_POSITIVE_COUNTS_REQUIRED');
+      assert.match(step.logSha256 ?? '', hash, 'CP_AI_SYNTHETIC_LOG_HASH_REQUIRED');
+    }
+    for (const [id, field] of [['implementation', 'implementationStatus'], ['synthetic', 'syntheticValidationStatus'], ['review', 'reviewStatus'], ['deployment', 'deploymentStatus'], ['live', 'liveVerificationStatus']]) {
+      const gate = index.gates.find(entry => entry.id === `cp-ai-001-${id}`);
+      assert.ok(gate, 'CP_AI_SEPARATE_GATE_REQUIRED');
+      assert.ok(['pending', 'passed', 'failed'].includes(cp[field]), 'CP_AI_GATE_STATUS_REQUIRED');
+      assert.deepEqual([gate.status, gate.sourceSha, gate.evidence], [cp[field], cp.testedSource, ['cpAiBoundaryPreparation']], 'CP_AI_GATE_RECEIPT_CHANGED');
+      if (['review', 'deployment', 'live'].includes(id)) assert.equal(cp[field], 'pending', 'CP_AI_PREPARATION_CANNOT_APPROVE_OPERATION');
+      if (cp[field] === 'passed') assert.match(cp.testedSource ?? '', sha, 'CP_AI_PASS_REQUIRES_TESTED_SOURCE');
+    }
+  }
   return index;
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
 const short = value => value === null ? 'pending' : `\`${value.slice(0, 8)}\``;
-export function renderStatus(index) {
+export function renderStatus(index, root = ROOT) {
   const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
   if (index.gates.find(entry => entry.id === 'fallback-scan-current')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**', '');
   if (index.evidence.successorPreparationObservation) lines.splice(7, 0, '**The dependency-only C578 successor has passed bounded security/native recovery preparation. Exact-artifact selection and the original release acceptance remain pending.** See the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md).', '');
+  if (index.evidence.cpAiBoundaryPreparation) {
+    const cp = JSON.parse(readFileSync(path.join(root, index.evidence.cpAiBoundaryPreparation.path), 'utf8'));
+    const table = lines.findIndex(line => line === '| Source | Current main observed | Historical tested application | Frozen successor |');
+    lines[table] = '| Source | Historical reconciled main snapshot | Historical tested application | Frozen successor |';
+    lines.splice(table, 0, `**Newly observed SchoolPilot main baseline: ${short(cp.observedMainBaseline)}. CP-AI-001 tested source: ${short(cp.testedSource)}.** The source rows below retain dated historical reconciliation. The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; new candidate equivalence, image/scan and applicable recovery/classroom acceptance remain pending. Unchanged F restores the prior provider boundary on rollback and requires selection/applicability review.`, '');
+  }
   for (const [repository, source] of Object.entries(index.sources)) lines.push(`| ${repository} | ${short(source.remoteMainObserved)} | ${short(source.testedHistorical)} | ${short(source.frozenApplicationReference)} |`);
   if (index.evidence.mergeRequest) {
     const merged = index.gates.find(entry => entry.id === 'preparation-merges')?.status === 'passed';
@@ -384,7 +422,7 @@ export function main(args = process.argv.slice(2), root = ROOT) {
   assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--check'), 'USAGE: release297-current-state.mjs [--check]');
   const index = validateIndex(JSON.parse(readFileSync(path.join(root, INDEX), 'utf8')), root);
   const filename = path.join(root, CHECKLIST), before = readFileSync(filename, 'utf8').replaceAll('\r\n', '\n');
-  const after = updateChecklist(before, renderStatus(index));
+  const after = updateChecklist(before, renderStatus(index, root));
   if (args[0] === '--check') assert.equal(before, after, 'GENERATED_CURRENT_STATUS_STALE');
   else if (before !== after) writeFileSync(filename, after);
   console.log(args[0] === '--check' ? 'Release297 current index/evidence/status verified (offline).' : 'Release297 current status generated (offline).');

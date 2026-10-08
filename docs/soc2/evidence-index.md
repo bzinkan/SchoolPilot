@@ -42,8 +42,15 @@ records, or student records.
 The [ClassPilot public-claim audit](../CLASSPILOT_AI_CLAIM_AUDIT.md) and
 `tests/classpilot-provider-boundary-audit.test.ts` use exclusively synthetic
 fixtures and a mocked provider. CP-AI-001 records unredacted inputs in that
-boundary test; a passing characterization is not completed minimization,
-production exposure evidence, or provider-account approval.
+historical boundary test; a passing characterization is not completed
+minimization, production exposure evidence, or provider-account approval. The
+[CP-AI-001 credential-boundary preparation](../CLASSPILOT_AI_REQUEST_BOUNDARY.md)
+and synthetic prevention tests record the bounded browser policy separately.
+The collector includes hashes of the helper/policy/tests without copying their
+content and treats test presence as a pointer, not a pass. Exact-source results,
+designated review, authorized backend deployment and live verification remain
+distinct. Ordinary email/search context remains; broader personal-data and
+provider-account review stays open.
 Paperwork import tests establish behavior and recovery, not model accuracy.
 Keep model output reports and human correction-effort reviews outside this
 repository; record only non-content evidence pointers. Source cleanup does not

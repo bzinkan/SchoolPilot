@@ -97,3 +97,15 @@ do not claim an identical rebuilt image or reuse an old digest as the new image.
 Image preparation requires its own source/digest evidence; no settings are
 activated and no production result is claimed by this slice. Rollback of the frontend is technically independent, but
 would restore the inaccurate disclosures; prefer a corrected copy forward change.
+
+## October 8 follow-up
+
+The preceding October 7 observations, source identities, test counts and copy-only
+release impact are preserved historical evidence. The separate
+[CP-AI-001 browser credential-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md)
+changes backend behavior before Gemini requests: bounded credential/token fields
+are redacted or the model call is withheld, while ordinary email/search context
+remains. Exact-source test results and review are recorded separately. This
+follow-up requires a later authorized backend deployment and fresh applicable
+release evidence; it does not establish production protection or provider-account
+guarantees and does not resolve the broader personal-data review.

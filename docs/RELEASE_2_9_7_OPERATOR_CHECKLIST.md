@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-08T00:33:00.773Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-08T14:23:02.901Z**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**
 
@@ -13,7 +13,9 @@ Observed **2026-10-08T00:33:00.773Z**. The [machine-readable index](releases/rel
 
 **Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**
 
-| Source | Current main observed | Historical tested application | Frozen successor |
+**Newly observed SchoolPilot main baseline: `bb8db8c5`. CP-AI-001 tested source: pending.** The source rows below retain dated historical reconciliation. The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; new candidate equivalence, image/scan and applicable recovery/classroom acceptance remain pending. Unchanged F restores the prior provider boundary on rollback and requires selection/applicability review.
+
+| Source | Historical reconciled main snapshot | Historical tested application | Frozen successor |
 |---|---|---|---|
 | schoolpilot | `a5161eb1` | `ddc5996b` | pending |
 | classpilot | `03a9c363` | `065be165` | pending |
@@ -24,9 +26,9 @@ All four authorized source preparation PRs **#616, #617, #619 and #620** are mer
 
 | Stage | Status | Applicability | Next action |
 |---|---|---|---|
-| Observed merged implementation | passed | current_baseline | Review the bounded successor tooling/state PR; verify exact resulting-main CI after any separately authorized merge. |
-| Testing | pending | candidate_pending | Verify reviewed tooling/resulting-main CI; complete the bounded 133-client, classroom endurance, normal-load and headroom campaign before release acceptance. |
-| Packaging | pending | candidate_pending | Review and select the exact F successor separately; finish matched candidate frontend and full acceptance before operational publication Plans. |
+| Historical merged preparation implementation | passed | historical | Review CP-AI-001 exact-source implementation; separately authorize merge and verify resulting-main CI. |
+| Testing | pending | candidate_pending | Complete CP-AI-001 preparation checks; freeze a new application reference and refresh applicable recovery and bounded 133-client/classroom/normal-load/headroom acceptance. |
+| Packaging | pending | candidate_pending | Build and scan the newly frozen candidate; review F rollback/privacy applicability and retain original artifacts unchanged. |
 | Publication | pending | candidate_pending | Operator separately authorizes exact artifact publication after acceptance and final-main binding. |
 | Deployment | unknown | candidate_pending | Operator refreshes exact serving state and authorizes migration-first deployment. |
 | Activation | pending | candidate_pending | Authorize DeSales pilot only after source/image/admission and participating capabilities are verified. |
@@ -64,7 +66,7 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Successor classroom, normal and headroom acceptance | pending | candidate_pending; pending | [normalHistorical](release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json), [headroomHistorical](release-evidence/release-297/release-gate-policy-20261003/lower-250-aaf95-ddc-confirmation-passed.json). Rerun mixed block, capability-on normal-load and accepted 250-client gate with original scope retained. |
 | Historical ordinary recovery/restoration | passed | historical; `ddc5996b` | [recoveryOrdinaryHistorical](release-evidence/release-297/release-gate-policy-20261003/production-default43-53-composed06-independent.json). Refresh actual local candidate-to-C578-to-candidate recovery on the ordinary schema/admission chain. |
 | Historical full-manifest rehearsal | passed | historical; `ddc5996b` | [recoveryFullHistorical](release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json). Never relabel its54-entry evidence as the ordinary 53-entry successor proof. |
-| Successor recovery compatibility | pending | candidate_pending; pending | [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Record exact-source applicability and F selection after review; complete original candidate campaigns without relabelling preparation as full release acceptance. |
+| Successor recovery compatibility | pending | candidate_pending; pending | [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Refresh actual new-candidate-to-F-to-new-candidate recovery on ordinary 43-to53 and 121-to129 phases; explicitly review F restoring the prior provider boundary. |
 | Historical production catalog | passed | historical; `7af9d0dd` | [catalogHistorical](release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json). Refresh via a new authorized bounded inspection on source/context/window drift. |
 | Fresh production, backups, flags and window | unknown | candidate_pending; pending | [productionHistorical](release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json), [catalogHistorical](release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json). Operator supplies fresh current task/image/flags/catalog/backups/health and exact authorized window. |
 | Two managed Chromebooks | waived_not_passed | policy_definition; `ddc5996b` | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately. |
@@ -87,7 +89,7 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Ordinary A/F recovery | passed | preparation_only; `d75fc1c4` | [successorOrdinaryRecovery](release-evidence/release297-successor-20261007/ordinaryRecovery.json). Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans. |
 | Restricted-owner restoration | passed | preparation_only; `d75fc1c4` | [successorRestrictedRestoration](release-evidence/release297-successor-20261007/restrictedRestoration.json). Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans. |
 | Bounded C578 security successor preparation | passed | preparation_only; `d75fc1c4` | [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Review the exact source/artifact/evidence packet; this does not authorize successor selection or any release operation. |
-| Exact replacement artifact selection | pending | preparation_only; `d75fc1c4` | [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Record an explicit review of the exact F artifact and amendment to the original exact-C578 requirement. Do not infer approval from preparation, scans or source review. |
+| Exact replacement artifact selection | pending | preparation_only; `d75fc1c4` | [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Review exact F replacement selection, compatibility and CP-AI-001 rollback applicability: unchanged F restores the prior credential-egress risk. Keep selection pending until recorded review. |
 | Pending binding operational Plan guards | passed | preparation_only; `d75fc1c4` | [successorOperationalRejections](releases/release297/successor-pending-operational-plans-20261008.json). Do not create executable operational Plans until exact-artifact selection, original candidate acceptance, source applicability and current-main prerequisites pass. |
 | Exact-F TypeScript | passed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json). Retain source-specific evidence; changes to F invalidate it. |
 | Exact-F build | passed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json). Retain exact build/artifact identities for replacement review. |
@@ -98,6 +100,12 @@ The existing daily/shadow rollup can still run with both new modes off. Preserve
 | Exact-F default production dependency audit | failed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json). Track the Moderate dependency follow-ups and preserve the audit failure without a scan waiver. |
 | Exact-F production High/Critical audit gate | passed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json). Retain lower findings and compare the independently bound runtime image scan. |
 | Reviewed screenshot fixture against exact-F compiled modules | passed | preparation_only; `d75fc1c4` | [successorSourceChecks](releases/release297/source-specific-successor-checks-20261008.json), [successorDatabaseFixtureReview](release-evidence/release297-successor-20261007/database-fixture-independent-review.json). Review the precise fixture-only distinction with F replacement selection; no full corrected-lane or broader product pass is inferred. |
+| CP-AI-001 source implementation | pending | preparation_only; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Review the bounded source change and exact committed synthetic results; no merge is authorized by this record. |
+| CP-AI-001 synthetic provider prevention | pending | preparation_only; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Record exact committed source, executed checks, failures and skips using synthetic mocked providers only. |
+| CP-AI-001 designated policy/source review | pending | preparation_only; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Review the exact credential policy, retained email/search context, classification tradeoffs and F rollback applicability. |
+| CP-AI-001 production backend protection | pending | candidate_pending; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). Complete new candidate gates and fresh production prerequisites, then separately authorize exact migration-first API/worker deployment. |
+| CP-AI-001 live protection verification | pending | candidate_pending; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json). After separately authorized deployment, bind approved live evidence to exact serving task/image identities. |
+| CP-AI-001 changed candidate/recovery applicability | pending | candidate_pending; pending | [cpAiBoundaryPreparation](releases/release297/cp-ai-001-preparation-20261008.json), [successorPreparationObservation](releases/release297/successor-preparation-observation-20261008.json). Freeze a new application reference; produce fresh image/scan and applicable native, recovery and classroom acceptance. Review unchanged F selection explicitly. |
 
 ### Inclusion and evidence invalidation
 
@@ -123,7 +131,7 @@ Every listed merge is included in the observed main. CI and historical receipts 
 
 | Artifact | Status | Source | Identity and limitation |
 |---|---|---|---|
-| Successor API/worker image | pending | pending | A local preparation image exists, but no exact frozen application A image/config, fresh acceptance or final-main B binding is recorded. Produce a fresh source/scan/archive/manifest/config receipt after freeze. |
+| Successor API/worker image | pending | pending | Historical exact A/F preparation images exist. CP-AI-001 changes backend/governance image inputs; no new frozen candidate image/config or refreshed acceptance is recorded. Freeze the changed application reference; build and identify a fresh source/scan/archive/manifest/config receipt before operational Plans. |
 | Successor frontend archive | pending | pending | A local preparation archive exists; TeachingTools, Focus and analytics changed from historical inputs. Final-main source is not frozen. Build from frozen source, identify and hash the archive; publication remains separate. |
 | Local preparation API/worker image | passed | `2b7b5dc0` | Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release. Retain preparation receipts. Build/test exact frozen application A, then reuse that exact image/config under reviewed final-main B only after proven A/B application equivalence. |
 | Local preparation frontend archive | passed | `1cb459cc` | Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred. Build/hash the matched frozen application frontend after review; bind it to equivalent final-main B. This archive is preparation-only. |

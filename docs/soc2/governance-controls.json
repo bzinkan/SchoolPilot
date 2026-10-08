@@ -241,7 +241,7 @@
       "status": "Implementing",
       "frequency": "Continuous",
       "nextReviewDue": "2026-07-31",
-      "automationImpact": "Evidence generation does not enable AI. Public disclosure corrections change frontend wording only; CP-AI-001 in docs/CLASSPILOT_AI_CLAIM_AUDIT.md characterizes synthetic URL/title identity and credential-bearing inputs at a mocked provider boundary, with minimization and provider-account review pending. Separately gated teacher-started My Desk imports add selected page-image processing, private review and cleanup; provider-account retention and extraction quality require human review before activation.",
+      "automationImpact": "Evidence generation does not enable AI. The October 7 public disclosure corrections changed frontend wording only; their CP-AI-001 synthetic exposure finding remains historical. The October 8 browser boundary implementation in docs/CLASSPILOT_AI_REQUEST_BOUNDARY.md changes ClassPilot URL/title preparation before Gemini on a later authorized backend deployment: bounded credentials/tokens are redacted or unsafe calls withheld, while ordinary email/search context, local classification and precise-resource matching retain their existing behavior. Exact-source testing, designated review, deployment/live verification, broader personal-data minimization and private provider-account guarantees remain separate gates. Separately gated teacher-started My Desk imports add selected page-image processing, private review and cleanup; provider-account retention and extraction quality require human review before activation.",
       "evidence": [
         {
           "name": "AI/privacy evidence packet",
