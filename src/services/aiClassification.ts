@@ -727,7 +727,7 @@ export async function classifyUrl(
   // Hash the exact original observation, even when redaction makes two provider
   // inputs identical. Never reuse another resource's model decision or pending
   // work. Version the policy independently of classification semantics.
-  const inputFingerprint = createHash("sha256").update(JSON.stringify([url, title || "Unknown"])).digest("hex");
+  const inputFingerprint = createHash("sha256").update(JSON.stringify([url, title])).digest("hex");
   const pageCacheKey = `page|${cacheKey}|model:${GEMINI_URL_CLASSIFICATION_MODEL}|input-policy:${CLASSPILOT_AI_REQUEST_INPUT_POLICY_VERSION}|${inputFingerprint}`;
   const cachedPage = classificationCache.get(pageCacheKey);
   if (cachedPage && Date.now() - cachedPage.classifiedAt < CACHE_TTL_MS) return cachedPage;

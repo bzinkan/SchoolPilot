@@ -193,6 +193,33 @@ describe("Gemini Flash-Lite URL classification", () => {
     assert.equal(results[2]?.safetyAlert, null);
   });
 
+  it("keeps absent, empty, and literal Unknown original titles independent despite identical provider inputs", async () => {
+    const releases: Array<() => void> = [];
+    respond = () => new Promise<Response>((resolve) => {
+      const index = requests.length;
+      releases.push(() => resolve(modelResponse(index === 1 ? "violence" : index === 2 ? "self-harm" : "none")));
+    });
+    const url = "https://exact-optional-title.test/lesson";
+    const pending = [classifyUrl(url), classifyUrl(url), classifyUrl(url, ""), classifyUrl(url, "Unknown")];
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(requests.length, 3, "only identical originals coalesce; provider placeholder titles do not define identity");
+      assert.equal(requests[0]?.init?.body, requests[1]?.init?.body);
+      assert.equal(requests[1]?.init?.body, requests[2]?.init?.body);
+    } finally {
+      for (const release of releases) release();
+    }
+    const results = await Promise.all(pending);
+    assert.equal(results[0]?.safetyAlert, "violence");
+    assert.equal(results[1], results[0], "identical absent-title originals share work");
+    assert.equal(results[2]?.safetyAlert, "self-harm");
+    assert.equal(results[3]?.safetyAlert, null);
+    assert.equal(await classifyUrl(url), results[0]);
+    assert.equal(await classifyUrl(url, ""), results[2]);
+    assert.equal(await classifyUrl(url, "Unknown"), results[3]);
+    assert.equal(requests.length, 3, "each original title form reuses only its own cached result");
+  });
+
   it("retains school-domain authority and fallback-mode separation", async () => {
     const url = "https://school-context.test/page";
     const school = await classifyUrl(url, "Resource", { schoolDomain: "school-context.test" });
