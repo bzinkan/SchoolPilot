@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Artifact preparation only. This module never launches tasks or changes services.
 import assert from 'node:assert/strict';
-import { bindingSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan } from './release-source-binding.mjs';
+import { bindingSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation } from './release-source-binding.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { archiveConfigDigest, inspectImage, runCommand, scanCounts, SCANNER, validateRegistryManifest, verifyPublishedImage } from './verify-legacy-deploy-image.mjs';
-import { anchor128Stages, ecsRequestTags, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse } from './register-compatible-fallback-inactive.mjs';
+import { anchor128Stages, ecsRequestTags, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse, retainSuccessorRegistration } from './register-compatible-fallback-inactive.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REGISTRY = Object.freeze({ account: '135775632425', region: 'us-east-1', repository: 'schoolpilot-production-api' });
@@ -50,7 +50,7 @@ async function sourceContract(input, run) {
   equal((await checked(run, 'git', ['-C', input.sourceDirectory, 'status', '--porcelain'])).trim(), '', 'SOURCE_DIRTY');
   if (input.kind === 'serving-anchor' && input.schemaVersion === 1) {
     equal((await checked(run, 'git', ['-C', input.sourceDirectory, 'diff', '--name-only', FALLBACK.application, input.source, '--', ...imageInputs])).trim(), '', 'APPLICATION_BYTES_CHANGED');
-  } else if (input.kind !== 'serving-anchor') { equal(input.kind, 'fallback', 'PUBLICATION_KIND_INVALID'); equal(input.source, FALLBACK.source, 'FALLBACK_SOURCE_CHANGED'); }
+  } else if (input.kind !== 'serving-anchor') { equal(input.kind, 'fallback', 'PUBLICATION_KIND_INVALID'); equal(input.source, releaseBinding?.fallback?.source ?? FALLBACK.source, 'FALLBACK_SOURCE_CHANGED'); }
   return releaseBinding;
 }
 export function validateMainCi(proof, source) {
@@ -66,8 +66,8 @@ export function validateMainCi(proof, source) {
   for (const run of latest.values()) assert.ok(run.status === 'completed' && ['success', 'skipped', 'neutral'].includes(run.conclusion), 'MAIN_CI_NOT_GREEN');
 }
 export async function validateLocalScan(input, releaseBinding) {
-  const artifactSource = releaseBinding?.applicationSource ?? input.source;
-  if (input.schemaVersion === 2) assert.ok(releaseBinding, 'SCAN_BINDING_REQUIRED');
+  const artifactSource = boundArtifactSource(releaseBinding) ?? input.source;
+  if (input.schemaVersion >= 2) assert.ok(releaseBinding, 'SCAN_BINDING_REQUIRED');
   const scan = pinned(input.scan); equal([scan.schemaVersion, scan.sourceSha, scan.passed, scan.scanner, scan.os, scan.architecture], [1, artifactSource, true, SCANNER, 'linux', 'amd64'], 'SCAN_IDENTITY_INVALID');
   assert.match(scan.imageId ?? '', digest, 'LOCAL_INDEX_REQUIRED'); assert.match(scan.configDigest ?? '', digest, 'CONFIG_DIGEST_REQUIRED');
   assert.ok(typeof scan.dockerHost === 'string' && scan.dockerHost.length > 0 && !/[\r\n]/.test(scan.dockerHost), 'DOCKER_HOST_REQUIRED');
@@ -79,7 +79,7 @@ export async function validateLocalScan(input, releaseBinding) {
   const counts = scanCounts(JSON.parse(readFileSync(report, 'utf8')), scan.configDigest); equal(counts, scan.counts, 'SCAN_COUNTS_CHANGED'); equal([counts.HIGH, counts.CRITICAL], [0, 0], 'BLOCKING_SCAN_FINDINGS');
   equal(await fileHash(archive), scan.archiveSha256, 'SCAN_ARCHIVE_CHANGED'); equal(await archiveConfigDigest(archive, artifactSource), scan.configDigest, 'ARCHIVE_CONFIG_CHANGED');
   if (releaseBinding) assertBoundScan(scan, releaseBinding);
-  if (input.kind === 'fallback') equal([scan.imageId, scan.configDigest], [FALLBACK.localIndex, FALLBACK.config], 'EXACT_FALLBACK_IMAGE_REQUIRED');
+  if (input.kind === 'fallback') { const fallback = releaseBinding?.fallback ?? FALLBACK; equal([scan.imageId, scan.configDigest], [fallback.localIndex, fallback.config], 'EXACT_FALLBACK_IMAGE_REQUIRED'); }
   return scan;
 }
 async function privatePermissions(directory, inputs, run) {
@@ -90,7 +90,7 @@ async function privatePermissions(directory, inputs, run) {
   await checked(run, 'pwsh', ['-NoProfile', '-File', bridge, '-Helper', helper, '-Directory', directory, '-Repository', root, '-Inputs', path.join(directory, 'private-inputs.json')]);
 }
 async function newPlan(input, operation, run) {
-  assert.ok([1, 2].includes(input.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  assert.ok([1, 2, 3].includes(input.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
   for (const directory of [root, input.sourceDirectory]) { const relative = path.relative(directory, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_BE_OUTSIDE_SOURCE'); }
   const releaseBinding = await sourceContract(input, run);
   const toolSource = (await checked(run, 'git', ['-C', root, 'rev-parse', 'HEAD'])).trim(); assert.match(toolSource, sha, 'TOOL_SOURCE_REQUIRED'); equal((await checked(run, 'git', ['-C', root, 'status', '--porcelain'])).trim(), '', 'TOOL_DIRTY');
@@ -99,9 +99,10 @@ async function newPlan(input, operation, run) {
   return { schemaVersion: input.schemaVersion, ...(releaseBinding ? { releaseBinding } : {}), kind: 'release-artifact-preparation', operation, input, toolSource, toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes: helperHashes(), cloudMutationsDuringPlan: 0, servicesMayChange: false, tasksMayLaunch: false, productionDatabaseOperations: 0, signed: false };
 }
 export async function planPublication(input, { run = runCommand, verifyScan = validateLocalScan } = {}) {
-  const releaseBinding = bindingSchema(input) === 2 ? await sourceContract(input, run) : undefined;
+  const releaseBinding = bindingSchema(input) >= 2 ? await sourceContract(input, run) : undefined;
   assert.ok(!existsSync(path.join(path.dirname(input.scan.path), 'registry-proof.json')), 'FRESH_REGISTRY_PROOF_REQUIRED');
   if (input.kind === 'serving-anchor') validateMainCi(pinned(input.mainCi), input.source);
+  else if (input.schemaVersion === 3) validateMainCi(pinned(input.mainCi), input.mainSource);
   equal(pinned(input.publisherConfiguration), { repository: 'bzinkan/SchoolPilot', variable: 'IMMUTABLE_RELEASE_IMAGE_ENABLED', enabled: false }, 'EXCLUSIVE_PUBLISHER_CONFIGURATION_REQUIRED');
   const repository = pinned(input.repository); assert.ok(repository.repositories?.length === 1, 'REPOSITORY_UNAVAILABLE'); validatePublicationRepository(repository.repositories[0]);
   const scan = await verifyScan(input, releaseBinding);
@@ -139,13 +140,13 @@ export function renderUnused121Pair(sources, live, source, image) {
   return requests;
 }
 export async function planUnused121(input, { run = runCommand, verifyScan = validateLocalScan } = {}) {
-  const releaseBinding = input.schemaVersion === 2 ? await sourceContract(input, run) : undefined;
+  const releaseBinding = input.schemaVersion >= 2 ? await sourceContract(input, run) : undefined;
   bindingSchema(input);
   equal(input.kind, 'serving-anchor', 'ANCHOR_PUBLICATION_ONLY');
   const publication = pinned(input.publication); assert.ok(publication.status === 'published' && publication.source === input.source && publication.signed === false && publication.publicationOutcomeUncertain === false, 'SUCCESSFUL_PUBLICATION_REQUIRED');
   const proof = pinned(publication.registryProof), scan = await verifyScan(input, releaseBinding);
   if (releaseBinding) assertBoundScan(scan, releaseBinding);
-  equal([proof.passed, proof.sourceSha, proof.receiptSha256, proof.configDigest, proof.repository, proof.region], [true, releaseBinding?.applicationSource ?? input.source, input.scan.sha256, scan.configDigest, REGISTRY.repository, REGISTRY.region], 'REGISTRY_PROOF_INVALID'); assert.match(proof.digest ?? '', digest);
+  equal([proof.passed, proof.sourceSha, proof.receiptSha256, proof.configDigest, proof.repository, proof.region], [true, boundArtifactSource(releaseBinding) ?? input.source, input.scan.sha256, scan.configDigest, REGISTRY.repository, REGISTRY.region], 'REGISTRY_PROOF_INVALID'); assert.match(proof.digest ?? '', digest);
   if (releaseBinding) assertBoundPublication(publication, releaseBinding, input.source, proof.digest);
   equal(publication.registryDigest, proof.digest, 'PUBLICATION_DIGEST_CHANGED'); validateMainCi(pinned(input.mainCi), input.source);
   const sources = { api: pinned(input.api), 'scheduler-worker': pinned(input.worker) }, live = pinned(input.liveServices), requests = renderUnused121Pair(sources, live, input.source, proof.digest);
@@ -181,17 +182,19 @@ export function validatePublicationRepository(repository) {
     assert.ok(filter.filterType === 'WILDCARD' && typeof filter.filter === 'string', 'TAG_FILTER_INVALID');
   }
 }
-export function validatePublicationPlatform(kind, proof, configDigest) {
+export function validatePublicationPlatform(kind, proof, configDigest, releaseBinding) {
   assert.match(proof.digest ?? '', digest, 'REGISTRY_DIGEST_REQUIRED'); assert.match(proof.platformDigest ?? '', digest, 'REGISTRY_PLATFORM_REQUIRED');
   equal(proof.configDigest, configDigest, 'REGISTRY_CONFIG_CHANGED');
-  if (kind === 'fallback') equal(proof.platformDigest, FALLBACK.platform, 'EXACT_FALLBACK_PLATFORM_REQUIRED');
+  if (releaseBinding?.schemaVersion === 3) equal(proof.platformDigest, releaseBinding.artifact.platform, 'BOUND_PLATFORM_CHANGED');
+  if (kind === 'fallback') equal(proof.platformDigest, releaseBinding?.fallback?.platform ?? FALLBACK.platform, 'EXACT_FALLBACK_PLATFORM_REQUIRED');
 }
 const aws = args => [...args, '--region', REGISTRY.region, '--output', 'json', '--no-cli-pager'];
 async function identity(run, call) { equal(JSON.parse(await call('aws', aws(['sts', 'get-caller-identity']))).Account, REGISTRY.account, 'AWS_ACCOUNT_CHANGED'); }
 async function currentMain(input, call) {
-  if (input.kind !== 'serving-anchor') return;
-  const branch = JSON.parse(await call('gh', ['api', 'repos/bzinkan/SchoolPilot/branches/main'])); equal(branch.commit?.sha, input.source, 'REMOTE_MAIN_CHANGED');
-  const runs = JSON.parse(await call('gh', ['run', 'list', '--repo', 'bzinkan/SchoolPilot', '--commit', input.source, '--event', 'push', '--limit', '100', '--json', 'headSha,headBranch,event,status,conclusion,workflowName'])); validateMainCi({ repository: 'bzinkan/SchoolPilot', branch: 'main', source: input.source, runs }, input.source);
+  if (input.kind !== 'serving-anchor' && input.schemaVersion !== 3) return;
+  const mainSource = input.kind === 'fallback' ? input.mainSource : input.source;
+  const branch = JSON.parse(await call('gh', ['api', 'repos/bzinkan/SchoolPilot/branches/main'])); equal(branch.commit?.sha, mainSource, 'REMOTE_MAIN_CHANGED');
+  const runs = JSON.parse(await call('gh', ['run', 'list', '--repo', 'bzinkan/SchoolPilot', '--commit', mainSource, '--event', 'push', '--limit', '100', '--json', 'headSha,headBranch,event,status,conclusion,workflowName'])); validateMainCi({ repository: 'bzinkan/SchoolPilot', branch: 'main', source: mainSource, runs }, mainSource);
 }
 async function exclusivePublisher(call) {
   const pages = JSON.parse(await call('gh', ['api', '--paginate', '--slurp', 'repos/bzinkan/SchoolPilot/actions/variables?per_page=100']));
@@ -230,7 +233,7 @@ function receiptWriter(directory, name, initial) {
 }
 export async function publishImage(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyScan = validateLocalScan, login = loginDocker, verifyPublished = verifyPublishedImage } = {}) {
   const { plan, window } = await replayPlan(planRecord, 'PublishImage', authorizationRecord, { run, now });
-  const receipt = receiptWriter(plan.input.outputDirectory, 'publication.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: plan.releaseBinding.applicationSource } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', signed: false, publicationOutcomeUncertain: false, publishedTags: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
+  const receipt = receiptWriter(plan.input.outputDirectory, 'publication.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(plan.schemaVersion === 3 ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', signed: false, publicationOutcomeUncertain: false, publishedTags: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
   const call = async (exe, args, options = {}) => { window.inWindow(); return checked(run, exe, args, { ...options, timeout: Math.min(options.timeout ?? 120_000, window.remaining()) }); };
   try {
     assert.ok(!existsSync(path.join(path.dirname(plan.input.scan.path), 'registry-proof.json')), 'FRESH_REGISTRY_PROOF_REQUIRED');
@@ -238,11 +241,11 @@ export async function publishImage(planRecord, authorizationRecord, { run = runC
     await identity(run, call); await currentMain(plan.input, call); await exclusivePublisher(call);
     const repository = JSON.parse(await call('aws', aws(['ecr', 'describe-repositories', '--registry-id', REGISTRY.account, '--repository-names', REGISTRY.repository]))); assert.ok(repository.repositories?.length === 1, 'REPOSITORY_UNAVAILABLE'); validatePublicationRepository(repository.repositories[0]); equal(repository, pinned(plan.input.repository), 'REPOSITORY_POLICY_CHANGED');
     receipt.value.repositoryPolicySha256 = hash(repository); receipt.value.exclusivePublisherRequired = true; receipt.value.atomicTagExclusionGuaranteed = false; receipt.save();
-    inspectImage(JSON.parse(await call('docker', ['--host', scan.dockerHost, 'image', 'inspect', scan.imageId])), scan.imageId, plan.releaseBinding?.applicationSource ?? plan.input.source);
+    inspectImage(JSON.parse(await call('docker', ['--host', scan.dockerHost, 'image', 'inspect', scan.imageId])), scan.imageId, boundArtifactSource(plan.releaseBinding) ?? plan.input.source);
     const before = await Promise.all(plan.tags.map(tag => remoteTag(tag, call))); let publishedDigest;
     for (const image of before.filter(Boolean)) {
       const proof = await validateRegistryManifest(async imageDigest => { const response = JSON.parse(await call('aws', aws(['ecr', 'batch-get-image', '--registry-id', REGISTRY.account, '--repository-name', REGISTRY.repository, '--image-ids', `imageDigest=${imageDigest}`]))); assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0]; }, image.imageId.imageDigest, scan.configDigest);
-      validatePublicationPlatform(plan.input.kind, proof, scan.configDigest);
+      validatePublicationPlatform(plan.input.kind, proof, scan.configDigest, plan.releaseBinding);
       if (publishedDigest) equal(proof.digest, publishedDigest, 'SOURCE_TAG_CONFLICT'); publishedDigest = proof.digest;
     }
     if (!publishedDigest) {
@@ -274,9 +277,9 @@ export async function publishImage(planRecord, authorizationRecord, { run = runC
         receipt.value.publishedTags.push({ tag, digest: publishedDigest }); receipt.value.publicationOutcomeUncertain = false; receipt.save();
       }
     }
-    window.inWindow(); const proof = await verifyPublished({ receiptPath: plan.input.scan.path, receiptSha256: plan.input.scan.sha256, sourceSha: plan.releaseBinding?.applicationSource ?? plan.input.source, repository: REGISTRY.repository, digest: publishedDigest, region: REGISTRY.region }, { run: (exe, args, options) => call(exe, args, options).then(stdout => ({ code: 0, stdout })) });
+    window.inWindow(); const proof = await verifyPublished({ receiptPath: plan.input.scan.path, receiptSha256: plan.input.scan.sha256, sourceSha: boundArtifactSource(plan.releaseBinding) ?? plan.input.source, repository: REGISTRY.repository, digest: publishedDigest, region: REGISTRY.region }, { run: (exe, args, options) => call(exe, args, options).then(stdout => ({ code: 0, stdout })) });
     receipt.value.registryDigest = proof.digest; receipt.value.registryProof = record(path.join(path.dirname(plan.input.scan.path), 'registry-proof.json'));
-    receipt.save(); validatePublicationPlatform(plan.input.kind, proof, scan.configDigest);
+    receipt.save(); validatePublicationPlatform(plan.input.kind, proof, scan.configDigest, plan.releaseBinding);
     for (const tag of plan.tags) { const image = await remoteTag(tag, call); equal(image?.imageId.imageDigest, proof.digest, 'FINAL_TAG_CHANGED'); }
     equal(JSON.parse(await call('aws', aws(['ecr', 'describe-repositories', '--registry-id', REGISTRY.account, '--repository-names', REGISTRY.repository]))), repository, 'REPOSITORY_POLICY_CHANGED');
     await finalSource(plan, run); window.inWindow(); receipt.value.status = 'published'; receipt.save(); return record(receipt.filename);
@@ -284,7 +287,7 @@ export async function publishImage(planRecord, authorizationRecord, { run = runC
 }
 export async function registerUnused121(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyRegistry = validateRegistryManifest, verifyScan = validateLocalScan } = {}) {
   const { plan, window } = await replayPlan(planRecord, 'RegisterUnused121', authorizationRecord, { run, now });
-  const receipt = receiptWriter(plan.input.outputDirectory, 'registration.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: plan.releaseBinding.applicationSource } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', registered: [], registrationOutcomeUncertain: false, servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
+  const receipt = receiptWriter(plan.input.outputDirectory, 'registration.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(plan.schemaVersion === 3 ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', registered: [], registrationOutcomeUncertain: false, servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
   const call = async (exe, args) => { window.inWindow(); return checked(run, exe, args, { timeout: Math.min(120_000, window.remaining()) }); };
   const serviceArgs = aws(['ecs', 'describe-services', '--cluster', 'schoolpilot-production-cluster', '--services', 'schoolpilot-production-api', 'schoolpilot-production-scheduler-worker']);
   try {
@@ -303,9 +306,9 @@ export async function registerUnused121(planRecord, authorizationRecord, { run =
       const rawResponse = await call('aws', aws(['ecs', 'register-task-definition', '--cli-input-json', `file://${generated.path.replaceAll('\\', '/')}`]));
       writeFileSync(path.join(plan.input.outputDirectory, `${role}.register-response.private.json`), rawResponse, { flag: 'wx', mode: 0o600 });
       const response = JSON.parse(rawResponse);
-      const arn = response.taskDefinition?.taskDefinitionArn;
+      const arn = plan.schemaVersion === 3 ? retainSuccessorRegistration(receipt.value, role, response, generated.sha256, requests[role].family) : response.taskDefinition?.taskDefinitionArn;
       // Retain the returned ARN before any semantic assertion or further command.
-      receipt.value.registered.push({ role, arn: typeof arn === 'string' ? arn : null, requestSha256: generated.sha256 }); receipt.value.registrationOutcomeUncertain = typeof arn !== 'string'; receipt.save();
+      if (plan.schemaVersion !== 3) { receipt.value.registered.push({ role, arn: typeof arn === 'string' ? arn : null, requestSha256: generated.sha256 }); receipt.value.registrationOutcomeUncertain = typeof arn !== 'string'; } receipt.save();
       assert.match(arn ?? '', new RegExp(`^arn:aws:ecs:${REGISTRY.region}:${REGISTRY.account}:task-definition/${requests[role].family}:[1-9][0-9]*$`), 'REGISTERED_ARN_INVALID'); assert.ok(arn !== generated.sourceArn, 'NEW_REVISION_REQUIRED'); window.inWindow();
       const actual = JSON.parse(await call('aws', aws(['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS'])));
       validateSourceResponse(actual, role, plan.input.source, plan.registryDigest, anchor128Stages()[0]); equal(registrationEnvironmentProjection(projection(actual)), registrationEnvironmentProjection(requests[role]), 'REGISTERED_DEFINITION_DRIFT');
@@ -320,7 +323,8 @@ async function main(args) {
   const [operation, inputPath, inputHash, authorizationPath, authorizationHash] = args;
   const input = { path: inputPath, sha256: inputHash }, authorization = { path: authorizationPath, sha256: authorizationHash };
   let result;
-  if (operation === 'PlanPublication' && args.length === 3) result = await planPublication(pinned(input));
+  if (operation === 'ValidateSuccessorPreparation' && args.length === 3) result = await validateSuccessorPreparation(pinned(input), { root, run: runCommand, fallback: FALLBACK, sourceDirectory: pinned(input).sourceDirectory, source: pinned(input).source });
+  else if (operation === 'PlanPublication' && args.length === 3) result = await planPublication(pinned(input));
   else if (operation === 'PlanUnused121' && args.length === 3) result = await planUnused121(pinned(input));
   else if (operation === 'PublishImage' && args.length === 5) result = await publishImage(input, authorization);
   else if (operation === 'RegisterUnused121' && args.length === 5) result = await registerUnused121(input, authorization);

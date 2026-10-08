@@ -33,7 +33,7 @@ function advancedObservation(candidate, read, write) {
   current.schoolpilotRemoteMain = source;
   current.currentMainCi = { source, event: 'push', branch: 'main', status: 'pending', checks: [], workflowRuns: {} };
   current.recordedAsOf = { kind: 'before_closing_pr_merge', closingPullRequest: 619, closingMergeSha: null, pendingMergePullRequests: [619, 620], resultingMainCiStatus: 'pending' };
-  current.preparationPullRequests ??= [616, 617, 619, 620].map(number => ({ number, state: 'OPEN', headRefOid: candidate.sources.schoolpilot.planningReference, mergeCommit: null, mergedAt: null }));
+  current.preparationPullRequests = [616, 617, 619, 620].map(number => ({ number, state: 'OPEN', headRefOid: candidate.sources.schoolpilot.planningReference, mergeCommit: null, mergedAt: null }));
   candidate.sources.schoolpilot.remoteMainObserved = source;
   for (const pr of candidate.inclusionMatrix) if (pr.repository === 'SchoolPilot') pr.includedInSource = source;
   const gate = candidate.gates.find(entry => entry.id === 'current-main-preparation-ci');
@@ -107,6 +107,33 @@ test('PR workflow evidence and invented closing merge cannot satisfy exact-push 
     assert.throws(() => validateIndex(candidate, fixture), /FUTURE_CLOSING_MERGE_REJECTED/);
   });
 });
+
+test('post-closing observations require every actual merge and the exact closing main', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = read('reconciliation');
+    assert.equal(current.recordedAsOf.kind, 'after_closing_pr_merge');
+    assert.equal(current.currentMainCi.status, 'passed');
+    validateIndex(candidate, fixture);
+    current.recordedAsOf.closingMergeSha = 'f'.repeat(40); write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CLOSING_MERGE_OBSERVATION_CHANGED/);
+  });
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = read('reconciliation'), tooling = current.preparationPullRequests.find(pr => pr.number === 620);
+    Object.assign(tooling, { state: 'OPEN', mergeCommit: null, mergedAt: null }); write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CLOSING_MERGES_REQUIRED/);
+  });
+});
+
+test('dependency-only successor source evidence cannot broaden the patch or select an artifact', () => {
+  for (const [field, value, error] of [['changedPaths', ['package-lock.json', 'src/app.ts'], 'SUCCESSOR_SOURCE_SCOPE_BROADENED'], ['entireCurrentMainLockfileCopied', true, 'SUCCESSOR_LOCKFILE_REVIEW_INCOMPLETE'], ['humanReplacementSelectionRecorded', true, 'SUCCESSOR_SOURCE_REVIEW_IS_NOT_SELECTION']]) {
+    receiptFixture((candidate, fixture, read, write) => {
+      const review = read('successorSourceReview'); review[field] = value; write('successorSourceReview', review);
+      assert.throws(() => validateIndex(candidate, fixture), new RegExp(error));
+    });
+  }
+  const candidate = index(); candidate.gates.find(entry => entry.id === 'fallback-successor-source').applicability = 'current_baseline';
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_SOURCE_GATE_CHANGED/);
+});
 test('new Usage activation, absent daily mode and unknown evidence fail validation', () => {
   let candidate = index(); candidate.usageModes.CLASSPILOT_USAGE_ROLLUP_MODE.requiredValue = 'on';
   assert.throws(() => validateIndex(candidate), /NEW_USAGE_MODE_MUST_STAY_OFF/);
@@ -115,11 +142,77 @@ test('new Usage activation, absent daily mode and unknown evidence fail validati
   candidate = index(); candidate.gates[0].evidence.push('inventedReceipt');
   assert.throws(() => validateIndex(candidate), /EVIDENCE_REFERENCE_UNKNOWN/);
 });
+
+test('successful successor preparation cannot select, authorize or relabel the fallback artifact', () => {
+  const candidate = index();
+  candidate.gates.find(entry => entry.id === 'fallback-successor-selection').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_SELECTION_CANNOT_BE_INFERRED/);
+  candidate.gates.find(entry => entry.id === 'fallback-successor-selection').status = 'pending';
+  candidate.artifacts.find(entry => entry.id === 'fallback-successor-artifact').sourceSha = candidate.artifacts.find(entry => entry.id === 'backend-successor-anchor').sourceSha;
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_ARTIFACT_ROLE_CHANGED/);
+  receiptFixture((candidate, fixture, read, write) => {
+    const proof = read('successorPreparationObservation'); proof.operationalAuthorization = true;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_PREPARATION_IS_NOT_SELECTION/);
+  });
+  receiptFixture((candidate, fixture, read, write) => {
+    const proof = read('successorPreparationObservation'); proof.cloudMutations = 1;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_PREPARATION_MUST_REMAIN_OFFLINE/);
+  });
+});
+
+test('successor status rejects changed binding and cross-role evidence even with updated file hashes', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const proof = read('successorPreparationObservation');
+    const ref = proof.preparationEvidence.ordinaryRecovery, native = read(ref);
+    native.artifactPair.fallback = structuredClone(native.artifactPair['serving-anchor']);
+    write(ref, native);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_BINDING_RECEIPT_CHANGED/);
+    const binding = read('successorBinding');
+    binding.preparation.evidence.ordinaryRecovery.sha256 = candidate.evidence[ref].gitBlobSha256;
+    write('successorBinding', binding); proof.bindingSha256 = candidate.evidence.successorBinding.gitBlobSha256;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_PREPARATION_ROLE_OR_RECEIPT_CHANGED/);
+  });
+  receiptFixture((candidate, fixture, read, write) => {
+    const binding = read('successorBinding'); binding.status = 'accepted'; write('successorBinding', binding);
+    const proof = read('successorPreparationObservation'); proof.bindingSha256 = candidate.evidence.successorBinding.gitBlobSha256;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_BINDING_IS_NOT_RELEASE_ACCEPTANCE/);
+  });
+  receiptFixture((candidate, fixture, read, write) => {
+    const proof = read('successorPreparationObservation'), ref = proof.preparationEvidence.successorScan, native = read(ref);
+    native.operationalAuthorization = true; write(ref, native);
+    const binding = read('successorBinding'); binding.preparation.evidence.successorScan.sha256 = candidate.evidence[ref].gitBlobSha256;
+    write('successorBinding', binding); proof.bindingSha256 = candidate.evidence.successorBinding.gitBlobSha256;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_WRAPPER_IS_NOT_AUTHORIZATION/);
+  });
+});
 test('public metadata rejects private records and escaping receipt paths', () => {
   let candidate = index(); candidate.artifacts[0].studentEmail = 'synthetic@example.invalid';
   assert.throws(() => validateIndex(candidate), /PRIVATE_DATA_FIELD_REJECTED/);
   candidate = index(); candidate.evidence.reconciliation.path = 'docs/../private-capture.json';
   assert.throws(() => validateIndex(candidate), /PUBLIC_EVIDENCE_PATH_REQUIRED/);
+});
+
+test('targeted fixture success cannot relabel the failed complete F database command', () => {
+  const candidate = index();
+  candidate.gates.find(entry => entry.id === 'fallback-successor-f-db').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_SOURCE_CHECK_GATE_RECLASSIFIED/);
+  receiptFixture((current, fixture, read, write) => {
+    const checks = read('successorSourceChecks');
+    checks.steps.find(entry => entry.command === 'npm run test:db-serial').counts.fail = 0;
+    write('successorSourceChecks', checks);
+    assert.throws(() => validateIndex(current, fixture), /SUCCESSOR_ORIGINAL_TEST_COUNTS_CHANGED/);
+  });
+  receiptFixture((current, fixture, read, write) => {
+    const checks = read('successorSourceChecks');
+    checks.correctedScreenshotFixture.compiledModuleIdentity.imageInventorySha256 = '0'.repeat(64);
+    write('successorSourceChecks', checks);
+    assert.throws(() => validateIndex(current, fixture), /SUCCESSOR_FIXTURE_REQUIRES_IMAGE_EQUIVALENCE/);
+  });
 });
 test('retained receipt modification is detected without modifying the original', () => {
   const candidate = index(), fixture = mkdtempSync(path.join(tmpdir(), 'release297-state-'));

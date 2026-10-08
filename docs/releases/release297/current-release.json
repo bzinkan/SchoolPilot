@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-07T21:29:13.642Z",
+  "observedAtUtc": "2026-10-08T00:33:00.773Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -21,7 +21,7 @@
   "sources": {
     "schoolpilot": {
       "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
-      "remoteMainObserved": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "remoteMainObserved": "a5161eb14939132776e0b77eac8e3c485091432c",
       "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
       "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
       "frozenApplicationReference": null,
@@ -236,6 +236,44 @@
         "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
         "gitTree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
       }
+    },
+    {
+      "id": "backend-successor-anchor",
+      "label": "Recovery-test application A image",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Review this exact artifact and pair-specific evidence; later A/F input changes invalidate applicability.",
+      "identity": {
+        "indexDigest": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+        "platformManifestDigest": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
+        "configDigest": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+        "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+      }
+    },
+    {
+      "id": "fallback-successor-artifact",
+      "label": "Dependency-only recovery successor F",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Review this exact artifact and pair-specific evidence; later A/F input changes invalidate applicability.",
+      "identity": {
+        "indexDigest": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+        "platformManifestDigest": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+        "configDigest": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+        "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+      }
     }
   ],
   "stages": [
@@ -244,13 +282,13 @@
       "label": "Observed merged implementation",
       "status": "passed",
       "applicability": "current_baseline",
-      "sourceSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
-      "rationale": "The coordinated integration, successors and preparation PRs #616/#617 are observed merged in eecf main. Binding tooling #620 and closing packet #619 are still open.",
-      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "rationale": "All scoped preparation PRs #616/#617/#619/#620 are merged in exact A main; the successor tooling/state PR remains a separate reviewable change.",
+      "observedAtUtc": "2026-10-07T23:49:34.842Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Complete the remaining scoped preparation merges and verify the final resulting main before selecting a frozen application reference."
+      "nextAction": "Review the bounded successor tooling/state PR; verify exact resulting-main CI after any separately authorized merge."
     },
     {
       "id": "testing",
@@ -258,12 +296,13 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Merged preparation PR CI and the dated observed-main push checks are separate from a frozen candidate. Final-main and successor native acceptance remain pending.",
-      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "rationale": "Exact A/F security/native recovery preparation passes; final-main tooling CI, candidate campaigns and live acceptance are separate gates.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
-        "reconciliation"
+        "reconciliation",
+        "successorPreparationObservation"
       ],
-      "nextAction": "Verify the final resulting-main push checks after closing merges; freeze and run the exact-source recovery and bounded acceptance campaign."
+      "nextAction": "Verify reviewed tooling/resulting-main CI; complete the bounded 133-client, classroom endurance, normal-load and headroom campaign before release acceptance."
     },
     {
       "id": "packaging",
@@ -271,14 +310,13 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Preparation artifacts exist; exact frozen application A packaging/acceptance and final-main B binding remain pending. The retained fallback fresh scan is failed.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "rationale": "Exact local A/F backend archives are identified and tested for successor preparation. Matched frontend, full acceptance, replacement selection and operational publication remain pending.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
-        "artifactsHistorical",
-        "extensionMerged",
-        "localArtifactsFresh"
+        "successorPreparationObservation",
+        "extensionFresh"
       ],
-      "nextAction": "Resolve the exact fallback blocker, freeze application A, build/test its exact image and frontend, then seal reviewed binding on equivalent final-main B with fresh CI."
+      "nextAction": "Review and select the exact F successor separately; finish matched candidate frontend and full acceptance before operational publication Plans."
     },
     {
       "id": "publication",
@@ -346,28 +384,28 @@
     {
       "id": "current-main-preparation-ci",
       "label": "Dated observed main push preparation CI",
-      "status": "pending",
+      "status": "passed",
       "applicability": "current_baseline",
-      "sourceSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
-      "rationale": "This exact eecf source has independently recorded push/main workflow provenance; checks are pending at the snapshot, separately from PR CI and future resulting-main CI.",
-      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "rationale": "Fresh read-only evidence binds successful push/main CI, CodeQL, Gitleaks and Trivy to exact a5161eb1; opt-in publication workflows remain skipped.",
+      "observedAtUtc": "2026-10-07T23:35:58.510Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Verify live main check links and retain fresh resulting-main evidence after the closing merges."
+      "nextAction": "Use this exact source for successor recovery preparation; verify any later application/tooling main and its applicable checks before release operations."
     },
     {
       "id": "preparation-merges",
       "label": "Remaining scoped preparation merges",
-      "status": "pending",
-      "applicability": "preparation_only",
-      "sourceSha": null,
-      "rationale": "PRs #616/#617 are observed merged. #620 and #619 are still open; human authorization is limited to exactly these four source PRs.",
-      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "rationale": "All four explicitly authorized preparation PRs are merged; the observed resulting main is exact a5161eb1.",
+      "observedAtUtc": "2026-10-07T23:35:58.510Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Complete applicable checks and remaining authorized source merges; verify their resulting main separately."
+      "nextAction": "Use this exact source for successor recovery preparation; verify any later application/tooling main and its applicable checks before release operations."
     },
     {
       "id": "merge-request",
@@ -471,7 +509,7 @@
       "evidence": [
         "localArtifactsFresh"
       ],
-      "nextAction": "Stop release preparation before executable operational plans. Resolve through a separately reviewed decision; no alternate fallback is authorized."
+      "nextAction": "Preserve the failed exact C578 scan. Review the dependency-only successor packet and record an exact-artifact selection before any original release acceptance or operational Plan."
     },
     {
       "id": "backend-scan-preparation",
@@ -623,13 +661,12 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": null,
-      "rationale": "Current candidate capabilities and ordinary recovery remain unpaired; the fresh exact-C578 scan has a separate failed release-blocking gate.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "rationale": "The preparation-only exact A/F ordinary recovery and restricted restoration now pass. Full release applicability, original acceptance campaigns and successor selection remain pending.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
-        "artifactsHistorical",
-        "localArtifactsFresh"
+        "successorPreparationObservation"
       ],
-      "nextAction": "Resolve retained-fallback scan blocker by separate review; preserve exact C578. Then verify capability equality, private-chat floors and53-entry recovery without shrinking admission."
+      "nextAction": "Record exact-source applicability and F selection after review; complete original candidate campaigns without relabelling preparation as full release acceptance."
     },
     {
       "id": "catalog-history",
@@ -779,55 +816,290 @@
     },
     {
       "id": "preparation-pr-616-ci",
-      "label": "Observed published PR #616 CI",
+      "label": "Historical published PR #616 CI",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
       "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Preserve exact-head PR history separately from current/final main checks."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "preparation-pr-617-ci",
-      "label": "Observed published PR #617 CI",
+      "label": "Historical published PR #617 CI",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
       "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Preserve exact-head PR history separately from current/final main checks."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "preparation-pr-619-ci",
-      "label": "Observed published PR #619 CI",
+      "label": "Historical published PR #619 CI",
       "status": "failed",
       "applicability": "preparation_only",
       "sourceSha": "9122b61b76f2e8a8e146877604ec63752575dc53",
       "rationale": "Read-only published-head PR checks: 17 success, 1 skip, 1 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance. They refer to the older published head, not the unfinished closing packet.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Preserve the cancelled older-head attempt; validate the completed closing commit before merge and retain resulting-main CI externally."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
     },
     {
       "id": "preparation-pr-620-ci",
-      "label": "Observed published PR #620 CI",
+      "label": "Historical published PR #620 CI",
       "status": "pending",
       "applicability": "preparation_only",
       "sourceSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
       "rationale": "Read-only published-head PR checks: 8 success, 0 skip, 0 cancelled; 5 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
       "observedAtUtc": "2026-10-07T21:29:13.642Z",
       "evidence": [
-        "reconciliation"
+        "reconciliationBeforeClosing"
       ],
-      "nextAction": "Wait for this exact published head to complete applicable PR checks before merge."
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
+    },
+    {
+      "id": "fallback-successor-source",
+      "label": "Dependency-only successor source review",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Independent Git object and dependency review confirms only the reviewed package-lock corrections; C578 application, build and schema inputs are preserved.",
+      "observedAtUtc": "2026-10-07T23:35:58.510Z",
+      "evidence": [
+        "successorSourceReview"
+      ],
+      "nextAction": "Source, scan and bounded recovery preparation are complete; separately review the exact replacement artifact before selection."
+    },
+    {
+      "id": "fallback-successor-successorScan",
+      "label": "Successor image security scan",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorScan"
+      ],
+      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+    },
+    {
+      "id": "fallback-successor-screenshotRuntime",
+      "label": "Native image/private-file/PDF processing",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorScreenshotRuntime"
+      ],
+      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+    },
+    {
+      "id": "fallback-successor-requestIpRateLimit",
+      "label": "Express client-IP and rate limiting",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorRequestIpRateLimit"
+      ],
+      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+    },
+    {
+      "id": "fallback-successor-ordinaryRecovery",
+      "label": "Ordinary A/F recovery",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorOrdinaryRecovery"
+      ],
+      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+    },
+    {
+      "id": "fallback-successor-restrictedRestoration",
+      "label": "Restricted-owner restoration",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorRestrictedRestoration"
+      ],
+      "nextAction": "Preserve paired evidence; source or image changes require refreshed applicable proof. Complete original candidate acceptance and exact-artifact selection before operational Plans."
+    },
+    {
+      "id": "fallback-successor-preparation",
+      "label": "Bounded C578 security successor preparation",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Actual offline ValidateSuccessorPreparation passes while releaseReady=false, operationalAuthorization=false and all original acceptance/applicability gates remain pending.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Review the exact source/artifact/evidence packet; this does not authorize successor selection or any release operation."
+    },
+    {
+      "id": "fallback-successor-selection",
+      "label": "Exact replacement artifact selection",
+      "status": "pending",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "No exact-artifact successor selection receipt or acceptance waiver exists; original C578 identities and October 7 failed scan remain preserved.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Record an explicit review of the exact F artifact and amendment to the original exact-C578 requirement. Do not infer approval from preparation, scans or source review."
+    },
+    {
+      "id": "fallback-successor-operational-guards",
+      "label": "Pending binding operational Plan guards",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Both publication roles, unused121, Anchor128 and compatible fallback reject the pending successor selection with zero external commands and zero cloud mutations.",
+      "observedAtUtc": "2026-10-08T00:20:33.762Z",
+      "evidence": [
+        "successorOperationalRejections"
+      ],
+      "nextAction": "Do not create executable operational Plans until exact-artifact selection, original candidate acceptance, source applicability and current-main prerequisites pass."
+    },
+    {
+      "id": "fallback-successor-f-type",
+      "label": "Exact-F TypeScript",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact clean-F type check exits zero.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Retain source-specific evidence; changes to F invalidate it."
+    },
+    {
+      "id": "fallback-successor-f-build",
+      "label": "Exact-F build",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact clean-F compile/build exits zero; Docker build is separately identified.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Retain exact build/artifact identities for replacement review."
+    },
+    {
+      "id": "fallback-successor-f-unit",
+      "label": "Exact-F unit and conditional service checks",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Original unit lane passes 1732 with four explicit skips; all four skipped service cases are separately re-exercised in a 65/65 zero-skip run.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve both complete receipts and skip coverage; do not rewrite original counts."
+    },
+    {
+      "id": "fallback-successor-f-db",
+      "label": "Exact-F original complete database lane",
+      "status": "failed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Complete exact-F DB lane finishes 1400 passed, 1 failed, 8 skipped. The old Redis text-matching screenshot fixture causes the sole failure; the separate reviewed correction passes 8/8 against image-equivalent F compiled modules. This complete failed command remains failed.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Review the independent fixture diagnosis and separate targeted receipt when selecting F; do not relabel the full lane or merge test changes into the lock-only source."
+    },
+    {
+      "id": "fallback-successor-f-rls",
+      "label": "Exact-F restricted-role database lane",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Separate exact-F RLS lane passes 383/383 with no failures/skips; public receipt maps all 18 skip markers from eight original DB skips to actual restricted-lane passes.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Retain actual role/skip coverage evidence; full-schema fixture checks do not replace ordinary recovery."
+    },
+    {
+      "id": "fallback-successor-f-full-audit",
+      "label": "Exact-F development-inclusive dependency audit",
+      "status": "failed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Original full audit exits 1 with 7 Moderate and 6 High findings in unchanged development dependencies; the runtime image has zero High/Critical.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Review/remediate the existing development tool-chain advisories separately; preserve this failure and do not present the full audit as clean."
+    },
+    {
+      "id": "fallback-successor-f-production-default-audit",
+      "label": "Exact-F default production dependency audit",
+      "status": "failed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Default production audit exits 1 for three Moderate mammoth/argparse/sprintf-js findings; no production High/Critical.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Track the Moderate dependency follow-ups and preserve the audit failure without a scan waiver."
+    },
+    {
+      "id": "fallback-successor-f-production-high-audit",
+      "label": "Exact-F production High/Critical audit gate",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Production audit with audit-level=high exits zero, with 0 High/Critical and three explicit Moderate findings.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Retain lower findings and compare the independently bound runtime image scan."
+    },
+    {
+      "id": "fallback-successor-f-reviewed-fixture",
+      "label": "Reviewed screenshot fixture against exact-F compiled modules",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "The existing bcded1c main test-only ABI correction passes 8/8 against all 1571 byte-equivalent F image/host compiled files. Independent causal replay reproduces the old mock mismatch and verifies corrected binding/null semantics. Original DB1400/1/8 remains failed.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks",
+        "successorDatabaseFixtureReview"
+      ],
+      "nextAction": "Review the precise fixture-only distinction with F replacement selection; no full corrected-lane or broader product pass is inferred."
     }
   ],
   "inclusionMatrix": [
@@ -839,7 +1111,7 @@
       "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
       "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
       "mergedAtUtc": "2026-10-04T22:45:00Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -856,7 +1128,7 @@
       "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
       "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
       "mergedAtUtc": "2026-10-05T03:23:01Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -871,7 +1143,7 @@
       "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
       "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
       "mergedAtUtc": "2026-10-05T11:23:21Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -886,7 +1158,7 @@
       "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
       "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
       "mergedAtUtc": "2026-10-06T22:31:47Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -903,7 +1175,7 @@
       "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
       "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
       "mergedAtUtc": "2026-10-06T23:19:16Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -918,7 +1190,7 @@
       "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
       "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
       "mergedAtUtc": "2026-10-07T00:30:35Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -933,7 +1205,7 @@
       "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
       "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
       "mergedAtUtc": "2026-10-07T14:17:37Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "backend",
         "frontend"
@@ -949,7 +1221,7 @@
       "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
       "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
       "mergedAtUtc": "2026-10-07T16:21:39Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -959,34 +1231,34 @@
     {
       "repository": "SchoolPilot",
       "number": 616,
-      "title": "Reconcile release297 current state and preserve dated evidence",
+      "title": "Release index, generated checklist and historical evidence reconciliation",
       "state": "MERGED",
       "headSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
       "mergeSha": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b",
       "mergedAtUtc": "2026-10-07T20:57:54Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
-        "release documentation",
-        "release tooling"
+        "release-tooling",
+        "release-evidence"
       ],
-      "reusableEvidence": "Immutable historical measurements and failures remain source-bound; no changed application acceptance is implied by documentation preparation.",
-      "requiredReruns": "Generated index/checklist validation, source reconciliation and fresh final-main checks after the closing merges."
+      "reusableEvidence": "Retained immutable historical records; no application acceptance is transferred.",
+      "requiredReruns": "Refresh exact candidate evidence and resulting-main CI for applicable later changes."
     },
     {
       "repository": "SchoolPilot",
       "number": 617,
-      "title": "Correct ClassPilot AI disclosures and record provider-boundary audit",
+      "title": "Correct AI/privacy claims and add bounded provider-boundary audit",
       "state": "MERGED",
       "headSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
       "mergeSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "mergedAtUtc": "2026-10-07T21:14:48Z",
-      "includedInSource": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
       "affectedArtifacts": [
-        "backend governance inputs",
-        "frontend public copy"
+        "backend-governance",
+        "frontend-public-copy"
       ],
-      "reusableEvidence": "Synthetic boundary fixtures and the claim-to-implementation table explain current behavior; prior runtime acceptance remains source-bound.",
-      "requiredReruns": "Freeze only after these merged public/governance inputs; verify final application inventories, exact artifacts and applicable regression/native acceptance."
+      "reusableEvidence": "Source-only copy and audit evidence; issue #618 remains a separate applicability decision.",
+      "requiredReruns": "Fresh candidate image, scan and native acceptance; governance documents are image inputs."
     },
     {
       "repository": "ClassPilot",
@@ -1002,12 +1274,44 @@
       ],
       "reusableEvidence": "Fresh canonical package verification passes all 24 files against clean source with identical merged extension tree; raw Git differences remain explicitly CRLF-only.",
       "requiredReruns": "Reverify package/tree on source drift; fresh Store/pending submissions and actual installed-client capability/adoption checks remain pending."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 619,
+      "title": "Operator packet, source-specific status and protection proposal",
+      "state": "MERGED",
+      "headSha": "106f78059172e2f7fda4632911b28153695ec448",
+      "mergeSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "mergedAtUtc": "2026-10-07T22:06:52Z",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Preparation-only records and reviewed settings proposal; no operational approval.",
+      "requiredReruns": "Refresh source/evidence binding and applicable CI after any tool or source change."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 620,
+      "title": "Version 2 binding controller and bounded CI installation correction",
+      "state": "MERGED",
+      "headSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
+      "mergeSha": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe",
+      "mergedAtUtc": "2026-10-07T21:48:32Z",
+      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "affectedArtifacts": [
+        "release-tooling",
+        "ci"
+      ],
+      "reusableEvidence": "Reviewed tooling regressions and passing PR/main CI; v2 profile remains pending.",
+      "requiredReruns": "Refresh tool/binding hashes and exact-main CI; native candidate acceptance remains required."
     }
   ],
   "evidence": {
     "reconciliation": {
-      "path": "docs/releases/release297/source-reconciliation-20261007T212913Z.json",
-      "gitBlobSha256": "2e6736dd09d7fb64a5ef8d13e4c0fb71561d2e58905eea2506014269447fae49"
+      "path": "docs/releases/release297/source-reconciliation-20261007T233558Z.json",
+      "gitBlobSha256": "c4fc1c41ee438fd5c2d1ec2df0affd0145255398c1355f89957c16dfd7a56ae3"
     },
     "extensionMerged": {
       "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json",
@@ -1096,6 +1400,54 @@
     "operatorStoreVersion": {
       "path": "docs/releases/release297/operator-store-version-20261007.json",
       "gitBlobSha256": "b66d654c7c925347a8215f6a235e246c4e9bf4777e05aedfccab1fb4ab1e7105"
+    },
+    "reconciliationBeforeClosing": {
+      "path": "docs/releases/release297/source-reconciliation-20261007T212913Z.json",
+      "gitBlobSha256": "2e6736dd09d7fb64a5ef8d13e4c0fb71561d2e58905eea2506014269447fae49"
+    },
+    "successorSourceReview": {
+      "path": "docs/release-evidence/release297-successor-20261007/source-delta-independent-review.json",
+      "gitBlobSha256": "edc6ccfa825925451c37ad303012aadfcb893556d62fc04c2c0def4f9207e6ff"
+    },
+    "successorBinding": {
+      "path": "docs/release-bindings/release-297-current-school-fallback-v3.json",
+      "gitBlobSha256": "6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c"
+    },
+    "successorScan": {
+      "path": "docs/release-evidence/release297-successor-20261007/successorScan.json",
+      "gitBlobSha256": "27507ca7afc2d1fe74c827b9fdc01754d34e06a3de0cc6a34ad0bc4d6dff620c"
+    },
+    "successorScreenshotRuntime": {
+      "path": "docs/release-evidence/release297-successor-20261007/screenshotRuntime.json",
+      "gitBlobSha256": "d24f76b171d48b72cae1a3975ca17ebf5b572c603b75502677a25081804c2a65"
+    },
+    "successorRequestIpRateLimit": {
+      "path": "docs/release-evidence/release297-successor-20261007/requestIpRateLimit.json",
+      "gitBlobSha256": "380e75e618aa2f56b8db0a2245eb99d7e257a257ac204e29e7d7471019274371"
+    },
+    "successorOrdinaryRecovery": {
+      "path": "docs/release-evidence/release297-successor-20261007/ordinaryRecovery.json",
+      "gitBlobSha256": "e7874f2427257d71b37d0d832529420d4c6e3df4d383028a3786ab16c1fefcd3"
+    },
+    "successorRestrictedRestoration": {
+      "path": "docs/release-evidence/release297-successor-20261007/restrictedRestoration.json",
+      "gitBlobSha256": "5351566f28af9e8efe85390e837ee18e31f2163aabe8504f223daa6d3fc14628"
+    },
+    "successorPreparationObservation": {
+      "path": "docs/releases/release297/successor-preparation-observation-20261008.json",
+      "gitBlobSha256": "b1304c38cbba758d1aefcaf84fec7a359c910a7aa327f3b7b7ee2646285dd8b3"
+    },
+    "successorOperationalRejections": {
+      "path": "docs/releases/release297/successor-pending-operational-plans-20261008.json",
+      "gitBlobSha256": "9501688af64bdcf1c6061462bc454db3b7659f9e8c5711da285b8151031f36fc"
+    },
+    "successorSourceChecks": {
+      "path": "docs/releases/release297/source-specific-successor-checks-20261008.json",
+      "gitBlobSha256": "3e9b2951aff71ea584085b9847f50306d3f0b80af4345d475f301aa09342e697"
+    },
+    "successorDatabaseFixtureReview": {
+      "path": "docs/release-evidence/release297-successor-20261007/database-fixture-independent-review.json",
+      "gitBlobSha256": "b611d1e6609992bfee7115a1c2b8b48a2f0d34c8ff057ae3b17ce61ab98be1f8"
     }
   }
 }

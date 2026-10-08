@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_successor_source_delta_independent_review",
+  "observedAt": "2026-10-07T23:35:35.131Z",
+  "status": "passed",
+  "passed": true,
+  "reviewer": "independent-successor-review-agent",
+  "reviewScope": "Source delta only; does not approve artifact selection or operational use.",
+  "baseSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+  "successorSource": "d75fc1c48d0a3918857508d3965904c69023a153",
+  "referencePatchSource": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
+  "parentIsExactC578": true,
+  "cleanSourceVerified": true,
+  "changedPaths": [
+    "package-lock.json"
+  ],
+  "changedPackageCount": 28,
+  "changedPackages": [
+    "node_modules/@img/sharp-darwin-arm64",
+    "node_modules/@img/sharp-darwin-x64",
+    "node_modules/@img/sharp-freebsd-wasm32",
+    "node_modules/@img/sharp-libvips-darwin-arm64",
+    "node_modules/@img/sharp-libvips-darwin-x64",
+    "node_modules/@img/sharp-libvips-linux-arm",
+    "node_modules/@img/sharp-libvips-linux-arm64",
+    "node_modules/@img/sharp-libvips-linux-ppc64",
+    "node_modules/@img/sharp-libvips-linux-riscv64",
+    "node_modules/@img/sharp-libvips-linux-s390x",
+    "node_modules/@img/sharp-libvips-linux-x64",
+    "node_modules/@img/sharp-libvips-linuxmusl-arm64",
+    "node_modules/@img/sharp-libvips-linuxmusl-x64",
+    "node_modules/@img/sharp-linux-arm",
+    "node_modules/@img/sharp-linux-arm64",
+    "node_modules/@img/sharp-linux-ppc64",
+    "node_modules/@img/sharp-linux-riscv64",
+    "node_modules/@img/sharp-linux-s390x",
+    "node_modules/@img/sharp-linux-x64",
+    "node_modules/@img/sharp-linuxmusl-arm64",
+    "node_modules/@img/sharp-linuxmusl-x64",
+    "node_modules/@img/sharp-wasm32",
+    "node_modules/@img/sharp-webcontainers-wasm32",
+    "node_modules/@img/sharp-win32-arm64",
+    "node_modules/@img/sharp-win32-ia32",
+    "node_modules/@img/sharp-win32-x64",
+    "node_modules/proxy-addr",
+    "node_modules/sharp"
+  ],
+  "dependencyVersions": {
+    "proxy-addr": "2.0.8",
+    "sharp": "0.35.5",
+    "sharpNative": "0.35.5",
+    "sharpLibvips": "1.3.4"
+  },
+  "entireCurrentMainLockfileCopied": false,
+  "referencePackageRecordsMatchExactly": true,
+  "unrelatedLockfileRecordsAndMetadataUnchanged": true,
+  "sourceDeltaGitTreeProof": {
+    "historicalTree": "74f35a574a9486bc30ad448c5660dae614c6581b",
+    "successorTree": "214e621f38b6da8bccc0ca75a40d4a09012d4682",
+    "historicalLockfileBlob": "d47113701bf6144400c524b32de5e797afbee920",
+    "successorLockfileBlob": "608236c5f8366de630cba68ee96951edba5eb7a7",
+    "referenceLockfileBlob": "8c1744a6567b67a7b73164c695afd4c5a9e2bc3a",
+    "unchangedObjectCount": 2039,
+    "unchangedObjectsSha256": "fb3314d2dfaa60e24b9224ab787690bb529f0c48e962c0cfd86433a8183c694d"
+  },
+  "unchangedInputs": {
+    "applicationCode": true,
+    "migrations": true,
+    "dockerfile": true,
+    "buildConfiguration": true,
+    "frontend": true,
+    "allTrackedObjectsExceptLockfile": true
+  },
+  "inventories": {
+    "historicalC578": {
+      "backend": {
+        "sha256": "f98ab567c70bae9f8dd9064c54348fd29fc8223ebb425789ca02586f5f23a44d",
+        "fileCount": 548
+      },
+      "frontend": {
+        "sha256": "d6ea482405f1b84efa75f3f80f3a63e0ba452349db42af0b8533e1beb8cb103e",
+        "fileCount": 632
+      }
+    },
+    "successorF": {
+      "backend": {
+        "sha256": "97c9075f67f871d15c3e29006830a8d799c8e0fe22c7d2173fae3421378bdf53",
+        "fileCount": 548
+      },
+      "frontend": {
+        "sha256": "d6ea482405f1b84efa75f3f80f3a63e0ba452349db42af0b8533e1beb8cb103e",
+        "fileCount": 632
+      }
+    }
+  },
+  "proofScriptSha256": "35beb3af910c0522c296d7ff6712332d14cf23579696e0ee90d6e9420323fc5b",
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "humanReplacementSelectionRecorded": false
+}

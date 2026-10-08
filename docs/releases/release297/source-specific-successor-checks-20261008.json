@@ -1,0 +1,1205 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_fallback_successor_source_specific_checks",
+  "observedAtUtc": "2026-10-08T00:31:03.209Z",
+  "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "localIndex": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+      "config": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+      "platform": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
+      "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+    },
+    "fallback": {
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "localIndex": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+      "config": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+      "platform": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+      "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+    }
+  },
+  "sourceInventories": {
+    "servingAnchor": {
+      "backend": {
+        "sha256": "11ab2736ad2c4fc7a75da1d00b15168c8f5d297c39e6e269808301b961cf669d",
+        "fileCount": 563
+      },
+      "frontend": {
+        "sha256": "3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0",
+        "fileCount": 633
+      }
+    },
+    "fallback": {
+      "backend": {
+        "sha256": "97c9075f67f871d15c3e29006830a8d799c8e0fe22c7d2173fae3421378bdf53",
+        "fileCount": 548
+      },
+      "frontendNotApplicable": "Recovery backend/worker artifact contains no frontend; matched current candidate frontend remains separately gated."
+    }
+  },
+  "sourceDelta": {
+    "baseline": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "successor": "d75fc1c48d0a3918857508d3965904c69023a153",
+    "changedPaths": [
+      "package-lock.json"
+    ],
+    "appliedCorrection": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
+    "applicationMigrationsDockerfileAndBuildUnchanged": true
+  },
+  "steps": [
+    {
+      "command": "npm ci",
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/npm-ci.log",
+        "sha256": "1169b07efa0f365531f0dee4b852364ca74e9c2f992b7f78ef7d5febf17d96f7"
+      },
+      "auditWarningsNotApproval": true
+    },
+    {
+      "command": "npm run check",
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/typecheck.log",
+        "sha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58"
+      }
+    },
+    {
+      "command": "npm run build",
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/host-build.log",
+        "sha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48"
+      }
+    },
+    {
+      "command": "npm run test:unit",
+      "status": "passed_with_explicit_skips",
+      "exitCode": 0,
+      "counts": {
+        "tests": 1736,
+        "suites": 174,
+        "pass": 1732,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 4,
+        "todo": 0
+      },
+      "finalTapSummaryPresent": true,
+      "observedFailedTapRecords": 0,
+      "skippedCases": [
+        "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+        "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+        "ok 3 - parses inspected index key columns as a text array # SKIP",
+        "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+      ],
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/unit.log",
+        "sha256": "355715bbac477f1e754a82a1d7165ebe34794e21d76d1f77b3c29073dd567574"
+      }
+    },
+    {
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 <four conditional service test files>",
+      "status": "passed",
+      "exitCode": 0,
+      "counts": {
+        "tests": 65,
+        "suites": 6,
+        "pass": 65,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "finalTapSummaryPresent": true,
+      "observedFailedTapRecords": 0,
+      "skippedCases": [],
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/unit-conditional-services-d8cf461f07c3.log",
+        "sha256": "db5c752883b37fd2e9985b276ff516bc206b5b2ee97efc5fff97f12c460977c7"
+      },
+      "priorSkippedCasesReexercised": 4
+    },
+    {
+      "command": "npm audit --json",
+      "status": "failed",
+      "exitCode": 1,
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/npm-full-audit.json",
+        "sha256": "14a28f84ba2fc64fb5d1804b3ef24aa1aae42712714364cb137fc4ec019dc6ba"
+      },
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 7,
+        "high": 6,
+        "critical": 0,
+        "total": 13
+      }
+    },
+    {
+      "command": "npm audit --omit=dev --json",
+      "status": "failed",
+      "exitCode": 1,
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/npm-production-audit.json",
+        "sha256": "c6d217e0b23c24cd2e2409007df96f9216b1977e4dbccef0183d34cdf8bfc8aa"
+      },
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 3,
+        "high": 0,
+        "critical": 0,
+        "total": 3
+      }
+    },
+    {
+      "command": "npm audit --omit=dev --audit-level=high --json",
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/npm-production-audit-high-gate.json",
+        "sha256": "c6d217e0b23c24cd2e2409007df96f9216b1977e4dbccef0183d34cdf8bfc8aa"
+      },
+      "counts": {
+        "info": 0,
+        "low": 0,
+        "moderate": 3,
+        "high": 0,
+        "critical": 0,
+        "total": 3
+      }
+    },
+    {
+      "command": "npm run test:db-serial",
+      "status": "failed",
+      "exitCode": 1,
+      "counts": {
+        "tests": 1409,
+        "suites": 121,
+        "pass": 1400,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 8,
+        "todo": 0
+      },
+      "finalTapSummaryPresent": true,
+      "observedFailedTapRecords": 2,
+      "skippedCases": [
+        "ok 47 - Compatible fallback cleanup with Usage off # SKIP requires restricted RLS lane",
+        "ok 82 - Focus authority and continuation under restricted RLS # SKIP",
+        "ok 87 - Classroom lesson prerequisites under restricted RLS # SKIP",
+        "ok 177 - ClassPilot roadmap forced tenant isolation # SKIP",
+        "ok 193 - ClassPilot schedule-change startup and forced-RLS bundle # SKIP",
+        "ok 345 - ClassPilot transactional plan scenarios against PostgreSQL/FORCE RLS # SKIP",
+        "ok 348 - Monitored Browser Time rollups under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)",
+        "ok 2 - RLS partitions PassPilot legacy multi-class memberships # SKIP",
+        "ok 3 - RLS partitions PassPilot appointments and rejects foreign appointment parents # SKIP",
+        "ok 4 - RLS partitions PassPilot issuance rules and their school-scoped read # SKIP",
+        "ok 5 - RLS partitions Monitored Browser Time rollups and their school-scoped read # SKIP",
+        "ok 6 - RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context # SKIP",
+        "ok 16 - RLS hides another school's School Library rows even when that school is named explicitly # SKIP",
+        "ok 18 - RLS hides another school's precise Flight Path resources even when that school is named explicitly # SKIP",
+        "ok 373 - GoPilot child-table RLS # SKIP",
+        "ok 510 - appointments under forced tenant RLS # SKIP requires restricted RLS lane",
+        "ok 7 - partitions canonical classes, rosters, passes, and migration state under RLS # SKIP",
+        "ok 541 - PassPilot rule tables under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)"
+      ],
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/db-serial-566fd899cc61.log",
+        "sha256": "2a409385d652abff432d21708384794af194342d7ed90a97e973b5ff7476f057"
+      }
+    },
+    {
+      "command": "npm run test:rls-serial",
+      "status": "passed",
+      "exitCode": 0,
+      "counts": {
+        "tests": 383,
+        "suites": 22,
+        "pass": 383,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "finalTapSummaryPresent": true,
+      "observedFailedTapRecords": 0,
+      "skippedCases": [],
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/rls-serial-d269e3482069.log",
+        "sha256": "30da8b6fde284e845547f06b17454ef2729e93c3a66ab473b0c643f4f4b7594e"
+      }
+    }
+  ],
+  "audits": {
+    "productionHighCriticalGatePassed": true,
+    "productionImageHighCriticalGatePassed": true,
+    "fullDefaultAuditPassed": false,
+    "productionDefaultAuditPassed": false,
+    "full": {
+      "info": 0,
+      "low": 0,
+      "moderate": 7,
+      "high": 6,
+      "critical": 0,
+      "total": 13
+    },
+    "production": {
+      "info": 0,
+      "low": 0,
+      "moderate": 3,
+      "high": 0,
+      "critical": 0,
+      "total": 3
+    },
+    "findings": [
+      {
+        "package": "@esbuild-kit/core-utils",
+        "version": "3.3.2",
+        "severity": "moderate",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "@esbuild-kit/esm-loader",
+        "version": "2.6.5",
+        "severity": "moderate",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "argparse",
+        "version": "1.0.10",
+        "severity": "moderate",
+        "production": true,
+        "developmentOnly": false,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "braces",
+        "version": "3.0.3",
+        "severity": "high",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": [
+          {
+            "id": 1240992,
+            "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+            "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+            "severity": "high"
+          }
+        ]
+      },
+      {
+        "package": "chokidar",
+        "version": "3.6.0",
+        "severity": "high",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "drizzle-kit",
+        "version": "0.31.10",
+        "severity": "moderate",
+        "production": false,
+        "developmentOnly": true,
+        "direct": true,
+        "advisories": []
+      },
+      {
+        "package": "esbuild",
+        "version": "0.18.20",
+        "severity": "moderate",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": [
+          {
+            "id": 1102341,
+            "url": "https://github.com/advisories/GHSA-67mh-4wv8-2f99",
+            "title": "esbuild enables any website to send any requests to the development server and read the response",
+            "severity": "moderate"
+          }
+        ]
+      },
+      {
+        "package": "fast-glob",
+        "version": "3.3.3",
+        "severity": "high",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "globby",
+        "version": "11.1.0",
+        "severity": "high",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "mammoth",
+        "version": "1.12.3",
+        "severity": "moderate",
+        "production": true,
+        "developmentOnly": false,
+        "direct": true,
+        "advisories": []
+      },
+      {
+        "package": "micromatch",
+        "version": "4.0.8",
+        "severity": "high",
+        "production": false,
+        "developmentOnly": true,
+        "direct": false,
+        "advisories": []
+      },
+      {
+        "package": "sprintf-js",
+        "version": "1.0.3",
+        "severity": "moderate",
+        "production": true,
+        "developmentOnly": false,
+        "direct": false,
+        "advisories": [
+          {
+            "id": 1241202,
+            "url": "https://github.com/advisories/GHSA-hp3w-g68c-fv3c",
+            "title": "sprintf-js vulnerable to denial of service through unbounded precision specifiers",
+            "severity": "moderate"
+          }
+        ]
+      },
+      {
+        "package": "tsc-alias",
+        "version": "1.8.17",
+        "severity": "high",
+        "production": false,
+        "developmentOnly": true,
+        "direct": true,
+        "advisories": []
+      }
+    ],
+    "developmentRemediationFollowUp": "Unchanged C578 tsc-alias build-time dependency chain has six High entries, all marked dev:true and excluded from production npm audit/image; remediate in a separate reviewed tooling dependency change."
+  },
+  "nativeAttempts": [
+    {
+      "runId": "8b7ccbc7af23",
+      "status": "failed",
+      "evidence": {
+        "storage": "private",
+        "path": "recovery/execution-8b7ccbc7af23/execution.json",
+        "sha256": "dcaa5fe8479bd888102c411cc09f93994ad2afead53957865223b9326c991d51"
+      },
+      "cleanupPassed": true,
+      "gracefulCleanupPassed": false,
+      "actualApiWorkerProcesses": 0,
+      "gracefulDrains": 0,
+      "reason": "Harness requested unsupported cumulative RLS bundle at 126; corrected to existing exact per-phase bundle."
+    },
+    {
+      "runId": "69c51faab928",
+      "status": "failed",
+      "evidence": {
+        "storage": "private",
+        "path": "recovery/execution-69c51faab928/execution.json",
+        "sha256": "e081013f0291f4e8b5b64782c76b0b1c5599240700bdd973f54b7a4398f1bfe1"
+      },
+      "cleanupPassed": true,
+      "gracefulCleanupPassed": false,
+      "actualApiWorkerProcesses": 8,
+      "gracefulDrains": 8,
+      "reason": "Borrowed earlier restoration probe omitted required explicit parameter text casts; corrected by reusing the existing stable06 probe."
+    },
+    {
+      "runId": "2151d4342b64",
+      "status": "passed",
+      "evidence": {
+        "storage": "private",
+        "path": "recovery/execution-2151d4342b64/execution.json",
+        "sha256": "008a3b134aab5d8bd75ec6d8b3a36e2362e258e784efa7ed6c5a7ad4f7211bcb"
+      },
+      "cleanupPassed": true,
+      "gracefulCleanupPassed": true,
+      "actualApiWorkerProcesses": 8,
+      "gracefulDrains": 8,
+      "admissionCounts": [
+        121,
+        125,
+        126,
+        127,
+        128,
+        129
+      ],
+      "baselineMigrations": 43,
+      "candidateMigrations": 53,
+      "fallbackDeclaredMigrations": 52,
+      "retainedCompletedMigrations": 53
+    }
+  ],
+  "ownedChecksCleanup": {
+    "passed": true,
+    "resources": [
+      {
+        "role": "redis",
+        "absent": true,
+        "exitCode": 0,
+        "oomKilled": false,
+        "unforced": true
+      },
+      {
+        "role": "postgres",
+        "absent": true,
+        "exitCode": 0,
+        "oomKilled": false,
+        "unforced": true
+      },
+      {
+        "role": "redis",
+        "absent": true,
+        "exitCode": 0,
+        "oomKilled": false,
+        "unforced": true
+      },
+      {
+        "role": "postgres",
+        "absent": true,
+        "exitCode": 0,
+        "oomKilled": false,
+        "unforced": true
+      }
+    ],
+    "evidence": [
+      {
+        "storage": "private",
+        "path": "fallback-F/checks-566fd899cc61.json",
+        "sha256": "d6542ad4d9035ce2d4e93c2274fae51524b49a63492c7dff95ae977a7b2c3e70"
+      },
+      {
+        "storage": "private",
+        "path": "fallback-F/checks-d269e3482069.json",
+        "sha256": "9ddf920cf3f41f2542d5ac18264523af8021d91af5951c4083f417bd0dfe39bc"
+      }
+    ]
+  },
+  "publication": false,
+  "registration": false,
+  "deployment": false,
+  "activation": false,
+  "productionMutations": 0,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "checkAttempts": [
+    {
+      "runId": "d8cf461f07c3",
+      "lane": "initial_combined",
+      "status": "failed",
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/checks-d8cf461f07c3.json",
+        "sha256": "0950574770a0a7387c7b2cf17b0eb83995a00fcc6758a9bb8749345c7bcbdde9"
+      },
+      "commands": [
+        {
+          "name": "db-create-schema",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-create-schema-d8cf461f07c3.log",
+            "sha256": "32eedc65ca7946f8e598609c85ded8b8712243dd57edc7bbf4a2cd3fc871653c"
+          }
+        },
+        {
+          "name": "db-appointment-contract",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-appointment-contract-d8cf461f07c3.log",
+            "sha256": "2c0ed679cf48b0902cc3537350ae3396ee0f39dea9746fa929c9b676a7699edb"
+          }
+        },
+        {
+          "name": "unit-conditional-services",
+          "exitCode": 0,
+          "error": null,
+          "counts": {
+            "tests": 65,
+            "suites": 6,
+            "pass": 65,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "finalTapSummaryPresent": true,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/unit-conditional-services-d8cf461f07c3.log",
+            "sha256": "db5c752883b37fd2e9985b276ff516bc206b5b2ee97efc5fff97f12c460977c7"
+          }
+        },
+        {
+          "name": "db-serial",
+          "exitCode": null,
+          "error": "ETIMEDOUT",
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 26,
+          "skippedCases": [
+            "ok 47 - Compatible fallback cleanup with Usage off # SKIP requires restricted RLS lane",
+            "ok 82 - Focus authority and continuation under restricted RLS # SKIP",
+            "ok 87 - Classroom lesson prerequisites under restricted RLS # SKIP",
+            "ok 177 - ClassPilot roadmap forced tenant isolation # SKIP",
+            "ok 193 - ClassPilot schedule-change startup and forced-RLS bundle # SKIP",
+            "ok 345 - ClassPilot transactional plan scenarios against PostgreSQL/FORCE RLS # SKIP",
+            "ok 348 - Monitored Browser Time rollups under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)",
+            "ok 2 - RLS partitions PassPilot legacy multi-class memberships # SKIP",
+            "ok 3 - RLS partitions PassPilot appointments and rejects foreign appointment parents # SKIP",
+            "ok 4 - RLS partitions PassPilot issuance rules and their school-scoped read # SKIP",
+            "ok 5 - RLS partitions Monitored Browser Time rollups and their school-scoped read # SKIP",
+            "ok 6 - RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context # SKIP",
+            "ok 16 - RLS hides another school's School Library rows even when that school is named explicitly # SKIP",
+            "ok 18 - RLS hides another school's precise Flight Path resources even when that school is named explicitly # SKIP",
+            "ok 373 - GoPilot child-table RLS # SKIP",
+            "ok 510 - appointments under forced tenant RLS # SKIP requires restricted RLS lane",
+            "ok 7 - partitions canonical classes, rosters, passes, and migration state under RLS # SKIP",
+            "ok 541 - PassPilot rule tables under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)"
+          ],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-serial-d8cf461f07c3.log",
+            "sha256": "68cad443a06fb0928df9512305415658c3f132b358494b620c905d180b5140a6"
+          }
+        },
+        {
+          "name": "rls-legacy-convergence",
+          "exitCode": 1,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/rls-legacy-convergence-d8cf461f07c3.log",
+            "sha256": "3b33a52e02f4c8e3b77cdeb4309696a983a86446fdee96e32f5d97cc6bf08aa2"
+          }
+        }
+      ],
+      "ownedCleanupPassed": true,
+      "reason": "Initial harness forced scheduler off during tests, used a 15-minute bound, and reused the mutated DB test database for RLS convergence. Retained failed assertions, timeout, and convergence failure; corrected with independent fresh CI-shaped fixtures."
+    },
+    {
+      "runId": "0faa941095c6",
+      "lane": "rls",
+      "status": "failed",
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/checks-0faa941095c6.json",
+        "sha256": "a9b9243c44fddcf02dfd4b3b4d985fafcb4877fa3bd8608c6256386fa4fab909"
+      },
+      "commands": [
+        {
+          "name": "db-create-schema",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-create-schema-0faa941095c6.log",
+            "sha256": "32eedc65ca7946f8e598609c85ded8b8712243dd57edc7bbf4a2cd3fc871653c"
+          }
+        },
+        {
+          "name": "rls-legacy-convergence",
+          "exitCode": 1,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/rls-legacy-convergence-0faa941095c6.log",
+            "sha256": "cc6ae29c92ed8d8f0dc3e7e7be041831fed1a862807b424b59250c8545954cc3"
+          }
+        }
+      ],
+      "ownedCleanupPassed": true,
+      "reason": "Fresh RLS-only fixture omitted CI RLS_GUC_ENABLED/table settings at convergence; corrected in a fresh fixture with the source registry before convergence."
+    },
+    {
+      "runId": "d269e3482069",
+      "lane": "rls",
+      "status": "passed",
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/checks-d269e3482069.json",
+        "sha256": "9ddf920cf3f41f2542d5ac18264523af8021d91af5951c4083f417bd0dfe39bc"
+      },
+      "commands": [
+        {
+          "name": "db-create-schema",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-create-schema-d269e3482069.log",
+            "sha256": "32eedc65ca7946f8e598609c85ded8b8712243dd57edc7bbf4a2cd3fc871653c"
+          }
+        },
+        {
+          "name": "rls-legacy-convergence",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/rls-legacy-convergence-d269e3482069.log",
+            "sha256": "32b7ccd22bd5406f7cc75bbb1a512e65b7ff712d6b599b8c35dff85df0062718"
+          }
+        },
+        {
+          "name": "rls-setup",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/rls-setup-d269e3482069.log",
+            "sha256": "b052de67d15c803e7ad035c614da69e515aa66a3f87c2d857604cdc33ec2f97a"
+          }
+        },
+        {
+          "name": "rls-serial",
+          "exitCode": 0,
+          "error": null,
+          "counts": {
+            "tests": 383,
+            "suites": 22,
+            "pass": 383,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "finalTapSummaryPresent": true,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/rls-serial-d269e3482069.log",
+            "sha256": "30da8b6fde284e845547f06b17454ef2729e93c3a66ab473b0c643f4f4b7594e"
+          }
+        }
+      ],
+      "ownedCleanupPassed": true
+    },
+    {
+      "runId": "566fd899cc61",
+      "lane": "db",
+      "status": "failed",
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/checks-566fd899cc61.json",
+        "sha256": "d6542ad4d9035ce2d4e93c2274fae51524b49a63492c7dff95ae977a7b2c3e70"
+      },
+      "commands": [
+        {
+          "name": "db-create-schema",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-create-schema-566fd899cc61.log",
+            "sha256": "32eedc65ca7946f8e598609c85ded8b8712243dd57edc7bbf4a2cd3fc871653c"
+          }
+        },
+        {
+          "name": "db-appointment-contract",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-appointment-contract-566fd899cc61.log",
+            "sha256": "2c0ed679cf48b0902cc3537350ae3396ee0f39dea9746fa929c9b676a7699edb"
+          }
+        },
+        {
+          "name": "db-serial",
+          "exitCode": 1,
+          "error": null,
+          "counts": {
+            "tests": 1409,
+            "suites": 121,
+            "pass": 1400,
+            "fail": 1,
+            "cancelled": 0,
+            "skipped": 8,
+            "todo": 0
+          },
+          "finalTapSummaryPresent": true,
+          "observedFailedTapRecords": 2,
+          "skippedCases": [
+            "ok 47 - Compatible fallback cleanup with Usage off # SKIP requires restricted RLS lane",
+            "ok 82 - Focus authority and continuation under restricted RLS # SKIP",
+            "ok 87 - Classroom lesson prerequisites under restricted RLS # SKIP",
+            "ok 177 - ClassPilot roadmap forced tenant isolation # SKIP",
+            "ok 193 - ClassPilot schedule-change startup and forced-RLS bundle # SKIP",
+            "ok 345 - ClassPilot transactional plan scenarios against PostgreSQL/FORCE RLS # SKIP",
+            "ok 348 - Monitored Browser Time rollups under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)",
+            "ok 2 - RLS partitions PassPilot legacy multi-class memberships # SKIP",
+            "ok 3 - RLS partitions PassPilot appointments and rejects foreign appointment parents # SKIP",
+            "ok 4 - RLS partitions PassPilot issuance rules and their school-scoped read # SKIP",
+            "ok 5 - RLS partitions Monitored Browser Time rollups and their school-scoped read # SKIP",
+            "ok 6 - RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context # SKIP",
+            "ok 16 - RLS hides another school's School Library rows even when that school is named explicitly # SKIP",
+            "ok 18 - RLS hides another school's precise Flight Path resources even when that school is named explicitly # SKIP",
+            "ok 373 - GoPilot child-table RLS # SKIP",
+            "ok 510 - appointments under forced tenant RLS # SKIP requires restricted RLS lane",
+            "ok 7 - partitions canonical classes, rosters, passes, and migration state under RLS # SKIP",
+            "ok 541 - PassPilot rule tables under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)"
+          ],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-serial-566fd899cc61.log",
+            "sha256": "2a409385d652abff432d21708384794af194342d7ed90a97e973b5ff7476f057"
+          }
+        }
+      ],
+      "ownedCleanupPassed": true,
+      "reason": "See retained actual command outcomes; not waived."
+    },
+    {
+      "runId": "2f840d0c8285",
+      "lane": "screenshot",
+      "status": "passed",
+      "source": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "evidence": {
+        "storage": "private",
+        "path": "fallback-F/checks-2f840d0c8285.json",
+        "sha256": "eacbfb999090e713acbd756c4828c245c07383feb62ab92d780d4bc165088d0d"
+      },
+      "commands": [
+        {
+          "name": "db-create-schema",
+          "exitCode": 0,
+          "error": null,
+          "counts": {},
+          "finalTapSummaryPresent": false,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/db-create-schema-2f840d0c8285.log",
+            "sha256": "32eedc65ca7946f8e598609c85ded8b8712243dd57edc7bbf4a2cd3fc871653c"
+          }
+        },
+        {
+          "name": "screenshot-reviewed-fixture",
+          "exitCode": 0,
+          "error": null,
+          "counts": {
+            "tests": 8,
+            "suites": 1,
+            "pass": 8,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0
+          },
+          "finalTapSummaryPresent": true,
+          "observedFailedTapRecords": 0,
+          "skippedCases": [],
+          "evidence": {
+            "storage": "private",
+            "path": "fallback-F/screenshot-reviewed-fixture-2f840d0c8285.log",
+            "sha256": "95a23146966e58ef38b795587b01c1beb028b1290045ed2bf20c610dd2e6d213"
+          }
+        }
+      ],
+      "ownedCleanupPassed": true
+    }
+  ],
+  "usageSettings": {
+    "syntheticPairs": {
+      "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": {
+        "setting": "unset",
+        "resolvedApplicationDefault": "shadow"
+      },
+      "CLASSPILOT_USAGE_ROLLUP_MODE": {
+        "setting": "off"
+      },
+      "CLASSPILOT_DIGITAL_USAGE_MODE": {
+        "setting": "off"
+      }
+    },
+    "actualServiceProcesses": 8,
+    "evidence": {
+      "storage": "private",
+      "path": "usage-settings.json",
+      "sha256": "5336d15c835f3cec8c77d0b50e8475236938b0656f3fc95235b4eb75dd9d10de"
+    },
+    "productionState": "unknown",
+    "dailyWorkloadPreserved": true
+  },
+  "freshImageScans": {
+    "serving-anchor": {
+      "high": 0,
+      "critical": 0,
+      "lowerSeverityFindings": [
+        {
+          "id": "CVE-2026-85091",
+          "package": "zlib",
+          "installedVersion": "1.3.2-r0",
+          "fixedVersion": "1.3.2-r1",
+          "severity": "MEDIUM",
+          "url": "https://avd.aquasec.com/nvd/cve-2026-85091"
+        },
+        {
+          "id": "CVE-2026-97058",
+          "package": "sprintf-js",
+          "installedVersion": "1.0.3",
+          "fixedVersion": null,
+          "severity": "MEDIUM",
+          "url": "https://avd.aquasec.com/nvd/cve-2026-97058"
+        }
+      ],
+      "report": {
+        "storage": "private",
+        "path": "anchor-A/reports/trivy.json",
+        "sha256": "2bbab23fac233190bd959623bd16c9f718a36d9b14e3040b6c89aa4c9eb98a5d"
+      },
+      "receipt": {
+        "storage": "private",
+        "path": "anchor-A/scan-receipt.json",
+        "sha256": "89c7e935e04b80e49e652530b18ceef56967f5ad8ec330a1d07bf4c865d9cba4"
+      }
+    },
+    "fallback": {
+      "high": 0,
+      "critical": 0,
+      "lowerSeverityFindings": [
+        {
+          "id": "CVE-2026-85091",
+          "package": "zlib",
+          "installedVersion": "1.3.2-r0",
+          "fixedVersion": "1.3.2-r1",
+          "severity": "MEDIUM",
+          "url": "https://avd.aquasec.com/nvd/cve-2026-85091"
+        },
+        {
+          "id": "CVE-2026-97058",
+          "package": "sprintf-js",
+          "installedVersion": "1.0.3",
+          "fixedVersion": null,
+          "severity": "MEDIUM",
+          "url": "https://avd.aquasec.com/nvd/cve-2026-97058"
+        }
+      ],
+      "report": {
+        "storage": "private",
+        "path": "fallback-F/reports/trivy.json",
+        "sha256": "1c24585528f3731e314e33852e1e51e65d45536e9f52030abbc77a52e24d0158"
+      },
+      "receipt": {
+        "storage": "private",
+        "path": "fallback-F/scan-receipt.json",
+        "sha256": "e209c6bfa7b3156d8558e0f466612ba7cae088fd4ee383dc14087e8992a1eb4b"
+      }
+    }
+  },
+  "correctedScreenshotFixture": {
+    "status": "passed",
+    "applicationSource": "d75fc1c48d0a3918857508d3965904c69023a153",
+    "fixtureSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+    "reviewedCorrection": "bcded1cfeea7b2b10f3d239eceec09d41748486c",
+    "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 <private reviewed screenshot fixture against exact-F dist>",
+    "exitCode": 0,
+    "counts": {
+      "tests": 8,
+      "suites": 1,
+      "pass": 8,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "finalTapSummaryPresent": true,
+    "observedFailedTapRecords": 0,
+    "skippedCases": [],
+    "evidence": {
+      "storage": "private",
+      "path": "fallback-F/screenshot-reviewed-fixture-2f840d0c8285.log",
+      "sha256": "95a23146966e58ef38b795587b01c1beb028b1290045ed2bf20c610dd2e6d213"
+    },
+    "sourceProof": {
+      "storage": "private",
+      "path": "reviewed-fixture/source-proof.json",
+      "sha256": "2e411a785a194bfea8aac1db365b1a23f21430a3341190dae4c79f1623800baa"
+    },
+    "reviewedMainFixture": {
+      "storage": "private",
+      "path": "reviewed-fixture/main-source.test.ts",
+      "sha256": "046fc72573edd88d29822d23f854b703799d502fb71cd9a6aa91d89c49a98e22"
+    },
+    "adaptedFixture": {
+      "storage": "private",
+      "path": "reviewed-fixture/exact-F.test.ts",
+      "sha256": "5e6680b43c0f2b046f25263b37bedd21b6cbc783785dd341591ae4db9cdfb813"
+    },
+    "compiledModuleIdentity": {
+      "byteExactCompiledFiles": 1571,
+      "hostInventorySha256": "8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4",
+      "imageInventorySha256": "8635335700e94423c2072defb607607e0302ae98c9f69a085618290d8ccdbce4",
+      "evidence": {
+        "storage": "private",
+        "path": "reviewed-fixture/compiled-equivalence.json",
+        "sha256": "cffa13d331347e4679d202da45015696011a9d2b8f2ff2678a9f7d0655ded3ac"
+      }
+    },
+    "ownedCleanupPassed": true,
+    "receipt": {
+      "storage": "private",
+      "path": "fallback-F/checks-2f840d0c8285.json",
+      "sha256": "eacbfb999090e713acbd756c4828c245c07383feb62ab92d780d4bc165088d0d"
+    },
+    "fullExactFDatabaseCommandRelabeled": false,
+    "independentReview": {
+      "storage": "private",
+      "path": "independent-review/exact-F-db-fixture.review.json",
+      "sha256": "9872cd2bb8a024fc3d227b0b69baba83c0d80f3e6389fa7b459b7282b6d3e149"
+    }
+  },
+  "skipCoverage": {
+    "fullDbSkippedCount": 8,
+    "markerCount": 18,
+    "coverageLane": "exact-F restricted RLS",
+    "coverageEvidence": {
+      "storage": "private",
+      "path": "fallback-F/rls-serial-d269e3482069.log",
+      "sha256": "30da8b6fde284e845547f06b17454ef2729e93c3a66ab473b0c643f4f4b7594e"
+    },
+    "cases": [
+      {
+        "name": "Compatible fallback cleanup with Usage off",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "Focus authority and continuation under restricted RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "Classroom lesson prerequisites under restricted RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "ClassPilot roadmap forced tenant isolation",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "ClassPilot schedule-change startup and forced-RLS bundle",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "ClassPilot transactional plan scenarios against PostgreSQL/FORCE RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "Monitored Browser Time rollups under forced RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS partitions PassPilot legacy multi-class memberships",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS partitions PassPilot appointments and rejects foreign appointment parents",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS partitions PassPilot issuance rules and their school-scoped read",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS partitions Monitored Browser Time rollups and their school-scoped read",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS hides another school's School Library rows even when that school is named explicitly",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "RLS hides another school's precise Flight Path resources even when that school is named explicitly",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "GoPilot child-table RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "appointments under forced tenant RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "partitions canonical classes, rosters, passes, and migration state under RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      },
+      {
+        "name": "PassPilot rule tables under forced RLS",
+        "status": "passed in restricted lane",
+        "matchingPassedRecords": 1
+      }
+    ]
+  },
+  "fullExactFDatabaseCommand": {
+    "status": "failed",
+    "exitCode": 1,
+    "counts": {
+      "tests": 1409,
+      "suites": 121,
+      "pass": 1400,
+      "fail": 1,
+      "cancelled": 0,
+      "skipped": 8,
+      "todo": 0
+    },
+    "correctedFixtureSeparate": true,
+    "evidence": {
+      "storage": "private",
+      "path": "fallback-F/db-serial-566fd899cc61.log",
+      "sha256": "2a409385d652abff432d21708384794af194342d7ed90a97e973b5ff7476f057"
+    }
+  },
+  "restrictedMigration": {
+    "status": "passed",
+    "role": {
+      "rolsuper": false,
+      "rolbypassrls": false
+    },
+    "baselineMigrations": 43,
+    "completedMigrations": 53,
+    "evidence": {
+      "storage": "private",
+      "path": "migrationRole.review.json",
+      "sha256": "c54247c199f617cbd6475b1a09db4b6c9c60dfc2ac9b05ad4cf18135e52519ef"
+    }
+  },
+  "additiveRestrictedOwnerRestoration": {
+    "status": "passed",
+    "rounds": 4,
+    "migrationCounts": [
+      43,
+      53
+    ],
+    "actualDdlOwner": {
+      "rolsuper": false,
+      "rolbypassrls": false
+    },
+    "runtimeNonowner": {
+      "rolsuper": false,
+      "rolbypassrls": false,
+      "noSchemaCreate": true
+    },
+    "stableSecondSerializationRoundtrip": true,
+    "zeroNamedSqlConnections": true,
+    "cleanupPassed": true,
+    "evidence": {
+      "storage": "private",
+      "path": "restricted-restoration-13d577a3ca2c/execution.json",
+      "sha256": "698062df304c9b3e7c90bd060b00605a5926489f5c4188aaf2fc61d6efcc5100"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "restrictedRestoration.review.json",
+      "sha256": "494bf53944df8a5d1f8f85cffac93d0c5e2c398526b6d17793ca456146a945b6"
+    },
+    "originalSuperuserRestoreProofPreserved": true
+  }
+}

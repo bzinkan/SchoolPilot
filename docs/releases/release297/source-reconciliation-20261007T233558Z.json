@@ -1,0 +1,433 @@
+{
+  "schemaVersion": 1,
+  "kind": "readonly_release_source_reconciliation",
+  "observedAtUtc": "2026-10-07T23:35:58.510Z",
+  "schoolpilotRemoteMain": "a5161eb14939132776e0b77eac8e3c485091432c",
+  "classpilotRemoteMain": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+  "recordedAsOf": {
+    "kind": "after_closing_pr_merge",
+    "closingPullRequest": 619,
+    "closingMergeSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+    "pendingMergePullRequests": [],
+    "resultingMainCiStatus": "passed",
+    "provenance": "Read-only GitHub observations after all four authorized preparation merges; exact push/main checks were reverified before successor recovery preparation.",
+    "nextAction": "Prepare and review the exact security successor. Release candidate acceptance and every operational stage remain separate.",
+    "currentLiveGitHub": "https://github.com/bzinkan/SchoolPilot/commits/main"
+  },
+  "schoolpilotPullRequests": [
+    {
+      "headRefOid": "766ec202817e3fa5504df599a5832cad13f39693",
+      "mergeCommit": {
+        "oid": "047bc64f30d8cd711581ec1edacacfeb49898d61"
+      },
+      "mergedAt": "2026-10-04T22:45:00Z",
+      "number": 603,
+      "state": "MERGED",
+      "title": "Stabilize coordinated roadmap release for ClassPilot 2.9.7",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/603"
+    },
+    {
+      "headRefOid": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
+      "mergeCommit": {
+        "oid": "400e71d432bd9b38d36edec2cb6b400100f21809"
+      },
+      "mergedAt": "2026-10-05T03:23:01Z",
+      "number": 606,
+      "state": "MERGED",
+      "title": "Preserve admission CSV order in inactive release preparation",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/606"
+    },
+    {
+      "headRefOid": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
+      "mergeCommit": {
+        "oid": "a406735cb2dc75fed350e12a38a8c589155538c7"
+      },
+      "mergedAt": "2026-10-05T11:23:21Z",
+      "number": 609,
+      "state": "MERGED",
+      "title": "Fix School Library loading on lazy Teaching tools routes",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/609"
+    },
+    {
+      "headRefOid": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
+      "mergeCommit": {
+        "oid": "13420736ae5f5eaa9c40cbf6c226ff687bce1304"
+      },
+      "mergedAt": "2026-10-06T22:31:47Z",
+      "number": 610,
+      "state": "MERGED",
+      "title": "Show daily Chromebook usage averages for each class",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/610"
+    },
+    {
+      "headRefOid": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
+      "mergeCommit": {
+        "oid": "048b0e94747032d5d50f586f4591e5b29821ac6d"
+      },
+      "mergedAt": "2026-10-06T23:19:16Z",
+      "number": 612,
+      "state": "MERGED",
+      "title": "Accept identical ECR tag aliases during image verification",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/612"
+    },
+    {
+      "headRefOid": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
+      "mergeCommit": {
+        "oid": "ae41d88555a0a6c15e8ee7baef21c829717eab4d"
+      },
+      "mergedAt": "2026-10-07T00:30:35Z",
+      "number": 613,
+      "state": "MERGED",
+      "title": "Simplify ClassPilot usage analytics report",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/613"
+    },
+    {
+      "headRefOid": "801f628766dbd454eecc19fc882cf021a1fb52e3",
+      "mergeCommit": {
+        "oid": "a14759a231ef47ad01951e8b9519c87de39433bc"
+      },
+      "mergedAt": "2026-10-07T14:17:37Z",
+      "number": 614,
+      "state": "MERGED",
+      "title": "Restore Focus and Bring Forward availability on the dashboard",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/614"
+    },
+    {
+      "headRefOid": "e00632984d1f0aff0538033533122ebc63aa7bfc",
+      "mergeCommit": {
+        "oid": "56df7a4f390b45a2f97ee435c01381ddede5dc2e"
+      },
+      "mergedAt": "2026-10-07T16:21:39Z",
+      "number": 615,
+      "state": "MERGED",
+      "title": "Fix hourly activity chart sizing and readable values",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/615"
+    },
+    {
+      "headRefOid": "5cb78dfa37c29538785ebf8933bba494ad83e593",
+      "mergeCommit": {
+        "oid": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b"
+      },
+      "mergedAt": "2026-10-07T20:57:54Z",
+      "number": 616,
+      "state": "MERGED",
+      "title": "Reconcile release297 current state and preserve dated evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/616"
+    },
+    {
+      "headRefOid": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
+      "mergeCommit": {
+        "oid": "eecf85f4a9c4b83940a16fbe085608c2e87d0742"
+      },
+      "mergedAt": "2026-10-07T21:14:48Z",
+      "number": 617,
+      "state": "MERGED",
+      "title": "Correct ClassPilot AI disclosures and record provider-boundary audit",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/617"
+    },
+    {
+      "headRefOid": "106f78059172e2f7fda4632911b28153695ec448",
+      "mergeCommit": {
+        "oid": "a5161eb14939132776e0b77eac8e3c485091432c"
+      },
+      "mergedAt": "2026-10-07T22:06:52Z",
+      "number": 619,
+      "state": "MERGED",
+      "title": "Prepare release operator packet and source-specific current status",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/619"
+    },
+    {
+      "headRefOid": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
+      "mergeCommit": {
+        "oid": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe"
+      },
+      "mergedAt": "2026-10-07T21:48:32Z",
+      "number": 620,
+      "state": "MERGED",
+      "title": "Add fail-closed release297 source binding and evidence replay",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/620"
+    }
+  ],
+  "classpilotPullRequest": {
+    "headRefOid": "8069a9c9bd50352e187847158b356a69edc4e45d",
+    "mergeCommit": {
+      "oid": "03a9c3633d1e1f7d763ea5cf910f870994400e02"
+    },
+    "mergedAt": "2026-10-04T21:14:57Z",
+    "number": 123,
+    "state": "MERGED",
+    "title": "Prepare consolidated ClassPilot 2.9.7 release candidate",
+    "url": "https://github.com/bzinkan/ClassPilot/pull/123"
+  },
+  "preparationPullRequests": [
+    {
+      "headRefOid": "5cb78dfa37c29538785ebf8933bba494ad83e593",
+      "mergeCommit": {
+        "oid": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b"
+      },
+      "mergedAt": "2026-10-07T20:57:54Z",
+      "number": 616,
+      "state": "MERGED",
+      "title": "Reconcile release297 current state and preserve dated evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/616"
+    },
+    {
+      "headRefOid": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
+      "mergeCommit": {
+        "oid": "eecf85f4a9c4b83940a16fbe085608c2e87d0742"
+      },
+      "mergedAt": "2026-10-07T21:14:48Z",
+      "number": 617,
+      "state": "MERGED",
+      "title": "Correct ClassPilot AI disclosures and record provider-boundary audit",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/617"
+    },
+    {
+      "headRefOid": "106f78059172e2f7fda4632911b28153695ec448",
+      "mergeCommit": {
+        "oid": "a5161eb14939132776e0b77eac8e3c485091432c"
+      },
+      "mergedAt": "2026-10-07T22:06:52Z",
+      "number": 619,
+      "state": "MERGED",
+      "title": "Prepare release operator packet and source-specific current status",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/619"
+    },
+    {
+      "headRefOid": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
+      "mergeCommit": {
+        "oid": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe"
+      },
+      "mergedAt": "2026-10-07T21:48:32Z",
+      "number": 620,
+      "state": "MERGED",
+      "title": "Add fail-closed release297 source binding and evidence replay",
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/620"
+    }
+  ],
+  "currentMainCi": {
+    "source": "a5161eb14939132776e0b77eac8e3c485091432c",
+    "event": "push",
+    "branch": "main",
+    "status": "passed",
+    "checks": [
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 approval queue",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113047340180"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 tenant isolation evidence",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113047269624"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 incident evidence",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113047269462"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 deployment evidence",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113047269416"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 monitoring evidence",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113045676962"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 AI/privacy evidence",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113045676883"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "SOC 2 privileged access evidence",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113043422039"
+      },
+      {
+        "conclusion": "skipped",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Detect changed paths",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041109984"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Frontend release-focused gates (shard 1)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108949"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Frontend release-focused gates (shard 4)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108918"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Frontend release-focused gates (shard 2)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108876"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Cross-tenant isolation tests",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108807"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "RLS-enabled cross-tenant tests",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108743"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108688"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Frontend release-focused gates (shard 3)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108674"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Backend (TypeScript + Build)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108621"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Frontend (Vite Build)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225/job/113041108400"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Scan for secrets",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048148/job/113041107416"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Analyze (javascript-typescript)",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048140/job/113041107223"
+      },
+      {
+        "conclusion": "success",
+        "headSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "name": "Scan Docker image",
+        "status": "completed",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048075/job/113041107032"
+      }
+    ],
+    "workflowRuns": {
+      "37694048225": {
+        "conclusion": "success",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048225",
+        "id": 37694048225,
+        "name": "CI",
+        "status": "completed"
+      },
+      "37694048148": {
+        "conclusion": "success",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048148",
+        "id": 37694048148,
+        "name": "Gitleaks",
+        "status": "completed"
+      },
+      "37694048140": {
+        "conclusion": "success",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048140",
+        "id": 37694048140,
+        "name": "CodeQL",
+        "status": "completed"
+      },
+      "37694048075": {
+        "conclusion": "success",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "a5161eb14939132776e0b77eac8e3c485091432c",
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37694048075",
+        "id": 37694048075,
+        "name": "Trivy Container Scan",
+        "status": "completed"
+      }
+    }
+  },
+  "originalBaselineEvidence": "docs/releases/release297/source-reconciliation-20261007.json",
+  "mutations": {
+    "repositorySettings": 0,
+    "cloud": 0,
+    "database": 0,
+    "store": 0
+  },
+  "limitations": [
+    "This is a dated preparation snapshot, not an evergreen assertion of live GitHub state or release readiness.",
+    "#616 and #617 are observed merged; #619 and #620 remain open. Published #619 checks refer to its older head and do not validate this unfinished closing commit.",
+    "Exact-main CI is recorded separately from PR CI. It does not establish frozen candidate, ordinary restoration/recovery, classroom acceptance, publication, deployment, managed adoption or live state.",
+    "The original baseline receipts and initial failed/cancelled preparation checks remain immutable historical records."
+  ],
+  "excludedWorkflowRuns": [
+    {
+      "conclusion": "skipped",
+      "event": "workflow_run",
+      "head_branch": "main",
+      "head_sha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37697455878",
+      "id": 37697455878,
+      "name": "Immutable Release Image",
+      "status": "completed"
+    },
+    {
+      "conclusion": "skipped",
+      "event": "workflow_run",
+      "head_branch": "main",
+      "head_sha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37695572221",
+      "id": 37695572221,
+      "name": "Immutable Release Image",
+      "status": "completed"
+    }
+  ]
+}
