@@ -1,3 +1,5 @@
+import { getBrowsingActivityTitle } from '../../../lib/browsing-activity.js';
+
 // Pure projection of a student's open-tab snapshot into the small favicon
 // strip rendered on the teacher tile. Favicon URLs are untrusted student
 // telemetry: only https URLs of a bounded length may ever become an <img>.
@@ -53,7 +55,7 @@ export function deriveTileTabFavicons(student, { max = TILE_FAVICON_MAX } = {}) 
       if (active && !existing.active) {
         existing.active = true;
         existing.key = tab.tabRef || tab.url;
-        existing.title = typeof tab.title === 'string' && tab.title.trim() ? tab.title.trim() : hostname;
+        existing.title = getBrowsingActivityTitle(tab.title, tab.url);
         existing.favicon = safeFaviconUrl(tab.favicon) ?? existing.favicon;
       }
       continue;
@@ -61,7 +63,7 @@ export function deriveTileTabFavicons(student, { max = TILE_FAVICON_MAX } = {}) 
     byHostname.set(hostname, {
       key: tab.tabRef || tab.url,
       hostname,
-      title: typeof tab.title === 'string' && tab.title.trim() ? tab.title.trim() : hostname,
+      title: getBrowsingActivityTitle(tab.title, tab.url),
       favicon: safeFaviconUrl(tab.favicon),
       active,
     });

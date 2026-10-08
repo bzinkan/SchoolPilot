@@ -15,6 +15,7 @@ import { Separator } from "../../../components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { formatDistanceToNow, format, startOfDay, endOfDay } from "date-fns";
 import { calculateURLSessions, formatDuration, isSessionOffTask } from "../../../lib/classpilot-utils";
+import { getBrowsingActivityTitle } from "../../../lib/browsing-activity";
 import { useToast } from "../../../hooks/use-toast";
 import { deriveStudentMonitoringDisplay, deriveUnavailablePreview, formatAbsoluteObservedAt, lastObservedDomain } from "../lib/studentMonitoringDisplay";
 import StudentBrowsingHistory from "./StudentBrowsingHistory";
@@ -278,7 +279,7 @@ function StudentDetailDrawer({
                                 />
                               )}
                               <p className="text-sm font-medium flex-1">
-                                {student.activeTabTitle || "No active tab"}
+                                {getBrowsingActivityTitle(student.activeTabTitle, student.activeTabUrl)}
                               </p>
                             </div>
                             {student.activeTabUrl && (
@@ -348,7 +349,7 @@ function StudentDetailDrawer({
                                       </p>
                                     </div>
                                     <p className="text-xs font-mono text-muted-foreground truncate mb-1">
-                                      {session.url}
+                                      {session.url && session.url !== 'unknown' ? session.url : 'No page URL recorded'}
                                     </p>
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                       <Clock className="h-3 w-3" />
@@ -474,9 +475,9 @@ function StudentDetailDrawer({
                           hasOffTask,
                           hasCamera,
                           isNoTab,
-                          // Override display values for no-tab sessions
-                          displayTitle: isNoTab ? 'No Active Tab' : session.title,
-                          displayUrl: isNoTab ? 'Browser open but no tab focused' : session.url
+                          // Missing page data does not establish what the browser was doing.
+                          displayTitle: session.title,
+                          displayUrl: isNoTab || session.url === 'unknown' ? 'No page URL recorded' : session.url
                         };
                       });
 

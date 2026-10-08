@@ -1,3 +1,5 @@
+import { getBrowsingActivityTitle } from './browsing-activity.js';
+
 /**
  * Shared utility functions ported from ClassPilot (shared/utils.ts).
  * TypeScript types stripped; logic preserved identically.
@@ -111,7 +113,7 @@ export function calculateURLSessions(heartbeats, heartbeatIntervalSeconds = 10) 
 
       currentSession = {
         url: currentUrl,
-        title: heartbeat.activeTabTitle ?? "Unknown",
+        title: getBrowsingActivityTitle(heartbeat.activeTabTitle, heartbeat.activeTabUrl),
         favicon: heartbeat.favicon || undefined,
         startTime: currentTime,
         endTime: currentTime,
@@ -128,7 +130,7 @@ export function calculateURLSessions(heartbeats, heartbeatIntervalSeconds = 10) 
       currentSession.heartbeatCount++;
 
       // Update title/favicon to most recent
-      currentSession.title = heartbeat.activeTabTitle;
+      currentSession.title = getBrowsingActivityTitle(heartbeat.activeTabTitle, heartbeat.activeTabUrl);
       if (heartbeat.favicon) {
         currentSession.favicon = heartbeat.favicon;
       }
