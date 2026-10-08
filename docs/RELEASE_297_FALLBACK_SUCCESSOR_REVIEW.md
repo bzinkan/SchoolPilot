@@ -20,6 +20,9 @@ verifies the complete C578→F Git object/mode/path comparison and all 28 change
 package records. The correction applies the lockfile patch from
 `86ea5c5ca5f76406300f5170d2ecb3e3554baeb3`; unrelated lockfile records and C578's
 build process remain intact. No older application tree is merged into main.
+The retained source branch is `codex/release297-fallback-security`; review the
+[exact C578→F comparison](https://github.com/bzinkan/SchoolPilot/compare/c578120d980d4c2405a72f4f40b2d3c29a07e20b...d75fc1c48d0a3918857508d3965904c69023a153)
+without merging its older application tree into main.
 
 The original findings are Critical `proxy-addr` 2.0.7
 ([upstream fix 2.0.8](https://github.com/jshttp/proxy-addr/security/advisories/GHSA-jqcg-44mw-7w3h))
@@ -29,6 +32,94 @@ F includes the matching native Sharp/libvips packages. Applicability details do
 not relax the zero High/Critical scan gate. The
 [original failed observation](releases/release297/local-artifact-observation-20261007.json)
 remains immutable.
+
+## Exact local artifacts and security findings
+
+These are source-labelled Linux/amd64 artifacts built using the unchanged pinned
+Dockerfile. Registry identities and publication receipts remain unavailable.
+The frontend rows identify source inventories; preparing the matched release
+frontend remains part of the original candidate acceptance work.
+
+| Identity | Serving anchor A | Recovery fallback F |
+|---|---|---|
+| Image/index | `sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85` | `sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459` |
+| Config | `sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340` | `sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84` |
+| Platform manifest | `sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46` | `sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6` |
+| Archive SHA-256 | `938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9` | `ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58` |
+| Backend inventory | 563 files; `11ab2736ad2c4fc7a75da1d00b15168c8f5d297c39e6e269808301b961cf669d` | 548 files; `97c9075f67f871d15c3e29006830a8d799c8e0fe22c7d2173fae3421378bdf53` |
+| Frontend inventory | 633 files; `3acea6eb117e8e58fa00cd507963bfc40af0f25cae0aa0acd82cb5e3fee3e1d0` | Unchanged from C578: 632 files; `d6ea482405f1b84efa75f3f80f3a63e0ba452349db42af0b8533e1beb8cb103e` |
+
+Both fresh scans pass with **0 High, 0 Critical and 2 Medium**. The scanner is
+`aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa`.
+The retained database is version 2, updated `2026-10-07T07:38:55.515026687Z`,
+next update `2026-10-08T07:38:55.515026457Z`; F was scanned at
+`2026-10-07T23:38:18.988Z`, A at `2026-10-07T23:38:25.016Z`.
+Raw reports, database metadata, archive/config extraction and exact owned,
+unforced scanner cleanup are privately retained and independently reviewed.
+
+The remaining image findings are Medium `CVE-2026-85091` in zlib `1.3.2-r0`
+(fix `1.3.2-r1`) and Medium `CVE-2026-97058` in sprintf-js `1.0.3` (no fixed
+version reported). They are explicit follow-ups; this patch does not change
+the base image or unrelated dependencies.
+
+Exact-F production `npm audit --omit=dev --audit-level=high` passes with zero
+High/Critical and three Moderate findings in the mammoth/argparse/sprintf-js
+chain. The default production audit exits 1 for those Moderate findings. The
+full development-inclusive audit remains **failed** with 13 findings
+(7 Moderate, 6 High), including the unchanged tsc-alias/globby/fast-glob/
+micromatch/chokidar/braces tool chain. Review and remediate those development
+dependencies separately; neither audit failure is relabelled as a pass. The
+bounded successor image passes its zero High/Critical runtime scan without
+an exception or scan waiver.
+
+## Native validation and retained attempts
+
+The fresh whole recovery attempt `2151d4342b64` passes actual local API/worker
+recovery and restricted-role post-restoration checks on the exact A/F artifacts above. It covers
+all six admission counts, eight API/worker processes and eight graceful drains;
+every drain exits zero, without OOM or forced stop, with zero remaining named SQL
+connections. F declares 52 migrations while preserving all 53 completed ledger
+rows. Restricted-role tenant checks, retained screenshot function body/ACL,
+private expiry/history and authority fences, exact Focus cleanup, equal runtime
+capabilities and private-chat floors pass. Owned fixture cleanup is complete.
+Its original DDL restore runs under the fixture's superuser owner; that limitation
+remains recorded. Additive fixture `restricted-restoration-13d577a3ca2c` passes
+four restore rounds under an actual NOSUPERUSER/NOBYPASS owner, with restricted
+non-owner tenant checks, stable second serialization and unforced cleanup.
+The separate restricted-restoration evidence binds both proofs; the original
+superuser restore is not relabelled as a restricted-owner operation.
+The actual ordinary migrations already run through a dedicated LOGIN
+NOSUPERUSER/NOBYPASSRLS/NOINHERIT migration role, with explicit schema grants
+and source-specific role observations; the restore-owner gap does not apply
+to those eight exact-image migration executions.
+The eight real services drain after SIGTERM. One-shot probes drain their SQL,
+socket and background work before exit; exiting also closes an imported Redis
+client that has no probe disposal API. This distinction is retained in the
+independent review and does not substitute probe exits for service drains.
+
+Earlier recovery attempts remain failed: `8b7ccbc7af23` requested the wrong
+cumulative admission bundle; `69c51faab928` passed its service-pair components
+but failed a restoration-fixture query with ambiguous SQL parameter `42P08`.
+The final whole attempt applies the existing exact-bundle request and explicit
+text-cast fixture correction. No application/image change was made between the
+attempts; earlier passes are not used to disguise either failure.
+
+Independent native processing attempt `ff7c29511233` passes nine blocks using
+the actual F Linux/musl runtime, Sharp codecs, private-file/PDF functions and
+Express rate-limit middleware. Coverage includes EXIF orientation/stripping,
+oversized/corrupt image rejection, real bounded PDF tools, encrypted/corrupt/
+page-limit PDF rejection and cleanup, trusted proxy-hop/client-IP handling,
+IPv6 limiter isolation, bearer-token limits and temporary-file cleanup. It uses
+synthetic fixtures, no provider/network calls and an owned read-only container
+that is removed without force. This proves native codec/function behavior;
+**it does not claim an actual screenshot HTTP-route or classroom campaign**.
+Two earlier runtime-probe setup failures are retained before the corrected
+whole attempt; neither is relabelled as a product failure or passing attempt.
+
+The native producer and independent reviewer are different for each of the
+five preparation evidence kinds. Public envelopes retain the exact artifact
+pair and private native/review hashes; raw captures, synthetic operational
+identities, SQL fixtures and environment material remain private.
 
 ## Preparation contract
 
@@ -52,10 +143,10 @@ authority fences, exact Focus cleanup and compatible protocol/private-chat floor
 All processes must drain gracefully with no named SQL connections remaining.
 Historical 54-entry evidence does not satisfy this proof.
 
-The new Usage and Digital Usage modes stay off. The independent daily-rollup
-setting is recorded and preserved on the synthetic API/worker pair; it is not
-inferred from the two new settings. Local fixtures do not establish production
-flag values or managed-device adoption.
+The new Usage and Digital Usage modes stay off. On the synthetic pair,
+`CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` is unset and resolves to **shadow** by the
+exact source's default. It is recorded independently and may still do work.
+Local fixtures do not establish production flag values or managed-device adoption.
 
 ## Review and subsequent operator actions
 

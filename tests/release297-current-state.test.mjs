@@ -142,6 +142,41 @@ test('new Usage activation, absent daily mode and unknown evidence fail validati
   candidate = index(); candidate.gates[0].evidence.push('inventedReceipt');
   assert.throws(() => validateIndex(candidate), /EVIDENCE_REFERENCE_UNKNOWN/);
 });
+
+test('successful successor preparation cannot select, authorize or relabel the fallback artifact', () => {
+  const candidate = index();
+  candidate.gates.find(entry => entry.id === 'fallback-successor-selection').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_SELECTION_CANNOT_BE_INFERRED/);
+  candidate.gates.find(entry => entry.id === 'fallback-successor-selection').status = 'pending';
+  candidate.artifacts.find(entry => entry.id === 'fallback-successor-artifact').sourceSha = candidate.artifacts.find(entry => entry.id === 'backend-successor-anchor').sourceSha;
+  assert.throws(() => validateIndex(candidate), /SUCCESSOR_ARTIFACT_ROLE_CHANGED/);
+  receiptFixture((candidate, fixture, read, write) => {
+    const proof = read('successorPreparationObservation'); proof.operationalAuthorization = true;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_PREPARATION_IS_NOT_SELECTION/);
+  });
+});
+
+test('successor status rejects changed binding and cross-role evidence even with updated file hashes', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const proof = read('successorPreparationObservation');
+    const ref = proof.preparationEvidence.ordinaryRecovery, native = read(ref);
+    native.artifactPair.fallback = structuredClone(native.artifactPair['serving-anchor']);
+    write(ref, native);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_BINDING_RECEIPT_CHANGED/);
+    const binding = read('successorBinding');
+    binding.preparation.evidence.ordinaryRecovery.sha256 = candidate.evidence[ref].gitBlobSha256;
+    write('successorBinding', binding); proof.bindingSha256 = candidate.evidence.successorBinding.gitBlobSha256;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_PREPARATION_ROLE_OR_RECEIPT_CHANGED/);
+  });
+  receiptFixture((candidate, fixture, read, write) => {
+    const binding = read('successorBinding'); binding.status = 'accepted'; write('successorBinding', binding);
+    const proof = read('successorPreparationObservation'); proof.bindingSha256 = candidate.evidence.successorBinding.gitBlobSha256;
+    write('successorPreparationObservation', proof);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_BINDING_IS_NOT_RELEASE_ACCEPTANCE/);
+  });
+});
 test('public metadata rejects private records and escaping receipt paths', () => {
   let candidate = index(); candidate.artifacts[0].studentEmail = 'synthetic@example.invalid';
   assert.throws(() => validateIndex(candidate), /PRIVATE_DATA_FIELD_REJECTED/);
