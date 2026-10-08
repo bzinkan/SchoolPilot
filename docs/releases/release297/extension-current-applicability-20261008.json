@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "kind": "retained_extension_current_applicability_observation",
+  "observedAtUtc": "2026-10-08T21:51:41.552Z",
+  "source": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+  "extensionTree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+  "version": "2.9.7",
+  "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "zipBytes": 376052,
+  "files": 24,
+  "sourceAndZipIdentityEqualToOctober7Evidence": true,
+  "allPackagedGitBlobsMatchAfterDeclaredCrLfNormalization": true,
+  "rawGitBlobEquality": false,
+  "crlfOnlyDifferences": [
+    "auth-gate-bootstrap.js",
+    "auth-gate-frame.css",
+    "auth-gate-frame.html",
+    "auth-gate-frame.js",
+    "auth-gate-transport.js",
+    "auth-recovery-diagnostics.js",
+    "classroom-runtime-core.js",
+    "content-injection.js",
+    "content.js",
+    "managed_schema.json",
+    "manifest.json",
+    "offscreen.html",
+    "offscreen.js",
+    "page-lifecycle.js",
+    "popup.html",
+    "popup.js",
+    "private-recovery-store.js",
+    "school-website-policy.js",
+    "service-worker.js",
+    "vendor/sentry.browser.min.js"
+  ],
+  "otherDifferences": [],
+  "freshCanonicalAttempt": {
+    "status": "failed",
+    "reason": "Byte comparison of a fresh Git checkout differs in line endings for classroom-runtime-core.js.",
+    "logSha256": "17ba4f1d8ff8a19d32ab528376a56ed946dafed644a181c1c4c8c660d004c51c"
+  },
+  "priorCanonicalPass": {
+    "path": "docs/releases/release297/extension-verification-20261007.json",
+    "applicability": "Retained only for the unchanged exact ZIP and unchanged extension Git tree. Fresh normalized comparison proves EOL-only differences; the new raw canonical attempt remains failed."
+  },
+  "storeListing": "operator_reported_live_2.9.7_october7_not_freshly_verified",
+  "managedAdoption": "unknown",
+  "newUploadPerformed": false,
+  "extensionChanged": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

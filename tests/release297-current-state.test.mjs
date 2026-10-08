@@ -21,6 +21,7 @@ const historicalIndex = () => {
   delete candidate.evidence.currentSuccessorBinding;
   delete candidate.evidence.currentCandidateNative;
   delete candidate.evidence.currentFrontend;
+  delete candidate.evidence.currentExtensionApplicability;
   candidate.authorization.productionDeployment = false;
   const historic = JSON.parse(readFileSync(path.join(ROOT, candidate.evidence.reconciliation.path), 'utf8'));
   candidate.sources.schoolpilot.remoteMainObserved = historic.schoolpilotRemoteMain;
@@ -30,7 +31,7 @@ const historicalIndex = () => {
   }
   candidate.inclusionMatrix = candidate.inclusionMatrix.filter(pr => pr.repository !== 'SchoolPilot' || ![621, 622, 623].includes(pr.number));
   for (const pr of candidate.inclusionMatrix) if (pr.repository === 'SchoolPilot') pr.includedInSource = historic.schoolpilotRemoteMain;
-  candidate.gates = candidate.gates.filter(gate => !['candidate-freeze', 'repository-protections', 'backend-successor-scan-fresh', 'fallback-successor-scan-fresh', 'candidate-native-processing-fresh', 'current-v3-binding'].includes(gate.id));
+  candidate.gates = candidate.gates.filter(gate => !['candidate-freeze', 'repository-protections', 'backend-successor-scan-fresh', 'fallback-successor-scan-fresh', 'candidate-native-processing-fresh', 'current-v3-binding', 'extension-current-identity-applicability', 'extension-current-canonical-attempt'].includes(gate.id));
   candidate.artifacts = candidate.artifacts.filter(artifact => artifact.id !== 'fallback-successor-current-scan');
   for (const group of ['artifacts', 'stages', 'gates']) for (const record of candidate[group]) record.evidence = record.evidence.map(id => ['candidateRefresh', 'currentArtifactsScan', 'currentCandidateNative', 'currentFrontend'].includes(id) ? 'reconciliation' : id);
   candidate.gates.find(gate => gate.id === 'current-main-preparation-ci').sourceSha = historic.schoolpilotRemoteMain;
@@ -199,6 +200,20 @@ test('actual current v3 preparation and operational profile reject before extern
   await assert.rejects(validateSuccessorPreparation({schemaVersion:3,releaseBindingId:SUCCESSOR_BINDING_ID}, {root:ROOT,fallback:FALLBACK,run:async()=>{externalCommands++;throw new Error('UNEXPECTED_EXTERNAL_COMMAND');}}), /SUCCESSOR_PREPARATION_PENDING/);
   assert.equal(externalCommands, 0);
   assert.throws(() => validateBindingProfile(profile, SUCCESSOR_BINDING_ID, FALLBACK), /SUCCESSOR_PREPARATION_PENDING/);
+});
+
+test('unchanged extension applicability cannot relabel a fresh canonical failure or establish adoption', () => {
+  for (const [mutate, expected] of [
+    [current => { current.zipSha256 = 'f'.repeat(64); }, /CURRENT_EXTENSION_IDENTITY_CHANGED/],
+    [current => { current.rawGitBlobEquality = true; }, /CURRENT_EXTENSION_NORMALIZATION_SCOPE_CHANGED/],
+    [current => { current.otherDifferences = ['changed-script.js']; }, /CURRENT_EXTENSION_NORMALIZATION_SCOPE_CHANGED/],
+    [current => { current.freshCanonicalAttempt.status = 'passed'; }, /CURRENT_EXTENSION_ATTEMPT_MUST_REMAIN_FAILED/],
+    [current => { current.managedAdoption = 'passed'; }, /CURRENT_EXTENSION_ATTEMPT_MUST_REMAIN_FAILED/],
+    [current => { current.newUploadPerformed = true; }, /CURRENT_EXTENSION_ATTEMPT_MUST_REMAIN_FAILED/],
+  ]) receiptFixture((candidate, fixture, read, write) => {
+    const current = read('currentExtensionApplicability'); mutate(current); write('currentExtensionApplicability', current);
+    assert.throws(() => validateIndex(candidate, fixture), expected);
+  }, true);
 });
 test('CP-AI source-only preparation cannot approve deployment, live protection or a changed historical recovery pair', () => {
   for (const field of ['reviewStatus', 'deploymentStatus', 'liveVerificationStatus']) {

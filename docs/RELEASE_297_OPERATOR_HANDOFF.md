@@ -46,6 +46,10 @@ Those backend/frontend artifacts were prepared on the clean copy-PR source,
 not a frozen resulting-main release. Their hashes do not authorize publication.
 The retained extension's source/package evidence is in the
 [fresh extension verification](releases/release297/extension-verification-20261007.json).
+The [current extension applicability observation](releases/release297/extension-current-applicability-20261008.json)
+retains that dated pass only for the unchanged exact ZIP/tree and records the
+fresh canonical byte-verifier attempt as failed. Its 24-file normalized Git
+comparison has only declared CRLF differences; it is separate from raw equality.
 Version 2.9.7 remains the unchanged candidate. The operator confirmed that
 2.9.7 is live on October 7, 2026. Record that as operator-reported publication;
 the uploaded ZIP identity, pending-submission state and managed adoption remain

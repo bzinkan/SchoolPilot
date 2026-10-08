@@ -460,6 +460,17 @@ export function validateIndex(index, root = ROOT) {
     assert.ok(frontend.fileCount > 0 && frontend.archiveBytes > 0, 'CURRENT_FRONTEND_ARCHIVE_REQUIRED');
     assert.deepEqual([artifact.status, artifact.applicability, artifact.sourceSha, artifact.identity, artifact.evidence], ['passed', 'preparation_only', frontend.source, { archiveSha256: frontend.archiveSha256, fileInventorySha256: frontend.fileInventorySha256 }, ['currentFrontend']], 'CURRENT_FRONTEND_ARTIFACT_CHANGED');
   }
+  if (index.evidence.currentExtensionApplicability) {
+    const current = receipt('currentExtensionApplicability'), extension = index.artifacts.find(entry => entry.id === 'extension');
+    assert.deepEqual([current.schemaVersion, current.kind, current.source, current.extensionTree, current.version, current.zipSha256, current.zipBytes, current.files], [1, 'retained_extension_current_applicability_observation', extension.sourceSha, extension.identity.gitTree, '2.9.7', extension.identity.zipSha256, extension.identity.bytes, 24], 'CURRENT_EXTENSION_IDENTITY_CHANGED');
+    assert.deepEqual([current.sourceAndZipIdentityEqualToOctober7Evidence, current.allPackagedGitBlobsMatchAfterDeclaredCrLfNormalization, current.rawGitBlobEquality, current.crlfOnlyDifferences.length, current.otherDifferences], [true, true, false, 20, []], 'CURRENT_EXTENSION_NORMALIZATION_SCOPE_CHANGED');
+    assert.deepEqual([current.freshCanonicalAttempt.status, current.priorCanonicalPass.path, current.managedAdoption, current.newUploadPerformed, current.extensionChanged, current.releaseReady, current.operationalAuthorization], ['failed', index.evidence.extensionFresh.path, 'unknown', false, false, false, false], 'CURRENT_EXTENSION_ATTEMPT_MUST_REMAIN_FAILED');
+    assert.match(current.freshCanonicalAttempt.logSha256 ?? '', hash, 'CURRENT_EXTENSION_FAILURE_LOG_REQUIRED');
+    for (const [id, status] of [['extension-current-identity-applicability', 'passed'], ['extension-current-canonical-attempt', 'failed']]) {
+      const gate = index.gates.find(entry => entry.id === id);
+      assert.deepEqual([gate?.status, gate?.sourceSha, gate?.evidence], [status, current.source, ['currentExtensionApplicability']], 'CURRENT_EXTENSION_GATE_CHANGED');
+    }
+  }
   return index;
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-08T21:48:17.972Z",
+  "observedAtUtc": "2026-10-08T21:53:56.768Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -237,13 +237,13 @@
       "status": "passed",
       "applicability": "current_baseline",
       "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
-      "rationale": "Fresh canonical verifier passes all 24 packaged files byte-for-byte with clean 8069 source; its extension Git tree equals merged 03a9. Raw Git comparison still has 20 CRLF-only differences and remains failed.",
+      "rationale": "Exact retained2.9.7 ZIP/tree remain unchanged. October7 canonical pass is retained for those identities; fresh24-blob normalized comparison has20 CRLF-only/0 other differences, while the fresh canonical byte attempt failed and remains explicitly separate.",
       "observedAtUtc": "2026-10-07T17:24:35.148Z",
       "evidence": [
         "extensionFresh",
         "extensionMerged"
       ],
-      "nextAction": "Retain unchanged version 2.9.7; the operator reports it live, so no repeat upload is needed. Uploaded ZIP identity and managed adoption remain unverified.",
+      "nextAction": "Retain unchanged2.9.7; no upload/source change occurred. Preserve fresh canonical failure and normalization limits; uploaded package identity/managed adoption remain unverified.",
       "identity": {
         "version": "2.9.7",
         "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
@@ -832,17 +832,17 @@
     },
     {
       "id": "extension-canonical-fresh",
-      "label": "Fresh canonical extension package verification",
+      "label": "Retained October7 canonical package validation",
       "status": "passed",
       "applicability": "current_baseline",
       "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
-      "rationale": "Fresh canonical verifier passes all 24 packaged files byte-for-byte with clean 8069 source; its extension Git tree equals merged 03a9. Raw Git comparison still has 20 CRLF-only differences and remains failed.",
+      "rationale": "The unchanged immutable October7 canonical receipt remains applicable only to the exact retained ZIP/tree. Fresh October8 canonical byte verification failed separately on EOL; current normalized identity proof does not convert that failure to pass.",
       "observedAtUtc": "2026-10-07T17:24:35.148Z",
       "evidence": [
         "extensionFresh",
         "extensionMerged"
       ],
-      "nextAction": "Retain unchanged version 2.9.7; the operator reports it live, so no repeat upload is needed. Uploaded ZIP identity and managed adoption remain unverified."
+      "nextAction": "Retain original dated pass and exact ZIP/tree identity; consult both fresh normalized applicability and failed canonical-attempt gates."
     },
     {
       "id": "extension-raw-git",
@@ -1269,8 +1269,8 @@
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": null,
-      "rationale": "33 final focused regressions and66 combined current-state/v1/v2/v3 real-Git binding regressions pass with zero failures/skips. Offline generation and whitespace checks pass; final patch hashes identify tested bytes. Future exact-main B CI remains separate.",
-      "observedAtUtc": "2026-10-08T21:48:17.972Z",
+      "rationale": "34 final focused regressions and66 earlier combined current-state/v1/v2/v3 real-Git binding regressions pass with zero failures/skips. Offline generation and whitespace checks pass; exact canonical and raw tested patch hashes are distinct. Future exact-main B CI remains separate.",
+      "observedAtUtc": "2026-10-08T21:53:56.768Z",
       "evidence": [
         "currentRecordRefreshChecks"
       ],
@@ -1328,6 +1328,32 @@
         "currentArtifactsScan"
       ],
       "nextAction": "Review the concrete F correction and explicit replacement/privacy applicability. Obtain fresh pair/campaign evidence and final B CI before sealing; never relabel archived a516/F receipts."
+    },
+    {
+      "id": "extension-current-identity-applicability",
+      "label": "Retained extension current identity/applicability",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Fresh exact retained ZIP/source/tree identities match October7. All24 packaged Git blobs match after declared CRLF normalization;20 EOL-only and0 other differences. This is normalization/identity evidence, not a fresh canonical byte-verifier pass.",
+      "observedAtUtc": "2026-10-08T21:51:41.552Z",
+      "evidence": [
+        "currentExtensionApplicability"
+      ],
+      "nextAction": "Retain unchanged2.9.7/exact ZIP and original canonical receipt; preserve the separately failed fresh canonical attempt. Store package/adoption remains unverified."
+    },
+    {
+      "id": "extension-current-canonical-attempt",
+      "label": "Fresh unchanged extension canonical byte attempt",
+      "status": "failed",
+      "applicability": "current_baseline",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Fresh clean03a9 canonical verify-only attempt fails on classroom-runtime-core.js byte/EOL comparison. The failed attempt remains failed beside unchanged exact-ZIP/tree applicability and the original October7 canonical pass.",
+      "observedAtUtc": "2026-10-08T21:51:41.552Z",
+      "evidence": [
+        "currentExtensionApplicability"
+      ],
+      "nextAction": "Preserve failed attempt/log; do not relabel normalized equality as raw canonical success. No source/package change or repeat upload is authorized."
     }
   ],
   "inclusionMatrix": [
@@ -1739,7 +1765,7 @@
     },
     "currentRecordRefreshChecks": {
       "path": "docs/releases/release297/current-record-refresh-checks-20261008.json",
-      "gitBlobSha256": "4e1f320e15fdac08218e6ecf69522ac54a5fb59e55596aed4eeb343e0a68d75d"
+      "gitBlobSha256": "a1822357ba2b45027994c23e4bfb5f94f187e896fa3f083d587714540cf92d43"
     },
     "currentArtifactsScan": {
       "path": "docs/release-evidence/release297-current-candidate-20261008/current-artifacts-scan-20261008.json",
@@ -1756,6 +1782,10 @@
     "currentFrontend": {
       "path": "docs/release-evidence/release297-current-candidate-20261008/frontend-artifact-20261008.json",
       "gitBlobSha256": "768381c19b8889b935d457dc93af3831c6f8de86106abff97d514525e91e17d8"
+    },
+    "currentExtensionApplicability": {
+      "path": "docs/releases/release297/extension-current-applicability-20261008.json",
+      "gitBlobSha256": "646b800c850e02095e5b59d160d736b2943b2012613df77c438984202f6b7761"
     }
   }
 }
