@@ -38,7 +38,9 @@ export function validateIndex(index, root = ROOT) {
   assert.ok(stamp(index.observedAtUtc), 'OBSERVATION_TIME_REQUIRED');
   assert.deepEqual(index.audience, { school: 'DeSales', clients: 133, validationLevel: 'synthetic_only', managedValidation: 'waived_not_passed' }, 'AUDIENCE_CHANGED');
   sameKeys(index.authorization, ['merge', 'productionDeployment', 'registryPublication', 'inactiveRegistration', 'storeSubmission', 'runtimeActivation', 'githubSettings']);
-  assert.ok(Object.values(index.authorization).every(value => value === false), 'INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION');
+  // A dated direct-user observation may record an existing deployment request.
+  // Recording it never supplies controller authority, execution, or readiness.
+  assert.ok(Object.entries(index.authorization).every(([key, value]) => value === false || (key === 'productionDeployment' && value === true && index.evidence.candidateRefresh)), 'INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION');
   metadataOnly(index);
   sameKeys(index.sources, ['schoolpilot', 'classpilot']);
   for (const source of Object.values(index.sources)) {
@@ -87,7 +89,7 @@ export function validateIndex(index, root = ROOT) {
           assert.match(record.identity.zipSha256, hash, 'ZIP_HASH_INVALID');
           assert.match(record.identity.gitTree, sha, 'EXTENSION_TREE_INVALID');
         } else {
-          const keys = record.id === 'frontend-historical' ? ['archiveSha256'] : record.id === 'frontend-preparation' ? ['archiveSha256', 'fileInventorySha256'] : record.id === 'backend-preparation' ? ['localImageId', 'configDigest', 'archiveSha256', 'reportSha256'] : ['indexDigest', 'platformManifestDigest', 'configDigest', 'archiveSha256'];
+          const keys = record.id === 'frontend-historical' ? ['archiveSha256'] : ['frontend-preparation', 'frontend-successor'].includes(record.id) ? ['archiveSha256', 'fileInventorySha256'] : record.id === 'backend-preparation' ? ['localImageId', 'configDigest', 'archiveSha256', 'reportSha256'] : ['indexDigest', 'platformManifestDigest', 'configDigest', 'archiveSha256'];
           sameKeys(record.identity, keys);
           for (const [key, value] of Object.entries(record.identity)) assert.match(value, ['archiveSha256', 'fileInventorySha256', 'reportSha256'].includes(key) ? hash : /^sha256:[a-f0-9]{64}$/, 'ARTIFACT_IDENTITY_INVALID');
         }
@@ -144,7 +146,8 @@ export function validateIndex(index, root = ROOT) {
     const gate = index.gates.find(entry => entry.id === 'current-main-preparation-ci');
     assert.ok(gate, 'CURRENT_MAIN_CI_GATE_REQUIRED');
     assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [ci.status, 'current_baseline', ci.source, ['reconciliation']], 'CURRENT_MAIN_CI_GATE_CHANGED');
-    const afterClosing = reconciliation.recordedAsOf.kind === 'after_closing_pr_merge';
+    const afterSuccessors = reconciliation.recordedAsOf.kind === 'after_successor_merges';
+    const afterClosing = reconciliation.recordedAsOf.kind === 'after_closing_pr_merge' || afterSuccessors;
     if (afterClosing) {
       assert.deepEqual([reconciliation.recordedAsOf.closingPullRequest, reconciliation.recordedAsOf.resultingMainCiStatus, reconciliation.recordedAsOf.pendingMergePullRequests], [619, ci.status, []], 'CLOSING_OBSERVATION_SCOPE_CHANGED');
       assert.match(reconciliation.recordedAsOf.closingMergeSha ?? '', sha, 'CLOSING_MERGE_SOURCE_REQUIRED');
@@ -166,7 +169,17 @@ export function validateIndex(index, root = ROOT) {
     if (afterClosing) {
       assert.ok(reconciliation.preparationPullRequests.every(pr => pr.state === 'MERGED'), 'CLOSING_MERGES_REQUIRED');
       assert.equal(closing.mergeCommit.oid, reconciliation.recordedAsOf.closingMergeSha, 'CLOSING_MERGE_OBSERVATION_CHANGED');
-      assert.equal(reconciliation.schoolpilotRemoteMain, closing.mergeCommit.oid, 'CLOSING_MAIN_SOURCE_CHANGED');
+      if (afterSuccessors) {
+        assert.deepEqual(reconciliation.recordedAsOf.successorPullRequests, [621, 622, 623], 'SUCCESSOR_MERGE_SCOPE_CHANGED');
+        const successors = reconciliation.schoolpilotPullRequests.filter(pr => reconciliation.recordedAsOf.successorPullRequests.includes(pr.number));
+        assert.equal(successors.length, 3, 'SUCCESSOR_MERGES_REQUIRED');
+        for (const pr of successors) {
+          assert.equal(pr.state, 'MERGED', 'SUCCESSOR_MERGES_REQUIRED');
+          assert.match(pr.mergeCommit?.oid ?? '', sha, 'SUCCESSOR_MERGE_SOURCE_REQUIRED');
+          assert.ok(stamp(pr.mergedAt), 'SUCCESSOR_MERGE_TIME_REQUIRED');
+        }
+        assert.equal(reconciliation.schoolpilotRemoteMain, successors.find(pr => pr.number === 623).mergeCommit.oid, 'SUCCESSOR_MAIN_SOURCE_CHANGED');
+      } else assert.equal(reconciliation.schoolpilotRemoteMain, closing.mergeCommit.oid, 'CLOSING_MAIN_SOURCE_CHANGED');
       assert.ok(tooling.mergeCommit.oid !== closing.mergeCommit.oid, 'DISTINCT_TOOLING_MERGE_REQUIRED');
     } else {
       assert.deepEqual([closing.state, closing.mergeCommit, closing.mergedAt], ['OPEN', null, null], 'FUTURE_CLOSING_MERGE_REJECTED');
@@ -372,29 +385,104 @@ export function validateIndex(index, root = ROOT) {
       const gate = index.gates.find(entry => entry.id === `cp-ai-001-${id}`);
       assert.ok(gate, 'CP_AI_SEPARATE_GATE_REQUIRED');
       assert.ok(['pending', 'passed', 'failed'].includes(cp[field]), 'CP_AI_GATE_STATUS_REQUIRED');
-      assert.deepEqual([gate.status, gate.sourceSha, gate.evidence], [cp[field], cp.testedSource, ['cpAiBoundaryPreparation']], 'CP_AI_GATE_RECEIPT_CHANGED');
+      const currentReview = id === 'review' && index.evidence.candidateRefresh;
+      assert.deepEqual([gate.status, gate.sourceSha, gate.evidence], [currentReview ? 'passed' : cp[field], cp.testedSource, [currentReview ? 'candidateRefresh' : 'cpAiBoundaryPreparation']], 'CP_AI_GATE_RECEIPT_CHANGED');
       if (['review', 'deployment', 'live'].includes(id)) assert.equal(cp[field], 'pending', 'CP_AI_PREPARATION_CANNOT_APPROVE_OPERATION');
       if (cp[field] === 'passed') assert.match(cp.testedSource ?? '', sha, 'CP_AI_PASS_REQUIRES_TESTED_SOURCE');
     }
+  }
+  if (index.evidence.candidateRefresh) {
+    const current = receipt('candidateRefresh');
+    metadataOnly(current);
+    assert.deepEqual([current.schemaVersion, current.kind, current.releaseReady, current.operationalAuthorizationReceipt, current.productionDeploymentExecuted], [1, 'release297_current_candidate_observation', false, false, false], 'CURRENT_OBSERVATION_IS_NOT_RELEASE_AUTHORITY');
+    assert.ok(stamp(current.observedAtUtc) && Date.parse(current.observedAtUtc) <= Date.parse(index.observedAtUtc), 'CURRENT_OBSERVATION_TIME_REQUIRED');
+    assert.deepEqual([current.applicationReferenceA, current.extensionSource, current.extensionVersion, current.cleanSourceAtFreeze], [index.sources.schoolpilot.remoteMainObserved, index.sources.classpilot.remoteMainObserved, '2.9.7', true], 'CURRENT_FREEZE_SOURCE_CHANGED');
+    assert.deepEqual([index.sources.schoolpilot.frozenApplicationReference, index.sources.classpilot.frozenApplicationReference], [current.applicationReferenceA, current.extensionSource], 'CURRENT_FREEZE_REQUIRED');
+    for (const inventory of [current.backendInventory, current.frontendInventory]) {
+      assert.match(inventory.sha256 ?? '', hash, 'CURRENT_FREEZE_INVENTORY_REQUIRED');
+      assert.ok(Number.isSafeInteger(inventory.fileCount) && inventory.fileCount > 0, 'CURRENT_FREEZE_INVENTORY_REQUIRED');
+    }
+    assert.deepEqual([current.authorization.verificationMethod, current.authorization.directUserInstruction, current.authorization.productionDeployment, current.authorization.executionCompleted, current.authorization.controllerReceiptGenerated], ['direct_user_request', 'confirm Cl, merge to main, deploy, clean/remove branch', true, false, false], 'DIRECT_DEPLOYMENT_REQUEST_REQUIRED');
+    assert.deepEqual(index.authorization, { merge: false, productionDeployment: true, registryPublication: false, inactiveRegistration: false, storeSubmission: false, runtimeActivation: false, githubSettings: false }, 'DIRECT_DEPLOYMENT_SCOPE_CHANGED');
+    const merged = reconciliation.schoolpilotPullRequests.find(pr => pr.number === 622);
+    assert.deepEqual([current.cpAiPullRequest, current.cpAiMergeSource, current.cpAiTestedSource, current.cpAiReviewStatus], [622, merged.mergeCommit.oid, receipt('cpAiBoundaryPreparation').testedSource, 'passed'], 'CP_AI_MERGED_REVIEW_OBSERVATION_CHANGED');
+    assert.ok(reconciliation.currentMainCi.checks.some(check => check.name === 'Scan Docker image' && check.conclusion === 'success'), 'CURRENT_CANDIDATE_MAIN_SCAN_CHECK_REQUIRED');
+    assert.deepEqual([current.fallbackSourceF, current.fallbackSelection, current.fallbackRollbackRestoresPriorProviderBoundary], [receipt('successorPreparationObservation').artifactPair.fallback.source, 'pending_exact_artifact_and_applicability_review', true], 'CURRENT_FALLBACK_APPLICABILITY_CHANGED');
+    const freeze = index.gates.find(gate => gate.id === 'candidate-freeze');
+    assert.deepEqual([freeze?.status, freeze?.applicability, freeze?.sourceSha, freeze?.evidence], ['passed', 'current_baseline', current.applicationReferenceA, ['candidateRefresh']], 'CURRENT_FREEZE_GATE_CHANGED');
+    assert.deepEqual([current.productionObservation.metadataOnly, current.productionObservation.catalogVerified, current.productionObservation.ledgerVerified, current.productionObservation.restoreVerified], [true, false, false, false], 'PRODUCTION_METADATA_IS_NOT_CATALOG_OR_RESTORE_PROOF');
+    assert.deepEqual(current.productionObservation.usageModes, { CLASSPILOT_DAILY_USAGE_ROLLUP_MODE: { configuredValue: null, effectiveDefault: 'shadow' }, CLASSPILOT_USAGE_ROLLUP_MODE: { configuredValue: 'off' }, CLASSPILOT_DIGITAL_USAGE_MODE: { configuredValue: 'off' } }, 'CURRENT_USAGE_OBSERVATION_CHANGED');
+    for (const [name, value] of [['CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'shadow'], ['CLASSPILOT_USAGE_ROLLUP_MODE', 'off'], ['CLASSPILOT_DIGITAL_USAGE_MODE', 'off']]) {
+      assert.deepEqual([index.usageModes[name].observedValue, index.usageModes[name].status, index.usageModes[name].evidence], [value, 'passed', ['candidateRefresh']], 'CURRENT_USAGE_GATE_CHANGED');
+    }
+  }
+  if (index.evidence.currentArtifactsScan) {
+    const scan = receipt('currentArtifactsScan');
+    metadataOnly(scan);
+    assert.ok(index.evidence.candidateRefresh, 'CURRENT_ARTIFACT_SCAN_REQUIRES_FREEZE');
+    assert.deepEqual([scan.schemaVersion, scan.kind, scan.releaseReady, scan.operationalAuthorization, scan.productionMutations], [1, 'release297_current_artifact_scan_observation', false, false, 0], 'CURRENT_ARTIFACT_SCAN_IS_NOT_AUTHORITY');
+    assert.ok(stamp(scan.observedAtUtc) && Date.parse(scan.observedAtUtc) <= Date.parse(index.observedAtUtc), 'CURRENT_ARTIFACT_SCAN_TIME_REQUIRED');
+    const pair = receipt('successorPreparationObservation').artifactPair;
+    for (const [field, role, source, artifactId, gateId, status] of [['candidate', 'serving-anchor', index.sources.schoolpilot.frozenApplicationReference, 'backend-successor', 'backend-successor-scan-fresh', 'passed'], ['fallback', 'fallback', pair.fallback.source, 'fallback-successor-current-scan', 'fallback-successor-scan-fresh', 'failed']]) {
+      const fact = scan[field];
+      assert.deepEqual([fact.artifactRole, fact.source, fact.status], [role, source, status], 'CURRENT_SCAN_ARTIFACT_ROLE_CHANGED');
+      const identity = { indexDigest: fact.localIndex, platformManifestDigest: fact.platform, configDigest: fact.config, archiveSha256: fact.archiveSha256 };
+      const artifact = index.artifacts.find(entry => entry.id === artifactId);
+      assert.deepEqual([artifact?.status, artifact?.applicability, artifact?.sourceSha, artifact?.identity, artifact?.evidence], [status, status === 'passed' ? 'preparation_only' : 'current_baseline', source, identity, ['currentArtifactsScan']], 'CURRENT_SCAN_ARTIFACT_IDENTITY_CHANGED');
+      const gate = index.gates.find(entry => entry.id === gateId);
+      assert.deepEqual([gate?.status, gate?.sourceSha, gate?.evidence], [status, source, ['currentArtifactsScan']], 'CURRENT_SCAN_GATE_CHANGED');
+      assert.deepEqual(fact.exactOwnedScannerCleanup, { exitCode: 0, unforced: true, containerAbsentAfterRemoval: true }, 'CURRENT_SCAN_CLEANUP_REQUIRED');
+      for (const severity of ['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL']) assert.equal(fact.counts[severity], fact.findings.filter(finding => finding.severity === severity).length, 'CURRENT_SCAN_FINDING_COUNTS_CHANGED');
+      if (field === 'candidate') assert.deepEqual([fact.counts.HIGH, fact.counts.CRITICAL], [0, 0], 'CURRENT_CANDIDATE_SCAN_MUST_PASS');
+      else {
+        assert.ok(fact.counts.HIGH + fact.counts.CRITICAL > 0, 'CURRENT_F_FAILURE_RECLASSIFIED');
+        assert.deepEqual([fact.localIndex, fact.config, fact.platform, fact.archiveSha256], [pair.fallback.localIndex, pair.fallback.config, pair.fallback.platform, pair.fallback.archiveSha256], 'CURRENT_F_SCAN_SUBSTITUTED');
+      }
+    }
+    assert.ok(Object.entries(scan.acceptanceDisposition).filter(([key]) => key !== 'reason').every(([, value]) => value === 'held_before_execution'), 'FAILED_F_ACCEPTANCE_MUST_STOP');
+  }
+  if (index.evidence.currentSuccessorBinding) {
+    const current = receipt('candidateRefresh'), binding = receipt('currentSuccessorBinding'), scan = receipt('currentArtifactsScan');
+    assert.deepEqual([binding.schemaVersion, binding.id, binding.status, binding.applicationSource, binding.inventory, binding.frontendInventory, binding.preparation.status, binding.preparation.evidence.successorScan.status, binding.fallbackScan.status, binding.successorSelection.status, binding.operationalAuthorization], [3, 'release-297-current-school-fallback-v3', 'pending', current.applicationReferenceA, current.backendInventory, current.frontendInventory, 'pending', 'failed', 'failed', 'pending', false], 'CURRENT_BINDING_MUST_FAIL_CLOSED');
+    assert.deepEqual([binding.historicalPreparation.profile.path, binding.historicalPreparation.profile.sha256, binding.historicalPreparation.applicableToCurrentA], [index.evidence.successorBinding.path, index.evidence.successorBinding.gitBlobSha256, false], 'HISTORICAL_BINDING_MUST_REMAIN_SEPARATE');
+    for (const [role, field] of [['serving-anchor', 'candidate'], ['fallback', 'fallback']]) assert.deepEqual(binding.artifacts[role], Object.fromEntries(['source', 'localIndex', 'config', 'platform', 'archiveSha256'].map(key => [key, scan[field][key]])), 'CURRENT_BINDING_ARTIFACT_PAIR_CHANGED');
+    for (const key of ['screenshotRuntime', 'requestIpRateLimit', 'ordinaryRecovery', 'restrictedRestoration']) assert.deepEqual(binding.preparation.evidence[key], {status:'pending', path:null, sha256:null}, 'HISTORICAL_PAIR_EVIDENCE_CANNOT_PASS_CURRENT_PREPARATION');
+  }
+  if (index.evidence.currentCandidateNative) {
+    const native = receipt('currentCandidateNative'), exact = receipt('currentArtifactsScan').candidate;
+    assert.deepEqual([native.kind, native.status, native.artifactRole, native.source, native.localIndex, native.config, native.platform, native.archiveSha256, native.actualChecks.length, native.productionMutations, native.releaseReady, native.operationalAuthorization], ['release297_current_candidate_native_processing', 'passed', 'serving-anchor', exact.source, exact.localIndex, exact.config, exact.platform, exact.archiveSha256, 9, 0, false, false], 'CURRENT_NATIVE_SOURCE_OR_ROLE_CHANGED');
+    assert.ok(native.actualChecks.every(check => check.passed === true) && Object.values(native.checks).every(value => value === true), 'CURRENT_NATIVE_CHECKS_REQUIRED');
+    assert.deepEqual([native.ownedCleanup.exitCode, native.ownedCleanup.unforced, native.ownedCleanup.containerAbsentByFreshDockerRead, native.ownedCleanup.privateTempDirectoriesRemoved, native.limits.FSelected, native.limits.productionCatalogProven], [0, true, true, true, false, false], 'CURRENT_NATIVE_CANNOT_ESTABLISH_PAIR_OR_PRODUCTION');
+  }
+  if (index.evidence.currentFrontend) {
+    const frontend = receipt('currentFrontend'), frozen = receipt('candidateRefresh'), artifact = index.artifacts.find(entry => entry.id === 'frontend-successor');
+    assert.deepEqual([frontend.source, frontend.frontendGitInventorySha256, frontend.allArchiveEntriesMatchBuiltFiles, frontend.published, frontend.adoptionVerified, frontend.releaseReady, frontend.operationalAuthorization], [frozen.applicationReferenceA, frozen.frontendInventory.sha256, true, false, false, false, false], 'CURRENT_FRONTEND_IS_NOT_PUBLICATION_OR_ADOPTION');
+    assert.ok(frontend.fileCount > 0 && frontend.archiveBytes > 0, 'CURRENT_FRONTEND_ARCHIVE_REQUIRED');
+    assert.deepEqual([artifact.status, artifact.applicability, artifact.sourceSha, artifact.identity, artifact.evidence], ['passed', 'preparation_only', frontend.source, { archiveSha256: frontend.archiveSha256, fileInventorySha256: frontend.fileInventorySha256 }, ['currentFrontend']], 'CURRENT_FRONTEND_ARTIFACT_CHANGED');
   }
   return index;
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
 const short = value => value === null ? 'pending' : `\`${value.slice(0, 8)}\``;
 export function renderStatus(index, root = ROOT) {
-  const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
+  const refreshed = index.evidence.candidateRefresh;
+  const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', refreshed ? '**DeSales: 133 clients; both new Usage modes must be off. The exact application/extension sources are frozen for validation; artifact and runtime acceptance remain separately gated. This record is not a controller authorization receipt.**' : '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
   if (index.gates.find(entry => entry.id === 'fallback-scan-current')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**', '');
-  if (index.evidence.successorPreparationObservation) lines.splice(7, 0, '**The dependency-only C578 successor has passed bounded security/native recovery preparation. Exact-artifact selection and the original release acceptance remain pending.** See the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md).', '');
+  if (index.evidence.successorPreparationObservation) lines.splice(7, 0, '**The dependency-only C578 successor passed historical bounded security/native recovery preparation for its exact earlier pair. Current security/applicability checks, exact-artifact selection and original release acceptance remain separate.** See the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md).', '');
+  if (index.gates.find(entry => entry.id === 'fallback-successor-scan-fresh')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the latest scan of unchanged F failed the zero High/Critical criterion. Its earlier passing preparation remains historical; stop current A/F recovery and release acceptance until a concrete reviewed security correction and fresh artifact evidence pass.**', '');
   if (index.evidence.cpAiBoundaryPreparation) {
     const cp = JSON.parse(readFileSync(path.join(root, index.evidence.cpAiBoundaryPreparation.path), 'utf8'));
     const table = lines.findIndex(line => line === '| Source | Current main observed | Historical tested application | Frozen successor |');
-    lines[table] = '| Source | Historical reconciled main snapshot | Historical tested application | Frozen successor |';
-    lines.splice(table, 0, `**Newly observed SchoolPilot main baseline: ${short(cp.observedMainBaseline)}. CP-AI-001 tested source: ${short(cp.testedSource)}.** The source rows below retain dated historical reconciliation. The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; new candidate equivalence, image/scan and applicable recovery/classroom acceptance remain pending. Unchanged F restores the prior provider boundary on rollback and requires selection/applicability review.`, '');
+    if (refreshed) lines.splice(table, 0, `**CP-AI-001 is merged in #622; the current frozen source ${short(index.sources.schoolpilot.frozenApplicationReference)} also includes #621 and #623. CP-AI-001 synthetic evidence remains bound to ${short(cp.testedSource)}.** The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; source-specific image/scan and applicable recovery/classroom acceptance remain separate. Unchanged F restores the prior provider boundary on rollback and requires exact-artifact selection/applicability review.`, '');
+    else {
+      lines[table] = '| Source | Historical reconciled main snapshot | Historical tested application | Frozen successor |';
+      lines.splice(table, 0, `**Newly observed SchoolPilot main baseline: ${short(cp.observedMainBaseline)}. CP-AI-001 tested source: ${short(cp.testedSource)}.** The source rows below retain dated historical reconciliation. The [browser-boundary preparation](CLASSPILOT_AI_REQUEST_BOUNDARY.md) changes application/image inputs; new candidate equivalence, image/scan and applicable recovery/classroom acceptance remain pending. Unchanged F restores the prior provider boundary on rollback and requires selection/applicability review.`, '');
+    }
   }
   for (const [repository, source] of Object.entries(index.sources)) lines.push(`| ${repository} | ${short(source.remoteMainObserved)} | ${short(source.testedHistorical)} | ${short(source.frozenApplicationReference)} |`);
   if (index.evidence.mergeRequest) {
     const merged = index.gates.find(entry => entry.id === 'preparation-merges')?.status === 'passed';
-    lines.push('', `${merged ? 'All four authorized source preparation PRs **#616, #617, #619 and #620** are merged, with exact resulting-main push checks recorded.' : 'The operator requested source merges **#616, #617, #619 and #620** after their preparation checks.'} Every release-operation authorization flag remains false. The observed main is a dated snapshot; refresh [live main checks](https://github.com/bzinkan/SchoolPilot/actions?query=branch%3Amain) before later release operations.`);
+    lines.push('', `${merged ? 'All four authorized source preparation PRs **#616, #617, #619 and #620** are merged, with exact resulting-main push checks recorded.' : 'The operator requested source merges **#616, #617, #619 and #620** after their preparation checks.'} ${refreshed ? 'The prior direct user request authorizes production deployment after required gates pass; deployment has not executed. Publication, unused registration, activation, Store submission and settings application remain separate, unexecuted decisions. This index cannot be submitted as operational authority.' : 'Every release-operation authorization flag remains false.'} The observed main is a dated snapshot; refresh [live main checks](https://github.com/bzinkan/SchoolPilot/actions?query=branch%3Amain) before later release operations.`);
   }
   if (index.evidence.operatorStoreVersion) lines.push('', '**Store version 2.9.7 is operator-reported live.** Uploaded ZIP identity and pending submissions remain unknown; managed adoption remains pending and managed validation `waived_not_passed`. The unchanged candidate does not require another upload.');
   lines.push('', '| Stage | Status | Applicability | Next action |', '|---|---|---|---|');

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_current_frontend_artifact_observation",
+  "observedAtUtc": "2026-10-08T21:42:43.9862170Z",
+  "source": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "frontendGitInventorySha256": "9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac",
+  "archiveSha256": "ad4acf6aeed629fb365269dfd48785376dd2d7c3f540d647b066526907094294",
+  "archiveBytes": 1008016,
+  "fileCount": 171,
+  "fileInventorySha256": "8140e65d93f2fb8a41356e1e0dcbb1e2c41c2569bfd3b79410065a61aba6e76d",
+  "allArchiveEntriesMatchBuiltFiles": true,
+  "checks": {
+    "cleanInstall": "passed",
+    "lint": "passed",
+    "productionBuild": "passed",
+    "exactSourceMainCi": "passed",
+    "mainCiUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/37812359330",
+    "mainCiJobCounts": {
+      "passed": 16,
+      "skipped": 1,
+      "failed": 0
+    }
+  },
+  "retainedEvidence": {
+    "fileInventory": {
+      "storage": "private",
+      "path": "frontend-01/file-inventory.json",
+      "sha256": "8140e65d93f2fb8a41356e1e0dcbb1e2c41c2569bfd3b79410065a61aba6e76d"
+    },
+    "mainCi": {
+      "storage": "private",
+      "path": "candidate-main-ci.json",
+      "sha256": "6abea9762dcf84d79bed0bacc629210307b344c000f10a51be92d2abf15ed4b6"
+    }
+  },
+  "published": false,
+  "adoptionVerified": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

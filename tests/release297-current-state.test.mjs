@@ -6,10 +6,40 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { BEGIN, END, CHECKLIST, INDEX, ROOT, validateIndex, renderStatus, updateChecklist } from '../scripts/release297-current-state.mjs';
+import { SUCCESSOR_BINDING_ID, validateBindingProfile, validateSuccessorPreparation } from '../scripts/release-source-binding.mjs';
+import { FALLBACK } from '../scripts/register-compatible-fallback-inactive.mjs';
 
 const index = () => JSON.parse(readFileSync(path.join(ROOT, INDEX), 'utf8'));
-function receiptFixture(work) {
-  const candidate = index(), fixture = mkdtempSync(path.join(tmpdir(), 'release297-state-refresh-'));
+const historicalIndex = () => {
+  // Reconstruct the historical validation overlay from retained receipts rather
+  // than requiring an ancestor Git object in a shallow CI checkout.
+  const candidate = index();
+  candidate.evidence.reconciliation = candidate.evidence.reconciliationPrevious;
+  delete candidate.evidence.reconciliationPrevious;
+  delete candidate.evidence.candidateRefresh;
+  delete candidate.evidence.currentArtifactsScan;
+  delete candidate.evidence.currentSuccessorBinding;
+  delete candidate.evidence.currentCandidateNative;
+  delete candidate.evidence.currentFrontend;
+  candidate.authorization.productionDeployment = false;
+  const historic = JSON.parse(readFileSync(path.join(ROOT, candidate.evidence.reconciliation.path), 'utf8'));
+  candidate.sources.schoolpilot.remoteMainObserved = historic.schoolpilotRemoteMain;
+  for (const source of Object.values(candidate.sources)) {
+    source.frozenApplicationReference = null;
+    source.evidence = source.evidence.map(id => id === 'candidateRefresh' ? 'reconciliation' : id);
+  }
+  candidate.inclusionMatrix = candidate.inclusionMatrix.filter(pr => pr.repository !== 'SchoolPilot' || ![621, 622, 623].includes(pr.number));
+  for (const pr of candidate.inclusionMatrix) if (pr.repository === 'SchoolPilot') pr.includedInSource = historic.schoolpilotRemoteMain;
+  candidate.gates = candidate.gates.filter(gate => !['candidate-freeze', 'repository-protections', 'backend-successor-scan-fresh', 'fallback-successor-scan-fresh', 'candidate-native-processing-fresh', 'current-v3-binding'].includes(gate.id));
+  candidate.artifacts = candidate.artifacts.filter(artifact => artifact.id !== 'fallback-successor-current-scan');
+  for (const group of ['artifacts', 'stages', 'gates']) for (const record of candidate[group]) record.evidence = record.evidence.map(id => ['candidateRefresh', 'currentArtifactsScan', 'currentCandidateNative', 'currentFrontend'].includes(id) ? 'reconciliation' : id);
+  candidate.gates.find(gate => gate.id === 'current-main-preparation-ci').sourceSha = historic.schoolpilotRemoteMain;
+  Object.assign(candidate.gates.find(gate => gate.id === 'cp-ai-001-review'), { status: 'pending', evidence: ['cpAiBoundaryPreparation'] });
+  for (const mode of Object.values(candidate.usageModes)) Object.assign(mode, { observedValue: null, status: 'unknown', evidence: ['productionHistorical'] });
+  return candidate;
+};
+function receiptFixture(work, current = false) {
+  const candidate = current ? index() : historicalIndex(), fixture = mkdtempSync(path.join(tmpdir(), 'release297-state-refresh-'));
   try {
     for (const entry of Object.values(candidate.evidence)) {
       const filename = path.join(fixture, entry.path); mkdirSync(path.dirname(filename), { recursive: true });
@@ -66,15 +96,109 @@ test('current-state record cannot authorize an operation or substitute a fallbac
   candidate.compatibility.retainedFallbackSource = candidate.sources.schoolpilot.remoteMainObserved;
   assert.throws(() => validateIndex(candidate), /FALLBACK_SUBSTITUTED/);
 });
-test('CP-AI preparation renders the new observed main while preserving dated source reconciliation', () => {
+test('current observation renders merged CP-AI and frozen A without relabeling dated preparation', () => {
   const candidate = index();
   const originalMain = candidate.sources.schoolpilot.remoteMainObserved;
   const cp = JSON.parse(readFileSync(path.join(ROOT, candidate.evidence.cpAiBoundaryPreparation.path), 'utf8'));
   const rendered = renderStatus(validateIndex(candidate));
-  assert.match(rendered, new RegExp(`Newly observed SchoolPilot main baseline:.*${cp.observedMainBaseline.slice(0, 8)}`));
-  assert.match(rendered, /Historical reconciled main snapshot/);
+  assert.match(rendered, /CP-AI-001 is merged in #622/);
+  assert.match(rendered, new RegExp(`current frozen source.*${originalMain.slice(0, 8)}`));
+  assert.match(rendered, /Current main observed/);
+  assert.match(rendered, /direct user request authorizes production deployment after required gates pass; deployment has not executed/);
+  assert.equal(cp.reviewStatus, 'pending');
   assert.match(rendered, /Unchanged F restores the prior provider boundary/);
   assert.equal(candidate.sources.schoolpilot.remoteMainObserved, originalMain);
+});
+
+test('recorded deployment request cannot authorize publication, settings or operational execution', () => {
+  for (const field of ['registryPublication', 'inactiveRegistration', 'runtimeActivation', 'storeSubmission', 'githubSettings', 'merge']) {
+    const candidate = index(); candidate.authorization[field] = true;
+    assert.throws(() => validateIndex(candidate), /INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION/);
+  }
+  const candidate = index(); delete candidate.evidence.candidateRefresh;
+  assert.throws(() => validateIndex(candidate), /INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION/);
+  for (const field of ['releaseReady', 'operationalAuthorizationReceipt', 'productionDeploymentExecuted']) {
+    receiptFixture((candidate, fixture, read, write) => {
+      const current = read('candidateRefresh'); current[field] = true; write('candidateRefresh', current);
+      assert.throws(() => validateIndex(candidate, fixture), /CURRENT_OBSERVATION_IS_NOT_RELEASE_AUTHORITY/);
+    }, true);
+  }
+});
+
+test('current freeze requires exact source, positive inventories and direct-user provenance', () => {
+  for (const [mutate, expected] of [
+    [current => { current.applicationReferenceA = 'f'.repeat(40); }, /CURRENT_FREEZE_SOURCE_CHANGED/],
+    [current => { current.cleanSourceAtFreeze = false; }, /CURRENT_FREEZE_SOURCE_CHANGED/],
+    [current => { current.backendInventory.fileCount = 0; }, /CURRENT_FREEZE_INVENTORY_REQUIRED/],
+    [current => { current.frontendInventory.sha256 = 'invalid'; }, /CURRENT_FREEZE_INVENTORY_REQUIRED/],
+    [current => { current.authorization.verificationMethod = 'prepared_document'; }, /DIRECT_DEPLOYMENT_REQUEST_REQUIRED/],
+    [current => { current.authorization.controllerReceiptGenerated = true; }, /DIRECT_DEPLOYMENT_REQUEST_REQUIRED/],
+    [current => { current.cpAiMergeSource = 'f'.repeat(40); }, /CP_AI_MERGED_REVIEW_OBSERVATION_CHANGED/],
+    [current => { current.fallbackSelection = 'selected'; }, /CURRENT_FALLBACK_APPLICABILITY_CHANGED/],
+    [current => { current.productionObservation.catalogVerified = true; }, /PRODUCTION_METADATA_IS_NOT_CATALOG_OR_RESTORE_PROOF/],
+    [current => { current.productionObservation.usageModes.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE.effectiveDefault = 'off'; }, /CURRENT_USAGE_OBSERVATION_CHANGED/],
+  ]) receiptFixture((candidate, fixture, read, write) => {
+    const current = read('candidateRefresh'); mutate(current); write('candidateRefresh', current);
+    assert.throws(() => validateIndex(candidate, fixture), expected);
+  }, true);
+});
+
+test('successor merge observation requires actual merged PRs and green exact-main container scan', () => {
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = read('reconciliation'); current.schoolpilotPullRequests.find(pr => pr.number === 622).state = 'OPEN';
+    write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /SUCCESSOR_MERGES_REQUIRED/);
+  }, true);
+  receiptFixture((candidate, fixture, read, write) => {
+    const current = read('reconciliation'); current.currentMainCi.checks = current.currentMainCi.checks.filter(check => check.name !== 'Scan Docker image');
+    write('reconciliation', current);
+    assert.throws(() => validateIndex(candidate, fixture), /CURRENT_CANDIDATE_MAIN_SCAN_CHECK_REQUIRED/);
+  }, true);
+});
+
+test('latest F failure stays distinct from both historical F pass and current candidate scan', () => {
+  const candidate = index();
+  assert.equal(candidate.artifacts.find(artifact => artifact.id === 'fallback-successor-artifact').status, 'passed');
+  assert.equal(candidate.gates.find(gate => gate.id === 'fallback-successor-scan-fresh').status, 'failed');
+  assert.equal(candidate.gates.find(gate => gate.id === 'backend-successor-scan-fresh').status, 'passed');
+  assert.match(renderStatus(candidate), /latest scan of unchanged F failed the zero High\/Critical criterion/);
+  candidate.gates.find(gate => gate.id === 'fallback-successor-scan-fresh').status = 'passed';
+  assert.throws(() => validateIndex(candidate), /CURRENT_SCAN_GATE_CHANGED/);
+});
+
+test('fresh scan observations reject mixed artifact roles, substituted F, count changes and acceptance after failure', () => {
+  for (const [mutate, expected] of [
+    [scan => { scan.candidate.artifactRole = 'fallback'; }, /CURRENT_SCAN_ARTIFACT_ROLE_CHANGED/],
+    [scan => { scan.candidate.localIndex = scan.fallback.localIndex; }, /CURRENT_SCAN_ARTIFACT_IDENTITY_CHANGED/],
+    [scan => { scan.fallback.status = 'passed'; }, /CURRENT_SCAN_ARTIFACT_ROLE_CHANGED/],
+    [scan => { scan.fallback.counts.HIGH = 0; }, /CURRENT_SCAN_FINDING_COUNTS_CHANGED/],
+    [scan => { scan.fallback.exactOwnedScannerCleanup.unforced = false; }, /CURRENT_SCAN_CLEANUP_REQUIRED/],
+    [scan => { scan.acceptanceDisposition.ordinaryRecovery = 'passed'; }, /FAILED_F_ACCEPTANCE_MUST_STOP/],
+  ]) receiptFixture((candidate, fixture, read, write) => {
+    const scan = read('currentArtifactsScan'); mutate(scan); write('currentArtifactsScan', scan);
+    assert.throws(() => validateIndex(candidate, fixture), expected);
+  }, true);
+});
+
+test('current binding cannot reuse historical preparation or infer native pair/adoption evidence', () => {
+  for (const [id, mutate, expected] of [
+    ['currentSuccessorBinding', binding => { binding.preparation.status = 'passed'; }, /CURRENT_BINDING_MUST_FAIL_CLOSED/],
+    ['currentSuccessorBinding', binding => { binding.preparation.evidence.ordinaryRecovery = binding.historicalPreparation.preparation.evidence.ordinaryRecovery; }, /HISTORICAL_PAIR_EVIDENCE_CANNOT_PASS_CURRENT_PREPARATION/],
+    ['currentCandidateNative', native => { native.artifactRole = 'fallback'; }, /CURRENT_NATIVE_SOURCE_OR_ROLE_CHANGED/],
+    ['currentCandidateNative', native => { native.limits.FSelected = true; }, /CURRENT_NATIVE_CANNOT_ESTABLISH_PAIR_OR_PRODUCTION/],
+    ['currentFrontend', frontend => { frontend.adoptionVerified = true; }, /CURRENT_FRONTEND_IS_NOT_PUBLICATION_OR_ADOPTION/],
+  ]) receiptFixture((candidate, fixture, read, write) => {
+    const current = read(id); mutate(current); write(id, current);
+    assert.throws(() => validateIndex(candidate, fixture), expected);
+  }, true);
+});
+
+test('actual current v3 preparation and operational profile reject before external commands', async () => {
+  const current = index(), profile = JSON.parse(readFileSync(path.join(ROOT, current.evidence.currentSuccessorBinding.path), 'utf8'));
+  let externalCommands = 0;
+  await assert.rejects(validateSuccessorPreparation({schemaVersion:3,releaseBindingId:SUCCESSOR_BINDING_ID}, {root:ROOT,fallback:FALLBACK,run:async()=>{externalCommands++;throw new Error('UNEXPECTED_EXTERNAL_COMMAND');}}), /SUCCESSOR_PREPARATION_PENDING/);
+  assert.equal(externalCommands, 0);
+  assert.throws(() => validateBindingProfile(profile, SUCCESSOR_BINDING_ID, FALLBACK), /SUCCESSOR_PREPARATION_PENDING/);
 });
 test('CP-AI source-only preparation cannot approve deployment, live protection or a changed historical recovery pair', () => {
   for (const field of ['reviewStatus', 'deploymentStatus', 'liveVerificationStatus']) {

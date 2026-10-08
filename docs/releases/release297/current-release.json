@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-08T15:12:42.674Z",
+  "observedAtUtc": "2026-10-08T21:48:17.972Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -11,7 +11,7 @@
   },
   "authorization": {
     "merge": false,
-    "productionDeployment": false,
+    "productionDeployment": true,
     "registryPublication": false,
     "inactiveRegistration": false,
     "storeSubmission": false,
@@ -21,12 +21,13 @@
   "sources": {
     "schoolpilot": {
       "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
-      "remoteMainObserved": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "remoteMainObserved": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
       "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
-      "frozenApplicationReference": null,
+      "frozenApplicationReference": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "evidence": [
         "reconciliation",
+        "candidateRefresh",
         "classroomHistorical"
       ]
     },
@@ -35,43 +36,45 @@
       "remoteMainObserved": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
       "reviewedHistorical": "8069a9c9bd50352e187847158b356a69edc4e45d",
       "testedHistorical": "065be165b5df704d84eb716e3fb914c1fed17f98",
-      "frozenApplicationReference": null,
+      "frozenApplicationReference": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
       "evidence": [
         "extensionMerged",
-        "reconciliation"
+        "extensionFresh",
+        "reconciliation",
+        "candidateRefresh"
       ]
     }
   },
   "usageModes": {
     "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": {
       "requiredValue": "preserve_observed_value",
-      "observedValue": null,
-      "status": "unknown",
-      "rationale": "Daily rollup is independent; missing configuration defaults to shadow and can still incur work with new modes off.",
+      "observedValue": "shadow",
+      "status": "passed",
+      "rationale": "Fresh dated API/worker metadata omits the independent daily setting; unchanged code defaults it to shadow, which can still perform work.",
       "evidence": [
-        "productionHistorical"
+        "candidateRefresh"
       ],
-      "nextAction": "Read and preserve actual API/worker daily mode separately; do not infer disabled workload."
+      "nextAction": "Freshly re-read and preserve both service values immediately before operations; daily configuration is independent of the two new modes."
     },
     "CLASSPILOT_USAGE_ROLLUP_MODE": {
       "requiredValue": "off",
-      "observedValue": null,
-      "status": "unknown",
-      "rationale": "Bounded release requires writer off; no fresh runtime observation is recorded.",
+      "observedValue": "off",
+      "status": "passed",
+      "rationale": "Fresh dated API/worker definitions configure off. This observation is not activation or an evergreen live assertion.",
       "evidence": [
-        "productionHistorical"
+        "candidateRefresh"
       ],
-      "nextAction": "Verify off on every actual API/worker definition before the separately authorized release."
+      "nextAction": "Freshly re-read and preserve both service values immediately before operations; daily configuration is independent of the two new modes."
     },
     "CLASSPILOT_DIGITAL_USAGE_MODE": {
       "requiredValue": "off",
-      "observedValue": null,
-      "status": "unknown",
-      "rationale": "Bounded release requires reader off; no fresh runtime observation is recorded.",
+      "observedValue": "off",
+      "status": "passed",
+      "rationale": "Fresh dated API/worker definitions configure off. This observation is not activation or an evergreen live assertion.",
       "evidence": [
-        "productionHistorical"
+        "candidateRefresh"
       ],
-      "nextAction": "Verify off on every actual API/worker definition before the separately authorized release."
+      "nextAction": "Freshly re-read and preserve both service values immediately before operations; daily configuration is independent of the two new modes."
     }
   },
   "compatibility": {
@@ -105,26 +108,38 @@
     {
       "id": "backend-successor",
       "label": "Successor API/worker image",
-      "status": "pending",
-      "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Historical exact A/F preparation images exist. CP-AI-001 changes backend/governance image inputs; no new frozen candidate image/config or refreshed acceptance is recorded.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
-      "evidence": [],
-      "nextAction": "Freeze the changed application reference; build and identify a fresh source/scan/archive/manifest/config receipt before operational Plans."
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact frozen A Linux/amd64 image/config/platform/archive is identified. Fresh pinned Trivy scan records zero High/Critical and one explicit Medium; owned unforced scanner cleanup passes. Native/release acceptance and publication remain separate.",
+      "observedAtUtc": "2026-10-08T21:35:53.409Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Retain this exact tested image/config; refresh standalone native checks. Current A/F recovery and release campaigns stop for the fresh F High finding.",
+      "identity": {
+        "indexDigest": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+        "platformManifestDigest": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+        "configDigest": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+        "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41"
+      }
     },
     {
       "id": "frontend-successor",
       "label": "Successor frontend archive",
-      "status": "pending",
-      "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "A local preparation archive exists; TeachingTools, Focus and analytics changed from historical inputs. Final-main source is not frozen.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact frozen A frontend archive is built and hashed; all 171 ZIP entries match the deterministic built file inventory. Fresh exact A frontend CI passes; publication/adoption and classroom acceptance remain separate.",
+      "observedAtUtc": "2026-10-08T21:42:43.9862170Z",
       "evidence": [
-        "reconciliation"
+        "currentFrontend"
       ],
-      "nextAction": "Build from frozen source, identify and hash the archive; publication remains separate."
+      "nextAction": "Retain this matched archive and input inventory; refresh final B input equivalence/CI and deploy only after release gates pass.",
+      "identity": {
+        "archiveSha256": "ad4acf6aeed629fb365269dfd48785376dd2d7c3f540d647b066526907094294",
+        "fileInventorySha256": "8140e65d93f2fb8a41356e1e0dcbb1e2c41c2569bfd3b79410065a61aba6e76d"
+      }
     },
     {
       "id": "backend-preparation",
@@ -274,49 +289,72 @@
         "configDigest": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
         "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
       }
+    },
+    {
+      "id": "fallback-successor-current-scan",
+      "label": "Unchanged F latest security observation",
+      "status": "failed",
+      "applicability": "current_baseline",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "identity": {
+        "indexDigest": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+        "platformManifestDigest": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+        "configDigest": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+        "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+      },
+      "rationale": "The exact unchanged F image freshly fails zero High/Critical: CVE-2026-4775 in tiff4.7.1-r0; scanner reports fix4.7.2-r0. Two Medium findings are explicit. Its earlier passing scan remains historical.",
+      "observedAtUtc": "2026-10-08T21:36:12.886Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Prepare and review a replacement fallback artifact that passes a fresh scan; preserve exact failed F. Explicitly review whether its source must also retain CP-AI-001 protection. New-source/image recovery evidence and exact replacement selection are required."
     }
   ],
   "stages": [
     {
       "id": "implementation",
-      "label": "Historical merged preparation implementation",
+      "label": "Merged current application and tooling implementation",
       "status": "passed",
-      "applicability": "historical",
-      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
-      "rationale": "PRs #616/#617/#619/#620 are merged in historical exact A main; PR621 is included in the newly observed bb8 baseline. The CP-AI-001 runtime change remains separately reviewable and unmerged.",
-      "observedAtUtc": "2026-10-07T23:49:34.842Z",
+      "applicability": "current_baseline",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Current exact A includes all merged release preparation, CP-AI remediation #622 and frontend follow-up #623.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
-        "reconciliation"
+        "reconciliation",
+        "candidateRefresh"
       ],
-      "nextAction": "Review CP-AI-001 exact-source implementation; separately authorize merge and verify resulting-main CI."
+      "nextAction": "Retain exact source freeze; add only demonstrated blockers and invalidate affected evidence on application drift."
     },
     {
       "id": "testing",
       "label": "Testing",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Historical exact A/F security/native recovery preparation passes for that pair. CP-AI-001 changes application inputs, so a new tested application reference and affected acceptance are required.",
-      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact A CI/security workflows and fresh candidate image scan pass. Mandatory fresh F High TIFF finding holds A/F recovery and current-school/classroom/normal/headroom acceptance before execution.",
+      "observedAtUtc": "2026-10-08T21:41:15.866Z",
       "evidence": [
         "reconciliation",
-        "successorPreparationObservation"
+        "candidateRefresh",
+        "currentArtifactsScan"
       ],
-      "nextAction": "Complete CP-AI-001 preparation checks; freeze a new application reference and refresh applicable recovery and bounded 133-client/classroom/normal-load/headroom acceptance."
+      "nextAction": "Review/remediate the exact fallback TIFF security blocker; standalone A native checks may proceed, but pair/campaign acceptance stays held until fresh security and source applicability pass."
     },
     {
       "id": "packaging",
       "label": "Packaging",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Historical exact A/F archives remain identified. CP-AI-001 backend and governance image inputs require a new candidate image/scan; matched frontend, acceptance and F selection remain separate.",
-      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact frozen A backend and matched frontend are built/identified; candidate scan/native preparation passes and unchanged2.9.7 is retained. Fresh unchanged F scan failed High TIFF; release packaging/selection remains gated.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
-        "successorPreparationObservation",
+        "currentArtifactsScan",
+        "currentCandidateNative",
+        "currentFrontend",
         "extensionFresh"
       ],
-      "nextAction": "Build and scan the newly frozen candidate; review F rollback/privacy applicability and retain original artifacts unchanged."
+      "nextAction": "Preserve exact A/F artifacts and failed scan. Review/remediate fallback TIFF finding and selection/privacy applicability before sealing operational publication/deployment inputs."
     },
     {
       "id": "publication",
@@ -332,15 +370,15 @@
     {
       "id": "deployment",
       "label": "Deployment",
-      "status": "unknown",
+      "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Last production observations are dated October 4; current production state was not read.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "The direct user deployment instruction is already recorded. No candidate deployment occurred; dated production metadata remains a147 on API179/worker195.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
-        "productionHistorical"
+        "candidateRefresh"
       ],
-      "nextAction": "Operator refreshes exact serving state and authorizes migration-first deployment."
+      "nextAction": "Close fresh candidate acceptance and production prerequisites, then execute the authorized deployment with exact artifacts; do not relabel prior deployment as protection."
     },
     {
       "id": "activation",
@@ -386,26 +424,26 @@
       "label": "Dated observed main push preparation CI",
       "status": "passed",
       "applicability": "current_baseline",
-      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
-      "rationale": "Fresh read-only evidence binds successful push/main CI, CodeQL, Gitleaks and Trivy to exact a5161eb1; opt-in publication workflows remain skipped.",
-      "observedAtUtc": "2026-10-07T23:35:58.510Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Fresh exact A push/main CI, CodeQL, Gitleaks and Trivy workflows all pass; emitted path-detection skip and disabled opt-in publication are recorded separately.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Use this exact source for successor recovery preparation; verify any later application/tooling main and its applicable checks before release operations."
+      "nextAction": "Use frozen A for current validation; verify fresh exact-main CI and application equivalence after tooling/document-only final main B."
     },
     {
       "id": "preparation-merges",
       "label": "Remaining scoped preparation merges",
       "status": "passed",
       "applicability": "current_baseline",
-      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
-      "rationale": "All four explicitly authorized preparation PRs are merged; the observed resulting main is exact a5161eb1.",
-      "observedAtUtc": "2026-10-07T23:35:58.510Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "All scoped preparation PRs #616/#617/#619/#620 and successors #621/#622/#623 are merged and included in exact current A.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
         "reconciliation"
       ],
-      "nextAction": "Use this exact source for successor recovery preparation; verify any later application/tooling main and its applicable checks before release operations."
+      "nextAction": "Retain merge/head identities and inspect later source changes before altering the freeze."
     },
     {
       "id": "merge-request",
@@ -413,12 +451,12 @@
       "status": "passed",
       "applicability": "policy_definition",
       "sourceSha": null,
-      "rationale": "The human operator requested these four preparation merges after completing their applicable checks. All operational authorization flags remain false.",
-      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "rationale": "The dated four-PR request remains historical; later direct merge/deploy instruction is recorded separately. No index grants controller authority.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
         "mergeRequest"
       ],
-      "nextAction": "Complete and review the named PRs; publication, deployment, activation and settings need separate authorization."
+      "nextAction": "Retain original scope and direct-user provenance; do not infer authority for unrelated merges or settings."
     },
     {
       "id": "baseline-local-checks",
@@ -540,13 +578,15 @@
     {
       "id": "final-main-ci",
       "label": "Frozen source and final main CI",
-      "status": "pending",
-      "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Application reference is not frozen; #619/#620 remain open at this snapshot. The final resulting-main push CI cannot be inferred from prior PR or main checks.",
-      "observedAtUtc": "2026-10-07T21:29:13.642Z",
-      "evidence": [],
-      "nextAction": "After the closing merges, retain exact resulting-main push CI; after freeze/sealing, verify fresh applicable CI for final-main B."
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact frozen A main push CI and three security workflows passed. Later tooling/evidence main B still needs its own exact-main CI and proven A/B application equivalence.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Refresh B/tool dependency hashes and fresh resulting-main checks after the candidate tooling/evidence PR is merged."
     },
     {
       "id": "criteria",
@@ -580,13 +620,14 @@
       "label": "Successor bounded numerical acceptance",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "No new measurements bound to a frozen successor are recorded.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "No new measurements bound to a frozen successor are recorded. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-08T21:41:15.866Z",
       "evidence": [
-        "policyApproval"
+        "policyApproval",
+        "currentArtifactsScan"
       ],
-      "nextAction": "Use the same amended criteria, fixed order, thresholds, safety checks and stop policy."
+      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
     },
     {
       "id": "strict-comparison",
@@ -620,14 +661,15 @@
       "label": "Successor classroom, normal and headroom acceptance",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Changed dependencies/backend and UI require refreshed capacity and classroom behavior evidence.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Changed dependencies/backend and UI require refreshed capacity and classroom behavior evidence. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-08T21:41:15.866Z",
       "evidence": [
         "normalHistorical",
-        "headroomHistorical"
+        "headroomHistorical",
+        "currentArtifactsScan"
       ],
-      "nextAction": "Rerun mixed block, capability-on normal-load and accepted 250-client gate with original scope retained."
+      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
     },
     {
       "id": "recovery-history",
@@ -660,13 +702,14 @@
       "label": "Successor recovery compatibility",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "Actual ordinary A-to-F-to-A preparation remains historical evidence for its exact pair; CP-AI-001 source changes invalidate reuse for a new candidate.",
-      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Actual ordinary A-to-F-to-A preparation remains historical evidence for its exact pair; CP-AI-001 source changes invalidate reuse for a new candidate. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-08T21:41:15.866Z",
       "evidence": [
-        "successorPreparationObservation"
+        "successorPreparationObservation",
+        "currentArtifactsScan"
       ],
-      "nextAction": "Refresh actual new-candidate-to-F-to-new-candidate recovery on ordinary 43-to53 and 121-to129 phases; explicitly review F restoring the prior provider boundary."
+      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
     },
     {
       "id": "catalog-history",
@@ -684,16 +727,16 @@
     {
       "id": "production-fresh",
       "label": "Fresh production, backups, flags and window",
-      "status": "unknown",
+      "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
-      "rationale": "October4 receipts do not establish current health, catalog, admission, successful restore or an approved future window.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Dated fresh ECS/task metadata shows stable API179/worker195 on a147 with configured129 admission and newUsage off/off. Actual SQL catalog/ledger, successful restore, quiet window and fresh final-operation state remain unverified.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
-        "productionHistorical",
-        "catalogHistorical"
+        "candidateRefresh",
+        "productionHistorical"
       ],
-      "nextAction": "Operator supplies fresh current task/image/flags/catalog/backups/health and exact authorized window."
+      "nextAction": "Capture fresh private health/catalog/admission/backups/environment/task/ALB evidence immediately before controller operations; retain metadata/capture separation."
     },
     {
       "id": "managed",
@@ -779,9 +822,9 @@
       "label": "Live DeSales acceptance and adoption",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": null,
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "rationale": "No current task-pair-bound live samples or installed-client capability confirmation are recorded.",
-      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
         "policyApproval"
       ],
@@ -963,12 +1006,12 @@
       "status": "pending",
       "applicability": "preparation_only",
       "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
-      "rationale": "No exact-artifact successor selection receipt or acceptance waiver exists; original C578 identities and October 7 failed scan remain preserved.",
+      "rationale": "Exact-artifact successor selection remains pending and is now blocked by fresh F High TIFF finding. No scan waiver or substitute identity is permitted; older preparation pass remains historical.",
       "observedAtUtc": "2026-10-08T00:18:49.670Z",
       "evidence": [
         "successorPreparationObservation"
       ],
-      "nextAction": "Review exact F replacement selection, compatibility and CP-AI-001 rollback applicability: unchanged F restores the prior credential-egress risk. Keep selection pending until recorded review."
+      "nextAction": "Review the concrete TIFF correction and CP-AI rollback risk, then explicitly select an exact fresh-scanned replacement through a separate reviewed contract."
     },
     {
       "id": "fallback-successor-operational-guards",
@@ -1130,15 +1173,15 @@
     {
       "id": "cp-ai-001-review",
       "label": "CP-AI-001 designated policy/source review",
-      "status": "pending",
+      "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
-      "rationale": "Synthetic preparation does not constitute designated review or risk acceptance.",
-      "observedAtUtc": "2026-10-08T15:12:42.674Z",
+      "rationale": "PR #622 was reviewed through passing applicable checks and merged at exact 092f source. This records source review/merge, not risk acceptance or deployment.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
-        "cpAiBoundaryPreparation"
+        "candidateRefresh"
       ],
-      "nextAction": "Review the exact credential policy, retained email/search context, classification tradeoffs and F rollback applicability."
+      "nextAction": "Keep issue #618 open until separately executed deployment and task-pair-bound live protection verification."
     },
     {
       "id": "cp-ai-001-deployment",
@@ -1146,12 +1189,12 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
-      "rationale": "No deployment or live task identity is recorded for the new browser boundary. Source changes require a new candidate image.",
-      "observedAtUtc": "2026-10-08T15:12:42.674Z",
+      "rationale": "Direct user deployment authorization is recorded; no new candidate deployment has executed. Production still serves a147 metadata. Required artifact/native/acceptance prerequisites remain pending.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
         "cpAiBoundaryPreparation"
       ],
-      "nextAction": "Complete new candidate gates and fresh production prerequisites, then separately authorize exact migration-first API/worker deployment."
+      "nextAction": "Complete current A gates and fresh production prerequisites; execute the already-authorized migration-first matched deployment only when readiness/controller prerequisites pass."
     },
     {
       "id": "cp-ai-001-live",
@@ -1171,14 +1214,120 @@
       "label": "CP-AI-001 changed candidate/recovery applicability",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
-      "rationale": "Backend and governance image inputs changed. Historical A-to-F-to-A and scan receipts remain source-specific; unchanged F restores the previous provider boundary on rollback.",
-      "observedAtUtc": "2026-10-08T15:12:42.674Z",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Backend and governance image inputs changed. Historical A-to-F-to-A and scan receipts remain source-specific; unchanged F restores the previous provider boundary on rollback. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-08T21:41:15.866Z",
       "evidence": [
         "cpAiBoundaryPreparation",
-        "successorPreparationObservation"
+        "successorPreparationObservation",
+        "currentArtifactsScan"
       ],
-      "nextAction": "Freeze a new application reference; produce fresh image/scan and applicable native, recovery and classroom acceptance. Review unchanged F selection explicitly."
+      "nextAction": "Review a concrete TIFF security correction and exact replacement/privacy applicability; preserve failed F and every historical receipt. Only refresh current-source recovery/campaign evidence after a fresh replacement scan passes; retain approved thresholds/run order."
+    },
+    {
+      "id": "candidate-freeze",
+      "label": "Current application/extension source freeze",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Clean green current A and unchanged ClassPilot03a9 are selected for validation with deterministic backend/frontend Git inventories. This source freeze does not identify an executable artifact or accept native/release campaigns.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh"
+      ],
+      "nextAction": "Build exact A artifacts; retain F unchanged and refresh affected source/artifact-bound evidence. Prove final B input equivalence and fresh CI."
+    },
+    {
+      "id": "repository-protections",
+      "label": "Repository protection application",
+      "status": "pending",
+      "applicability": "current_baseline",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Fresh GitHub branch metadata reports both main branches unprotected. The proposal remains prepared; no settings decision/application occurred.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh"
+      ],
+      "nextAction": "Obtain the separate settings decision, apply the prepared payloads, and verify actual emitted-check enforcement and owner bypass."
+    },
+    {
+      "id": "resulting-tooling-main-ci",
+      "label": "Future tooling/evidence main B verification",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Frozen exact A CI is green; the unmerged reconciliation/tooling/evidence changes have no resulting-main B push CI yet. A CI does not certify changed tools.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh"
+      ],
+      "nextAction": "After reviewed tooling/evidence merge, prove deterministic A/B backend/frontend equivalence, refresh validator/binding dependencies, and verify fresh successful exact B main push CI."
+    },
+    {
+      "id": "current-record-refresh-checks",
+      "label": "Current-state generator/reconciliation patch checks",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": null,
+      "rationale": "33 final focused regressions and66 combined current-state/v1/v2/v3 real-Git binding regressions pass with zero failures/skips. Offline generation and whitespace checks pass; final patch hashes identify tested bytes. Future exact-main B CI remains separate.",
+      "observedAtUtc": "2026-10-08T21:48:17.972Z",
+      "evidence": [
+        "currentRecordRefreshChecks"
+      ],
+      "nextAction": "Review/commit this tool/document patch, bind its final dependencies and verify fresh exact-main B CI without transferring old artifact/native acceptance."
+    },
+    {
+      "id": "backend-successor-scan-fresh",
+      "label": "Frozen A exact-artifact security scan",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Fresh exact A scan passes zero High/Critical with one Medium; this pass identifies security preparation only.",
+      "observedAtUtc": "2026-10-08T21:35:53.409Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Retain exact source/image/config/archive/scan receipt; execute only standalone A native checks while the F security blocker remains."
+    },
+    {
+      "id": "fallback-successor-scan-fresh",
+      "label": "Unchanged F fresh security scan",
+      "status": "failed",
+      "applicability": "current_baseline",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Fresh exact unchanged F has one High TIFF finding and two Medium findings; the mandatory zero High/Critical criterion stops selection/recovery/campaigns. Earlier F pass and original C578 failed scan remain immutable.",
+      "observedAtUtc": "2026-10-08T21:36:12.886Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Prepare and review a replacement fallback artifact that passes a fresh scan; preserve exact failed F. Explicitly review whether its source must also retain CP-AI-001 protection. New-source/image recovery evidence and exact replacement selection are required."
+    },
+    {
+      "id": "candidate-native-processing-fresh",
+      "label": "Exact current A native processing",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Nine actual synthetic Linux/musl screenshot/private-image/PDF/Express/rate-limit checks pass with owned unforced cleanup in the exact A image. This standalone result does not certify F, ordinary pair recovery or classroom/capacity acceptance.",
+      "observedAtUtc": "2026-10-08T21:41:29.521Z",
+      "evidence": [
+        "currentCandidateNative"
+      ],
+      "nextAction": "Retain exact A artifact/compiled/native dependency evidence; pair acceptance remains held until the F security blocker is resolved."
+    },
+    {
+      "id": "current-v3-binding",
+      "label": "Current A/F v3 binding state",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Current allowlisted v3 profile now identifies exact A inventories/image and failed unchanged F scan. Current preparation is pending and operational Plans fail closed; the exact old profile is separately archived unchanged.",
+      "observedAtUtc": "2026-10-08T21:43:52.319Z",
+      "evidence": [
+        "currentSuccessorBinding",
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Review the concrete F correction and explicit replacement/privacy applicability. Obtain fresh pair/campaign evidence and final B CI before sealing; never relabel archived a516/F receipts."
     }
   ],
   "inclusionMatrix": [
@@ -1190,7 +1339,7 @@
       "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
       "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
       "mergedAtUtc": "2026-10-04T22:45:00Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -1207,7 +1356,7 @@
       "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
       "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
       "mergedAtUtc": "2026-10-05T03:23:01Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -1222,7 +1371,7 @@
       "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
       "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
       "mergedAtUtc": "2026-10-05T11:23:21Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -1237,7 +1386,7 @@
       "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
       "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
       "mergedAtUtc": "2026-10-06T22:31:47Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -1254,7 +1403,7 @@
       "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
       "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
       "mergedAtUtc": "2026-10-06T23:19:16Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -1269,7 +1418,7 @@
       "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
       "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
       "mergedAtUtc": "2026-10-07T00:30:35Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -1284,7 +1433,7 @@
       "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
       "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
       "mergedAtUtc": "2026-10-07T14:17:37Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "backend",
         "frontend"
@@ -1300,7 +1449,7 @@
       "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
       "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
       "mergedAtUtc": "2026-10-07T16:21:39Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -1315,7 +1464,7 @@
       "headSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
       "mergeSha": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b",
       "mergedAtUtc": "2026-10-07T20:57:54Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -1331,7 +1480,7 @@
       "headSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
       "mergeSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "mergedAtUtc": "2026-10-07T21:14:48Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "backend-governance",
         "frontend-public-copy"
@@ -1362,7 +1511,7 @@
       "headSha": "106f78059172e2f7fda4632911b28153695ec448",
       "mergeSha": "a5161eb14939132776e0b77eac8e3c485091432c",
       "mergedAtUtc": "2026-10-07T22:06:52Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -1378,19 +1527,67 @@
       "headSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
       "mergeSha": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe",
       "mergedAtUtc": "2026-10-07T21:48:32Z",
-      "includedInSource": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "affectedArtifacts": [
         "release-tooling",
         "ci"
       ],
       "reusableEvidence": "Reviewed tooling regressions and passing PR/main CI; v2 profile remains pending.",
       "requiredReruns": "Refresh tool/binding hashes and exact-main CI; native candidate acceptance remains required."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 621,
+      "title": "Prepare reviewed C578 security successor and guarded v3 release binding",
+      "state": "MERGED",
+      "headSha": "e55bd455b42dc90e7b264ce6da50ffe8979e5268",
+      "mergeSha": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "mergedAtUtc": "2026-10-08T01:25:19Z",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Exact F source/security/native pair preparation remains historical; tooling merge does not select F or accept a changed A.",
+      "requiredReruns": "Current A/F applicability, ordinary recovery and original classroom/capacity acceptance; final tool/binding dependencies and exact-main CI."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 622,
+      "title": "Protect ClassPilot browser classification from credential egress",
+      "state": "MERGED",
+      "headSha": "f459a2a96d8b0395c788cf71129d0868d2d7a9fd",
+      "mergeSha": "092f8fbfe96dd7deed52c279d0b916676e0fc102",
+      "mergedAtUtc": "2026-10-08T15:34:51Z",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "affectedArtifacts": [
+        "backend",
+        "backend-governance",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Bounded synthetic prevention evidence remains bound to tested 9f source and original local/matching regressions. Source merge does not establish production protection.",
+      "requiredReruns": "Fresh exact-A backend image/scan/native recovery and fixed 133/mixed/normal/headroom acceptance; explicit F rollback/privacy applicability."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 623,
+      "title": "Describe student browsing when tab titles are unavailable",
+      "state": "MERGED",
+      "headSha": "ca38a6236bd332f7069136e1e555b9dbb681caba",
+      "mergeSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "mergedAtUtc": "2026-10-08T16:53:51Z",
+      "includedInSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Backend CP-AI image inputs remain equivalent to its tested source; the changed frontend requires a fresh matched frontend archive and applicable browser evidence.",
+      "requiredReruns": "Matched frontend build/archive identity, unavailable-title browsing behavior, and current-school browser/classroom/live adoption scenarios."
     }
   ],
   "evidence": {
     "reconciliation": {
-      "path": "docs/releases/release297/source-reconciliation-20261007T233558Z.json",
-      "gitBlobSha256": "c4fc1c41ee438fd5c2d1ec2df0affd0145255398c1355f89957c16dfd7a56ae3"
+      "path": "docs/releases/release297/source-reconciliation-20261008T2131Z.json",
+      "gitBlobSha256": "0def502f1baa5129c7b52512c25698d1f67121d4ec1e63f121deb8bc69979569"
     },
     "extensionMerged": {
       "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json",
@@ -1489,7 +1686,7 @@
       "gitBlobSha256": "edc6ccfa825925451c37ad303012aadfcb893556d62fc04c2c0def4f9207e6ff"
     },
     "successorBinding": {
-      "path": "docs/release-bindings/release-297-current-school-fallback-v3.json",
+      "path": "docs/releases/release297/release-297-current-school-fallback-v3-before-current-freeze-20261008.json",
       "gitBlobSha256": "6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c"
     },
     "successorScan": {
@@ -1531,6 +1728,34 @@
     "cpAiBoundaryPreparation": {
       "path": "docs/releases/release297/cp-ai-001-preparation-20261008.json",
       "gitBlobSha256": "c70a0a16555feeca3dbba6bdaa2e78b58822376652cc6e131672421f57e4da55"
+    },
+    "reconciliationPrevious": {
+      "path": "docs/releases/release297/source-reconciliation-20261007T233558Z.json",
+      "gitBlobSha256": "c4fc1c41ee438fd5c2d1ec2df0affd0145255398c1355f89957c16dfd7a56ae3"
+    },
+    "candidateRefresh": {
+      "path": "docs/releases/release297/candidate-freeze-observation-20261008.json",
+      "gitBlobSha256": "a11d3f673e50249583090124634e1cd5d651be70253a699c3d35f88b64095c39"
+    },
+    "currentRecordRefreshChecks": {
+      "path": "docs/releases/release297/current-record-refresh-checks-20261008.json",
+      "gitBlobSha256": "03eff6651ccd576adcfa18f7f1e88a37c484a4849555107f5b051bac0018b22d"
+    },
+    "currentArtifactsScan": {
+      "path": "docs/release-evidence/release297-current-candidate-20261008/current-artifacts-scan-20261008.json",
+      "gitBlobSha256": "677a9a064d3f6bb6d0b66753507a26893f00a3802df7bcdf0182f630ee42073a"
+    },
+    "currentSuccessorBinding": {
+      "path": "docs/release-bindings/release-297-current-school-fallback-v3.json",
+      "gitBlobSha256": "898746be784d37499ed5eb34d7b084412d095cab80f35590c09cd65da3ee0b81"
+    },
+    "currentCandidateNative": {
+      "path": "docs/release-evidence/release297-current-candidate-20261008/candidate-native-processing-20261008.json",
+      "gitBlobSha256": "8b5d4ec05ec9c4c71d4abd50eb6292aa6c5132af6a79ad904eff411367e25db2"
+    },
+    "currentFrontend": {
+      "path": "docs/release-evidence/release297-current-candidate-20261008/frontend-artifact-20261008.json",
+      "gitBlobSha256": "768381c19b8889b935d457dc93af3831c6f8de86106abff97d514525e91e17d8"
     }
   }
 }

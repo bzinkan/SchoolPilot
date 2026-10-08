@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_current_record_refresh_checks",
+  "observedAtUtc": "2026-10-08T21:48:17.972Z",
+  "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "testedToolingGitSource": null,
+  "testedToolingScope": "Uncommitted current-state generator/test patch over frozen A; exact file hashes identify tested bytes. Future reviewed tooling/evidence main B requires fresh CI and tool binding.",
+  "testedToolFiles": {
+    "scripts/release297-current-state.mjs": "460cb6ca78ef92fe3a84bc2b4ee6fa65ae2b2ce1aa76e71fa74fbf44c459e3ad",
+    "tests/release297-current-state.test.mjs": "b84f305f8881d0779bc08cc440258fb9a07f4c61c027b805f72d3ab25872e7da"
+  },
+  "checks": [
+    {
+      "command": "node --test tests/release297-current-state.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 33,
+      "passed": 33,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "97716a15103d4bcf32f0611234aafc2f925048ee7c06f6bfed507bf681a0b60b"
+    },
+    {
+      "command": "node --test tests/release297-current-state.test.mjs tests/release-source-binding.test.mjs tests/release-fallback-successor-binding.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 66,
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "dba18f7dcfcbf030fb148bae106ec9571f3ed84cd796fb3b1648d20b55b45deb",
+      "scope": "32 current-state tests plus34 unchanged v1/v2/v3 source-binding regressions at execution; the final current-state suite added one actual-default-pending guard and is separately rerun33/33."
+    },
+    {
+      "command": "node scripts/release297-current-state.mjs --check",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed",
+      "exitCode": 0
+    }
+  ],
+  "historicalReceiptsChanged": false,
+  "applicationInputsChanged": false,
+  "sourceFreezeIsArtifactAcceptance": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionDeploymentExecuted": false
+}
