@@ -398,3 +398,23 @@ test('read-only preparation rejects a validator edit occurring during retained-e
     await assert.rejects(validateSuccessorPreparation(f.value, { ...f.options, run }), /SUCCESSOR_VALIDATOR_CHANGED/);
   } finally { f.cleanup(); }
 });
+
+test('offline preparation rejects clean committed B application changes even when clean tested A is supplied separately', async () => {
+  const f = await fixture(), anchorDirectory = path.join(f.directory, 'tested-anchor');
+  try {
+    const anchorSource = f.value.anchorSource;
+    f.git(['worktree', 'add', '-q', '--detach', anchorDirectory, anchorSource]);
+    const value = { ...f.value, anchorDirectory, anchorSource }, options = { ...f.options, sourceDirectory: anchorDirectory, source: anchorSource };
+    const backend = readFileSync(path.join(f.main, 'src/app.js'), 'utf8');
+    f.write('src/app.js', backend + '\nexport const untestedBackendChange = true;\n'); f.seal();
+    assert.equal(f.git(['status', '--porcelain']), '');
+    assert.equal(execFileSync('git', ['-C', anchorDirectory, 'status', '--porcelain'], { encoding: 'utf8', windowsHide: true }).trim(), '');
+    await assert.rejects(validateSuccessorPreparation(value, options), /SUCCESSOR_TOOL_APPLICATION_BYTES_CHANGED/);
+    f.write('src/app.js', backend); f.write('schoolpilot-app/src/app.js', 'export const untestedFrontendChange = true;\n'); f.seal();
+    assert.equal(f.git(['status', '--porcelain']), '');
+    await assert.rejects(validateSuccessorPreparation(value, options), /SUCCESSOR_TOOL_FRONTEND_BYTES_CHANGED/);
+    assert.equal(f.commands.some(command => ['aws', 'gh', 'docker'].includes(command.executable)), false);
+  } finally {
+    f.git(['worktree', 'remove', '--force', anchorDirectory]); f.cleanup();
+  }
+});
