@@ -55,7 +55,7 @@
     }
   },
   "observedAtUtc": "2026-10-09T17:29:25.253Z",
-  "evidenceScope": "Actual340-second capability-on normal-load run passed unchanged criteria, native persistence, error, resource, schema and cleanup assertions.",
+  "evidenceScope": "Actual 340 clients for 60 seconds in the capability-on normal-load run passed unchanged criteria, native persistence, error, resource, schema and cleanup assertions.",
   "historicalFailuresReclassified": false,
   "releaseReady": false,
   "operationalAuthorization": false

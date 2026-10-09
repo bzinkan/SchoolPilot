@@ -2575,7 +2575,7 @@
     },
     "buildSecurityBinding": {
       "path": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
-      "gitBlobSha256": "5d95574e2b54ff161fe21416a82b1e58b6d11ab445cbb666d29c7356ceb989df"
+      "gitBlobSha256": "1e31aed6bdcb70b2f06883f97c7540bfc44395c10723f149b304bd4f522fe60b"
     },
     "buildSecurityCandidatePreparation": {
       "path": "docs/releases/release297/a3-artifact-preparation-20261009.json",
@@ -2631,7 +2631,7 @@
     },
     "buildSecurityOriginalNormalLoadAcceptance": {
       "path": "docs/release-evidence/release297/cp-protected-build/original-normalLoadAcceptance.json",
-      "gitBlobSha256": "d32ba5d30fcb04918b58dda3790864e9802361bfb8427e4c95783a42445b5cde"
+      "gitBlobSha256": "9688e6105e3d9ef00341eb79b9da6e766b2dba10dd2a374bf83199abfc8f9049"
     },
     "buildSecurityOriginalClassroomAcceptance": {
       "path": "docs/release-evidence/release297/cp-protected-build/original-classroomAcceptance.json",

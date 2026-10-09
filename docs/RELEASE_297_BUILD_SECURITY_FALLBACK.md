@@ -42,7 +42,7 @@ the opaque teacher-command contract are unchanged.
 | Original release gate | Current outcome | Actual evidence |
 | --- | --- | --- |
 | DeSales 133-client campaign | Passed | Eight fixed-order 60-second runs; 6,384 offers, successful responses and persisted rows; all nine approved amended criteria |
-| Capability-on normal load | Passed | Actual 340-second run with persistence, error, safety and cleanup review |
+| Capability-on normal load | Passed | 340 clients for 60 seconds with persistence, error, safety and cleanup review |
 | Mixed classroom endurance | Passed | Three consecutive 900-second runs, 45 rounds and 36,309 successful/persisted heartbeats; full continuous ordinary-heartbeat p95 32.437478 / 34.635894 / 34.942394 ms |
 | Ordinary recovery | Passed | Exact A3→F3→A3, eight API/worker processes and eight graceful drains, queried restricted migration roles and retained 53-entry ledger |
 | Restricted restoration | Passed | Six fresh actual rounds bound to the same A3/F3 ordinary replay |
