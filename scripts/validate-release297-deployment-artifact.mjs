@@ -83,9 +83,9 @@ export function validateFallbackScope(receipt, plan, binding) {
   }
 }
 
-async function prepareFallback(record, binding, expectedMain, root, run, resolve, verifyScan, now) {
+async function readFallback(record, expectedMain, root, run) {
   const receipt = await pinned(record, root, run), plan = await pinned(receipt.plan, root, run);
-  validateFallbackScope(receipt, plan, binding);
+  validateFallbackScope(receipt, plan, plan.releaseBinding);
   assert.equal(plan.toolSource, expectedMain, 'FALLBACK_TOOL_SOURCE_CHANGED');
   assert.equal(plan.toolSha256, hash(readFileSync(path.join(root, 'scripts/register-compatible-fallback-inactive.mjs'))), 'FALLBACK_TOOL_CHANGED');
   assert.equal(plan.bindingHelperSha256, hash(readFileSync(path.join(root, 'scripts/release-source-binding.mjs'))), 'FALLBACK_VALIDATOR_CHANGED');
@@ -97,7 +97,14 @@ async function prepareFallback(record, binding, expectedMain, root, run, resolve
     [1, true, 'RegisterInactive', receipt.plan.sha256], 'FALLBACK_AUTHORIZATION_CHANGED');
   const start = Date.parse(authorization.startsAtUtc), end = Date.parse(authorization.expiresAtUtc);
   assert.ok(Number.isFinite(start) && Number.isFinite(end) && end > start && end - start <= 3_600_000, 'FALLBACK_WINDOW_INVALID');
-  const current = await resolve(plan.input, { root, run, fallback: FALLBACK, sourceDirectory: root, source: expectedMain, now });
+  return { receipt, plan };
+}
+
+async function prepareFallback(record, prefetched, current, binding, expectedMain, root, run, verifyScan) {
+  // Replay the same pinned inputs after both independent binding reads settle.
+  const receipt = await pinned(record, root, run), plan = await pinned(receipt.plan, root, run);
+  assert.deepEqual({ receipt, plan }, prefetched, 'FALLBACK_PREFETCH_CHANGED');
+  validateFallbackScope(receipt, plan, binding);
   assertBindingReplay(plan.input, plan.releaseBinding, current);
   const publication = await pinned(plan.input.fallbackPublication, root, run), publicationPlan = await pinned(publication.plan, root, run);
   assert.deepEqual([publication.schemaVersion, publication.operation, publication.status, publication.artifactRole,
@@ -162,7 +169,14 @@ export async function validateDeploymentArtifact(record, expectedMain, {
   assert.ok(Number.isFinite(start) && Number.isFinite(end) && end > start && end - start <= 1_200_000, 'PUBLICATION_WINDOW_INVALID');
   // Publication authorization is historical; resolve rechecks present readiness,
   // source equality, private evidence, scan freshness and applicable acceptance.
-  const binding = await resolve(plan.input, { root, run, fallback: FALLBACK, sourceDirectory: root, source: expectedMain, now });
+  assert.ok(fallbackRegistration, 'REVIEWED_FALLBACK_REGISTRATION_REQUIRED');
+  const prefetchedFallback = await readFallback(fallbackRegistration, expectedMain, root, run);
+  // Both roles perform full fresh replay in separate contexts. Drain both before
+  // checking results in serving/fallback order; neither can release an AWS read.
+  const results = await Promise.allSettled([plan.input, prefetchedFallback.plan.input].map(input =>
+    Promise.resolve().then(() => resolve(input, { root, run, fallback: FALLBACK, sourceDirectory: root, source: expectedMain, now }))));
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
+  const [binding, fallbackBinding] = results.map(result => result.value);
   assertBindingReplay(plan.input, plan.releaseBinding, binding);
   assertBoundPublication(receipt, binding, expectedMain, receipt.registryDigest);
   const scan = await verifyScan(plan.input, binding); assertBoundScan(scan, binding);
@@ -172,8 +186,7 @@ export async function validateDeploymentArtifact(record, expectedMain, {
     [1, true, boundArtifactSource(binding), plan.input.scan.sha256, REGISTRY.repository, REGISTRY.region], 'REGISTRY_PROOF_CHANGED');
   assert.equal(proof.digest, receipt.registryDigest, 'REGISTRY_DIGEST_CHANGED');
   validatePublicationPlatform('serving-anchor', proof, scan.configDigest, binding);
-  assert.ok(fallbackRegistration, 'REVIEWED_FALLBACK_REGISTRATION_REQUIRED');
-  const fallback = await prepareFallback(fallbackRegistration, binding, expectedMain, root, run, resolve, verifyScan, now);
+  const fallback = await prepareFallback(fallbackRegistration, prefetchedFallback, fallbackBinding, binding, expectedMain, root, run, verifyScan);
   // No AWS call occurs until all local evidence and the accepted binding pass.
   await verifyCurrentReleaseMain(expectedMain, run);
   const aws = args => [...args, '--region', REGISTRY.region, '--output', 'json', '--no-cli-pager'];
