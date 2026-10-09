@@ -1188,8 +1188,8 @@ test('the Messages roster and the student grid share one last-name order, and ro
   assert.match(dashboard, /import \{ compareStudentsByLastName \} from '\.\.\/lib\/studentOrder';/);
   assert.doesNotMatch(dashboard, /getLastName|localeCompare\(\w+\(b\.studentName\)\)/, 'no second copy of the student order');
   assert.match(
-    dashboard,
-    /const filteredClassStudents = sessionFilteredStudents\s+\.filter\([\s\S]{0,300}?\}\)\s+\.sort\(compareStudentsByLastName\);/,
+    dashboard.slice(dashboard.indexOf('const filteredClassStudents ='), dashboard.indexOf('const filteredAvailableStudents =')),
+    /const filteredClassStudents = sessionFilteredStudents\s+\.filter\([\s\S]*?\}\)\s+\.sort\(compareStudentsByLastName\);/,
     'the class grid sorts with the shared comparator',
   );
   assert.match(roster, /import \{ compareStudentsByLastName \} from '\.\/studentOrder\.js';/);
@@ -1245,13 +1245,15 @@ test('a selection cleared automatically is refused, never widened, and every cla
     between('const resolveActiveCommandTarget = (', 'const getActiveCommandStudents'),
     /selectionLoss: commandType && commandAudienceIsServerDerived\(commandType, commandPayload\)\s*\? null\s*: activeSelectionLoss,/,
   );
-  // A lost selection belongs to one school and viewer, schedule boundary, view
+  // A lost selection belongs to one school and viewer, workspace boundary, view
   // and (Class view only) class authority revision: buildSelectionScopeKey
-  // leaves the class session out of the Claimed view's scope.
+  // leaves the class session out of the legacy Claimed view's scope. A room
+  // keeps its own boundary across normal bells; ordinary Class keeps the schedule.
+  assert.match(dashboard, /const workspaceTransitionKey = roomWorkspace \? activityTransitionKey\(roomActivity\) : scheduledTransitionKey;/);
   assert.match(
     dashboard,
-    /const selectionScopeKey = buildSelectionScopeKey\(\{\s*readerKey: classReaderKey, transitionKey: scheduledTransitionKey, view: studentView, authorityKey: effectiveAuthorityKey,\s*\}\);/,
-    'a lost selection belongs to one school, schedule boundary, view and Class-view authority revision',
+    /const selectionScopeKey = buildSelectionScopeKey\(\{\s*readerKey: classReaderKey, transitionKey: workspaceTransitionKey, view: studentView, authorityKey: effectiveAuthorityKey,\s*\}\);/,
+    'a lost selection belongs to one school, workspace boundary, view and exact authority revision',
   );
   assert.match(dashboard, /const activeSelectionLoss = selectionLoss\?\.scopeKey === selectionScopeKey \? selectionLoss : null;/);
 

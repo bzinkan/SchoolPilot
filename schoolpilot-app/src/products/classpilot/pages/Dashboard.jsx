@@ -4514,7 +4514,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     }
     const target = resolveCommandTargets({
       mode: dashboardCapabilities.mode,
-      sessionStudents: (roomWorkspace ? filteredClassStudents : sessionFilteredStudents).map((student) => ({
+      sessionStudents: (roomWorkspace && overrideStudentIds === null ? filteredClassStudents : sessionFilteredStudents).map((student) => ({
         ...student,
         commandable: commandType
           ? isStudentCommandableForCommand(
