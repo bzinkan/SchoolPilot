@@ -1,0 +1,2441 @@
+{
+  "schemaVersion": 1,
+  "kind": "current_release_index",
+  "releaseId": "release297-desales133-usage-off",
+  "observedAtUtc": "2026-10-09T14:17:02.673Z",
+  "audience": {
+    "school": "DeSales",
+    "clients": 133,
+    "validationLevel": "synthetic_only",
+    "managedValidation": "waived_not_passed"
+  },
+  "authorization": {
+    "merge": true,
+    "productionDeployment": true,
+    "registryPublication": true,
+    "inactiveRegistration": true,
+    "storeSubmission": false,
+    "runtimeActivation": false,
+    "githubSettings": false
+  },
+  "sources": {
+    "schoolpilot": {
+      "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "remoteMainObserved": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
+      "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "frozenApplicationReference": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ]
+    },
+    "classpilot": {
+      "planningReference": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "remoteMainObserved": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "reviewedHistorical": "8069a9c9bd50352e187847158b356a69edc4e45d",
+      "testedHistorical": "065be165b5df704d84eb716e3fb914c1fed17f98",
+      "frozenApplicationReference": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "evidence": [
+        "extensionMerged",
+        "extensionFresh",
+        "reconciliation",
+        "candidateRefresh"
+      ]
+    }
+  },
+  "usageModes": {
+    "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": {
+      "requiredValue": "preserve_observed_value",
+      "observedValue": "shadow",
+      "status": "passed",
+      "rationale": "Fresh A2 applicability capture independently records daily setting omitted, effective shadow at current serving source; workload is unmeasured.",
+      "evidence": [
+        "buildSecurityCurrentObservation"
+      ],
+      "nextAction": "Re-read exact API/worker definitions and preserve the reviewed setting before each operational mutation."
+    },
+    "CLASSPILOT_USAGE_ROLLUP_MODE": {
+      "requiredValue": "off",
+      "observedValue": "off",
+      "status": "passed",
+      "rationale": "Fresh dated API/worker capture independently records off for both services; preserve and re-read before operations.",
+      "evidence": [
+        "buildSecurityCurrentObservation"
+      ],
+      "nextAction": "Re-read exact API/worker definitions and preserve the reviewed setting before each operational mutation."
+    },
+    "CLASSPILOT_DIGITAL_USAGE_MODE": {
+      "requiredValue": "off",
+      "observedValue": "off",
+      "status": "passed",
+      "rationale": "Fresh dated API/worker capture independently records off for both services; preserve and re-read before operations.",
+      "evidence": [
+        "buildSecurityCurrentObservation"
+      ],
+      "nextAction": "Re-read exact API/worker definitions and preserve the reviewed setting before each operational mutation."
+    }
+  },
+  "compatibility": {
+    "ordinaryMigrationPath": [
+      43,
+      53
+    ],
+    "admissionPath": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ],
+    "historicalFullManifestLedger": 54,
+    "retainedFallbackSource": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "neverShrinkAdmission": true,
+    "preservePrivateChatFloor": true,
+    "capabilityEqualityRequired": true,
+    "phase128Before129": "Compatible API/worker writer/bridge/relay with issuance off; fully drain incompatible tasks and old ALB targets before thread admission.",
+    "privateChatFloor": {
+      "lifecycleWriterVersion": 1,
+      "bridgeVersion": 1,
+      "relayVersion": 1
+    },
+    "optionalStaffIdentityContract": "deferred",
+    "screenshotFunction": "Install/verify via supported migration before serving; preserve body and scoped EXECUTE through recovery."
+  },
+  "artifacts": [
+    {
+      "id": "backend-successor",
+      "label": "Historical: Successor API/worker image",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact frozen A Linux/amd64 image/config/platform/archive is identified. Fresh pinned Trivy scan records zero High/Critical and one explicit Medium; owned unforced scanner cleanup passes. Native/release acceptance and publication remain separate.",
+      "observedAtUtc": "2026-10-08T21:35:53.409Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Retain the exact built A image/config/archive and completed fresh scan/nine-check native evidence. Resolve the fresh F High finding before current A/F recovery or release campaigns.",
+      "identity": {
+        "indexDigest": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+        "platformManifestDigest": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+        "configDigest": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+        "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41"
+      }
+    },
+    {
+      "id": "frontend-successor",
+      "label": "Historical: Successor frontend archive",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Exact frozen A frontend archive is built and hashed; all 171 ZIP entries match the deterministic built file inventory. Fresh exact A frontend CI passes; publication/adoption and classroom acceptance remain separate.",
+      "observedAtUtc": "2026-10-08T21:42:43.9862170Z",
+      "evidence": [
+        "currentFrontend"
+      ],
+      "nextAction": "Retain this matched archive and input inventory; refresh final B input equivalence/CI and deploy only after release gates pass.",
+      "identity": {
+        "archiveSha256": "ad4acf6aeed629fb365269dfd48785376dd2d7c3f540d647b066526907094294",
+        "fileInventorySha256": "8140e65d93f2fb8a41356e1e0dcbb1e2c41c2569bfd3b79410065a61aba6e76d"
+      }
+    },
+    {
+      "id": "backend-preparation",
+      "label": "Historical: Local preparation API/worker image",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Local Linux scan passes with0 High / 0 Critical / 2 Medium; exact owned scanner exited and was removed without force. Preparation source is not current main or a frozen release.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Retain preparation receipts. Build/test exact frozen application A, then reuse that exact image/config under reviewed final-main B only after proven A/B application equivalence.",
+      "identity": {
+        "localImageId": "sha256:6040dbd2044b0a2564f4a9ce861b1bf53b87b9af422060eec65984b3a95ee393",
+        "configDigest": "sha256:a35bf3d4a087752d9cd1fadd2f2d4e7965d69f7e2a4a850d8ba0c8e3894e1e79",
+        "archiveSha256": "15e7bcbffa7ca6447b051428bea2c7f2eb62e434ea6820f9aec4229368a4f9af",
+        "reportSha256": "a0afc4f8b7354efb8b08a6492f337a5c7aa1275f4de5f572bd021a4440afeaff"
+      }
+    },
+    {
+      "id": "frontend-preparation",
+      "label": "Historical: Local preparation frontend archive",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "1cb459cc19001996ced307ee203c199d9f334929",
+      "rationale": "Local archive was built from 1cb459cc; public-copy test-only successor 2b7b5dc has equivalent frontend/backend inputs. No frontend deployment occurred.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Build/hash the matched frozen application frontend after review; bind it to equivalent final-main B. This archive is preparation-only.",
+      "identity": {
+        "archiveSha256": "93d96b5eeeec7e44bada12dcf827efd6c642e08f40e8b08a1542332e0086057d",
+        "fileInventorySha256": "835607afa14045aa0fc31b64180f628ffc87b50b79137098207e322e50366f25"
+      }
+    },
+    {
+      "id": "backend-ddc",
+      "label": "Historical: Historical DDC API/worker",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "artifactsHistorical"
+      ],
+      "nextAction": "Keep as historical evidence; do not select it as the successor image.",
+      "identity": {
+        "indexDigest": "sha256:8ae47ef898382883c20406c83a97728168d115d47345b7790701cb266fd7c835",
+        "platformManifestDigest": "sha256:fdd0296f74621dba2b74ceae242e171d681a965e9fb8b65fdcbb72db9502d05d",
+        "configDigest": "sha256:8b66f44e342194c35c36cf50e30cdc0ae7e467ab0b52aa9c50d1a0d6c370f799",
+        "archiveSha256": "78dfee093d214208e01e8d5c3776f46df6d66eda144c1352f25b113b3dd02ec8"
+      }
+    },
+    {
+      "id": "fallback-c578",
+      "label": "Historical: Retained compatible fallback C578",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "rationale": "Historical local build/scan passed for the exact image index, platform manifest, config and archive identities retained in this index. This does not establish successor publication/deployment.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "artifactsHistorical"
+      ],
+      "nextAction": "Preserve exact identity; fresh compatibility/scan checks must pass before operational use.",
+      "identity": {
+        "indexDigest": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+        "platformManifestDigest": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1",
+        "configDigest": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+        "archiveSha256": "1cbedd3fda3b18e806a8f56a82342e80a48107d13030265918d2d19fd8bc2fa3"
+      }
+    },
+    {
+      "id": "frontend-historical",
+      "label": "Historical: Historical frontend archive",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ed0265133d4a87fd3d2477dd90884535b749ee7d",
+      "rationale": "Retained archive SHA256 7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675 describes earlier frontend inputs.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "frontendHistorical"
+      ],
+      "nextAction": "Rebuild successor frontend; retain the old artifact as history.",
+      "identity": {
+        "archiveSha256": "7a262bf6704928194ec43cc9da0523084a935a24a040c4de20b2c7a06c321675"
+      }
+    },
+    {
+      "id": "extension",
+      "label": "ClassPilot 2.9.7 retained ZIP",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Exact retained2.9.7 ZIP/tree remain unchanged. October7 canonical pass is retained for those identities; fresh24-blob normalized comparison has20 CRLF-only/0 other differences, while the fresh canonical byte attempt failed and remains explicitly separate.",
+      "observedAtUtc": "2026-10-07T17:24:35.148Z",
+      "evidence": [
+        "extensionFresh",
+        "extensionMerged"
+      ],
+      "nextAction": "Retain unchanged2.9.7; no upload/source change occurred. Preserve fresh canonical failure and normalization limits; uploaded package identity/managed adoption remain unverified.",
+      "identity": {
+        "version": "2.9.7",
+        "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
+        "bytes": 376052,
+        "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+        "gitTree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f"
+      }
+    },
+    {
+      "id": "backend-successor-anchor",
+      "label": "Historical: Historical a516/F: Recovery-test application A image",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair.",
+      "identity": {
+        "indexDigest": "sha256:2faa59a736fd0489ece3e61d3a541adbfa4a8e0eb458563c8b9946add7ea1f85",
+        "platformManifestDigest": "sha256:9cda1da374dbc46abc33a5ae915c838455bebbcaf4769257a53df20dc6a87e46",
+        "configDigest": "sha256:8ccb8b4be632eabd73763b89381c864411192fa4f719dc585429f81da09af340",
+        "archiveSha256": "938699bca3722e20e842c7748bdba17798cf458ed1bfe49149819222df7eeef9"
+      }
+    },
+    {
+      "id": "fallback-successor-artifact",
+      "label": "Historical: Historical a516/F: Dependency-only recovery successor F",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact local Linux/amd64 source-labelled image/config/platform/archive, scanned and used in the native A/F recovery pair. Registry publication and final release selection remain pending. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair.",
+      "identity": {
+        "indexDigest": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+        "platformManifestDigest": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+        "configDigest": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+        "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+      }
+    },
+    {
+      "id": "fallback-successor-current-scan",
+      "label": "Historical: Historical current-A/F1 artifact scan failure",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "identity": {
+        "indexDigest": "sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459",
+        "platformManifestDigest": "sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6",
+        "configDigest": "sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84",
+        "archiveSha256": "ad88fa8fb0aebb5ef2ee9bbffcfe20a0d64a94000b035da843ed028e9bd9ac58"
+      },
+      "rationale": "The exact unchanged F image freshly fails zero High/Critical: CVE-2026-4775 in tiff4.7.1-r0; scanner reports fix4.7.2-r0. Two Medium findings are explicit. Its earlier passing scan remains historical.",
+      "observedAtUtc": "2026-10-08T21:36:12.886Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Review a replacement artifact containing scanner-reported fixed TIFF4.7.2-r0 with its own source/image/config/archive identities and dependency/base inventory; require a fresh zero High/zero Critical scan. Explicitly review CP-AI protection on rollback and replacement source/applicability; exact selection remains pending. Preserve failed F and historical receipts; do not silently select a rebuild or infer a scan waiver."
+    },
+    {
+      "id": "fallback-cp-protected-artifact",
+      "label": "Historical: CP-AI protected F2 exact local artifact",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact source-labelled Linux/amd64 artifact was built and independently verified; runtime scan0High/0Critical/1Medium. Development audit is separately failed; artifact is unselected and unpublished.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve issue625 with a separately reviewed source/artifact correction before preparation acceptance and exact selection.",
+      "identity": {
+        "indexDigest": "sha256:0eebe8c88bbc8304debaeb50644d008e1d3ad8212b0fee22a3a00eac1d04e264",
+        "platformManifestDigest": "sha256:bd70e6f4a091620936cb582c56d131f884fbe0aee5863d98259eadd5323e5048",
+        "configDigest": "sha256:849b9e9ecc822e8e5b4b46a31ab31c2df13420ec7231435d8dc9f6567cf11738",
+        "archiveSha256": "8a17801e557886ee49688b18d7a678cb12f22fa84b16d457d532a21e6de0cc0c"
+      }
+    },
+    {
+      "id": "backend-current-a2",
+      "label": "Current A2 API/worker artifact",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact source-labelled A2 Linux/amd64 artifact is identified and freshly scanned0High/0Critical/1Medium; pair/campaign acceptance remains separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Preserve exact identity; acceptance, publication and deployment require their own passed evidence.",
+      "identity": {
+        "indexDigest": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
+        "platformManifestDigest": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
+        "configDigest": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
+        "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b"
+      }
+    },
+    {
+      "id": "fallback-build-security-f3",
+      "label": "CP-protected build-security F3 artifact",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "Exact unchanged F3 artifact has passed fresh native/compiled-provider fixtures for A2 pair and retained fresh scan; selection and operational use remain separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Preserve exact identity; acceptance, publication and deployment require their own passed evidence.",
+      "identity": {
+        "indexDigest": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+        "platformManifestDigest": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+        "configDigest": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+        "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+      }
+    },
+    {
+      "id": "frontend-current-a2",
+      "label": "Current matched A2 frontend archive",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "identity": {
+        "archiveSha256": "a107df178142707491f3797d9ebc3dd8270bbd1ad8349b964aeef90bff4e5ea9",
+        "fileInventorySha256": "d8452f43e010b6bac8e677922ffc3d49f9de8afe00862f82b2e7b292628b31a3"
+      },
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact production-mode frontend02 archive,171-entry inventory, lint/build and browsing-history browser checks passed. Frontend01 was built under NODE_ENV=test and remains explicitly ineligible.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCandidatePreparation"
+      ],
+      "nextAction": "Retain the actual fresh frontend archive and deterministic file inventory after build; publish only after backend convergence."
+    }
+  ],
+  "stages": [
+    {
+      "id": "implementation",
+      "label": "Merged current application and tooling implementation",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "A2 application changes are merged; the bounded v5 tooling/state correction is under preparation review.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Complete reviewed preparation PR and exact resulting-main verification."
+    },
+    {
+      "id": "testing",
+      "label": "Testing",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2/F3 preparation and original classroom/capacity campaigns remain separately gated.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Finish six-leaf preparation, fixed133, three900second mixed, normal capability-on and accepted250headroom gates."
+    },
+    {
+      "id": "packaging",
+      "label": "Packaging",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact A2 backend and F3 artifacts are identified; matched frontend checks and complete acceptance remain separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact matched backend/frontend identities and source-specific evidence."
+    },
+    {
+      "id": "publication",
+      "label": "Publication",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Necessary exact artifact publication is authorized as a deployment prerequisite; no publication receipt exists.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "After acceptance/selection, review exact offline Plans/windows then publish the bound artifacts."
+    },
+    {
+      "id": "deployment",
+      "label": "Deployment",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Direct user fix/deploy request is authorized; actual execution awaits all required gates and exact completed fallback registration.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Verify fresh production health/catalog/backups/task/flags and completed inactive129F3rollback; migrate first, then API/worker and matched frontend."
+    },
+    {
+      "id": "activation",
+      "label": "Activation",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Runtime/pilot activation is outside the deployment authorization and remains separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Obtain separate authorization for any capability/pilot activation."
+    },
+    {
+      "id": "live",
+      "label": "Live verification",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Actual sample-bearing managed-device and live DeSales acceptance is pending; managed validation stays waived_not_passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation",
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Collect actual sample-bearing workflows and managed adoption; retain waived_not_passed."
+    }
+  ],
+  "gates": [
+    {
+      "id": "baseline-ci",
+      "label": "Historical: Original baseline exact-main CI",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "19 emitted checks succeed; Detect changed paths is intentionally skipped on main push.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "reconciliationHistorical"
+      ],
+      "nextAction": "Repeat applicable CI for preparation heads and final resulting main; a skip is not a test pass."
+    },
+    {
+      "id": "current-main-preparation-ci",
+      "label": "Historical: Frozen application A push preparation CI",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Fresh exact A push/main CI, CodeQL, Gitleaks and Trivy workflows all pass; emitted path-detection skip and disabled opt-in publication are recorded separately.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Use frozen A for current validation; verify fresh exact-main CI and application equivalence after tooling/document-only final main B."
+    },
+    {
+      "id": "preparation-merges",
+      "label": "Historical: Remaining scoped preparation merges",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "All scoped preparation PRs #616/#617/#619/#620 and successors #621/#622/#623 are merged and included in exact current A.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "reconciliation"
+      ],
+      "nextAction": "Retain merge/head identities and inspect later source changes before altering the freeze."
+    },
+    {
+      "id": "merge-request",
+      "label": "Historical: Operator request for source merges 616/617/619/620",
+      "status": "passed",
+      "applicability": "policy_definition",
+      "sourceSha": null,
+      "rationale": "The dated four-PR request remains historical; later direct merge/deploy instruction is recorded separately. No index grants controller authority.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "mergeRequest"
+      ],
+      "nextAction": "Retain original scope and direct-user provenance; do not infer authority for unrelated merges or settings."
+    },
+    {
+      "id": "baseline-local-checks",
+      "label": "Historical: Local baseline build, unit and governance preparation",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "Backend type/build pass; unit 2272 pass / 4 skip; governance pass retains private evidence, owner decision and MFA warnings. Full infrastructure failure is recorded separately.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "preparationFollowups"
+      ],
+      "nextAction": "Review skips/warnings and refresh applicable checks on final source; these local checks do not establish runtime acceptance."
+    },
+    {
+      "id": "baseline-infrastructure",
+      "label": "Historical: Original full Windows infrastructure lane",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "rationale": "1051 tests: 1048 pass / 3 fail / 0 skip. Exact CRLF coordinator end-marker defect reproduced; the failed full-lane receipt is preserved.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "coordinatorNewline"
+      ],
+      "nextAction": "Retain this attempt. Merge the reviewed tooling fix and require a fresh complete applicable infrastructure lane before closing this preparation dependency."
+    },
+    {
+      "id": "focused-role-rerun",
+      "label": "Historical: Focused coordinator and role-adapter reruns",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "5dfef86cb82b79f681e528176d572f2ec3e418be",
+      "rationale": "35/35 adapters/runtime and 339/339 role tests pass after the bounded LF/CRLF marker fix. Raw input/output hashes remain distinct; the committed patch files match tested bytes.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "coordinatorNewline"
+      ],
+      "nextAction": "Review tooling PR #620; a focused rerun does not turn the original full infrastructure attempt into a pass."
+    },
+    {
+      "id": "full-infrastructure-after-fix",
+      "label": "Historical: Initial local full-infrastructure rerun observation",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "5dfef86cb82b79f681e528176d572f2ec3e418be",
+      "rationale": "At this immutable receipt time only focused and all-role-adapter reruns were recorded. Later CI/full-lane observations must be retained separately; this pending historical preparation observation is not relabeled.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "coordinatorNewline"
+      ],
+      "nextAction": "Require fresh complete applicable CI for the resulting main; preserve the original failed full-lane record."
+    },
+    {
+      "id": "public-copy-preparation-ci",
+      "label": "Historical: Original public-copy PR preparation CI",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "The original exact #617 head emitted 18 successes and 1 legitimate AWS rollout path skip. This earlier PR preparation receipt remains source-bound; refreshed merged-head PR CI is recorded separately.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "preparationFollowups"
+      ],
+      "nextAction": "Review/merge the copy PR before freezing application A; require fresh resulting-main B CI and proven A/B application equivalence."
+    },
+    {
+      "id": "restricted-database-preparation",
+      "label": "Historical: Disposable full-schema database and restricted-role preparation",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Local restricted-role 513/513 pass with 129 tables, non-superuser/non-bypass role. Original ordinary Redis fixture 4 failures and corrected 4 passes are retained; CI DB 1554 pass/8 skip and RLS 512 pass/1 skip.",
+      "observedAtUtc": "2026-10-07T18:14:08.678Z",
+      "evidence": [
+        "preparationFollowups"
+      ],
+      "nextAction": "Review canonical receipt and skips; run actual ordinary 43â†’53 restoration and candidateâ†’fallbackâ†’candidate recovery on the exact frozen image. Existing 2.9.3 CI capture does not establish 2.9.7 adoption."
+    },
+    {
+      "id": "fallback-scan-current",
+      "label": "Historical: Retained C578 fresh scan release blocker",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+      "rationale": "Exact retained image freshly fails: Critical CVE-2026-90711 proxy-addr 2.0.7 (fixed in 2.0.8) and High GHSA-wq5f-xc86-pv6w sharp 0.35.4 (fixed in 0.35.5). Historical pass remains historical; unforced scanner cleanup passes.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Preserve the failed exact C578 scan. Review the dependency-only successor packet and record an exact-artifact selection before any original release acceptance or operational Plan."
+    },
+    {
+      "id": "backend-scan-preparation",
+      "label": "Historical: Local preparation backend scan",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Fresh Linux scan records0 High / 0 Critical / 2 Medium, source/image/config/archive/report hashes and unforced owned cleanup. Registry verification is unknown.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Build/test the exact frozen application A artifact after review; reuse its accepted image/config only with proven final-main B equivalence and fresh CI. Local preparation is not publication."
+    },
+    {
+      "id": "screenshot-preparation",
+      "label": "Historical: Local Linux screenshot processing",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "2b7b5dc03adc6f4a4870162e6acf95a64bceaf0f",
+      "rationale": "Synthetic JPEG/resizePNG processing passes inside the Linux preparation image with sharp 0.35.5 / vips 8.18.7; no production validation occurred.",
+      "observedAtUtc": "2026-10-07T17:34:01.248Z",
+      "evidence": [
+        "localArtifactsFresh"
+      ],
+      "nextAction": "Refresh final-candidate screenshot/runtime acceptance alongside ordinary recovery and classroom behavior."
+    },
+    {
+      "id": "final-main-ci",
+      "label": "Historical: Frozen source and final main CI",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+      "rationale": "Exact resulting mainB pushCI, CodeQL, Trivy and Gitleaks passed with nineteen successful checks; conditional path-detection and opt-in publisher jobs are skipped explicitly. Backend/frontend Git input inventories equal frozenA.",
+      "observedAtUtc": "2026-10-08T23:35:08.465Z",
+      "evidence": [
+        "resultingMainObservation"
+      ],
+      "nextAction": "Verify later resulting-main/tool binding dependencies again after the protected fallback tooling/evidence PR merges."
+    },
+    {
+      "id": "criteria",
+      "label": "Historical: Bounded criteria approval",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Existing approval defines DeSales 133/Usage-off numerical criteria, historically evaluated on DDC; it adds no operations permission.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Review successor binding/applicability explicitly and rerun the approved fixed-order campaign."
+    },
+    {
+      "id": "historical-bounded",
+      "label": "Historical: Historical bounded numerical acceptance",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Accepted measurements apply to DDC only; successor application inputs changed.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval",
+        "fixedComparison"
+      ],
+      "nextAction": "Preserve original receipts; require fresh successor evidence before assigning a current pass."
+    },
+    {
+      "id": "successor-bounded",
+      "label": "Historical: Successor bounded numerical acceptance",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "No new measurements bound to a frozen successor are recorded. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "policyApproval",
+        "currentArtifactsScan",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "strict-comparison",
+      "label": "Historical: Historical strict comparison",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Five baseline latency failures and unstable controls remain failed under the original comparison contract.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "fixedComparison"
+      ],
+      "nextAction": "Retain original failure; the superseding approved bounded policy does not reclassify it."
+    },
+    {
+      "id": "mixed-history",
+      "label": "Historical: Historical three classroom runs",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Three consecutive 900-second synthetic classroom runs pass on DDC.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "classroomHistorical",
+        "classroomReview"
+      ],
+      "nextAction": "Rerun three consecutive 900-second runs against frozen successor application inputs."
+    },
+    {
+      "id": "mixed-successor",
+      "label": "Historical: Successor classroom, normal and headroom acceptance",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Changed dependencies/backend and UI require refreshed capacity and classroom behavior evidence. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "normalHistorical",
+        "headroomHistorical",
+        "currentArtifactsScan",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "recovery-history",
+      "label": "Historical: Historical ordinary recovery/restoration",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Accepted composed components cover ordinary 43-to53 local migration/service recovery and restricted restoration; earlier failures remain immutable.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "recoveryOrdinaryHistorical"
+      ],
+      "nextAction": "Refresh actual local candidate-to-C578-to-candidate recovery on the ordinary schema/admission chain."
+    },
+    {
+      "id": "full-ledger-history",
+      "label": "Historical: Historical full-manifest rehearsal",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "The synthetic 54-entry staging rehearsal is a separate historical fixture.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "recoveryFullHistorical"
+      ],
+      "nextAction": "Never relabel its54-entry evidence as the ordinary 53-entry successor proof."
+    },
+    {
+      "id": "recovery-successor",
+      "label": "Historical: Successor recovery compatibility",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Actual ordinary A-to-F-to-A preparation remains historical evidence for its exact pair; CP-AI-001 source changes invalidate reuse for a new candidate. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "successorPreparationObservation",
+        "currentArtifactsScan",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "catalog-history",
+      "label": "Historical: Historical production catalog",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "rationale": "October4 approved inspection observed121 forced-RLS tables and43 completed migrations; that window was consumed.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "catalogHistorical"
+      ],
+      "nextAction": "Refresh via a new authorized bounded inspection on source/context/window drift."
+    },
+    {
+      "id": "production-fresh",
+      "label": "Fresh production, backups, flags and window",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Dated fresh ECS/task metadata shows stable API179/worker195 on a147 with configured129 admission and newUsage off/off. Actual SQL catalog/ledger, successful restore, quiet window and fresh final-operation state remain unverified.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh",
+        "productionHistorical"
+      ],
+      "nextAction": "Capture fresh private health/catalog/admission/backups/environment/task/ALB evidence immediately before controller operations; retain metadata/capture separation."
+    },
+    {
+      "id": "managed",
+      "label": "Two managed Chromebooks",
+      "status": "waived_not_passed",
+      "applicability": "policy_definition",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "The approved synthetic-only exception is waived_not_passed; it is not managed-device evidence.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately."
+    },
+    {
+      "id": "store-live-version",
+      "label": "Operator-confirmed live Store version 2.9.7",
+      "status": "passed",
+      "applicability": "current_baseline",
+      "sourceSha": null,
+      "rationale": "The human operator reports version 2.9.7 live. Verification method is operator_report; package identity and managed adoption are not inferred.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "evidence": [
+        "operatorStoreVersion"
+      ],
+      "nextAction": "Retain the operator report separately from uploaded ZIP, pending-submission and managed-adoption evidence."
+    },
+    {
+      "id": "store-unchanged-upload",
+      "label": "New Store upload for unchanged 2.9.7 candidate",
+      "status": "not_applicable",
+      "applicability": "equivalence_required",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Existing canonical package verification and the reported live version do not require a duplicate upload for the unchanged candidate.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "evidence": [
+        "operatorStoreVersion",
+        "extensionFresh"
+      ],
+      "nextAction": "Recheck source/package if it changes; managed adoption still requires actual sample-bearing live evidence."
+    },
+    {
+      "id": "store",
+      "label": "Store uploaded ZIP identity and pending submissions",
+      "status": "unknown",
+      "applicability": "equivalence_required",
+      "sourceSha": null,
+      "rationale": "The operator reports live version 2.9.7. Uploaded ZIP identity and pending submission state remain unknown; this was not a fresh dashboard/listing capture.",
+      "observedAtUtc": "2026-10-07T21:16:58.907Z",
+      "evidence": [
+        "operatorStoreVersion"
+      ],
+      "nextAction": "No repeat upload for the unchanged candidate. Verify pending submissions and exact uploaded identity before any separately reviewed successor upload."
+    },
+    {
+      "id": "usage-capacity",
+      "label": "Historical: Separate Usage capacity",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+      "rationale": "Zero accepted cold runs; the retained 6000-offer attempt failed. This is separate from the bounded Usage-off release.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "usageFailure"
+      ],
+      "nextAction": "Keep both new modes off; diagnostics and Usage activation remain separate follow-up work."
+    },
+    {
+      "id": "broader-fleet",
+      "label": "Historical: Broader800-client capacity",
+      "status": "not_applicable",
+      "applicability": "policy_definition",
+      "sourceSha": null,
+      "rationale": "Broader fleet capacity is outside this DeSales 133 preparation and is not accepted.",
+      "observedAtUtc": "2026-10-07T17:21:12.006Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "No broader rollout; require a separately reviewed capacity campaign if scope expands."
+    },
+    {
+      "id": "live-acceptance",
+      "label": "Live DeSales acceptance and adoption",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "No current task-pair-bound live samples or installed-client capability confirmation are recorded.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "policyApproval"
+      ],
+      "nextAction": "Verify already-open pages, sign-in, IXL/precise/mixed paths, Focus/Attention, actions, messaging, reconnect and relevant PassPilot/GoPilot workflows."
+    },
+    {
+      "id": "extension-canonical-fresh",
+      "label": "Historical: Retained October7 canonical package validation",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "The unchanged immutable October7 canonical receipt remains applicable only to the exact retained ZIP/tree. Fresh October8 canonical byte verification failed separately on EOL; current normalized identity proof does not convert that failure to pass.",
+      "observedAtUtc": "2026-10-07T17:24:35.148Z",
+      "evidence": [
+        "extensionFresh",
+        "extensionMerged"
+      ],
+      "nextAction": "Retain original dated pass and exact ZIP/tree identity; consult both fresh normalized applicability and failed canonical-attempt gates."
+    },
+    {
+      "id": "extension-raw-git",
+      "label": "Historical: Raw packaged text versus Git blobs",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Raw packaged bytes differ on 20 CRLF-only text files. Canonical verification is a separate pass; initial buffer-limited failures are retained.",
+      "observedAtUtc": "2026-10-07T17:24:35.148Z",
+      "evidence": [
+        "extensionFresh"
+      ],
+      "nextAction": "Preserve raw failure and newline qualification; never claim byte equality with LF Git blobs or reclassify this failure."
+    },
+    {
+      "id": "preparation-pr-616-ci",
+      "label": "Historical: Historical published PR #616 CI",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
+      "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliationBeforeClosing"
+      ],
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
+    },
+    {
+      "id": "preparation-pr-617-ci",
+      "label": "Historical: Historical published PR #617 CI",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
+      "rationale": "Read-only published-head PR checks: 18 success, 1 skip, 0 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliationBeforeClosing"
+      ],
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
+    },
+    {
+      "id": "preparation-pr-619-ci",
+      "label": "Historical: Historical published PR #619 CI",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "9122b61b76f2e8a8e146877604ec63752575dc53",
+      "rationale": "Read-only published-head PR checks: 17 success, 1 skip, 1 cancelled; 0 unfinished. These are PR checks and do not establish exact-main or runtime acceptance. They refer to the older published head, not the unfinished closing packet.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliationBeforeClosing"
+      ],
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
+    },
+    {
+      "id": "preparation-pr-620-ci",
+      "label": "Historical: Historical published PR #620 CI",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
+      "rationale": "Read-only published-head PR checks: 8 success, 0 skip, 0 cancelled; 5 unfinished. These are PR checks and do not establish exact-main or runtime acceptance.",
+      "observedAtUtc": "2026-10-07T21:29:13.642Z",
+      "evidence": [
+        "reconciliationBeforeClosing"
+      ],
+      "nextAction": "Preserve this dated PR-head snapshot; use the separate merged-source and exact-main gates for current status."
+    },
+    {
+      "id": "fallback-successor-source",
+      "label": "Historical: Historical a516/F: Dependency-only successor source review",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Independent Git object and dependency review confirms only the reviewed package-lock corrections; C578 application, build and schema inputs are preserved. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-07T23:35:58.510Z",
+      "evidence": [
+        "successorSourceReview"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-successorScan",
+      "label": "Historical: Historical a516/F: Successor image security scan",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorScan"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-screenshotRuntime",
+      "label": "Historical: Historical a516/F: Native image/private-file/PDF processing",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorScreenshotRuntime"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-requestIpRateLimit",
+      "label": "Historical: Historical a516/F: Express client-IP and rate limiting",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorRequestIpRateLimit"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-ordinaryRecovery",
+      "label": "Historical: Historical a516/F: Ordinary A/F recovery",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorOrdinaryRecovery"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-restrictedRestoration",
+      "label": "Historical: Historical a516/F: Restricted-owner restoration",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact A/F artifact pair and retained native/independent review hashes passed actual offline preparation replay; original release acceptance remains separate. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorRestrictedRestoration"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-preparation",
+      "label": "Historical: Historical a516/F: Bounded C578 security successor preparation",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Actual offline ValidateSuccessorPreparation passes while releaseReady=false, operationalAuthorization=false and all original acceptance/applicability gates remain pending. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:18:49.670Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-selection",
+      "label": "Historical: Exact replacement artifact selection",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact-artifact successor selection remains pending and is now blocked by fresh F High TIFF finding. No scan waiver or substitute identity is permitted; older preparation pass remains historical.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "successorPreparationObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "fallback-successor-operational-guards",
+      "label": "Historical: Historical a516/F: Pending binding operational Plan guards",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Both publication roles, unused121, Anchor128 and compatible fallback reject the pending successor selection with zero external commands and zero cloud mutations. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:20:33.762Z",
+      "evidence": [
+        "successorOperationalRejections"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-type",
+      "label": "Historical: Historical a516/F: Exact-F TypeScript",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact clean-F type check exits zero. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-build",
+      "label": "Historical: Historical a516/F: Exact-F build",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Exact clean-F compile/build exits zero; Docker build is separately identified. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-unit",
+      "label": "Historical: Historical a516/F: Exact-F unit and conditional service checks",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Original unit lane passes 1732 with four explicit skips; all four skipped service cases are separately re-exercised in a 65/65 zero-skip run. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-db",
+      "label": "Historical: Historical a516/F: Exact-F original complete database lane",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Complete exact-F DB lane finishes 1400 passed, 1 failed, 8 skipped. The old Redis text-matching screenshot fixture causes the sole failure; the separate reviewed correction passes 8/8 against image-equivalent F compiled modules. This complete failed command remains failed. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-rls",
+      "label": "Historical: Historical a516/F: Exact-F restricted-role database lane",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Separate exact-F RLS lane passes 383/383 with no failures/skips; public receipt maps all 18 skip markers from eight original DB skips to actual restricted-lane passes. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-full-audit",
+      "label": "Historical: Historical a516/F: Exact-F development-inclusive dependency audit",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Original full audit exits 1 with 7 Moderate and 6 High findings in unchanged development dependencies; the October7 runtime scan recorded zero High/Critical; the fresh unchanged F October8 scan failed one High. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-production-default-audit",
+      "label": "Historical: Historical a516/F: Exact-F default production dependency audit",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Default production audit exits 1 for three Moderate mammoth/argparse/sprintf-js findings; no production High/Critical. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-production-high-audit",
+      "label": "Historical: Historical a516/F: Exact-F production High/Critical audit gate",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Production audit with audit-level=high exits zero, with 0 High/Critical and three explicit Moderate findings. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "fallback-successor-f-reviewed-fixture",
+      "label": "Historical: Historical a516/F: Reviewed screenshot fixture against exact-F compiled modules",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "The existing bcded1c main test-only ABI correction passes 8/8 against all 1571 byte-equivalent F image/host compiled files. Independent causal replay reproduces the old mock mismatch and verifies corrected binding/null semantics. Original DB1400/1/8 remains failed. Dated a516/F evidence only; current ecf6/F preparation is held.",
+      "observedAtUtc": "2026-10-08T00:33:00.773Z",
+      "evidence": [
+        "successorSourceChecks",
+        "successorDatabaseFixtureReview"
+      ],
+      "nextAction": "Preserve this exact dated a516/F outcome, artifact identity and receipt hash as historical evidence. Current ecf6/F recovery/campaign acceptance remains held by the fresh F High finding; no old preparation pass certifies the changed pair."
+    },
+    {
+      "id": "cp-ai-001-implementation",
+      "label": "Historical: CP-AI-001 source implementation",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "rationale": "Reviewed bounded implementation is present at the exact tested source; designated approval and production protection remain separate.",
+      "observedAtUtc": "2026-10-08T15:12:42.674Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Review the bounded source change and exact committed synthetic results; no merge is authorized by this record."
+    },
+    {
+      "id": "cp-ai-001-synthetic",
+      "label": "Historical: CP-AI-001 synthetic provider prevention",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "rationale": "108 source-bound focused tests and 92 compiled helper/provider/cache replay tests passed without skips; no live provider or production data was used.",
+      "observedAtUtc": "2026-10-08T15:12:42.674Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Retain exact9f synthetic prevention results and proven equivalent current-A backend inputs. Complete separately gated deployment/live verification; do not broaden the credential-detection claim."
+    },
+    {
+      "id": "cp-ai-001-review",
+      "label": "Historical: CP-AI-001 designated policy/source review",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "rationale": "PR #622 was reviewed through passing applicable checks and merged at exact 092f source. This records source review/merge, not risk acceptance or deployment.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh"
+      ],
+      "nextAction": "Keep issue #618 open until separately executed deployment and task-pair-bound live protection verification."
+    },
+    {
+      "id": "cp-ai-001-deployment",
+      "label": "CP-AI-001 production backend protection",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "rationale": "Direct user deployment authorization is recorded; no new candidate deployment has executed. Production still serves a147 metadata. Required artifact/native/acceptance prerequisites remain pending.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "Complete current A gates and fresh production prerequisites; execute the already-authorized migration-first matched deployment only when readiness/controller prerequisites pass."
+    },
+    {
+      "id": "cp-ai-001-live",
+      "label": "CP-AI-001 live protection verification",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+      "rationale": "No sample-bearing live verification of the new browser boundary is available.",
+      "observedAtUtc": "2026-10-08T15:12:42.674Z",
+      "evidence": [
+        "cpAiBoundaryPreparation"
+      ],
+      "nextAction": "After separately authorized deployment, bind approved live evidence to exact serving task/image identities."
+    },
+    {
+      "id": "cp-ai-001-candidate-applicability",
+      "label": "Historical: CP-AI-001 changed candidate/recovery applicability",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Backend and governance image inputs changed. Historical A-to-F-to-A and scan receipts remain source-specific; unchanged F restores the previous provider boundary on rollback. Fresh unchanged F scan has one High; this acceptance block is held before execution under the mandatory security stop.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "cpAiBoundaryPreparation",
+        "successorPreparationObservation",
+        "currentArtifactsScan",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "candidate-freeze",
+      "label": "Historical: Current application/extension source freeze",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Clean green current A and unchanged ClassPilot03a9 are selected for validation with deterministic backend/frontend Git inventories. This source freeze does not identify an executable artifact or accept native/release campaigns.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh"
+      ],
+      "nextAction": "Retain frozen A, identified backend/frontend artifacts, completed standalone A security/native checks and unchanged2.9.7 identities. Review the F security correction, then refresh affected pair/campaign evidence and final B equivalence/CI."
+    },
+    {
+      "id": "repository-protections",
+      "label": "Repository protection application",
+      "status": "pending",
+      "applicability": "current_baseline",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Fresh GitHub branch metadata reports both main branches unprotected. The proposal remains prepared; no settings decision/application occurred.",
+      "observedAtUtc": "2026-10-08T21:33:46.754Z",
+      "evidence": [
+        "candidateRefresh"
+      ],
+      "nextAction": "Obtain the separate settings decision, apply the prepared payloads, and verify actual emitted-check enforcement and owner bypass."
+    },
+    {
+      "id": "resulting-tooling-main-ci",
+      "label": "Historical: Resulting tooling main B exact CI and application equivalence",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+      "rationale": "PR624 merged to exact mainB; nineteen emitted checks passed and two explicitly conditional jobs skipped. Real deterministic Git input inventories equal frozenA; no publication or deployment occurred.",
+      "observedAtUtc": "2026-10-08T23:35:08.465Z",
+      "evidence": [
+        "resultingMainObservation"
+      ],
+      "nextAction": "Retain frozenA artifacts; a later source/tooling change requires new exact-main CI and proven application equivalence."
+    },
+    {
+      "id": "current-record-refresh-checks",
+      "label": "Historical: Dated original reconciliation checks (34/66)",
+      "status": "passed",
+      "applicability": "policy_definition",
+      "sourceSha": null,
+      "rationale": "34 final focused regressions and66 earlier combined current-state/v1/v2/v3 real-Git binding regressions pass with zero failures/skips. Offline generation and whitespace checks pass; exact canonical and raw tested patch hashes are distinct. Future exact-main B CI remains separate.",
+      "observedAtUtc": "2026-10-08T21:53:56.768Z",
+      "evidence": [
+        "currentRecordRefreshChecks"
+      ],
+      "nextAction": "Preserve this immutable dated receipt and its exact original code/hash basis. The later historical applicability correction has a separate fresh focused check receipt; resulting-main CI remains required."
+    },
+    {
+      "id": "backend-successor-scan-fresh",
+      "label": "Historical: Frozen A exact-artifact security scan",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Fresh exact A scan passes zero High/Critical with one Medium; this pass identifies security preparation only.",
+      "observedAtUtc": "2026-10-08T21:35:53.409Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Retain exact source/image/config/archive/scan plus completed nine-check standalone native receipt. Keep A/F recovery and release campaigns held while the fresh F High finding remains."
+    },
+    {
+      "id": "fallback-successor-scan-fresh",
+      "label": "Historical: Historical current-A/F1 scan failure",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "d75fc1c48d0a3918857508d3965904c69023a153",
+      "rationale": "Fresh exact unchanged F has one High TIFF finding and two Medium findings; the mandatory zero High/Critical criterion stops selection/recovery/campaigns. Earlier F pass and original C578 failed scan remain immutable.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "currentArtifactsScan"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "candidate-native-processing-fresh",
+      "label": "Historical: Exact current A native processing",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Nine actual synthetic Linux/musl screenshot/private-image/PDF/Express/rate-limit checks pass with owned unforced cleanup in the exact A image. This standalone result does not certify F, ordinary pair recovery or classroom/capacity acceptance.",
+      "observedAtUtc": "2026-10-08T21:41:29.521Z",
+      "evidence": [
+        "currentCandidateNative"
+      ],
+      "nextAction": "Retain exact A artifact/compiled/native dependency evidence; pair acceptance remains held until the F security blocker is resolved."
+    },
+    {
+      "id": "current-v3-binding",
+      "label": "Historical: Historical current-A/F1 schema3 binding",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "rationale": "Current allowlisted v3 profile now identifies exact A inventories/image and failed unchanged F scan. Current preparation is pending and operational Plans fail closed; the exact old profile is separately archived unchanged.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "currentSuccessorBinding",
+        "currentArtifactsScan",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "extension-current-identity-applicability",
+      "label": "Historical: Retained extension current identity/applicability",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Fresh exact retained ZIP/source/tree identities match October7. All24 packaged Git blobs match after declared CRLF normalization;20 EOL-only and0 other differences. This is normalization/identity evidence, not a fresh canonical byte-verifier pass.",
+      "observedAtUtc": "2026-10-08T21:51:41.552Z",
+      "evidence": [
+        "currentExtensionApplicability"
+      ],
+      "nextAction": "Retain unchanged2.9.7/exact ZIP and original canonical receipt; preserve the separately failed fresh canonical attempt. Store package/adoption remains unverified."
+    },
+    {
+      "id": "extension-current-canonical-attempt",
+      "label": "Historical: Fresh unchanged extension canonical byte attempt",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "rationale": "Fresh clean03a9 canonical verify-only attempt fails on classroom-runtime-core.js byte/EOL comparison. The failed attempt remains failed beside unchanged exact-ZIP/tree applicability and the original October7 canonical pass.",
+      "observedAtUtc": "2026-10-08T21:51:41.552Z",
+      "evidence": [
+        "currentExtensionApplicability"
+      ],
+      "nextAction": "Preserve failed attempt/log; do not relabel normalized equality as raw canonical success. No source/package change or repeat upload is authorized."
+    },
+    {
+      "id": "private-path-control-repair",
+      "label": "Historical: Private artifact path readability repair",
+      "status": "passed",
+      "applicability": "policy_definition",
+      "sourceSha": null,
+      "rationale": "Actual repair verifies1019 existing entries, protected DACLs, required explicit current-owner/SYSTEM/Administrators allow ACE classes and real Node critical-file reads. Earlier empty-DACL assertion and failed repair attempt remain preserved; no local principal names/SIDs or raw operational contents are public.",
+      "observedAtUtc": "2026-10-08T22:00:18.8152279Z",
+      "evidence": [
+        "currentPrivatePathControlRepair"
+      ],
+      "nextAction": "Retain corrected readability/ACL proof and prior erroneous assertion. Each later Plan still needs its actual approved private paths, fresh controls/window and controller validation; this repair grants no operational authority."
+    },
+    {
+      "id": "release-tool-regressions-current",
+      "label": "Historical: Additional current release controller regressions",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "62dcfbe840983818419fe6cbbcf6f50fde5df97d",
+      "rationale": "119 current artifact/fallback/v1/v2/v3 controller regressions pass with zero failures/skips, including real Git fixtures and offline invalid-input/partial-outcome safeguards. Governance validation passes with existing evidence/human warnings; no approval or acceptance is inferred.",
+      "observedAtUtc": "2026-10-08T22:05:51.757Z",
+      "evidence": [
+        "currentToolRegressions"
+      ],
+      "nextAction": "Retain executed code/log identities and review integrated tooling/template changes. Fresh resulting-main CI and operational prerequisites remain pending; controller regressions do not certify native pair/campaign acceptance."
+    },
+    {
+      "id": "acceptance-preparation-tooling",
+      "label": "Historical: Current acceptance tooling and non-executable templates",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "f636cab9b7f6dd07ab1b763a8bcd85d931f82c27",
+      "rationale": "Reviewable preparation tooling passes168 pure regressions and independent16-case review/native-byte timestamp/object replay. Six actual-rehashed templates are explicitly non-executable with unknown operational inputs null; old provisional templates are preserved. This is tooling review/preparation only; actual A/F recovery/helper/classroom/capacity runs remain held by F security.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "acceptancePreparationTooling",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Resolve protected fallback full build-security issue625 through a separately reviewed minimal correction; preserve passed dated A/F2 preparation and failed historical F1 scan. Refresh affected exact source/artifact evidence, explicitly select/apply source/privacy applicability, then execute original campaigns under the unchanged policy/order/thresholds."
+    },
+    {
+      "id": "historical-successor-overlay-checks",
+      "label": "Historical: Current historical a516/F applicability overlay checks",
+      "status": "passed",
+      "applicability": "policy_definition",
+      "sourceSha": null,
+      "rationale": "35 focused generator regressions pass with zero failures/skips against exact recorded uncommitted patch bytes. Current a516/F source/artifact/scan/recovery/preparation records are historical; original outcomes and native receipt hashes are unchanged. The original 34/66, root119 and author168/16 receipts remain dated evidence.",
+      "observedAtUtc": "2026-10-08T22:22:22.336Z",
+      "evidence": [
+        "historicalSuccessorOverlayChecks"
+      ],
+      "nextAction": "Review this bounded generator/status correction and obtain fresh integrated PR/resulting-main CI. These checks establish documentation/tooling correctness only; failed fresh F security still holds actual current-pair recovery and campaigns."
+    },
+    {
+      "id": "cp-protected-successorScan",
+      "label": "Historical: Protected F2 runtime scan",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact F2 artifact leaf passed and was independently reviewed. This does not satisfy full dependency security, pair acceptance or operational readiness.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackSuccessorScan",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Preserve the leaf and rerun affected evidence after the separately reviewed issue625 correction."
+    },
+    {
+      "id": "cp-protected-screenshotRuntime",
+      "label": "Historical: Protected F2 screenshot/image/private-file/PDF native processing",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact F2 artifact leaf passed and was independently reviewed. This does not satisfy full dependency security, pair acceptance or operational readiness.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackScreenshotRuntime",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Preserve the leaf and rerun affected evidence after the separately reviewed issue625 correction."
+    },
+    {
+      "id": "cp-protected-requestIpRateLimit",
+      "label": "Historical: Protected F2 Express client-IP/rate-limit native checks",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact F2 artifact leaf passed and was independently reviewed. This does not satisfy full dependency security, pair acceptance or operational readiness.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackRequestIpRateLimit",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Preserve the leaf and rerun affected evidence after the separately reviewed issue625 correction."
+    },
+    {
+      "id": "cp-protected-credentialBoundary",
+      "label": "Historical: Protected F2 compiled credential provider boundary",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact F2 artifact leaf passed and was independently reviewed. This does not satisfy full dependency security, pair acceptance or operational readiness.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackCredentialBoundary",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Preserve the leaf and rerun affected evidence after the separately reviewed issue625 correction."
+    },
+    {
+      "id": "cp-protected-source-port",
+      "label": "Historical: Protected F2 bounded CP-AI source port",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact8path F1→F2 reviewed Git delta and provider/matcher regressions passed; host source175 and independent366 are distinct from image53 tests.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackSourceReview",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Retain exact comparison and failed attempts; any later F2 change requires new source and image evidence."
+    },
+    {
+      "id": "cp-protected-build-dependency-audit",
+      "label": "Historical: Protected F2 full build/development dependency audit",
+      "status": "failed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Full audit6High/0Critical/7Moderate from retained tsc-alias→braces chain, GHSA-vfj7-8cjw-p6xm/CVE-2026-93687; runtime omission0High/0Critical/3Moderate does not clear this failure. No waiver.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackObservation",
+        "protectedFallbackBinding"
+      ],
+      "nextAction": "Resolve issue625 through separately reviewed minimal build-tool/source applicability and fresh exact source/image/recovery; deployment remains held."
+    },
+    {
+      "id": "cp-protected-preparation",
+      "label": "Historical: Protected F2 complete preparation",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "All six exact-source/artifact preparation leaves passed independently, including actual ordinary and six-round restricted recovery. Full development/build audit remains failed6High; complete preparation must reject.",
+      "observedAtUtc": "2026-10-09T00:12:19.182Z",
+      "evidence": [
+        "protectedFallbackObservation",
+        "protectedFallbackBinding"
+      ],
+      "nextAction": "Resolve issue625 through a separately reviewed minimal build-tool/source correction and fresh affected evidence; preserve exact leaf passes without claiming overall preparation or enabling Plans."
+    },
+    {
+      "id": "cp-protected-selection",
+      "label": "Historical: Protected fallback exact artifact selection",
+      "status": "pending",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Operator chose retaining CP-AI protection; no exact artifact selection or applicability review has been approved.",
+      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "evidence": [
+        "protectedFallbackObservation",
+        "protectedFallbackBinding"
+      ],
+      "nextAction": "After full security, corrected-pair recovery and source/privacy applicability pass, explicitly review/select the exact protected replacement artifact."
+    },
+    {
+      "id": "cp-protected-ordinaryRecovery",
+      "label": "Historical: Protected F2 actual ordinary A→F2→A API/worker recovery",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact dated A/F2 local recovery leaf passed and was independently reviewed. Eight actual services drained unforced with no residual named SQL connections; full development audit remains failed and complete preparation/selection remain pending.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "protectedFallbackOrdinaryRecovery",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Retain this exact pair proof; resolve issue625 through a separately reviewed correction and refresh affected source/image/recovery evidence before complete preparation or release acceptance."
+    },
+    {
+      "id": "cp-protected-restrictedRestoration",
+      "label": "Historical: Protected F2 six restricted-owner43/53 restoration rounds",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
+      "rationale": "Exact dated A/F2 local recovery leaf passed and was independently reviewed. Eight actual services drained unforced with no residual named SQL connections; full development audit remains failed and complete preparation/selection remain pending.",
+      "observedAtUtc": "2026-10-09T00:05:34.121Z",
+      "evidence": [
+        "protectedFallbackRestrictedRestoration",
+        "protectedFallbackObservation"
+      ],
+      "nextAction": "Retain this exact pair proof; resolve issue625 through a separately reviewed correction and refresh affected source/image/recovery evidence before complete preparation or release acceptance."
+    },
+    {
+      "id": "cp-protected-tooling-regressions",
+      "label": "Historical: Protected fallback tooling local regressions",
+      "status": "passed",
+      "applicability": "historical",
+      "sourceSha": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+      "rationale": "Local working bytes are identified by canonical file hashes:119controller,168acceptance,49state/v4 tests passed; unit2465passed/4skipped. Type/build and governance collectors passed; final commit PR/resulting-main CI remains separate.",
+      "observedAtUtc": "2026-10-09T00:07:45.972Z",
+      "evidence": [
+        "protectedFallbackToolingChecks"
+      ],
+      "nextAction": "Review the tooling/state PR, verify its exact commit CI, then separately authorize any merge; full F2 audit issue625 still blocks preparation/selection/deployment."
+    },
+    {
+      "id": "build-security-main-ci",
+      "label": "Exact A2 push/main CI",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact 55f91 push/main workflows completed:19 success and2 explicit expected skips.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation"
+      ],
+      "nextAction": "Verify fresh exact resulting-main CI and proven application equivalence after the v5 tooling merge."
+    },
+    {
+      "id": "build-security-candidate-freeze",
+      "label": "A2 exact source/artifact freeze",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact source55f91 and identified backend artifact/inventories replace the changed ecf6 input reference.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityCurrentObservation"
+      ],
+      "nextAction": "Retain exact A2/F3 identities; changed application inputs invalidate affected evidence."
+    },
+    {
+      "id": "build-security-source-applicability",
+      "label": "A2 source/policy applicability",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact approved policy/order/thresholds remain applicable; source-only review asserts no human artifact approval.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Complete actual pair recovery and original campaigns; retain rollback frontend limitation."
+    },
+    {
+      "id": "build-security-full-audit",
+      "label": "F3 full build dependency security",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "Fresh raw full audit0High/0Critical/7Moderate; runtime audit0High/0Critical/3Moderate. F2sixHigh failure remains historical.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain raw audit/source-check results and disclosed lower severities; no waiver."
+    },
+    {
+      "id": "build-security-output-equivalence",
+      "label": "F2→F3 compiled output equivalence",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "All1,574 compiled files are byte-equal across before/after alias and F3 inventories, independently reviewed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact two-file source delta, real Git proof and all three output inventories."
+    },
+    {
+      "id": "build-security-successorScan",
+      "label": "A2/F3 preparation: successorScan",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact raw receipts and independent review; do not substitute historical ecf6 or54-entry proof."
+    },
+    {
+      "id": "build-security-screenshotRuntime",
+      "label": "A2/F3 preparation: screenshotRuntime",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact raw receipts and independent review; do not substitute historical ecf6 or54-entry proof."
+    },
+    {
+      "id": "build-security-requestIpRateLimit",
+      "label": "A2/F3 preparation: requestIpRateLimit",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact raw receipts and independent review; do not substitute historical ecf6 or54-entry proof."
+    },
+    {
+      "id": "build-security-ordinaryRecovery",
+      "label": "A2/F3 preparation: ordinaryRecovery",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact raw receipts and independent review; do not substitute historical ecf6 or54-entry proof."
+    },
+    {
+      "id": "build-security-restrictedRestoration",
+      "label": "A2/F3 preparation: restrictedRestoration",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact raw receipts and independent review; do not substitute historical ecf6 or54-entry proof."
+    },
+    {
+      "id": "build-security-credentialBoundary",
+      "label": "A2/F3 preparation: credentialBoundary",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Retain exact raw receipts and independent review; do not substitute historical ecf6 or54-entry proof."
+    },
+    {
+      "id": "build-security-preparation",
+      "label": "Complete A2/F3 successor preparation",
+      "status": "passed",
+      "applicability": "preparation_only",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Complete preparation requires all six reviewed leaves, passed full audit and compiled-output proof.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Run offline ValidateSuccessorPreparation on clean committed tooling; it must report releaseReady:false."
+    },
+    {
+      "id": "build-security-selection",
+      "label": "Exact F3 replacement selection",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "rationale": "No exact F3 selection is asserted before actual evidence and replacement review are complete.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Root records exact source/image/config/archive selection review after required evidence passes; no invented human approval."
+    },
+    {
+      "id": "build-security-currentSchoolAcceptance",
+      "label": "Original release gate: currentSchoolAcceptance",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Execute the immutable source-bound campaign and stop at its existing failure policy; preserve every attempt."
+    },
+    {
+      "id": "build-security-classroomAcceptance",
+      "label": "Original release gate: classroomAcceptance",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Execute the immutable source-bound campaign and stop at its existing failure policy; preserve every attempt."
+    },
+    {
+      "id": "build-security-normalLoadAcceptance",
+      "label": "Original release gate: normalLoadAcceptance",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Execute the immutable source-bound campaign and stop at its existing failure policy; preserve every attempt."
+    },
+    {
+      "id": "build-security-headroomAcceptance",
+      "label": "Original release gate: headroomAcceptance",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Execute the immutable source-bound campaign and stop at its existing failure policy; preserve every attempt."
+    },
+    {
+      "id": "build-security-tooling-review",
+      "label": "Reviewed v5 tooling merge",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Main-based v5/current129/deployment tooling is reviewable preparation; its resulting-main verification remains pending.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
+      "evidence": [
+        "buildSecurityBinding"
+      ],
+      "nextAction": "Review the preparation PR, require applicable green CI, merge the authorized correction and verify resulting main."
+    }
+  ],
+  "inclusionMatrix": [
+    {
+      "repository": "SchoolPilot",
+      "number": 603,
+      "title": "Stabilize coordinated roadmap release for ClassPilot 2.9.7",
+      "state": "MERGED",
+      "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
+      "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
+      "mergedAtUtc": "2026-10-04T22:45:00Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "backend",
+        "frontend",
+        "release tooling"
+      ],
+      "reusableEvidence": "DDC measurements, failures and policy remain historical; package/runtime changes cannot reuse its image acceptance.",
+      "requiredReruns": "Fresh backend/frontend artifacts, scans, native regression, ordinary recovery and bounded campaigns."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 606,
+      "title": "Preserve admission CSV order in inactive release preparation",
+      "state": "MERGED",
+      "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
+      "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
+      "mergedAtUtc": "2026-10-05T03:23:01Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release tooling"
+      ],
+      "reusableEvidence": "Application evidence only after final-source equivalence; preserve ordered admission behavior.",
+      "requiredReruns": "Artifact/fallback controller tests and final tool dependency hashes."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 609,
+      "title": "Fix School Library loading on lazy Teaching tools routes",
+      "state": "MERGED",
+      "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
+      "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
+      "mergedAtUtc": "2026-10-05T11:23:21Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Unchanged backend/extension evidence only with exact-source equivalence.",
+      "requiredReruns": "TeachingTools/School Library lazy-route tests, lint/build and final frontend browser gates."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 610,
+      "title": "Show daily Chromebook usage averages for each class",
+      "state": "MERGED",
+      "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
+      "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
+      "mergedAtUtc": "2026-10-06T22:31:47Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "backend",
+        "frontend",
+        "backend dependencies"
+      ],
+      "reusableEvidence": "Policy definitions; source-specific DDC capacity remains historical.",
+      "requiredReruns": "Analytics calculations/browser scenarios, backend scan, screenshot processing, regression/recovery/capacity."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 612,
+      "title": "Accept identical ECR tag aliases during image verification",
+      "state": "MERGED",
+      "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
+      "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
+      "mergedAtUtc": "2026-10-06T23:19:16Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release tooling"
+      ],
+      "reusableEvidence": "Reviewed image aliases do not authorize a second image; other evidence remains source-bound.",
+      "requiredReruns": "Legacy image verification regression and final tool hashes."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 613,
+      "title": "Simplify ClassPilot usage analytics report",
+      "state": "MERGED",
+      "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
+      "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
+      "mergedAtUtc": "2026-10-07T00:30:35Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Backend/extension evidence only if source equivalence is proven.",
+      "requiredReruns": "Analytics browser scenarios and frontend artifact/build."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 614,
+      "title": "Restore Focus and Bring Forward availability on the dashboard",
+      "state": "MERGED",
+      "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
+      "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
+      "mergedAtUtc": "2026-10-07T14:17:37Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "backend",
+        "frontend"
+      ],
+      "reusableEvidence": "Existing Focus status/enforcement stays implemented; extension source is unchanged.",
+      "requiredReruns": "Focus/Bring Forward capability availability, current assignment, hydration/recipient regression and refreshed native acceptance."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 615,
+      "title": "Fix hourly activity chart sizing and readable values",
+      "state": "MERGED",
+      "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
+      "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
+      "mergedAtUtc": "2026-10-07T16:21:39Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Backend/extension evidence only if source equivalence is proven.",
+      "requiredReruns": "Hourly activity sizing, labels/readable values and final browser/build gates."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 616,
+      "title": "Release index, generated checklist and historical evidence reconciliation",
+      "state": "MERGED",
+      "headSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
+      "mergeSha": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b",
+      "mergedAtUtc": "2026-10-07T20:57:54Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Retained immutable historical records; no application acceptance is transferred.",
+      "requiredReruns": "Refresh exact candidate evidence and resulting-main CI for applicable later changes."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 617,
+      "title": "Correct AI/privacy claims and add bounded provider-boundary audit",
+      "state": "MERGED",
+      "headSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
+      "mergeSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
+      "mergedAtUtc": "2026-10-07T21:14:48Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "backend-governance",
+        "frontend-public-copy"
+      ],
+      "reusableEvidence": "Source-only copy and audit evidence; issue #618 remains a separate applicability decision.",
+      "requiredReruns": "Fresh candidate image, scan and native acceptance; governance documents are image inputs."
+    },
+    {
+      "repository": "ClassPilot",
+      "number": 123,
+      "title": "Prepare consolidated ClassPilot 2.9.7 release candidate",
+      "state": "MERGED",
+      "headSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+      "mergeSha": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "mergedAtUtc": "2026-10-04T21:14:57Z",
+      "includedInSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+      "affectedArtifacts": [
+        "extension"
+      ],
+      "reusableEvidence": "Fresh canonical package verification passes all 24 files against clean source with identical merged extension tree; raw Git differences remain explicitly CRLF-only.",
+      "requiredReruns": "Reverify package/tree on source drift; fresh Store/pending submissions and actual installed-client capability/adoption checks remain pending."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 619,
+      "title": "Operator packet, source-specific status and protection proposal",
+      "state": "MERGED",
+      "headSha": "106f78059172e2f7fda4632911b28153695ec448",
+      "mergeSha": "a5161eb14939132776e0b77eac8e3c485091432c",
+      "mergedAtUtc": "2026-10-07T22:06:52Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Preparation-only records and reviewed settings proposal; no operational approval.",
+      "requiredReruns": "Refresh source/evidence binding and applicable CI after any tool or source change."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 620,
+      "title": "Version 2 binding controller and bounded CI installation correction",
+      "state": "MERGED",
+      "headSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
+      "mergeSha": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe",
+      "mergedAtUtc": "2026-10-07T21:48:32Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release-tooling",
+        "ci"
+      ],
+      "reusableEvidence": "Reviewed tooling regressions and passing PR/main CI; v2 profile remains pending.",
+      "requiredReruns": "Refresh tool/binding hashes and exact-main CI; native candidate acceptance remains required."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 621,
+      "title": "Prepare reviewed C578 security successor and guarded v3 release binding",
+      "state": "MERGED",
+      "headSha": "e55bd455b42dc90e7b264ce6da50ffe8979e5268",
+      "mergeSha": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
+      "mergedAtUtc": "2026-10-08T01:25:19Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Exact F source/security/native pair preparation remains historical; tooling merge does not select F or accept a changed A.",
+      "requiredReruns": "Current A/F applicability, ordinary recovery and original classroom/capacity acceptance; final tool/binding dependencies and exact-main CI."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 622,
+      "title": "Protect ClassPilot browser classification from credential egress",
+      "state": "MERGED",
+      "headSha": "f459a2a96d8b0395c788cf71129d0868d2d7a9fd",
+      "mergeSha": "092f8fbfe96dd7deed52c279d0b916676e0fc102",
+      "mergedAtUtc": "2026-10-08T15:34:51Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "backend",
+        "backend-governance",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Bounded synthetic prevention evidence remains bound to tested 9f source and original local/matching regressions. Source merge does not establish production protection.",
+      "requiredReruns": "Fresh exact-A backend image/scan/native recovery and fixed 133/mixed/normal/headroom acceptance; explicit F rollback/privacy applicability."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 623,
+      "title": "Describe student browsing when tab titles are unavailable",
+      "state": "MERGED",
+      "headSha": "ca38a6236bd332f7069136e1e555b9dbb681caba",
+      "mergeSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "mergedAtUtc": "2026-10-08T16:53:51Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "frontend"
+      ],
+      "reusableEvidence": "Backend CP-AI image inputs remain equivalent to its tested source; the changed frontend requires a fresh matched frontend archive and applicable browser evidence.",
+      "requiredReruns": "Matched frontend build/archive identity, unavailable-title browsing behavior, and current-school browser/classroom/live adoption scenarios."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 624,
+      "title": "Reconcile frozen release candidate and block stale fallback acceptance",
+      "state": "MERGED",
+      "headSha": "238de1358920d3f0b02f0ad5fbaa208eb5fd9024",
+      "mergeSha": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+      "mergedAtUtc": "2026-10-08T23:03:22Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Exact frozen A application/frontend inventories and artifacts remain unchanged. Exact resulting B push/main workflows pass; source624 branch cleanup is verified.",
+      "requiredReruns": "New F2 preparation, development dependency correction #625, exact replacement review, current pair recovery and unchanged original classroom/capacity gates; later tooling main needs fresh CI and equivalence."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 626,
+      "title": "Release 2.9.7: bind CP-protected fallback and preserve security hold",
+      "state": "MERGED",
+      "headSha": "4c3236fc85d2d0ed0af2d3561583ce3ac0002e8c",
+      "mergeSha": "7ad2405846fb066e4dd43339297aba43a170d002",
+      "mergedAtUtc": "2026-10-09T10:53:18Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "release-tooling",
+        "release-evidence"
+      ],
+      "reusableEvidence": "Preserved CP-protected F2 historical leaves and failed full audit; no source/artifact selection or deployment inferred.",
+      "requiredReruns": "Fresh v5 tool regressions, exact resulting-main CI, exact A2/F3 applicability and selection."
+    },
+    {
+      "repository": "SchoolPilot",
+      "number": 627,
+      "title": "Keep missing-page heartbeats from flooding student browsing history",
+      "state": "MERGED",
+      "headSha": "e30d44531668dbfbcdc0cf4ac07547c4aa9906d1",
+      "mergeSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "mergedAtUtc": "2026-10-09T13:21:56Z",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "affectedArtifacts": [
+        "backend (three source image inputs)",
+        "frontend",
+        "frontend browser check"
+      ],
+      "reusableEvidence": "Historical ecf6 artifacts/recovery/campaign receipts retain their exact old scope; unchanged F3 artifact proofs require explicit new A2 pair applicability.",
+      "requiredReruns": "Fresh exact A2 backend/frontend build, scan/native, A2→F3→A2 recovery, six restricted rounds and unchanged 133/mixed/normal/headroom acceptance; matched frontend browser checks."
+    }
+  ],
+  "evidence": {
+    "reconciliation": {
+      "path": "docs/releases/release297/source-reconciliation-20261008T2131Z.json",
+      "gitBlobSha256": "0def502f1baa5129c7b52512c25698d1f67121d4ec1e63f121deb8bc69979569"
+    },
+    "extensionMerged": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classpilot-merged-main-03a9-passed.json",
+      "gitBlobSha256": "576c63665a48a6cb3a9a5d20c0d77162d2536ff9eb53b9ac8484491297a1848e"
+    },
+    "artifactsHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/runtime-operator-artifact-facts.json",
+      "gitBlobSha256": "f1eb27e03e21ab434665d3ee6682af954dd4c6e72af1b9fe08b9b3d72d258e94"
+    },
+    "scansHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/runtime-artifacts-ddc5996b-c578120d.json",
+      "gitBlobSha256": "fde5d6bbd20e1e7f922ef86e56aeed4efffb7ff72fafbdfe79277b73d441ab4a"
+    },
+    "policyApproval": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json",
+      "gitBlobSha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95"
+    },
+    "fixedComparison": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/production-default43-53-fixed8-canonical-independent.json",
+      "gitBlobSha256": "d232c9ea2d4ca95ae4f84026d6f014e332d5e8193dca47f47d64ad8a869b4ffd"
+    },
+    "classroomHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-passed-block.json",
+      "gitBlobSha256": "f4f6ff8aa6d714dad17963f225817e0f0a5a8d06d659bddde2ce8972498d3e57"
+    },
+    "classroomReview": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-mixed-native-7238-ddc-independent-review.json",
+      "gitBlobSha256": "c01874825b6555c0b3e3421fca361f5d8e4f443dbbb6e9c2c9c4f0f4176198cf"
+    },
+    "normalHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/classroom-normal-native-7238-ddc-summary.json",
+      "gitBlobSha256": "9181f40e62f535a8a4c695bfa323d1080acff6dd40210ae70ef09d977c2f5785"
+    },
+    "headroomHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/lower-250-aaf95-ddc-confirmation-passed.json",
+      "gitBlobSha256": "2b41ddc138058106be49cfcfaebcd65a27f54667deee28fc4706b9e28b00ff45"
+    },
+    "recoveryOrdinaryHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/production-default43-53-composed06-independent.json",
+      "gitBlobSha256": "a7e4072f7c24346151d5bd71550db99cabeca3a6f02e9bb8323f08c63f4332a2"
+    },
+    "recoveryFullHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/staging128129-ddc5996b-passed.json",
+      "gitBlobSha256": "cca18d0e2d122a2f21ffa6f66b7160636f0dfe6ebc1ffeb8c7f43c5ff5879c98"
+    },
+    "catalogHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/catalog-inspection-60cd65-completed.json",
+      "gitBlobSha256": "4f256678907298f703774c03823b35a47e18c75bd154105b9a18f595a2113f50"
+    },
+    "productionHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json",
+      "gitBlobSha256": "b3bf32e86fdf110790837bbb568bec374a1a5da44d28077e128842f4382b8f11"
+    },
+    "usageFailure": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/usage-native-ddc5996b-df919-failed-03.json",
+      "gitBlobSha256": "55b1bed648c97c42fe56747d0421036fa92fa0309b115128c734ec92e3fc906a"
+    },
+    "frontendHistorical": {
+      "path": "docs/release-evidence/release-297/release-gate-policy-20261003/operator-preparation-audit-b5d59130.json",
+      "gitBlobSha256": "24cab8230cbed9d9ca0ef637f107946ef225c06f6e070f3df15eac0909787179"
+    },
+    "extensionFresh": {
+      "path": "docs/releases/release297/extension-verification-20261007.json",
+      "gitBlobSha256": "5489afa7da5d0c1f10a074ad8250aef0d80b15c5132052c0e7be9a05dee8cfe7"
+    },
+    "localArtifactsFresh": {
+      "path": "docs/releases/release297/local-artifact-observation-20261007.json",
+      "gitBlobSha256": "267941fe88a906531468c3e582d07f56c5840ae3dee5506e0b7c20101140e10d"
+    },
+    "coordinatorNewline": {
+      "path": "docs/releases/release297/coordinator-newline-checks-20261007.json",
+      "gitBlobSha256": "125dad4750cbd55291536dd5452ea504c2ad63da342081fe336ec30e8843dc35"
+    },
+    "preparationFollowups": {
+      "path": "docs/releases/release297/preparation-followups-20261007.json",
+      "gitBlobSha256": "512f2058daeab630771ade07f2593cb87357f8c8616fda6d685cff604a868f79"
+    },
+    "reconciliationHistorical": {
+      "path": "docs/releases/release297/source-reconciliation-20261007.json",
+      "gitBlobSha256": "c710674f59a20224ff998b4e0592f67ac03a5f416c48f7cde8c68f2b105a6de6"
+    },
+    "mergeRequest": {
+      "path": "docs/releases/release297/operator-merge-request-20261007.json",
+      "gitBlobSha256": "92a38b4943316f378e55ea0afd8f10a501395f2fc6daa6835c5b95bc403accf8"
+    },
+    "operatorStoreVersion": {
+      "path": "docs/releases/release297/operator-store-version-20261007.json",
+      "gitBlobSha256": "b66d654c7c925347a8215f6a235e246c4e9bf4777e05aedfccab1fb4ab1e7105"
+    },
+    "reconciliationBeforeClosing": {
+      "path": "docs/releases/release297/source-reconciliation-20261007T212913Z.json",
+      "gitBlobSha256": "2e6736dd09d7fb64a5ef8d13e4c0fb71561d2e58905eea2506014269447fae49"
+    },
+    "successorSourceReview": {
+      "path": "docs/release-evidence/release297-successor-20261007/source-delta-independent-review.json",
+      "gitBlobSha256": "edc6ccfa825925451c37ad303012aadfcb893556d62fc04c2c0def4f9207e6ff"
+    },
+    "successorBinding": {
+      "path": "docs/releases/release297/release-297-current-school-fallback-v3-before-current-freeze-20261008.json",
+      "gitBlobSha256": "6dc30aa4d19875a9b2ba08bc0b960c3d54e9736f5eac0129e5f8e10aa1691b7c"
+    },
+    "successorScan": {
+      "path": "docs/release-evidence/release297-successor-20261007/successorScan.json",
+      "gitBlobSha256": "27507ca7afc2d1fe74c827b9fdc01754d34e06a3de0cc6a34ad0bc4d6dff620c"
+    },
+    "successorScreenshotRuntime": {
+      "path": "docs/release-evidence/release297-successor-20261007/screenshotRuntime.json",
+      "gitBlobSha256": "d24f76b171d48b72cae1a3975ca17ebf5b572c603b75502677a25081804c2a65"
+    },
+    "successorRequestIpRateLimit": {
+      "path": "docs/release-evidence/release297-successor-20261007/requestIpRateLimit.json",
+      "gitBlobSha256": "380e75e618aa2f56b8db0a2245eb99d7e257a257ac204e29e7d7471019274371"
+    },
+    "successorOrdinaryRecovery": {
+      "path": "docs/release-evidence/release297-successor-20261007/ordinaryRecovery.json",
+      "gitBlobSha256": "e7874f2427257d71b37d0d832529420d4c6e3df4d383028a3786ab16c1fefcd3"
+    },
+    "successorRestrictedRestoration": {
+      "path": "docs/release-evidence/release297-successor-20261007/restrictedRestoration.json",
+      "gitBlobSha256": "5351566f28af9e8efe85390e837ee18e31f2163aabe8504f223daa6d3fc14628"
+    },
+    "successorPreparationObservation": {
+      "path": "docs/releases/release297/successor-preparation-observation-20261008.json",
+      "gitBlobSha256": "b1304c38cbba758d1aefcaf84fec7a359c910a7aa327f3b7b7ee2646285dd8b3"
+    },
+    "successorOperationalRejections": {
+      "path": "docs/releases/release297/successor-pending-operational-plans-20261008.json",
+      "gitBlobSha256": "9501688af64bdcf1c6061462bc454db3b7659f9e8c5711da285b8151031f36fc"
+    },
+    "successorSourceChecks": {
+      "path": "docs/releases/release297/source-specific-successor-checks-20261008.json",
+      "gitBlobSha256": "3e9b2951aff71ea584085b9847f50306d3f0b80af4345d475f301aa09342e697"
+    },
+    "successorDatabaseFixtureReview": {
+      "path": "docs/release-evidence/release297-successor-20261007/database-fixture-independent-review.json",
+      "gitBlobSha256": "b611d1e6609992bfee7115a1c2b8b48a2f0d34c8ff057ae3b17ce61ab98be1f8"
+    },
+    "cpAiBoundaryPreparation": {
+      "path": "docs/releases/release297/cp-ai-001-preparation-20261008.json",
+      "gitBlobSha256": "c70a0a16555feeca3dbba6bdaa2e78b58822376652cc6e131672421f57e4da55"
+    },
+    "reconciliationPrevious": {
+      "path": "docs/releases/release297/source-reconciliation-20261007T233558Z.json",
+      "gitBlobSha256": "c4fc1c41ee438fd5c2d1ec2df0affd0145255398c1355f89957c16dfd7a56ae3"
+    },
+    "candidateRefresh": {
+      "path": "docs/releases/release297/candidate-freeze-observation-20261008.json",
+      "gitBlobSha256": "a11d3f673e50249583090124634e1cd5d651be70253a699c3d35f88b64095c39"
+    },
+    "currentRecordRefreshChecks": {
+      "path": "docs/releases/release297/current-record-refresh-checks-20261008.json",
+      "gitBlobSha256": "a1822357ba2b45027994c23e4bfb5f94f187e896fa3f083d587714540cf92d43"
+    },
+    "currentArtifactsScan": {
+      "path": "docs/release-evidence/release297-current-candidate-20261008/current-artifacts-scan-20261008.json",
+      "gitBlobSha256": "677a9a064d3f6bb6d0b66753507a26893f00a3802df7bcdf0182f630ee42073a"
+    },
+    "currentSuccessorBinding": {
+      "path": "docs/release-bindings/release-297-current-school-fallback-v3.json",
+      "gitBlobSha256": "898746be784d37499ed5eb34d7b084412d095cab80f35590c09cd65da3ee0b81"
+    },
+    "currentCandidateNative": {
+      "path": "docs/release-evidence/release297-current-candidate-20261008/candidate-native-processing-20261008.json",
+      "gitBlobSha256": "8b5d4ec05ec9c4c71d4abd50eb6292aa6c5132af6a79ad904eff411367e25db2"
+    },
+    "currentFrontend": {
+      "path": "docs/release-evidence/release297-current-candidate-20261008/frontend-artifact-20261008.json",
+      "gitBlobSha256": "768381c19b8889b935d457dc93af3831c6f8de86106abff97d514525e91e17d8"
+    },
+    "currentExtensionApplicability": {
+      "path": "docs/releases/release297/extension-current-applicability-20261008.json",
+      "gitBlobSha256": "646b800c850e02095e5b59d160d736b2943b2012613df77c438984202f6b7761"
+    },
+    "currentPrivatePathControlRepair": {
+      "path": "docs/releases/release297/private-path-control-repair-20261008.json",
+      "gitBlobSha256": "26d53e9d3f0f147e767300de9fb314daf6218a3cbb9e3af907070cba198e573f"
+    },
+    "currentToolRegressions": {
+      "path": "docs/releases/release297/current-tool-regressions-20261008.json",
+      "gitBlobSha256": "20b663d787f333d326859b25e728150dab5dc648aee75510ca07b2d720e4a66a"
+    },
+    "acceptancePreparationTooling": {
+      "path": "docs/releases/release297/acceptance-preparation-20261008.json",
+      "gitBlobSha256": "57914c8bd06c33991471d06452565aa4c9ed4d2011023e39a3fbbe1c566cd8a0"
+    },
+    "historicalSuccessorOverlayChecks": {
+      "path": "docs/releases/release297/historical-successor-overlay-checks-20261008.json",
+      "gitBlobSha256": "0f48cfab50b6d3d35bf66e8905b00274abc3b5b81f25211884e411e0238f47b9"
+    },
+    "resultingMainObservation": {
+      "path": "docs/releases/release297/resulting-main-0fc57be1-20261008.json",
+      "gitBlobSha256": "20af9a1fc1328b9142ef6ba3d1932080f8e4f4dcf8b7dcf25b69a5432d8b8101"
+    },
+    "protectedFallbackObservation": {
+      "path": "docs/releases/release297/cp-protected-fallback-observation-20261008.json",
+      "gitBlobSha256": "cd1283d5d40eddd7847ed63f4f24552570152de003e05bc2e9575a7823299b5d"
+    },
+    "protectedFallbackBinding": {
+      "path": "docs/release-bindings/release-297-current-school-cp-protected-fallback-v4.json",
+      "gitBlobSha256": "3b46b6bca03969f61ae8bf2a517affc3fcc67fbfbd05240c4297a14163c43298"
+    },
+    "protectedFallbackSourceReview": {
+      "path": "docs/release-evidence/release297/cp-protected/independent-source-review.json",
+      "gitBlobSha256": "8b07f30d9dd942be485010c2cc55fdf1043d3524cbc78726c5517fb4461c8bfa"
+    },
+    "protectedFallbackSuccessorScan": {
+      "path": "docs/release-evidence/release297/cp-protected/successorScan.json",
+      "gitBlobSha256": "05a3742bc27662967c9028f7f6ec33eaf1e987d7645201fc8fd6404f18f52597"
+    },
+    "protectedFallbackScreenshotRuntime": {
+      "path": "docs/release-evidence/release297/cp-protected/screenshotRuntime.json",
+      "gitBlobSha256": "6b7d93e92263f39cfbc32f8535c998ad8ce1bc96127fc40b2a4ce0bfb6589eb9"
+    },
+    "protectedFallbackRequestIpRateLimit": {
+      "path": "docs/release-evidence/release297/cp-protected/requestIpRateLimit.json",
+      "gitBlobSha256": "71c8121406adce1728370d18e4fd26012024462c82b527514f71ac00eb029c16"
+    },
+    "protectedFallbackCredentialBoundary": {
+      "path": "docs/release-evidence/release297/cp-protected/credentialBoundary.json",
+      "gitBlobSha256": "e2c3ad92c158495f38278c041041e36db1e85401b7f097161a011102cfa26d14"
+    },
+    "protectedFallbackOrdinaryRecovery": {
+      "path": "docs/release-evidence/release297/cp-protected/ordinaryRecovery.json",
+      "gitBlobSha256": "b2176b2080e3411fa158f734943749e5d1c0902d9ac8fba37aa53d65898217e8"
+    },
+    "protectedFallbackRestrictedRestoration": {
+      "path": "docs/release-evidence/release297/cp-protected/restrictedRestoration.json",
+      "gitBlobSha256": "5599e99502acbf55a58c77292758300d579725fe7dc682542c42d671c60286a2"
+    },
+    "protectedFallbackToolingChecks": {
+      "path": "docs/releases/release297/cp-protected-tooling-checks-20261009.json",
+      "gitBlobSha256": "66321a55d2637b4cc7f29dcf6758f89f5e6bf433e9b3b3847161808e1533c9b9"
+    },
+    "buildSecurityPreviousIndex": {
+      "path": "docs/releases/release297/history/current-release-0fc57be1-20261009.json",
+      "gitBlobSha256": "63e50a638928f7e29e67b2dcb8cb46589e21fda2db380f17ae31d88a95278075"
+    },
+    "buildSecurityBinding": {
+      "path": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "gitBlobSha256": "d0aec2e393245cada7e19527e0c94031f222f72f9c427d6fe0f029306b1ac3ee"
+    },
+    "buildSecurityCandidatePreparation": {
+      "path": "docs/releases/release297/a2-artifact-preparation-20261009.json",
+      "gitBlobSha256": "be0d259a1585bf16c0f0b60d1ea144aeae5ab44fe73595476ba65565c1f6b3b3"
+    },
+    "buildSecurityCurrentObservation": {
+      "path": "docs/releases/release297/build-security-current-observation-20261009.json",
+      "gitBlobSha256": "79ed23459aa5cc83200ed9e3181470eb6b0d109d766df75497f074628756e50b"
+    }
+  }
+}

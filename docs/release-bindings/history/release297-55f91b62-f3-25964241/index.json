@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical_exact_application_preparation",
+  "applicationSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+  "fallbackSource": "392970b7ccfea365faadf1eba07da4ad26964c09",
+  "toolSource": "259642412255fea058532f61699e078b62113152",
+  "preparationPassed": true,
+  "originalCampaignsExecuted": false,
+  "currentBinding": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "reason": "Main advanced with PR628 backend/frontend inputs before any A2 acceptance measurement. All A2 scans/build/native/actual recovery and exact clean offline preparation remain dated historical evidence.",
+  "files": [
+    {
+      "originalPath": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "gitBlobSha256": "d0aec2e393245cada7e19527e0c94031f222f72f9c427d6fe0f029306b1ac3ee"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/successorScan.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/successorScan.json",
+      "gitBlobSha256": "5424a02a76b8f010275ecfa1db1247a8fca491c3e437f72173c16fdc02bcbd83"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/screenshotRuntime.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/screenshotRuntime.json",
+      "gitBlobSha256": "611c87cb9d670fc46c1e214d6a04199f77b6b8e8fdf59be31c27410f99d4c8ba"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/requestIpRateLimit.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/requestIpRateLimit.json",
+      "gitBlobSha256": "fc540560b13ed3c60c56f4acda22b0c7bf7714f26e3c9c275ecac4f7228f8d42"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/ordinaryRecovery.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/ordinaryRecovery.json",
+      "gitBlobSha256": "0b1a995a962d69813fa4b1e079c0457cfc0d759d551dbbddca91c0ba364d928d"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/restrictedRestoration.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/restrictedRestoration.json",
+      "gitBlobSha256": "37fe51975d3ac8dd8fbb051b3f6827132fb5280043e59a0c67df7075eaa7da2c"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/credentialBoundary.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/credentialBoundary.json",
+      "gitBlobSha256": "ec5bd8888799f40fbfdda107f9e36b80d17f23c1b4c4ea3ab8d5e1b5800319c4"
+    },
+    {
+      "originalPath": "docs/release-evidence/release297/cp-protected-build/source-applicability.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/source-applicability.json",
+      "gitBlobSha256": "85fce05c709287b0558b56c50d39184a5112aead1a86538f1eef24cd646a9f1a"
+    },
+    {
+      "originalPath": "docs/releases/release297/current-release.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/current-release.json",
+      "gitBlobSha256": "a6b24c11b319ea5675b659c7481b4171e94fdb04de4f8d32c4cab5ac19869e8b"
+    },
+    {
+      "originalPath": "docs/releases/release297/build-security-current-observation-20261009.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/build-security-current-observation-20261009.json",
+      "gitBlobSha256": "79ed23459aa5cc83200ed9e3181470eb6b0d109d766df75497f074628756e50b"
+    },
+    {
+      "originalPath": "docs/releases/release297/a2-artifact-preparation-20261009.json",
+      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/a2-artifact-preparation-20261009.json",
+      "gitBlobSha256": "be0d259a1585bf16c0f0b60d1ea144aeae5ab44fe73595476ba65565c1f6b3b3"
+    }
+  ]
+}

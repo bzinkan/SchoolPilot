@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "release_successor_preparation_evidence",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "evidenceKind": "successorScan",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "localIndex": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
+      "config": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
+      "platform": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
+      "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b"
+    },
+    "fallback": {
+      "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+      "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+      "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+      "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+    }
+  },
+  "observedAtUtc": "2026-10-09T13:49:56.489Z",
+  "passed": true,
+  "retainedEvidence": {
+    "nativeResult": {
+      "storage": "private",
+      "path": "leaf-results-A2-02/successorScan.native.json",
+      "sha256": "3dcc1540165d22fdb0ddb0916fe7c5159fb3d0e734658efd251ab0eb8e00ba58"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "leaf-results-A2-02/successorScan.review.json",
+      "sha256": "42b1a09f643a6d454c26055e0f344ed822fae02d50b965774a32777fb8944ab5"
+    }
+  },
+  "evidenceScope": "Exact unchanged F3 artifact, freshly executed native/credential fixtures bound to the A2/F3 pair. Original scan timestamp is retained; fresh scan custody/hash applicability is explicit. Campaigns, selection and operational stages remain separate.",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}
