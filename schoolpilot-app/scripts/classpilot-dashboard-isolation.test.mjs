@@ -1326,7 +1326,8 @@ test('a selection cleared automatically is refused, never widened, and every cla
   // clears the other ticks (which would leave every claimed student targeted).
   assert.match(between('const deselectStudents = (studentIds = []) => {', '\n  };'), /setSelectedStudentIds\(\(prev\) => \{[\s\S]*!removed\.has\(studentId\)/);
   assert.doesNotMatch(between('const deselectStudents = (studentIds = []) => {', '\n  };'), /setSelectionLoss/);
-  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /onSuccess: \(_data, variables\) => \{ if \(variables\.scope === supervisionScopeRef\.current\) \{ deselectStudents\(variables\.students\.map\(\(student\) => student\.studentId\)\);/);
+  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /onSuccess: \(_data, variables\) => \{ if \(releaseScopeCurrent\(variables\)\)/);
+  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /const releasedIds = new Set\(variables\.students\.map\(\(student\) => student\.studentId\)\);[\s\S]*deselectStudents\(\[\.\.\.releasedIds\]\);/);
   assert.doesNotMatch(between('const releaseClaimMutation = useMutation', 'const endTestingMutation'), /clearSelection\(\)/);
   assert.match(between('const returnToClassMutation = useMutation', 'onError'), /deselectStudents\(variables\?\.studentIds\);/);
 

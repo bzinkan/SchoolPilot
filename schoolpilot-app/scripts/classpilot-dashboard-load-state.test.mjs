@@ -6862,6 +6862,74 @@ test('temporary room binds mixed-grade filters, commands, previews and FAB to on
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('room removal clears exact private tiles before polling and a late release cannot refresh a replacement room', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const room = scheduledTestingActivity({ id: 'remove-room', name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '7', studentCount: 3,
+    authority: { supervisionContextId: 'remove-room' }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const rows = ['3', '4', '5'].map(grade => student({ studentId: `remove-grade-${grade}`, studentName: `Grade ${grade} Student`, gradeLevel: grade,
+    supervisionState: 'temporary_coverage', supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID }, contextAuthorityRevision: '7',
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
+  const replacement = { ...room, id: 'replacement-room', studentCount: 1, contextAuthorityRevision: '8', authority: { supervisionContextId: 'replacement-room' } };
+  const replacementRows = [{ ...rows[0], studentId: 'replacement-member', studentName: 'Replacement member',
+    supervisionContext: { id: replacement.id, assignedStaffId: ADMIN_ID }, contextAuthorityRevision: '8' }];
+  let currentRoom = room;
+  let roomRows = rows;
+  const response = () => ({ ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room: currentRoom });
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), acknowledgeSessionSubscriptions: true,
+    dashboardActivity: response(), coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+    screenshotTiles: body => ({ tiles: body.studentIds.map(studentId => ({ studentId, bindingVersion: `removal:${studentId}`, screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: `removal:${studentId}`, timestamp: TESTING_TIME.toISOString(),
+    } })) }) });
+  const reads = [];
+  await page.route('**/api/students-aggregated*', route => {
+    const contextId = new URL(route.request().url()).searchParams.get('supervisionContextId'); reads.push(contextId);
+    return route.fulfill({ json: contextId === room.id ? roomRows : contextId === replacement.id ? replacementRows : [] });
+  });
+  let releaseLate;
+  const held = new Promise(resolve => { releaseLate = resolve; });
+  context.after(() => releaseLate());
+  let heldRequest = false;
+  await page.route(`**/api/coverage/contexts/${room.id}/release`, async route => {
+    const ids = route.request().postDataJSON().studentIds;
+    assert.equal(route.request().headers()['x-classpilot-context-authority-revision'], '7');
+    if (ids.includes(rows[1].studentId)) { heldRequest = true; await held; }
+    roomRows = roomRows.filter(row => !ids.includes(row.studentId));
+    if (currentRoom.id === room.id) { currentRoom = { ...room, studentCount: roomRows.length }; harness.setDashboardActivity(response()); }
+    await route.fulfill({ json: { releasedCount: ids.length } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  for (const row of rows) await page.getByTestId(`card-student-${row.studentId}`).waitFor();
+  await page.getByTestId(`screenshot-${rows[0].studentId}`).waitFor();
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1000)));
+  const frozenTime = await page.evaluate(() => Date.now());
+  const initialReads = reads.length;
+  await page.getByTestId(`button-release-student-${rows[0].studentId}`).click();
+  await page.getByTestId(`card-student-${rows[0].studentId}`).waitFor({ state: 'hidden' });
+  await waitUntil(() => reads.length > initialReads, 'Room removal immediately reconciles the exact aggregate without a timer or socket');
+  assert(reads.slice(initialReads).every(id => id === room.id));
+  assert.equal(await page.getByTestId(`screenshot-${rows[0].studentId}`).count(), 0);
+  await page.getByTestId(`card-student-${rows[1].studentId}`).waitFor();
+  assert.equal(await page.evaluate(() => Date.now()), frozenTime, 'No polling boundary advanced');
+
+  await page.getByTestId(`button-release-student-${rows[1].studentId}`).click();
+  await waitUntil(() => heldRequest, 'The old-room release is pending');
+  currentRoom = replacement; harness.setDashboardActivity(response());
+  await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.refetchQueries({ queryKey: ['/api/classpilot/dashboard-activity'] }); });
+  await page.getByTestId('card-student-replacement-member').waitFor();
+  const beforeLateResponse = [...reads];
+  const completed = page.waitForResponse(reply => new URL(reply.url()).pathname === `/api/coverage/contexts/${room.id}/release`);
+  releaseLate(); await completed;
+  await page.waitForTimeout(300);
+  assert.deepEqual(reads, beforeLateResponse, 'A late release marks only its old aggregate stale and never refreshes the replacement room');
+  await page.getByTestId('card-student-replacement-member').waitFor();
+  assert.equal(await page.getByTestId(`card-student-${rows[1].studentId}`).count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('Supervision hub Open waits for authority and selects the requested owner session among two active sessions', { timeout: 90_000 }, async context => {
   const { createSupervisionDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
   const { browser, baseURL } = await assignedTestingBrowser(context);

@@ -6394,10 +6394,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
   });
 
+  const releaseScopeCurrent = variables => variables.scope === supervisionScopeRef.current
+    && (!variables.roomReadScope || variables.roomReadScope.authorityKey === activityScopeRef.current);
   const releaseClaimMutation = useMutation({
     retry: false,
-    mutationFn: async ({ students: rows, scope }) => {
+    mutationFn: async ({ students: rows, scope, roomReadScope }) => {
       if (scope !== supervisionScopeRef.current || (!roomWorkspace && studentViewRef.current !== 'claimed')) throw new Error('The room view changed. Refresh before releasing students.');
+      if (roomReadScope && roomReadScope.authorityKey !== activityScopeRef.current) throw new Error('The room assignment changed. Refresh before releasing students.');
       const requests = new Map();
       for (const row of rows) {
         const current = (roomWorkspace ? students : claimedPickupStudents).find(student => student.studentId === row.studentId);
@@ -6421,10 +6424,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
     // Only the released students lose their ticks. If that ends a supervision
     // group, the groups-changed effect records the rest as a lost selection.
-    onSuccess: (_data, variables) => { if (variables.scope === supervisionScopeRef.current) { deselectStudents(variables.students.map((student) => student.studentId)); toast({ title: 'Students released', description: 'Students follow their current scheduled assignments.' }); } },
-    onError: (error, variables) => { if (variables.scope === supervisionScopeRef.current) toast({ variant: 'destructive', title: 'Could not release all students', description: error.response?.data?.error || error.message }); },
+    onSuccess: (_data, variables) => { if (releaseScopeCurrent(variables)) {
+      const releasedIds = new Set(variables.students.map((student) => student.studentId));
+      if (variables.roomReadScope) queryClient.setQueryData(variables.roomReadScope.queryKey, rows => Array.isArray(rows) ? rows.filter(student => !releasedIds.has(student.studentId)) : rows);
+      deselectStudents([...releasedIds]);
+      toast({ title: 'Students released', description: 'Students follow their current scheduled assignments.' });
+    } },
+    onError: (error, variables) => { if (releaseScopeCurrent(variables)) toast({ variant: 'destructive', title: 'Could not release all students', description: error.response?.data?.error || error.message }); },
     onSettled: (_data, _error, variables) => {
-      if (variables.scope !== supervisionScopeRef.current) return;
+      if (variables.roomReadScope) void queryClient.invalidateQueries({ queryKey: variables.roomReadScope.queryKey, exact: true,
+        refetchType: releaseScopeCurrent(variables) ? 'active' : 'none' });
+      if (!releaseScopeCurrent(variables)) return;
       void purgeAllStudentTileCaches(queryClient);
       void queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true });
       void queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
@@ -6432,6 +6442,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       void refreshDashboardActivity({ cancelRefetch: true });
     },
   });
+  const releasePickupStudents = rows => releaseClaimMutation.mutate({ students: rows, scope: classReaderKey,
+    roomReadScope: roomWorkspace ? { queryKey: [...aggregatedStudentsQueryKey], authorityKey: activityScopeKey } : null });
 
   const endTestingMutation = useMutation({
     retry: false,
@@ -7381,7 +7393,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <Button variant="outline" onClick={() => { setAdminObservedSessionId(null); setStudentView('available'); }}>Add students</Button>
                 <Button variant="outline" onClick={() => setRoomEndTimeOpen({ scopeKey: roomDialogScopeKey })}>Change end time</Button>
                 <Button variant="outline" disabled={selectedStudentIds.size === 0 || releaseClaimMutation.isPending}
-                  onClick={() => releaseClaimMutation.mutate({ students: filteredStudents.filter(student => selectedStudentIds.has(student.studentId)), scope: classReaderKey })}>Remove selected</Button>
+                  onClick={() => releasePickupStudents(filteredStudents.filter(student => selectedStudentIds.has(student.studentId)))}>Remove selected</Button>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -7405,7 +7417,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               ))}
             </div>
             <Button variant="outline" disabled={!claimedPickupStudents.length || claimedStudentsQueryError || releaseClaimMutation.isPending}
-              onClick={() => releaseClaimMutation.mutate({ students: claimedPickupStudents, scope: classReaderKey })}>Release all</Button>
+              onClick={() => releasePickupStudents(claimedPickupStudents)}>Release all</Button>
           </div>
         ) : null}
         {/* Student Tiles */}
@@ -7833,7 +7845,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     actionContextKey={`${activeSchoolId || ''}:${effectiveActivity?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   />}
                   {(roomWorkspace || studentView === 'claimed') && !dashboardCapabilities.observedOtherClass ? <Button variant="outline" size="sm" className="mt-2 w-full"
-                    disabled={releaseClaimMutation.isPending} onClick={() => releaseClaimMutation.mutate({ students: [student], scope: classReaderKey })}
+                    disabled={releaseClaimMutation.isPending} onClick={() => releasePickupStudents([student])}
                     data-testid={`button-release-student-${student.studentId}`}>{roomWorkspace ? 'Remove from room' : 'Release student'}</Button> : null}
                 </div>
               );
