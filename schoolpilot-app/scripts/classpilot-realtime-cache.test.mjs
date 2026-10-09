@@ -851,7 +851,7 @@ test('Focus labels follow device-confirmed, suspended, invalidated and cleared r
     [confirmedFocus, 'Focus confirmed'],
     [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'attention' }, 'Focus paused for Attention'],
     [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'authentication' }, 'Focus paused for sign-in'],
-    [{ state: 'invalidated', assignmentId: 'assignment-a', reason: 'focus_tab_closed' }, 'Focus ended: target unavailable'],
+    [{ state: 'invalidated', assignmentId: 'assignment-a', reason: 'focus_tab_closed' }, 'Focus ended: tab closed'],
     [{ state: 'inactive' }, 'No Focus confirmed'],
   ];
   for (const [index, [focus, label]] of states.entries()) {
