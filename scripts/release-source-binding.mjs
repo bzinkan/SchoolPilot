@@ -740,6 +740,14 @@ async function retainedArtifact(record, root, input, run, context) {
   equal(digest.digest('hex'), record.sha256, 'BINDING_RETAINED_BYTES_CHANGED');
   return filename;
 }
+export async function replayBuildSecurityRawEvidence(records, load) {
+  const failures = [];
+  for (let offset = 0; offset < records.length; offset += 4) {
+    const results = await Promise.allSettled(records.slice(offset, offset + 4).map(record => load(record)));
+    for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+  }
+  if (failures.length) throw failures[0];
+}
 function successorEvidenceIdentity(value, profile, key) {
   equal([value.releaseBindingId, value.evidenceKind, value.artifactPair, value.passed], [profile.id, key, successorArtifactPair(profile), true], 'SUCCESSOR_EVIDENCE_IDENTITY_CHANGED');
   const observed = Date.parse(value.observedAtUtc);
@@ -992,7 +1000,7 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
     validateProtectedBuildDependencyAudit(audit, sourceChecks, profile);
     equal((await git(run, input.fallbackDirectory, ['rev-parse', `${fallbackSource}:package-lock.json`])).trim(), profile.buildDependencyAudit.lockfileGitBlob, 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
     if (buildFallback) {
-      for (const record of sourceChecks.rawEvidence) await retainedArtifact(record, root, input, run, context);
+      await replayBuildSecurityRawEvidence(sourceChecks.rawEvidence, record => retainedArtifact(record, root, input, run, context));
       for (const key of ['unit', 'credentialBoundarySynthetic']) {
         const result = sourceChecks.checks[key], filename = await retainedArtifact(result.evidence, root, input, run, context);
         validateBuildSecurityTestLog(readFileSync(filename, 'utf8'), result.evidence);
@@ -1024,7 +1032,8 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
     if (key === 'screenshotRuntime' || key === 'requestIpRateLimit' || key === 'credentialBoundary') equal([native.testedArtifactRole, native.source, native.applicationImage], ['fallback', fallbackSource, profile.fallback.localIndex], 'SUCCESSOR_NATIVE_ARTIFACT_ROLE_CHANGED');
     assert.ok(Array.isArray(native.rawEvidence) && native.rawEvidence.length > 0 && native.rawEvidence.length <= 256 && new Set(native.rawEvidence.map(value => `${value.storage}:${value.path}`)).size === native.rawEvidence.length, 'SUCCESSOR_RAW_EVIDENCE_REQUIRED');
     equal(review.rawEvidenceSha256s, native.rawEvidence.map(value => value.sha256), 'SUCCESSOR_REVIEW_RAW_CHANGED');
-    for (const record of native.rawEvidence) await load(record);
+    if (buildFallback) await replayBuildSecurityRawEvidence(native.rawEvidence, load);
+    else for (const record of native.rawEvidence) await load(record);
     if (protectedFallback && key !== 'successorScan') {
       assert.ok(native.executionReceipt && native.rawEvidence.some(record => record.sha256 === native.executionReceipt.sha256 && record.path === native.executionReceipt.path), 'CP_PROTECTED_EXECUTION_RECEIPT_REQUIRED');
       const execution = await load(native.executionReceipt);

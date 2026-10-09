@@ -9,7 +9,7 @@ import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_SOURCE, BUILD_SECURITY_SOURCE
   CP_PROTECTED_BINDING_ID, BINDING_FILES, bindingSchema, bindingHash, validateReviewedProtectedDelta,
   validateCompilerOnlyManifestDelta, validateCompilerOnlyLockDelta, validateSuccessorPreparation, validateProtectedBuildDependencyAudit,
   validateBuildSecurityOutputEquivalence, validateBuildSecurityTestLog, validateSuccessorProfile, validateBindingProfile, validateProtectedExecutionEvidence, successorArtifactPair, validateBuildSecurityRestrictedReplayApplicability, validateBuildSecurityExecutionPair,
-  bindingForRole, assertBoundPublication, assertBoundScan, assertBindingReplay, resolveReleaseBinding } from '../scripts/release-source-binding.mjs';
+  bindingForRole, assertBoundPublication, assertBoundScan, assertBindingReplay, resolveReleaseBinding, replayBuildSecurityRawEvidence } from '../scripts/release-source-binding.mjs';
 import { FALLBACK, createPlan, createAnchor128Plan, retainSuccessorRegistration, inventoryFor, renderRequest, validateSourceResponse } from '../scripts/register-compatible-fallback-inactive.mjs';
 import { planPublication, planUnused121, planCurrent129Anchor, renderCurrent129Pair } from '../scripts/prepare-release-artifacts.mjs';
 import { BUILD_SECURITY_ACCEPTANCE_ID, CP_PROTECTED_ACCEPTANCE_ID, BUILD_SECURITY_ACCEPTANCE_CANDIDATE_IDENTITIES as ACCEPTANCE_CANDIDATE_IDENTITIES, ACCEPTANCE_CANDIDATE_IDENTITIES as HISTORICAL_CANDIDATE_IDENTITIES,
@@ -21,6 +21,17 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const input = { schemaVersion: 5, releaseBindingId: BUILD_SECURITY_BINDING_ID };
 const shipped = () => JSON.parse(readFileSync(path.join(root, BINDING_FILES[BUILD_SECURITY_BINDING_ID])));
 const digest = text => 'sha256:' + bindingHash(text);
+
+test('v5 raw replay bounds concurrency at four and checks every record before any permitted mutation', async () => {
+  const records=Array.from({length:11},(_,index)=>({index}));
+  for (const fail of [false,true]) {
+    let active=0,maximum=0,mutations=0;const started=[],finished=[];
+    const load=async record=>{started.push(record.index);active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;finished.push(record.index);if(fail&&[1,7].includes(record.index))throw Error('synthetic rejected raw check');return record;};
+    const operation=async()=>{await replayBuildSecurityRawEvidence(records,load);mutations++;};
+    if(fail)await assert.rejects(operation(),/synthetic rejected raw check/);else await operation();
+    assert.equal(maximum,4);assert.equal(active,0);assert.deepEqual(started,records.map(row=>row.index));assert.deepEqual(finished.sort((a,b)=>a-b),records.map(row=>row.index));assert.equal(mutations,fail?0:1);
+  }
+});
 
 test('v5 replays raw recovery pair JSON rather than accepting the claimed current pair beside an older reference', async () => {
   const profile = shipped(), pair = successorArtifactPair(profile), directory = path.resolve(tmpdir(), 'synthetic-pair-root');
