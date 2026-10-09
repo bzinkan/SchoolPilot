@@ -2055,6 +2055,10 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       } as any);
       await storage.linkStudentDevice({ studentId: studentTwo.id, deviceId: addedDeviceId });
       await storage.setActiveStudentForDevice(addedDeviceId, studentTwo.id);
+      // Session timestamps use the database clock; align fixture presence with
+      // this test's frozen application clock before reading or claiming it.
+      await db.execute(sql`UPDATE student_sessions SET last_seen_at=${new Date().toISOString()}::timestamptz
+        WHERE student_id IN (${studentOne.id},${studentTwo.id}) AND is_active=true`);
     });
     const refreshedCoverage = await inSchool(school.id, () =>
       scheduled.buildScheduledCoveragePayload({

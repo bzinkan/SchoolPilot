@@ -26083,6 +26083,7 @@ export async function claimScheduledCoverageStudents(options: {
           scheduledConflictId: conflict.id,
           createdBy: options.actorId,
           note: options.note || null,
+          startsAt: now,
           endsAt: scheduledEndsAt,
         })
         .returning();

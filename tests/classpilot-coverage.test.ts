@@ -2224,11 +2224,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       blockEndTime: "11:45",
     } as any));
     await inSchool(school.id, () => addGroupStudentsDetailed(expiringGroup.id, [scheduledOnlyStudent.id]));
+    const expiringWindow = await seedCurrentScheduledWindow(expiringGroup);
     const expiringStart = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: expiringGroup,
-      scheduledDate: "2026-01-15",
+      scheduledDate: expiringWindow.date,
       scheduledTeacherConnectedOverride: false,
-      now: new Date("2026-01-15T16:15:00.000Z"),
+      now: expiringWindow.now,
     }));
     assert.equal(expiringStart.status, "coverage_needed");
     const expiringConflictId = expiringStart.status === "coverage_needed" ? expiringStart.conflictId : "";
@@ -2252,8 +2253,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     } as any));
     const expired = await inSchool(school.id, () => expireScheduledClassConflictsForSchool({
       schoolId: school.id,
-      scheduledDate: "2026-01-15",
-      currentTimeHHMM: "11:46",
+      scheduledDate: expiringWindow.date,
+      currentTimeHHMM: "23:59",
     }));
     assert.equal(expired.length, 1);
     assert.equal(expired[0].id, expiringConflictId);
@@ -2269,7 +2270,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(finalizedReport.rows[0]?.scheduled_finalization_reason, "scheduled_end");
     assert.equal(
       new Date(`${String(finalizedReport.rows[0]!.end_time_text).replace(" ", "T")}Z`).toISOString(),
-      "2026-01-15T16:45:00.000Z"
+      expiringReportSession!.scheduledEndAt!.toISOString()
     );
     const queuedDeliveries = await inSchool(school.id, () =>
       db.execute(sql`
