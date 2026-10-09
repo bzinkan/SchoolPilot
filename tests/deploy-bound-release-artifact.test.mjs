@@ -187,3 +187,74 @@ test('bound deployment replays immediately before every registration, scaling ho
   assert.ok(recovery.includes('--task-definition "$recovery_worker"'));
   assert.doesNotMatch(recovery, /PRODUCTION_ROLLBACK_API_TASK_DEFINITION=/);
 });
+
+
+test('both full binding replays overlap in separate contexts and form a barrier before scan or AWS', { timeout: 5000 }, async t => {
+  const f = fixture(t), originalResolve = f.options.resolve, originalScan = f.options.verifyScan;
+  let notifyStarted, release, completed = 0;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  const contexts = [], inputs = [];
+  f.options.resolve = async (input, context) => {
+    inputs.push(input); contexts.push(context);
+    if (inputs.length === 2) notifyStarted();
+    await barrier; const result = await originalResolve(input, context); completed += 1; return result;
+  };
+  f.options.verifyScan = async (...args) => { assert.equal(completed, 2); return originalScan(...args); };
+  const pending = validateDeploymentArtifact(f.record, main, f.options);
+  await started;
+  assert.notEqual(contexts[0], contexts[1]);
+  assert.notEqual(inputs[0], inputs[1]);
+  assert.equal(inputs[0].kind, 'serving-anchor'); assert.equal(inputs[1].admissionCount, 129);
+  assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+  release(); assert.equal((await pending).passed, true); assert.equal(completed, 2);
+});
+
+test('full binding replay drains both failures and reports serving failure first without AWS', async t => {
+  const f = fixture(t), servingFailure = new Error('SERVING_REPLAY_FAILURE'), fallbackFailure = new Error('FALLBACK_REPLAY_FAILURE');
+  const finished = [];
+  let fallbackStarted;
+  const fallback = new Promise(resolve => { fallbackStarted = resolve; });
+  f.options.resolve = (input) => {
+    if (input.kind !== 'serving-anchor') { finished.push('fallback'); fallbackStarted(); throw fallbackFailure; }
+    return fallback.then(() => { finished.push('serving'); throw servingFailure; });
+  };
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), error => error === servingFailure);
+  assert.deepEqual(finished, ['fallback', 'serving']);
+  assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+});
+
+for (const target of ['receipt', 'plan']) test(`a fallback ${target} changed during full replay rejects before AWS`, async t => {
+  const f = fixture(t), original = f.options.resolve;
+  let changed = false;
+  f.options.resolve = async (...args) => {
+    if (!changed) {
+      changed = true;
+      const receipt = JSON.parse(readFileSync(f.options.fallbackRegistration.path, 'utf8'));
+      const file = target === 'receipt' ? f.options.fallbackRegistration.path : receipt.plan.path;
+      const value = JSON.parse(readFileSync(file, 'utf8')); value.unreviewedChange = true; writeFileSync(file, JSON.stringify(value));
+    }
+    return original(...args);
+  };
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /INPUT_CHANGED/);
+  assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+});
+
+for (const role of ['serving-anchor', 'fallback']) test(`a substituted ${role} replay cannot pass the paired replay barrier`, async t => {
+  const f = fixture(t), original = f.options.resolve;
+  let completed = 0;
+  f.options.resolve = async (input, context) => {
+    const binding = structuredClone(await original(input, context)); completed += 1;
+    if ((input.kind === 'serving-anchor') === (role === 'serving-anchor')) binding.sha256 = sha('substituted binding');
+    return binding;
+  };
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options));
+  assert.equal(completed, 2); assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+});
+
+test('invalid pinned fallback tool fails before either full replay or AWS', async t => {
+  const f = fixture(t, { fallbackPlan: plan => { plan.toolSha256 = sha('changed'); } });
+  let replays = 0; f.options.resolve = async () => { replays += 1; throw new Error('MUST_NOT_RESOLVE'); };
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /FALLBACK_TOOL_CHANGED/);
+  assert.equal(replays, 0); assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+});

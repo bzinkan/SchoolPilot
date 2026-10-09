@@ -383,8 +383,9 @@ async function replayNativeEvidence(receipt, profile, key, root, input, run, con
   evidenceIdentity(receipt, profile, key);
   equal(Object.keys(receipt.retainedEvidence ?? {}).sort(), ['independentReview', 'nativeResult'], 'BINDING_RETAINED_EVIDENCE_REQUIRED');
   const load = record => retainedJson(record, root, input.retainedEvidenceDirectory, run, context);
-  const native = await load(receipt.retainedEvidence.nativeResult);
-  const review = await load(receipt.retainedEvidence.independentReview);
+  const [native, review] = profile.schemaVersion === 5
+    ? await replayBuildSecurityRawEvidence([receipt.retainedEvidence.nativeResult, receipt.retainedEvidence.independentReview], load)
+    : [await load(receipt.retainedEvidence.nativeResult), await load(receipt.retainedEvidence.independentReview)];
   equal([native.schemaVersion, native.kind, native.passed], [1, 'release_binding_native_result', true], 'BINDING_NATIVE_RESULT_INVALID');
   equal([review.schemaVersion, review.kind, review.passed, review.fullIndependentReviewComplete], [1, 'release_binding_independent_review', true, true], 'BINDING_INDEPENDENT_REVIEW_REQUIRED');
   evidenceIdentity(native, profile, key); evidenceIdentity(review, profile, key);
@@ -396,8 +397,9 @@ async function replayNativeEvidence(receipt, profile, key, root, input, run, con
   assert.equal(new Set(native.runs.map(record => record.sha256)).size, native.runs.length, 'BINDING_DUPLICATE_NATIVE_RUN');
   equal(review.runSha256s, native.runs.map(record => record.sha256), 'BINDING_REVIEW_RUNS_CHANGED');
   const runs = [];
-  for (const record of native.runs) {
-    const nativeRun = await load(record);
+  const runRecords = profile.schemaVersion === 5 ? await replayBuildSecurityRawEvidence(native.runs, load) : native.runs;
+  for (const record of runRecords) {
+    const nativeRun = profile.schemaVersion === 5 ? record : await load(record);
     evidenceIdentity(nativeRun, profile, key);
     equal([nativeRun.schemaVersion, nativeRun.kind, nativeRun.applicationImage, nativeRun.complete, nativeRun.safetyPassed, nativeRun.completeErrorCoverage, nativeRun.cleanupPassed], [1, 'release_binding_native_run', native.applicationImage, true, true, true, true], 'BINDING_NATIVE_RUN_INVALID');
     assert.ok(typeof nativeRun.runId === 'string' && nativeRun.runId.length > 0, 'BINDING_NATIVE_RUN_ID_REQUIRED');
@@ -451,7 +453,9 @@ export async function resolveReleaseBinding(input, { root, run, fallback, source
   const context = { fallback, sourceDirectory, outputDirectory: input.outputDirectory };
   if (profile.schemaVersion === 5) context.privatePermissionQueue = createBuildSecurityPermissionQueue(run, path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'), root, [fallback.permissionHelperSha256, fallback.permissionHelperLfSha256]);
   const load = record => retainedJson(record, root, input.retainedEvidenceDirectory, run, context);
-  const fallbackScan = await load(profile.fallbackScan.scan), fallbackReport = await load(profile.fallbackScan.report), fallbackCleanup = await load(profile.fallbackScan.cleanup);
+  const [fallbackScan, fallbackReport, fallbackCleanup] = profile.schemaVersion === 5
+    ? await replayBuildSecurityRawEvidence([profile.fallbackScan.scan, profile.fallbackScan.report, profile.fallbackScan.cleanup], load)
+    : [await load(profile.fallbackScan.scan), await load(profile.fallbackScan.report), await load(profile.fallbackScan.cleanup)];
   const currentRuntime = profile.schemaVersion === 5 ? await loadBuildSecurityCurrentRuntime(profile, load) : undefined;
   assert.ok(Number.isFinite(Date.parse(fallbackScan.createdAt)) && Date.parse(fallbackScan.createdAt) > Date.parse(FALLBACK_FAILED_SCAN_AT), 'BINDING_FALLBACK_SCAN_STALE');
   equal([fallbackScan.schemaVersion, fallbackScan.passed, fallbackScan.sourceSha, fallbackScan.imageId, fallbackScan.configDigest, fallbackScan.scanner, fallbackScan.os, fallbackScan.architecture, fallbackScan.reportSha256], [1, true, fallback.source, fallback.localIndex, fallback.config, SCANNER, 'linux', 'amd64', profile.fallbackScan.report.sha256], 'BINDING_FALLBACK_SCAN_CHANGED');
@@ -633,16 +637,16 @@ export function validateSuccessorProfile(profile, historicalFallback) {
 }
 
 async function loadBuildSecurityCurrentRuntime(profile, load) {
-  const review = await load(profile.currentRuntime.review), capabilities = await load(profile.currentRuntime.controls);
+  const [review, capabilities] = await replayBuildSecurityRawEvidence([profile.currentRuntime.review, profile.currentRuntime.controls], load);
   equal([review.schemaVersion, review.kind, review.source, review.image, review.admissionCount, review.controls, review.newUsageModes, review.dailyUsageRollup, review.newRuntimeActivationAuthorized, review.humanApprovalAsserted, review.operationalAuthorization, review.releaseReady],
     [1, 'reviewed_existing_current129_serving_state', profile.currentRuntime.source, profile.currentRuntime.image, 129, profile.currentRuntime.controls, 'off/off', 'omitted->shadow', false, false, false, false], 'CURRENT129_REVIEW_CHANGED');
   assert.ok(capabilities && !Array.isArray(capabilities) && typeof capabilities === 'object' && Object.keys(capabilities).length > 0, 'CURRENT129_CONTROLS_REQUIRED');
   const controls = value => Object.fromEntries(Object.entries(value).filter(([key]) => key.startsWith('CLASSPILOT_CAP_') || key === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || key === 'CLASSPILOT_PROTOCOL_V3_ENABLED'));
   equal(controls(capabilities), capabilities, 'CURRENT129_UNKNOWN_CONTROL');
-  const services = await load(review.services);
+  const [services, ...definitions] = await replayBuildSecurityRawEvidence([review.services, ...['api','scheduler-worker'].map(role => review.definitions[role])], load);
   equal(services.services?.map(row => row.serviceName).sort(), ['schoolpilot-production-api','schoolpilot-production-scheduler-worker'], 'CURRENT129_SERVICE_CAPTURE_INVALID');
-  for (const role of ['api','scheduler-worker']) {
-    const response = await load(review.definitions[role]), task = response.taskDefinition;
+  for (const [index, role] of ['api','scheduler-worker'].entries()) {
+    const response = definitions[index], task = response.taskDefinition;
     const container = task?.containerDefinitions?.find(row => row.name === role), values = Object.fromEntries((container?.environment ?? []).map(row => [row.name,row.value]));
     equal([values.GIT_SHA,container?.image,values.RLS_GUC_ENABLED,values.CLASSPILOT_USAGE_ROLLUP_MODE,values.CLASSPILOT_DIGITAL_USAGE_MODE,values.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE], [profile.currentRuntime.source,`135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@${profile.currentRuntime.image}`,'true','off','off',undefined], 'CURRENT129_CAPTURE_CHANGED');
     assert.ok(values.RLS_ENABLED_TABLES?.split(',').length === 129 && new Set(values.RLS_ENABLED_TABLES.split(',')).size === 129, 'CURRENT129_CAPTURE_ADMISSION_CHANGED');
@@ -770,12 +774,16 @@ async function retainedArtifact(record, root, input, run, context) {
   return filename;
 }
 export async function replayBuildSecurityRawEvidence(records, load) {
-  const failures = [];
+  const failures = [], values = [];
   for (let offset = 0; offset < records.length; offset += 4) {
     const results = await Promise.allSettled(records.slice(offset, offset + 4).map(record => Promise.resolve().then(() => load(record))));
-    for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+    for (const result of results) {
+      if (result.status === 'rejected') failures.push(result.reason);
+      else values.push(result.value);
+    }
   }
   if (failures.length) throw failures[0];
+  return values;
 }
 function successorEvidenceIdentity(value, profile, key) {
   equal([value.releaseBindingId, value.evidenceKind, value.artifactPair, value.passed], [profile.id, key, successorArtifactPair(profile), true], 'SUCCESSOR_EVIDENCE_IDENTITY_CHANGED');
@@ -1025,8 +1033,10 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
   if (buildFallback) context.privatePermissionQueue = createBuildSecurityPermissionQueue(run, path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'), root, [fallback.permissionHelperSha256, fallback.permissionHelperLfSha256]);
   if (buildFallback) await loadBuildSecurityCurrentRuntime(profile, record => retainedArtifact(record, root, input, run, context));
   if (protectedFallback) {
-    const audit = await retainedArtifact(profile.buildDependencyAudit.audit, root, input, run, context);
-    const sourceChecks = await retainedArtifact(profile.buildDependencyAudit.sourceChecks, root, input, run, context);
+    const load = record => retainedArtifact(record, root, input, run, context);
+    const [audit, sourceChecks] = buildFallback
+      ? await replayBuildSecurityRawEvidence([profile.buildDependencyAudit.audit, profile.buildDependencyAudit.sourceChecks], load)
+      : [await load(profile.buildDependencyAudit.audit), await load(profile.buildDependencyAudit.sourceChecks)];
     validateProtectedBuildDependencyAudit(audit, sourceChecks, profile);
     equal((await git(run, input.fallbackDirectory, ['rev-parse', `${fallbackSource}:package-lock.json`])).trim(), profile.buildDependencyAudit.lockfileGitBlob, 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
     if (buildFallback) {
@@ -1050,7 +1060,9 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
     const retained = receipt.value.retainedEvidence;
     equal(Object.keys(retained ?? {}).sort(), ['independentReview', 'nativeResult'], 'SUCCESSOR_RETAINED_EVIDENCE_REQUIRED');
     const load = record => retainedArtifact(record, root, input, run, context);
-    const native = await load(retained.nativeResult), review = await load(retained.independentReview);
+    const [native, review] = buildFallback
+      ? await replayBuildSecurityRawEvidence([retained.nativeResult, retained.independentReview], load)
+      : [await load(retained.nativeResult), await load(retained.independentReview)];
     equal([native.schemaVersion, native.kind], [1, 'release_successor_native_result'], 'SUCCESSOR_NATIVE_RESULT_INVALID');
     equal([review.schemaVersion, review.kind, review.fullIndependentReviewComplete, review.independentFromProducer], [1, 'release_successor_independent_review', true, true], 'SUCCESSOR_INDEPENDENT_REVIEW_REQUIRED');
     successorEvidenceIdentity(native, profile, key); successorEvidenceIdentity(review, profile, key);
@@ -1093,7 +1105,9 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
     if (key === 'restrictedRestoration') equal(native.restoration, { ddlOwner: { rolsuper: false, rolbypassrls: false }, probeRole: { rolsuper: false, rolbypassrls: false }, ordinaryMigrationCounts: [43, 53], stableSerializationRoundtrip: true }, 'SUCCESSOR_RESTRICTED_RESTORATION_REQUIRED');
     if (key === 'successorScan') {
       equal(Object.keys(native.scanArtifacts ?? {}).sort(), ['archive', 'cleanup', 'custody', 'databaseMetadata', 'report', 'scan'], 'SUCCESSOR_SCAN_RAW_REQUIRED');
-      const scan = await load(native.scanArtifacts.scan), report = await load(native.scanArtifacts.report), cleanup = await load(native.scanArtifacts.cleanup), custody = await load(native.scanArtifacts.custody), database = await load(native.scanArtifacts.databaseMetadata);
+      const [scan, report, cleanup, custody, database] = buildFallback
+        ? await replayBuildSecurityRawEvidence(['scan','report','cleanup','custody','databaseMetadata'].map(field => native.scanArtifacts[field]), load)
+        : [await load(native.scanArtifacts.scan), await load(native.scanArtifacts.report), await load(native.scanArtifacts.cleanup), await load(native.scanArtifacts.custody), await load(native.scanArtifacts.databaseMetadata)];
       assert.ok(Date.parse(scan.createdAt) > Date.parse(FALLBACK_FAILED_SCAN_AT) && now() - Date.parse(scan.createdAt) >= 0 && now() - Date.parse(scan.createdAt) <= 86_400_000, 'SUCCESSOR_SCAN_STALE');
       equal([scan.schemaVersion, scan.sourceSha, scan.imageId, scan.configDigest, scan.passed, scan.scanner, scan.os, scan.architecture, scan.archiveSha256, scan.reportSha256], [1, fallbackSource, profile.fallback.localIndex, profile.fallback.config, true, SCANNER, 'linux', 'amd64', profile.artifacts.fallback.archiveSha256, native.scanArtifacts.report.sha256], 'SUCCESSOR_SCAN_IDENTITY_CHANGED');
       equal(scanCounts(report, profile.fallback.config), scan.counts, 'SUCCESSOR_SCAN_COUNTS_CHANGED');
