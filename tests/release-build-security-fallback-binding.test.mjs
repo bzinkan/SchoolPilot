@@ -108,6 +108,15 @@ test('passed preparation profile never substitutes for pending selection or orig
   for(const mutate of [v=>{v.currentRuntime.source='a'.repeat(40);},v=>{v.currentRuntime.controls.sha256=bindingHash('substituted controls');},v=>{v.currentRuntime.admissionCount=128;}]){const value=structuredClone(profile);mutate(value);assert.throws(()=>validateSuccessorProfile(value,FALLBACK),/BUILD_SECURITY_CURRENT_RUNTIME_CHANGED/);}
 });
 
+test('v5 current A3 contract rejects earlier A2 candidate and superseded179/195 runtime references',()=>{
+  const profile=shipped();profile.preparation.status='passed';
+  const priorCandidate=structuredClone(profile);priorCandidate.applicationSource='55f91b620d2d48de5ed164a72250ec133450bc0f';
+  assert.throws(()=>validateSuccessorProfile(priorCandidate,FALLBACK),/CP_PROTECTED_APPLICATION_SOURCE_CHANGED/);
+  for(const mutate of [value=>{value.currentRuntime.source='a14759a231ef47ad01951e8b9519c87de39433bc';},value=>{value.currentRuntime.review.path='current-serving-129/state-review.private.json';value.currentRuntime.review.sha256='719cdcc5d4dd547a07127def1212091374d581fbae13ed1ed1756aff31955edc';}]){
+    const value=structuredClone(profile);mutate(value);assert.throws(()=>validateSuccessorProfile(value,FALLBACK),/BUILD_SECURITY_CURRENT_RUNTIME_CHANGED/);
+  }
+});
+
 function current129Fixture() {
   const profile=shipped(),controls={CLASSPILOT_CAP_FOCUS_TAB_V1:'true',CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1:'true',CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1:'true',CLASSPILOT_PROTOCOL_V3_ENABLED:'true',CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({focusTabV1:{mode:'on'},preciseRestrictionResourcesV1:{mode:'on'},privateChatLifecycleV1:{mode:'on'}})};
   const binding={schemaVersion:5,id:BUILD_SECURITY_BINDING_ID,currentRuntime:{...profile.currentRuntime,capabilityEnvironment:controls}},sources={};

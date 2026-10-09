@@ -5,11 +5,11 @@
   "evidenceKind": "requestIpRateLimit",
   "artifactPair": {
     "serving-anchor": {
-      "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-      "localIndex": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
-      "config": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
-      "platform": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
-      "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b"
+      "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+      "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
+      "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
+      "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
     },
     "fallback": {
       "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
@@ -19,21 +19,21 @@
       "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
     }
   },
-  "observedAtUtc": "2026-10-09T13:49:56.499Z",
+  "observedAtUtc": "2026-10-09T14:52:19.796Z",
   "passed": true,
   "retainedEvidence": {
     "nativeResult": {
       "storage": "private",
-      "path": "leaf-results-A2-02/requestIpRateLimit.native.json",
-      "sha256": "6079de2ca7600995f7b1514809a1978f23369cb44b71f6eff7842f559d3610b7"
+      "path": "leaf-results-A3/requestIpRateLimit.native.json",
+      "sha256": "3b0803fff8c0b9b949b2295ac5319217ae7c95cba953189d0a4dae9f6b5f6b92"
     },
     "independentReview": {
       "storage": "private",
-      "path": "leaf-results-A2-02/requestIpRateLimit.review.json",
-      "sha256": "f40e6825c521d57c227a032b0e62aeab99d1b07e5dd6795cf1592a2f45a501c7"
+      "path": "leaf-results-A3/requestIpRateLimit.review.json",
+      "sha256": "514994579da42caac56ea362d0ffa7f2ead6940f2062c886efcaf44a2e67033b"
     }
   },
-  "evidenceScope": "Exact unchanged F3 artifact, freshly executed native/credential fixtures bound to the A2/F3 pair. Original scan timestamp is retained; fresh scan custody/hash applicability is explicit. Campaigns, selection and operational stages remain separate.",
+  "evidenceScope": "One exact F3 preparation leaf; original campaigns, source applicability, artifact selection and operational stages remain separate.",
   "releaseReady": false,
   "operationalAuthorization": false
 }

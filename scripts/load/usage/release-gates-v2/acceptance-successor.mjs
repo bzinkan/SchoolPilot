@@ -14,7 +14,7 @@ import { CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_BINDING_ID, BI
 // their byte hashes and the DDC/54-entry lower-load contract remain unchanged.
 export const ACCEPTANCE_SUCCESSOR_ID = 'release297-current-school-acceptance-ecf6ce01-v1';
 export const CP_PROTECTED_ACCEPTANCE_ID = 'release297-current-school-acceptance-ecf6ce01-cp-protected-v2';
-export const BUILD_SECURITY_ACCEPTANCE_ID = 'release297-current-school-acceptance-55f91b62-cp-protected-build-v3';
+export const BUILD_SECURITY_ACCEPTANCE_ID = 'release297-current-school-acceptance-2001e888-cp-protected-build-v3';
 const isProtectedAcceptance = id => [CP_PROTECTED_ACCEPTANCE_ID, BUILD_SECURITY_ACCEPTANCE_ID].includes(id);
 const protectedAcceptancePins = id => id === BUILD_SECURITY_ACCEPTANCE_ID ? { source: BUILD_SECURITY_SOURCE, artifact: BUILD_SECURITY_ARTIFACT, id: BUILD_SECURITY_BINDING_ID, schemaVersion: 5 } : { source: CP_PROTECTED_SOURCE, artifact: CP_PROTECTED_ARTIFACT, id: CP_PROTECTED_BINDING_ID, schemaVersion: 4 };
 const protectedFallbackIdentity = id => { const { source, artifact } = protectedAcceptancePins(id); assert.ok(artifact, 'CP_PROTECTED_ARTIFACT_PINS_PENDING'); return { source, image: artifact.localIndex, config: artifact.config, platform: artifact.platform, archiveSha256: artifact.archiveSha256 }; };

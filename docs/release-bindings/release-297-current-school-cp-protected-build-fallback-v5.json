@@ -3,7 +3,7 @@
   "kind": "reviewed_release_source_binding",
   "id": "release-297-current-school-cp-protected-build-fallback-v5",
   "status": "pending",
-  "applicationSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
   "reviewedBaselineSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
   "imageInputs": [
     "src",
@@ -16,7 +16,7 @@
     "docs/soc2"
   ],
   "inventory": {
-    "sha256": "4478303590f02b854898a241cca07001f7389afec1e6d174a153c1f45b993678",
+    "sha256": "fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01",
     "fileCount": 564
   },
   "fallback": {
@@ -55,7 +55,7 @@
   "sourceApplicability": {
     "status": "approved",
     "path": "docs/release-evidence/release297/cp-protected-build/source-applicability.json",
-    "sha256": "85fce05c709287b0558b56c50d39184a5112aead1a86538f1eef24cd646a9f1a"
+    "sha256": "bc16d432a885ee81be222ac3e3d2e595926c5278ba401601832d627f63b3da70"
   },
   "evidence": {
     "currentSchoolAcceptance": {
@@ -100,14 +100,15 @@
     "C578/F1/F2 identities, failed scans and F2 full audit remain immutable historical evidence.",
     "F3 preserves all eight reviewed CP-AI source/test changes; the compiled tsc output is compared byte-for-byte before and after removing the unused alias transform.",
     "Draft/null pins never establish preparation, release readiness or operational authorization. Fresh exact-F3 leaves and independent review are required.",
-    "Source/policy applicability was reviewed within the user-authorized fix/deploy scope; broader minimization/provider-account review and live evidence remain pending. No human approval is fabricated."
+    "PR628 changed five backend and frontend inputs after the A2 preparation freeze. Exact A2/25964241 evidence is preserved in the historical manifest; it cannot certify A3. Fresh A3 pair preparation and source/policy review are required.",
+    "Fresh read-only180/196 production observation supersedes179/195 operation-input applicability. Full reviewed environment, capability settings and secret references are unchanged; old captures/plans remain historical. This state observation does not authorize activation or certify deployment readiness."
   ],
   "frontendInputs": [
     "schoolpilot-app"
   ],
   "frontendInventory": {
-    "sha256": "c2f64565160a9bba89cfed1d907e41ca0f49b095719e5bdbdc727adfb18a397f",
-    "fileCount": 635
+    "sha256": "fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4",
+    "fileCount": 637
   },
   "extension": {
     "version": "2.9.7",
@@ -118,14 +119,15 @@
     "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
     "zipBytes": 376052
   },
-  "testedApplicationImage": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
+  "testedApplicationImage": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
   "blockers": [
     "fresh-original-candidate-campaigns-pending",
     "exact-build-security-successor-selection-pending",
-    "resulting-v5-tooling-main-CI-pending"
+    "exact-resulting-tooling-main-CI-pending",
+    "current-A2-frontend-compatible-F3-recovery-applicability-pending"
   ],
-  "sourceStatus": "A2-source-frozen-exact-artifact-preparation-passed",
-  "testedApplicationConfig": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
+  "sourceStatus": "A3-source-frozen-exact-artifact-preparation-passed",
+  "testedApplicationConfig": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
   "fallbackScan": {
     "status": "passed",
     "scan": {
@@ -142,8 +144,8 @@
     },
     "cleanup": {
       "storage": "private",
-      "path": "leaf-results-A2-02/scanner-custody.json",
-      "sha256": "65f696db588189431d7ffd26c6bf32570c572d90767e6eead11bad75496401d1",
+      "path": "leaf-results-A3/scanner-custody.json",
+      "sha256": "42454820097070235e55f644ea416b01f9cc08a5be1f0b44529de11b09811868",
       "format": "json"
     }
   },
@@ -155,11 +157,11 @@
   },
   "artifacts": {
     "serving-anchor": {
-      "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-      "localIndex": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
-      "config": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
-      "platform": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
-      "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b"
+      "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+      "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
+      "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
+      "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
     },
     "fallback": {
       "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
@@ -208,32 +210,32 @@
       "successorScan": {
         "status": "passed",
         "path": "docs/release-evidence/release297/cp-protected-build/successorScan.json",
-        "sha256": "5424a02a76b8f010275ecfa1db1247a8fca491c3e437f72173c16fdc02bcbd83"
+        "sha256": "ef23c202ac648870e52f51da605918b7f872a4da2cdbe0da4aad873048201fdb"
       },
       "screenshotRuntime": {
         "status": "passed",
         "path": "docs/release-evidence/release297/cp-protected-build/screenshotRuntime.json",
-        "sha256": "611c87cb9d670fc46c1e214d6a04199f77b6b8e8fdf59be31c27410f99d4c8ba"
+        "sha256": "a24b1094833ecd6a449bae2f457052af3b5c38a3977ac4762b9bbd1929f33772"
       },
       "requestIpRateLimit": {
         "status": "passed",
         "path": "docs/release-evidence/release297/cp-protected-build/requestIpRateLimit.json",
-        "sha256": "fc540560b13ed3c60c56f4acda22b0c7bf7714f26e3c9c275ecac4f7228f8d42"
+        "sha256": "73ad4bd5ad4100a2036338d3bce12a9a11678ec022c6ca70d0e7be8f51bc2d06"
       },
       "ordinaryRecovery": {
         "status": "passed",
         "path": "docs/release-evidence/release297/cp-protected-build/ordinaryRecovery.json",
-        "sha256": "0b1a995a962d69813fa4b1e079c0457cfc0d759d551dbbddca91c0ba364d928d"
+        "sha256": "5fff4c829915db731364d050efd370ce79ecaa4f94e86a4e4579b5d06d0eae96"
       },
       "restrictedRestoration": {
         "status": "passed",
         "path": "docs/release-evidence/release297/cp-protected-build/restrictedRestoration.json",
-        "sha256": "37fe51975d3ac8dd8fbb051b3f6827132fb5280043e59a0c67df7075eaa7da2c"
+        "sha256": "6ec67e3c072c60657330593312597a3aec1dc6b1acbd85c19b2845c76614d44e"
       },
       "credentialBoundary": {
         "status": "passed",
         "path": "docs/release-evidence/release297/cp-protected-build/credentialBoundary.json",
-        "sha256": "ec5bd8888799f40fbfdda107f9e36b80d17f23c1b4c4ea3ab8d5e1b5800319c4"
+        "sha256": "f360853ccfbbf9c77d81663514df20d2c0cbefda57218a6794f5345860c263dd"
       }
     }
   },
@@ -391,19 +393,19 @@
     }
   },
   "currentRuntime": {
-    "source": "a14759a231ef47ad01951e8b9519c87de39433bc",
-    "image": "sha256:6519ac858e3163263adb85a77c68dde5b8cacffa7bed8de6a6cb6d7ca3e0bc43",
+    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "image": "sha256:a939d0af0f109f3765355be53137e88cab1859af82ce875aeeff455a4d55c8f3",
     "admissionCount": 129,
     "controls": {
       "storage": "private",
-      "path": "current-serving-129/controls.private.json",
+      "path": "current-serving-129-A3/controls.private.json",
       "sha256": "4292b4c8ff0719abda45003d02f95718d9e205ca2e4c2ef9c71fccfd0ae20051",
       "format": "json"
     },
     "review": {
       "storage": "private",
-      "path": "current-serving-129/state-review.private.json",
-      "sha256": "719cdcc5d4dd547a07127def1212091374d581fbae13ed1ed1756aff31955edc",
+      "path": "current-serving-129-A3/state-review.private.json",
+      "sha256": "91cd89c76d2aeb0361c497a261ea86839d98044e99b47048dc1a7f6fe319936c",
       "format": "json"
     }
   }

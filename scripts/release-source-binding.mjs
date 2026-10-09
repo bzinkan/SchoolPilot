@@ -15,10 +15,10 @@ export const SUCCESSOR_SOURCE = 'd75fc1c48d0a3918857508d3965904c69023a153';
 export const SUCCESSOR_CORRECTION = '86ea5c5ca5f76406300f5170d2ecb3e3554baeb3';
 export const CP_PROTECTED_BINDING_ID = 'release-297-current-school-cp-protected-fallback-v4';
 export const BUILD_SECURITY_BINDING_ID = 'release-297-current-school-cp-protected-build-fallback-v5';
-export const BUILD_SECURITY_APPLICATION_SOURCE = '55f91b620d2d48de5ed164a72250ec133450bc0f';
-export const BUILD_SECURITY_ANCHOR_ARTIFACT = Object.freeze({source:BUILD_SECURITY_APPLICATION_SOURCE,localIndex:'sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161',config:'sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764',platform:'sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857',archiveSha256:'2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b'});
-export const BUILD_SECURITY_APPLICATION_INVENTORY = Object.freeze({sha256:'4478303590f02b854898a241cca07001f7389afec1e6d174a153c1f45b993678',fileCount:564});
-export const BUILD_SECURITY_FRONTEND_INVENTORY = Object.freeze({sha256:'c2f64565160a9bba89cfed1d907e41ca0f49b095719e5bdbdc727adfb18a397f',fileCount:635});
+export const BUILD_SECURITY_APPLICATION_SOURCE = '2001e8888992674493c3084981fa8aae27d70e1d';
+export const BUILD_SECURITY_ANCHOR_ARTIFACT = Object.freeze({source:BUILD_SECURITY_APPLICATION_SOURCE,localIndex:'sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc',config:'sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943',platform:'sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb',archiveSha256:'b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e'});
+export const BUILD_SECURITY_APPLICATION_INVENTORY = Object.freeze({sha256:'fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01',fileCount:564});
+export const BUILD_SECURITY_FRONTEND_INVENTORY = Object.freeze({sha256:'fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4',fileCount:637});
 // v5 pins are separate review inputs. Missing pins never establish preparation.
 export const BUILD_SECURITY_SOURCE = "392970b7ccfea365faadf1eba07da4ad26964c09";
 export const BUILD_SECURITY_SOURCE_CREATED_AT = '2026-10-09T12:58:29Z';
@@ -59,11 +59,11 @@ export const BUILD_SECURITY_ARTIFACT = Object.freeze({
   "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
 });
 export const BUILD_SECURITY_CURRENT_RUNTIME = Object.freeze({
-  source: 'a14759a231ef47ad01951e8b9519c87de39433bc',
-  image: 'sha256:6519ac858e3163263adb85a77c68dde5b8cacffa7bed8de6a6cb6d7ca3e0bc43',
+  source: '55f91b620d2d48de5ed164a72250ec133450bc0f',
+  image: 'sha256:a939d0af0f109f3765355be53137e88cab1859af82ce875aeeff455a4d55c8f3',
   admissionCount: 129,
-  controls: { storage: 'private', path: 'current-serving-129/controls.private.json', sha256: '4292b4c8ff0719abda45003d02f95718d9e205ca2e4c2ef9c71fccfd0ae20051', format: 'json' },
-  review: { storage: 'private', path: 'current-serving-129/state-review.private.json', sha256: '719cdcc5d4dd547a07127def1212091374d581fbae13ed1ed1756aff31955edc', format: 'json' }
+  controls: { storage: 'private', path: 'current-serving-129-A3/controls.private.json', sha256: '4292b4c8ff0719abda45003d02f95718d9e205ca2e4c2ef9c71fccfd0ae20051', format: 'json' },
+  review: { storage: 'private', path: 'current-serving-129-A3/state-review.private.json', sha256: '91cd89c76d2aeb0361c497a261ea86839d98044e99b47048dc1a7f6fe319936c', format: 'json' }
 });
 export const BUILD_SECURITY_OPERATION_DEPENDENCIES = Object.freeze(['scripts/validate-release297-deployment-artifact.mjs', 'scripts/deploy.sh']);
 export const buildSecurityOperationHashes = root => Object.fromEntries(BUILD_SECURITY_OPERATION_DEPENDENCIES.map(file => [file, bindingHash(readFileSync(path.join(root, file)))]));

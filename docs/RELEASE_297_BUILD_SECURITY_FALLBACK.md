@@ -7,7 +7,8 @@ tree must never be merged into main.
 
 | Role | Exact source | Image index |
 | --- | --- | --- |
-| Current application reference A2 | `55f91b620d2d48de5ed164a72250ec133450bc0f` | `sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161` |
+| Current application reference A3 | `2001e8888992674493c3084981fa8aae27d70e1d` | `sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc` |
+| Historical tested application A2 | `55f91b620d2d48de5ed164a72250ec133450bc0f` | `sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161` |
 | Historical tested application A | `ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2` | `sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a` |
 | Previous protected fallback F2 | `6259e768553e55346ba14a6453340772198a3d6b` | `sha256:0eebe8c88bbc8304debaeb50644d008e1d3ad8212b0fee22a3a00eac1d04e264` |
 | Build-security fallback F3 | `392970b7ccfea365faadf1eba07da4ad26964c09` | `sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e` |
@@ -20,7 +21,13 @@ Main advanced to A2 with backend and frontend browsing-history changes before
 operational preparation. The previous A/F3 preparation is retained at tooling
 commit `8293939d1122c401a994450db48ea12f8f0da353` and in the [historical snapshot](release-bindings/history/release297-ecf6ce01-f3-8293939d/index.json).
 A2 has its own exact image, native validation, source applicability and
-recovery/restoration. Its pending operational binding cannot use A's campaigns.
+recovery/restoration. PR #628 then changed five backend image inputs and the
+frontend before any measured campaign. The exact A2/25964241 preparation is
+preserved in its [historical manifest](release-bindings/history/release297-55f91b62-f3-25964241/index.json).
+A3 has its own exact artifacts, fresh pair recovery and six fresh restricted
+rounds. All six independently reviewed preparation leaves passed; original
+candidate campaigns and exact successor selection remain pending. No A2 campaign
+measurement started.
 
 The F2-to-F3 difference contains only `package.json` and `package-lock.json`.
 Its full Git binary patch SHA-256 is
@@ -65,15 +72,26 @@ comparisons to the fresh ownership-query replay. Both attempts and their scope
 remain retained; no historical 54-entry rehearsal is substituted. These results
 do not certify A2 → F3 → A2.
 
-Fresh A2 → F3 → A2 ordinary recovery and all six fresh restricted restoration
+Historical A2 → F3 → A2 ordinary recovery and all six fresh restricted restoration
 rounds passed independently. Eight actual API/worker processes and eight drains,
 the 53-entry ledger and all five queried ownership checkpoints passed, with zero
 named SQL connections and all 39 owned containers absent after graceful cleanup.
 The raw pair JSON, both artifact roles and each actual execution reference are
 replayed against the exact A2/F3 binding. An initial derived leaf referenced the
 older A pair; that draft remains retained, and corrected leaves were separately
-reviewed. No actual recovery run used the older A artifact. All six preparation
-leaves now pass; original campaigns and exact successor selection remain pending.
+reviewed. No actual recovery run used the older A artifact. These outcomes retain
+their historical A2 scope.
+
+Fresh A3 → F3 → A3 ordinary recovery and six fresh restricted restoration rounds
+passed independently. Eight actual API/worker processes and eight graceful drains,
+the 53-entry ledger, five queried ownership checkpoints and all compatibility
+floors passed, with zero named SQL connections and all 39 owned containers absent.
+The actual raw pair JSON and execution references match the exact A3/F3 binding.
+All six current preparation leaves pass. Exact A3 main CI also passed with 19
+successful checks and two expected skips; its [completion supplement](releases/release297/a3-preparation-ci-completion-20261009.json)
+preserves the original pending snapshot and failed Android dependency-resolution
+attempt. Original campaigns, exact selection and resulting tooling-main CI remain
+pending.
 
 F3 retains the CP-AI boundary on rollback. It predates A2's optional browsing-history
 `view=pages` filter: an A2 frontend paired temporarily with F3 can display all
@@ -119,6 +137,6 @@ managed-device gate remains `waived_not_passed`. Publication, registration,
 deployment, live verification and later capability promotion each retain their
 own applicable gates and evidence.
 
-Automatic backend recovery runs before the matched A2 frontend is published. A later manual F3 rollback after A2 frontend adoption requires a separately reviewed compatible frontend and a browsing-history cursor reset; reloading the A2 frontend alone does not restore the older browsing-history wording and filter contract. That conditional frontend selection remains a separate dependency.
+Automatic backend recovery runs before the matched frontend is published. Current production has externally adopted A2's frontend, so that order alone no longer establishes compatibility with F3. Deployment remains blocked pending a reviewed compatible frontend recovery action and exact artifact; the earlier A1 applicability claim retains historical scope. A later manual F3 rollback after matched frontend adoption likewise requires a separately reviewed compatible frontend and browsing-history cursor reset. F3 also lacks PR #628's opaque active-tab reference; A3 disables the current-tab Focus shortcut when that reference is absent. Reloading the newer frontend alone does not restore the older history contract.
 
-The [fresh A2 preparation observation](releases/release297/a2-artifact-preparation-20261009.json) retains exact-source type/build/test-type, 2,470 unit tests (2,466 passed; four explicit skips), 169 credential/precise/safety/history regressions, governance and exact-main CI. Its matched frontend02 was built explicitly in production mode; the 171-entry ZIP is `a107df178142707491f3797d9ebc3dd8270bbd1ad8349b964aeef90bff4e5ea9`, with inventory `d8452f43e010b6bac8e677922ffc3d49f9de8afe00862f82b2e7b292628b31a3`. Frontend01 remains ineligible because it inherited NODE_ENV=test. Raw failure/correction attempts and independent aggregate review are retained.
+The [historical A2 preparation observation](releases/release297/a2-artifact-preparation-20261009.json) retains exact-source type/build/test-type, 2,470 unit tests (2,466 passed; four explicit skips), 169 credential/precise/safety/history regressions, governance and exact-main CI. Its matched frontend02 was built explicitly in production mode; the 171-entry ZIP is `a107df178142707491f3797d9ebc3dd8270bbd1ad8349b964aeef90bff4e5ea9`, with inventory `d8452f43e010b6bac8e677922ffc3d49f9de8afe00862f82b2e7b292628b31a3`. Frontend01 remains ineligible because it inherited NODE_ENV=test. Raw failure/correction attempts and independent aggregate review are retained. These identities cannot certify the changed A3 inputs; see the separate [A3 preparation observation](releases/release297/a3-artifact-preparation-20261009.json).

@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "kind": "release297_build_security_current_observation",
-  "observedAtUtc": "2026-10-09T14:17:02.673Z",
-  "applicationSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-  "mainSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+  "observedAtUtc": "2026-10-09T15:24:33.431Z",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "mainSource": "2001e8888992674493c3084981fa8aae27d70e1d",
   "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
   "artifactPair": {
     "serving-anchor": {
-      "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-      "localIndex": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
-      "config": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
-      "platform": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
-      "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b"
+      "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+      "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
+      "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
+      "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
     },
     "fallback": {
       "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
@@ -22,12 +22,12 @@
     }
   },
   "inventory": {
-    "sha256": "4478303590f02b854898a241cca07001f7389afec1e6d174a153c1f45b993678",
+    "sha256": "fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01",
     "fileCount": 564
   },
   "frontendInventory": {
-    "sha256": "c2f64565160a9bba89cfed1d907e41ca0f49b095719e5bdbdc727adfb18a397f",
-    "fileCount": 635
+    "sha256": "fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4",
+    "fileCount": 637
   },
   "addedPullRequests": [
     {
@@ -47,208 +47,235 @@
         "oid": "55f91b620d2d48de5ed164a72250ec133450bc0f"
       },
       "mergedAt": "2026-10-09T13:21:56Z"
+    },
+    {
+      "number": 628,
+      "title": "Unify student tile Focus and Waypoint lock actions",
+      "headRefOid": "5c184a73deea32404f352204f9e15e2a4d216923",
+      "mergeCommit": {
+        "oid": "2001e8888992674493c3084981fa8aae27d70e1d"
+      },
+      "mergedAt": "2026-10-09T14:38:46Z"
     }
   ],
   "currentMainCi": {
-    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "source": "2001e8888992674493c3084981fa8aae27d70e1d",
     "event": "push",
     "branch": "main",
     "status": "passed",
-    "observedAtUtc": "2026-10-09T13:59:56.313Z",
+    "observedAtUtc": "2026-10-09T15:13:23.952Z",
     "checks": [
       {
-        "name": "Build, scan, sign, and publish once",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "skipped",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37940081204/job/113851930456"
-      },
-      {
-        "name": "SOC 2 approval queue",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "name": "Scan for secrets",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113845867085"
-      },
-      {
-        "name": "SOC 2 incident evidence",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113845761940"
-      },
-      {
-        "name": "SOC 2 tenant isolation evidence",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113845761907"
-      },
-      {
-        "name": "SOC 2 deployment evidence",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113845761826"
-      },
-      {
-        "name": "SOC 2 monitoring evidence",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113843206863"
-      },
-      {
-        "name": "SOC 2 AI/privacy evidence",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113843206818"
-      },
-      {
-        "name": "SOC 2 privileged access evidence",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113841402159"
-      },
-      {
-        "name": "Detect changed paths",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "skipped",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839160021"
-      },
-      {
-        "name": "Frontend release-focused gates (shard 1)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158953"
-      },
-      {
-        "name": "Backend (TypeScript + Build)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158794"
-      },
-      {
-        "name": "AWS rollout safety (PowerShell + Terraform)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158774"
-      },
-      {
-        "name": "Cross-tenant isolation tests",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158699"
-      },
-      {
-        "name": "Frontend release-focused gates (shard 2)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158679"
-      },
-      {
-        "name": "RLS-enabled cross-tenant tests",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158675"
-      },
-      {
-        "name": "Frontend release-focused gates (shard 3)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158634"
-      },
-      {
-        "name": "Frontend release-focused gates (shard 4)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158619"
-      },
-      {
-        "name": "Frontend (Vite Build)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863/job/113839158355"
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945726977/job/113871349643"
       },
       {
         "name": "Analyze (javascript-typescript)",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317811/job/113839157576"
-      },
-      {
-        "name": "Scan for secrets",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-        "status": "completed",
-        "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317820/job/113839157483"
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727116/job/113871351457"
       },
       {
         "name": "Scan Docker image",
-        "headSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317824/job/113839157018"
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727085/job/113871354390"
+      },
+      {
+        "name": "Build, scan, sign, and publish once",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37949960447/job/113885868284"
+      },
+      {
+        "name": "Frontend (Vite Build)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881501545"
+      },
+      {
+        "name": "Backend (TypeScript + Build)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881502992"
+      },
+      {
+        "name": "Detect changed paths",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881503668"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 3)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881504312"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 2)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881504445"
+      },
+      {
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881504903"
+      },
+      {
+        "name": "SOC 2 privileged access evidence",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881540493"
+      },
+      {
+        "name": "Cross-tenant isolation tests",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881541174"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 1)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881543527"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 4)",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881543926"
+      },
+      {
+        "name": "RLS-enabled cross-tenant tests",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113881557308"
+      },
+      {
+        "name": "SOC 2 incident evidence",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113885603206"
+      },
+      {
+        "name": "SOC 2 AI/privacy evidence",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113885603290"
+      },
+      {
+        "name": "SOC 2 monitoring evidence",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113885603323"
+      },
+      {
+        "name": "SOC 2 deployment evidence",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113885603387"
+      },
+      {
+        "name": "SOC 2 tenant isolation evidence",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113885603665"
+      },
+      {
+        "name": "SOC 2 approval queue",
+        "headSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132/job/113885710311"
       }
     ],
     "workflowRuns": {
-      "37940081204": {
-        "id": 37940081204,
+      "37949960447": {
+        "id": 37949960447,
         "event": "workflow_run",
         "head_branch": "main",
-        "head_sha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "skipped",
-        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37940081204"
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37949960447"
       },
-      "37936317811": {
-        "id": 37936317811,
+      "37948803589": {
+        "id": 37948803589,
+        "event": "workflow_run",
+        "head_branch": "main",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "skipped",
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37948803589"
+      },
+      "37948566754": {
+        "id": 37948566754,
+        "event": "workflow_run",
+        "head_branch": "main",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "status": "completed",
+        "conclusion": "skipped",
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37948566754"
+      },
+      "37945726977": {
+        "id": 37945726977,
         "event": "push",
         "head_branch": "main",
-        "head_sha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317811"
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945726977"
       },
-      "37936317820": {
-        "id": 37936317820,
+      "37945727085": {
+        "id": 37945727085,
         "event": "push",
         "head_branch": "main",
-        "head_sha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317820"
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727085"
       },
-      "37936317824": {
-        "id": 37936317824,
+      "37945727116": {
+        "id": 37945727116,
         "event": "push",
         "head_branch": "main",
-        "head_sha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317824"
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727116"
       },
-      "37936317863": {
-        "id": 37936317863,
+      "37945727132": {
+        "id": 37945727132,
         "event": "push",
         "head_branch": "main",
-        "head_sha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+        "head_sha": "2001e8888992674493c3084981fa8aae27d70e1d",
         "status": "completed",
         "conclusion": "success",
-        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37936317863"
+        "html_url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37945727132"
       }
     },
     "successes": 19,
@@ -271,7 +298,7 @@
     "review": {
       "status": "approved",
       "path": "docs/release-evidence/release297/cp-protected-build/source-applicability.json",
-      "sha256": "85fce05c709287b0558b56c50d39184a5112aead1a86538f1eef24cd646a9f1a"
+      "sha256": "bc16d432a885ee81be222ac3e3d2e595926c5278ba401601832d627f63b3da70"
     }
   },
   "dailyRollup": {
@@ -281,10 +308,13 @@
   },
   "rollbackFrontendApplicability": {
     "automaticBackendRecoveryBeforeMatchedFrontend": true,
-    "laterManualRollbackAfterA2FrontendRequiresCompatibleFrontend": true,
+    "laterManualRollbackAfterMatchedFrontendRequiresCompatibleFrontend": true,
     "compatibleFrontendSelection": "pending_review",
     "pageCursorResetRequired": true,
-    "F3RetainsPr627PagesOnlyView": false
+    "F3RetainsPr627PagesOnlyView": false,
+    "currentProductionFrontendSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "automaticRecoveryCompatibility": "pending_review",
+    "compatibleFrontendRecoveryBeforeDeployment": "pending_review"
   },
   "preparationStatus": "passed",
   "selectionStatus": "pending",
@@ -295,39 +325,58 @@
     "headroomAcceptance": "unknown"
   },
   "frontend": {
-    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-    "archiveSha256": "a107df178142707491f3797d9ebc3dd8270bbd1ad8349b964aeef90bff4e5ea9",
-    "fileInventorySha256": "d8452f43e010b6bac8e677922ffc3d49f9de8afe00862f82b2e7b292628b31a3",
+    "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+    "archiveSha256": "ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d",
+    "archiveBytes": 1014154,
+    "fileInventorySha256": "3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3",
     "fileCount": 171,
     "nodeEnv": "production",
     "buildPassed": true,
     "lintPassed": true,
     "browsingHistoryBrowserPassed": true,
+    "studentTileBrowserPassed": true,
+    "dashboardLoadStatePassed": true,
     "publication": false,
     "adoptionVerified": false
   },
   "historicalInvalidation": {
-    "previousApplicationReference": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
-    "previousToolPreparation": "8293939d1122c401a994450db48ea12f8f0da353",
+    "previousApplicationReference": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "previousToolPreparation": "259642412255fea058532f61699e078b62113152",
     "changedApplicationInputs": [
-      "src/routes/classpilot/studentBrowsingHistory.ts",
-      "src/services/classpilotBrowsingHistory.ts",
-      "src/services/classpilotBrowsingHistoryModel.ts",
-      "schoolpilot-app/src/products/classpilot/components/StudentBrowsingHistory.jsx"
+      "src/routes/classpilot/coverage.ts",
+      "src/routes/classpilot/devices.ts",
+      "src/routes/compat.ts",
+      "src/services/classpilotCoverageHydration.ts",
+      "src/services/classpilotRealtimeStatus.ts",
+      "schoolpilot-app"
     ],
-    "changedBrowserCheck": "schoolpilot-app/scripts/browsing-history-browser.mjs",
+    "changedBrowserCheck": "Focus/realtime browser and unit checks",
     "oldCandidateArtifactRecoveryCampaignApplicability": "historical",
-    "freshA2Required": true,
+    "freshA3Required": true,
     "F3SourceAndArtifactUnchanged": true
   },
   "retainedMainCiCapture": {
     "storage": "private",
-    "path": "independent-review/A2-main-ci-01.private.json",
-    "sha256": "fdd852a0bb4c8ad3f9422d2263f8d069093a1b2d401fae6f2d59743544695d81"
+    "path": "independent-review/A3-main-ci-02.private.json",
+    "sha256": "bd82fe320bcaf8d38b439903c9a97f01ad65e60a53e72e2a694670e5edfd24a6"
   },
   "releaseReady": false,
   "operationalAuthorization": false,
   "productionDeploymentExecuted": false,
   "publicationExecuted": false,
-  "inactiveRegistrationExecuted": false
+  "inactiveRegistrationExecuted": false,
+  "externalProductionChange": {
+    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "apiRevision": 180,
+    "workerRevision": 196,
+    "admission": 129,
+    "environmentExceptGitShaUnchanged": true,
+    "prior179195OperationalPlansInvalidated": true,
+    "retainedReview": {
+      "storage": "private",
+      "path": "independent-review/current129-A3-external-state.review.json",
+      "sha256": "4a42810a835040622981a1ce4a1bbcf10b19be8a6805c686c73d8e9be36f550e"
+    },
+    "observedDeploymentWasExternal": true
+  }
 }
