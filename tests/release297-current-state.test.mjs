@@ -22,20 +22,23 @@ const historicalIndex = () => {
   delete candidate.evidence.currentCandidateNative;
   delete candidate.evidence.currentFrontend;
   delete candidate.evidence.currentExtensionApplicability;
+  delete candidate.evidence.resultingMainObservation;
+  for (const key of Object.keys(candidate.evidence)) if (key.startsWith('protectedFallback')) delete candidate.evidence[key];
   candidate.authorization.productionDeployment = false;
   const historic = JSON.parse(readFileSync(path.join(ROOT, candidate.evidence.reconciliation.path), 'utf8'));
   candidate.sources.schoolpilot.remoteMainObserved = historic.schoolpilotRemoteMain;
   for (const source of Object.values(candidate.sources)) {
     source.frozenApplicationReference = null;
-    source.evidence = source.evidence.map(id => id === 'candidateRefresh' ? 'reconciliation' : id);
+    source.evidence = source.evidence.filter(id => id !== 'resultingMainObservation').map(id => id === 'candidateRefresh' ? 'reconciliation' : id);
   }
-  candidate.inclusionMatrix = candidate.inclusionMatrix.filter(pr => pr.repository !== 'SchoolPilot' || ![621, 622, 623].includes(pr.number));
+  candidate.inclusionMatrix = candidate.inclusionMatrix.filter(pr => pr.repository !== 'SchoolPilot' || ![621, 622, 623, 624].includes(pr.number));
   for (const pr of candidate.inclusionMatrix) if (pr.repository === 'SchoolPilot') pr.includedInSource = historic.schoolpilotRemoteMain;
-  candidate.gates = candidate.gates.filter(gate => !['candidate-freeze', 'repository-protections', 'backend-successor-scan-fresh', 'fallback-successor-scan-fresh', 'candidate-native-processing-fresh', 'current-v3-binding', 'extension-current-identity-applicability', 'extension-current-canonical-attempt'].includes(gate.id));
-  candidate.artifacts = candidate.artifacts.filter(artifact => artifact.id !== 'fallback-successor-current-scan');
-  for (const group of ['artifacts', 'stages', 'gates']) for (const record of candidate[group]) record.evidence = record.evidence.map(id => ['candidateRefresh', 'currentArtifactsScan', 'currentCandidateNative', 'currentFrontend'].includes(id) ? 'reconciliation' : id);
+  candidate.gates = candidate.gates.filter(gate => !gate.id.startsWith('cp-protected-') && !['candidate-freeze', 'repository-protections', 'backend-successor-scan-fresh', 'fallback-successor-scan-fresh', 'candidate-native-processing-fresh', 'current-v3-binding', 'extension-current-identity-applicability', 'extension-current-canonical-attempt'].includes(gate.id));
+  candidate.artifacts = candidate.artifacts.filter(artifact => !['fallback-successor-current-scan','fallback-cp-protected-artifact'].includes(artifact.id));
+  for (const group of ['artifacts', 'stages', 'gates']) for (const record of candidate[group]) record.evidence = record.evidence.filter(id => !id.startsWith('protectedFallback')).map(id => ['candidateRefresh', 'currentArtifactsScan', 'currentCandidateNative', 'currentFrontend', 'resultingMainObservation'].includes(id) ? 'reconciliation' : id);
   for (const group of ['artifacts', 'gates']) for (const record of candidate[group]) if (record.applicability === 'historical' && (record.id.startsWith('fallback-successor-') || record.id === 'backend-successor-anchor')) record.applicability = 'preparation_only';
   candidate.gates.find(gate => gate.id === 'current-main-preparation-ci').sourceSha = historic.schoolpilotRemoteMain;
+  candidate.gates.find(gate => gate.id === 'current-main-preparation-ci').applicability = 'current_baseline';
   Object.assign(candidate.gates.find(gate => gate.id === 'cp-ai-001-review'), { status: 'pending', evidence: ['cpAiBoundaryPreparation'] });
   for (const mode of Object.values(candidate.usageModes)) Object.assign(mode, { observedValue: null, status: 'unknown', evidence: ['productionHistorical'] });
   return candidate;
@@ -104,7 +107,7 @@ test('current observation renders merged CP-AI and frozen A without relabeling d
   const cp = JSON.parse(readFileSync(path.join(ROOT, candidate.evidence.cpAiBoundaryPreparation.path), 'utf8'));
   const rendered = renderStatus(validateIndex(candidate));
   assert.match(rendered, /CP-AI-001 is merged in #622/);
-  assert.match(rendered, new RegExp(`current frozen source.*${originalMain.slice(0, 8)}`));
+  assert.match(rendered, new RegExp(`current frozen source.*${candidate.sources.schoolpilot.frozenApplicationReference.slice(0, 8)}`));
   assert.match(rendered, /Current main observed/);
   assert.match(rendered, /direct user request authorizes production deployment after required gates pass; deployment has not executed/);
   assert.equal(cp.reviewStatus, 'pending');
@@ -125,6 +128,26 @@ test('recorded deployment request cannot authorize publication, settings or oper
       assert.throws(() => validateIndex(candidate, fixture), /CURRENT_OBSERVATION_IS_NOT_RELEASE_AUTHORITY/);
     }, true);
   }
+});
+
+test('resulting main preserves frozen A only with exact application equivalence and emitted push CI', () => {
+  for (const [mutate, expected] of [
+    [value => { value.releaseReady = true; }, /RESULTING_MAIN_IS_NOT_AUTHORITY/],
+    [value => { value.applicationEquivalence.backendInputsEquivalent = false; }, /RESULTING_MAIN_APPLICATION_EQUIVALENCE_REQUIRED/],
+    [value => { value.applicationEquivalence.backend.sha256 = 'f'.repeat(64); }, /RESULTING_MAIN_APPLICATION_INVENTORY_CHANGED/],
+    [value => { value.applicationEquivalence.frontend.fileCount += 1; }, /RESULTING_MAIN_APPLICATION_INVENTORY_CHANGED/],
+    [value => { value.pullRequest.state = 'OPEN'; }, /MERGE_OBSERVATION_CHANGED|RESULTING_MAIN_MERGE_REQUIRED/],
+    [value => { value.currentMainCi.workflowRuns.find(run => run.role === 'CI').event = 'pull_request'; }, /RESULTING_MAIN_WORKFLOW_TRIGGER_CHANGED/],
+    [value => { value.currentMainCi.workflowRuns.find(run => run.role === 'ImmutableReleaseImage').event = 'push'; }, /RESULTING_MAIN_WORKFLOW_TRIGGER_CHANGED/],
+    [value => { value.currentMainCi.checks.find(check => check.name === 'Scan Docker image').conclusion = 'skipped'; }, /RESULTING_MAIN_CHECK_OUTCOME_CHANGED/],
+    [value => { value.currentMainCi.checks.find(check => check.name === 'Backend (TypeScript + Build)').source = 'f'.repeat(40); }, /RESULTING_MAIN_CHECK_OUTCOME_CHANGED/],
+    [value => { value.currentMainCi.checks.pop(); }, /RESULTING_MAIN_REQUIRED_CHECK_MISSING/],
+    [value => { value.currentMainCi.emittedTestLanes[0].failed = 1; }, /RESULTING_MAIN_TEST_COUNTS_CHANGED/],
+    [value => { value.retainedInputs.equivalenceSha256 = null; }, /RESULTING_MAIN_RETAINED_PROOF_REQUIRED/],
+  ]) receiptFixture((candidate, fixture, read, write) => {
+    const observation = read('resultingMainObservation'); mutate(observation); write('resultingMainObservation', observation);
+    assert.throws(() => validateIndex(candidate, fixture), expected);
+  }, true);
 });
 
 test('current freeze requires exact source, positive inventories and direct-user provenance', () => {
@@ -166,6 +189,23 @@ test('latest F failure stays distinct from both historical F pass and current ca
   assert.match(renderStatus(candidate), /latest scan of unchanged F failed the zero High\/Critical criterion/);
   candidate.gates.find(gate => gate.id === 'fallback-successor-scan-fresh').status = 'passed';
   assert.throws(() => validateIndex(candidate), /CURRENT_SCAN_GATE_CHANGED/);
+});
+
+test('protected fallback leaves cannot clear full audit failure, select an artifact or inflate test scopes', () => {
+  for (const [mutate, expected] of [
+    [value => { value.buildDependencyAudit.status = 'passed'; }, /PROTECTED_BUILD_AUDIT_CANNOT_BE_WAIVED/],
+    [value => { value.buildDependencyAudit.waiver = true; }, /PROTECTED_BUILD_AUDIT_CANNOT_BE_WAIVED/],
+    [value => { value.selectionStatus = 'passed'; }, /PROTECTED_PREPARATION_CANNOT_SELECT/],
+    [value => { value.preparationStatus = 'passed'; }, /PROTECTED_PREPARATION_CANNOT_SELECT/],
+    [value => { value.credentialBoundary.externalProviderRequests = 1; }, /PROTECTED_COMPILED_TEST_SCOPE_CHANGED/],
+    [value => { value.sourceChecks.fullUnit.skipped = 0; }, /PROTECTED_SOURCE_TEST_SCOPE_CHANGED/],
+    [value => { value.native.checks[0].passed = false; }, /PROTECTED_NATIVE_CHECKS_REQUIRED/],
+    [value => { value.artifactPair.fallback.source = value.artifactPair['serving-anchor'].source; }, /PROTECTED_ARTIFACT_PAIR_CHANGED/],
+    [value => { value.operationalPlansCreated = true; }, /PROTECTED_OBSERVATION_IS_NOT_AUTHORITY/],
+  ]) receiptFixture((candidate,fixture,read,write)=>{
+    const observed=read('protectedFallbackObservation');mutate(observed);write('protectedFallbackObservation',observed);
+    assert.throws(()=>validateIndex(candidate,fixture),expected);
+  },true);
 });
 
 test('fresh scan observations reject mixed artifact roles, substituted F, count changes and acceptance after failure', () => {

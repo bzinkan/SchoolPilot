@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Artifact preparation only. This module never launches tasks or changes services.
 import assert from 'node:assert/strict';
-import { bindingSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation } from './release-source-binding.mjs';
+import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation } from './release-source-binding.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -90,7 +90,7 @@ async function privatePermissions(directory, inputs, run) {
   await checked(run, 'pwsh', ['-NoProfile', '-File', bridge, '-Helper', helper, '-Directory', directory, '-Repository', root, '-Inputs', path.join(directory, 'private-inputs.json')]);
 }
 async function newPlan(input, operation, run) {
-  assert.ok([1, 2, 3].includes(input.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  assert.ok([1, 2, 3, 4].includes(input.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
   for (const directory of [root, input.sourceDirectory]) { const relative = path.relative(directory, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_BE_OUTSIDE_SOURCE'); }
   const releaseBinding = await sourceContract(input, run);
   const toolSource = (await checked(run, 'git', ['-C', root, 'rev-parse', 'HEAD'])).trim(); assert.match(toolSource, sha, 'TOOL_SOURCE_REQUIRED'); equal((await checked(run, 'git', ['-C', root, 'status', '--porcelain'])).trim(), '', 'TOOL_DIRTY');
@@ -102,7 +102,7 @@ export async function planPublication(input, { run = runCommand, verifyScan = va
   const releaseBinding = bindingSchema(input) >= 2 ? await sourceContract(input, run) : undefined;
   assert.ok(!existsSync(path.join(path.dirname(input.scan.path), 'registry-proof.json')), 'FRESH_REGISTRY_PROOF_REQUIRED');
   if (input.kind === 'serving-anchor') validateMainCi(pinned(input.mainCi), input.source);
-  else if (input.schemaVersion === 3) validateMainCi(pinned(input.mainCi), input.mainSource);
+  else if (isSuccessorSchema(input.schemaVersion)) validateMainCi(pinned(input.mainCi), input.mainSource);
   equal(pinned(input.publisherConfiguration), { repository: 'bzinkan/SchoolPilot', variable: 'IMMUTABLE_RELEASE_IMAGE_ENABLED', enabled: false }, 'EXCLUSIVE_PUBLISHER_CONFIGURATION_REQUIRED');
   const repository = pinned(input.repository); assert.ok(repository.repositories?.length === 1, 'REPOSITORY_UNAVAILABLE'); validatePublicationRepository(repository.repositories[0]);
   const scan = await verifyScan(input, releaseBinding);
@@ -185,13 +185,13 @@ export function validatePublicationRepository(repository) {
 export function validatePublicationPlatform(kind, proof, configDigest, releaseBinding) {
   assert.match(proof.digest ?? '', digest, 'REGISTRY_DIGEST_REQUIRED'); assert.match(proof.platformDigest ?? '', digest, 'REGISTRY_PLATFORM_REQUIRED');
   equal(proof.configDigest, configDigest, 'REGISTRY_CONFIG_CHANGED');
-  if (releaseBinding?.schemaVersion === 3) equal(proof.platformDigest, releaseBinding.artifact.platform, 'BOUND_PLATFORM_CHANGED');
+  if (isSuccessorSchema(releaseBinding?.schemaVersion)) equal(proof.platformDigest, releaseBinding.artifact.platform, 'BOUND_PLATFORM_CHANGED');
   if (kind === 'fallback') equal(proof.platformDigest, releaseBinding?.fallback?.platform ?? FALLBACK.platform, 'EXACT_FALLBACK_PLATFORM_REQUIRED');
 }
 const aws = args => [...args, '--region', REGISTRY.region, '--output', 'json', '--no-cli-pager'];
 async function identity(run, call) { equal(JSON.parse(await call('aws', aws(['sts', 'get-caller-identity']))).Account, REGISTRY.account, 'AWS_ACCOUNT_CHANGED'); }
 async function currentMain(input, call) {
-  if (input.kind !== 'serving-anchor' && input.schemaVersion !== 3) return;
+  if (input.kind !== 'serving-anchor' && !isSuccessorSchema(input.schemaVersion)) return;
   const mainSource = input.kind === 'fallback' ? input.mainSource : input.source;
   const branch = JSON.parse(await call('gh', ['api', 'repos/bzinkan/SchoolPilot/branches/main'])); equal(branch.commit?.sha, mainSource, 'REMOTE_MAIN_CHANGED');
   const runs = JSON.parse(await call('gh', ['run', 'list', '--repo', 'bzinkan/SchoolPilot', '--commit', mainSource, '--event', 'push', '--limit', '100', '--json', 'headSha,headBranch,event,status,conclusion,workflowName'])); validateMainCi({ repository: 'bzinkan/SchoolPilot', branch: 'main', source: mainSource, runs }, mainSource);
@@ -233,7 +233,7 @@ function receiptWriter(directory, name, initial) {
 }
 export async function publishImage(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyScan = validateLocalScan, login = loginDocker, verifyPublished = verifyPublishedImage } = {}) {
   const { plan, window } = await replayPlan(planRecord, 'PublishImage', authorizationRecord, { run, now });
-  const receipt = receiptWriter(plan.input.outputDirectory, 'publication.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(plan.schemaVersion === 3 ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', signed: false, publicationOutcomeUncertain: false, publishedTags: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
+  const receipt = receiptWriter(plan.input.outputDirectory, 'publication.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(isSuccessorSchema(plan.schemaVersion) ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', signed: false, publicationOutcomeUncertain: false, publishedTags: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
   const call = async (exe, args, options = {}) => { window.inWindow(); return checked(run, exe, args, { ...options, timeout: Math.min(options.timeout ?? 120_000, window.remaining()) }); };
   try {
     assert.ok(!existsSync(path.join(path.dirname(plan.input.scan.path), 'registry-proof.json')), 'FRESH_REGISTRY_PROOF_REQUIRED');
@@ -287,7 +287,7 @@ export async function publishImage(planRecord, authorizationRecord, { run = runC
 }
 export async function registerUnused121(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyRegistry = validateRegistryManifest, verifyScan = validateLocalScan } = {}) {
   const { plan, window } = await replayPlan(planRecord, 'RegisterUnused121', authorizationRecord, { run, now });
-  const receipt = receiptWriter(plan.input.outputDirectory, 'registration.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(plan.schemaVersion === 3 ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', registered: [], registrationOutcomeUncertain: false, servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
+  const receipt = receiptWriter(plan.input.outputDirectory, 'registration.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(isSuccessorSchema(plan.schemaVersion) ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', registered: [], registrationOutcomeUncertain: false, servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
   const call = async (exe, args) => { window.inWindow(); return checked(run, exe, args, { timeout: Math.min(120_000, window.remaining()) }); };
   const serviceArgs = aws(['ecs', 'describe-services', '--cluster', 'schoolpilot-production-cluster', '--services', 'schoolpilot-production-api', 'schoolpilot-production-scheduler-worker']);
   try {
@@ -306,9 +306,9 @@ export async function registerUnused121(planRecord, authorizationRecord, { run =
       const rawResponse = await call('aws', aws(['ecs', 'register-task-definition', '--cli-input-json', `file://${generated.path.replaceAll('\\', '/')}`]));
       writeFileSync(path.join(plan.input.outputDirectory, `${role}.register-response.private.json`), rawResponse, { flag: 'wx', mode: 0o600 });
       const response = JSON.parse(rawResponse);
-      const arn = plan.schemaVersion === 3 ? retainSuccessorRegistration(receipt.value, role, response, generated.sha256, requests[role].family) : response.taskDefinition?.taskDefinitionArn;
+      const arn = isSuccessorSchema(plan.schemaVersion) ? retainSuccessorRegistration(receipt.value, role, response, generated.sha256, requests[role].family) : response.taskDefinition?.taskDefinitionArn;
       // Retain the returned ARN before any semantic assertion or further command.
-      if (plan.schemaVersion !== 3) { receipt.value.registered.push({ role, arn: typeof arn === 'string' ? arn : null, requestSha256: generated.sha256 }); receipt.value.registrationOutcomeUncertain = typeof arn !== 'string'; } receipt.save();
+      if (!isSuccessorSchema(plan.schemaVersion)) { receipt.value.registered.push({ role, arn: typeof arn === 'string' ? arn : null, requestSha256: generated.sha256 }); receipt.value.registrationOutcomeUncertain = typeof arn !== 'string'; } receipt.save();
       assert.match(arn ?? '', new RegExp(`^arn:aws:ecs:${REGISTRY.region}:${REGISTRY.account}:task-definition/${requests[role].family}:[1-9][0-9]*$`), 'REGISTERED_ARN_INVALID'); assert.ok(arn !== generated.sourceArn, 'NEW_REVISION_REQUIRED'); window.inWindow();
       const actual = JSON.parse(await call('aws', aws(['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS'])));
       validateSourceResponse(actual, role, plan.input.source, plan.registryDigest, anchor128Stages()[0]); equal(registrationEnvironmentProjection(projection(actual)), registrationEnvironmentProjection(requests[role]), 'REGISTERED_DEFINITION_DRIFT');
