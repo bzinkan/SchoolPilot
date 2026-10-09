@@ -20,7 +20,7 @@
       "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
     }
   },
-  "releaseBindingSha256": "ed7ed89296cf23ec4a9a57a5277827e36d173766b67354e965489baefe4c9cad",
+  "releaseBindingSha256": "8d66e4be314d422014a72e496d40db2156f716e66429f807bffef3f2ba2fcfef",
   "allSevenOriginalGatesPassed": true,
   "preparationStatus": "passed",
   "successorSelectionStatus": "approved",

@@ -5,6 +5,8 @@ import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {ROOT,INDEX,validateIndex,renderStatus} from '../scripts/release297-current-state.mjs';
+import {validateBindingProfile} from '../scripts/release-source-binding.mjs';
+import {FALLBACK} from '../scripts/register-compatible-fallback-inactive.mjs';
 const current=()=>JSON.parse(readFileSync(join(ROOT,INDEX),'utf8'));
 function fixture(work){const index=current(),root=mkdtempSync(join(tmpdir(),'release297-build-state-'));try{for(const value of Object.values(index.evidence)){const target=join(root,value.path);mkdirSync(dirname(target),{recursive:true});copyFileSync(join(ROOT,value.path),target);}const change=(id,mutate)=>{const file=join(root,index.evidence[id].path),value=JSON.parse(readFileSync(file,'utf8'));mutate(value);const bytes=JSON.stringify(value,null,2)+'\n';writeFileSync(file,bytes);index.evidence[id].gitBlobSha256=createHash('sha256').update(bytes).digest('hex');};work(index,root,change);}finally{assert.equal(dirname(resolve(root)),resolve(tmpdir()));assert.ok(root.includes('release297-build-state-'));rmSync(root,{recursive:true,force:true});}}
 test('v5 current state validates exact A3, preserves historical failures and generates accurate authorization scope',()=>{const index=current();validateIndex(index);const text=renderStatus(index);assert.match(text,/A3 is `2001e888`/);assert.match(text,/fix this and deploy/);assert.match(text,/already admits 129/);assert.match(text,/later manual F3 rollback/);assert.equal(index.gates.find(row=>row.id==='cp-protected-build-dependency-audit').status,'failed');assert.equal(index.gates.find(row=>row.id==='fallback-scan-current').status,'failed');});
@@ -45,6 +47,7 @@ test('v5 candidate artifact table displays the current A3 backend and frontend r
 test('accepted current evidence keeps original fixed133 and fresh same-binding normal/mixed/headroom distinct',()=>{
  const index=current(),load=id=>JSON.parse(readFileSync(join(ROOT,index.evidence[id].path),'utf8'));
  const binding=load('buildSecurityBinding');
+ validateBindingProfile(binding,binding.id,FALLBACK);
  assert.equal(binding.status,'accepted');assert.deepEqual(binding.blockers,[]);
  assert.ok(Object.values(binding.evidence).every(row=>row.status==='passed'));
  const summary=load('buildSecurityOriginalAcceptanceCompletion');

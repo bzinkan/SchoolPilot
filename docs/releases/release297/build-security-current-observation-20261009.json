@@ -409,7 +409,7 @@
   },
   "actualAcceptanceCompletion": {
     "path": "docs/releases/release297/original-acceptance-completion-20261009.json",
-    "gitBlobSha256": "73419fcfcdc91a632c6b0512199861d712170b5d3ddbfe151621fc83bfef6bcb"
+    "gitBlobSha256": "8aed74661c35d3cc48ee05a7052fd90c3a5340486053443b750b38aef4216fa0"
   },
   "currentCapacityObservation": {
     "observedAtUtc": "2026-10-09T20:44:17.3418548Z",
