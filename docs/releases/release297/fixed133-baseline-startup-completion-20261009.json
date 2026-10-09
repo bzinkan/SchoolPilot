@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_fixed133_baseline_startup_correction_completion",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "testedHarnessSource": "dbf00dbb29945fd316150af047aa55194f59d892",
+  "baselineSource": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "compatibilityId": "release297-7af9-fixed133-capability-map-v1",
+  "fixedProfileSha256": "59167a96d825a56ed6f951f5327200257a0cacde0f2bc65a02606603cb9998a1",
+  "observedAtUtc": "2026-10-09T16:33:55.724Z",
+  "correctionScope": "Only the exact v3 fixed133 baseline omits the three unsupported capability-map entries and corresponding individual flags. Candidate fixed133 already has those three capabilities off. All other environment fields, application inputs, thresholds and the fixed arm order are retained.",
+  "originalFailure": {
+    "run": "59b496e9a479",
+    "outcome": "failed",
+    "reason": "V2_ROLE_EXITED_BEFORE_RESPONSE",
+    "measuredRounds": 0,
+    "remainingRoundsHeld": 7,
+    "failedStartupOwnerCustody": "unavailable in original failed attempt; later harness catch preserves startup inspect and logs",
+    "reclassifiedAsPassed": false
+  },
+  "correctedStartup": {
+    "protocolPassed": true,
+    "fullBaselineApiStartupPassed": true,
+    "startupOnlyOffers": 0,
+    "startupOnlyMeasuredRounds": 0,
+    "unforcedCleanupPassed": true,
+    "namedSqlConnectionsRemaining": 0
+  },
+  "fixed133": {
+    "status": "passed",
+    "runs": 8,
+    "order": [
+      "A",
+      "A",
+      "A",
+      "B",
+      "B",
+      "A",
+      "A",
+      "B"
+    ],
+    "clients": 133,
+    "secondsPerRun": 60,
+    "approvedAmendedPolicyChecksPassed": 9,
+    "offers": 6384,
+    "successfulResponses": 6384,
+    "persistedRows": 6384,
+    "fiveBaselineLatencyFailuresPreserved": true,
+    "supersededComparisonGateRevived": false
+  },
+  "retainedEvidence": {
+    "causalDiagnostic": {
+      "storage": "private",
+      "path": "baseline-startup-diagnostic-d91a8d6c9123/execution.json",
+      "sha256": "99687e66693248d83718fa72f8ded805bc2b1ad0f63ec13201a3cb7a050c57bf",
+      "format": "json"
+    },
+    "correctedProtocol": {
+      "storage": "private",
+      "path": "baseline-startup-corrected-diagnostic-3c7ad6b29afe/execution.json",
+      "sha256": "e5f15cd00ea5aec01ba5871f2b19843fb5e782c11ec30de787e7cb0f1187d6b4",
+      "format": "json"
+    },
+    "correctedProtocolIndependentReview": {
+      "storage": "private",
+      "path": "independent-review/baseline-startup-corrected-protocol-actual.review.json",
+      "sha256": "b91c8303075b7f7b9677dcd4a26be55a8ed5f3a38ff230e523711eb4f64796f8",
+      "format": "json"
+    },
+    "baselineApiStartup": {
+      "storage": "private",
+      "path": "acceptance-a3-resume-02/startup-only-ddcaac9f79fe/execution.json",
+      "sha256": "2808b5814b9777ba1d522c6c35d9ff68fdc1efff8e5e0f84c5e6b16c4b6271d7",
+      "format": "json"
+    },
+    "baselineApiStartupIndependentReview": {
+      "storage": "private",
+      "path": "independent-review/baseline-actual-api-startup-only-actual.review.json",
+      "sha256": "a7bec5e3b6ea8b0ad4455f0734178f929ab9f14b29c6761cc1cfe0725dda5df1",
+      "format": "json"
+    },
+    "fixed133NativeResult": {
+      "storage": "private",
+      "path": "acceptance-a3/original-gates/currentSchoolAcceptance/native-result.json",
+      "sha256": "a1369b6f5f73e09d5a2d9980001e8fd24a7f7a129dbdd108125b1e816b6801e6",
+      "format": "json"
+    },
+    "fixed133IndependentReview": {
+      "storage": "private",
+      "path": "acceptance-a3/original-gates/currentSchoolAcceptance/independent-review-01.json",
+      "sha256": "811c16b6846d1bfe5c265532bf2b7f2b1cd5425b51ca378649b1cb1f8d65f7c7",
+      "format": "json"
+    }
+  },
+  "limitations": [
+    "Synthetic local fixed133 acceptance does not establish production state, managed adoption or live classroom acceptance.",
+    "Remaining original release gates and operational stages are separate."
+  ],
+  "historicalFailuresReclassified": false,
+  "humanApprovalAsserted": false,
+  "managedDeviceValidation": "waived_not_passed",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

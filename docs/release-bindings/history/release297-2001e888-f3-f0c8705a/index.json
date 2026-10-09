@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical_release297_preparation_snapshot_manifest",
+  "source": "44c91781ad168c742b408b811df11c2fc01efed9",
+  "testedHarnessSource": "f0c8705a0eb2f5ef048b7e65e88afe3213c8a111",
+  "recordedAtUtc": "2026-10-09T20:45:44.339Z",
+  "files": [
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-f0c8705a/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "gitBlobSha256": "1e31aed6bdcb70b2f06883f97c7540bfc44395c10723f149b304bd4f522fe60b",
+      "originalPath": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json"
+    },
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-f0c8705a/releases/release297/current-release.json",
+      "gitBlobSha256": "936ec5d1ba52daab97b1fd4a07c5d5aef5d70ff49eee807edf6846efb62377e5",
+      "originalPath": "docs/releases/release297/current-release.json"
+    },
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-f0c8705a/releases/release297/build-security-current-observation-20261009.json",
+      "gitBlobSha256": "f246d45c1889462a187a4ab22db7a5f7c6f1984245052f6e4b7d68c4874770f2",
+      "originalPath": "docs/releases/release297/build-security-current-observation-20261009.json"
+    },
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-f0c8705a/RELEASE_297_BUILD_SECURITY_FALLBACK.md",
+      "gitBlobSha256": "29fbcb67fda8ae2baa57a32852618ed522df9e210a9897b15f5da3322c7d0ec6",
+      "originalPath": "docs/RELEASE_297_BUILD_SECURITY_FALLBACK.md"
+    }
+  ],
+  "scope": "Historical pending profile and failed headroom state before selecting the independently reviewed fresh same-binding normal/mixed/headroom receipts. Original fixed133 and all earlier receipts keep their exact bindings.",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}
