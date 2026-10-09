@@ -1,0 +1,527 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_resulting_main_observation",
+  "observedAtUtc": "2026-10-08T23:35:08.465Z",
+  "applicationReferenceA": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "resultingMainSourceB": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+  "remoteMainObserved": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+  "pullRequest": {
+    "number": 624,
+    "state": "MERGED",
+    "headRefOid": "238de1358920d3f0b02f0ad5fbaa208eb5fd9024",
+    "mergeCommit": {
+      "oid": "0fc57be11b334416a3a97a60497a492b1d3cdd70"
+    },
+    "mergedAt": "2026-10-08T23:03:22Z"
+  },
+  "applicationEquivalence": {
+    "cleanToolingSource": true,
+    "reviewedPrTreeExactlyPreserved": true,
+    "backendInputsEquivalent": true,
+    "frontendInputsEquivalent": true,
+    "backend": {
+      "sha256": "91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b",
+      "fileCount": 564
+    },
+    "frontend": {
+      "sha256": "9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac",
+      "fileCount": 635
+    },
+    "reviewedAcceptanceToolCanonicalGitBytesUnchanged": true
+  },
+  "currentMainCi": {
+    "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+    "status": "passed",
+    "workflowRuns": [
+      {
+        "role": "CI",
+        "id": 37857241118,
+        "event": "push",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118"
+      },
+      {
+        "role": "CodeQL",
+        "id": 37857241080,
+        "event": "push",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241080"
+      },
+      {
+        "role": "Trivy",
+        "id": 37857241102,
+        "event": "push",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241102"
+      },
+      {
+        "role": "Gitleaks",
+        "id": 37857241108,
+        "event": "push",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241108"
+      },
+      {
+        "role": "ImmutableReleaseImage",
+        "id": 37860065419,
+        "event": "workflow_run",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37860065419"
+      }
+    ],
+    "checks": [
+      {
+        "name": "Build, scan, sign, and publish once",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37860065419/job/113593432647"
+      },
+      {
+        "name": "SOC 2 approval queue",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113589007634"
+      },
+      {
+        "name": "SOC 2 deployment evidence",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113588929171"
+      },
+      {
+        "name": "SOC 2 tenant isolation evidence",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113588929105"
+      },
+      {
+        "name": "SOC 2 incident evidence",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113588929079"
+      },
+      {
+        "name": "SOC 2 monitoring evidence",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113587778108"
+      },
+      {
+        "name": "SOC 2 AI/privacy evidence",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113587778068"
+      },
+      {
+        "name": "SOC 2 privileged access evidence",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113586365331"
+      },
+      {
+        "name": "Detect changed paths",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584259732"
+      },
+      {
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258796"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 4)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258721"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 3)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258695"
+      },
+      {
+        "name": "Frontend (Vite Build)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258692"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 2)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258625"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 1)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258579"
+      },
+      {
+        "name": "RLS-enabled cross-tenant tests",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258553"
+      },
+      {
+        "name": "Backend (TypeScript + Build)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258546"
+      },
+      {
+        "name": "Cross-tenant isolation tests",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241118/job/113584258377"
+      },
+      {
+        "name": "Scan for secrets",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241108/job/113584257703"
+      },
+      {
+        "name": "Scan Docker image",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241102/job/113584257448"
+      },
+      {
+        "name": "Analyze (javascript-typescript)",
+        "source": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37857241080/job/113584257377"
+      }
+    ],
+    "emittedTestLanes": [
+      {
+        "workflow": "CI",
+        "job": "Cross-tenant isolation tests",
+        "step": "DB and ordinary cross-tenant tests (serial)",
+        "emittedOuterSuites": 1,
+        "tests": 1562,
+        "passed": 1554,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 8,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Backend (TypeScript + Build)",
+        "step": "Pure unit tests (concurrency 4)",
+        "emittedOuterSuites": 1,
+        "tests": 2455,
+        "passed": 2451,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 4,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Backend (TypeScript + Build)",
+        "step": "Usage workload fixture guards (no database or load)",
+        "emittedOuterSuites": 1,
+        "tests": 400,
+        "passed": 400,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Backend (TypeScript + Build)",
+        "step": "Infrastructure and load-safety tests (serial)",
+        "emittedOuterSuites": 1,
+        "tests": 1053,
+        "passed": 1051,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 2,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "RLS-enabled cross-tenant tests",
+        "step": "RLS-enabled cross-tenant and tile-read isolation tests (serial)",
+        "emittedOuterSuites": 1,
+        "tests": 513,
+        "passed": 512,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 1,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend release-focused gates (shard 1)",
+        "step": "Run ClassPilot and kiosk release-focused frontend gates (shard 1)",
+        "emittedOuterSuites": 4,
+        "tests": 72,
+        "passed": 72,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend release-focused gates (shard 2)",
+        "step": "Run ClassPilot and kiosk release-focused frontend gates (shard 2)",
+        "emittedOuterSuites": 9,
+        "tests": 245,
+        "passed": 245,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test Router reachability validator",
+        "emittedOuterSuites": 1,
+        "tests": 15,
+        "passed": 15,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test frontend dependency audit engine and scope contract",
+        "emittedOuterSuites": 1,
+        "tests": 16,
+        "passed": 16,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test ClassPilot tile batching contract",
+        "emittedOuterSuites": 1,
+        "tests": 37,
+        "passed": 37,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test ClassPilot precise restriction matcher parity",
+        "emittedOuterSuites": 1,
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test GoPilot staff-only contracts",
+        "emittedOuterSuites": 1,
+        "tests": 13,
+        "passed": 13,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test staff identity lifecycle frontend contracts",
+        "emittedOuterSuites": 1,
+        "tests": 9,
+        "passed": 9,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test ClassPilot one-day schedule-change workflows",
+        "emittedOuterSuites": 1,
+        "tests": 1,
+        "passed": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test ClassPilot Teaching tools School Library",
+        "emittedOuterSuites": 1,
+        "tests": 8,
+        "passed": 8,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Smoke production preview routes",
+        "emittedOuterSuites": 6,
+        "tests": 26,
+        "passed": 26,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Test PassPilot rules UI contracts and Chromium flows",
+        "emittedOuterSuites": 1,
+        "tests": 2,
+        "passed": 2,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Inspect GoPilot mobile security and generated bundle",
+        "emittedOuterSuites": 1,
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Smoke canonical classes in the PassPilot bundle",
+        "emittedOuterSuites": 1,
+        "tests": 3,
+        "passed": 3,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend (Vite Build)",
+        "step": "Inspect PassPilot mobile security and generated bundle",
+        "emittedOuterSuites": 1,
+        "tests": 4,
+        "passed": 4,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend release-focused gates (shard 3)",
+        "step": "Run ClassPilot and kiosk release-focused frontend gates (shard 3)",
+        "emittedOuterSuites": 27,
+        "tests": 377,
+        "passed": 377,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "Frontend release-focused gates (shard 4)",
+        "step": "Run ClassPilot and kiosk release-focused frontend gates (shard 4)",
+        "emittedOuterSuites": 3,
+        "tests": 67,
+        "passed": 67,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      {
+        "workflow": "CI",
+        "job": "AWS rollout safety (PowerShell + Terraform)",
+        "step": "Private load-artifact Windows ACL tests",
+        "emittedOuterSuites": 1,
+        "tests": 1,
+        "passed": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    ],
+    "jobCounts": {
+      "success": 19,
+      "skipped": 2,
+      "failed": 0
+    },
+    "testSkipDistinction": "Test skips are recorded per emitted outer TAP lane; job/step skips and nested suite summaries are separate."
+  },
+  "retainedInputs": {
+    "ciSummarySha256": "05bd44f924de802b207e508e7a0edd9fd581a9e683423c532672bceecae3e616",
+    "equivalenceSha256": "161611e3eb3067fe3ebf85c77d41d9f3ef3e103744bfa69aa8e31d771fb37f3b"
+  },
+  "branchCleanup": {
+    "localBranchRemoved": true,
+    "remoteBranchRemoved": true
+  },
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionDeploymentExecuted": false
+}

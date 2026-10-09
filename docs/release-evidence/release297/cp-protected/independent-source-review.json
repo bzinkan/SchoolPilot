@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "kind": "protected_fallback_cp_boundary_independent_source_review_public",
+  "observedAtUtc": "2026-10-08T23:41:42.696Z",
+  "sources": {
+    "c578": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "originalFallback": "d75fc1c48d0a3918857508d3965904c69023a153",
+    "protectedFallback": "6259e768553e55346ba14a6453340772198a3d6b",
+    "reviewedCpSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+    "reviewedCpMerge": "092f8fbfe96dd7deed52c279d0b916676e0fc102"
+  },
+  "policyVersion": "classpilot-ai-request-input-2026-10-08.1",
+  "reviewStatus": "passed_for_bounded_source_portability",
+  "sourceOnly": true,
+  "checks": {
+    "reviewedRuntimeDeltaOnly": true,
+    "exactReviewedPreparationHelper": true,
+    "exactReviewedCopiedTests": true,
+    "originalObservationAndPolicyVersionCacheIdentity": true,
+    "deterministicRulesAndDisabledFallbackRetained": true,
+    "providerBuilderPreparedInputOnly": true,
+    "syntheticProviderInterceptPassed": true,
+    "testedCredentialRequestsPrevented": true,
+    "testedSensitiveDiagnosticsAbsent": true,
+    "allowedContextPreserved": true,
+    "unavailableCompletionPassed": true,
+    "originalMatchingInputsPreserved": true,
+    "unchangedBuildSchemaProtocolCapability": true
+  },
+  "comparison": {
+    "changedPathCount": 8,
+    "paths": [
+      "src/services/aiClassification.ts",
+      "src/services/classpilotAiRequestInput.ts",
+      "tests/classpilot-after-hours-ai-boundary.test.ts",
+      "tests/classpilot-ai-request-input.test.ts",
+      "tests/classpilot-heartbeat-classification-delivery.test.ts",
+      "tests/classpilot-provider-boundary-audit.test.ts",
+      "tests/gemini-url-classification-budget.test.ts",
+      "tests/gemini-url-classification.test.ts"
+    ],
+    "rawGitDiffSha256": "488454d7ac7b2cb754ea91acdad8c01d345a720e0754d5ec271720eb35df32ac",
+    "exactReviewedChangedLines": true,
+    "exactReviewedHelper": true,
+    "protectedPathsUnchanged": true,
+    "normativeFixturesUnchanged": true
+  },
+  "syntheticTests": {
+    "producer": {
+      "tests": 175,
+      "passed": 175,
+      "failed": 0,
+      "skipped": 0
+    },
+    "independent": {
+      "tests": 366,
+      "passed": 366,
+      "failed": 0,
+      "skipped": 0
+    },
+    "externalProviderRequests": 0,
+    "syntheticFixturesOnly": true,
+    "artifactExecution": false
+  },
+  "dependencyAudit": {
+    "runtime": {
+      "info": 0,
+      "low": 0,
+      "moderate": 3,
+      "high": 0,
+      "critical": 0,
+      "total": 3
+    },
+    "fullDevelopment": {
+      "info": 0,
+      "low": 0,
+      "moderate": 7,
+      "high": 6,
+      "critical": 0,
+      "total": 13
+    },
+    "fullDevelopmentStatus": "failed",
+    "waiver": false
+  },
+  "retainedFailedAttempts": [
+    "Producer initial unit attempt: five compiled-output import failures before concurrent build completion; retained, then sequential unit passed1820 with4skips.",
+    "Independent external receipt runner: incorrect assumed175 total after actual366 passing tests; retained, corrected by source-bound review without rerun."
+  ],
+  "limitations": [
+    "This review tests host source with actual fetch intercepted before classifier import; it does not claim the production image executed these tests.",
+    "The finite credential policy preserves ordinary email/search context; it is not universal secret detection, anonymity, or broader provider-account/SOC2 approval.",
+    "Artifact scan, native processing, actual API/worker recovery and release acceptance must be bound to exact F2 independently.",
+    "No artifact selection, publication, registration, deployment or activation is authorized or performed."
+  ],
+  "privateReviewSha256": "bbb19b4c1d282354ed749384c8eca4d1be3f539f245adbc3fa6fd13db83807e5",
+  "artifactSelection": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "releaseBindingId": "release-297-current-school-cp-protected-fallback-v4",
+  "evidenceKind": "screenshotRuntime",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "localIndex": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+      "config": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+      "platform": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+      "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41"
+    },
+    "fallback": {
+      "source": "6259e768553e55346ba14a6453340772198a3d6b",
+      "localIndex": "sha256:0eebe8c88bbc8304debaeb50644d008e1d3ad8212b0fee22a3a00eac1d04e264",
+      "config": "sha256:849b9e9ecc822e8e5b4b46a31ab31c2df13420ec7231435d8dc9f6567cf11738",
+      "platform": "sha256:bd70e6f4a091620936cb582c56d131f884fbe0aee5863d98259eadd5323e5048",
+      "archiveSha256": "8a17801e557886ee49688b18d7a678cb12f22fa84b16d457d532a21e6de0cc0c"
+    }
+  },
+  "observedAtUtc": "2026-10-08T23:51:17.339Z",
+  "passed": true,
+  "kind": "release_successor_preparation_evidence",
+  "retainedEvidence": {
+    "nativeResult": {
+      "storage": "private",
+      "path": "leaf-results/screenshotRuntime.native.json",
+      "sha256": "a6cf02376a73508485f1492e374f773996dfbce3d22091c15e0da10e1b61ae42"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "leaf-results/screenshotRuntime.review.json",
+      "sha256": "57f7c7f0b155b819cb8329930c0b5f660054cc83b61c842505823b50ac4a2abc"
+    }
+  },
+  "evidenceScope": "One exact-source/artifact preparation leaf only; development dependency audit remains failed under issue625. Acceptance campaigns, selection, operational readiness and live verification are pending.",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

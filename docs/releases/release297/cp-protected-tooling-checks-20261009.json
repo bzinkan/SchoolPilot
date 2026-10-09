@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_cp_protected_tooling_local_checks",
+  "observedAtUtc": "2026-10-09T00:07:45.972Z",
+  "baseToolingMainSource": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
+  "testedWorkingBytes": true,
+  "finalCommitCiStatus": "pending",
+  "testedFilesCanonicalGitSha256": {
+    "scripts/release-source-binding.mjs": "758f0cc9dc681de67755fc62a6719fc75f00c1522917575ed24d21c7efd22b01",
+    "scripts/prepare-release-artifacts.mjs": "d072437b20aef550bd9568d345f977da5d72fe8bc90991fb31e06e95051febd2",
+    "scripts/register-compatible-fallback-inactive.mjs": "98665aa2a1a5d697585e7c955cda08f98897e43d57ea48f4ee670b16db73319b",
+    "scripts/release297-current-state.mjs": "77d1c4cabe77b248c90173b2326b42b84a408576369c101b065060b2c42178df",
+    "scripts/load/usage/release-gates-v2/acceptance-successor.mjs": "a1532011d4dbcf79cfd4a98e9f43b02c88c3633dcf56b9b2684a9f419b81e7bb",
+    "tests/release-cp-protected-fallback-binding.test.mjs": "5b83d52c4944ccebcd415a2bcfd3ce8a4e6ef3619f923056de5a843a75ed3363",
+    "tests/release297-current-state.test.mjs": "0a95fb1ad07fb3d6533c8f189e1c22749a7e343d0068ca6c43a663d651f7733b"
+  },
+  "steps": [
+    {
+      "command": "node --test tests/release297-artifact-preparation.test.mjs tests/release297-compatible-fallback-inactive.test.mjs tests/release-source-binding.test.mjs tests/release-fallback-successor-binding.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "d2129dbb570796195b92d5e2e9b7e67e59d2bee1552bad89a160f6fada16ed76",
+      "tests": 119,
+      "passed": 119,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "node --test scripts/load/usage/release-gates-v2/*.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "b07521311ff6ca47ad22890eb0aa40f8793c281ea988293e903efe3ca9bd839f",
+      "tests": 168,
+      "passed": 168,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "node --test tests/release297-current-state.test.mjs tests/release-cp-protected-fallback-binding.test.mjs",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "da4a06fec9547870182aa21097cf27fc73445189c6a691cbea6e725179ab622b",
+      "tests": 49,
+      "passed": 49,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "npm run check",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58"
+    },
+    {
+      "command": "npm run build",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76"
+    },
+    {
+      "command": "npm run test:unit",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "b5e8428c4a7a705ee524e0fb731ae66c2b09bb7fdbe9888921bcb6a2a5f2877c",
+      "tests": 2469,
+      "passed": 2465,
+      "failed": 0,
+      "skipped": 4
+    },
+    {
+      "command": "npm run soc2:check",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "c29d3756529e014d33acf903fd6e9f441062ac1ce7e0e94b39cc3789756040b5"
+    },
+    {
+      "command": "npm run soc2:ai-privacy-evidence",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "19a64b271c33ba5b16f43c3decc6f7b079cf558a3c3e9dfc22a55391a4496d65"
+    },
+    {
+      "command": "npm run soc2:deployment-evidence",
+      "status": "passed",
+      "exitCode": 0,
+      "logSha256": "92b9a4e2c04a72c45a215b9c15f87ff32f2e8d4cee9e6ba09b78973c9f7cbb15"
+    }
+  ],
+  "unitSkips": "Four explicit environment-dependent unit skips retained in raw TAP; this does not establish database/RLS/live-device coverage. Exact commit normal PR CI remains pending.",
+  "retainedFailedAttempts": [
+    {
+      "scope": "initial v4contract fixture",
+      "logSha256": "4608c7e28e5740d5900ad4b0b1ac8b028d60747c04a5ae944a5acbe94427776a",
+      "reason": "Fixture incorrectly expected malformed returned identity to throw; controller correctly retains returned identity with uncertainty. Fixture corrected;7passed."
+    },
+    {
+      "scope": "acceptance prerequisites",
+      "logSha256": "b17b771468d496b09d500a0ce0a10d0a1919ebecb94184526878bd581a9be5ad",
+      "reason": "Five module-load failures from missing pg before new worktree dependency installation completed; actual168suite rerun passed after npmci."
+    },
+    {
+      "scope": "final packet/current-state integration",
+      "logSha256": "e5f631612c8f4486f0332f0282b89ac246ea011c72488d340114dea517447f29",
+      "reason": "Strict historical evidence references rejected added current-link arrays; preserve historical references, then regenerate and pass49."
+    }
+  ],
+  "independentGuardCorrectionReviewSha256": "f069bb682f6ea1f8dfaa2720dbf390aee7a3fa0a43911ec4fe3a4197e3ee8582",
+  "actualRawExecutionReplaySha256": "c1c5dc913819b85e8a649f0c402f28f8f2322dc19f4a6313ba08cbffbc5a6f5b",
+  "preparationPassed": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "cloudMutations": 0
+}

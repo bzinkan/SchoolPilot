@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CP_PROTECTED_BINDING_ID, CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_SOURCE_REVIEW } from './release-source-binding.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const INDEX = 'docs/releases/release297/current-release.json';
@@ -118,9 +119,10 @@ export function validateIndex(index, root = ROOT) {
   }
   const receipt = id => JSON.parse(readFileSync(path.join(root, index.evidence[id].path), 'utf8'));
   const reconciliation = receipt('reconciliation');
+  const resultingMain = index.evidence.resultingMainObservation ? receipt('resultingMainObservation') : null;
   const historicalReconciliation = receipt('reconciliationHistorical');
   assert.equal(historicalReconciliation.schoolpilotRemoteMain, index.sources.schoolpilot.planningReference, 'ORIGINAL_BASELINE_SOURCE_CHANGED');
-  assert.equal(index.sources.schoolpilot.remoteMainObserved, reconciliation.schoolpilotRemoteMain, 'SOURCE_OBSERVATION_CHANGED');
+  assert.equal(index.sources.schoolpilot.remoteMainObserved, resultingMain?.resultingMainSourceB ?? reconciliation.schoolpilotRemoteMain, 'SOURCE_OBSERVATION_CHANGED');
   assert.equal(index.sources.classpilot.remoteMainObserved, reconciliation.classpilotRemoteMain, 'SOURCE_OBSERVATION_CHANGED');
   const baselineCi = index.gates.find(entry => entry.id === 'baseline-ci');
   assert.deepEqual([baselineCi.status, baselineCi.applicability, baselineCi.sourceSha, baselineCi.evidence], ['passed', 'historical', historicalReconciliation.schoolpilotRemoteMain, ['reconciliationHistorical']], 'ORIGINAL_BASELINE_CI_RECLASSIFIED');
@@ -146,7 +148,7 @@ export function validateIndex(index, root = ROOT) {
     assert.equal(ci.status, failed ? 'failed' : passed ? 'passed' : 'pending', 'CURRENT_MAIN_CI_OUTCOME_CHANGED');
     const gate = index.gates.find(entry => entry.id === 'current-main-preparation-ci');
     assert.ok(gate, 'CURRENT_MAIN_CI_GATE_REQUIRED');
-    assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [ci.status, 'current_baseline', ci.source, ['reconciliation']], 'CURRENT_MAIN_CI_GATE_CHANGED');
+    assert.deepEqual([gate.status, gate.applicability, gate.sourceSha, gate.evidence], [ci.status, resultingMain ? 'historical' : 'current_baseline', ci.source, ['reconciliation']], 'CURRENT_MAIN_CI_GATE_CHANGED');
     const afterSuccessors = reconciliation.recordedAsOf.kind === 'after_successor_merges';
     const afterClosing = reconciliation.recordedAsOf.kind === 'after_closing_pr_merge' || afterSuccessors;
     if (afterClosing) {
@@ -188,7 +190,7 @@ export function validateIndex(index, root = ROOT) {
     }
   }
   for (const entry of index.inclusionMatrix) {
-    const observed = entry.repository === 'SchoolPilot' ? reconciliation.schoolpilotPullRequests.find(pr => pr.number === entry.number) : reconciliation.classpilotPullRequest;
+    const observed = entry.repository === 'SchoolPilot' ? entry.number === resultingMain?.pullRequest.number ? resultingMain.pullRequest : reconciliation.schoolpilotPullRequests.find(pr => pr.number === entry.number) : reconciliation.classpilotPullRequest;
     assert.ok(observed && observed.number === entry.number, 'MERGE_OBSERVATION_MISSING');
     assert.deepEqual([entry.state, entry.headSha, entry.mergeSha, entry.mergedAtUtc], [observed.state, observed.headRefOid, observed.mergeCommit.oid, observed.mergedAt], 'MERGE_OBSERVATION_CHANGED');
   }
@@ -397,7 +399,7 @@ export function validateIndex(index, root = ROOT) {
     metadataOnly(current);
     assert.deepEqual([current.schemaVersion, current.kind, current.releaseReady, current.operationalAuthorizationReceipt, current.productionDeploymentExecuted], [1, 'release297_current_candidate_observation', false, false, false], 'CURRENT_OBSERVATION_IS_NOT_RELEASE_AUTHORITY');
     assert.ok(stamp(current.observedAtUtc) && Date.parse(current.observedAtUtc) <= Date.parse(index.observedAtUtc), 'CURRENT_OBSERVATION_TIME_REQUIRED');
-    assert.deepEqual([current.applicationReferenceA, current.extensionSource, current.extensionVersion, current.cleanSourceAtFreeze], [index.sources.schoolpilot.remoteMainObserved, index.sources.classpilot.remoteMainObserved, '2.9.7', true], 'CURRENT_FREEZE_SOURCE_CHANGED');
+    assert.deepEqual([current.applicationReferenceA, current.extensionSource, current.extensionVersion, current.cleanSourceAtFreeze], [resultingMain?.applicationReferenceA ?? index.sources.schoolpilot.remoteMainObserved, index.sources.classpilot.remoteMainObserved, '2.9.7', true], 'CURRENT_FREEZE_SOURCE_CHANGED');
     assert.deepEqual([index.sources.schoolpilot.frozenApplicationReference, index.sources.classpilot.frozenApplicationReference], [current.applicationReferenceA, current.extensionSource], 'CURRENT_FREEZE_REQUIRED');
     for (const inventory of [current.backendInventory, current.frontendInventory]) {
       assert.match(inventory.sha256 ?? '', hash, 'CURRENT_FREEZE_INVENTORY_REQUIRED');
@@ -417,6 +419,58 @@ export function validateIndex(index, root = ROOT) {
       assert.deepEqual([index.usageModes[name].observedValue, index.usageModes[name].status, index.usageModes[name].evidence], [value, 'passed', ['candidateRefresh']], 'CURRENT_USAGE_GATE_CHANGED');
     }
   }
+  if (resultingMain) {
+    metadataOnly(resultingMain);
+    assert.ok(index.evidence.candidateRefresh, 'RESULTING_MAIN_REQUIRES_FROZEN_REFERENCE');
+    assert.deepEqual([resultingMain.schemaVersion, resultingMain.kind, resultingMain.releaseReady, resultingMain.operationalAuthorization, resultingMain.productionDeploymentExecuted], [1, 'release297_resulting_main_observation', false, false, false], 'RESULTING_MAIN_IS_NOT_AUTHORITY');
+    assert.ok(stamp(resultingMain.observedAtUtc) && Date.parse(resultingMain.observedAtUtc) <= Date.parse(index.observedAtUtc), 'RESULTING_MAIN_OBSERVATION_TIME_REQUIRED');
+    const frozen = receipt('candidateRefresh'), source = resultingMain.resultingMainSourceB;
+    assert.match(source, sha, 'RESULTING_MAIN_SOURCE_REQUIRED');
+    assert.deepEqual([resultingMain.applicationReferenceA, resultingMain.remoteMainObserved, source], [frozen.applicationReferenceA, source, index.sources.schoolpilot.remoteMainObserved], 'RESULTING_MAIN_PAIR_CHANGED');
+    assert.equal(resultingMain.applicationReferenceA, reconciliation.schoolpilotRemoteMain, 'RESULTING_MAIN_APPLICATION_REFERENCE_CHANGED');
+    const pr = resultingMain.pullRequest;
+    assert.deepEqual([pr.number, pr.state, pr.mergeCommit?.oid], [624, 'MERGED', source], 'RESULTING_MAIN_MERGE_REQUIRED');
+    assert.match(pr.headRefOid, sha, 'RESULTING_MAIN_REVIEWED_HEAD_REQUIRED');
+    assert.ok(stamp(pr.mergedAt) && Date.parse(pr.mergedAt) <= Date.parse(resultingMain.observedAtUtc), 'RESULTING_MAIN_MERGE_TIME_REQUIRED');
+    const equivalence = resultingMain.applicationEquivalence;
+    assert.deepEqual([equivalence.cleanToolingSource, equivalence.reviewedPrTreeExactlyPreserved, equivalence.backendInputsEquivalent, equivalence.frontendInputsEquivalent, equivalence.reviewedAcceptanceToolCanonicalGitBytesUnchanged], [true, true, true, true, true], 'RESULTING_MAIN_APPLICATION_EQUIVALENCE_REQUIRED');
+    assert.deepEqual([equivalence.backend, equivalence.frontend], [frozen.backendInventory, frozen.frontendInventory], 'RESULTING_MAIN_APPLICATION_INVENTORY_CHANGED');
+    for (const value of Object.values(resultingMain.retainedInputs)) assert.match(value, hash, 'RESULTING_MAIN_RETAINED_PROOF_REQUIRED');
+    sameKeys(resultingMain.retainedInputs, ['ciSummarySha256', 'equivalenceSha256']);
+    const ci = resultingMain.currentMainCi;
+    assert.deepEqual([ci.source, ci.status], [source, 'passed'], 'RESULTING_MAIN_CI_REQUIRED');
+    assert.ok(Array.isArray(ci.workflowRuns) && ci.workflowRuns.length === 5, 'RESULTING_MAIN_WORKFLOW_PROVENANCE_REQUIRED');
+    const workflows = new Map();
+    for (const workflow of ci.workflowRuns) {
+      assert.ok(!workflows.has(workflow.role) && Number.isSafeInteger(workflow.id) && workflow.id > 0, 'RESULTING_MAIN_WORKFLOW_DUPLICATED');
+      const publisher = workflow.role === 'ImmutableReleaseImage';
+      assert.deepEqual([workflow.source, workflow.event, workflow.status, workflow.conclusion, workflow.url], [source, publisher ? 'workflow_run' : 'push', 'completed', publisher ? 'skipped' : 'success', `https://github.com/bzinkan/SchoolPilot/actions/runs/${workflow.id}`], 'RESULTING_MAIN_WORKFLOW_TRIGGER_CHANGED');
+      workflows.set(workflow.role, workflow);
+    }
+    assert.deepEqual([...workflows.keys()].sort(), ['CI', 'CodeQL', 'Gitleaks', 'ImmutableReleaseImage', 'Trivy'], 'RESULTING_MAIN_WORKFLOW_PROVENANCE_REQUIRED');
+    assert.ok(Array.isArray(ci.checks), 'RESULTING_MAIN_CHECKS_REQUIRED');
+    const names = new Set();
+    for (const check of ci.checks) {
+      assert.ok(text(check.name) && !names.has(check.name), 'RESULTING_MAIN_CHECK_DUPLICATED'); names.add(check.name);
+      const workflow = workflows.get(check.name === 'Build, scan, sign, and publish once' ? 'ImmutableReleaseImage' : check.name === 'Analyze (javascript-typescript)' ? 'CodeQL' : check.name === 'Scan for secrets' ? 'Gitleaks' : check.name === 'Scan Docker image' ? 'Trivy' : 'CI');
+      assert.ok(new RegExp(`^https://github\\.com/bzinkan/SchoolPilot/actions/runs/${workflow.id}/job/\\d+$`).test(check.url), 'RESULTING_MAIN_CHECK_URL_REQUIRED');
+      const skipped = ['Detect changed paths', 'Build, scan, sign, and publish once'].includes(check.name);
+      assert.deepEqual([check.source, check.status, check.conclusion], [source, 'completed', skipped ? 'skipped' : 'success'], 'RESULTING_MAIN_CHECK_OUTCOME_CHANGED');
+    }
+    assert.deepEqual([...names].sort(), [...REQUIRED_MAIN_CHECKS, 'Scan Docker image', 'Detect changed paths', 'Build, scan, sign, and publish once'].sort(), 'RESULTING_MAIN_REQUIRED_CHECK_MISSING');
+    assert.deepEqual(ci.jobCounts, { success: 19, skipped: 2, failed: 0 }, 'RESULTING_MAIN_CHECK_COUNTS_CHANGED');
+    assert.ok(Array.isArray(ci.emittedTestLanes) && ci.emittedTestLanes.length > 0 && text(ci.testSkipDistinction), 'RESULTING_MAIN_TEST_LANES_REQUIRED');
+    for (const lane of ci.emittedTestLanes) {
+      assert.ok(lane.workflow === 'CI' && names.has(lane.job) && text(lane.step), 'RESULTING_MAIN_TEST_LANE_PROVENANCE_REQUIRED');
+      for (const field of ['emittedOuterSuites', 'tests', 'passed', 'failed', 'cancelled', 'skipped', 'todo']) assert.ok(Number.isSafeInteger(lane[field]) && lane[field] >= 0, 'RESULTING_MAIN_TEST_COUNTS_REQUIRED');
+      assert.ok(lane.tests > 0 && lane.emittedOuterSuites > 0 && lane.tests === lane.passed + lane.failed + lane.cancelled + lane.skipped + lane.todo && lane.failed === 0 && lane.cancelled === 0, 'RESULTING_MAIN_TEST_COUNTS_CHANGED');
+    }
+    assert.deepEqual(resultingMain.branchCleanup, { localBranchRemoved: true, remoteBranchRemoved: true }, 'RESULTING_MAIN_BRANCH_CLEANUP_REQUIRED');
+    for (const id of ['resulting-tooling-main-ci', 'final-main-ci']) {
+      const gate = index.gates.find(entry => entry.id === id);
+      assert.deepEqual([gate?.status, gate?.applicability, gate?.sourceSha, gate?.evidence], ['passed', 'current_baseline', source, ['resultingMainObservation']], 'RESULTING_MAIN_CI_GATE_CHANGED');
+    }
+  }
   if (index.evidence.currentArtifactsScan) {
     const scan = receipt('currentArtifactsScan');
     metadataOnly(scan);
@@ -429,7 +483,7 @@ export function validateIndex(index, root = ROOT) {
       assert.deepEqual([fact.artifactRole, fact.source, fact.status], [role, source, status], 'CURRENT_SCAN_ARTIFACT_ROLE_CHANGED');
       const identity = { indexDigest: fact.localIndex, platformManifestDigest: fact.platform, configDigest: fact.config, archiveSha256: fact.archiveSha256 };
       const artifact = index.artifacts.find(entry => entry.id === artifactId);
-      assert.deepEqual([artifact?.status, artifact?.applicability, artifact?.sourceSha, artifact?.identity, artifact?.evidence], [status, status === 'passed' ? 'preparation_only' : 'current_baseline', source, identity, ['currentArtifactsScan']], 'CURRENT_SCAN_ARTIFACT_IDENTITY_CHANGED');
+      assert.deepEqual([artifact?.status, artifact?.applicability, artifact?.sourceSha, artifact?.identity, artifact?.evidence], [status, status === 'passed' ? 'preparation_only' : index.evidence.protectedFallbackObservation ? 'historical' : 'current_baseline', source, identity, ['currentArtifactsScan']], 'CURRENT_SCAN_ARTIFACT_IDENTITY_CHANGED');
       const gate = index.gates.find(entry => entry.id === gateId);
       assert.deepEqual([gate?.status, gate?.sourceSha, gate?.evidence], [status, source, ['currentArtifactsScan']], 'CURRENT_SCAN_GATE_CHANGED');
       assert.deepEqual(fact.exactOwnedScannerCleanup, { exitCode: 0, unforced: true, containerAbsentAfterRemoval: true }, 'CURRENT_SCAN_CLEANUP_REQUIRED');
@@ -472,6 +526,42 @@ export function validateIndex(index, root = ROOT) {
       assert.deepEqual([gate?.status, gate?.sourceSha, gate?.evidence], [status, current.source, ['currentExtensionApplicability']], 'CURRENT_EXTENSION_GATE_CHANGED');
     }
   }
+  if (index.evidence.protectedFallbackObservation) {
+    const observed = receipt('protectedFallbackObservation'), binding = receipt('protectedFallbackBinding'), sourceReview = receipt('protectedFallbackSourceReview');
+    metadataOnly(observed); metadataOnly(sourceReview);
+    assert.deepEqual([observed.schemaVersion, observed.kind, observed.releaseBindingId, observed.releaseReady, observed.operationalAuthorization, observed.productionMutations, observed.operationalPlansCreated, observed.registryArtifactPublished], [1, 'release297_cp_protected_fallback_observation', CP_PROTECTED_BINDING_ID, false, false, 0, false, false], 'PROTECTED_OBSERVATION_IS_NOT_AUTHORITY');
+    assert.ok(stamp(observed.observedAtUtc) && Date.parse(observed.observedAtUtc) <= Date.parse(index.observedAtUtc), 'PROTECTED_OBSERVATION_TIME_REQUIRED');
+    assert.deepEqual([binding.schemaVersion, binding.id, binding.status, binding.preparation.status, binding.successorSelection.status, binding.operationalAuthorization], [4, CP_PROTECTED_BINDING_ID, 'pending', 'pending', 'pending', false], 'PROTECTED_BINDING_MUST_FAIL_CLOSED');
+    assert.deepEqual([binding.applicationSource, binding.artifacts, binding.artifacts.fallback, binding.sourceDelta], [index.sources.schoolpilot.frozenApplicationReference, observed.artifactPair, CP_PROTECTED_ARTIFACT, CP_PROTECTED_SOURCE_REVIEW], 'PROTECTED_ARTIFACT_PAIR_CHANGED');
+    assert.deepEqual([observed.preparationStatus, observed.selectionStatus, observed.historicalC578AndF1ScansRemainFailed], ['pending', 'pending', true], 'PROTECTED_PREPARATION_CANNOT_SELECT');
+    assert.deepEqual([observed.sourceDelta.baseline, observed.sourceDelta.source, observed.sourceDelta.changedPathCount, observed.sourceDelta.patchSha256, observed.sourceDelta.backendInventory, observed.sourceDelta.unchangedLockfileDockerfileBuildMigrationsCapabilitiesMatcherAndFrontend], [CP_PROTECTED_SOURCE_REVIEW.baseline, CP_PROTECTED_SOURCE, 8, CP_PROTECTED_SOURCE_REVIEW.patchSha256, binding.fallbackInventory, true], 'PROTECTED_SOURCE_DELTA_CHANGED');
+    assert.deepEqual([sourceReview.sources.protectedFallback, sourceReview.sourceOnly, sourceReview.syntheticTests.artifactExecution, sourceReview.comparison.changedPathCount, sourceReview.comparison.rawGitDiffSha256], [CP_PROTECTED_SOURCE, true, false, 8, CP_PROTECTED_SOURCE_REVIEW.patchSha256], 'PROTECTED_SOURCE_REVIEW_CHANGED');
+    assert.deepEqual([observed.sourceChecks.sourceOnly, observed.sourceChecks.producerBoundary, observed.sourceChecks.independentBoundary, observed.sourceChecks.fullUnit], [true, { tests:175, passed:175, failed:0, skipped:0 }, { tests:366, passed:366, failed:0, skipped:0 }, { tests:1824, passed:1820, failed:0, skipped:4 }], 'PROTECTED_SOURCE_TEST_SCOPE_CHANGED');
+    assert.deepEqual([observed.credentialBoundary.retainedOnRollback, observed.credentialBoundary.actualCompiledImage, observed.credentialBoundary.tests, observed.credentialBoundary.passed, observed.credentialBoundary.failed, observed.credentialBoundary.skipped, observed.credentialBoundary.externalProviderRequests, observed.credentialBoundary.syntheticFixturesOnly], [true, true, 53, 53, 0, 0, 0, true], 'PROTECTED_COMPILED_TEST_SCOPE_CHANGED');
+    assert.deepEqual(observed.scan.counts, { UNKNOWN:0, LOW:0, MEDIUM:1, HIGH:0, CRITICAL:0 }, 'PROTECTED_RUNTIME_SCAN_COUNTS_CHANGED');
+    assert.deepEqual(observed.scan.findings, [{ id:'CVE-2026-97058', package:'sprintf-js', installedVersion:'1.0.3', severity:'MEDIUM' }], 'PROTECTED_RUNTIME_SCAN_FINDINGS_CHANGED');
+    assert.ok(observed.native.actualImageExecution && observed.native.unforcedCleanupPassed && observed.native.checks.length === 9 && observed.native.checks.every(check => check.passed === true), 'PROTECTED_NATIVE_CHECKS_REQUIRED');
+    const audit = observed.buildDependencyAudit;
+    assert.deepEqual([audit.status, audit.counts, audit.runtimeCounts, audit.advisory, audit.cve, audit.issue, audit.rawAuditSha256, audit.waiver], ['failed', {high:6,critical:0,moderate:7}, {high:0,critical:0,moderate:3}, 'GHSA-vfj7-8cjw-p6xm', 'CVE-2026-93687', 'https://github.com/bzinkan/SchoolPilot/issues/625', '14a28f84ba2fc64fb5d1804b3ef24aa1aae42712714364cb137fc4ec019dc6ba', false], 'PROTECTED_BUILD_AUDIT_CANNOT_BE_WAIVED');
+    assert.deepEqual([binding.buildDependencyAudit.status, binding.buildDependencyAudit.counts, binding.buildDependencyAudit.source, binding.buildDependencyAudit.audit.sha256], ['failed', audit.counts, CP_PROTECTED_SOURCE, audit.rawAuditSha256], 'PROTECTED_BINDING_AUDIT_CHANGED');
+    assert.deepEqual([observed.ordinaryRecovery.status, observed.ordinaryRecovery.sequence, observed.ordinaryRecovery.ordinaryMigrations, observed.ordinaryRecovery.retainedCompletedMigrations, observed.ordinaryRecovery.admissionCounts, observed.ordinaryRecovery.actualApiWorkerProcesses, observed.ordinaryRecovery.gracefulDrains, observed.ordinaryRecovery.namedSqlConnectionsAfterDrains, observed.ordinaryRecovery.providerAccessDisabled], ['passed', [binding.applicationSource,CP_PROTECTED_SOURCE,binding.applicationSource], [43,53], 53, [121,125,126,127,128,129], 8, 8, 0, true], 'PROTECTED_ORDINARY_RECOVERY_CHANGED');
+    assert.deepEqual([observed.restrictedRestoration.status, observed.restrictedRestoration.rounds, observed.restrictedRestoration.restrictedDdlAndRuntimeRoles, observed.restrictedRestoration.stableSerializationSecondRoundtrip, observed.restrictedRestoration.zeroNamedSqlConnections, observed.restrictedRestoration.unforcedCleanup, observed.restrictedRestoration.fullHistoricalDatabaseCommandsRepeated], ['passed',6,true,true,true,true,false], 'PROTECTED_RESTORATION_SCOPE_CHANGED');
+    for (const key of ['successorScan', 'screenshotRuntime', 'requestIpRateLimit', 'credentialBoundary', 'ordinaryRecovery', 'restrictedRestoration']) {
+      const evidenceId = 'protectedFallback' + key[0].toUpperCase() + key.slice(1), leaf = receipt(evidenceId), record = observed.leafEvidence[key];
+      assert.deepEqual([leaf.schemaVersion, leaf.kind, leaf.releaseBindingId, leaf.evidenceKind, leaf.artifactPair, leaf.passed, leaf.releaseReady, leaf.operationalAuthorization], [1, 'release_successor_preparation_evidence', CP_PROTECTED_BINDING_ID, key, observed.artifactPair, true, false, false], 'PROTECTED_LEAF_IDENTITY_CHANGED');
+      assert.ok(stamp(leaf.observedAtUtc) && Date.parse(leaf.observedAtUtc) >= Date.parse('2026-10-08T23:33:09Z') && Date.parse(leaf.observedAtUtc) <= Date.parse(index.observedAtUtc), 'PROTECTED_LEAF_TIME_REQUIRED');
+      assert.deepEqual([record.path, record.sha256, binding.preparation.evidence[key]], [index.evidence[evidenceId].path, index.evidence[evidenceId].gitBlobSha256, {status:'passed',path:record.path,sha256:record.sha256}], 'PROTECTED_LEAF_HASH_CHANGED');
+      for (const field of ['nativeResult', 'independentReview']) assert.match(leaf.retainedEvidence[field]?.sha256 ?? '', hash, 'PROTECTED_RETAINED_HASH_REQUIRED');
+      const gate = index.gates.find(entry => entry.id === 'cp-protected-' + key);
+      assert.deepEqual([gate?.status, gate?.applicability, gate?.sourceSha, gate?.evidence], ['passed', 'preparation_only', CP_PROTECTED_SOURCE, [evidenceId,'protectedFallbackObservation']], 'PROTECTED_LEAF_GATE_CHANGED');
+    }
+    const artifact = index.artifacts.find(entry => entry.id === 'fallback-cp-protected-artifact');
+    assert.deepEqual([artifact?.status, artifact?.applicability, artifact?.sourceSha, artifact?.identity], ['passed', 'preparation_only', CP_PROTECTED_SOURCE, { indexDigest:CP_PROTECTED_ARTIFACT.localIndex, platformManifestDigest:CP_PROTECTED_ARTIFACT.platform, configDigest:CP_PROTECTED_ARTIFACT.config, archiveSha256:CP_PROTECTED_ARTIFACT.archiveSha256 }], 'PROTECTED_ARTIFACT_GATE_CHANGED');
+    for (const [id, status] of [['cp-protected-build-dependency-audit','failed'], ['cp-protected-preparation','pending'], ['cp-protected-selection','pending']]) {
+      const gate = index.gates.find(entry => entry.id === id);
+      assert.deepEqual([gate?.status, gate?.sourceSha], [status, CP_PROTECTED_SOURCE], 'PROTECTED_SECURITY_AND_SELECTION_GATES_REQUIRED');
+    }
+  }
   return index;
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
@@ -481,7 +571,9 @@ export function renderStatus(index, root = ROOT) {
   const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', refreshed ? '**DeSales: 133 clients; both new Usage modes must be off. The exact application/extension sources are frozen for validation; artifact and runtime acceptance remain separately gated. This record is not a controller authorization receipt.**' : '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
   if (index.gates.find(entry => entry.id === 'fallback-scan-current')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**', '');
   if (index.evidence.successorPreparationObservation) lines.splice(7, 0, '**The dependency-only C578 successor passed historical bounded security/native recovery preparation for its exact earlier pair. Current security/applicability checks, exact-artifact selection and original release acceptance remain separate.** See the [successor review packet](RELEASE_297_FALLBACK_SUCCESSOR_REVIEW.md).', '');
-  if (index.gates.find(entry => entry.id === 'fallback-successor-scan-fresh')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the latest scan of unchanged F failed the zero High/Critical criterion. Its earlier passing preparation remains historical; stop current A/F recovery and release acceptance until a concrete reviewed security correction and fresh artifact evidence pass.**', '');
+  if (index.gates.find(entry => entry.id === 'fallback-successor-scan-fresh')?.status === 'failed') lines.splice(7, 0, '**The latest scan of unchanged F failed the zero High/Critical criterion. That A/F1 pair cannot pass release acceptance; its earlier passing preparation remains historical and completed local A/F2 preparation is recorded separately. Preserve the failed F1 artifact and scan.**', '');
+  if (index.evidence.resultingMainObservation) lines.splice(7, 0, `**Preparation PR #624 is merged at ${short(index.sources.schoolpilot.remoteMainObserved)}. Exact resulting-main CI passed and real Git inventories prove application inputs remain equal to frozen A ${short(index.sources.schoolpilot.frozenApplicationReference)}.** This dated observation does not transfer evidence to changed application inputs.`, '');
+  if (index.evidence.protectedFallbackObservation) lines.splice(7, 0, '**Protected fallback F2 retains CP-AI protection and passed the exact runtime scan, nine native checks, 53 compiled-provider fixtures, actual A→F2→A recovery and six restricted restoration rounds. Overall preparation remains pending: its full development/build audit failed with six High findings in [issue #625](https://github.com/bzinkan/SchoolPilot/issues/625). Selection, original acceptance and deployment remain held.** See the [protected fallback packet](RELEASE_297_CP_PROTECTED_FALLBACK.md); historical C578/F1 failures remain preserved.', '');
   if (index.evidence.cpAiBoundaryPreparation) {
     const cp = JSON.parse(readFileSync(path.join(root, index.evidence.cpAiBoundaryPreparation.path), 'utf8'));
     const table = lines.findIndex(line => line === '| Source | Current main observed | Historical tested application | Frozen successor |');
