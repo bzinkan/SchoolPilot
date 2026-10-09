@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-09T00:07:45.972Z",
+  "observedAtUtc": "2026-10-09T00:12:19.182Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -1530,7 +1530,7 @@
       "applicability": "candidate_pending",
       "sourceSha": "6259e768553e55346ba14a6453340772198a3d6b",
       "rationale": "All six exact-source/artifact preparation leaves passed independently, including actual ordinary and six-round restricted recovery. Full development/build audit remains failed6High; complete preparation must reject.",
-      "observedAtUtc": "2026-10-08T23:53:06.024Z",
+      "observedAtUtc": "2026-10-09T00:12:19.182Z",
       "evidence": [
         "protectedFallbackObservation",
         "protectedFallbackBinding"
@@ -2062,7 +2062,7 @@
     },
     "protectedFallbackObservation": {
       "path": "docs/releases/release297/cp-protected-fallback-observation-20261008.json",
-      "gitBlobSha256": "78754adade0de9746feacf71be36ba11fda01d091b860a9d45db22ccad0dd70b"
+      "gitBlobSha256": "cd1283d5d40eddd7847ed63f4f24552570152de003e05bc2e9575a7823299b5d"
     },
     "protectedFallbackBinding": {
       "path": "docs/release-bindings/release-297-current-school-cp-protected-fallback-v4.json",

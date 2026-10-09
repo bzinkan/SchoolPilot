@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "release297_cp_protected_fallback_observation",
-  "observedAtUtc": "2026-10-09T00:05:34.121Z",
+  "observedAtUtc": "2026-10-09T00:12:19.182Z",
   "releaseBindingId": "release-297-current-school-cp-protected-fallback-v4",
   "artifactPair": {
     "serving-anchor": {
@@ -252,5 +252,19 @@
   "productionMutations": 0,
   "releaseReady": false,
   "operationalAuthorization": false,
-  "recoveryLeafReviewSealingSha256": "202fce5ee04655d22674821555b05daba88e1d3037117498a0cad612f5879414"
+  "recoveryLeafReviewSealingSha256": "202fce5ee04655d22674821555b05daba88e1d3037117498a0cad612f5879414",
+  "chronology": {
+    "initialArtifactObservedAtUtc": "2026-10-08T23:53:06.024Z",
+    "initialPassedLeafKinds": [
+      "successorScan",
+      "screenshotRuntime",
+      "requestIpRateLimit",
+      "credentialBoundary"
+    ],
+    "initialRecoveryLeaves": "pending",
+    "restrictedExecutionCompletedAtUtc": "2026-10-08T23:57:38.513Z",
+    "independentRecoveryLeafReviewObservedAtUtc": "2026-10-09T00:02:58.412Z",
+    "sixLeafRecordUpdatedAtUtc": "2026-10-09T00:05:34.121Z",
+    "correctedAggregateObservedAtUtc": "2026-10-09T00:12:19.182Z"
+  }
 }
