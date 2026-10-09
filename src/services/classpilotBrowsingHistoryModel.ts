@@ -3,7 +3,16 @@ import { addLocalDays, localDateInTimeZone, localDateStartUtc } from "../util/sc
 
 export type HistoryWindow={start:Date;end:Date};
 export const HISTORY_MAX_GAP_SECONDS=60;
+export type HistoryView="all"|"pages";
+// These are missing-page labels emitted by clients or used by the history UI,
+// not evidence of a page visit. A nonblank URL always makes a row page-bearing.
+export const HISTORY_EMPTY_PAGE_TITLES=["","unknown","page details unavailable","no page details","browser observation"] as const;
 export function historyError(code:string,message:string,status=400){return Object.assign(new Error(message),{code,status,expose:true});}
+export function resolveHistoryView(value:unknown):HistoryView{
+  if(value===undefined)return "all";
+  if(value==="all"||value==="pages")return value;
+  throw historyError("HISTORY_VIEW_INVALID","Choose pages or all for the browsing history view.");
+}
 export function historyDate(value:unknown,fallback:string):string{
   if(value===undefined)return fallback;
   if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value)||!Number.isFinite(Date.parse(value))||new Date(value).toISOString().slice(0,10)!==value)throw historyError("HISTORY_DATE_INVALID","Use valid school-local dates in YYYY-MM-DD format.");

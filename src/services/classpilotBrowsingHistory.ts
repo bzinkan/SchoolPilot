@@ -7,11 +7,12 @@ import { classpilotSessionUsage, dailyUsage } from "../schema/classpilot.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
 import { addLocalDays, localDateStartUtc } from "../util/schoolTime.js";
 import { getClasspilotStudentHistoryAuthority, type ClasspilotStudentDataRole } from "./classpilotStudentData.js";
-import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyError, historyScopeHash, readHistoryCursor, resolveHistoryDates, type HistoryWindow } from "./classpilotBrowsingHistoryModel.js";
+import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, HISTORY_EMPTY_PAGE_TITLES, historyAggregateCovered, historyError, historyScopeHash, readHistoryCursor, resolveHistoryDates, resolveHistoryView, type HistoryWindow } from "./classpilotBrowsingHistoryModel.js";
 import { normalizeContentCategory } from "./classpilotContentCategories.js";
 
-export type BrowsingHistoryRequest={schoolId:string;studentId:string;actorId:string;role:ClasspilotStudentDataRole;startDate?:unknown;endDate?:unknown;limit?:unknown;cursor?:unknown;now?:Date};
+export type BrowsingHistoryRequest={schoolId:string;studentId:string;actorId:string;role:ClasspilotStudentDataRole;startDate?:unknown;endDate?:unknown;limit?:unknown;cursor?:unknown;view?:unknown;now?:Date};
 async function historyContext(input:BrowsingHistoryRequest){
+  const view=resolveHistoryView(input.view);
   const now=input.now||new Date();
   const [student]=await db.select({id:students.id}).from(students).where(and(eq(students.schoolId,input.schoolId),eq(students.id,input.studentId))).limit(1);
   if(!student)throw historyError("HISTORY_DENIED","This student's browsing history is not available to you.",404);
@@ -20,7 +21,9 @@ async function historyContext(input:BrowsingHistoryRequest){
   const retentionDays=parseClasspilotRetentionDays(policy?.retentionHours);const retentionCutoff=new Date(now.getTime()-retentionDays*86400000);
   const cursorDates=readHistoryCursor(input.cursor,now);
   const dates=resolveHistoryDates({startDate:input.startDate??cursorDates?.startDate,endDate:input.endDate??cursorDates?.endDate,timeZone:school?.timeZone||"America/New_York",now});
-  const scope=historyScopeHash([input.schoolId,input.studentId,input.actorId,input.role,dates.startDate,dates.endDate]);
+  // Preserve existing all-observation cursors while binding filtered cursors to
+  // their view. Switching views must restart pagination.
+  const scope=historyScopeHash([input.schoolId,input.studentId,input.actorId,input.role,dates.startDate,dates.endDate,...(view==="pages"?[view]:[])]);
   const cursor=decodeHistoryCursor(input.cursor,scope,now);const anchor=cursor?new Date(cursor.anchor):now;
   const authority=input.role==="teacher"?await getClasspilotStudentHistoryAuthority({...input,now,retentionCutoff}):null;
   if(authority&&!authority.windows.length)throw historyError("HISTORY_DENIED","You can view browsing only during classes or supervision you actually taught.",403);
@@ -28,7 +31,7 @@ async function historyContext(input:BrowsingHistoryRequest){
   const start=new Date(Math.max(dates.start.getTime(),retentionCutoff.getTime()));
   const windows=clipHistoryWindows(authority?.windows||[{start,end:requestedEnd}],start,requestedEnd);
   if(authority&&!expired&&!windows.length)throw historyError("HISTORY_DENIED","You did not supervise this student during the selected dates.",403);
-  return {now,dates,scope,cursor,anchor,authority,windows,expired,retentionDays,retentionCutoff,meta:{studentId:input.studentId,timeZone:dates.timeZone,startDate:dates.startDate,endDate:dates.endDate,today:dates.today,retentionDays,retainedFrom:retentionCutoff.toISOString(),partiallyExpired:dates.start<retentionCutoff&&!expired,scope:input.role==="teacher"?"supervised_intervals":"school",asOf:anchor.toISOString()}};
+  return {now,dates,scope,cursor,anchor,authority,windows,expired,retentionDays,retentionCutoff,view,meta:{studentId:input.studentId,timeZone:dates.timeZone,startDate:dates.startDate,endDate:dates.endDate,today:dates.today,retentionDays,retainedFrom:retentionCutoff.toISOString(),partiallyExpired:dates.start<retentionCutoff&&!expired,scope:input.role==="teacher"?"supervised_intervals":"school",asOf:anchor.toISOString(),view}};
 }
 function windowValues(windows:HistoryWindow[]){return sql.join(windows.map(row=>sql`(${row.start.toISOString()}::timestamp,${row.end.toISOString()}::timestamp)`),sql`, `);}
 
@@ -39,6 +42,14 @@ export async function getStudentBrowsingHistory(input:BrowsingHistoryRequest){
   const limit=Math.min(500,requested);const empty={...context.meta,state:context.expired?"expired":"empty",entries:[],nextCursor:null,hasMore:false,estimatedDurationNote:"Durations are estimates between consecutive observations up to 60 seconds apart; gaps and the last observation add no time."};
   if(context.expired||!context.windows.length)return empty;
   const cursorPredicate=context.cursor?sql`AND (h.timestamp,h.id)<(${context.cursor.timestamp}::timestamp,${context.cursor.id})`:sql``;
+  // Apply before LIMIT so a long run of presence-only heartbeats cannot hide
+  // older page observations behind empty result pages.
+  const pagePredicate=context.view==="pages"?sql`AND (
+    h.active_tab_url ~ '[^[:space:]]'
+    OR lower(regexp_replace(coalesce(h.active_tab_title,''),'^[[:space:]]+|[[:space:]]+$','','g')) NOT IN (${sql.join(HISTORY_EMPTY_PAGE_TITLES.map(title=>sql`${title}`),sql`,`)})
+  )`:sql``;
+  // Duration boundaries deliberately use every raw observation below, including
+  // hidden rows without page details; never credit an unknown interval to a page.
   const rows=await db.execute<{id:string;timestamp:string;active_tab_url:string|null;active_tab_title:string;ai_category:string|null;content_category:string|null;teacher_intent_source:string|null;screen_locked:boolean|null;camera_active:boolean|null;authority_end:Date;next_observed_at:Date|null}>(sql`
     WITH authorized_windows(start_at,end_at) AS (VALUES ${windowValues(context.windows)}), candidate AS (
       SELECT h.id,h.device_id,h.timestamp,h.active_tab_url,h.active_tab_title,h.ai_category,h.content_category,h.teacher_intent_source,h.screen_locked,h.camera_active,
@@ -46,7 +57,7 @@ export async function getStudentBrowsingHistory(input:BrowsingHistoryRequest){
       FROM heartbeats h WHERE h.school_id=${input.schoolId} AND h.student_id=${input.studentId}
         AND h.timestamp>=${context.windows[0]!.start.toISOString()}::timestamp AND h.timestamp<${context.windows.at(-1)!.end.toISOString()}::timestamp
         AND EXISTS(SELECT 1 FROM authorized_windows w WHERE h.timestamp>=w.start_at AND h.timestamp<w.end_at)
-        ${cursorPredicate} ORDER BY h.timestamp DESC,h.id DESC LIMIT ${limit+1}
+        ${cursorPredicate} ${pagePredicate} ORDER BY h.timestamp DESC,h.id DESC LIMIT ${limit+1}
     )
     SELECT h.id,to_char(h.timestamp,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS timestamp,h.active_tab_url,h.active_tab_title,h.ai_category,h.content_category,h.teacher_intent_source,h.screen_locked,h.camera_active,h.authority_end AT TIME ZONE 'UTC' AS authority_end,
       next_observation.timestamp AT TIME ZONE 'UTC' AS next_observed_at

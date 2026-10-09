@@ -42,6 +42,8 @@ describe("Student browsing history authorization and pagination",()=>{
   it("uses frozen historical staff after reassignment and removes another teacher's supervision",async()=>{
     const owner=await scoped(()=>history.getStudentBrowsingHistory({...request,role:"teacher"}));assert.deepEqual(owner.entries.map(row=>row.id),["after","two","one"].map(suffix=>studentId+suffix));
     const coverage=await scoped(()=>history.getStudentBrowsingHistory({...request,role:"teacher",actorId:otherTeacherId}));assert.deepEqual(coverage.entries.map(row=>row.id),[studentId+"covered"]);
+    const ownerPages=await scoped(()=>history.getStudentBrowsingHistory({...request,role:"teacher",view:"pages"}));assert.deepEqual(ownerPages.entries.map(row=>row.id),owner.entries.map(row=>row.id));
+    const coveragePages=await scoped(()=>history.getStudentBrowsingHistory({...request,role:"teacher",actorId:otherTeacherId,view:"pages"}));assert.deepEqual(coveragePages.entries.map(row=>row.id),coverage.entries.map(row=>row.id));
     const {sql}=await import("drizzle-orm");await scoped(()=>database.execute(sql`UPDATE teaching_sessions SET session_mode='scheduled_report' WHERE id=${sessionId}`));
     await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...request,role:"teacher"})),{code:"HISTORY_DENIED"});
     await scoped(()=>database.execute(sql`UPDATE teaching_sessions SET session_mode='live' WHERE id=${sessionId}`));
@@ -50,8 +52,59 @@ describe("Student browsing history authorization and pagination",()=>{
     const expired=await scoped(()=>history.getStudentBrowsingHistory({...request,startDate:"2026-01-01",endDate:"2026-01-01"}));assert.equal(expired.state,"expired");
     const empty=await scoped(()=>history.getStudentBrowsingHistory({...request,startDate:"2026-08-31",endDate:"2026-08-31"}));assert.equal(empty.state,"empty");
     await assert.rejects(tenant({schoolId:otherSchoolId},()=>history.getStudentBrowsingHistory({...request,schoolId:otherSchoolId})),{code:"HISTORY_DENIED"});
+    await assert.rejects(tenant({schoolId:otherSchoolId},()=>history.getStudentBrowsingHistory({...request,schoolId:otherSchoolId,view:"pages"})),{code:"HISTORY_DENIED"});
     const admin=await scoped(()=>history.getStudentBrowsingDomains(request));assert.equal(admin.days[0]?.domains[0]?.seconds,90);
     const teacher=await scoped(()=>history.getStudentBrowsingDomains({...request,role:"teacher"}));assert.deepEqual(teacher.days,[]);assert.equal(teacher.state,"unavailable");
+  });
+  it("filters before pagination without losing title-only pages or extending durations across unknown observations",async()=>{
+    const {sql}=await import("drizzle-orm");const pageStudentId=randomUUID();
+    const pageRequest={...request,studentId:pageStudentId};
+    const observations:Array<{id:string;at:string;title:string;url:string|null}>=[
+      {id:"first",at:"13:00:00.123456",title:"First page",url:"https://first.example.edu"},
+      {id:"unknown-gap",at:"13:00:10.123456",title:"Unknown",url:null},
+      {id:"second",at:"13:00:50.123456",title:"Second page",url:"https://second.example.edu"},
+      {id:"signing-in",at:"13:01:00",title:"Signing in",url:null},
+      {id:"assigned",at:"13:01:05",title:"Assigned page",url:null},
+      {id:"internal",at:"13:01:10",title:"Unknown",url:"chrome://newtab/"},
+      {id:"whitespace",at:"13:01:20",title:"  Unknown \t",url:" \t\n"},
+      {id:"untitled",at:"13:01:30",title:"Unknown",url:"https://untitled.example.edu"},
+      {id:"blank-title",at:"13:01:40",title:" \t\n",url:null},
+      {id:"no-details",at:"13:01:50",title:" No Page Details ",url:null},
+      {id:"unavailable",at:"13:02:00",title:"PAGE DETAILS UNAVAILABLE",url:null},
+      {id:"generic",at:"13:02:10",title:"Browser observation",url:null},
+      {id:"empty-title",at:"13:02:20",title:"",url:null},
+    ];
+    try{
+      await scoped(async()=>{
+        await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name) VALUES(${pageStudentId},${schoolId},'Page','Fixture')`);
+        for(const row of observations)await database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,active_tab_url,timestamp) VALUES(${pageStudentId+row.id},${schoolId},${pageStudentId},'page-fixture-device',${row.title},${row.url},${'2026-09-01 '+row.at}::timestamp)`);
+        await database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,timestamp) SELECT ${pageStudentId}||'presence-'||n,${schoolId},${pageStudentId},'page-fixture-device','Unknown','2026-09-01 14:00:00'::timestamp+n*interval '10 seconds' FROM generate_series(1,125) n`);
+      });
+      const raw=await scoped(()=>history.getStudentBrowsingHistory(pageRequest));
+      assert.equal(raw.view,"all");assert.equal(raw.entries.length,100);assert(raw.hasMore);assert(raw.entries.every(row=>row.activeTabUrl===null&&row.activeTabTitle==="Unknown"));
+      const explicitAll=await scoped(()=>history.getStudentBrowsingHistory({...pageRequest,view:"all"}));assert.deepEqual(explicitAll.entries,raw.entries);
+      let cursor:string|null=null;const seen:string[]=[];let firstCursor:string|null=null;let firstEstimate:number|undefined;let pages=0;
+      do{
+        const page=await scoped(()=>history.getStudentBrowsingHistory({...pageRequest,view:"pages",limit:2,...(cursor?{cursor}:{})}));
+        assert.equal(page.view,"pages");assert.equal(page.state,"available");assert(page.entries.every(row=>!("deviceId" in row)));
+        seen.push(...page.entries.map(row=>row.id));
+        firstEstimate=page.entries.find(row=>row.id===pageStudentId+"first")?.estimatedSeconds??firstEstimate;
+        cursor=page.nextCursor;if(!pages)firstCursor=cursor;pages++;assert(pages<5);
+      }while(cursor);
+      assert.deepEqual(seen,["untitled","internal","assigned","signing-in","second","first"].map(id=>pageStudentId+id));
+      assert.equal(firstEstimate,10,"The hidden unknown heartbeat ends the previous page's estimate");
+      assert(firstCursor);assert(raw.nextCursor);
+      await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...pageRequest,view:"all",cursor:firstCursor})),{code:"HISTORY_CURSOR_INVALID"});
+      await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...pageRequest,view:"pages",cursor:raw.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+      const {encodeHistoryCursor,historyScopeHash}=await import("../src/services/classpilotBrowsingHistoryModel.js");
+      const legacyCursor=encodeHistoryCursor({timestamp:raw.entries.at(-1)!.timestamp,id:raw.entries.at(-1)!.id,anchor:raw.asOf,scope:historyScopeHash([schoolId,pageStudentId,teacherId,"admin",request.startDate,request.endDate]),startDate:request.startDate,endDate:request.endDate});
+      const continued=await scoped(()=>history.getStudentBrowsingHistory({...pageRequest,view:"all",cursor:legacyCursor}));assert(continued.entries.length>0);
+    }finally{
+      await scoped(async()=>{
+        await database.execute(sql`DELETE FROM heartbeats WHERE school_id=${schoolId} AND student_id=${pageStudentId}`);
+        await database.execute(sql`DELETE FROM students WHERE school_id=${schoolId} AND id=${pageStudentId}`);
+      });
+    }
   });
   it("never releases whole-session domains across delegated gaps, late captures or clipped retention",async()=>{
     const {sql}=await import("drizzle-orm");
