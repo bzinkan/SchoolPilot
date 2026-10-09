@@ -4633,9 +4633,18 @@ test('tile lock: current-tab Focus and tile Stop Focus synchronize with Manage T
 
   const focused = { ...row, focus: { state: 'active', assignmentId: 'tile-focus' },
     classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'tile-focus' } } } };
+  const readsBeforeEarlyAck = reads.length;
   focusConfirmed = true;
-  await refreshFocusStudent(fixture, focused);
   await page.clock.runFor(1000);
+  await waitUntil(() => reads.length > readsBeforeEarlyAck, 'The device ACK must arrive before lifecycle telemetry in this regression');
+  await waitUntil(async () => await lock.getAttribute('aria-label') === 'Stop Focus',
+    'An early completed Focus ACK retains cleanup instead of reopening current-tab Focus');
+  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'device ACK alone cannot confirm the corresponding Focus lifecycle');
+  await page.getByTestId(`lock-spinner-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
+  assert.equal(posts.length, 1, 'the ACK-to-telemetry gap never automatically starts a duplicate Focus');
+
+  await refreshFocusStudent(fixture, focused);
   await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'The matching device result ends the pending tile operation');
   assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
   assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
@@ -4668,11 +4677,27 @@ test('tile lock: Manage Tabs Focus replaces an older assignment without letting 
   await page.getByTestId('button-focus-tab-opaque-second').click();
   await waitUntil(() => posts.length === 1, 'Manage Tabs must post the explicitly selected duplicate tab');
   assert.deepEqual(posts[0].commandPayload, { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-second', observedRevision: 7 }] });
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
+  await page.getByTestId('button-close-tabs-dialog').click();
+  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
+  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'Manage Tabs HTTP acceptance immediately projects pending Focus onto the tile');
+  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
+  await page.getByTestId(`lock-spinner-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
+
+  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+    command: { id: 'focus-1', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
+  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'an early Manage Tabs ACK cannot replace missing lifecycle telemetry');
+  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
+  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
+
   await refreshFocusStudent(fixture, { ...row, focus: { state: 'active', assignmentId: 'older-focus' },
     classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'replacement-focus' } } } });
   await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus requested; awaiting confirmation', { exact: true }).waitFor();
   await page.getByTestId('button-close-tabs-dialog').click();
-  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
   assert.equal(await lock.getAttribute('aria-busy'), 'true');
   assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
 
@@ -4683,6 +4708,46 @@ test('tile lock: Manage Tabs Focus replaces an older assignment without letting 
   assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
   assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
   assert.equal(posts.length, 1, 'status reconciliation never automatically chooses another tab');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('tile lock: a late Manage Tabs HTTP response cannot restore ended Focus or revive its pending state', { timeout: 60_000 }, async context => {
+  const fixture = await focusBrowserFixture(context);
+  const { page, harness, row, posts } = fixture;
+  let finishResponse;
+  const responseGate = new Promise(resolve => { finishResponse = resolve; });
+  context.after(() => finishResponse());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON();
+    posts.push(body);
+    await responseGate;
+    await route.fulfill({ json: { command: { id: 'focus-1', ...body, schoolId: SCHOOL_ID,
+      targets: [{ studentId: STUDENT_ID, status: 'received' }] } } });
+  });
+  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await waitUntil(() => posts.length === 1, 'Hold the original Focus HTTP response while authoritative lifecycle changes');
+  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
+
+  await refreshFocusStudent(fixture, { ...row, focus: { state: 'active', assignmentId: 'brief-focus' } });
+  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).waitFor();
+  assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
+  await refreshFocusStudent(fixture, { ...row, focus: { state: 'inactive' } });
+  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('No Focus confirmed', { exact: true }).waitFor();
+  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked',
+    'observed inactive lifecycle retires the earlier provisional Focus even without a desired snapshot');
+
+  finishResponse();
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
+  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked', 'late HTTP acceptance cannot resurrect ended Focus');
+  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false',
+    'late HTTP acceptance cannot revive an already retired lifecycle wait', 5000);
+  assert.equal(await lock.getAttribute('aria-label'), 'Focus current tab');
+  assert.equal(await page.getByTestId(`lock-spinner-${STUDENT_ID}`).count(), 0);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.clock.runFor(1000);
+  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked');
+  assert.equal(await lock.getAttribute('aria-busy'), 'false');
+  assert.equal(posts.length, 1, 'late response handling cannot create a replacement Focus');
   assert.deepEqual(harness.pageErrors, []);
 });
 

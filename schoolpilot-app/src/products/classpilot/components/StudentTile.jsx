@@ -633,7 +633,7 @@ function StudentTile({
               const action = name === 'waypoint' ? 'clear-waypoint' : startingFocus ? 'focus-current-tab' : 'stop-focus';
               const label = name === 'waypoint' ? 'Clear Waypoint' : startingFocus ? 'Focus current tab' : 'Stop Focus';
               const disabled = !onLockAction || commandPending || (startingFocus
-                ? interactionsDisabled || !canFocusTab || !lockControl.focusTarget.enabled || lockControl.busy
+                ? interactionsDisabled || !canFocusTab || !lockControl.focusTarget.enabled || lockControl.busy || lockControl.focus.clearable
                 : name === 'waypoint'
                   ? lockControl.clearWaypointDisabled || !lockControl.waypoint.clearable
                   : lockControl.stopFocusDisabled || !lockControl.focus.clearable);

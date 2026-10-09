@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusTabCapability, focusPayloadForStudents, focusStatusLabel, focusCommandFeedback }
+import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusTabCapability, focusPayloadForStudents, focusStatusLabel, focusCommandFeedback, tileFocusLifecycleObserved }
   from '../src/products/classpilot/lib/focusControls.js';
 
 const row = (studentId, tabRef) => ({ studentId, tabRef, observedRevision: 7,
@@ -349,5 +349,85 @@ test('requested and sent cleanup commands remain awaiting after timeout and conv
     const focusConverged = deriveTileLockControl(tileStudent({ focus: { state: 'inactive' },
       classroomState: desired(undefined, false) }), { lockOperation: focusOperation });
     assert.equal(focusConverged.pending, false, status);
+  }
+});
+
+test('completed start remains provisionally locked and clearable until newer lifecycle telemetry arrives', () => {
+  const lockOperation = { pending: false, action: 'focus-current-tab', awaitingFocusLifecycle: true,
+    focusAssignmentId: null, focusControlRevision: 4,
+    outcomes: { focus: { status: 'completed', commandType: 'focus-tab' } } };
+  const initial = tileStudent({ focus: { state: 'inactive' },
+    classroomState: { revision: 4, ...desired(undefined, false) } });
+  assert.equal(tileFocusLifecycleObserved(initial, lockOperation), false);
+  const awaiting = deriveTileLockControl(initial, { lockOperation });
+  assert.equal(awaiting.locked, true);
+  assert.equal(awaiting.focus.confirmed, false);
+  assert.equal(awaiting.focus.clearable, true);
+  assert.equal(awaiting.pending, true);
+  assert.equal(awaiting.action, 'stop-focus');
+  assert.equal(awaiting.disabled, false, 'confirmed start remains removable while telemetry catches up');
+  assert.equal(awaiting.statusLabel, 'Focus requested; awaiting confirmation');
+
+  for (const [state, reason, expected] of [
+    ['active', undefined, 'Focus confirmed'],
+    ['suspended', 'authentication', 'Focus paused for sign-in'],
+    ['invalidated', 'focus_tab_closed', 'Focus ended: tab closed'],
+  ]) {
+    const current = activeFocusStudent({ focus: { state, assignmentId: 'current-focus', reason },
+      classroomState: { revision: 5, ...desired({ active: true, assignmentId: 'current-focus' }) } });
+    assert.equal(tileFocusLifecycleObserved(current, lockOperation), true, state);
+    const observed = deriveTileLockControl(current, { lockOperation });
+    assert.equal(observed.pending, false, state);
+    assert.equal(observed.statusLabel, expected, state);
+  }
+  const inactive = tileStudent({ focus: { state: 'inactive' },
+    classroomState: { revision: 6, ...desired(undefined, false) } });
+  assert.equal(tileFocusLifecycleObserved(inactive, lockOperation), true, 'newer clear supersedes an applied start');
+  const retired = deriveTileLockControl(inactive, { lockOperation: { ...lockOperation, awaitingFocusLifecycle: false } });
+  assert.equal(retired.pending, false);
+  assert.equal(retired.locked, false);
+  assert.equal(retired.action, 'focus-current-tab');
+});
+
+test('start lifecycle observation rejects old assignments and revision guesses while admitting coverage reports', () => {
+  const operation = { action: 'focus-current-tab', awaitingFocusLifecycle: true,
+    focusAssignmentId: 'old-focus', focusControlRevision: 4 };
+  assert.equal(tileFocusLifecycleObserved(activeFocusStudent({
+    focus: { state: 'active', assignmentId: 'old-focus' },
+  }), operation), false);
+  assert.equal(tileFocusLifecycleObserved(activeFocusStudent({
+    focus: { state: 'active', assignmentId: 'other-focus' },
+  }), operation), false, 'reported lifecycle must match the desired assignment');
+  assert.equal(tileFocusLifecycleObserved(tileStudent({
+    focus: { state: 'active', assignmentId: 'new-coverage-focus' }, classroomState: undefined,
+  }), operation), true);
+  for (const revision of [undefined, 0, 4, '5', 5.5]) {
+    assert.equal(tileFocusLifecycleObserved(tileStudent({ focus: { state: 'inactive' },
+      classroomState: { revision, ...desired({ active: false }) } }), operation), false, String(revision));
+  }
+  assert.equal(tileFocusLifecycleObserved(tileStudent({ focus: { state: 'inactive' },
+    classroomState: { revision: 5, ...desired({ active: false }) } }), operation), true);
+  const staleEnded = deriveTileLockControl(activeFocusStudent({
+    focus: { state: 'invalidated', assignmentId: 'old-focus', reason: 'focus_tab_closed' },
+    classroomState: { revision: 4, ...desired(undefined) },
+  }), { lockOperation: operation });
+  assert.equal(staleEnded.focus.status, 'requested', 'previous ended assignment must not erase the new provisional request');
+});
+
+test('retired lifecycle bridge never revives a received start after authoritative reconciliation', () => {
+  const student = tileStudent({ focus: { state: 'inactive' }, classroomState: undefined });
+  for (const focusAssignmentId of [null, 'old-focus']) {
+    for (const status of ['received', 'sent', 'requested']) {
+      const control = deriveTileLockControl(student, { lockOperation: {
+        pending: false, action: 'focus-current-tab', awaitingFocusLifecycle: false,
+        focusAssignmentId, focusControlRevision: 4,
+        outcomes: { focus: { status, commandType: 'focus-tab' } },
+      } });
+      assert.equal(control.focus.status, 'none', `${focusAssignmentId}: ${status}`);
+      assert.equal(control.locked, false, `${focusAssignmentId}: ${status}`);
+      assert.equal(control.pending, false, `${focusAssignmentId}: ${status}`);
+      assert.equal(control.statusLabel, 'No Focus or Waypoint');
+      assert.equal(control.action, 'focus-current-tab');
+    }
   }
 });

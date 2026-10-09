@@ -3,6 +3,14 @@ import { classroomCommands, waitForClassroomTargets } from './classroomActions.j
 const TERMINAL = new Set(['completed', 'failed', 'unavailable', 'expired']);
 const ACTIONS = new Set(['focus-current-tab', 'stop-focus', 'clear-waypoint', 'stop-both']);
 
+export function tileLockCommandOutcome(target, commandType, commandId) {
+  const notApplied = target.status === 'completed'
+    && target.result?.outcome !== undefined && target.result.outcome !== 'applied';
+  return { status: notApplied ? 'failed' : target.status, commandType, commandId, result: target.result,
+    error: target.errorMessage || target.error
+      || (notApplied ? `The device did not apply this change (${target.result.outcome}).` : undefined) };
+}
+
 // Control revisions change as these commands are applied. Identity and owner
 // changes, however, must cancel the remainder of a multi-command gesture.
 export function tileLockAuthorityKey(scopeKey, student) {
@@ -61,13 +69,9 @@ export async function runTileLockAction({ action, studentId, focusPayload, postC
           const target = targets[0];
           // Stateful commands may complete transport delivery with a stale or
           // expired snapshot. Only an applied outcome confirms the change.
-          const notApplied = target.status === 'completed'
-            && target.result?.outcome !== undefined && target.result.outcome !== 'applied';
-          const status = notApplied ? 'failed' : target.status;
-          update(field, { status, commandType, commandId: command.id, result: target.result,
-            error: target.errorMessage || target.error
-              || (notApplied ? `The device did not apply this change (${target.result.outcome}).` : undefined) },
-          `${label}: ${TERMINAL.has(status) ? status : 'awaiting confirmation'}`);
+          const outcome = tileLockCommandOutcome(target, commandType, command.id);
+          update(field, outcome,
+            `${label}: ${TERMINAL.has(outcome.status) ? outcome.status : 'awaiting confirmation'}`);
         },
       });
       guard();

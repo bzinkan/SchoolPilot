@@ -172,8 +172,9 @@ import { chatStudentName, countUnreadByStudent, deriveChatConversations, describ
 import { broadcastButtonLabel, buildMessagingRoster } from '../lib/chatRoster';
 import { compareStudentsByLastName } from '../lib/studentOrder';
 import { mergeCommandUpdateIntoBatches, mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
-import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusCommandFeedback, focusPayloadForStudents, focusStatusLabel, focusTabCapability } from '../lib/focusControls';
-import { runTileLockAction, tileLockAuthorityKey } from '../lib/tileLockActions';
+import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusCommandFeedback, focusPayloadForStudents, focusStatusLabel, focusTabCapability, tileFocusLifecycleObserved } from '../lib/focusControls';
+import { runTileLockAction, tileLockAuthorityKey, tileLockCommandOutcome } from '../lib/tileLockActions';
+import { classroomCommands } from '../lib/classroomActions';
 import {
   classpilotObservationSessionEligible,
   claimedPreviewContextsFromRoster,
@@ -2174,6 +2175,21 @@ export default function Dashboard() {
                 if (updates.size > 100) updates.delete(updates.keys().next().value);
               }
               setLastFocusResult((current) => current ? mergeCommandUpdateIntoBatches([current], message)[0] : current);
+              setTileLockOperations((current) => {
+                let changed = false;
+                const next = Object.entries(current).map(([id, operation]) => {
+                  if (operation.source !== 'manage-tabs' || operation.outcomes?.focus?.commandId !== focusCommandId)
+                    return [id, operation];
+                  const target = (publicCommand.targets || message.targets || []).find((entry) => entry.studentId === id);
+                  if (!target) return [id, operation];
+                  changed = true;
+                  const outcome = tileLockCommandOutcome(target, operation.outcomes.focus.commandType, focusCommandId);
+                  return [id, { ...operation, outcomes: { focus: outcome },
+                    awaitingFocusLifecycle: operation.awaitingFocusLifecycle
+                      && !['failed', 'unavailable', 'expired'].includes(outcome.status) }];
+                });
+                return changed ? Object.fromEntries(next) : current;
+              });
 
               const before = transientCommandOutcomesRef.current;
               const tracked = trackTransientCommandResponse(
@@ -4513,13 +4529,24 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const student = tileLockStudentsRef.current.get(id);
       if (!student || request.authorityKey !== tileLockAuthorityKey(focusControlScopeKey, student))
         request.controller.abort();
+      else if (request.action === 'focus-current-tab' && tileFocusLifecycleObserved(student, request))
+        request.focusLifecycleObserved = true;
     }
     setTileLockOperations((current) => {
-      const entries = Object.entries(current).filter(([id, operation]) => {
+      let changed = false;
+      const entries = Object.entries(current).flatMap(([id, operation]) => {
         const student = tileLockStudentsRef.current.get(id);
-        return student && operation.authorityKey === tileLockAuthorityKey(focusControlScopeKey, student);
+        if (!student || operation.authorityKey !== tileLockAuthorityKey(focusControlScopeKey, student)) {
+          changed = true;
+          return [];
+        }
+        if (operation.awaitingFocusLifecycle && tileFocusLifecycleObserved(student, operation)) {
+          changed = true;
+          return [[id, { ...operation, awaitingFocusLifecycle: false }]];
+        }
+        return [[id, operation]];
       });
-      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+      return changed ? Object.fromEntries(entries) : current;
     });
   }, [claimedPickupStudents, sessionFilteredStudents, studentView, focusControlScopeKey]);
   useEffect(() => () => {
@@ -5639,6 +5666,24 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   });
 
   const focusMutation = useMutation({
+    onMutate: ({ type, tab, studentIds, recipients }) => {
+      if (!['focus-tab', 'stop-focus'].includes(type)) return { operations: {} };
+      const ids = recipients ? snapshotRecipientOptions(recipients).studentIds : type === 'stop-focus' ? studentIds : [tab?.studentId];
+      if (!Array.isArray(ids) || ids.some((id) => tileLockRequestsRef.current.has(id)))
+        throw new Error('Wait for this student’s lock action to finish.');
+      const operations = Object.fromEntries(ids.flatMap((id) => {
+        const student = tileLockStudentsRef.current.get(id);
+        if (!student) return [];
+        return [[id, { source: 'manage-tabs', requestToken: {}, action: type === 'focus-tab' ? 'focus-current-tab' : 'stop-focus',
+          authorityKey: tileLockAuthorityKey(focusControlScopeRef.current, student),
+          focusAssignmentId: student.classroomState?.restrictions?.focus?.assignmentId || student.focus?.assignmentId || null,
+          focusControlRevision: normalizedTileControlRevision(student),
+          awaitingFocusLifecycle: type === 'focus-tab', pending: true,
+          outcomes: { focus: { status: 'requesting', commandType: type } } }]];
+      }));
+      setTileLockOperations((current) => ({ ...current, ...operations }));
+      return { operations };
+    },
     mutationFn: async ({ type, tab, studentIds, recipients }) => {
       const scope = focusControlScopeKey;
       const ids = recipients ? snapshotRecipientOptions(recipients).studentIds : type === 'stop-focus' ? studentIds : [tab?.studentId];
@@ -5651,15 +5696,45 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (scope !== focusControlScopeRef.current) throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
       return data;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data, variables, context) => {
       const confirmed = [...focusCommandUpdatesRef.current.values()].reduce((current, message) => mergeCommandUpdateIntoBatches([current], message)[0], data);
       toast(variables.recipients ? recipientDeliveryToast(focusCommandFeedback(confirmed, variables.type), variables.recipients) : focusCommandFeedback(confirmed, variables.type));
       if (variables.recipients) closeRecipientDialog('stop-focus');
       setLastFocusResult({ ...confirmed, type: variables.type });
+      setTileLockOperations((current) => {
+        const next = { ...current };
+        for (const [id, anchor] of Object.entries(context?.operations || {})) {
+          const student = tileLockStudentsRef.current.get(id);
+          if (!student || anchor.authorityKey !== tileLockAuthorityKey(focusControlScopeRef.current, student)
+            || current[id]?.requestToken !== anchor.requestToken) continue;
+          const command = classroomCommands(confirmed).find((entry) => entry.targets.some((target) => target.studentId === id));
+          const target = command?.targets.find((entry) => entry.studentId === id);
+          const outcome = target ? tileLockCommandOutcome(target, variables.type, command.id)
+            : { status: 'pending', commandType: variables.type };
+          next[id] = { ...anchor, pending: false, outcomes: { focus: outcome },
+            awaitingFocusLifecycle: anchor.awaitingFocusLifecycle
+              && current[id]?.awaitingFocusLifecycle !== false
+              && !tileFocusLifecycleObserved(student, anchor)
+              && !['failed', 'unavailable', 'expired'].includes(outcome.status) };
+        }
+        return next;
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
+      void refetchStudents();
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
       if (error?.name === 'AbortError') return;
+      setTileLockOperations((current) => {
+        const next = { ...current };
+        for (const [id, anchor] of Object.entries(context?.operations || {})) {
+          const student = tileLockStudentsRef.current.get(id);
+          if (!student || anchor.authorityKey !== tileLockAuthorityKey(focusControlScopeRef.current, student)
+            || current[id]?.requestToken !== anchor.requestToken) continue;
+          next[id] = { ...anchor, pending: false, awaitingFocusLifecycle: false,
+            outcomes: { focus: { status: 'failed', commandType: anchor.outcomes.focus.commandType, error: error.message } } };
+        }
+        return next;
+      });
       toast({ variant: 'destructive', title: 'Command unavailable', description: error.message });
     },
     onSettled: (_data, _error, variables) => { if (variables?.recipients) releaseRecipientSend('stop-focus'); },
@@ -6068,9 +6143,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const scope = focusControlScopeRef.current;
     const authorityKey = tileLockAuthorityKey(scope, student);
     const controller = new AbortController();
-    const request = { authorityKey, controller };
     const focusAssignmentId = student.classroomState?.restrictions?.focus?.assignmentId
       || student.focus?.assignmentId || null;
+    const focusControlRevision = normalizedTileControlRevision(student);
+    const request = { authorityKey, controller, action, focusAssignmentId, focusControlRevision,
+      focusLifecycleObserved: false };
     const previousOperation = tileLockOperations[studentId];
     const carriedOutcomes = action === 'clear-waypoint'
       && previousOperation?.focusAssignmentId === focusAssignmentId
@@ -6086,13 +6163,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     };
     const update = (operation) => {
       assertCurrent();
+      if (action === 'focus-current-tab'
+        && tileFocusLifecycleObserved(tileLockStudentsRef.current.get(studentId), request))
+        request.focusLifecycleObserved = true;
+      const awaitingFocusLifecycle = action === 'focus-current-tab' && !request.focusLifecycleObserved
+        && !operation.error && !['failed', 'unavailable', 'expired'].includes(operation.outcomes?.focus?.status);
       setTileLockOperations((current) => ({ ...current, [studentId]: {
         ...operation, outcomes: { ...carriedOutcomes, ...operation.outcomes }, authorityKey, focusAssignmentId,
+        focusControlRevision, awaitingFocusLifecycle,
       } }));
     };
     tileLockRequestsRef.current.set(studentId, request);
     try {
       const control = deriveTileLockControl(student, {
+        lockOperation: previousOperation,
         focusTelemetryCurrent: monitoringDisplayFor(student).telemetryCurrent,
         canFocusTab: dashboardCapabilities.allows('focus-tab') && isStudentCommandableForCommand(student, 'focus-tab'),
         canStopFocus: dashboardCapabilities.allows('stop-focus') && isStudentStructurallyCommandable(student),

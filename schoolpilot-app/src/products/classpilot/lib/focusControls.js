@@ -88,6 +88,27 @@ export function focusStatusLabel(student) {
   return deriveFocusState(student).label;
 }
 
+// Retire a completed start's provisional UI only after newer authoritative
+// lifecycle evidence arrives. An old inactive row is not proof that the Focus
+// which the device just applied has already ended.
+export function tileFocusLifecycleObserved(student, operation) {
+  if (!operation) return false;
+  const reported = student?.focus;
+  const restrictions = student?.classroomState?.restrictions;
+  const requested = restrictions?.focus;
+  const assignmentId = reported?.assignmentId;
+  if (['active', 'suspended', 'invalidated'].includes(reported?.state)
+    && typeof assignmentId === 'string' && assignmentId.trim()
+    && assignmentId !== operation.focusAssignmentId) {
+    return requested?.active !== true || !requested.assignmentId || requested.assignmentId === assignmentId;
+  }
+  const revision = student?.classroomState?.revision;
+  return Boolean(restrictions) && requested?.active !== true && reported?.state === 'inactive'
+    && Number.isSafeInteger(revision) && revision > 0
+    && Number.isSafeInteger(operation.focusControlRevision) && operation.focusControlRevision >= 0
+    && revision > operation.focusControlRevision;
+}
+
 function screenOnlyUnlockSupported(student) {
   // Keep the existing screen-only unlock negotiation, including older public
   // telemetry which reports it in capabilities rather than acceptedCapabilities.
@@ -126,6 +147,12 @@ export function deriveTileLockControl(student, {
   let focus = deriveFocusState(student);
   const requestedFocus = student?.classroomState?.restrictions?.focus;
   const operationAction = lockOperation?.action || lockOperation?.phase;
+  if (operationAction === 'focus-current-tab' && lockOperation?.awaitingFocusLifecycle === true
+    && !tileFocusLifecycleObserved(student, lockOperation)) {
+    focus = { ...focus, status: 'requested', label: 'Focus requested; awaiting confirmation',
+      present: true, clearable: true, confirmed: false, pending: true,
+      assignmentId: requestedFocus?.assignmentId || null };
+  }
   const clearsFocus = ['stop-focus', 'stop-both'].includes(operationAction)
     || lockOperation?.outcomes?.focus?.commandType === 'stop-focus';
   const originalAssignment = lockOperation?.focusAssignmentId;
@@ -164,7 +191,8 @@ export function deriveTileLockControl(student, {
   const focusReleaseConfirmed = Boolean(student?.classroomState?.restrictions)
     && requestedFocus?.active !== true && student?.focus?.state === 'inactive';
   const focusStartConfirmed = operationAction === 'focus-current-tab'
-    && ['active', 'suspended', 'invalidated'].includes(focus.status);
+    && (lockOperation?.awaitingFocusLifecycle === false
+      || ['active', 'suspended', 'invalidated'].includes(focus.status));
   const waypointReleaseConfirmed = requestedWaypoint?.active !== true && student?.screenLocked === false;
   const outcomes = Object.entries(lockOperation?.outcomes || {})
     .filter(([name]) => name !== 'focus' || !clearsFocus || originalAssignment === undefined || originalFocusOnly)
