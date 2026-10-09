@@ -1,0 +1,410 @@
+{
+  "schemaVersion": 5,
+  "kind": "reviewed_release_source_binding",
+  "id": "release-297-current-school-cp-protected-build-fallback-v5",
+  "status": "pending",
+  "applicationSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "reviewedBaselineSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
+  "imageInputs": [
+    "src",
+    "package*.json",
+    "tsconfig.json",
+    "drizzle.config.ts",
+    "Dockerfile",
+    ".dockerignore",
+    "config",
+    "docs/soc2"
+  ],
+  "inventory": {
+    "sha256": "91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b",
+    "fileCount": 564
+  },
+  "fallback": {
+    "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+    "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+    "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+    "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a"
+  },
+  "schema": {
+    "staffIdentityContract": "deferred",
+    "baselineMigrations": 43,
+    "candidateMigrations": 53,
+    "fallbackDeclaredMigrations": 52,
+    "retainedCompletedMigrations": 53,
+    "admissionCounts": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ]
+  },
+  "scope": {
+    "school": "St. Francis DeSales",
+    "clients": 133,
+    "usageRollupMode": "off",
+    "digitalUsageMode": "off",
+    "managedChromebookGate": "waived_not_passed",
+    "liveAcceptanceMinutes": 30
+  },
+  "policy": {
+    "path": "docs/release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json",
+    "sha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95"
+  },
+  "sourceApplicability": {
+    "status": "approved",
+    "path": "docs/release-evidence/release297/cp-protected-build/source-applicability.json",
+    "sha256": "7183bcaf7a31c9034d2636242d9bf4db549fb8bbe0b22a4684081bc6bd0c34c9"
+  },
+  "evidence": {
+    "currentSchoolAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "classroomAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "normalLoadAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "headroomAcceptance": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "ordinaryRecovery": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "restrictedRestoration": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    },
+    "screenshotRuntime": {
+      "status": "unknown",
+      "path": null,
+      "sha256": null
+    }
+  },
+  "operationalAuthorization": false,
+  "notes": [
+    "F3 is a separate exact child of F2 changing only the build manifests. The older application tree is never merged into main.",
+    "C578/F1/F2 identities, failed scans and F2 full audit remain immutable historical evidence.",
+    "F3 preserves all eight reviewed CP-AI source/test changes; the compiled tsc output is compared byte-for-byte before and after removing the unused alias transform.",
+    "Draft/null pins never establish preparation, release readiness or operational authorization. Fresh exact-F3 leaves and independent review are required.",
+    "Source/policy applicability was reviewed within the user-authorized fix/deploy scope; broader minimization/provider-account review and live evidence remain pending. No human approval is fabricated."
+  ],
+  "frontendInputs": [
+    "schoolpilot-app"
+  ],
+  "frontendInventory": {
+    "sha256": "9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac",
+    "fileCount": 635
+  },
+  "extension": {
+    "version": "2.9.7",
+    "id": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "source": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "mergedSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+    "tree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "zipBytes": 376052
+  },
+  "testedApplicationImage": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+  "blockers": [
+    "fresh-original-candidate-campaigns-pending",
+    "exact-build-security-successor-selection-pending",
+    "resulting-v5-tooling-main-CI-pending"
+  ],
+  "sourceStatus": "frozen-successor-preparation-passed-candidate-campaigns-pending",
+  "testedApplicationConfig": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+  "fallbackScan": {
+    "status": "passed",
+    "scan": {
+      "storage": "private",
+      "path": "scan-01/scan-receipt.json",
+      "sha256": "e23018f682f533d2909f0a9ee059fdb1bf3c6b187c5a000c42279a028f66a3c5",
+      "format": "json"
+    },
+    "report": {
+      "storage": "private",
+      "path": "scan-01/reports/trivy.json",
+      "sha256": "bdf6613127228a5c491209b7958c2a1108e97fe0ced8a8cfd9d08312c2413241",
+      "format": "json"
+    },
+    "cleanup": {
+      "storage": "private",
+      "path": "leaf-results/scanner-custody.json",
+      "sha256": "a55aca5647e8c5fa268c0fd0517521954855b4e8f4afc897142c6d4215ce97a0",
+      "format": "json"
+    }
+  },
+  "historicalFallback": {
+    "source": "c578120d980d4c2405a72f4f40b2d3c29a07e20b",
+    "localIndex": "sha256:2fd61fdbda527a0f72cdd947db719531b92e0e5b14cebe5bff2cbd8c62abfd08",
+    "config": "sha256:d4f012de43822047ba9fc52277c90f0c18b944522c22a6988f165aa2ee06097b",
+    "platform": "sha256:405f738bc0da4baa99b6e892dd827459cf98c216dbc09232bd3c29d5fcac33a1"
+  },
+  "artifacts": {
+    "serving-anchor": {
+      "source": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "localIndex": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+      "config": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+      "platform": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+      "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41"
+    },
+    "fallback": {
+      "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+      "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+      "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+      "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+    }
+  },
+  "fallbackInventory": {
+    "sha256": "a60c84088ada6961b5c5833c7ebde325eda33f3a556e5b11a6341c5fde357d7b",
+    "fileCount": 549
+  },
+  "sourceDelta": {
+    "baseline": "6259e768553e55346ba14a6453340772198a3d6b",
+    "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+    "files": [
+      {
+        "path": "package-lock.json",
+        "before": {
+          "mode": "100644",
+          "object": "608236c5f8366de630cba68ee96951edba5eb7a7"
+        },
+        "after": {
+          "mode": "100644",
+          "object": "8c1744a6567b67a7b73164c695afd4c5a9e2bc3a"
+        }
+      },
+      {
+        "path": "package.json",
+        "before": {
+          "mode": "100644",
+          "object": "5e847f1eddda47d28682cb2e977528348e5e514c"
+        },
+        "after": {
+          "mode": "100644",
+          "object": "965f6d1e914114482774d8dff9dd497945aec4b0"
+        }
+      }
+    ],
+    "patchSha256": "2184fac4c1fa58736afe999f5da094a9e478467e7c86e5f7d906523aa55688d0"
+  },
+  "preparation": {
+    "status": "passed",
+    "evidence": {
+      "successorScan": {
+        "status": "passed",
+        "path": "docs/release-evidence/release297/cp-protected-build/successorScan.json",
+        "sha256": "cb14cb46ff8a59582b73a268e2713c9dfd238746cb8f5eae20b7f71722544c68"
+      },
+      "screenshotRuntime": {
+        "status": "passed",
+        "path": "docs/release-evidence/release297/cp-protected-build/screenshotRuntime.json",
+        "sha256": "6f92675974ad37ffae9fdbae67f9f235bb90d54bf00d6ac07a05144b6d3cebba"
+      },
+      "requestIpRateLimit": {
+        "status": "passed",
+        "path": "docs/release-evidence/release297/cp-protected-build/requestIpRateLimit.json",
+        "sha256": "a16bb92b14d2917dba648247b8551cb013550fa350a32e10182ed8dc35e25c28"
+      },
+      "ordinaryRecovery": {
+        "status": "passed",
+        "path": "docs/release-evidence/release297/cp-protected-build/ordinaryRecovery.json",
+        "sha256": "05cc5d5ccdd62b8b41b002524b85138a0e6fb3a1b66003080f5b115252e02a4d"
+      },
+      "restrictedRestoration": {
+        "status": "passed",
+        "path": "docs/release-evidence/release297/cp-protected-build/restrictedRestoration.json",
+        "sha256": "1f1f6b370cb90cd19f37678c8fedf617f74036557403d203b7cb75ee5cb760f6"
+      },
+      "credentialBoundary": {
+        "status": "passed",
+        "path": "docs/release-evidence/release297/cp-protected-build/credentialBoundary.json",
+        "sha256": "65827cb81a191f22fea9886566e502514fac06308364350273ffb68ac205039f"
+      }
+    }
+  },
+  "successorSelection": {
+    "status": "pending",
+    "path": null,
+    "sha256": null
+  },
+  "previousFallback": {
+    "source": "6259e768553e55346ba14a6453340772198a3d6b",
+    "localIndex": "sha256:0eebe8c88bbc8304debaeb50644d008e1d3ad8212b0fee22a3a00eac1d04e264",
+    "config": "sha256:849b9e9ecc822e8e5b4b46a31ab31c2df13420ec7231435d8dc9f6567cf11738",
+    "platform": "sha256:bd70e6f4a091620936cb582c56d131f884fbe0aee5863d98259eadd5323e5048"
+  },
+  "credentialBoundary": {
+    "reviewedSource": "9f3657c6ce0bb13eda62df07924d81bafb85ea60",
+    "mergedSource": "092f8fbfe96dd7deed52c279d0b916676e0fc102",
+    "policy": "classpilot-ai-request-input-2026-10-08.1",
+    "retainedOnRollback": true
+  },
+  "buildDependencyAudit": {
+    "status": "passed",
+    "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+    "lockfileGitBlob": "8c1744a6567b67a7b73164c695afd4c5a9e2bc3a",
+    "inventory": {
+      "sha256": "a60c84088ada6961b5c5833c7ebde325eda33f3a556e5b11a6341c5fde357d7b",
+      "fileCount": 549
+    },
+    "issue": "https://github.com/bzinkan/SchoolPilot/issues/625",
+    "audit": {
+      "storage": "private",
+      "path": "source-checks/f3-npm-audit-full-01.json",
+      "sha256": "0f678fe5a496f3251bbf6cf53496c16adceca2752fe83eae3c4db5a70dfbf53f"
+    },
+    "sourceChecks": {
+      "storage": "private",
+      "path": "source-checks/source-checks-receipt-02.json",
+      "sha256": "2d57b165f762631bae201234126056031de2decb686935417a4c78deef6a205b"
+    },
+    "counts": {
+      "high": 0,
+      "critical": 0,
+      "moderate": 7
+    }
+  },
+  "inheritedCredentialDelta": {
+    "baseline": "d75fc1c48d0a3918857508d3965904c69023a153",
+    "source": "6259e768553e55346ba14a6453340772198a3d6b",
+    "files": [
+      {
+        "path": "src/services/aiClassification.ts",
+        "before": {
+          "mode": "100644",
+          "object": "39ca4ac7d4832e923f045ad3d54bb207f3e87a65"
+        },
+        "after": {
+          "mode": "100644",
+          "object": "19e32a35518d1c0c1b3f7fa3ca39ac94c586b06a"
+        }
+      },
+      {
+        "path": "src/services/classpilotAiRequestInput.ts",
+        "before": null,
+        "after": {
+          "mode": "100644",
+          "object": "f9ae070890980795d874ea9a60338ed75e4fa2d3"
+        }
+      },
+      {
+        "path": "tests/classpilot-after-hours-ai-boundary.test.ts",
+        "before": null,
+        "after": {
+          "mode": "100644",
+          "object": "68ad5f321a0ea9499d3259efd0d22ab6e90ef4d6"
+        }
+      },
+      {
+        "path": "tests/classpilot-ai-request-input.test.ts",
+        "before": null,
+        "after": {
+          "mode": "100644",
+          "object": "ce2f7d33056dbd0a4d904bed74798d7cb357c5ee"
+        }
+      },
+      {
+        "path": "tests/classpilot-heartbeat-classification-delivery.test.ts",
+        "before": {
+          "mode": "100644",
+          "object": "a702141092e911d53eb3b65daa21e101852602d3"
+        },
+        "after": {
+          "mode": "100644",
+          "object": "eeba8b69e6e112ef90110cd914620cd9befa27e2"
+        }
+      },
+      {
+        "path": "tests/classpilot-provider-boundary-audit.test.ts",
+        "before": null,
+        "after": {
+          "mode": "100644",
+          "object": "6ed8d42e11ae12e3bf1da1fd20f055f867e017de"
+        }
+      },
+      {
+        "path": "tests/gemini-url-classification-budget.test.ts",
+        "before": {
+          "mode": "100644",
+          "object": "889288fe4915e328584177d9b84b56dd913254c1"
+        },
+        "after": {
+          "mode": "100644",
+          "object": "fd7f062e8e85aa6e1bd9055ceccd207bc58616b9"
+        }
+      },
+      {
+        "path": "tests/gemini-url-classification.test.ts",
+        "before": {
+          "mode": "100644",
+          "object": "b063fc6e91dddef0cdd4afa9728fa81c4aafacf6"
+        },
+        "after": {
+          "mode": "100644",
+          "object": "cf8bc61633672dae0764e6c7f8475dc1f8c0f40b"
+        }
+      }
+    ],
+    "patchSha256": "488454d7ac7b2cb754ea91acdad8c01d345a720e0754d5ec271720eb35df32ac"
+  },
+  "compiledOutputEquivalence": {
+    "status": "passed",
+    "execution": {
+      "storage": "private",
+      "path": "source-checks/compiled-output-execution.json",
+      "sha256": "3bd83ae7444cdade9c1ac172d843812ed1fb0d4ef5a588c19a56f6b47e2a78fe"
+    },
+    "beforeAlias": {
+      "storage": "private",
+      "path": "source-checks/compiled-beforeAlias.json",
+      "sha256": "bad3d9e7459b205bbe8300004e96d3857ace0bbc38fb6f810da0f8b54956825b"
+    },
+    "afterAlias": {
+      "storage": "private",
+      "path": "source-checks/compiled-afterAlias.json",
+      "sha256": "ce368619c069d067c18315681a409b5daef0af817e213a370c2aa23c6d22f863"
+    },
+    "successor": {
+      "storage": "private",
+      "path": "source-checks/compiled-successor.json",
+      "sha256": "cf846016888ad80ec440047caec83e67357bc824c9b8593d3914c033baf17ae6"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "independent-review/compiled-output.review.json",
+      "sha256": "7aea40170da0a51247bb18d00221c9bb04775d4e32ba84dc39dc567f8bd175e8"
+    }
+  },
+  "currentRuntime": {
+    "source": "a14759a231ef47ad01951e8b9519c87de39433bc",
+    "image": "sha256:6519ac858e3163263adb85a77c68dde5b8cacffa7bed8de6a6cb6d7ca3e0bc43",
+    "admissionCount": 129,
+    "controls": {
+      "storage": "private",
+      "path": "current-serving-129/controls.private.json",
+      "sha256": "4292b4c8ff0719abda45003d02f95718d9e205ca2e4c2ef9c71fccfd0ae20051",
+      "format": "json"
+    },
+    "review": {
+      "storage": "private",
+      "path": "current-serving-129/state-review.private.json",
+      "sha256": "719cdcc5d4dd547a07127def1212091374d581fbae13ed1ed1756aff31955edc",
+      "format": "json"
+    }
+  }
+}

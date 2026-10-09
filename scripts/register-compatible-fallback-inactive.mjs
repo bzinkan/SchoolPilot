@@ -2,7 +2,7 @@
 // Preparation-only controller: rendering is offline; registration never launches
 // a task, updates a service, changes admission, or publishes an image.
 import assert from 'node:assert/strict';
-import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, verifyCurrentReleaseMain, publicReceiptHash, assertBoundScan, assertBoundFallbackScan, bindingForRole, validateSuccessorPreparation } from './release-source-binding.mjs';
+import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, verifyCurrentReleaseMain, publicReceiptHash, assertBoundScan, assertBoundFallbackScan, bindingForRole, validateSuccessorPreparation, BUILD_SECURITY_OPERATION_DEPENDENCIES, BUILD_SECURITY_BINDING_ID } from './release-source-binding.mjs';
 import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -86,7 +86,10 @@ function env(container) {
   return Object.fromEntries(container.environment.map(item => { assert.ok(typeof item.name === 'string' && typeof item.value === 'string', 'ENVIRONMENT_INVALID'); return [item.name, item.value]; }));
 }
 function runtimeContainer(task, role) { const matches = task?.containerDefinitions?.filter(item => item.name === role); assert.ok(matches?.length === 1, 'SOURCE_CONTAINER_INVALID'); return matches[0]; }
-export function validateSourceResponse(response, role, source, image, inventory) {
+export function capabilityEnvironment(values) {
+  return Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith('CLASSPILOT_CAP_') || key === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || key === 'CLASSPILOT_PROTOCOL_V3_ENABLED'));
+}
+export function validateSourceResponse(response, role, source, image, inventory, releaseBinding) {
   const task = response?.taskDefinition; assert.ok(task && task.status === 'ACTIVE', 'SOURCE_DEFINITION_INACTIVE');
   ecsRequestTags(response.tags);
   const family = role === 'api' ? '(?:schoolpilot-production-api|schoolpilot-production-api-emergency)' : 'schoolpilot-production-scheduler-worker';
@@ -109,7 +112,12 @@ export function validateSourceResponse(response, role, source, image, inventory)
   for (const name of ['CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE']) equal(values[name], 'off', 'USAGE_MUST_BE_EXPLICITLY_OFF');
   const rollouts = JSON.parse(values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON ?? '{}');
   assert.ok(rollouts && !Array.isArray(rollouts) && typeof rollouts === 'object', 'ROLLOUTS_INVALID');
-  for (const [capability, name] of Object.entries(controls)) {
+  if (releaseBinding?.schemaVersion === 5) {
+    equal(releaseBinding.id, BUILD_SECURITY_BINDING_ID, 'CURRENT129_BINDING_NOT_ALLOWLISTED');
+    equal(inventory, inventoryFor(129), 'CURRENT129_ADMISSION_REQUIRED');
+    equal(values.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE, undefined, 'CURRENT129_DAILY_ROLLUP_DRIFT');
+    equal(capabilityEnvironment(values), releaseBinding.currentRuntime?.capabilityEnvironment, 'CURRENT129_CAPABILITY_DRIFT');
+  } else for (const [capability, name] of Object.entries(controls)) {
     assert.ok(values[name] === undefined || values[name] === 'false', 'NEW_ISSUANCE_MUST_BE_OFF');
     assert.ok(rollouts[capability] === undefined || rollouts[capability]?.mode === 'off', 'NEW_ROLLOUT_MUST_BE_OFF');
   }
@@ -173,10 +181,10 @@ function assertUnusedSources(sources, services) {
 function responseEnvironmentProjection(response) {
   return { ...responseTagProjection(response), taskDefinition: registrationEnvironmentProjection(response.taskDefinition) };
 }
-export function renderRequest(response, role, source, sourceImage, targetImage, count) {
+export function renderRequest(response, role, source, sourceImage, targetImage, count, releaseBinding) {
   checkString(source, /^[a-f0-9]{40}$/, 'SOURCE_SHA_INVALID'); checkString(sourceImage, digestPattern, 'SOURCE_DIGEST_INVALID'); checkString(targetImage, digestPattern, 'TARGET_DIGEST_INVALID');
   assert.ok(source !== '7af9d0dd5bc2bd3e13b96d35a577725e07f8b678' && source !== FALLBACK.source, 'COMPATIBLE_CANDIDATE_ANCHOR_REQUIRED');
-  const task = validateSourceResponse(response, role, source, sourceImage, inventoryFor(count));
+  const task = validateSourceResponse(response, role, source, sourceImage, inventoryFor(count), releaseBinding);
   const request = Object.fromEntries(Object.entries(structuredClone(task)).filter(([key]) => requestFields.has(key)));
   const tags = ecsRequestTags(response.tags); if (tags !== undefined) request.tags = tags;
   runtimeContainer(request, role).image = `${repoUri}@${targetImage}`;
@@ -286,7 +294,7 @@ export async function createPlan(input, { run = runCommand, now = Date.now } = {
   const releaseBinding = await releaseBindingFor(input, run);
   const fallback = selectedFallback(releaseBinding);
   validatePublicationBinding(input, releaseBinding);
-  assert.ok([1, 2, 3, 4].includes(input?.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  assert.ok([1, 2, 3, 4, 5].includes(input?.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
   checkString(input.anchorSource, /^[a-f0-9]{40}$/, 'ANCHOR_SOURCE_REQUIRED'); checkString(input.anchorImage, digestPattern, 'ANCHOR_IMAGE_REQUIRED');
   for (const root of [repositoryRoot, input.anchorDirectory, input.fallbackDirectory]) { assert.ok(path.isAbsolute(root), 'SOURCE_DIRECTORY_REQUIRED'); const relative = path.relative(root, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_STAY_OUTSIDE_SOURCE'); }
   const scan = pinnedJson(input.scan), proof = pinnedJson(input.registryProof), cleanup = pinnedJson(input.scanCleanup);
@@ -303,7 +311,7 @@ export async function createPlan(input, { run = runCommand, now = Date.now } = {
   const capturedServices = pinnedJson(input.liveServices);
   assert.ok(capturedServices.services?.length === 2 && (capturedServices.failures ?? []).length === 0, 'CAPTURED_BASELINE_REQUIRED');
   equal(capturedServices.services.map(value => value.serviceName).sort(), ['schoolpilot-production-api', 'schoolpilot-production-scheduler-worker'], 'CAPTURED_SERVICES_INVALID');
-  const requests = Object.fromEntries(Object.entries(sources).map(([role, response]) => [role, renderRequest(response, role, input.anchorSource, input.anchorImage, proof.digest, input.admissionCount)]));
+  const requests = Object.fromEntries(Object.entries(sources).map(([role, response]) => [role, renderRequest(response, role, input.anchorSource, input.anchorImage, proof.digest, input.admissionCount, releaseBinding)]));
   const states = Object.values(sources).map((value, index) => env(runtimeContainer(value.taskDefinition, index === 0 ? 'api' : 'scheduler-worker')));
   const managed = value => Object.fromEntries(Object.entries(value).filter(([key]) => key.startsWith('CLASSPILOT_CAP_') || key === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || key === 'CLASSPILOT_PROTOCOL_V3_ENABLED'));
   equal(managed(states[0]), managed(states[1]), 'PAIR_CAPABILITY_MISMATCH');
@@ -393,7 +401,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
   const serviceArgs = ['ecs', 'describe-services', '--cluster', 'schoolpilot-production-cluster', '--services', 'schoolpilot-production-api', 'schoolpilot-production-scheduler-worker', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager'];
   const live = JSON.parse(await checked(run, 'aws', serviceArgs)); assert.ok(live.services?.length === 2 && (live.failures ?? []).length === 0, 'BASELINE_UNAVAILABLE');
   equal(hash(live.services), plan.liveServicesSha256, 'LIVE_BASELINE_DRIFT'); equal(hash(pinnedJson(plan.input.liveServices).services), plan.liveServicesSha256, 'CAPTURED_BASELINE_CHANGED');
-  const result = { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: isSuccessorSchema(plan.schemaVersion) ? bindingForRole(plan.releaseBinding, 'fallback') : plan.releaseBinding, source: isSuccessorSchema(plan.schemaVersion) ? fallback.source : plan.input.anchorSource, artifactSource: isSuccessorSchema(plan.schemaVersion) ? fallback.source : plan.releaseBinding.applicationSource, ...(isSuccessorSchema(plan.schemaVersion) ? { artifactRole: 'fallback' } : {}) } : {}), planSha256: planRecord.sha256, status: 'started', registered: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 };
+  const result = { schemaVersion: plan.schemaVersion, ...(plan.schemaVersion === 5 ? {kind:'compatible_fallback_inactive',operation:'RegisterInactive',plan:planRecord,authorization:authorizationRecord,registrationOutcomeUncertain:false} : {}), ...(plan.releaseBinding ? { releaseBinding: isSuccessorSchema(plan.schemaVersion) ? bindingForRole(plan.releaseBinding, 'fallback') : plan.releaseBinding, source: isSuccessorSchema(plan.schemaVersion) ? fallback.source : plan.input.anchorSource, artifactSource: isSuccessorSchema(plan.schemaVersion) ? fallback.source : plan.releaseBinding.applicationSource, ...(isSuccessorSchema(plan.schemaVersion) ? { artifactRole: 'fallback' } : {}) } : {}), planSha256: planRecord.sha256, status: 'started', registered: [], servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 };
   writeNew(receiptPath, result);
   try {
     for (const role of ['api', 'scheduler-worker']) {
@@ -414,7 +422,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
       if (!isSuccessorSchema(plan.schemaVersion)) { result.registered.push({ role, arn, requestSha256: generated.sha256 }); result.registrationOutcomeUncertain = false; writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); }
       inWindow();
       const actual = JSON.parse(await checked(run, 'aws', ['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS', '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
-      validateSourceResponse(actual, role, fallback.source, plan.registryDigest, inventoryFor(plan.input.admissionCount));
+      validateSourceResponse(actual, role, fallback.source, plan.registryDigest, inventoryFor(plan.input.admissionCount), releaseBinding);
       const actualRequest = Object.fromEntries(Object.entries(actual.taskDefinition).filter(([key]) => requestFields.has(key))); if (actual.tags !== undefined) actualRequest.tags = actual.tags; equal(registrationEnvironmentProjection(actualRequest), registrationEnvironmentProjection(request), 'REGISTERED_DEFINITION_DRIFT');
     }
     inWindow(); const after = JSON.parse(await checked(run, 'aws', serviceArgs)); equal(after.services, live.services, 'SERVICES_CHANGED_DURING_INACTIVE_REGISTRATION');
@@ -424,7 +432,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
   return { registered: result.registered, receiptPath, receiptSha256: hash(readFileSync(receiptPath)), servicesUpdated: 0, tasksLaunched: 0 };
 }
 const anchorHelperFiles = ['scripts/release-source-binding.mjs', 'scripts/enforce-deploy-rls-allowlist.mjs', 'src/config/rlsRegistry.json', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/deploy-classpilot-runtime-config.ps1'];
-function anchorHelperHashes() { return Object.fromEntries(anchorHelperFiles.map(file => [file, hash(readFileSync(path.join(repositoryRoot, file)))])); }
+function anchorHelperHashes(schemaVersion) { return Object.fromEntries([...anchorHelperFiles, ...(schemaVersion === 5 ? BUILD_SECURITY_OPERATION_DEPENDENCIES : [])].map(file => [file, hash(readFileSync(path.join(repositoryRoot, file)))])); }
 function anchorEvidence(input, releaseBinding) {
   validatePublicationBinding(input, releaseBinding);
   const scan = pinnedJson(input.anchorScan), proof = pinnedJson(input.anchorRegistryProof);
@@ -442,7 +450,8 @@ async function replayAnchor128Scan(plan) {
 }
 export async function createAnchor128Plan(input, { run = runCommand, now = Date.now } = {}) {
   const releaseBinding = await releaseBindingFor(input, run);
-  assert.ok([1, 2, 3, 4].includes(input?.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  assert.notEqual(input.schemaVersion, 5, 'CURRENT129_OPERATION_REQUIRED');
+  assert.ok([1, 2, 3, 4, 5].includes(input?.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
   for (const root of [repositoryRoot, input.anchorDirectory, input.fallbackDirectory]) {
     assert.ok(path.isAbsolute(root), 'SOURCE_DIRECTORY_REQUIRED'); const relative = path.relative(root, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_STAY_OUTSIDE_SOURCE');
   }
@@ -459,13 +468,13 @@ export async function createAnchor128Plan(input, { run = runCommand, now = Date.
     const filename = path.join(input.outputDirectory, `${role}.private.json`); writeNew(filename, request);
     generated[role] = { path: filename, sha256: hash(readFileSync(filename)), request, source: role === 'api' ? input.api : input.worker, sourceArn: sources[role].taskDefinition.taskDefinitionArn };
   }
-  const plan = { schemaVersion: input.schemaVersion, ...(releaseBinding ? { releaseBinding } : {}), kind: 'compatible_anchor128_inactive', createdAtUtc: new Date(now()).toISOString(), executableActions: ['RegisterInactiveAnchor128'], input, toolSource, toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes: anchorHelperHashes(), liveServicesSha256: hash(live.services), registryDigest: proof.digest, generated, admissionCounts: [121, 125, 126, 127, 128], cloudMutationsDuringPlan: 0, servicesMayChange: false };
+  const plan = { schemaVersion: input.schemaVersion, ...(releaseBinding ? { releaseBinding } : {}), kind: 'compatible_anchor128_inactive', createdAtUtc: new Date(now()).toISOString(), executableActions: ['RegisterInactiveAnchor128'], input, toolSource, toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes: anchorHelperHashes(input.schemaVersion), liveServicesSha256: hash(live.services), registryDigest: proof.digest, generated, admissionCounts: [121, 125, 126, 127, 128], cloudMutationsDuringPlan: 0, servicesMayChange: false };
   const filename = path.join(input.outputDirectory, 'plan.private.json'); writeNew(filename, plan);
   return { path: filename, sha256: hash(readFileSync(filename)), admissionCount: 128, registered: false };
 }
 export async function registerAnchor128Inactive(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyLocalScan = replayAnchor128Scan, verifyRegistry = (plan, command) => verifyRemoteRegistry(plan, command, 'anchor') } = {}) {
   const plan = pinnedJson(planRecord), authorization = pinnedJson(authorizationRecord);
-  equal(plan.kind, 'compatible_anchor128_inactive', 'PLAN_KIND_INVALID'); equal(plan.executableActions, ['RegisterInactiveAnchor128'], 'PLAN_ACTION_CHANGED'); equal(plan.toolSha256, hash(readFileSync(fileURLToPath(import.meta.url))), 'TOOL_CHANGED'); equal(plan.helperHashes, anchorHelperHashes(), 'ANCHOR_HELPER_CHANGED');
+  equal(plan.kind, 'compatible_anchor128_inactive', 'PLAN_KIND_INVALID'); equal(plan.executableActions, ['RegisterInactiveAnchor128'], 'PLAN_ACTION_CHANGED'); equal(plan.toolSha256, hash(readFileSync(fileURLToPath(import.meta.url))), 'TOOL_CHANGED'); equal(plan.helperHashes, anchorHelperHashes(plan.schemaVersion), 'ANCHOR_HELPER_CHANGED');
   equal(plan.admissionCounts, [121, 125, 126, 127, 128], 'ANCHOR_SEQUENCE_CHANGED');
   assert.ok(authorization.schemaVersion === 1 && authorization.operation === 'RegisterInactiveAnchor128' && authorization.authorized === true && authorization.planSha256 === planRecord.sha256, 'EXACT_AUTHORIZATION_REQUIRED');
   const start = Date.parse(authorization.startsAtUtc), end = Date.parse(authorization.expiresAtUtc); assert.ok(Number.isFinite(start) && Number.isFinite(end) && end > start && end - start <= 60 * 60_000, 'BOUNDED_WINDOW_REQUIRED');

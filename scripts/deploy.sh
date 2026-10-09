@@ -88,6 +88,13 @@ SAME_IMAGE_BOUND_NETWORK_HASH=""
 EXPECTED_NETWORK_CONFIG_SHA256=""
 IMMUTABLE_IMAGE_SHA=""
 IMMUTABLE_IMAGE_DIGEST=""
+RELEASE_ARTIFACT_PUBLICATION=""
+RELEASE_ARTIFACT_PUBLICATION_SHA256=""
+RELEASE_ARTIFACT_IDENTITY=""
+RELEASE_ARTIFACT_FALLBACK=""
+RELEASE_ARTIFACT_FALLBACK_SHA256=""
+RELEASE_ARTIFACT_RECOVERY_API=""
+RELEASE_ARTIFACT_RECOVERY_WORKER=""
 SAME_IMAGE_SERVICE_MUTATION_STARTED=false
 SAME_IMAGE_SAFE_TERMINAL_REACHED=false
 SAME_IMAGE_RECOVERY_MAX_ATTEMPTS=30
@@ -195,6 +202,22 @@ while [[ $# -gt 0 ]]; do
     --immutable-image-digest)
       [[ $# -ge 2 ]] || { echo "--immutable-image-digest requires a sha256 digest"; exit 1; }
       IMMUTABLE_IMAGE_DIGEST="$2"; shift 2
+      ;;
+    --release-artifact-publication)
+      [[ $# -ge 2 ]] || { echo "--release-artifact-publication requires a private receipt path"; exit 1; }
+      RELEASE_ARTIFACT_PUBLICATION="$2"; shift 2
+      ;;
+    --release-artifact-publication-sha256)
+      [[ $# -ge 2 ]] || { echo "--release-artifact-publication-sha256 requires a receipt hash"; exit 1; }
+      RELEASE_ARTIFACT_PUBLICATION_SHA256="$2"; shift 2
+      ;;
+    --release-artifact-fallback)
+      [[ $# -ge 2 ]] || { echo "--release-artifact-fallback requires a private receipt path"; exit 1; }
+      RELEASE_ARTIFACT_FALLBACK="$2"; shift 2
+      ;;
+    --release-artifact-fallback-sha256)
+      [[ $# -ge 2 ]] || { echo "--release-artifact-fallback-sha256 requires a receipt hash"; exit 1; }
+      RELEASE_ARTIFACT_FALLBACK_SHA256="$2"; shift 2
       ;;
     --skip-wait) SKIP_WAIT=true; shift ;;
     --tag)      IMAGE_TAG="$2"; shift 2 ;;
@@ -1420,16 +1443,23 @@ restore_production_scaling_hold() {
 
 rollback_classpilot_tile_auth_deployment() {
   local failed=false
-  if [[ -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
-        -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+  local recovery_api="$PRODUCTION_ROLLBACK_API_TASK_DEFINITION"
+  local recovery_worker="$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"
+  if [[ -n "$RELEASE_ARTIFACT_PUBLICATION" ]]; then
+    # The immutable reviewed pair was verified before mutation. Recovery must
+    # remain possible if main/CI changes while a rollout is failing.
+    recovery_api="$RELEASE_ARTIFACT_RECOVERY_API"
+    recovery_worker="$RELEASE_ARTIFACT_RECOVERY_WORKER"
+  fi
+  if [[ -z "$recovery_api" || -z "$recovery_worker" ]]; then
     error "The pre-deployment API/worker revisions are unavailable; automatic rollback cannot be proven."
     failed=true
   else
-    warn "Rolling the API and scheduler worker back to their exact pre-deployment revisions..."
+    warn "Restoring the API and scheduler worker to the reviewed recovery pair..."
     if ! aws ecs update-service \
       --cluster "$CLUSTER" \
       --service "$SERVICE" \
-      --task-definition "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" \
+      --task-definition "$recovery_api" \
       --output json \
       --region "$REGION" \
       --no-cli-pager > /dev/null; then
@@ -1439,7 +1469,7 @@ rollback_classpilot_tile_auth_deployment() {
     if ! aws ecs update-service \
       --cluster "$CLUSTER" \
       --service "$WORKER_SERVICE" \
-      --task-definition "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" \
+      --task-definition "$recovery_worker" \
       --output json \
       --region "$REGION" \
       --no-cli-pager > /dev/null; then
@@ -1456,12 +1486,12 @@ rollback_classpilot_tile_auth_deployment() {
         failed=true
       fi
       if [[ "$failed" == false ]] && ! wait_for_production_backend_strict_stability \
-          "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
+          "$recovery_api" "$recovery_worker"; then
         error "The API/worker rollback did not reach exact strict convergence."
         failed=true
       fi
       if [[ "$failed" == false ]]; then
-        success "API and scheduler worker restored to the exact pre-deployment revisions"
+        success "API and scheduler worker restored to the reviewed recovery pair"
       fi
     fi
   fi
@@ -4012,6 +4042,7 @@ register_classpilot_candidate_worker_task_definition() {
   fi
 
   local worker_arn
+  replay_release_artifact || return 1
   if ! worker_arn=$(aws ecs register-task-definition \
     --cli-input-json file://.worker-taskdef-new.json \
     --query 'taskDefinition.taskDefinitionArn' \
@@ -4992,6 +5023,46 @@ validate_immutable_image_mode() {
     error "Immutable-image deployment requires a backend deploy and rejects same-image, --tag, and rehearsal-reuse modes."
     return 1
   fi
+}
+
+validate_release_artifact_mode() {
+  if [[ -z "$RELEASE_ARTIFACT_PUBLICATION" && -z "$RELEASE_ARTIFACT_PUBLICATION_SHA256" &&
+        -z "$RELEASE_ARTIFACT_FALLBACK" && -z "$RELEASE_ARTIFACT_FALLBACK_SHA256" ]]; then
+    return 0
+  fi
+  if [[ -z "$RELEASE_ARTIFACT_PUBLICATION" || ! "$RELEASE_ARTIFACT_PUBLICATION_SHA256" =~ ^[a-f0-9]{64}$ ||
+        -z "$RELEASE_ARTIFACT_FALLBACK" || ! "$RELEASE_ARTIFACT_FALLBACK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    error "Reviewed artifact deployment requires private publication and fallback registration receipts with their SHA-256 hashes."
+    return 1
+  fi
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true || "$DEPLOY_FRONTEND" != false ||
+        "$ACTIVATE_EMERGENCY" != true || "$SKIP_WAIT" != false ||
+        "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" != false ||
+        -n "$IMMUTABLE_IMAGE_SHA" || -n "$IMMUTABLE_IMAGE_DIGEST" || -n "$IMAGE_TAG" ||
+        -n "$SAME_IMAGE_NETWORKING_STAGE" || -n "$ENABLE_RLS_TABLE" ||
+        -n "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" || "$APPLY_STAFF_IDENTITY_CONTRACTS" != false ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != false || "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != false ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != false || "$CAPACITY_ACCEPTANCE_RELEASE" != false ||
+        -n "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" || -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+        -n "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
+    error "Reviewed artifact deployment requires production --backend --activate-emergency and rejects combined release modes."
+    return 1
+  fi
+}
+
+replay_release_artifact() {
+  [[ -n "$RELEASE_ARTIFACT_PUBLICATION" ]] || return 0
+  local identity
+  identity=$(node "$SCRIPT_DIR/validate-release297-deployment-artifact.mjs" \
+    "$RELEASE_ARTIFACT_PUBLICATION" "$RELEASE_ARTIFACT_PUBLICATION_SHA256" "$LOCAL_SHA" \
+    "$RELEASE_ARTIFACT_FALLBACK" "$RELEASE_ARTIFACT_FALLBACK_SHA256") || return 1
+  if [[ -n "$RELEASE_ARTIFACT_IDENTITY" && "$identity" != "$RELEASE_ARTIFACT_IDENTITY" ]]; then
+    error "The reviewed publication identity changed during deployment."
+    return 1
+  fi
+  RELEASE_ARTIFACT_IDENTITY="$identity"
+  RELEASE_ARTIFACT_RECOVERY_API=$(printf '%s' "$identity" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>console.log(JSON.parse(s).fallbackApiTaskDefinition))') || return 1
+  RELEASE_ARTIFACT_RECOVERY_WORKER=$(printf '%s' "$identity" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>console.log(JSON.parse(s).fallbackWorkerTaskDefinition))') || return 1
 }
 
 same_image_application_identity_preflight() {
@@ -6123,6 +6194,9 @@ fi
 if ! validate_immutable_image_mode; then
   exit 1
 fi
+if ! validate_release_artifact_mode; then
+  exit 1
+fi
 if ! validate_classpilot_tile_auth_plan_gate_mode; then
   exit 1
 fi
@@ -6242,6 +6316,7 @@ fi
 # below so the rollout peak stays at the reviewed 124-connection ceiling. This
 # check runs before Docker/ECR/ECS work and fails closed if ECS cannot provide
 # one unambiguous two-service snapshot.
+replay_release_artifact
 production_backend_deploy_window_preflight
 production_backend_capacity_preflight
 assert_protected_window_target_health exact
@@ -6311,7 +6386,11 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   preflight_rls_table_enablement_sources
   preflight_microsoft_sign_in_secret
 
-  if [[ -n "$IMMUTABLE_IMAGE_DIGEST" ]]; then
+  if [[ -n "$RELEASE_ARTIFACT_PUBLICATION" ]]; then
+    replay_release_artifact
+    DIGEST=$(BOUND_ARTIFACT_JSON="$RELEASE_ARTIFACT_IDENTITY" node -e 'console.log(JSON.parse(process.env.BOUND_ARTIFACT_JSON).registryDigest)')
+    success "Using reviewed published release artifact: ${ECR_REPO}@${DIGEST}"
+  elif [[ -n "$IMMUTABLE_IMAGE_DIGEST" ]]; then
     info "Verifying the green CI image tag and digest in ECR..."
     DIGEST=$(aws ecr describe-images \
       --repository-name "${NAME}-api" \
@@ -6502,6 +6581,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     exit 1
   fi
 
+  replay_release_artifact
   STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
     --cli-input-json file://.taskdef-new.json \
     --query 'taskDefinition.taskDefinitionArn' \
@@ -6549,6 +6629,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     exit 1
   fi
 
+  replay_release_artifact
   EMERGENCY_TASK_DEF_ARN=$(aws ecs register-task-definition \
     --cli-input-json file://.taskdef-emergency.json \
     --query 'taskDefinition.taskDefinitionArn' \
@@ -6713,6 +6794,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # Acquire the hold only after the slow image and task-definition work, then
   # keep it through the one-off migration and both ECS service deployments.
   # The helper rechecks API/worker stability after scaling is suspended.
+  replay_release_artifact
   acquire_production_scaling_hold
   launch_safe_active_api_preflight
 
@@ -6737,6 +6819,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     }));
   ')
   info "Running startup migrations with ${API_ROLLOUT_TASK_DEF}..."
+  replay_release_artifact
   aws ecs run-task \
     --cluster "$CLUSTER" \
     --launch-type FARGATE \
@@ -6802,6 +6885,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   success "Startup migrations completed"
 
   # Step 6: Point the API service at the new revision
+  replay_release_artifact
   production_backend_deploy_window_preflight "before service rollout"
   production_backend_capacity_preflight "after migration under the autoscaling hold"
   if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
@@ -6821,6 +6905,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   assert_protected_window_target_health exact
   apply_protected_window_deployment_bounds
   info "Updating ECS API service to ${API_ROLLOUT_TASK_DEF}..."
+  replay_release_artifact
   # Set before the request because a lost CLI response can leave an applied,
   # otherwise unobserved service mutation. The EXIT trap restores both exact
   # predeployment revisions until postdeploy identity and scaling are sealed.
@@ -6859,6 +6944,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       exit 1
     fi
     info "Updating scheduler worker service to exact candidate ${WORKER_CANDIDATE_TASK_DEF}..."
+    replay_release_artifact
     aws ecs update-service \
       --cluster "$CLUSTER" \
       --service "$WORKER_SERVICE" \

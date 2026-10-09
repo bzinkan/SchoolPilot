@@ -638,6 +638,31 @@ Infrastructure is on AWS (us-east-1):
 - **CloudFront**: Distribution `E1TPPJOD7C2CXR`
 
 ### Schema Changes
+The reviewed release-2.9.7 v5 artifact path deploys the exact tested serving image
+after publication, rather than rebuilding it from an equivalent tooling commit:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --release-artifact-publication <absolute-private-publication-receipt-path> \
+  --release-artifact-publication-sha256 <64-hex-receipt-hash> \
+  --release-artifact-fallback <absolute-private-fallback-registration-receipt-path> \
+  --release-artifact-fallback-sha256 <64-hex-receipt-hash>
+```
+
+This path accepts only the allowlisted v5 serving-anchor binding after successor
+selection, applicability and original acceptance gates pass. It replays source,
+tool, scan, evidence and registry identities before registration, migrations and
+service rollout. Publication remains unsigned and is never described as a signed
+CI artifact. All normal production window, capacity, environment and rollback
+guards remain in force. Deploy the separately verified matching frontend after
+backend/worker convergence; this flag does not upload the Chrome extension.
+The v5 path prepares the already-admitted 129-table pair, preserving its exact
+capability settings. Before rollout it verifies the completed inactive successor
+registration and both exact definitions. If rollout fails, automatic recovery
+uses that CP-AI-protected pair; original serving references remain the baseline
+for preflight comparisons. Historical 121/128 preparation remains unchanged for
+earlier binding versions.
+
 Since production RDS is in a private VPC, `drizzle-kit push` cannot reach it directly. Instead:
 1. Add the Drizzle schema definition in the appropriate `src/schema/*.ts` file (e.g., `gopilot.ts` for GoPilot tables, `classpilot.ts` for ClassPilot, etc.)
 2. Add an immutable migration entry in `src/db/migrations27.ts` (or the next versioned migration module), with a checksum, explicit transactional/nontransactional mode, and fail-closed SQL. New tenant tables must enable and FORCE RLS in that migration and be added to `src/config/rlsRegistry.json`.
