@@ -157,4 +157,13 @@ reporting. Once context-parented classroom records exist, do not roll back to
 software that assumes every record has a teaching session. Roll forward or retain
 the compatible gated version; deleting activity records is not a rollback step.
 
+Once temporary rooms have been created, a frontend rollback must retain the
+room-compatible API and worker. Pre-room revisions lack the holder-only source,
+reviewed destination/deadline and exact whole-room release checks, and classify
+rooms as ordinary current supervision. Before any pre-room backend downgrade,
+end or expire every active `temporary_room` through normal lifecycle finalization
+and verify that no active room contexts remain. Keep supervision history and
+respect the other data compatibility floors. Disabling display/tool rollout
+flags does not drain rooms or make that downgrade safe.
+
 Implementation does not authorize deployment, flag activation or Store upload.
