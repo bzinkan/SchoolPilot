@@ -1933,7 +1933,7 @@
       "evidence": [
         "buildSecurityFixed133StartupCorrection"
       ],
-      "nextAction": "Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt."
+      "nextAction": "Preserve the original failed attempt and its startup-custody limitation; follow the separately passed fixed133 correction and completion evidence without relabeling this historical failure."
     },
     {
       "id": "build-security-original-ordinaryRecovery",
