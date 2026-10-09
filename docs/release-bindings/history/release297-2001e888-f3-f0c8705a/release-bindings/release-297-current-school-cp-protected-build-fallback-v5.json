@@ -2,7 +2,7 @@
   "schemaVersion": 5,
   "kind": "reviewed_release_source_binding",
   "id": "release-297-current-school-cp-protected-build-fallback-v5",
-  "status": "accepted",
+  "status": "pending",
   "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
   "reviewedBaselineSource": "ddc5996b3b8645859fa51a9613486db52c481b7f",
   "imageInputs": [
@@ -65,18 +65,18 @@
     },
     "classroomAcceptance": {
       "status": "passed",
-      "path": "docs/release-evidence/release297/cp-protected-build/resume03-classroomAcceptance.json",
-      "sha256": "dfdf6a556866a42cd4c257ab07bb34dab448215b5d36f9261b3bddf8b95f7c2d"
+      "path": "docs/release-evidence/release297/cp-protected-build/original-classroomAcceptance.json",
+      "sha256": "1d009119c3c83a578fbbd14d9e24be10908a62e9740a9d8a8362478859fe45cb"
     },
     "normalLoadAcceptance": {
       "status": "passed",
-      "path": "docs/release-evidence/release297/cp-protected-build/resume03-normalLoadAcceptance.json",
-      "sha256": "10586e35ecd044966aa686531db4421b9f6f851aa6ca4be4e1f38d680ae05bf0"
+      "path": "docs/release-evidence/release297/cp-protected-build/original-normalLoadAcceptance.json",
+      "sha256": "9688e6105e3d9ef00341eb79b9da6e766b2dba10dd2a374bf83199abfc8f9049"
     },
     "headroomAcceptance": {
-      "status": "passed",
-      "path": "docs/release-evidence/release297/cp-protected-build/resume03-headroomAcceptance.json",
-      "sha256": "2e5fb7d536cf0a0a507a2fdcccf15f8f0d72b5606caf2da76106eaf8029b4d90"
+      "status": "failed",
+      "path": "docs/releases/release297/headroom250-failed-attempt-20261009.json",
+      "sha256": "8e340b8f457dddea2b22e5286d24528f9cffb75333affa94952482d6a031bc16"
     },
     "ordinaryRecovery": {
       "status": "passed",
@@ -101,8 +101,7 @@
     "F3 preserves all eight reviewed CP-AI source/test changes; the compiled tsc output is compared byte-for-byte before and after removing the unused alias transform.",
     "Draft/null pins never establish preparation, release readiness or operational authorization. Fresh exact-F3 leaves and independent review are required.",
     "PR628 changed five backend and frontend inputs after the A2 preparation freeze. Exact A2/25964241 evidence is preserved in the historical manifest; it cannot certify A3. Fresh A3 pair preparation and source/policy review are required.",
-    "Fresh read-only180/196 production observation supersedes179/195 operation-input applicability. Full reviewed environment, capability settings and secret references are unchanged; old captures/plans remain historical. This state observation does not authorize activation or certify deployment readiness.",
-    "All seven original release gates are accepted for the exact selected A3/F3 pair. The fixed133 receipt retains its original dbf00 harness; fresh normal, three mixed and three headroom receipts bind f0c/c8fa/1d686. Historical failed headroom and diagnostics are not relabeled. Operational readiness and authorization remain separate."
+    "Fresh read-only180/196 production observation supersedes179/195 operation-input applicability. Full reviewed environment, capability settings and secret references are unchanged; old captures/plans remain historical. This state observation does not authorize activation or certify deployment readiness."
   ],
   "frontendInputs": [
     "schoolpilot-app"
@@ -121,7 +120,9 @@
     "zipBytes": 376052
   },
   "testedApplicationImage": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
-  "blockers": [],
+  "blockers": [
+    "headroom-acceptance-failed-latency-correction-required"
+  ],
   "sourceStatus": "A3-source-frozen-exact-artifact-preparation-passed",
   "testedApplicationConfig": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
   "fallbackScan": {

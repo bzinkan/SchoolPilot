@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_async_idle_control_poll_correction",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "fallbackSource": "392970b7ccfea365faadf1eba07da4ad26964c09",
+  "testedToolingSource": "f0c8705a0eb2f5ef048b7e65e88afe3213c8a111",
+  "scope": "Release measurement harness only. The idle next-request lookup uses one awaited asynchronous read; only ENOENT means absent. The 25 ms cadence, atomic request publication, nonce/order checks, operation allowlist, pending limit, immutable responses, response binding and shutdown remain unchanged.",
+  "applicationOrExtensionChanges": false,
+  "workloadWarmupQuotaPolicyOrThresholdChanges": false,
+  "code": [
+    {
+      "path": "scripts/load/usage/release-gates-v2/role-control-request.mjs",
+      "filesystemSha256": "548934d435279ad530e05dede23bfc191fce673a3e6fe86a8a7c69c1db5fa58e"
+    },
+    {
+      "path": "scripts/load/usage/release-gates-v2/role-entry.mjs",
+      "filesystemSha256": "a994e4bdbeee8c7cb7efa2b911d857f50f14766cf0d5b84ff53df5a4b42c6c48"
+    }
+  ],
+  "validation": {
+    "harnessRegressions": {
+      "passed": 65,
+      "failed": 0,
+      "skipped": 0,
+      "receipt": {
+        "storage": "private",
+        "path": "independent-review/async-control-poll-regressions-03.log",
+        "sha256": "d213044ab31f5bff8634974da0e9c007fb9b9e3b57e63f4216ec9d28bc5c964d"
+      }
+    },
+    "httpProgressWhileIdleReadIsPending": true,
+    "independentCodeReview": {
+      "storage": "private",
+      "path": "independent-review/async-idle-control-read-correction-independent-review.private.json",
+      "sha256": "7720ae93f2e3aa2213e44f73127cf7486d7e6318df5f6482cc7a2518f48180dd"
+    },
+    "additiveCapacityMetadataRegressions": {
+      "passed": 131,
+      "failed": 0,
+      "skipped": 0,
+      "receipt": {
+        "storage": "private",
+        "path": "independent-review/capacity-baseline-state-regressions-02.log",
+        "sha256": "8105f4e52157176364b278376c66ecf3e3a2487c71f45312fa73aee412f9f6dd"
+      }
+    },
+    "capacityMetadataIndependentReview": {
+      "storage": "private",
+      "path": "independent-review/capacity-baseline-schema2-independent-review.private.json",
+      "sha256": "383f5a8f63d2ef808abb5dfd01a4852ffd2bf56505a72820e9f5a7088ce4e0bc"
+    },
+    "toolTestsAreNotCandidateAcceptance": true,
+    "boundedFilesystemAndHttpFixtures": 10,
+    "actualRoleEntryChildFixtures": 9
+  },
+  "historicalHeadroomFailure": {
+    "run": "21f119c74dbd",
+    "status": "failed",
+    "p95Ms": 544.6827059999996,
+    "approvedMaximumP95Ms": 400,
+    "offered": 1500,
+    "succeeded": 1500,
+    "persisted": 1500,
+    "remainingRunsHeld": 2,
+    "independentReview": {
+      "storage": "private",
+      "path": "independent-review/A3-headroom-first-failure-full-independent-review-01.private.json",
+      "sha256": "9b22517a8ccf2228223beed67862a0357ef47aefa5f48fc879a0de71312c824b"
+    },
+    "reclassified": false
+  },
+  "diagnosticInterpretation": "Instrumented CPU diagnostic 06 demonstrated synchronous filesystem work in the API process control poll. Its instrumented p95 of about 6177 ms is diagnostic evidence, not an acceptance result. The correction addresses that demonstrated event-loop hazard; a unique cause for the original failed headroom attempt is not established.",
+  "freshMeasurementRequirements": [
+    "One 340-client normal-load run for 60 seconds under the new binding",
+    "Three consecutive 900-second mixed runs under the new binding",
+    "Three 250-client headroom runs under the same new binding"
+  ],
+  "historicalReceiptsRetainedWithOriginalBindings": true,
+  "publicationRegistrationDeploymentOrActivationExecuted": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "observedAtUtc": "2026-10-09T19:19:36.425175Z",
+  "testedCapacityMetadataSource": "44c91781ad168c742b408b811df11c2fc01efed9",
+  "observationScope": "Correction preparation at the recorded time; later release stages require their own actual receipts and observations."
+}

@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-09T17:50:46.029Z**. The [current-release index](releases/release297/current-release.json) contains exact identities, evidence and historical outcomes. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-09T20:47:22.162Z**. The [current-release index](releases/release297/current-release.json) contains exact identities, evidence and historical outcomes. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients. A3 is `2001e888`; F3 retains CP-AI protection and corrects the failed F2 build dependency chain.** Preparation, exact selection and original classroom/capacity acceptance are separate gates. ClassPilot 2.9.7 is unchanged and needs no new Store upload.
 
@@ -16,14 +16,14 @@ The user authorized the necessary correction merge, exact publication, compatibl
 | schoolpilot | `6e33a196` | `2001e888` |
 | classpilot | `03a9c363` | `03a9c363` |
 
-PR #628 changed five backend and frontend inputs after the A2 freeze. Exact A2/25964241 artifacts and preparation are historical; fresh A3 evidence is required. PR #627 remains included. C578 and F1 scans and F2’s six-High full audit remain failed historical records. See the [F3 review packet](RELEASE_297_BUILD_SECURITY_FALLBACK.md).
+PR #628 invalidated the earlier A2 freeze. Fresh A3 preparation and all seven original release gates are complete for the exact selected A3/F3/C combination. Exact publication and backend/frontend deployment remain pending. Exact A2/25964241 artifacts remain historical. PR #627 remains included. C578 and F1 scans and F2’s six-High full audit remain failed historical records. See the [F3 review packet](RELEASE_297_BUILD_SECURITY_FALLBACK.md).
 
 | Stage | Status | Next action |
 |---|---|---|
-| Merged current application and tooling implementation | passed | Review/merge the state-only evidence successor; refresh resulting-main CI before operations. |
-| Testing | failed | Retain the failed run and held remainder. Establish an independently reviewed falsifiable cause and correction before authorizing any new attempt; do not change approved thresholds. |
+| Merged current application and tooling implementation | passed | Review/merge PR630 including the tested async harness correction and exact accepted evidence; verify resulting main before operations. |
+| Testing | passed | Review/merge the exact correction and evidence PR, then verify fresh resulting-main CI, application inventories and frozen scripts before operations. |
 | Packaging | passed | Publish only the exact reviewed artifacts after all gates and fresh operation prerequisites pass. |
-| Publication | pending | After acceptance/selection, review exact offline Plans/windows then publish the bound artifacts. |
+| Publication | pending | After resulting-main CI and fresh production prerequisites pass, review exact offline Plans/windows and publish only the bound artifacts. |
 | Deployment | pending | Verify fresh production health/catalog/backups/task/flags and completed inactive129F3rollback; migrate first, then API/worker and matched frontend. |
 | Activation | pending | Obtain separate authorization for any capability/pilot activation. |
 | Live verification | pending | Collect actual sample-bearing workflows and managed adoption; retain waived_not_passed. |
@@ -38,7 +38,7 @@ The daily setting is independently omitted and defaults to shadow; both new mode
 
 | Current gate | Status | Evidence and next action |
 |---|---|---|
-| Fresh production, backups, flags and window | pending | [candidateRefresh](releases/release297/candidate-freeze-observation-20261008.json), [productionHistorical](release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json). Capture fresh private health/catalog/admission/backups/environment/task/ALB evidence immediately before controller operations; retain metadata/capture separation. |
+| Fresh production, backups, flags and window | pending | [candidateRefresh](releases/release297/candidate-freeze-observation-20261008.json), [productionHistorical](release-evidence/release-297/release-gate-policy-20261003/readonly-production-20261004-03.json). Collect fresh production health/catalog/backups/task/flags plus an independently replayed capacity baseline within30minutes before migration; preserve actual API1..3/worker1 counts. |
 | Two managed Chromebooks | waived_not_passed | [policyApproval](release-evidence/release-297/release-gate-policy-20261003/current-school-gate-amendment-approved.json). Carry the exact waiver label and review its successor applicability; verify actual participating adoption separately. |
 | Operator-confirmed live Store version 2.9.7 | passed | [operatorStoreVersion](releases/release297/operator-store-version-20261007.json). Retain the operator report separately from uploaded ZIP, pending-submission and managed-adoption evidence. |
 | New Store upload for unchanged 2.9.7 candidate | not_applicable | [operatorStoreVersion](releases/release297/operator-store-version-20261007.json), [extensionFresh](releases/release297/extension-verification-20261007.json). Recheck source/package if it changes; managed adoption still requires actual sample-bearing live evidence. |
@@ -62,16 +62,17 @@ The daily setting is independently omitted and defaults to shadow; both new mode
 | Exact F3 replacement selection | passed | [buildSecuritySuccessorSelection](release-evidence/release297/cp-protected-build/exact-F3-C-successor-selection.json), [buildSecurityCompatibleFrontendPreparation](release-evidence/release297/cp-protected-build/fallback-frontend-C-preparation.json). Retain exact selected identities; satisfy all remaining acceptance and operational prerequisites. |
 | Current frontend compatibility with F3 recovery | pending | [buildSecurityCompatibleFrontendPreparation](release-evidence/release297/cp-protected-build/fallback-frontend-C-preparation.json), [buildSecuritySuccessorSelection](release-evidence/release297/cp-protected-build/exact-F3-C-successor-selection.json). After exact publication/registration, establish the reviewed C recovery proof and Plan before backend deployment. |
 | Original release gate: currentSchoolAcceptance | passed | [buildSecurityOriginalCurrentSchoolAcceptance](release-evidence/release297/cp-protected-build/original-currentSchoolAcceptance.json). Retain exact source/harness applicability; do not infer managed adoption or live acceptance. |
-| Original release gate: classroomAcceptance | passed | [buildSecurityOriginalClassroomAcceptance](release-evidence/release297/cp-protected-build/original-classroomAcceptance.json). Retain exact source/harness applicability; do not infer managed adoption or live acceptance. |
-| Original release gate: normalLoadAcceptance | passed | [buildSecurityOriginalNormalLoadAcceptance](release-evidence/release297/cp-protected-build/original-normalLoadAcceptance.json). Retain exact source/harness applicability; do not infer managed adoption or live acceptance. |
-| Original release gate: headroomAcceptance | failed | [buildSecurityHeadroomFailedAttempt](releases/release297/headroom250-failed-attempt-20261009.json). Retain the failed run and held remainder. Establish an independently reviewed falsifiable cause and correction before authorizing any new attempt; do not change approved thresholds. |
-| Reviewed v5 tooling merge | passed | [buildSecurityMergedTooling](releases/release297/build-security-merged-tooling-main-20261009.json). Review this state-only successor and verify its resulting main before operations. |
+| Original release gate: classroomAcceptance | passed | [buildSecurityOriginalClassroomAcceptance](release-evidence/release297/cp-protected-build/resume03-classroomAcceptance.json), [buildSecurityAsyncControlCorrection](releases/release297/async-idle-control-correction-20261009.json). Retain the exact source, artifact, policy and f0c/c8fa measured binding; refresh resulting-main CI and frozen-tool equivalence before operational Plans. |
+| Original release gate: normalLoadAcceptance | passed | [buildSecurityOriginalNormalLoadAcceptance](release-evidence/release297/cp-protected-build/resume03-normalLoadAcceptance.json), [buildSecurityAsyncControlCorrection](releases/release297/async-idle-control-correction-20261009.json). Retain the exact source, artifact, policy and f0c/c8fa measured binding; refresh resulting-main CI and frozen-tool equivalence before operational Plans. |
+| Original release gate: headroomAcceptance | passed | [buildSecurityOriginalHeadroomAcceptance](release-evidence/release297/cp-protected-build/resume03-headroomAcceptance.json), [buildSecurityAsyncControlCorrection](releases/release297/async-idle-control-correction-20261009.json). Retain the exact source, artifact, policy and f0c/c8fa measured binding; refresh resulting-main CI and frozen-tool equivalence before operational Plans. |
+| Reviewed v5 tooling merge | passed | [buildSecurityMergedTooling](releases/release297/build-security-merged-tooling-main-20261009.json). Review/merge PR630 including the tested async correction, then refresh exact resulting-main CI and operation/harness byte equivalence. |
 | First A3 fixed133 baseline startup attempt | failed | [buildSecurityFixed133StartupCorrection](releases/release297/fixed133-baseline-startup-correction-20261009.json). Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt. |
 | Original release ordinaryRecovery | passed | [buildSecurityOriginalOrdinaryRecovery](release-evidence/release297/cp-protected-build/original-ordinaryRecovery.json). Retain these original-gate receipts separately from bounded preparation leaves. |
 | Original release restrictedRestoration | passed | [buildSecurityOriginalRestrictedRestoration](release-evidence/release297/cp-protected-build/original-restrictedRestoration.json). Retain these original-gate receipts separately from bounded preparation leaves. |
 | Original release screenshotRuntime | passed | [buildSecurityOriginalScreenshotRuntime](release-evidence/release297/cp-protected-build/original-screenshotRuntime.json). Retain these original-gate receipts separately from bounded preparation leaves. |
 | Matched F3 compatible C frontend preparation | passed | [buildSecurityCompatibleFrontendPreparation](release-evidence/release297/cp-protected-build/fallback-frontend-C-preparation.json), [buildSecuritySuccessorSelection](release-evidence/release297/cp-protected-build/exact-F3-C-successor-selection.json). Actual root proof, recovery Plan/publication and already-open page reload remain separate. |
 | Corrected fixed133 baseline startup and acceptance | passed | [buildSecurityFixed133StartupCompletion](releases/release297/fixed133-baseline-startup-completion-20261009.json), [buildSecurityOriginalCurrentSchoolAcceptance](release-evidence/release297/cp-protected-build/original-currentSchoolAcceptance.json). Retain first failure/custody limitation and all corrected actual evidence without relabeling. |
+| Historical first 250-client headroom attempt | failed | [buildSecurityHeadroomFailedAttempt](releases/release297/headroom250-failed-attempt-20261009.json), [buildSecurityAsyncControlCorrection](releases/release297/async-idle-control-correction-20261009.json). Preserve the failed original and diagnostic limitations; do not substitute diagnostic results or relabel it as passed. |
 
 ### Candidate artifacts
 

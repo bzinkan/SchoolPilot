@@ -42,12 +42,12 @@ the opaque teacher-command contract are unchanged.
 | Original release gate | Current outcome | Actual evidence |
 | --- | --- | --- |
 | DeSales 133-client campaign | Passed | Eight fixed-order 60-second runs; 6,384 offers, successful responses and persisted rows; all nine approved amended criteria |
-| Capability-on normal load | Passed | Fresh 340 clients for 60 seconds; 2,040 successful/persisted heartbeats; p95 48.866331 ms with persistence, error, safety and cleanup review |
-| Mixed classroom endurance | Passed | Fresh three consecutive 900-second runs, 45 rounds and 36,309 successful/persisted heartbeats; full continuous ordinary-heartbeat p95 32.071456 / 41.069281 / 33.549954 ms |
+| Capability-on normal load | Passed | 340 clients for 60 seconds with persistence, error, safety and cleanup review |
+| Mixed classroom endurance | Passed | Three consecutive 900-second runs, 45 rounds and 36,309 successful/persisted heartbeats; full continuous ordinary-heartbeat p95 32.437478 / 34.635894 / 34.942394 ms |
 | Ordinary recovery | Passed | Exact A3→F3→A3, eight API/worker processes and eight graceful drains, queried restricted migration roles and retained 53-entry ledger |
 | Restricted restoration | Passed | Six fresh actual rounds bound to the same A3/F3 ordinary replay |
 | Screenshot/native processing | Passed | Source-bound actual processing and scan evidence, separate from preparation receipts |
-| Accepted 250-client headroom | Passed | Three fresh 60-second runs; 4,500 successful/persisted heartbeats; p95 34.619877 / 36.302964 / 29.168858 ms, below the unchanged 400 ms limit; all 14 checks per run and graceful cleanup passed |
+| Accepted 250-client headroom | Failed | Run `21f119c74dbd`: p95 544.682706 ms exceeds the approved 400 ms limit; all 1,500 requests succeeded/persisted, CPU 0.423284, other checks and cleanup passed. Remaining two attempts held. |
 
 Every passed original gate has a separate native result and independent review
 linked from the index. Mixed p95 figures above use each full 900-second continuous
@@ -58,22 +58,15 @@ corrected protocol and full baseline startup plus the successful eight-run block
 Five baseline latency failures remain retained; the superseded comparison gate
 was not revived. No thresholds, run order or production flags changed.
 
-The [failed headroom attempt](releases/release297/headroom250-failed-attempt-20261009.json)
-remains failed: run `21f119c74dbd` had p95 544.682706 ms above the approved
-400 ms limit, with 1,500 successful/persisted requests, CPU 0.423284 and other
-checks/cleanup passed. Its two remaining attempts were held. Diagnostic profiling exposed a
+The failed headroom attempt remains failed. Diagnostic profiling exposed a
 synchronous control-file lookup every 25 ms in the harness's HTTP process. This
 PR changes only that idle lookup to one awaited read, treating only `ENOENT` as
 an absent request; nonce, ordering, immutable replies and cleanup stay intact.
 An actual child/HTTP fixture verifies progress while the idle read is delayed.
 This removes a demonstrated blocking path without claiming it caused the failed
-latency result. The [reviewed correction](releases/release297/async-idle-control-correction-20261009.json)
-passed 65 meaningful harness regressions, including nine actual role-entry child
-cases. Fresh normal load, three mixed runs and three headroom runs now pass under
-one exact `f0c8705a` harness, freeze `1d686cf1` and acceptance input `c8fa1836`.
-The full independent headroom review also replayed its same-binding lower-load
-prerequisites. The 133-client campaign retains its original `dbf00dbb` binding;
-all older receipts and diagnostic limitations remain historical and unchanged.
+latency result. A newly reviewed harness/helper freeze and three fresh 250-client
+passes remain required. The six passed gates retain their original harness and
+receipts with separate applicability review.
 
 Ordinary recovery retains migrations **43→53** and admission
 **121→125→126→127→128→129**. The historical 54-entry rehearsal is separate.
@@ -95,15 +88,11 @@ the server-enforced opaque Focus command contract remains intact.
 
 The operator's remaining sequence is explicit:
 
-1. Review/merge the exact tooling/evidence successor, then verify fresh
-   resulting-main CI and application/script equivalence. The accepted v5 profile
-   records all seven original gates and exact F3/C selection; historical failures
-   remain immutable.
+1. Preserve the headroom failure, review the bounded idle-control-read correction
+   and freeze fresh matching harness/helpers before any new headroom block. After
+   three required fresh headroom passes, review/merge the tooling/evidence successor and verify
+   its exact resulting-main CI and application/script equivalence.
 2. Refresh production health, catalog/admission, backups, flags and task state.
-   Preserve the freshly observed service capacity; the scheduled minimum change
-   permits an ordinary API count of one through three with one worker. Deployment
-   completion must replay an independently reviewed actual capacity baseline no
-   older than 30 minutes before migration, rather than force an older count.
    Review exact publication and inactive-registration Plans/windows; publish the
    bound A3/F3 artifacts, register inactive129 pairs and establish C recovery proof.
 3. Run migration-first backend/worker deployment, converge on the exact candidate,

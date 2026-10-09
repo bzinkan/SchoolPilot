@@ -66,6 +66,7 @@ for(const [name,mutate,expected]of invalid)test('operational metadata rejects '+
 function renderingFixture(){
  const current=JSON.parse(readFileSync(join(ROOT,'docs/releases/release297/current-release.json'),'utf8'));
  current.sources.schoolpilot.remoteMainObserved=main;
+ current.stages.find(row=>row.id==='testing').status='pending';
  return current;
 }
 test('completed deployment renders the exact matched source while preserving pending adoption and live acceptance',()=>{

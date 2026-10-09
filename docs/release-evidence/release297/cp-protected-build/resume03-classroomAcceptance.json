@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "kind": "release_binding_acceptance",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "inventorySha256": "fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01",
+  "frontendInventorySha256": "fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4",
+  "policySha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95",
+  "extension": {
+    "version": "2.9.7",
+    "id": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "source": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "mergedSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+    "tree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "zipBytes": 376052
+  },
+  "schema": {
+    "staffIdentityContract": "deferred",
+    "baselineMigrations": 43,
+    "candidateMigrations": 53,
+    "fallbackDeclaredMigrations": 52,
+    "retainedCompletedMigrations": 53,
+    "admissionCounts": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ]
+  },
+  "scope": {
+    "school": "St. Francis DeSales",
+    "clients": 133,
+    "usageRollupMode": "off",
+    "digitalUsageMode": "off",
+    "managedChromebookGate": "waived_not_passed",
+    "liveAcceptanceMinutes": 30
+  },
+  "evidenceKind": "classroomAcceptance",
+  "passed": true,
+  "retainedEvidence": {
+    "nativeResult": {
+      "storage": "private",
+      "format": "json",
+      "path": "acceptance-a3-resume-03/original-gates/classroomAcceptance/native-result.json",
+      "sha256": "e259368e35c73ca5b97adb9e7898a77a7b0209f461c15da5a46d168bb7d027c3"
+    },
+    "independentReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "acceptance-a3-resume-03/original-gates/classroomAcceptance/independent-review-01.json",
+      "sha256": "547742be748fb059fd8a699447516248fba975ac2c8b6a93a25428b7ac58726c"
+    }
+  },
+  "observedAtUtc": "2026-10-09T20:33:51.585Z",
+  "evidenceScope": "Fresh three consecutive actual 900-second mixed classroom runs under the same f0c/c8fa binding; 45 lifecycle rounds and 36,309 heartbeats succeeded and persisted. Complete continuous ordinary-heartbeat p95: 32.071456 / 41.069281 / 33.549954 ms. First-60-second samples remain separately labeled.",
+  "measuredHarnessSource": "f0c8705a0eb2f5ef048b7e65e88afe3213c8a111",
+  "measuredHarnessFreeze": {
+    "storage": "private",
+    "format": "json",
+    "path": "acceptance-a3-resume-03/harness/freeze.json",
+    "sha256": "1d686cf1270e5c271e63d2aaececfb6b464c870fab41c11df7b1dac082f6479a"
+  },
+  "acceptanceSuccessorSha256": "c8fa18369f5aa9f8fde0580bdb1dc773ec84e9cacfdb7abd4c3e315e14689ad5",
+  "historicalFailuresReclassified": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

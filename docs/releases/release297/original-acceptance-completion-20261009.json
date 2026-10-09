@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_exact_original_acceptance_completion",
+  "recordedAtUtc": "2026-10-09T20:47:22.162Z",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+      "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
+      "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
+      "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
+    },
+    "fallback": {
+      "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+      "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+      "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+      "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+    }
+  },
+  "releaseBindingSha256": "ed7ed89296cf23ec4a9a57a5277827e36d173766b67354e965489baefe4c9cad",
+  "allSevenOriginalGatesPassed": true,
+  "preparationStatus": "passed",
+  "successorSelectionStatus": "approved",
+  "gateEvidence": {
+    "currentSchoolAcceptance": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/original-currentSchoolAcceptance.json",
+      "sha256": "0264ffb3cc3c99136dbc96745926c6b3574263876f69da3c241056a6ffa2f58c"
+    },
+    "classroomAcceptance": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/resume03-classroomAcceptance.json",
+      "sha256": "dfdf6a556866a42cd4c257ab07bb34dab448215b5d36f9261b3bddf8b95f7c2d"
+    },
+    "normalLoadAcceptance": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/resume03-normalLoadAcceptance.json",
+      "sha256": "10586e35ecd044966aa686531db4421b9f6f851aa6ca4be4e1f38d680ae05bf0"
+    },
+    "headroomAcceptance": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/resume03-headroomAcceptance.json",
+      "sha256": "2e5fb7d536cf0a0a507a2fdcccf15f8f0d72b5606caf2da76106eaf8029b4d90"
+    },
+    "ordinaryRecovery": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/original-ordinaryRecovery.json",
+      "sha256": "50f64ad13bce7df40ed9f49fc27b4c397008f2eb6c3ff83723c57c13aabc9a5b"
+    },
+    "restrictedRestoration": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/original-restrictedRestoration.json",
+      "sha256": "0acdc2cb0294e0cea0188014cc1067ad82c52efe20ea98493f613f2490a482d5"
+    },
+    "screenshotRuntime": {
+      "status": "passed",
+      "path": "docs/release-evidence/release297/cp-protected-build/original-screenshotRuntime.json",
+      "sha256": "bd76b261d6e21abab85e654364344f4f5949643afc3d4b596f8e847119581b28"
+    }
+  },
+  "originalFixed133HarnessSource": "dbf00dbb29945fd316150af047aa55194f59d892",
+  "freshNormalMixedHeadroom": {
+    "harnessSource": "f0c8705a0eb2f5ef048b7e65e88afe3213c8a111",
+    "harnessFreezeSha256": "1d686cf1270e5c271e63d2aaececfb6b464c870fab41c11df7b1dac082f6479a",
+    "acceptanceSuccessorSha256": "c8fa18369f5aa9f8fde0580bdb1dc773ec84e9cacfdb7abd4c3e315e14689ad5",
+    "normal": {
+      "clients": 340,
+      "durationSeconds": 60,
+      "offered": 2040,
+      "succeeded": 2040,
+      "persisted": 2040,
+      "p95Ms": 48.866331
+    },
+    "mixed": {
+      "runs": 3,
+      "durationSecondsPerRun": 900,
+      "lifecycleRounds": 45,
+      "offered": 36309,
+      "succeeded": 36309,
+      "persisted": 36309,
+      "fullContinuousOrdinaryHeartbeatP95Ms": [
+        32.071456,
+        41.069281,
+        33.549954
+      ]
+    },
+    "headroom": {
+      "runs": 3,
+      "clients": 250,
+      "durationSecondsPerRun": 60,
+      "offered": 4500,
+      "succeeded": 4500,
+      "persisted": 4500,
+      "p95Ms": [
+        34.619877,
+        36.302964,
+        29.168858
+      ],
+      "approvedMaximumP95Ms": 400,
+      "allFourteenChecksPerRunPassed": true
+    },
+    "mandatoryMixedFullReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/A3-resume-03-three-mixed-runs-full.review.json",
+      "sha256": "809a8e56b2492032451e515964feac239104bb1504126804d7bb1d8f00f80b9c"
+    },
+    "officialLowerLoadCouplingFullReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/A3-resume-03-headroom-lower-load-coupling-full.review.json",
+      "sha256": "95a72e196f990240554710fd82e5850185e19a48610a1e4c71b557ce58b8b01b"
+    }
+  },
+  "historicalFailedHeadroom": {
+    "evidence": {
+      "path": "docs/releases/release297/headroom250-failed-attempt-20261009.json",
+      "gitBlobSha256": "8e340b8f457dddea2b22e5286d24528f9cffb75333affa94952482d6a031bc16"
+    },
+    "status": "failed",
+    "run": "21f119c74dbd",
+    "p95Ms": 544.682706,
+    "remainingOriginalRunsHeld": 2,
+    "reclassified": false
+  },
+  "currentCapacityObservation": {
+    "observedAtUtc": "2026-10-09T20:44:17.3418548Z",
+    "apiDesiredRunning": 1,
+    "workerDesiredRunning": 1,
+    "apiRevision": 180,
+    "workerRevision": 196,
+    "serviceProjectionConverged": true,
+    "individualTaskHealthVerified": false,
+    "migrationCapacityBaseline": false,
+    "observation": {
+      "storage": "private",
+      "format": "json",
+      "path": "capacity-api1-observation-01/observation.private.json",
+      "sha256": "406249d6c4f3182cf8a35548998325d38aa3f9a40739c705ecb247752f45e4ba"
+    },
+    "independentReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/scheduled-api1-capacity-observation-01.review.private.json",
+      "sha256": "b9c7334e9590f8fbb2fc3e1295dd24ba8c7c63092ab8f933a92dd05dfaca9bcf"
+    }
+  },
+  "matchedFallbackFrontendPreparation": {
+    "source": "cce3f7b4eae30df13378337c01dc4ff2d5db3997",
+    "archiveSha256": "8d6379613dbb1c88783ee0f141ed41c34164fac5142172daee7da7f8d27cd72a",
+    "finalProducerReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/exact-C-frontend-and-final-recovery-producers-root-review-02.json",
+      "sha256": "db2dcd71855aaa0b0a214f2ee521f944b1badb8c038f721d52629169d63540af"
+    },
+    "actualRecoveryProofOrPlanCreated": false
+  },
+  "limitations": [
+    "Synthetic acceptance is source/artifact/harness specific and does not establish managed adoption or sample-bearing live acceptance.",
+    "The historical failed headroom and all original receipts remain immutable; diagnostic profiles are not acceptance results and a unique historical cause is not established.",
+    "Final resulting-main CI and real Git application/frozen-tool equivalence must be refreshed after the pending PR merge.",
+    "Exact publication, unused-definition registration, current catalog/backups/task health and matched backend/frontend deployment are pending.",
+    "The API1/worker1 service projection is a dated read-only observation; actual migration requires a separately reviewed raw capacity baseline no older than30minutes."
+  ],
+  "newUsageModes": "off/off",
+  "dailyUsageRollup": "omitted->shadow",
+  "extensionVersion": "2.9.7",
+  "managedDeviceValidation": "waived_not_passed",
+  "publicationExecuted": false,
+  "inactiveRegistrationExecuted": false,
+  "productionDeploymentExecuted": false,
+  "runtimeActivationExecuted": false,
+  "sampleBearingLiveAcceptanceComplete": false,
+  "humanApprovalAsserted": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

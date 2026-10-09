@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "release297_build_security_current_observation",
-  "observedAtUtc": "2026-10-09T20:47:22.162Z",
+  "observedAtUtc": "2026-10-09T17:50:46.029Z",
   "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
   "mainSource": "6e33a19662fec14e719a806e73160a84816f120e",
   "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
@@ -313,7 +313,7 @@
     "currentSchoolAcceptance": "passed",
     "classroomAcceptance": "passed",
     "normalLoadAcceptance": "passed",
-    "headroomAcceptance": "passed"
+    "headroomAcceptance": "failed"
   },
   "frontend": {
     "source": "2001e8888992674493c3084981fa8aae27d70e1d",
@@ -382,55 +382,6 @@
     "frontendInventory": {
       "sha256": "fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4",
       "fileCount": 637
-    }
-  },
-  "measuredHarnessApplicability": {
-    "fixed133": {
-      "source": "dbf00dbb29945fd316150af047aa55194f59d892",
-      "evidence": "buildSecurityOriginalCurrentSchoolAcceptance"
-    },
-    "freshNormalMixedHeadroom": {
-      "source": "f0c8705a0eb2f5ef048b7e65e88afe3213c8a111",
-      "freeze": {
-        "storage": "private",
-        "format": "json",
-        "path": "acceptance-a3-resume-03/harness/freeze.json",
-        "sha256": "1d686cf1270e5c271e63d2aaececfb6b464c870fab41c11df7b1dac082f6479a"
-      },
-      "acceptanceSuccessorSha256": "c8fa18369f5aa9f8fde0580bdb1dc773ec84e9cacfdb7abd4c3e315e14689ad5",
-      "evidence": [
-        "buildSecurityOriginalNormalLoadAcceptance",
-        "buildSecurityOriginalClassroomAcceptance",
-        "buildSecurityOriginalHeadroomAcceptance"
-      ]
-    },
-    "historicalHeadroomFailureRetained": "buildSecurityHeadroomFailedAttempt",
-    "crossHarnessReceiptsRelabeled": false
-  },
-  "actualAcceptanceCompletion": {
-    "path": "docs/releases/release297/original-acceptance-completion-20261009.json",
-    "gitBlobSha256": "73419fcfcdc91a632c6b0512199861d712170b5d3ddbfe151621fc83bfef6bcb"
-  },
-  "currentCapacityObservation": {
-    "observedAtUtc": "2026-10-09T20:44:17.3418548Z",
-    "apiDesiredRunning": 1,
-    "workerDesiredRunning": 1,
-    "apiRevision": 180,
-    "workerRevision": 196,
-    "serviceProjectionConverged": true,
-    "individualTaskHealthVerified": false,
-    "migrationCapacityBaseline": false,
-    "observation": {
-      "storage": "private",
-      "format": "json",
-      "path": "capacity-api1-observation-01/observation.private.json",
-      "sha256": "406249d6c4f3182cf8a35548998325d38aa3f9a40739c705ecb247752f45e4ba"
-    },
-    "independentReview": {
-      "storage": "private",
-      "format": "json",
-      "path": "independent-review/scheduled-api1-capacity-observation-01.review.private.json",
-      "sha256": "b9c7334e9590f8fbb2fc3e1295dd24ba8c7c63092ab8f933a92dd05dfaca9bcf"
     }
   }
 }
