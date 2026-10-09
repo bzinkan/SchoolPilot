@@ -15,6 +15,10 @@ export const SUCCESSOR_SOURCE = 'd75fc1c48d0a3918857508d3965904c69023a153';
 export const SUCCESSOR_CORRECTION = '86ea5c5ca5f76406300f5170d2ecb3e3554baeb3';
 export const CP_PROTECTED_BINDING_ID = 'release-297-current-school-cp-protected-fallback-v4';
 export const BUILD_SECURITY_BINDING_ID = 'release-297-current-school-cp-protected-build-fallback-v5';
+export const BUILD_SECURITY_APPLICATION_SOURCE = '55f91b620d2d48de5ed164a72250ec133450bc0f';
+export const BUILD_SECURITY_ANCHOR_ARTIFACT = Object.freeze({source:BUILD_SECURITY_APPLICATION_SOURCE,localIndex:'sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161',config:'sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764',platform:'sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857',archiveSha256:'2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b'});
+export const BUILD_SECURITY_APPLICATION_INVENTORY = Object.freeze({sha256:'4478303590f02b854898a241cca07001f7389afec1e6d174a153c1f45b993678',fileCount:564});
+export const BUILD_SECURITY_FRONTEND_INVENTORY = Object.freeze({sha256:'c2f64565160a9bba89cfed1d907e41ca0f49b095719e5bdbdc727adfb18a397f',fileCount:635});
 // v5 pins are separate review inputs. Missing pins never establish preparation.
 export const BUILD_SECURITY_SOURCE = "392970b7ccfea365faadf1eba07da4ad26964c09";
 export const BUILD_SECURITY_SOURCE_CREATED_AT = '2026-10-09T12:58:29Z';
@@ -537,7 +541,7 @@ export function validateSuccessorProfile(profile, historicalFallback) {
   if (protectedFallback) {
     equal(profile.previousFallback, buildFallback ? fallbackIdentity(CP_PROTECTED_ARTIFACT) : { source: SUCCESSOR_SOURCE, localIndex: 'sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459', config: 'sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84', platform: 'sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6' }, 'CP_PROTECTED_PREVIOUS_FALLBACK_CHANGED');
     equal(profile.credentialBoundary, { reviewedSource: '9f3657c6ce0bb13eda62df07924d81bafb85ea60', mergedSource: '092f8fbfe96dd7deed52c279d0b916676e0fc102', policy: 'classpilot-ai-request-input-2026-10-08.1', retainedOnRollback: true }, 'CP_PROTECTED_CREDENTIAL_BOUNDARY_CHANGED');
-    equal(profile.applicationSource, 'ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2', 'CP_PROTECTED_APPLICATION_SOURCE_CHANGED');
+    equal(profile.applicationSource, buildFallback ? BUILD_SECURITY_APPLICATION_SOURCE : 'ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2', 'CP_PROTECTED_APPLICATION_SOURCE_CHANGED');
     // A draft with missing artifact/evidence pins is never usable preparation.
     equal(profile.preparation?.status, 'passed', 'SUCCESSOR_PREPARATION_PENDING');
     equal(profile.buildDependencyAudit?.status, 'passed', 'CP_PROTECTED_BUILD_DEPENDENCY_AUDIT_FAILED');
@@ -553,9 +557,10 @@ export function validateSuccessorProfile(profile, historicalFallback) {
     equal(profile.artifacts?.fallback, buildFallback ? BUILD_SECURITY_ARTIFACT : CP_PROTECTED_ARTIFACT, 'CP_PROTECTED_ARTIFACT_CHANGED');
     if (buildFallback) {
       equal(profile.currentRuntime, BUILD_SECURITY_CURRENT_RUNTIME, 'BUILD_SECURITY_CURRENT_RUNTIME_CHANGED');
-      equal(profile.artifacts?.['serving-anchor'], { source: 'ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2', localIndex: 'sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a', config: 'sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4', platform: 'sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0', archiveSha256: '99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41' }, 'BUILD_SECURITY_ANCHOR_CHANGED');
-      equal(profile.inventory, { sha256: '91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b', fileCount: 564 }, 'BUILD_SECURITY_APPLICATION_INVENTORY_CHANGED');
-      equal(profile.frontendInventory, { sha256: '9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac', fileCount: 635 }, 'BUILD_SECURITY_FRONTEND_INVENTORY_CHANGED');
+      assert.ok(BUILD_SECURITY_ANCHOR_ARTIFACT, 'BUILD_SECURITY_ANCHOR_PINS_PENDING');
+      equal(profile.artifacts?.['serving-anchor'], BUILD_SECURITY_ANCHOR_ARTIFACT, 'BUILD_SECURITY_ANCHOR_CHANGED');
+      equal(profile.inventory, BUILD_SECURITY_APPLICATION_INVENTORY, 'BUILD_SECURITY_APPLICATION_INVENTORY_CHANGED');
+      equal(profile.frontendInventory, BUILD_SECURITY_FRONTEND_INVENTORY, 'BUILD_SECURITY_FRONTEND_INVENTORY_CHANGED');
       equal(profile.inheritedCredentialDelta, CP_PROTECTED_SOURCE_REVIEW, 'BUILD_SECURITY_CREDENTIAL_DELTA_CHANGED');
       equal(profile.compiledOutputEquivalence?.status, 'passed', 'BUILD_SECURITY_OUTPUT_EQUIVALENCE_PENDING');
       for (const field of ['execution', 'beforeAlias', 'afterAlias', 'successor', 'independentReview']) {
@@ -740,6 +745,20 @@ function successorEvidenceIdentity(value, profile, key) {
   const observed = Date.parse(value.observedAtUtc);
   assert.ok(Number.isFinite(observed) && observed > Date.parse(FALLBACK_FAILED_SCAN_AT), 'SUCCESSOR_EVIDENCE_STALE');
   if (isProtectedSchema(profile.schemaVersion)) assert.ok(observed >= Date.parse(protectedSourceTime(profile)), 'CP_PROTECTED_EVIDENCE_PREDATES_SOURCE');
+}
+export async function validateBuildSecurityExecutionPair(execution, native, profile, retainedDirectory, load) {
+  equal(profile.schemaVersion, 5, 'BUILD_SECURITY_PAIR_SCHEMA_REQUIRED');
+  const record = native.artifactPairBinding;
+  assert.ok(record?.storage === 'private' && record.format === 'json' && hashPattern.test(record.sha256 ?? ''), 'BUILD_SECURITY_RAW_PAIR_REQUIRED');
+  assert.ok(native.rawEvidence?.some(row => row.storage === record.storage && row.path === record.path && row.sha256 === record.sha256 && row.format === record.format), 'BUILD_SECURITY_RAW_PAIR_REQUIRED');
+  const reference = execution.artifactPairBinding;
+  assert.ok(reference && reference.sha256 === record.sha256 && path.resolve(retainedDirectory, reference.path) === path.resolve(retainedDirectory, record.path), 'BUILD_SECURITY_EXECUTION_PAIR_CHANGED');
+  const pair = await load(record);
+  equal(Object.keys(pair).sort(), ['fallback', 'serving-anchor'], 'BUILD_SECURITY_RAW_PAIR_ROLES_CHANGED');
+  const fields = ['source', 'localIndex', 'config', 'platform', 'archiveSha256'];
+  const projected = Object.fromEntries(['serving-anchor', 'fallback'].map(role => [role, Object.fromEntries(fields.map(field => [field, pair[role]?.[field]]))]));
+  equal(projected, successorArtifactPair(profile), 'BUILD_SECURITY_RAW_PAIR_CHANGED');
+  equal(projected, native.artifactPair, 'BUILD_SECURITY_RAW_PAIR_CHANGED');
 }
 export function validateProtectedExecutionEvidence(execution, native, profile, key) {
   const source = protectedSource(profile), bindingId = protectedBindingId(profile);
@@ -1009,10 +1028,12 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
     if (protectedFallback && key !== 'successorScan') {
       assert.ok(native.executionReceipt && native.rawEvidence.some(record => record.sha256 === native.executionReceipt.sha256 && record.path === native.executionReceipt.path), 'CP_PROTECTED_EXECUTION_RECEIPT_REQUIRED');
       const execution = await load(native.executionReceipt);
+      if (buildFallback && ['ordinaryRecovery', 'restrictedRestoration'].includes(key)) await validateBuildSecurityExecutionPair(execution, native, profile, input.retainedEvidenceDirectory, load);
       validateProtectedExecutionEvidence(execution, native, profile, key);
       if (key === 'restrictedRestoration') {
         assert.ok(native.serviceExecutionReceipt && native.rawEvidence.some(record => record.sha256 === native.serviceExecutionReceipt.sha256 && record.path === native.serviceExecutionReceipt.path), 'CP_PROTECTED_EXECUTION_RECEIPT_REQUIRED');
         const serviceExecution = await load(native.serviceExecutionReceipt);
+        if (buildFallback) await validateBuildSecurityExecutionPair(serviceExecution, native, profile, input.retainedEvidenceDirectory, load);
         if (buildFallback && execution.sealedServiceReplay?.sha256 !== native.serviceExecutionReceipt.sha256) {
           const applicability = native.restrictedReplayApplicability;
           equal(applicability?.currentActualReplay,native.serviceExecutionReceipt,'BUILD_SECURITY_RESTRICTED_CURRENT_REPLAY_CHANGED');

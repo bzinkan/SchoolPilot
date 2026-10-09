@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "release_successor_preparation_evidence",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "evidenceKind": "successorScan",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+      "localIndex": "sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a",
+      "config": "sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4",
+      "platform": "sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0",
+      "archiveSha256": "99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41"
+    },
+    "fallback": {
+      "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+      "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+      "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+      "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+    }
+  },
+  "observedAtUtc": "2026-10-09T13:05:36.002Z",
+  "passed": true,
+  "retainedEvidence": {
+    "nativeResult": {
+      "storage": "private",
+      "path": "leaf-results/successorScan.native.json",
+      "sha256": "4b4200e863f2193a3f57f01f0c4541c72ecaf2e8e2f6284710fe913e8aed82cc"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "leaf-results/successorScan.review.json",
+      "sha256": "8fe3dd4aa56cc30d1f8cb131280a83c03fc3c69b1734d3f7447ac54612b96663"
+    }
+  },
+  "evidenceScope": "One exact F3 preparation leaf; original campaigns, source applicability, artifact selection and operational stages remain separate.",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

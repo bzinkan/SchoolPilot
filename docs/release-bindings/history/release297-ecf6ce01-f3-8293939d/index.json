@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical_preparation_source_snapshot",
+  "toolingSource": "8293939d1122c401a994450db48ea12f8f0da353",
+  "applicationSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "fallbackSource": "392970b7ccfea365faadf1eba07da4ad26964c09",
+  "status": "historical_application_reference_superseded",
+  "reason": "Main55f91b62 changed backend and frontend inputs; A-specific recovery/applicability cannot certify the successor application reference.",
+  "referencesApplyOnlyAtToolingSource": true,
+  "currentReleaseBinding": false,
+  "operationalAuthorization": false,
+  "releaseReady": false,
+  "files": [
+    {
+      "path": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "sha256": "ed9915082adef5aedb3a9ea3ff625bb9a47c54b5827c619ffbd1085f4d80468f"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/credentialBoundary.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/credentialBoundary.json",
+      "sha256": "65827cb81a191f22fea9886566e502514fac06308364350273ffb68ac205039f"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/ordinaryRecovery.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/ordinaryRecovery.json",
+      "sha256": "05cc5d5ccdd62b8b41b002524b85138a0e6fb3a1b66003080f5b115252e02a4d"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/requestIpRateLimit.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/requestIpRateLimit.json",
+      "sha256": "a16bb92b14d2917dba648247b8551cb013550fa350a32e10182ed8dc35e25c28"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/restrictedRestoration.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/restrictedRestoration.json",
+      "sha256": "1f1f6b370cb90cd19f37678c8fedf617f74036557403d203b7cb75ee5cb760f6"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/screenshotRuntime.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/screenshotRuntime.json",
+      "sha256": "6f92675974ad37ffae9fdbae67f9f235bb90d54bf00d6ac07a05144b6d3cebba"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/source-applicability.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/source-applicability.json",
+      "sha256": "7183bcaf7a31c9034d2636242d9bf4db549fb8bbe0b22a4684081bc6bd0c34c9"
+    },
+    {
+      "path": "docs/release-evidence/release297/cp-protected-build/successorScan.json",
+      "retainedPath": "docs/release-bindings/history/release297-ecf6ce01-f3-8293939d/successorScan.json",
+      "sha256": "cb14cb46ff8a59582b73a268e2713c9dfd238746cb8f5eae20b7f71722544c68"
+    }
+  ]
+}

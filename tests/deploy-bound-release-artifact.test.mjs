@@ -168,7 +168,7 @@ test('shell rejects incomplete and conflicting publication flags before AWS', t 
   }
 });
 test('bound deployment replays immediately before every registration, scaling hold and rollout mutation', () => {
-  const script = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  const script = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8').replaceAll('\r\n', '\n');
   for (const fragment of [
     'replay_release_artifact || return 1\n  if ! worker_arn=$(aws ecs register-task-definition',
     'replay_release_artifact\n  STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=$(aws ecs register-task-definition',

@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_SOURCE, BUILD_SECURITY_SOURCE_REVIEW,
   CP_PROTECTED_BINDING_ID, BINDING_FILES, bindingSchema, bindingHash, validateReviewedProtectedDelta,
   validateCompilerOnlyManifestDelta, validateCompilerOnlyLockDelta, validateSuccessorPreparation, validateProtectedBuildDependencyAudit,
-  validateBuildSecurityOutputEquivalence, validateBuildSecurityTestLog, validateSuccessorProfile, validateBindingProfile, validateProtectedExecutionEvidence, successorArtifactPair, validateBuildSecurityRestrictedReplayApplicability,
+  validateBuildSecurityOutputEquivalence, validateBuildSecurityTestLog, validateSuccessorProfile, validateBindingProfile, validateProtectedExecutionEvidence, successorArtifactPair, validateBuildSecurityRestrictedReplayApplicability, validateBuildSecurityExecutionPair,
   bindingForRole, assertBoundPublication, assertBoundScan, assertBindingReplay, resolveReleaseBinding } from '../scripts/release-source-binding.mjs';
 import { FALLBACK, createPlan, createAnchor128Plan, retainSuccessorRegistration, inventoryFor, renderRequest, validateSourceResponse } from '../scripts/register-compatible-fallback-inactive.mjs';
 import { planPublication, planUnused121, planCurrent129Anchor, renderCurrent129Pair } from '../scripts/prepare-release-artifacts.mjs';
-import { BUILD_SECURITY_ACCEPTANCE_ID, CP_PROTECTED_ACCEPTANCE_ID, ACCEPTANCE_CANDIDATE_IDENTITIES,
+import { BUILD_SECURITY_ACCEPTANCE_ID, CP_PROTECTED_ACCEPTANCE_ID, BUILD_SECURITY_ACCEPTANCE_CANDIDATE_IDENTITIES as ACCEPTANCE_CANDIDATE_IDENTITIES, ACCEPTANCE_CANDIDATE_IDENTITIES as HISTORICAL_CANDIDATE_IDENTITIES,
   ACCEPTANCE_BASELINE, ACCEPTANCE_BASELINE_IMAGE, FIXED_ORDER, SUCCESSOR_PROFILES,
   assertAcceptanceSuccessorIdentity, assertProtectedAcceptanceBuildSecurity, assertOrdinaryMigrationConnectionRole } from '../scripts/load/usage/release-gates-v2/acceptance-successor.mjs';
 import { profileHash } from '../scripts/load/usage/release-gates-v2/contracts.mjs';
@@ -21,6 +21,22 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const input = { schemaVersion: 5, releaseBindingId: BUILD_SECURITY_BINDING_ID };
 const shipped = () => JSON.parse(readFileSync(path.join(root, BINDING_FILES[BUILD_SECURITY_BINDING_ID])));
 const digest = text => 'sha256:' + bindingHash(text);
+
+test('v5 replays raw recovery pair JSON rather than accepting the claimed current pair beside an older reference', async () => {
+  const profile = shipped(), pair = successorArtifactPair(profile), directory = path.resolve(tmpdir(), 'synthetic-pair-root');
+  const record = {storage:'private',path:'pair-A2.json',sha256:bindingHash('synthetic A2 pair'),format:'json'};
+  const native = {artifactPair:pair,artifactPairBinding:record,rawEvidence:[record]};
+  const execution = {artifactPairBinding:{path:path.join(directory,record.path),sha256:record.sha256}};
+  const check = (n=native,e=execution,value=pair) => validateBuildSecurityExecutionPair(e,n,profile,directory,async pinned=>{assert.deepEqual(pinned,n.artifactPairBinding);return value;});
+  await check();
+  const priorPair=structuredClone(pair);priorPair['serving-anchor'].source='ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2';
+  await assert.rejects(check(native,execution,priorPair),/BUILD_SECURITY_RAW_PAIR_CHANGED/);
+  for (const field of ['localIndex','config','platform','archiveSha256']) { const changed=structuredClone(pair);changed.fallback[field]=bindingHash('substitution');await assert.rejects(check(native,execution,changed),/BUILD_SECURITY_RAW_PAIR_CHANGED/); }
+  await assert.rejects(check({...native,artifactPairBinding:{...record,path:'old-pair.json',sha256:bindingHash('old pair')}},execution),/BUILD_SECURITY_RAW_PAIR_REQUIRED/);
+  await assert.rejects(check(native,{artifactPairBinding:{path:path.join(directory,'old-pair.json'),sha256:record.sha256}}),/BUILD_SECURITY_EXECUTION_PAIR_CHANGED/);
+  await assert.rejects(check({...native,rawEvidence:[]},execution),/BUILD_SECURITY_RAW_PAIR_REQUIRED/);
+  await assert.rejects(check(native,execution,{...pair,other:pair.fallback}),/BUILD_SECURITY_RAW_PAIR_ROLES_CHANGED/);
+});
 
 test('v5 admits only the build security ID without changing earlier version pairs', () => {
   assert.equal(bindingSchema(input), 5);
@@ -157,7 +173,7 @@ test('v5 ordinary recovery rejects F2 images, historical54, mixed pairs, repeate
 test('build protected acceptance uses its own immutable artifact pair and rejects v4/F2 receipts', () => {
   const profile=shipped(),artifact=profile.artifacts.fallback,binding={schemaVersion:1,id:BUILD_SECURITY_ACCEPTANCE_ID,kind:'current_school_acceptance_successor_preparation',preparationReviewed:true,localSyntheticOnly:true,operationalAuthorization:false,releaseReady:false,candidate:{...ACCEPTANCE_CANDIDATE_IDENTITIES},baseline:{source:ACCEPTANCE_BASELINE,image:ACCEPTANCE_BASELINE_IMAGE},fallback:{source:artifact.source,image:artifact.localIndex,config:artifact.config,platform:artifact.platform,archiveSha256:artifact.archiveSha256},releaseBindingId:BUILD_SECURITY_BINDING_ID,credentialBoundaryRetainedOnRollback:true,audience:'DeSales',clients:133,extensionVersion:'2.9.7',order:[...FIXED_ORDER],profiles:Object.fromEntries(SUCCESSOR_PROFILES.map(value=>[value.name,profileHash(value)])),evidenceNotBefore:'2026-10-09T13:00:00Z',recordedAt:'2026-10-09T13:10:00Z',validity:{startsAt:'2026-10-09T13:10:00Z',expiresAt:'2026-10-10T13:10:00Z'}};
   assertAcceptanceSuccessorIdentity(binding,Date.parse('2026-10-09T13:11:00Z'));
-  for(const mutate of [v=>{v.id=CP_PROTECTED_ACCEPTANCE_ID;},v=>{v.releaseBindingId=CP_PROTECTED_BINDING_ID;},v=>{v.fallback.source=profile.previousFallback.source;},v=>{v.fallback.image=profile.previousFallback.localIndex;},v=>{v.credentialBoundaryRetainedOnRollback=false;}]){const copy=structuredClone(binding);mutate(copy);assert.throws(()=>assertAcceptanceSuccessorIdentity(copy,Date.parse('2026-10-09T13:11:00Z')));}
+  for(const mutate of [v=>{v.id=CP_PROTECTED_ACCEPTANCE_ID;},v=>{v.releaseBindingId=CP_PROTECTED_BINDING_ID;},v=>{v.fallback.source=profile.previousFallback.source;},v=>{v.fallback.image=profile.previousFallback.localIndex;},v=>{v.credentialBoundaryRetainedOnRollback=false;},v=>{v.candidate={...HISTORICAL_CANDIDATE_IDENTITIES};}]){const copy=structuredClone(binding);mutate(copy);assert.throws(()=>assertAcceptanceSuccessorIdentity(copy,Date.parse('2026-10-09T13:11:00Z')));}
 });
 
 test('v5 restricted-round reuse requires actual identical source schemas, migration ledgers, artifact pair and fresh queried ownership', () => {
