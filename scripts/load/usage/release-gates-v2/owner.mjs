@@ -5,13 +5,19 @@ import { join, resolve, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
 import { pause } from './application.mjs';
+import { BASELINE_COMPATIBILITY_SUCCESSOR, BASELINE_COMPATIBILITY_SOURCE } from './baseline-environment-compatibility.mjs';
 
 export function privateFile(path, data) { assert.equal(existsSync(path), false); const temporary = path + '.tmp'; writeFileSync(temporary, JSON.stringify(data) + '\n', { flag: 'wx', mode: 0o600 }); renameSync(temporary, path); }
 export function assertOutside(root, path) { const rel = relative(resolve(root), resolve(path)); assert.ok(rel && (isAbsolute(rel) || rel === '..' || rel.startsWith('..' + (process.platform === 'win32' ? '\\' : '/'))), 'Evidence/control directory must be outside source'); }
-export async function ownRole({ docker, run, source, helperImage, helperConfigDigest, helperContainerImage, preparation, pgContainerId, role, entryFile, environment, privateDirectory, outputDirectory, cpu, memory }) {
+export async function ownRole({ docker, run, source, helperImage, helperConfigDigest, helperContainerImage, preparation, pgContainerId, role, entryFile, environment, privateDirectory, outputDirectory, cpu, memory, startupEvidenceContext }) {
   assert.match(run, /^[a-f0-9]{12}$/); assert.match(source, /^[a-f0-9]{40}$/); assert.match(role, /^(?:api[012]|worker|generator|observer|seeder)$/);
   assert.match(helperImage, /^sha256:[a-f0-9]{64}$/); assert.match(helperConfigDigest, /^sha256:[a-f0-9]{64}$/); assert.match(pgContainerId, /^[a-f0-9]{64}$/);
   assert.match(helperContainerImage, /^sha256:[a-f0-9]{64}$/);
+  if (startupEvidenceContext) {
+    assert.equal(startupEvidenceContext.id, BASELINE_COMPATIBILITY_SUCCESSOR, 'STARTUP_CUSTODY_SUCCESSOR_CHANGED');
+    assert.equal(startupEvidenceContext.candidateSource, '2001e8888992674493c3084981fa8aae27d70e1d', 'STARTUP_CUSTODY_CANDIDATE_CHANGED');
+    assert.ok([BASELINE_COMPATIBILITY_SOURCE,startupEvidenceContext.candidateSource].includes(source), 'STARTUP_CUSTODY_SOURCE_CHANGED');
+  }
   const control = join(privateDirectory, role); mkdirSync(control);
   const envFile = join(control, 'environment.private');
   for (const [key, value] of Object.entries(environment)) { assert.match(key, /^[A-Z_][A-Z0-9_]*$/); assert.equal(typeof value, 'string'); assert.doesNotMatch(value, /[\r\n\0]/); assert.doesNotMatch(key, /^(?:AWS_|DOCKER_|NODE_OPTIONS$|HTTP_PROXY$|HTTPS_PROXY$|ALL_PROXY$)/); }
@@ -39,7 +45,6 @@ export async function ownRole({ docker, run, source, helperImage, helperConfigDi
   assert.match(digest, /^[a-f0-9]{64}$/);
   const binding = { run, source, role, containerId: id, nonce: randomBytes(32).toString('hex'), entryFile, entrySha256: digest };
   privateFile(join(control, 'binding.json'), binding);
-  await docker(['start', id]);
   let nextId = 0, settled = 0, expired = 0, closed = false; const pending = new Map(), resources = [];
   let checkedAt=0, stateReading, lastState;
   async function checkAlive(){
@@ -65,7 +70,36 @@ export async function ownRole({ docker, run, source, helperImage, helperConfigDi
     }
     throw Error('V2_ROLE_RESPONSE_DEADLINE');
   }
-  const ready = await wait('ready.json');
+  async function start() { await docker(['start', id]); return wait('ready.json'); }
+  let ready;
+  try { ready = await start(); }
+  catch (error) {
+    if (startupEvidenceContext) {
+      const receipt = {schemaVersion:1,kind:'release297_successor_failed_role_startup',run,source,role,containerId:id,helperImage,
+        acceptanceSuccessorId:startupEvidenceContext.id,observedAtUtc:new Date().toISOString(),startupFailed:true,
+        inspectAvailable:false,logsAvailable:false,captureComplete:false,cleanupVerified:false,acceptancePassed:false};
+      try {
+        const raw = await docker(['inspect',id]), actual = JSON.parse(raw)[0];
+        assert.equal(actual.Id,id); assert.equal(actual.Image,helperContainerImage);
+        assert.deepEqual([actual.Config.Labels['codex.release297-v2'],actual.Config.Labels['codex.release297-role'],actual.Config.Labels['codex.release297-source']],[run,role,source]);
+        const file = join(privateDirectory,`${role}-startup-inspect.private.json`);
+        writeFileSync(file,raw,{flag:'wx',mode:0o600});
+        receipt.inspect={file,sha256:hash(raw)};receipt.inspectAvailable=true;
+        receipt.actualState={running:actual.State.Running,exitCode:actual.State.ExitCode,oomKilled:actual.State.OOMKilled};
+      } catch { receipt.inspectFailure='STARTUP_NATIVE_INSPECT_UNAVAILABLE'; }
+      try {
+        const raw=await docker(['logs',id]),file=join(privateDirectory,`${role}-startup-log.private`);
+        writeFileSync(file,raw,{flag:'wx',mode:0o600});receipt.logs={file,sha256:hash(raw)};receipt.logsAvailable=true;
+      } catch { receipt.logsFailure='STARTUP_NATIVE_LOGS_UNAVAILABLE'; }
+      receipt.captureComplete=receipt.inspectAvailable&&receipt.logsAvailable;
+      try {
+        const file=join(outputDirectory,`${role}-startup-failure.json`);
+        writeFileSync(file,JSON.stringify(receipt,null,2)+'\n',{flag:'wx'});
+        error.startupFailureEvidence={...receipt,receipt:{file,sha256:hash(readFileSync(file))}};
+      } catch { error.startupFailureEvidence={...receipt,receiptAvailable:false}; }
+    }
+    throw error;
+  }
   const owner = { role, id, ready, source, helperImage, cpu, memory, resources,
     async logs() { return docker(['logs', id]); },
     async rpc(operation, value, timeoutMs = 120_000) {

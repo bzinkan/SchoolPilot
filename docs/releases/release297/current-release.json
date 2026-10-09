@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-09T15:24:33.431Z",
+  "observedAtUtc": "2026-10-09T16:08:26.183Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -1892,6 +1892,19 @@
         "buildSecurityBinding"
       ],
       "nextAction": "Review the preparation PR, require applicable green CI, merge the authorized correction and verify resulting main."
+    },
+    {
+      "id": "build-security-fixed133-startup-attempt-01",
+      "label": "First A3 fixed133 baseline startup attempt",
+      "status": "failed",
+      "applicability": "preparation_only",
+      "sourceSha": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+      "rationale": "Historical baseline refused three unsupported current capability-map entries before any measured round. Original failed receipt and startup cleanup-custody limitation remain retained.",
+      "observedAtUtc": "2026-10-09T16:07:00.936Z",
+      "evidence": [
+        "buildSecurityFixed133StartupCorrection"
+      ],
+      "nextAction": "Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt."
     }
   ],
   "inclusionMatrix": [
@@ -2474,6 +2487,10 @@
     "buildSecurityPreviousA2Manifest": {
       "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/index.json",
       "gitBlobSha256": "ac0429fde167eb3b566ad23f3e477493fdc4d901ce211ee7242659179099f07d"
+    },
+    "buildSecurityFixed133StartupCorrection": {
+      "path": "docs/releases/release297/fixed133-baseline-startup-correction-20261009.json",
+      "gitBlobSha256": "15434c57a3f91b7639b59d4350aa1cc7056c22f23fb0e47cc69cd433962fd3cb"
     }
   }
 }

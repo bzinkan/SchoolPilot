@@ -5,7 +5,7 @@ The [current release index](releases/release297/current-release.json) binds the 
 <!-- release297-current-state:start -->
 ## Current release status
 
-Observed **2026-10-09T15:24:33.431Z**. The [current-release index](releases/release297/current-release.json) contains exact identities, evidence and historical outcomes. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
+Observed **2026-10-09T16:08:26.183Z**. The [current-release index](releases/release297/current-release.json) contains exact identities, evidence and historical outcomes. Regenerate with `node scripts/release297-current-state.mjs`; verify with `--check`.
 
 **DeSales: 133 clients. A3 is `2001e888`; F3 retains CP-AI protection and corrects the failed F2 build dependency chain.** Preparation, exact selection and original classroom/capacity acceptance are separate gates. ClassPilot 2.9.7 is unchanged and needs no new Store upload.
 
@@ -66,6 +66,7 @@ The daily setting is independently omitted and defaults to shadow; both new mode
 | Original release gate: normalLoadAcceptance | pending | [buildSecurityBinding](release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json). Execute the immutable source-bound campaign and stop at its existing failure policy; preserve every attempt. |
 | Original release gate: headroomAcceptance | pending | [buildSecurityBinding](release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json). Execute the immutable source-bound campaign and stop at its existing failure policy; preserve every attempt. |
 | Reviewed v5 tooling merge | pending | [buildSecurityBinding](release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json). Review the preparation PR, require applicable green CI, merge the authorized correction and verify resulting main. |
+| First A3 fixed133 baseline startup attempt | failed | [buildSecurityFixed133StartupCorrection](releases/release297/fixed133-baseline-startup-correction-20261009.json). Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt. |
 
 ### Candidate artifacts
 

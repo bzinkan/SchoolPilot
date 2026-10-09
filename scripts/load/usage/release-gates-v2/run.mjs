@@ -26,6 +26,7 @@ import { assertDistinctGeneratedBinding, verifyOriginalUsagePrerequisites, execu
 import { sanitizedDistinctOperationFailure } from './distinct-report-operation.mjs';
 import {assertLowerRun,lowerCreateArguments,assertLowerReservation,assertLowerPostRls,lowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 import {validateAcceptanceSuccessor,assertSuccessorRunBinding} from './acceptance-successor.mjs';
+import { baselineFixedEnvironment, BASELINE_COMPATIBILITY_SUCCESSOR } from './baseline-environment-compatibility.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -57,6 +58,8 @@ export async function runV2(options) {
     assert.equal(canonicalSchemaFingerprint(native.toString('utf8')),preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256,'Native and populated schema identities differ');
   }
   const remapped = remapObservedEnvironment(JSON.parse(envBytes), options.scopeBinding, today(),preparedSnapshot?.data['cold-fixture-state.json'].schools.map(row=>row.id));
+  const baselineCompatibility = baselineFixedEnvironment({ environment: remapped.environment, source: options.source,
+    arm: options.arm, profile, successorId: successor?.binding.id });
   let clientCapabilities;
   if(['blackbox','diagnostic'].includes(profile.kind)){
     const advertisementBytes=readFileSync(options.clientAdvertisementFile);assert.equal(hash(advertisementBytes),options.clientAdvertisementSha256);
@@ -103,6 +106,7 @@ export async function runV2(options) {
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
     operationalFixtureBootstrapRequired: true,
     ...(successorBinding?{acceptanceSuccessor:successorBinding,hostHarnessSource:options.hostHarnessSource}:{}),
+    ...(baselineCompatibility.proof?{baselineEnvironmentCompatibility:baselineCompatibility.proof}:{}),
     ...(lower?{lowerLoad:lower,hostHarnessSource:options.hostHarnessSource,lowerAuthorizedWindow:{startsAt:window.startsAt,expiresAt:window.expiresAt}}:{}),
     sourceAndSchemaAcceptance: false, productionReadiness: false, capacityAccepted: false,
     ...(options.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:options.usagePostVerificationContractSha256,hostHarnessSource:options.hostHarnessSource}:{}),
@@ -133,16 +137,19 @@ export async function runV2(options) {
     assert.equal(hostCapacity.length,2);assert.ok(hostCapacity.every(value=>Number.isSafeInteger(value)&&value>0));
     metrics.quietHost={declaredNoOtherLoadOrBuilds:window.noOtherLoadOrBuilds===true,preparationOnly:options.preparationSmoke===true,
       dockerCpuCount:hostCapacity[0],dockerMemoryBytes:hostCapacity[1],observedAt:new Date().toISOString(),hostInterferenceEstablished:false};
-    const owners = [], active = new Map(), exits = []; let redisId; const secrets = { JWT_SECRET: randomBytes(32).toString('hex'), SESSION_SECRET: randomBytes(32).toString('hex'), STUDENT_TOKEN_SECRET: randomBytes(32).toString('hex'), RELEASE297_FIXTURE_PASSWORD: randomBytes(24).toString('hex') };
+    const owners = [], active = new Map(), exits = [], failedStartups = []; let redisId; const secrets = { JWT_SECRET: randomBytes(32).toString('hex'), SESSION_SECRET: randomBytes(32).toString('hex'), STUDENT_TOKEN_SECRET: randomBytes(32).toString('hex'), RELEASE297_FIXTURE_PASSWORD: randomBytes(24).toString('hex') };
     const schemaReceipt = options.schemaReceiptFile ? read(options.schemaReceiptFile) : null;
     const tables = options.rlsTables ?? schemaReceipt?.rlsTables; assert.ok(Array.isArray(tables) && new Set(tables).size === tables.length);
     let observer, fixture;
-    const environmentFor = (role, index = 0) => roleEnvironment({ base: remapped.environment, source: options.source, run, appUrl: configuration.appUrl, adminUrl: configuration.adminUrl, profile, role, tables, secrets, clientCapabilities, arm, apiIndex: index });
+    const environmentFor = (role, index = 0) => roleEnvironment({ base: baselineCompatibility.environment, source: options.source, run, appUrl: configuration.appUrl, adminUrl: configuration.adminUrl, profile, role, tables, secrets, clientCapabilities, arm, apiIndex: index });
     async function role(name, entryFile, cpu, memory, index = 0) {
       const rolePreparation=lower&&name==='generator'?{...preparation,executedFiles:{...preparation.executedFiles,
         'scripts/load/usage/release-gates-v2/blackbox-generator.mjs':lower.overlays.find(row=>row.name==='blackbox-generator.mjs').sha256}}:preparation;
-      const owner = await ownRole({ docker: dockerInput, run, source: options.source, helperImage: options.helperImage, helperConfigDigest: options.helperConfigDigest,
-        helperContainerImage: binding.helperContainerImage, preparation:rolePreparation, pgContainerId: configuration.pgContainerId, role: name, entryFile, environment: environmentFor(name, index), privateDirectory: control, outputDirectory: output, cpu, memory });
+      let owner;
+      try { owner = await ownRole({ docker: dockerInput, run, source: options.source, helperImage: options.helperImage, helperConfigDigest: options.helperConfigDigest,
+        helperContainerImage: binding.helperContainerImage, preparation:rolePreparation, pgContainerId: configuration.pgContainerId, role: name, entryFile, environment: environmentFor(name, index), privateDirectory: control, outputDirectory: output, cpu, memory,
+        ...(successorBinding?.id===BASELINE_COMPATIBILITY_SUCCESSOR?{startupEvidenceContext:successorBinding}:{}) });
+      } catch (error) { if(error.startupFailureEvidence)failedStartups.push(error.startupFailureEvidence); throw error; }
       owners.push(owner); return owner;
     }
     async function stop(owner) { const exit = await owner.shutdown(); exits.push(exit); await dockerInput(['rm', '--volumes', owner.id]); return exit; }
@@ -294,6 +301,11 @@ export async function runV2(options) {
         try{logs=readFileSync(join(control,`${owner.role}-log.private`),'utf8');}catch(error){if(!lower)throw error;logs='';complete=false;metrics.lowerLogCustodyFailure=true;}
         return{role:owner.role,...classifyLog(logs,'api',{complete,expectedNegativeProbes:owner.role.startsWith('api')?runNegativeProbes(metrics):[]})};
       });
+      for(const startup of failedStartups){
+        let logs='',complete=false;
+        try{logs=readFileSync(startup.logs.file,'utf8');complete=startup.captureComplete===true&&hash(logs)===startup.logs.sha256;}catch{}
+        metrics.errorCoverage.push({role:startup.role,failedStartup:true,...classifyLog(logs,'api',{complete})});
+      }
       let pgLog;
       try{pgLog=await dockerInput(['logs',configuration.pgContainerId]);}catch(error){if(!lower)throw error;pgLog='';metrics.lowerLogCustodyFailure=true;}
       writeFileSync(join(control,'postgres-log.private'),pgLog,{flag:'wx',mode:0o600});
@@ -317,7 +329,9 @@ export async function runV2(options) {
       }
       const remaining = (await dockerInput(['container', 'ls', '-a', '--filter', `label=codex.release297-v2=${run}`, '--no-trunc', '--format', '{{.ID}}'])).trim().split(/\r?\n/).filter(Boolean);
       assert.ok(remaining.every(id => id === configuration.pgContainerId));
-      metrics.roleCleanup = { exits, confirmedAbsent: true, cleanupPassed: exits.every(exit => exit.clean === true) && metrics.redisCleanStop===true };
+      metrics.roleCleanup = { exits, confirmedAbsent: true,
+        ...(successorBinding?.id===BASELINE_COMPATIBILITY_SUCCESSOR?{failedStartups}:{}),
+        cleanupPassed: exits.every(exit => exit.clean === true) && metrics.redisCleanStop===true && failedStartups.length===0 };
       save(output, 'role-cleanup.json', metrics.roleCleanup);
     }
   }

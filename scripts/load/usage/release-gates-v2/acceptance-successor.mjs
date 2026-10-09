@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { PROFILES, profileHash, hash } from './contracts.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 import { remapObservedEnvironment, validateBaselineAdvertisement } from './environment.mjs';
+import { baselineFixedEnvironment } from './baseline-environment-compatibility.mjs';
 import { assertOutside } from './owner.mjs';
 import { SCANNER, scanCounts } from '../../../verify-legacy-deploy-image.mjs';
 import { CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_BINDING_ID, BINDING_FILES, validateProtectedBuildDependencyAudit, BUILD_SECURITY_SOURCE, BUILD_SECURITY_ARTIFACT, BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_APPLICATION_SOURCE, BUILD_SECURITY_ANCHOR_ARTIFACT, validateBuildSecurityOutputEquivalence, validateBuildSecurityMigrationOwnership } from '../../../release-source-binding.mjs';
@@ -377,6 +378,13 @@ export function assertSuccessorReceiptBinding(metrics) {
   assert.equal(metrics.helperBindingSha256, helper.binding.sha256); assert.equal(metrics.hostHarnessSource, binding.harness.source);
   assert.equal(metrics.hostHarnessSourceUnchanged, true); assert.equal(metrics.harnessSource, binding.harness.source);
   assert.equal(metrics.observedFlagsSha256, binding.environment.observedFlagsSha256);
+  if (binding.id === BUILD_SECURITY_ACCEPTANCE_ID) {
+    const profile = Object.values(PROFILES).find(value => value.name === metrics.profile); assert.ok(profile);
+    const capture = readPinnedSuccessorInput(binding.environment.capture).value;
+    const remapped = remapObservedEnvironment(capture, binding.environment.scopeBinding, binding.schoolLocalDate);
+    const compatibility = baselineFixedEnvironment({environment:remapped.environment,source:metrics.source,arm:metrics.arm,profile,successorId:binding.id});
+    assert.deepEqual(metrics.baselineEnvironmentCompatibility ?? null, compatibility.proof, 'BASELINE_COMPATIBILITY_RECEIPT_CHANGED');
+  }
   assert.ok(Date.parse(metrics.finishedAt) < Date.parse(binding.validity.expiresAt));
   return result;
 }
