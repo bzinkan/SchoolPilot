@@ -649,6 +649,27 @@ function hashBinding(schoolId: string, deviceId: string): string {
     .digest("base64url");
 }
 
+/** A current tab identity is usable only with its actual browser snapshot.
+ * Realtime event revisions and URL/active-flag guesses are not tab proof. */
+export function classpilotPublicActiveTabRef(
+  snapshot: Pick<ClasspilotRealtimeStatus, "state" | "activeTabRef" | "tabSnapshotRevision" | "allOpenTabs"> | null | undefined
+): string | null {
+  const ref = snapshot?.activeTabRef;
+  const revision = snapshot?.tabSnapshotRevision;
+  if (snapshot?.state !== "active"
+    || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1
+    || typeof ref !== "string" || !ref || ref.trim() !== ref || ref.length > 128) return null;
+  const matches = snapshot.allOpenTabs.filter(tab => tab.tabRef === ref);
+  const target = matches[0];
+  if (matches.length !== 1 || !target) return null;
+  try {
+    const url = new URL(target.url);
+    return ["http:", "https:"].includes(url.protocol) ? ref : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Stable, non-reversible identifier for one authenticated student-session
  * binding. This is safe to expose to teacher clients and lets them distinguish

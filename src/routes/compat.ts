@@ -92,6 +92,7 @@ import { readHeartbeatTileCacheBatch } from "../services/heartbeatTileCache.js";
 import {
   CLASSPILOT_REALTIME_EXPIRED_AFTER_MS,
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  classpilotPublicActiveTabRef,
   classpilotPublicRealtimeBinding,
   classpilotRealtimeStatusFromHeartbeat,
   normalizeClasspilotPublicCapabilities,
@@ -198,6 +199,7 @@ function publicClasspilotExtensionContract(
       ? null
       : { schemaVersion: 1, revision: tabSnapshotRevision },
     tabSnapshotRevision,
+    activeTabRef: classpilotPublicActiveTabRef(snapshot),
     extensionVersion: snapshot?.extensionVersion ?? null,
     clientProtocolVersion: snapshot?.clientProtocolVersion ?? null,
     focus: snapshot?.state === "active" && snapshot.focus !== undefined

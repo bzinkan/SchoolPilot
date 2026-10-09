@@ -190,6 +190,50 @@ describe("ClassPilot coverage bulk hydration", () => {
     assert.equal(result.get(studentId)?.lateSignInRestrictionSsoV1Enabled, false);
   });
 
+  it("projects current-tab identity only from the exact current binding and actual tab snapshot", async () => {
+    const now = Date.now();
+    const schoolId = "coverage-active-tab-school";
+    const samples = [
+      { studentId: "valid", activeTabRef: "exact-active-tab", tabSnapshotRevision: 7 },
+      { studentId: "missing-ref", activeTabRef: undefined, tabSnapshotRevision: 7 },
+      { studentId: "missing-revision", activeTabRef: "exact-active-tab", tabSnapshotRevision: undefined },
+      { studentId: "outside-snapshot", activeTabRef: "unknown-tab", tabSnapshotRevision: 7 },
+      { studentId: "replacement", activeTabRef: "exact-active-tab", tabSnapshotRevision: 7 },
+      { studentId: "signed-out", activeTabRef: "exact-active-tab", tabSnapshotRevision: 7 },
+    ];
+    for (const sample of samples) {
+      const written = await writeClasspilotRealtimeStatus({
+        schoolId, ...sample, studentSessionId: `${sample.studentId}-session`,
+        deviceId: `${sample.studentId}-device`, heartbeatId: `${sample.studentId}-heartbeat`,
+        observedAt: now, trackingStatus: "ACTIVE", activeTabUrl: "https://example.test/",
+        allOpenTabs: [
+          { tabRef: "exact-active-tab", title: "Example", url: "https://example.test/" },
+          { tabRef: "other-same-url", title: "Example", url: "https://example.test/", active: true },
+        ],
+      });
+      assert.ok(written.snapshot);
+      if (sample.studentId === "signed-out") await markClasspilotRealtimeSignedOut({
+        schoolId, studentId: sample.studentId, studentSessionId: `${sample.studentId}-session`,
+        deviceId: `${sample.studentId}-device`, observedAt: now + 1, reason: "explicit_sign_out",
+      });
+    }
+    const result = await hydrateClasspilotCoverageStatuses({
+      schoolId, studentIds: samples.map(sample => sample.studentId), now,
+      knownSessions: samples.map(sample => ({
+        id: sample.studentId === "replacement" ? "replacement-new-session" : `${sample.studentId}-session`,
+        studentId: sample.studentId, deviceId: `${sample.studentId}-device`, lastSeenAt: new Date(now),
+      })),
+    });
+    assert.equal(result.get("valid")?.activeTabRef, "exact-active-tab");
+    for (const sample of samples.filter(sample => sample.studentId !== "valid")) {
+      assert.equal(result.get(sample.studentId)?.activeTabRef, null, `${sample.studentId} cannot acquire a current-tab identity`);
+    }
+    assert.ok(result.get("missing-revision")?.tabSnapshotRevision, "legacy presentation keeps its realtime revision fallback");
+    const serialized = JSON.stringify([...result.values()]);
+    assert.equal(serialized.includes("studentSessionId"), false);
+    assert.equal(serialized.includes("deviceId"), false);
+  });
+
   it("retains Focus confirmation only for valid active exact-session bindings", async () => {
     const now = Date.now();
     const schoolId = "coverage-focus-status-school";

@@ -233,6 +233,66 @@ test('updates an existing claimed-coverage row without granting new roster visib
   assert.equal(result.students[0].realtimeRevision, 4);
 });
 
+test('current-tab identity follows a newer exact snapshot and an explicit null clears it', () => {
+  const current = [{ ...base()[0], activeTabRef: 'old-ref', tabSnapshotRevision: 10 }];
+  const next = applyStudentRealtimeEvents(current, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1',
+    eventVersion: 2, realtimeBinding: 'binding-a', revision: 4,
+    activeTabRef: 'new-ref', tabSnapshotRevision: 11,
+    allOpenTabs: [
+      { tabRef: 'old-ref', url: 'https://example.test/same' },
+      { tabRef: 'new-ref', url: 'https://example.test/same' },
+    ],
+  }], { schoolId: 'school-1' });
+  assert.equal(next[0].activeTabRef, 'new-ref');
+  assert.equal(next[0].tabSnapshotRevision, 11);
+  const cleared = applyStudentRealtimeEvents(next, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1',
+    eventVersion: 2, realtimeBinding: 'binding-a', revision: 5,
+    activeTabRef: null,
+  }], { schoolId: 'school-1' });
+  assert.equal(cleared[0].activeTabRef, null, 'no active web tab must not retain a prior exact identity');
+  const stale = applyStudentRealtimeEvents(cleared, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1',
+    eventVersion: 2, realtimeBinding: 'binding-a', revision: 4, activeTabRef: 'new-ref',
+  }], { schoolId: 'school-1' });
+  assert.equal(stale[0].activeTabRef, null, 'an old frame cannot revive the cleared tab');
+});
+
+test('sign-out and a new realtime binding retire the prior current-tab identity', () => {
+  const current = [{ ...base()[0], activeTabRef: 'session-a-ref', tabSnapshotRevision: 10 }];
+  const switched = applyStudentRealtimeEvents(current, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1',
+    eventVersion: 2, realtimeBinding: 'binding-b', revision: 1,
+    observedAtMs: Date.parse('2026-08-13T12:01:00.000Z'),
+  }], { schoolId: 'school-1' });
+  assert.equal(switched[0].activeTabRef, null);
+  assert.equal(switched[0].tabSnapshotRevision, null);
+  const signedOut = applyStudentRealtimeEvents(current, [{
+    type: 'student-signed-out', schoolId: 'school-1', studentId: 'student-1',
+    eventVersion: 2, realtimeBinding: 'binding-a', revision: 4,
+  }], { schoolId: 'school-1' });
+  assert.equal(signedOut[0].activeTabRef, null);
+  const delayed = applyStudentRealtimeEvents(switched, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1',
+    eventVersion: 2, realtimeBinding: 'binding-a', revision: 99,
+    observedAtMs: Date.parse('2026-08-13T12:00:10.000Z'), activeTabRef: 'session-a-ref',
+  }], { schoolId: 'school-1' });
+  assert.equal(delayed[0].activeTabRef, null);
+});
+
+test('HTTP reconciliation retains the newest current-tab identity and accepts an authoritative clear', () => {
+  const current = [{ ...base()[0], activeTabRef: 'new-ref', realtimeRevision: 5 }];
+  const stale = mergeAggregatedStudents(current, [{
+    ...base()[0], activeTabRef: 'old-ref', realtimeRevision: 4,
+  }]);
+  assert.equal(stale[0].activeTabRef, 'new-ref');
+  const fresh = mergeAggregatedStudents(stale, [{
+    ...base()[0], activeTabRef: null, realtimeRevision: 6,
+  }]);
+  assert.equal(fresh[0].activeTabRef, null);
+});
+
 test('rejects wrong-school, wrong-device, and stale events', () => {
   const original = base();
   const events = [
@@ -791,7 +851,7 @@ test('Focus labels follow device-confirmed, suspended, invalidated and cleared r
     [confirmedFocus, 'Focus confirmed'],
     [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'attention' }, 'Focus paused for Attention'],
     [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'authentication' }, 'Focus paused for sign-in'],
-    [{ state: 'invalidated', assignmentId: 'assignment-a', reason: 'focus_tab_closed' }, 'Focus ended: target unavailable'],
+    [{ state: 'invalidated', assignmentId: 'assignment-a', reason: 'focus_tab_closed' }, 'Focus ended: tab closed'],
     [{ state: 'inactive' }, 'No Focus confirmed'],
   ];
   for (const [index, [focus, label]] of states.entries()) {

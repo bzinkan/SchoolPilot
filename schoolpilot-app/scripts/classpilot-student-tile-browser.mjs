@@ -1011,6 +1011,154 @@ try {
   await page.keyboard.press('Escape');
   await page.getByTestId('expanded-screenshot-dialog').waitFor({ state: 'detached' });
 
+  // Focus and Waypoint share the header control, while ACKs retain authority
+  // over its state. Every action below is scoped to this one rendered tile.
+  const lockButton = page.getByTestId('button-lock-toggle-lock-control-student');
+  const lockTile = page.getByTestId('card-student-lock-control-student');
+  const lockStatus = page.getByTestId('lock-status-lock-control-student');
+  const lockActions = () => page.getByTestId('lock-actions').evaluate((element) => JSON.parse(element.textContent));
+  const selectLockScenario = async (scenario) => {
+    await page.getByTestId(`lock-scenario-${scenario}`).click();
+  };
+  const expectLockAction = async (action, trigger) => {
+    const before = await lockActions();
+    await trigger();
+    await page.waitForFunction(({ count, action: expected }) => {
+      const actions = JSON.parse(document.querySelector('[data-testid="lock-actions"]').textContent);
+      return actions.length === count + 1 && actions.at(-1) === expected;
+    }, { count: before.length, action });
+    assert.equal(await lockButton.isDisabled(), true, 'an in-flight lock operation prevents duplicate submissions');
+    assert.equal(await lockButton.getAttribute('aria-busy'), 'true', 'pending changes expose their busy state');
+    await page.getByTestId('lock-spinner-lock-control-student').waitFor();
+  };
+
+  await selectLockScenario('none');
+  assert.equal(await lockButton.getAttribute('title'), 'Focus current tab');
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Focus current tab');
+  assert.equal(await lockButton.getAttribute('data-lock-state'), 'unlocked');
+  await expectLockAction('focus-current-tab', () => lockButton.click());
+  assert.equal(await lockTile.getByText('Focus confirmed', { exact: true }).count(), 0,
+    'HTTP acceptance of Focus must not pretend the student has confirmed enforcement');
+  await lockButton.evaluate((button) => button.click());
+  assert.deepEqual(await lockActions(), ['focus-current-tab'], 'clicking a pending button cannot issue another request');
+
+  // Manage Tabs confirmations update the same icon. No tile action is required
+  // to receive an authoritative focus or stop-focus update.
+  await page.getByTestId('lock-confirm-focus').click();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Stop Focus');
+  assert.equal(await lockButton.getAttribute('data-lock-state'), 'locked');
+  await lockStatus.getByText('Focus confirmed', { exact: true }).waitFor();
+  await page.getByTestId('lock-confirm-stop-focus').click();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Focus current tab');
+  assert.deepEqual(await lockActions(), ['focus-current-tab']);
+
+  await selectLockScenario('focus');
+  assert.equal(await lockButton.getAttribute('title'), 'Stop Focus');
+  await expectLockAction('stop-focus', () => lockButton.click());
+  await page.getByTestId('lock-confirm-stop-focus').click();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Focus current tab');
+
+  await selectLockScenario('waypoint');
+  assert.equal(await lockButton.getAttribute('title'), 'Clear Waypoint');
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Clear Waypoint');
+  assert.equal(await lockButton.getAttribute('data-lock-state'), 'locked');
+  await expectLockAction('clear-waypoint', () => lockButton.click());
+  await page.getByTestId('lock-confirm-clear-waypoint').click();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Focus current tab');
+
+  for (const action of ['stop-focus', 'clear-waypoint', 'stop-both']) {
+    await selectLockScenario('both');
+    assert.equal(await lockButton.getAttribute('title'), 'Manage Focus and Waypoint');
+    assert.equal(await lockButton.getAttribute('aria-label'), 'Manage Focus and Waypoint');
+    assert.equal(await lockButton.getAttribute('data-lock-state'), 'locked');
+    await lockButton.click();
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Stop Focus', 'Clear Waypoint', 'Stop Both']);
+    if (action === 'stop-both' && process.env.FOCUS_TILE_QA_PATH) {
+      await lockTile.screenshot({ path: process.env.FOCUS_TILE_QA_PATH });
+    }
+    await expectLockAction(action, () => page.getByTestId(`lock-action-${action}-lock-control-student`).click());
+    assert.equal(await page.getByRole('menu').count(), 0, 'choosing a lock action dismisses its menu');
+  }
+
+  await selectLockScenario('both');
+  await page.getByTestId('lock-confirm-stop-focus').click();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Clear Waypoint', 'stopping Focus retains an existing Waypoint');
+  await selectLockScenario('both');
+  await page.getByTestId('lock-confirm-clear-waypoint').click();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Stop Focus', 'clearing Waypoint retains an existing Focus');
+
+  // Radix menu keyboard interaction must preserve the tile's independent
+  // screenshot, selection, and details actions.
+  await selectLockScenario('both');
+  await lockButton.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('menu').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('menu').waitFor({ state: 'detached' });
+  await page.clock.runFor(1);
+  assert.equal(await lockButton.evaluate((button) => button === document.activeElement), true,
+    'Escape restores focus to the lock control');
+  await page.keyboard.press('Enter');
+  await page.getByRole('menu').waitFor();
+  await page.getByTestId('lock-action-stop-both-lock-control-student').focus();
+  await expectLockAction('stop-both', () => page.keyboard.press('Enter'));
+  await selectLockScenario('focus');
+  await lockButton.focus();
+  await expectLockAction('stop-focus', () => page.keyboard.press('Space'));
+
+  for (const [scenario, label] of [
+    ['suspended-attention', 'Focus paused for Attention'],
+    ['suspended-authentication', 'Focus paused for sign-in'],
+  ]) {
+    await selectLockScenario(scenario);
+    await lockStatus.getByText(label, { exact: true }).waitFor();
+    assert.equal(await lockButton.getAttribute('aria-label'), 'Stop Focus');
+    assert.equal(await lockButton.isDisabled(), false, 'suspended Focus remains stoppable');
+    assert.equal(await lockTile.getByText('Focus confirmed', { exact: true }).count(), 0);
+  }
+  await selectLockScenario('invalidated');
+  await lockStatus.getByText('Focus ended: tab closed', { exact: true }).waitFor();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Focus current tab',
+    'invalidated Focus no longer closes the tile padlock');
+  assert.equal(await lockButton.getAttribute('data-lock-state'), 'unlocked');
+  const beforeInvalidatedTick = await lockActions();
+  await page.getByTestId('tick').click();
+  assert.deepEqual(await lockActions(), beforeInvalidatedTick, 'an invalidated target never automatically selects another tab');
+  await selectLockScenario('outdated-ack');
+  await lockStatus.getByText(/awaiting confirmation/).waitFor();
+  assert.equal(await lockTile.getByText('Focus confirmed', { exact: true }).count(), 0,
+    'a prior assignment ACK cannot confirm replacement Focus');
+  assert.equal(await lockButton.getAttribute('aria-busy'), 'true');
+
+  for (const scenario of ['missing-ref', 'missing-revision', 'duplicate-ref', 'unsupported', 'browser-page', 'stale']) {
+    await selectLockScenario(scenario);
+    assert.equal(await lockButton.isDisabled(), true, `${scenario} cannot start Focus on an unverified tab`);
+    assert.equal(await lockButton.getAttribute('title'),
+      'Current tab unavailable—refresh or use Manage Tabs.', `${scenario} explains the unavailable shortcut`);
+  }
+  await selectLockScenario('duplicate-url');
+  assert.equal(await lockButton.isDisabled(), false, 'duplicate URLs are safe when exactly one opaque ref matches');
+  await expectLockAction('focus-current-tab', () => lockButton.click());
+
+  await selectLockScenario('offline-focus');
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Stop Focus');
+  assert.equal(await lockButton.isDisabled(), false, 'offline Focus can still clear its saved restriction');
+  await expectLockAction('stop-focus', () => lockButton.click());
+  await selectLockScenario('offline-waypoint');
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Clear Waypoint');
+  assert.equal(await lockButton.isDisabled(), false, 'offline Waypoint cleanup retains the screen-only safety unlock');
+  await expectLockAction('clear-waypoint', () => lockButton.click());
+
+  await selectLockScenario('both');
+  await page.getByTestId('lock-partial-result').click();
+  await page.getByTestId('lock-operation-error-lock-control-student').getByText(/Waypoint could not be cleared/).waitFor();
+  assert.equal(await lockButton.getAttribute('aria-label'), 'Clear Waypoint',
+    'partial Stop Both keeps only the failed Waypoint action available for retry');
+  await expectLockAction('clear-waypoint', () => lockButton.click());
+  assert.equal(await page.getByTestId('lock-body-clicks').textContent(), '0', 'lock actions never enlarge the screenshot');
+  assert.equal(await page.getByTestId('lock-selection-clicks').textContent(), '0', 'lock actions never change selection');
+  assert.equal(await page.getByTestId('lock-details-clicks').textContent(), '0', 'lock actions never open student details');
+
   await page.getByTestId('toggle-tiles').click();
   assert.deepEqual(
     await page.evaluate(() => globalThis.__studentTileMinuteTimers()),

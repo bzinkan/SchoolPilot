@@ -838,6 +838,7 @@ function coverageStatusPayload(status: ClasspilotCoverageStatus) {
     lastSeenAt: status.lastSeenAt,
     activeTabTitle: status.activeTabTitle,
     activeTabUrl: status.activeTabUrl,
+    activeTabRef: status.activeTabRef,
     allOpenTabs: status.allOpenTabs,
     screenshotHealth: status.screenshotHealth,
     tabSnapshot: status.tabSnapshot,

@@ -3,6 +3,7 @@ import {
   CLASSPILOT_REALTIME_BATCH_SIZE,
   CLASSPILOT_REALTIME_EXPIRED_AFTER_MS,
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  classpilotPublicActiveTabRef,
   readClasspilotRealtimeStatusBatch,
   readLocalClasspilotRealtimeStatusBatch,
   type ClasspilotRealtimeBinding,
@@ -21,6 +22,7 @@ export type ClasspilotCoverageStatus = {
   lastSeenAt: number | null;
   activeTabTitle: string;
   activeTabUrl: string;
+  activeTabRef: string | null;
   allOpenTabs: Array<{
     tabRef?: string;
     title: string;
@@ -172,6 +174,7 @@ function publicStatus(
     lastSeenAt,
     activeTabTitle: realtime?.activeTabTitle || "",
     activeTabUrl: realtime?.activeTabUrl || "",
+    activeTabRef: classpilotPublicActiveTabRef(realtime),
     allOpenTabs: sanitizeTabs(realtime),
     tabSnapshot: realtime
       ? { schemaVersion: 1, revision: realtime.tabSnapshotRevision ?? realtime.revision }
