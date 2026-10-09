@@ -7,6 +7,20 @@ identify a tab. Each command names explicit students and sends only their tab
 reference and observed revision. Claimed-context delivery partitions those
 exact rows by the currently authorized context.
 
+Focus holds the selected browser tab in the foreground; it does not restrict
+navigation within that tab. Waypoints and Flight Paths retain their independent
+destination restrictions. The student tile's open padlock now focuses that
+student's current exact tab. A closed padlock stops Focus when only Focus is set,
+or clears the Waypoint when only a Waypoint is set. When both are set, the padlock
+opens a menu with Stop Focus, Clear Waypoint and Stop Both. Tooltips identify the
+current action, and pending or suspended states never claim confirmed enforcement.
+
+Stop Both waits for the Stop Focus result before clearing the Waypoint. If Focus
+confirmation is still pending after 60 seconds, Waypoint clearing remains a
+separate retry. Partial results identify the control that remains. Either release
+leaves Flight Paths, block lists, Attention and tab limits unchanged. Changes to
+the classroom authority or authenticated student binding cancel remaining work.
+
 New actions require accepted scopedAuthorityChecksV1 and focusTabV1, current
 telemetry and an exact tab reference. Raw extension advertisements cannot
 override capability withdrawal. Stop Focus uses the current explicit student

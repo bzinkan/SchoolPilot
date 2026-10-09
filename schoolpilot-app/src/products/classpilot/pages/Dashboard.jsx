@@ -172,7 +172,8 @@ import { chatStudentName, countUnreadByStudent, deriveChatConversations, describ
 import { broadcastButtonLabel, buildMessagingRoster } from '../lib/chatRoster';
 import { compareStudentsByLastName } from '../lib/studentOrder';
 import { mergeCommandUpdateIntoBatches, mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
-import { exactFocusPayload, focusCommandFeedback, focusPayloadForStudents, focusStatusLabel, focusTabCapability } from '../lib/focusControls';
+import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusCommandFeedback, focusPayloadForStudents, focusStatusLabel, focusTabCapability } from '../lib/focusControls';
+import { runTileLockAction, tileLockAuthorityKey } from '../lib/tileLockActions';
 import {
   classpilotObservationSessionEligible,
   claimedPreviewContextsFromRoster,
@@ -624,6 +625,10 @@ export default function Dashboard() {
   const [logoutPending, setLogoutPending] = useState(false);
   const [quickClaimStudentId, setQuickClaimStudentId] = useState(null);
   const [tileCommandState, setTileCommandState] = useState({});
+  const [tileLockOperations, setTileLockOperations] = useState({});
+  const tileLockRequestsRef = useRef(new Map());
+  const tileLockStudentsRef = useRef(new Map());
+  const tileLockActionRef = useRef(null);
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   if (!dismissedMessagesInitialized.current) {
@@ -1055,6 +1060,9 @@ export default function Dashboard() {
   const [lastFocusResult, setLastFocusResult] = useState(null);
   useLayoutEffect(() => {
     focusControlScopeRef.current = focusControlScopeKey;
+    for (const request of tileLockRequestsRef.current.values()) request.controller.abort();
+    tileLockRequestsRef.current.clear();
+    setTileLockOperations({});
     focusCommandUpdatesRef.current.clear();
     setLastFocusResult(null);
     setShowCloseTabsDialog(false);
@@ -4498,6 +4506,25 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   // the claimed students in Claimed view), and which of them can receive a
   // command now.
   const recipientStudents = () => (studentView === 'claimed' ? claimedPickupStudents : sessionFilteredStudents);
+  useLayoutEffect(() => {
+    const rows = studentView === 'claimed' ? claimedPickupStudents : sessionFilteredStudents;
+    tileLockStudentsRef.current = new Map(rows.map((student) => [student.studentId, student]));
+    for (const [id, request] of tileLockRequestsRef.current) {
+      const student = tileLockStudentsRef.current.get(id);
+      if (!student || request.authorityKey !== tileLockAuthorityKey(focusControlScopeKey, student))
+        request.controller.abort();
+    }
+    setTileLockOperations((current) => {
+      const entries = Object.entries(current).filter(([id, operation]) => {
+        const student = tileLockStudentsRef.current.get(id);
+        return student && operation.authorityKey === tileLockAuthorityKey(focusControlScopeKey, student);
+      });
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
+  }, [claimedPickupStudents, sessionFilteredStudents, studentView, focusControlScopeKey]);
+  useEffect(() => () => {
+    for (const request of tileLockRequestsRef.current.values()) request.controller.abort();
+  }, []);
   const commandableRecipientIds = (commandType, commandPayload = {}) => (
     dashboardCapabilities.mode === 'claimed-coverage'
       ? claimedPickupStudents.filter((student) => isStudentCommandableForCommand(student, commandType, commandPayload))
@@ -5361,6 +5388,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     // Every caller names its students: a dialog's frozen list, a tile, or the
     // selection resolved when a one-click action was pressed. A missing list
     // is refused, never resolved from whatever happens to be selected by now.
+    if (Array.isArray(options.studentIds) && ['focus-tab', 'stop-focus', 'lock-screen', 'unlock-screen'].includes(commandType)
+      && options.studentIds.some((id) => {
+        const activeRequest = tileLockRequestsRef.current.get(id);
+        return activeRequest && activeRequest !== options.lockRequest;
+      })) throw new Error('Wait for this student’s lock action to finish.');
     if (!Array.isArray(options.studentIds) || options.studentIds.length === 0) {
       throw new Error(RECIPIENTS_MISSING_MESSAGE);
     }
@@ -5613,6 +5645,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => !id)) {
         throw new Error('Select a student before sending this command.');
       }
+      if (ids.some((id) => tileLockRequestsRef.current.has(id)))
+        throw new Error('Wait for this student’s lock action to finish.');
       const data = await postActiveCommand(type, type === 'stop-focus' ? {} : exactFocusPayload([tab]), { studentIds: ids });
       if (scope !== focusControlScopeRef.current) throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
       return data;
@@ -6021,6 +6055,96 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       toast({ variant: 'destructive', title: 'Command failed', description: message });
     }
   };
+
+  const handleTileLockAction = async (studentId, action) => {
+    if (tileLockRequestsRef.current.has(studentId) || focusMutation.isPending) return;
+    if (nonRestrictionSelectionActive) {
+      toast({ variant: 'destructive', title: 'Clear the current selection',
+        description: 'Clear signed-out or sign-out-only selections before using an individual student action.' });
+      return;
+    }
+    const student = tileLockStudentsRef.current.get(studentId);
+    if (!student || !isStudentStructurallyCommandable(student)) return;
+    const scope = focusControlScopeRef.current;
+    const authorityKey = tileLockAuthorityKey(scope, student);
+    const controller = new AbortController();
+    const request = { authorityKey, controller };
+    const focusAssignmentId = student.classroomState?.restrictions?.focus?.assignmentId
+      || student.focus?.assignmentId || null;
+    const previousOperation = tileLockOperations[studentId];
+    const carriedOutcomes = action === 'clear-waypoint'
+      && previousOperation?.focusAssignmentId === focusAssignmentId
+      && previousOperation?.outcomes?.focus?.status === 'completed'
+      && (['stop-focus', 'stop-both'].includes(previousOperation.action)
+        || previousOperation.outcomes.focus.commandType === 'stop-focus')
+      ? { focus: { ...previousOperation.outcomes.focus, commandType: 'stop-focus' } } : {};
+    const assertCurrent = () => {
+      const current = tileLockStudentsRef.current.get(studentId);
+      if (controller.signal.aborted || scope !== focusControlScopeRef.current || !current
+        || authorityKey !== tileLockAuthorityKey(scope, current))
+        throw new DOMException('Classroom assignment changed', 'AbortError');
+    };
+    const update = (operation) => {
+      assertCurrent();
+      setTileLockOperations((current) => ({ ...current, [studentId]: {
+        ...operation, outcomes: { ...carriedOutcomes, ...operation.outcomes }, authorityKey, focusAssignmentId,
+      } }));
+    };
+    tileLockRequestsRef.current.set(studentId, request);
+    try {
+      const control = deriveTileLockControl(student, {
+        focusTelemetryCurrent: monitoringDisplayFor(student).telemetryCurrent,
+        canFocusTab: dashboardCapabilities.allows('focus-tab') && isStudentCommandableForCommand(student, 'focus-tab'),
+        canStopFocus: dashboardCapabilities.allows('stop-focus') && isStudentStructurallyCommandable(student),
+        canClearWaypoint: dashboardCapabilities.allows('unlock-screen')
+          && isStudentCommandableForCommand(student, 'unlock-screen', { screenOnly: true }, { allowSafetyUnlock: true }),
+      });
+      const actionDisabled = action === 'stop-both' ? control.stopBothDisabled
+        : action === 'stop-focus' ? control.stopFocusDisabled
+          : action === 'clear-waypoint' ? control.clearWaypointDisabled : control.disabled;
+      if (actionDisabled) throw new Error(control.reason);
+      const focusTarget = action === 'focus-current-tab' ? currentTabFocusTarget(student) : null;
+      if (focusTarget && !focusTarget.enabled) throw new Error(focusTarget.reason);
+      const result = await runTileLockAction({ action, studentId, focusPayload: focusTarget?.payload,
+        signal: controller.signal, assertCurrent, onUpdate: update,
+        postCommand: async (type, payload, studentIds) => {
+          assertCurrent();
+          const data = await postActiveCommand(type, payload, { studentIds, lockRequest: request });
+          assertCurrent();
+          if (type === 'focus-tab' || type === 'stop-focus') setLastFocusResult({ ...data, type });
+          queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
+          return data;
+        },
+        readCommand: (command, signal) => {
+          assertCurrent();
+          const authority = activityAuthority(command) || activityAuthority({ teachingSessionId: command.sessionId }) || effectiveAuthority;
+          const context = claimedPreviewContextById.get(authority?.supervisionContextId);
+          return requestActivityApi('GET', `/classpilot/commands/${encodeURIComponent(command.id)}/status?${activityAuthorityQuery(authority)}`,
+            undefined, { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
+        },
+      });
+      assertCurrent();
+      const outcomes = Object.values(result.outcomes);
+      const complete = outcomes.length > 0 && outcomes.every((outcome) => outcome.status === 'completed');
+      const failed = outcomes.some((outcome) => ['failed', 'unavailable', 'expired'].includes(outcome.status));
+      toast({ title: action === 'stop-both' ? complete ? 'Focus and Waypoint stopped' : 'Stop Both: review results'
+        : complete ? 'Lock action confirmed' : failed ? 'Lock action not confirmed' : 'Lock action awaiting confirmation',
+      variant: failed ? 'destructive' : undefined,
+      description: Object.entries(result.outcomes).map(([kind, outcome]) =>
+        `${kind === 'focus' ? 'Focus' : 'Waypoint'}: ${outcome.status}${outcome.error ? ` — ${outcome.error}` : ''}`).join('. ') });
+      void refetchStudents();
+      queueTargetedScreenshotRefresh([studentId]);
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      const message = error?.message || 'The lock action could not be completed.';
+      update({ action, pending: false, phase: '', outcomes: {}, error: message });
+      toast({ variant: 'destructive', title: 'Lock action unavailable', description: message });
+    } finally {
+      if (tileLockRequestsRef.current.get(studentId) === request)
+        tileLockRequestsRef.current.delete(studentId);
+    }
+  };
+  useLayoutEffect(() => { tileLockActionRef.current = handleTileLockAction; });
 
   const attentionModeMutation = useMutation({
     // Activation goes to the frozen dialog recipients. Release keeps its
@@ -7587,6 +7711,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     onAllowDomain={tileActionsDisabled ? undefined : handleAllowDomain}
                     onManageTabs={!tileActionsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
                     onCommand={tileActionsDisabled ? undefined : handleTileCommand}
+                    onLockAction={tileActionsDisabled ? undefined : (action) => tileLockActionRef.current?.(student.studentId, action)}
+                    lockOperation={tileLockOperations[student.studentId]}
+                    canFocusTab={dashboardCapabilities.allows('focus-tab') && isStudentCommandableForCommand(student, 'focus-tab') && !focusMutation.isPending}
+                    canStopFocus={dashboardCapabilities.allows('stop-focus') && isStudentStructurallyCommandable(student) && !focusMutation.isPending}
+                    canClearWaypoint={dashboardCapabilities.allows('unlock-screen') && isStudentCommandableForCommand(student, 'unlock-screen', { screenOnly: true }, { allowSafetyUnlock: true }) && !focusMutation.isPending}
                     commandPending={tileCommandState[student.studentId]?.pending === true}
                     commandError={supervisedElsewhere ? '' : tileCommandState[student.studentId]?.error || ''}
                     canLockScreen={dashboardCapabilities.allows('lock-screen') && dashboardCapabilities.allows('unlock-screen')}

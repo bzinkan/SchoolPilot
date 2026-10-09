@@ -3,8 +3,16 @@ import { getBrowsingActivityTitle } from "../../../lib/browsing-activity";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw, EyeOff, UserRound, MessageSquare } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, LoaderCircle, Layers, Maximize2, X, List, RotateCcw, EyeOff, UserRound, MessageSquare } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "../../../components/ui/dropdown-menu";
 import {
   deriveScreenshotDisplay,
   deriveScreenshotHealthDisplay,
@@ -18,13 +26,12 @@ import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
 import { useDecodedScreenshot } from "../hooks/useDecodedScreenshot";
 import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
 import { normalizedTileControlRevision } from "../lib/tileBatchPolling";
+import { deriveTileLockControl } from "../lib/focusControls";
 import "./studentTileFrame.css";
 import {
   activeTemporaryAllows,
   deriveTabLimitChip,
-  studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
-  studentTileScreenToggleCommand,
   studentTileTempUnblockCommand,
 } from "../lib/dashboardCommandContext";
 
@@ -94,9 +101,14 @@ function StudentTile({
   onAllowDomain,
   onManageTabs,
   onCommand,
+  onLockAction,
+  lockOperation = null,
   commandPending = false,
   commandError = "",
   canLockScreen = true,
+  canFocusTab = true,
+  canStopFocus = true,
+  canClearWaypoint = canLockScreen,
   canRemoveFlightPath = true,
   canTempUnblock = false,
   actionsDisabled = false,
@@ -279,10 +291,6 @@ function StudentTile({
   const hasLastObservation = Number.isFinite(effectiveMonitoringDisplay.observedAtMs)
     && effectiveMonitoringDisplay.observedAtMs > 0;
   const neverObserved = effectiveMonitoringDisplay.kind === 'signed_out' && !hasLastObservation;
-  const supportsScreenOnlyUnlock = studentSupportsCapability(student, 'screenOnlyUnlockV1');
-  const unlockLabel = supportsScreenOnlyUnlock
-    ? "Clear this student's waypoint (screen only)"
-    : "Extension update required for screen-only unlock";
   const activeLiveStream = interactionsDisabled || liveStreamAuthorizationRevoked
     ? null
     : liveStream;
@@ -292,15 +300,19 @@ function StudentTile({
       : monitoringActionsDisabled
         ? 'Student actions are disabled while monitoring updates'
         : "Student actions are unavailable in this view");
-  const safetyUnlockAvailable = !actionsDisabled
-    && !monitoringSuppressed
-    && !nonSignOutCommandsBlocked
-    && !restrictionSelectionActive
-    && monitoringActionsDisabled
-    && student.screenLocked
-    && supportsScreenOnlyUnlock
-    && canLockScreen
-    && Boolean(onCommand);
+  // Starting Focus needs current telemetry. Cleanup retains its separately
+  // authorized route when monitoring is lost, including saved offline Focus.
+  const lockControl = deriveTileLockControl(student, {
+    lockOperation,
+    canFocusTab,
+    focusTelemetryCurrent: currentTelemetry,
+    canStopFocus,
+    canClearWaypoint,
+    actionsDisabled: actionsDisabled || monitoringSuppressed || nonSignOutCommandsBlocked || restrictionSelectionActive,
+    actionsDisabledReason: unavailableActionReason,
+  });
+  const failedLockOutcomes = Object.entries(lockOperation?.outcomes || {})
+    .filter(([, outcome]) => ['failed', 'unavailable', 'expired'].includes(outcome?.status));
 
   // The dashboard owns negotiation and the enlarged portal. This tile only
   // renders a preview of the one active stream.
@@ -437,6 +449,43 @@ function StudentTile({
     }
   };
 
+  const lockButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="relative h-8 w-8"
+      disabled={lockControl.disabled || !onLockAction || commandPending}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (lockControl.disabled || !onLockAction || commandPending || lockControl.menu) return;
+        onLockAction(lockControl.action);
+      }}
+      aria-label={lockControl.label}
+      aria-describedby={`lock-status-${student.studentId} lock-help-${student.studentId}`}
+      aria-busy={lockControl.pending}
+      title={lockControl.disabled ? lockControl.reason : lockControl.label}
+      data-testid={`button-lock-toggle-${student.studentId}`}
+      data-lock-state={lockControl.locked ? 'locked' : 'unlocked'}
+      data-lock-pending={lockControl.pending ? 'true' : 'false'}
+    >
+      {lockControl.locked ? (
+        <Lock className={`h-4 w-4 ${lockControl.warning ? 'text-amber-600 dark:text-amber-400' : 'text-blue-600 dark:text-blue-400'}`} />
+      ) : (
+        <Unlock className="h-4 w-4" />
+      )}
+      {lockControl.pending ? (
+        <LoaderCircle
+          className="absolute -bottom-0.5 -right-0.5 h-3 w-3 animate-spin rounded-full bg-card text-blue-600 dark:text-blue-400"
+          aria-hidden="true"
+          data-testid={`lock-spinner-${student.studentId}`}
+        />
+      ) : lockControl.warning ? (
+        <span className="absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+      ) : null}
+    </Button>
+  );
+
   return (
     <Card
       data-testid={`card-student-${student.studentId}`}
@@ -524,34 +573,37 @@ function StudentTile({
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            {!monitoringSuppressed ? <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              disabled={(!safetyUnlockAvailable && interactionsDisabled) || !canLockScreen || !onCommand || (student.screenLocked && !supportsScreenOnlyUnlock) || (!currentTelemetry && !student.screenLocked) || commandPending}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (interactionsDisabled && !safetyUnlockAvailable) return;
-                const command = studentTileScreenToggleCommand(student);
-                if (command) onCommand?.(command);
-              }}
-              title={safetyUnlockAvailable
-                ? unlockLabel
-                : interactionsDisabled
-                  ? unavailableActionReason
-                  : student.screenLocked
-                  ? unlockLabel
-                  : currentTelemetry
-                    ? "Set a waypoint at this student's current screen"
-                    : "Current screen unavailable while monitoring signal is lost"}
-              data-testid={`button-lock-toggle-${student.studentId}`}
-            >
-              {student.screenLocked ? (
-                <Lock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-              ) : (
-                <Unlock className="h-4 w-4" />
-              )}
-            </Button> : null}
+            {!monitoringSuppressed ? lockControl.menu ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>{lockButton}</DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+                  <DropdownMenuLabel>Focus and Waypoint</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={lockControl.stopFocusDisabled || !onLockAction || commandPending}
+                    onSelect={() => onLockAction?.('stop-focus')}
+                    data-testid={`lock-action-stop-focus-${student.studentId}`}
+                  >
+                    Stop Focus
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={lockControl.clearWaypointDisabled || !onLockAction || commandPending}
+                    onSelect={() => onLockAction?.('clear-waypoint')}
+                    data-testid={`lock-action-clear-waypoint-${student.studentId}`}
+                  >
+                    Clear Waypoint
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={lockControl.stopBothDisabled || !onLockAction || commandPending}
+                    onSelect={() => onLockAction?.('stop-both')}
+                    data-testid={`lock-action-stop-both-${student.studentId}`}
+                  >
+                    Stop Both
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : lockButton : null}
           </div>
         </div>
 
@@ -573,12 +625,62 @@ function StudentTile({
           </div>
         ) : null}
 
+        {(lockOperation?.error || failedLockOutcomes.length > 0) && !monitoringSuppressed ? (
+          <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" role="alert" data-testid={`lock-operation-error-${student.studentId}`}>
+            {lockOperation.error ? <p>{lockOperation.error}</p> : null}
+            {failedLockOutcomes.map(([name, outcome]) => {
+              const startingFocus = name === 'focus' && lockOperation.action === 'focus-current-tab';
+              const action = name === 'waypoint' ? 'clear-waypoint' : startingFocus ? 'focus-current-tab' : 'stop-focus';
+              const label = name === 'waypoint' ? 'Clear Waypoint' : startingFocus ? 'Focus current tab' : 'Stop Focus';
+              const disabled = !onLockAction || commandPending || (startingFocus
+                ? interactionsDisabled || !canFocusTab || !lockControl.focusTarget.enabled || lockControl.busy
+                : name === 'waypoint'
+                  ? lockControl.clearWaypointDisabled || !lockControl.waypoint.clearable
+                  : lockControl.stopFocusDisabled || !lockControl.focus.clearable);
+              return (
+                <div key={name} className="mt-1.5 space-y-1">
+                  <p>{label}: {outcome.error || 'Not confirmed. Try again.'}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={disabled}
+                    onClick={(event) => { event.stopPropagation(); onLockAction?.(action); }}
+                    data-testid={`lock-retry-${name}-${student.studentId}`}
+                  >
+                    Retry {label}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         {/* Alert Badges. The row keeps a reserved height whether or not it has
             badges, so a badge appearing or clearing never reflows the tile —
             or, through the grid row, every tile beside it. */}
         {!monitoringSuppressed && (
           <div className="flex flex-col gap-2" data-testid={`badge-row-${student.studentId}`}>
             <div className="flex min-h-[22px] flex-wrap gap-1.5">
+              <span className="sr-only" id={`lock-help-${student.studentId}`}>
+                {lockControl.description}{lockOperation?.phase ? `. ${lockOperation.phase}` : ''}
+              </span>
+              <Badge
+                id={`lock-status-${student.studentId}`}
+                role="status"
+                aria-live="polite"
+                title={lockOperation?.phase || undefined}
+                variant="outline"
+                className={lockControl.focus.status === 'none' && lockControl.waypoint.status === 'none' && !lockControl.pending
+                  ? 'sr-only'
+                  : `text-[10px] px-2 py-0.5 ${lockControl.warning
+                    ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+                    : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800'}`}
+                data-testid={`lock-status-${student.studentId}`}
+              >
+                {lockControl.statusLabel}
+              </Badge>
               {currentTelemetry && student.aiClassification?.safetyAlert && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-100 text-red-900 border-red-400 animate-pulse dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-safety-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
@@ -1154,6 +1256,7 @@ const CALLBACK_PROPS = new Set([
   'onManageTabs',
   'onOpenScreenshot',
   'onCommand',
+  'onLockAction',
   'onReturnToClass',
   'onOpenChat',
 ]);

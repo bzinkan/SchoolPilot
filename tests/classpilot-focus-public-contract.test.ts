@@ -15,6 +15,7 @@ type PublicTabContract = {
   acceptedCapabilities: Record<string, boolean>;
   tabSnapshotRevision: number | null;
   tabSnapshot: { schemaVersion: number; revision: number } | null;
+  activeTabRef: string | null;
   focus?: { state: string; assignmentId?: string; reason?: string };
 };
 
@@ -46,6 +47,7 @@ const heartbeat = {
   studentSessionId: "private-session-binding", deviceId: "private-device-binding",
   heartbeatId: "focus-contract-heartbeat", observedAt: now, trackingStatus: "ACTIVE",
   clientProtocolVersion: 3, extensionVersion: "2.9.7", tabSnapshotRevision: 7,
+  activeTabRef: "opaque-exact-tab",
   allOpenTabs: [{ tabRef: "opaque-exact-tab", title: "Example", url: "https://example.test/", active: true }],
   extensionCapabilities: ["scopedAuthorityChecksV1", "focusTabV1"],
 };
@@ -69,9 +71,37 @@ describe("public Focus and Bring Forward capability contract", () => {
       assert.equal(contract.acceptedCapabilities.scopedAuthorityChecksV1, true);
       assert.equal(contract.tabSnapshotRevision, 7);
       assert.equal(contract.tabSnapshot?.revision, 7);
+      assert.equal(contract.activeTabRef, "opaque-exact-tab");
       const serialized = JSON.stringify(contract);
       assert.equal(serialized.includes("private-device-binding"), false);
       assert.equal(serialized.includes("private-session-binding"), false);
+    }
+  });
+
+  it("never substitutes a realtime revision, URL or active flag for the exact current-tab proof", async () => {
+    const negotiated = await snapshot(["scopedAuthorityChecksV1", "focusTabV1"]);
+    const missingProof = [
+      { activeTabRef: undefined }, { activeTabRef: null }, { activeTabRef: "" },
+      { activeTabRef: " opaque-exact-tab" }, { activeTabRef: "x".repeat(129) },
+      { tabSnapshotRevision: undefined }, { tabSnapshotRevision: 0 },
+      { tabSnapshotRevision: 1.5 }, { tabSnapshotRevision: "7" },
+      { state: "signed_out" }, { activeTabRef: "missing-ref" }, { allOpenTabs: [] },
+      { allOpenTabs: [negotiated.allOpenTabs[0], negotiated.allOpenTabs[0]] },
+      { allOpenTabs: [{ tabRef: "opaque-exact-tab", url: "chrome://settings" }] },
+    ];
+    for (const [surface, project] of projections) {
+      for (const changed of missingProof) {
+        const contract = project({ ...negotiated, ...changed });
+        assert.equal(contract.activeTabRef, null, `${surface} must clear unproven current-tab identity: ${JSON.stringify(changed)}`);
+      }
+      const duplicateUrls = project({ ...negotiated, allOpenTabs: [
+        ...negotiated.allOpenTabs,
+        { ...negotiated.allOpenTabs[0], tabRef: "different-tab-same-url", active: true },
+      ] });
+      assert.equal(duplicateUrls.activeTabRef, "opaque-exact-tab", `${surface} must retain the exact tab among duplicate URLs`);
+      const fallback = project({ ...negotiated, tabSnapshotRevision: undefined });
+      assert.equal(fallback.tabSnapshotRevision, negotiated.revision, "legacy revision presentation remains compatible");
+      assert.equal(fallback.activeTabRef, null, "the compatibility revision is never exact tab proof");
     }
   });
 

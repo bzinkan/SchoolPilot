@@ -3,6 +3,7 @@ import { contentCategory } from './contentCategories.js';
 
 const REALTIME_FIELDS = Object.freeze([
   'activeTabUrl',
+  'activeTabRef',
   'activeTabTitle',
   'favicon',
   'allOpenTabs',
@@ -91,6 +92,7 @@ function resetForRealtimeBinding(row, binding) {
     ...next,
     realtimeBinding: binding,
     activeTabUrl: '',
+    activeTabRef: null,
     activeTabTitle: '',
     favicon: null,
     allOpenTabs: [],
@@ -272,6 +274,7 @@ function mapStudentUpdate(row, event) {
   };
 
   copy('activeTabUrl');
+  copy('activeTabRef');
   copy('activeTabTitle');
   copy('favicon');
   copy('allOpenTabs');
@@ -365,6 +368,7 @@ function mapSignedOut(row, event) {
     isLoggedIn: false,
     activeTabTitle: '',
     activeTabUrl: '',
+    activeTabRef: null,
     favicon: null,
     allOpenTabs: [],
     tabSnapshot: null,

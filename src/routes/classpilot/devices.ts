@@ -212,6 +212,7 @@ import {
 } from "../../services/heartbeatHotPathMetrics.js";
 import {
   CLASSPILOT_REALTIME_STALE_AFTER_MS,
+  classpilotPublicActiveTabRef,
   classpilotPublicRealtimeBinding,
   classpilotRealtimeFresh,
   classpilotRealtimeOrderingKey,
@@ -1015,6 +1016,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     realtimeObservedAt: new Date(snapshot.observedAt).toISOString(),
     tabSnapshot: { schemaVersion: 1, revision: snapshot.tabSnapshotRevision ?? snapshot.revision },
     tabSnapshotRevision: snapshot.tabSnapshotRevision ?? snapshot.revision,
+    activeTabRef: classpilotPublicActiveTabRef(snapshot),
     extensionVersion: snapshot.extensionVersion ?? null,
     clientProtocolVersion: snapshot.clientProtocolVersion ?? null,
     capabilities: {
