@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-09T20:47:22.162Z",
+  "observedAtUtc": "2026-10-09T17:50:46.029Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -415,27 +415,22 @@
       "evidence": [
         "buildSecurityMergedTooling"
       ],
-      "nextAction": "Review/merge PR630 including the tested async harness correction and exact accepted evidence; verify resulting main before operations."
+      "nextAction": "Review/merge the state-only evidence successor; refresh resulting-main CI before operations."
     },
     {
       "id": "testing",
       "label": "Testing",
-      "status": "passed",
+      "status": "failed",
       "applicability": "current_baseline",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "All seven original release gates and all six preparation leaves passed independently reviewed actual evidence for exact A3/F3. The new normal/mixed/headroom sequence shares f0c/c8fa; fixed133 keeps its original dbf00 binding.",
-      "observedAtUtc": "2026-10-09T20:45:44.339Z",
+      "rationale": "Six original release gates and all six preparation leaves passed. The first required250-client headroom run failed latency; remaining2attempts are held.",
+      "observedAtUtc": "2026-10-09T17:44:41.601Z",
       "evidence": [
+        "buildSecurityCurrentObservation",
         "buildSecurityBinding",
-        "buildSecurityOriginalNormalLoadAcceptance",
-        "buildSecurityOriginalClassroomAcceptance",
-        "buildSecurityOriginalHeadroomAcceptance",
-        "buildSecurityOriginalCurrentSchoolAcceptance",
-        "buildSecurityOriginalOrdinaryRecovery",
-        "buildSecurityOriginalRestrictedRestoration",
-        "buildSecurityOriginalScreenshotRuntime"
+        "buildSecurityHeadroomFailedAttempt"
       ],
-      "nextAction": "Review/merge the exact correction and evidence PR, then verify fresh resulting-main CI, application inventories and frozen scripts before operations."
+      "nextAction": "Retain the failed run and held remainder. Establish an independently reviewed falsifiable cause and correction before authorizing any new attempt; do not change approved thresholds."
     },
     {
       "id": "packaging",
@@ -463,7 +458,7 @@
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
       ],
-      "nextAction": "After resulting-main CI and fresh production prerequisites pass, review exact offline Plans/windows and publish only the bound artifacts."
+      "nextAction": "After acceptance/selection, review exact offline Plans/windows then publish the bound artifacts."
     },
     {
       "id": "deployment",
@@ -836,13 +831,13 @@
       "status": "pending",
       "applicability": "candidate_pending",
       "sourceSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
-      "rationale": "A dated read-only API1/worker1 service projection on existing180/196 passed independent review after the ordinary schedule changed. Current catalog, backups, individual task health and a fresh migration capacity baseline remain operational prerequisites.",
+      "rationale": "Dated fresh ECS/task metadata shows stable API179/worker195 on a147 with configured129 admission and newUsage off/off. Actual SQL catalog/ledger, successful restore, quiet window and fresh final-operation state remain unverified.",
       "observedAtUtc": "2026-10-08T21:33:46.754Z",
       "evidence": [
         "candidateRefresh",
         "productionHistorical"
       ],
-      "nextAction": "Collect fresh production health/catalog/backups/task/flags plus an independently replayed capacity baseline within30minutes before migration; preserve actual API1..3/worker1 counts."
+      "nextAction": "Capture fresh private health/catalog/admission/backups/environment/task/ALB evidence immediately before controller operations; retain metadata/capture separation."
     },
     {
       "id": "managed",
@@ -1873,13 +1868,12 @@
       "status": "passed",
       "applicability": "current_baseline",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Fresh three consecutive actual 900-second mixed classroom runs under the same f0c/c8fa binding; 45 lifecycle rounds and 36,309 heartbeats succeeded and persisted. Complete continuous ordinary-heartbeat p95: 32.071456 / 41.069281 / 33.549954 ms. First-60-second samples remain separately labeled.",
-      "observedAtUtc": "2026-10-09T20:45:44.339Z",
+      "rationale": "The actual source-bound native result and independent full review passed existing criteria.",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
-        "buildSecurityOriginalClassroomAcceptance",
-        "buildSecurityAsyncControlCorrection"
+        "buildSecurityOriginalClassroomAcceptance"
       ],
-      "nextAction": "Retain the exact source, artifact, policy and f0c/c8fa measured binding; refresh resulting-main CI and frozen-tool equivalence before operational Plans."
+      "nextAction": "Retain exact source/harness applicability; do not infer managed adoption or live acceptance."
     },
     {
       "id": "build-security-normalLoadAcceptance",
@@ -1887,27 +1881,25 @@
       "status": "passed",
       "applicability": "current_baseline",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Fresh actual 340-client capability-on normal-load run for 60 seconds under f0c/c8fa; 2,040 offers, successful responses and persisted rows, with unchanged numerical, safety, relational, error and cleanup checks.",
-      "observedAtUtc": "2026-10-09T20:45:44.339Z",
+      "rationale": "The actual source-bound native result and independent full review passed existing criteria.",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
-        "buildSecurityOriginalNormalLoadAcceptance",
-        "buildSecurityAsyncControlCorrection"
+        "buildSecurityOriginalNormalLoadAcceptance"
       ],
-      "nextAction": "Retain the exact source, artifact, policy and f0c/c8fa measured binding; refresh resulting-main CI and frozen-tool equivalence before operational Plans."
+      "nextAction": "Retain exact source/harness applicability; do not infer managed adoption or live acceptance."
     },
     {
       "id": "build-security-headroomAcceptance",
       "label": "Original release gate: headroomAcceptance",
-      "status": "passed",
+      "status": "failed",
       "applicability": "current_baseline",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Three fresh actual 250-client headroom runs for 60 seconds each under the same f0c/c8fa binding passed the unchanged approved 400 ms criterion, persistence, teacher-scope, denial, resource and cleanup checks; all 4,500 offers succeeded and persisted. Historical 21f119c74dbd remains failed and its two unrun attempts remain held.",
-      "observedAtUtc": "2026-10-09T20:45:44.339Z",
+      "rationale": "First250-client run21f119c74dbd failed latency: p95 544.682706ms exceeds the approved400ms headroom limit and500ms ordinary limit. All1500 requests succeeded/persisted, CPU0.423284 and non-latency checks passed; cleanup completed. Remaining2attempts are held. Full independent replay of70raw records passed review and confirmed the gate remains failed; the cause is unresolved and no rerun is authorized.",
+      "observedAtUtc": "2026-10-09T17:50:46.029Z",
       "evidence": [
-        "buildSecurityOriginalHeadroomAcceptance",
-        "buildSecurityAsyncControlCorrection"
+        "buildSecurityHeadroomFailedAttempt"
       ],
-      "nextAction": "Retain the exact source, artifact, policy and f0c/c8fa measured binding; refresh resulting-main CI and frozen-tool equivalence before operational Plans."
+      "nextAction": "Retain the failed run and held remainder. Establish an independently reviewed falsifiable cause and correction before authorizing any new attempt; do not change approved thresholds."
     },
     {
       "id": "build-security-tooling-review",
@@ -1916,11 +1908,11 @@
       "applicability": "current_baseline",
       "sourceSha": "6e33a19662fec14e719a806e73160a84816f120e",
       "rationale": "PR629 is merged; exact main CI and A3 backend/frontend equivalence passed for the frozen release controllers and harness.",
-      "observedAtUtc": "2026-10-09T20:45:44.339Z",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
         "buildSecurityMergedTooling"
       ],
-      "nextAction": "Review/merge PR630 including the tested async correction, then refresh exact resulting-main CI and operation/harness byte equivalence."
+      "nextAction": "Review this state-only successor and verify its resulting main before operations."
     },
     {
       "id": "build-security-fixed133-startup-attempt-01",
@@ -1933,7 +1925,7 @@
       "evidence": [
         "buildSecurityFixed133StartupCorrection"
       ],
-      "nextAction": "Preserve the original failed attempt and its startup-custody limitation; follow the separately passed fixed133 correction and completion evidence without relabeling this historical failure."
+      "nextAction": "Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt."
     },
     {
       "id": "build-security-original-ordinaryRecovery",
@@ -2001,20 +1993,6 @@
       "nextAction": "Retain first failure/custody limitation and all corrected actual evidence without relabeling.",
       "applicability": "current_baseline",
       "observedAtUtc": "2026-10-09T17:36:48.106Z"
-    },
-    {
-      "id": "build-security-headroomAcceptance-failed-dbf00",
-      "label": "Historical first 250-client headroom attempt",
-      "status": "failed",
-      "applicability": "historical",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Original 21f119c74dbd p95 544.682706 ms exceeded the unchanged 400 ms limit. All 1,500 requests persisted and cleanup passed; its remaining two attempts were held. Fresh acceptance is separately bound to the reviewed async harness.",
-      "observedAtUtc": "2026-10-09T20:45:44.339Z",
-      "evidence": [
-        "buildSecurityHeadroomFailedAttempt",
-        "buildSecurityAsyncControlCorrection"
-      ],
-      "nextAction": "Preserve the failed original and diagnostic limitations; do not substitute diagnostic results or relabel it as passed."
     }
   ],
   "inclusionMatrix": [
@@ -2597,7 +2575,7 @@
     },
     "buildSecurityBinding": {
       "path": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
-      "gitBlobSha256": "8d66e4be314d422014a72e496d40db2156f716e66429f807bffef3f2ba2fcfef"
+      "gitBlobSha256": "1e31aed6bdcb70b2f06883f97c7540bfc44395c10723f149b304bd4f522fe60b"
     },
     "buildSecurityCandidatePreparation": {
       "path": "docs/releases/release297/a3-artifact-preparation-20261009.json",
@@ -2605,7 +2583,7 @@
     },
     "buildSecurityCurrentObservation": {
       "path": "docs/releases/release297/build-security-current-observation-20261009.json",
-      "gitBlobSha256": "4d97b610fba23740a728a22f736383c10cc35860f2bdc70c11b225918d204d30"
+      "gitBlobSha256": "f246d45c1889462a187a4ab22db7a5f7c6f1984245052f6e4b7d68c4874770f2"
     },
     "buildSecurityCandidatePreparationCi": {
       "path": "docs/releases/release297/a3-preparation-ci-completion-20261009.json",
@@ -2652,12 +2630,12 @@
       "gitBlobSha256": "bd76b261d6e21abab85e654364344f4f5949643afc3d4b596f8e847119581b28"
     },
     "buildSecurityOriginalNormalLoadAcceptance": {
-      "path": "docs/release-evidence/release297/cp-protected-build/resume03-normalLoadAcceptance.json",
-      "gitBlobSha256": "10586e35ecd044966aa686531db4421b9f6f851aa6ca4be4e1f38d680ae05bf0"
+      "path": "docs/release-evidence/release297/cp-protected-build/original-normalLoadAcceptance.json",
+      "gitBlobSha256": "9688e6105e3d9ef00341eb79b9da6e766b2dba10dd2a374bf83199abfc8f9049"
     },
     "buildSecurityOriginalClassroomAcceptance": {
-      "path": "docs/release-evidence/release297/cp-protected-build/resume03-classroomAcceptance.json",
-      "gitBlobSha256": "dfdf6a556866a42cd4c257ab07bb34dab448215b5d36f9261b3bddf8b95f7c2d"
+      "path": "docs/release-evidence/release297/cp-protected-build/original-classroomAcceptance.json",
+      "gitBlobSha256": "1d009119c3c83a578fbbd14d9e24be10908a62e9740a9d8a8362478859fe45cb"
     },
     "buildSecurityMergedTooling": {
       "path": "docs/releases/release297/build-security-merged-tooling-main-20261009.json",
@@ -2666,30 +2644,6 @@
     "buildSecurityHeadroomFailedAttempt": {
       "path": "docs/releases/release297/headroom250-failed-attempt-20261009.json",
       "gitBlobSha256": "8e340b8f457dddea2b22e5286d24528f9cffb75333affa94952482d6a031bc16"
-    },
-    "buildSecurityAsyncPreparationHistory": {
-      "path": "docs/release-bindings/history/release297-2001e888-f3-f0c8705a/index.json",
-      "gitBlobSha256": "4d92d8d2967a8d3c191d71848d74a1d1fe7dec50f2333b4a463146f3e699e4b1"
-    },
-    "buildSecurityAsyncControlCorrection": {
-      "path": "docs/releases/release297/async-idle-control-correction-20261009.json",
-      "gitBlobSha256": "88deae85f28dc976546623ea748af8e503987f066c12edb9eda44f561cb1ef93"
-    },
-    "buildSecurityOriginalNormalLoadAcceptanceHistoricalDbf00": {
-      "path": "docs/release-evidence/release297/cp-protected-build/original-normalLoadAcceptance.json",
-      "gitBlobSha256": "9688e6105e3d9ef00341eb79b9da6e766b2dba10dd2a374bf83199abfc8f9049"
-    },
-    "buildSecurityOriginalClassroomAcceptanceHistoricalDbf00": {
-      "path": "docs/release-evidence/release297/cp-protected-build/original-classroomAcceptance.json",
-      "gitBlobSha256": "1d009119c3c83a578fbbd14d9e24be10908a62e9740a9d8a8362478859fe45cb"
-    },
-    "buildSecurityOriginalHeadroomAcceptance": {
-      "path": "docs/release-evidence/release297/cp-protected-build/resume03-headroomAcceptance.json",
-      "gitBlobSha256": "2e5fb7d536cf0a0a507a2fdcccf15f8f0d72b5606caf2da76106eaf8029b4d90"
-    },
-    "buildSecurityOriginalAcceptanceCompletion": {
-      "path": "docs/releases/release297/original-acceptance-completion-20261009.json",
-      "gitBlobSha256": "8aed74661c35d3cc48ee05a7052fd90c3a5340486053443b750b38aef4216fa0"
     }
   }
 }

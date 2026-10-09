@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { pause } from './application.mjs';
+import { readRoleControlRequest } from './role-control-request.mjs';
 const binding = JSON.parse(readFileSync('/control/binding.json', 'utf8'));
 assert.match(binding.run, /^[a-f0-9]{12}$/); assert.match(binding.source, /^[a-f0-9]{40}$/);
 assert.match(binding.containerId, /^[a-f0-9]{64}$/); assert.match(binding.nonce, /^[a-f0-9]{64}$/);
@@ -36,8 +37,9 @@ process.connected = true;
 await import(pathToFileURL(binding.entryFile).href);
 while (!shutdown) {
   const path = `/control/request-${lastId + 1}.json`;
-  if (existsSync(path)) {
-    const request = JSON.parse(readFileSync(path, 'utf8'));
+  const raw = await readRoleControlRequest(path);
+  if (raw !== undefined) {
+    const request = JSON.parse(raw);
     assert.equal(request.id, lastId + 1); assert.equal(request.nonce, binding.nonce);
     assert.ok(['initialize', 'phase', 'correctness', 'snapshot', 'reset', 'drain', 'quiesce', 'rollup', 'shutdown', 'seed', 'verify', 'measureWindow', 'queryPlans', 'boundaryProof'].includes(request.operation));
     assert.ok(pending.size < 32); lastId = request.id; pending.set(request.id, request.operation);

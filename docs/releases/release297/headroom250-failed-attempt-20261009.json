@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_headroom_failed_attempt_observation",
+  "observedAtUtc": "2026-10-09T17:50:46.029Z",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "applicationImage": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+  "harnessSource": "dbf00dbb29945fd316150af047aa55194f59d892",
+  "profile": "release297-usage-off-one-api-250-heartbeat-envelope-v1",
+  "profileSha256": "bef9eff764f63b85a07c853ff3a563e58c3f13eefa6e8f90abc95de1af14a2d5",
+  "policySha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95",
+  "status": "failed",
+  "passed": false,
+  "run": "21f119c74dbd",
+  "completedAtUtc": "2026-10-09T17:37:02.864Z",
+  "attemptsRecorded": 1,
+  "remainingAttemptsHeld": 2,
+  "heartbeat": {
+    "offered": 1500,
+    "succeeded": 1500,
+    "persisted": 1500,
+    "failed": 0,
+    "p95Ms": 544.6827059999996,
+    "ordinaryLimitMs": 500,
+    "headroomLimitMs": 400
+  },
+  "apiMeanCpuFraction": 0.4232842666666667,
+  "allNonLatencyChecksPassed": true,
+  "scopedTeacherReadsPassed": true,
+  "cleanupPassed": true,
+  "quietWindowClosedAtUtc": "2026-10-09T17:38:11.459Z",
+  "ownedContainersAbsent": true,
+  "ownedVolumesAbsent": true,
+  "retainedEvidence": {
+    "metrics": {
+      "storage": "private",
+      "format": "json",
+      "path": "acceptance-a3-resume-02/blocks/headroom250/attempt-1/receipt/metrics.json",
+      "sha256": "f2c40305e70d37abf3277a411ccda97a733151545369bf634c47646abe845266"
+    },
+    "journal": {
+      "storage": "private",
+      "format": "json",
+      "path": "acceptance-a3-resume-02/blocks/headroom250/journal.json",
+      "sha256": "fe0eaacd0237fda4e0d8a9576d8ac277e670b9139b080e46b8b5fdf19fdae8b3"
+    },
+    "closure": {
+      "storage": "private",
+      "format": "json",
+      "path": "acceptance-a3-resume-02/blocks/headroom250/closure.json",
+      "sha256": "efe711a3757a1688d1c7484ca40185542fdef6502b49838b882ba32bdf8cbc81"
+    },
+    "quietClosure": {
+      "storage": "private",
+      "format": "json",
+      "path": "acceptance-a3-resume-02/quiet-window-03-closed-after-headroom250.json",
+      "sha256": "7dc527209e2c2929d9464be9bb73ee0d07840371fb62a1d7d1e8250f7f2f9a03"
+    },
+    "independentFailureReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/A3-headroom-first-failure-full-independent-review-01.private.json",
+      "sha256": "9b22517a8ccf2228223beed67862a0357ef47aefa5f48fc879a0de71312c824b"
+    }
+  },
+  "independentFailureReview": {
+    "reviewStatus": "passed",
+    "gateStatus": "failed",
+    "cause": "unresolved",
+    "rerunAuthorized": false,
+    "reviewedAtUtc": "2026-10-09T17:49:26.949Z"
+  },
+  "nextAction": "Retain the failed run and held remainder. Establish an independently reviewed falsifiable cause and correction before authorizing any new attempt; do not change approved thresholds.",
+  "historicalFailuresReclassified": false,
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

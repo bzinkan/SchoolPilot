@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical_release297_preparation_snapshot_manifest",
+  "source": "dbf00dbb29945fd316150af047aa55194f59d892",
+  "mergedAs": "6e33a19662fec14e719a806e73160a84816f120e",
+  "recordedAtUtc": "2026-10-09T17:36:48.106Z",
+  "files": [
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-dbf00dbb/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
+      "gitBlobSha256": "5a814f95b2f8071d3d53c7f309d3921205f520e2bdad3f02740f666b7ff740a8",
+      "originalPath": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json"
+    },
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-dbf00dbb/releases/release297/current-release.json",
+      "gitBlobSha256": "d5c5ca77aa896567ab57678ae0b200a76795aa47588409cf5897d4688c02c732",
+      "originalPath": "docs/releases/release297/current-release.json"
+    },
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-dbf00dbb/releases/release297/build-security-current-observation-20261009.json",
+      "gitBlobSha256": "b077d43c96976d710554ab38750bee32f3f94b01a7edd638be6c3447eb0e9766",
+      "originalPath": "docs/releases/release297/build-security-current-observation-20261009.json"
+    },
+    {
+      "path": "docs/release-bindings/history/release297-2001e888-f3-dbf00dbb/RELEASE_297_BUILD_SECURITY_FALLBACK.md",
+      "gitBlobSha256": "1b114490872c7d382c5b3b9c4699770962c5914a949e6f27575cefec051d1847",
+      "originalPath": "docs/RELEASE_297_BUILD_SECURITY_FALLBACK.md"
+    }
+  ],
+  "scope": "Historical source-bound snapshots. Resolve original indexed evidence at the recorded Git source; this manifest is not an executable current release index.",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

@@ -5,6 +5,8 @@ import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {ROOT,INDEX,validateIndex,renderStatus} from '../scripts/release297-current-state.mjs';
+import {validateBindingProfile} from '../scripts/release-source-binding.mjs';
+import {FALLBACK} from '../scripts/register-compatible-fallback-inactive.mjs';
 const current=()=>JSON.parse(readFileSync(join(ROOT,INDEX),'utf8'));
 function fixture(work){const index=current(),root=mkdtempSync(join(tmpdir(),'release297-build-state-'));try{for(const value of Object.values(index.evidence)){const target=join(root,value.path);mkdirSync(dirname(target),{recursive:true});copyFileSync(join(ROOT,value.path),target);}const change=(id,mutate)=>{const file=join(root,index.evidence[id].path),value=JSON.parse(readFileSync(file,'utf8'));mutate(value);const bytes=JSON.stringify(value,null,2)+'\n';writeFileSync(file,bytes);index.evidence[id].gitBlobSha256=createHash('sha256').update(bytes).digest('hex');};work(index,root,change);}finally{assert.equal(dirname(resolve(root)),resolve(tmpdir()));assert.ok(root.includes('release297-build-state-'));rmSync(root,{recursive:true,force:true});}}
 test('v5 current state validates exact A3, preserves historical failures and generates accurate authorization scope',()=>{const index=current();validateIndex(index);const text=renderStatus(index);assert.match(text,/A3 is `2001e888`/);assert.match(text,/fix this and deploy/);assert.match(text,/already admits 129/);assert.match(text,/later manual F3 rollback/);assert.equal(index.gates.find(row=>row.id==='cp-protected-build-dependency-audit').status,'failed');assert.equal(index.gates.find(row=>row.id==='fallback-scan-current').status,'failed');});
@@ -40,4 +42,39 @@ test('v5 candidate artifact table displays the current A3 backend and frontend r
   const table=renderStatus(index).split('### Candidate artifacts')[1].split('### ')[0];
   for(const id of ['backend-current-a3','frontend-current-a3']){const row=index.artifacts.find(value=>value.id===id);assert.ok(table.includes(row.label));assert.ok(table.includes('`2001e888`'));assert.ok(table.includes(row.identity.archiveSha256));if(row.identity.indexDigest)assert.ok(table.includes(row.identity.indexDigest));}
   assert.ok(!table.includes('Historical A2 must stay outside current table'));assert.ok(!table.includes('historical-a2-archive'));
+});
+
+test('accepted current evidence keeps original fixed133 and fresh same-binding normal/mixed/headroom distinct',()=>{
+ const index=current(),load=id=>JSON.parse(readFileSync(join(ROOT,index.evidence[id].path),'utf8'));
+ const binding=load('buildSecurityBinding');
+ validateBindingProfile(binding,binding.id,FALLBACK);
+ assert.equal(binding.status,'accepted');assert.deepEqual(binding.blockers,[]);
+ assert.ok(Object.values(binding.evidence).every(row=>row.status==='passed'));
+ const summary=load('buildSecurityOriginalAcceptanceCompletion');
+ assert.equal(summary.originalFixed133HarnessSource,'dbf00dbb29945fd316150af047aa55194f59d892');
+ for(const key of ['NormalLoadAcceptance','ClassroomAcceptance','HeadroomAcceptance']){
+  const record=load('buildSecurityOriginal'+key);
+  assert.equal(record.measuredHarnessSource,'f0c8705a0eb2f5ef048b7e65e88afe3213c8a111');
+  assert.equal(record.acceptanceSuccessorSha256,'c8fa18369f5aa9f8fde0580bdb1dc773ec84e9cacfdb7abd4c3e315e14689ad5');
+  assert.equal(record.measuredHarnessFreeze.sha256,'1d686cf1270e5c271e63d2aaececfb6b464c870fab41c11df7b1dac082f6479a');
+  assert.match(record.retainedEvidence.nativeResult.path,/^acceptance-a3-resume-03\//);
+ }
+ for(const key of ['NormalLoadAcceptance','ClassroomAcceptance']){
+  const historical=load('buildSecurityOriginal'+key+'HistoricalDbf00');
+  assert.match(historical.retainedEvidence.nativeResult.path,/^acceptance-a3\/original-gates\//);
+ }
+ const failed=load('buildSecurityHeadroomFailedAttempt');
+ assert.equal(failed.status,'failed');assert.equal(failed.run,'21f119c74dbd');assert.equal(failed.remainingAttemptsHeld,2);
+ assert.equal(index.gates.find(row=>row.id==='build-security-headroomAcceptance-failed-dbf00').status,'failed');
+ assert.equal(summary.historicalFailedHeadroom.reclassified,false);
+ for(const stage of ['publication','deployment','activation','live'])assert.equal(index.stages.find(row=>row.id===stage).status,'pending');
+});
+
+test('accepted current rendering leads to exact operations while retaining the failed historical attempt',()=>{
+ const index=current();validateIndex(index);const output=renderStatus(index);
+ assert.match(output,/Fresh A3 preparation and all seven original release gates are complete/);
+ assert.match(output,/Exact publication and backend\/frontend deployment remain pending/);
+ assert.doesNotMatch(output,/fresh A3 evidence is required/);
+ assert.match(output,/Historical first 250-client headroom attempt \| failed/);
+ assert.match(output,/managed-device validation|waived_not_passed/);
 });
