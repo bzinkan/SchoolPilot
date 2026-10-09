@@ -3239,7 +3239,7 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
   await assertPickupView(page, 'claimed');
   await page.clock.fastForward(2_000);
   await page.getByText('Supervision started; students could not load.', { exact: false }).waitFor();
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
   assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
@@ -5153,7 +5153,7 @@ test('supervision badge read failures are unknown and Retry keeps the selected C
   await assertPickupView(page, 'class');
   await waitUntil(() => harness.coverageSummaryRequests.length > 0, 'Summary must be requested');
   await page.clock.fastForward(2_000);
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
   assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
@@ -5169,7 +5169,7 @@ test('supervision badge read failures are unknown and Retry keeps the selected C
   unavailable = true;
   await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
   await page.clock.fastForward(2_000);
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'A cached positive count is visibly uncertain after a failed refresh');
   count = 0;
@@ -5177,7 +5177,7 @@ test('supervision badge read failures are unknown and Retry keeps the selected C
   await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
   await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
   await assertPickupView(page, 'class');
-  assert.equal(await page.getByLabel('Claimed student count unavailable', { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('Room student count unavailable', { exact: true }).count(), 0);
   assert.deepEqual(harness.coverageMutationRequests, [], 'Retry repeats reads only');
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -5193,13 +5193,13 @@ test('supervision badge remains unknown for legacy or malformed own metadata whi
       claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
     });
     await page.goto(`${baseURL}/classpilot`);
-    await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+    await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
     await assertPickupView(page, 'class');
     assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), [3]);
     assert.deepEqual(harness.claimedRosterRequests, []);
     await page.getByTestId('button-view-claimed-students').click();
     await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
-    await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+    await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
     assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'The cached manually loaded roster is not substituted for unknown ownership metadata');
     assert.deepEqual(harness.coverageMutationRequests, []);
     assert.deepEqual(harness.pageErrors, []);
@@ -5226,7 +5226,7 @@ test('the first valid supervision summary refreshes a manually loaded roster aft
   await page.clock.fastForward(2_000);
   await page.getByTestId('button-view-claimed-students').click();
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   const earlierReads = harness.claimedRosterRequests.length;
   ready = true;
   // Refresh just the lightweight summary, as its independent polling does.
@@ -6919,6 +6919,9 @@ test('room removal clears exact private tiles before polling and a late release 
   await waitUntil(() => heldRequest, 'The old-room release is pending');
   currentRoom = replacement; harness.setDashboardActivity(response());
   await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.refetchQueries({ queryKey: ['/api/classpilot/dashboard-activity'] }); });
+  // TanStack batches observer notifications on a timer. Flush those callbacks
+  // after the frozen-clock removal proof, without reaching any polling interval.
+  await page.clock.runFor(50);
   await page.getByTestId('card-student-replacement-member').waitFor();
   const beforeLateResponse = [...reads];
   const completed = page.waitForResponse(reply => new URL(reply.url()).pathname === `/api/coverage/contexts/${room.id}/release`);

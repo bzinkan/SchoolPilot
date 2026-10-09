@@ -97,7 +97,7 @@ function RemoteControlToolbar({
                     >
                       My room
                       {(claimedCount === null || claimedCount > 0) && (
-                        <span className={coverageCountClass} aria-label={claimedCount === null ? 'Claimed student count unavailable' : undefined}>{claimedCount ?? '—'}</span>
+                        <span className={coverageCountClass} aria-label={claimedCount === null ? 'Room student count unavailable' : undefined}>{claimedCount ?? '—'}</span>
                       )}
                     </Button>
                   </div>
