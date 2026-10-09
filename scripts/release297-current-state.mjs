@@ -31,14 +31,50 @@ function metadataOnly(value) {
     metadataOnly(nested);
   }
 }
+export function validateBuildSecurityCapacityBaseline(baseline, migrationStartsAtUtc) {
+  assert.ok(baseline&&typeof baseline==='object','DEPLOYMENT_CAPACITY_BASELINE_REQUIRED');
+  sameKeys(baseline,['observedAtUtc','servicesReceipt','desiredCounts','taskDefinitions']);
+  const retained=baseline.servicesReceipt;
+  assert.equal(retained?.storage,'private','DEPLOYMENT_CAPACITY_BASELINE_RECEIPT_REQUIRED');
+  assert.equal(retained?.format,'json','DEPLOYMENT_CAPACITY_BASELINE_RECEIPT_REQUIRED');
+  assert.match(retained?.sha256??'',hash,'DEPLOYMENT_CAPACITY_BASELINE_RECEIPT_REQUIRED');
+  assert.ok(typeof retained.path==='string'&&retained.path.length>0&&!path.isAbsolute(retained.path)&&!retained.path.split(/[\\/]/).includes('..'),'DEPLOYMENT_CAPACITY_BASELINE_PATH_INVALID');
+  sameKeys(baseline.desiredCounts,['api','scheduler-worker']);
+  assert.ok([1,2,3].includes(baseline.desiredCounts.api)&&baseline.desiredCounts['scheduler-worker']===1,'DEPLOYMENT_CAPACITY_BASELINE_COUNT_INVALID');
+  assert.deepEqual(baseline.taskDefinitions,{api:'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:180','scheduler-worker':'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:196'},'DEPLOYMENT_CAPACITY_BASELINE_TASK_PAIR_CHANGED');
+  assert.ok(stamp(baseline.observedAtUtc)&&stamp(migrationStartsAtUtc),'DEPLOYMENT_CAPACITY_BASELINE_TIME_REQUIRED');
+  const age=Date.parse(migrationStartsAtUtc)-Date.parse(baseline.observedAtUtc);
+  assert.ok(age>=0&&age<=30*60_000,'DEPLOYMENT_CAPACITY_BASELINE_STALE');
+  return baseline;
+}
+export function validateBuildSecurityCapacityBaselineRaw(baseline, rawBytes, migrationStartsAtUtc) {
+  validateBuildSecurityCapacityBaseline(baseline,migrationStartsAtUtc);
+  assert.ok(Buffer.isBuffer(rawBytes)||rawBytes instanceof Uint8Array,'DEPLOYMENT_CAPACITY_RAW_BYTES_REQUIRED');
+  assert.equal(digest(rawBytes),baseline.servicesReceipt.sha256,'DEPLOYMENT_CAPACITY_RAW_HASH_CHANGED');
+  const actual=JSON.parse(Buffer.from(rawBytes).toString('utf8'));
+  assert.deepEqual(actual.failures??[],[],'DEPLOYMENT_CAPACITY_RAW_FAILURES');
+  assert.ok(Array.isArray(actual.services)&&actual.services.length===2,'DEPLOYMENT_CAPACITY_RAW_SERVICES_REQUIRED');
+  assert.deepEqual(actual.services.map(row=>row.serviceName).sort(),['schoolpilot-production-api','schoolpilot-production-scheduler-worker'],'DEPLOYMENT_CAPACITY_RAW_SERVICE_CHANGED');
+  for(const role of ['api','scheduler-worker']) {
+    const name='schoolpilot-production-'+role,service=actual.services.find(row=>row.serviceName===name),count=baseline.desiredCounts[role];
+    assert.equal(service.clusterArn,'arn:aws:ecs:us-east-1:135775632425:cluster/schoolpilot-production-cluster','DEPLOYMENT_CAPACITY_RAW_CLUSTER_CHANGED');
+    assert.deepEqual([service.status,service.taskDefinition,service.desiredCount,service.runningCount,service.pendingCount],['ACTIVE',baseline.taskDefinitions[role],count,count,0],'DEPLOYMENT_CAPACITY_RAW_SERVICE_NOT_CONVERGED');
+    assert.ok(Array.isArray(service.deployments)&&service.deployments.length===1,'DEPLOYMENT_CAPACITY_RAW_DEPLOYMENTS_REQUIRED');
+    const deployment=service.deployments[0];
+    assert.deepEqual([deployment.status,deployment.taskDefinition,deployment.desiredCount,deployment.runningCount,deployment.pendingCount,deployment.failedTasks,deployment.rolloutState],['PRIMARY',baseline.taskDefinitions[role],count,count,0,0,'COMPLETED'],'DEPLOYMENT_CAPACITY_RAW_DEPLOYMENT_NOT_CONVERGED');
+  }
+  return {passed:true,baselineServicesSha256:baseline.servicesReceipt.sha256,observedAtUtc:baseline.observedAtUtc,desiredCounts:baseline.desiredCounts,taskDefinitions:baseline.taskDefinitions,scope:'Exact service/deployment convergence; individual task health requires its separate actual readback.'};
+}
+
 export function validateBuildSecurityOperationalCompletion(index, observation, binding, completion, review) {
   metadataOnly(completion); metadataOnly(review);
+  assert.ok([1,2].includes(completion.schemaVersion),'DEPLOYMENT_COMPLETION_IDENTITY_INVALID');
   assert.deepEqual([binding.status,binding.preparation.status,binding.successorSelection.status,binding.blockers],['accepted','passed','approved',[]],'DEPLOYMENT_REQUIRES_ACCEPTED_BINDING');
   sameKeys(binding.evidence,['currentSchoolAcceptance','classroomAcceptance','normalLoadAcceptance','headroomAcceptance','ordinaryRecovery','restrictedRestoration','screenshotRuntime']);
   assert.ok(Object.values(binding.evidence).every(row=>row.status==='passed'),'DEPLOYMENT_REQUIRES_ALL_ORIGINAL_GATES');
   assert.equal(observation.currentMainCi.status,'passed','DEPLOYMENT_REQUIRES_EXACT_MAIN_CI');
   assert.deepEqual([observation.publicationExecuted,observation.inactiveRegistrationExecuted,observation.productionDeploymentExecuted],[true,true,true],'DEPLOYMENT_EXECUTION_OBSERVATION_REQUIRED');
-  assert.deepEqual([completion.schemaVersion,completion.kind,completion.applicationSource,completion.mainSource,completion.releaseBindingId,completion.releaseBindingSha256,completion.artifactPair,completion.operationalOutcomeUncertain,completion.activationExecuted,completion.sampleBearingLiveAcceptanceComplete,completion.managedDeviceValidation,completion.releaseReady,completion.operationalAuthorization],[1,'release297_matched_deployment_completion',BUILD_SECURITY_APPLICATION_SOURCE,observation.mainSource,binding.id,index.evidence.buildSecurityBinding.gitBlobSha256,binding.artifacts,false,false,false,'waived_not_passed',false,false],'DEPLOYMENT_COMPLETION_IDENTITY_INVALID');
+  assert.deepEqual([completion.schemaVersion,completion.kind,completion.applicationSource,completion.mainSource,completion.releaseBindingId,completion.releaseBindingSha256,completion.artifactPair,completion.operationalOutcomeUncertain,completion.activationExecuted,completion.sampleBearingLiveAcceptanceComplete,completion.managedDeviceValidation,completion.releaseReady,completion.operationalAuthorization],[completion.schemaVersion,'release297_matched_deployment_completion',BUILD_SECURITY_APPLICATION_SOURCE,observation.mainSource,binding.id,index.evidence.buildSecurityBinding.gitBlobSha256,binding.artifacts,false,false,false,'waived_not_passed',false,false],'DEPLOYMENT_COMPLETION_IDENTITY_INVALID');
   assert.ok(stamp(completion.completedAtUtc)&&Date.parse(completion.completedAtUtc)<=Date.parse(observation.observedAtUtc),'DEPLOYMENT_COMPLETION_TIME_INVALID');
   assert.deepEqual(completion.frontend,{source:BUILD_SECURITY_APPLICATION_SOURCE,archiveSha256:observation.frontend.archiveSha256,fileInventorySha256:observation.frontend.fileInventorySha256,fileCount:171,publicStaticBytesVerified:true,alreadyOpenPageAdoption:'pending'},'DEPLOYMENT_MATCHED_FRONTEND_INVALID');
   assert.deepEqual(completion.fallbackFrontend,{source:'cce3f7b4eae30df13378337c01dc4ff2d5db3997',archiveSha256:'8d6379613dbb1c88783ee0f141ed41c34164fac5142172daee7da7f8d27cd72a',fileInventorySha256:'3484fa4f9848dc9e48e4e3bfeb384e959f17deccd10125e8b362fb094f29451e',fileCount:171,preparedAndReviewed:true},'DEPLOYMENT_FALLBACK_FRONTEND_INVALID');
@@ -52,10 +88,12 @@ export function validateBuildSecurityOperationalCompletion(index, observation, b
   for(const role of ['serving-anchor','fallback']){const actual=post.registry[role],expected=binding.artifacts[role];assert.match(actual.digest??'',/^sha256:[a-f0-9]{64}$/,'DEPLOYMENT_REGISTRY_DIGEST_REQUIRED');assert.deepEqual([actual.source,actual.localIndex,actual.config,actual.platform,actual.archiveSha256],[expected.source,expected.localIndex,expected.config,expected.platform,expected.archiveSha256],'DEPLOYMENT_REGISTRY_ROLE_CHANGED');}
   const taskArn=(value,family)=>typeof value==='string'&&new RegExp('^arn:aws:ecs:us-east-1:135775632425:task-definition/'+family+':[1-9][0-9]*$').test(value);
   const fallback=completion.registeredFallback;assert.deepEqual([fallback.source,fallback.admissionCount,fallback.inactive,fallback.registrationOutcomeUncertain],[BUILD_SECURITY_ARTIFACT.source,129,true,false],'DEPLOYMENT_FALLBACK_REGISTRATION_INVALID');assert.ok(taskArn(fallback.apiTaskDefinition,'schoolpilot-production-api-emergency')&&taskArn(fallback.workerTaskDefinition,'schoolpilot-production-scheduler-worker'),'DEPLOYMENT_FALLBACK_TASK_PAIR_REQUIRED');
+  const capacity=completion.schemaVersion===2?validateBuildSecurityCapacityBaseline(completion.capacityBaseline,completion.sequence?.[0]?.startedAtUtc):{desiredCounts:{api:3,'scheduler-worker':1}};
   sameKeys(post.services,['api','scheduler-worker']);
-  for(const role of ['api','scheduler-worker']){const service=post.services[role];assert.ok(taskArn(service.taskDefinition,role==='api'?'schoolpilot-production-api-emergency':'schoolpilot-production-scheduler-worker'),'DEPLOYMENT_TASK_PAIR_REQUIRED');assert.ok(role==='api'?service.desiredCount===3:service.desiredCount===1,'DEPLOYMENT_TASK_COUNT_INVALID');assert.deepEqual([service.runningCount,service.pendingCount,service.rolloutState,service.allTasksHealthy,service.runtimeSource],[service.desiredCount,0,'COMPLETED',true,observation.mainSource],'DEPLOYMENT_TASKS_NOT_CONVERGED');assert.ok([post.registry['serving-anchor'].digest,binding.artifacts['serving-anchor'].platform].includes(service.imageDigest),'DEPLOYMENT_TASK_IMAGE_CHANGED');assert.notEqual(service.taskDefinition,role==='api'?fallback.apiTaskDefinition:fallback.workerTaskDefinition,'DEPLOYMENT_SERVING_PAIR_IS_FALLBACK');}
+  for(const role of ['api','scheduler-worker']){const service=post.services[role];assert.ok(taskArn(service.taskDefinition,role==='api'?'schoolpilot-production-api-emergency':'schoolpilot-production-scheduler-worker'),'DEPLOYMENT_TASK_PAIR_REQUIRED');assert.equal(service.desiredCount,capacity.desiredCounts[role],'DEPLOYMENT_TASK_COUNT_INVALID');assert.deepEqual([service.runningCount,service.pendingCount,service.rolloutState,service.allTasksHealthy,service.runtimeSource],[service.desiredCount,0,'COMPLETED',true,observation.mainSource],'DEPLOYMENT_TASKS_NOT_CONVERGED');assert.ok([post.registry['serving-anchor'].digest,binding.artifacts['serving-anchor'].platform].includes(service.imageDigest),'DEPLOYMENT_TASK_IMAGE_CHANGED');assert.notEqual(service.taskDefinition,role==='api'?fallback.apiTaskDefinition:fallback.workerTaskDefinition,'DEPLOYMENT_SERVING_PAIR_IS_FALLBACK');}
   const sequence=completion.sequence;assert.ok(Array.isArray(sequence)&&sequence.length===3,'DEPLOYMENT_SEQUENCE_REQUIRED');assert.deepEqual(sequence.map(row=>row.stage),['migration','api-worker-convergence','matched-frontend'],'DEPLOYMENT_MIGRATION_FIRST_REQUIRED');let last=-Infinity;for(const row of sequence){assert.ok(stamp(row.startedAtUtc)&&stamp(row.completedAtUtc),'DEPLOYMENT_STAGE_TIME_REQUIRED');const start=Date.parse(row.startedAtUtc),end=Date.parse(row.completedAtUtc);assert.ok(last<=start&&start<=end&&end<=Date.parse(completion.completedAtUtc),'DEPLOYMENT_STAGE_ORDER_INVALID');last=end;}
-  assert.deepEqual([review.schemaVersion,review.kind,review.passed,review.independentFromProducer,review.humanApprovalAsserted,review.applicationSource,review.mainSource,review.releaseBindingId,review.completionSha256,review.actualPrivateReceiptsReplayed,review.releaseReady,review.operationalAuthorization],[1,'independent_release297_matched_deployment_completion_review',true,true,false,BUILD_SECURITY_APPLICATION_SOURCE,observation.mainSource,binding.id,index.evidence.buildSecurityDeploymentCompletion.gitBlobSha256,true,false,false],'DEPLOYMENT_INDEPENDENT_REVIEW_REQUIRED');
+  assert.deepEqual([review.schemaVersion,review.kind,review.passed,review.independentFromProducer,review.humanApprovalAsserted,review.applicationSource,review.mainSource,review.releaseBindingId,review.completionSha256,review.actualPrivateReceiptsReplayed,review.releaseReady,review.operationalAuthorization],[completion.schemaVersion,'independent_release297_matched_deployment_completion_review',true,true,false,BUILD_SECURITY_APPLICATION_SOURCE,observation.mainSource,binding.id,index.evidence.buildSecurityDeploymentCompletion.gitBlobSha256,true,false,false],'DEPLOYMENT_INDEPENDENT_REVIEW_REQUIRED');
+  if(completion.schemaVersion===2)assert.deepEqual([review.baselineServicesSha256,review.actualCapacityBaselineServicesReplayed,review.capacityBaselineObservedAtUtc,review.capacityBaselineDesiredCounts,review.capacityBaselineTaskDefinitions],[capacity.servicesReceipt.sha256,true,capacity.observedAtUtc,capacity.desiredCounts,capacity.taskDefinitions],'DEPLOYMENT_CAPACITY_BASELINE_REVIEW_REQUIRED');
   assert.deepEqual(review.operationReceiptSha256s,Object.fromEntries(operations.map(name=>[name,completion.operations[name].receipt.sha256])),'DEPLOYMENT_REVIEW_RECEIPTS_CHANGED');
   assert.ok(stamp(review.reviewedAtUtc)&&Date.parse(completion.completedAtUtc)<=Date.parse(review.reviewedAtUtc)&&Date.parse(review.reviewedAtUtc)<=Date.parse(observation.observedAtUtc),'DEPLOYMENT_REVIEW_TIME_INVALID');
   for(const id of ['implementation','testing','packaging','publication','deployment']){const stage=index.stages.find(row=>row.id===id);assert.ok(stage&&stage.status==='passed'&&stage.applicability==='current_baseline'&&stage.evidence.includes('buildSecurityDeploymentCompletion')&&stage.evidence.includes('buildSecurityDeploymentReview'),'DEPLOYMENT_STAGE_EVIDENCE_REQUIRED');}

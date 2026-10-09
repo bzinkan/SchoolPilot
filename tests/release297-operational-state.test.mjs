@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {test} from 'node:test';
-import {ROOT,validateBuildSecurityOperationalCompletion,renderStatus} from '../scripts/release297-current-state.mjs';
+import {ROOT,validateBuildSecurityOperationalCompletion,validateBuildSecurityCapacityBaselineRaw,renderStatus} from '../scripts/release297-current-state.mjs';
 import {BUILD_SECURITY_APPLICATION_SOURCE as A,BUILD_SECURITY_ARTIFACT as F} from '../scripts/release-source-binding.mjs';
 const main='6e33a19662fec14e719a806e73160a84816f120e';
 const sha=value=>createHash('sha256').update(value).digest('hex');
@@ -131,4 +131,64 @@ test('failed headroom is rendered as a blocker without changing completed origin
  assert.match(output,/Establish a reviewed falsifiable correction before a new attempt/);
  for(const key of ['currentSchoolAcceptance','classroomAcceptance','normalLoadAcceptance'])assert.equal(current.gates.find(row=>row.id==='build-security-'+key).status,'passed');
  assert.doesNotMatch(output,/Exact matched A3 backend\/worker and frontend .* are deployed/);
+});
+
+function capacityFixture(apiCount=3) {
+ const f=fixture();f.completion.schemaVersion=2;f.review.schemaVersion=2;
+ const taskDefinitions={api:arn('schoolpilot-production-api-emergency',180),'scheduler-worker':arn('schoolpilot-production-scheduler-worker',196)};
+ const desiredCounts={api:apiCount,'scheduler-worker':1};
+ const services=Object.entries(desiredCounts).map(([role,count])=>({serviceName:'schoolpilot-production-'+role,clusterArn:'arn:aws:ecs:us-east-1:135775632425:cluster/schoolpilot-production-cluster',status:'ACTIVE',taskDefinition:taskDefinitions[role],desiredCount:count,runningCount:count,pendingCount:0,deployments:[{status:'PRIMARY',taskDefinition:taskDefinitions[role],desiredCount:count,runningCount:count,pendingCount:0,failedTasks:0,rolloutState:'COMPLETED'}]}));
+ const raw={services,failures:[]};const rawBytes=Buffer.from(JSON.stringify(raw));
+ f.completion.capacityBaseline={observedAtUtc:'2026-10-09T16:55:00.000Z',servicesReceipt:{storage:'private',format:'json',path:'synthetic-test/capacity-services.json',sha256:sha(rawBytes)},desiredCounts,taskDefinitions};
+ Object.assign(f.review,{baselineServicesSha256:sha(rawBytes),actualCapacityBaselineServicesReplayed:true,capacityBaselineObservedAtUtc:f.completion.capacityBaseline.observedAtUtc,capacityBaselineDesiredCounts:structuredClone(desiredCounts),capacityBaselineTaskDefinitions:structuredClone(taskDefinitions)});
+ Object.assign(f.completion.postdeployment.services.api,{desiredCount:apiCount,runningCount:apiCount});
+ return {...f,raw,rawBytes};
+}
+for(const count of [1,2,3])test('schema2 records exact reviewed API'+count+'/worker1 capacity without changing schema1 fixed3/1',()=>{
+ const f=capacityFixture(count);assert.equal(validate(f),f.completion);
+ const result=validateBuildSecurityCapacityBaselineRaw(f.completion.capacityBaseline,f.rawBytes,f.completion.sequence[0].startedAtUtc);
+ assert.deepEqual(result.desiredCounts,{api:count,'scheduler-worker':1});assert.equal(result.passed,true);
+ assert.match(result.scope,/individual task health requires its separate actual readback/);
+});
+const invalidCapacity=[
+ ['missing baseline',f=>delete f.completion.capacityBaseline,/DEPLOYMENT_CAPACITY_BASELINE_REQUIRED/],
+ ['missing raw receipt hash',f=>delete f.completion.capacityBaseline.servicesReceipt.sha256,/DEPLOYMENT_CAPACITY_BASELINE_RECEIPT_REQUIRED/],
+ ['unreviewed raw baseline',f=>f.review.actualCapacityBaselineServicesReplayed=false,/DEPLOYMENT_CAPACITY_BASELINE_REVIEW_REQUIRED/],
+ ['cross-baseline reviewed hash',f=>f.review.baselineServicesSha256=sha('other-baseline'),/DEPLOYMENT_CAPACITY_BASELINE_REVIEW_REQUIRED/],
+ ['cross-baseline reviewed counts',f=>f.review.capacityBaselineDesiredCounts.api=2,/DEPLOYMENT_CAPACITY_BASELINE_REVIEW_REQUIRED/],
+ ['cross-baseline reviewed task definitions',f=>f.review.capacityBaselineTaskDefinitions.api=arn('schoolpilot-production-api-emergency',179),/DEPLOYMENT_CAPACITY_BASELINE_REVIEW_REQUIRED/],
+ ['baseline after migration',f=>f.completion.capacityBaseline.observedAtUtc='2026-10-09T17:01:00.000Z',/DEPLOYMENT_CAPACITY_BASELINE_STALE/],
+ ['baseline older than30min',f=>f.completion.capacityBaseline.observedAtUtc='2026-10-09T16:29:59.999Z',/DEPLOYMENT_CAPACITY_BASELINE_STALE/],
+ ['API0 baseline',f=>f.completion.capacityBaseline.desiredCounts.api=0,/DEPLOYMENT_CAPACITY_BASELINE_COUNT_INVALID/],
+ ['API4 baseline',f=>f.completion.capacityBaseline.desiredCounts.api=4,/DEPLOYMENT_CAPACITY_BASELINE_COUNT_INVALID/],
+ ['worker2 baseline',f=>f.completion.capacityBaseline.desiredCounts['scheduler-worker']=2,/DEPLOYMENT_CAPACITY_BASELINE_COUNT_INVALID/],
+ ['changed predeployment task pair',f=>f.completion.capacityBaseline.taskDefinitions.api=arn('schoolpilot-production-api-emergency',179),/DEPLOYMENT_CAPACITY_BASELINE_TASK_PAIR_CHANGED/],
+ ['false preserved postcounts',f=>{f.completion.postdeployment.services.api.desiredCount=1;f.completion.postdeployment.services.api.runningCount=1;},/DEPLOYMENT_TASK_COUNT_INVALID/],
+ ['private baseline traversal',f=>f.completion.capacityBaseline.servicesReceipt.path='../other.json',/DEPLOYMENT_CAPACITY_BASELINE_PATH_INVALID/],
+];
+for(const [name,mutate,expected]of invalidCapacity)test('schema2 rejects '+name,()=>{const f=capacityFixture();mutate(f);assert.throws(()=>validate(f),expected);});
+const invalidCapacityRaw=[
+ ['substituted hash',f=>{f.raw.services[0].desiredCount=2;},/DEPLOYMENT_CAPACITY_RAW_HASH_CHANGED/,false],
+ ['foreign cluster',f=>f.raw.services[0].clusterArn='arn:aws:ecs:us-east-1:135775632425:cluster/other',/DEPLOYMENT_CAPACITY_RAW_CLUSTER_CHANGED/],
+ ['wrong service',f=>f.raw.services[0].serviceName='schoolpilot-production-other',/DEPLOYMENT_CAPACITY_RAW_SERVICE_CHANGED/],
+ ['wrong task definition',f=>f.raw.services[0].taskDefinition=arn('schoolpilot-production-api',180),/DEPLOYMENT_CAPACITY_RAW_SERVICE_NOT_CONVERGED/],
+ ['API raw counts differ from baseline',f=>f.raw.services[0].runningCount=2,/DEPLOYMENT_CAPACITY_RAW_SERVICE_NOT_CONVERGED/],
+ ['pending service task',f=>f.raw.services[0].pendingCount=1,/DEPLOYMENT_CAPACITY_RAW_SERVICE_NOT_CONVERGED/],
+ ['nonactive service',f=>f.raw.services[0].status='DRAINING',/DEPLOYMENT_CAPACITY_RAW_SERVICE_NOT_CONVERGED/],
+ ['multiple deployments',f=>f.raw.services[0].deployments.push(structuredClone(f.raw.services[0].deployments[0])),/DEPLOYMENT_CAPACITY_RAW_DEPLOYMENTS_REQUIRED/],
+ ['failed deployment task',f=>f.raw.services[0].deployments[0].failedTasks=1,/DEPLOYMENT_CAPACITY_RAW_DEPLOYMENT_NOT_CONVERGED/],
+ ['incomplete deployment',f=>f.raw.services[0].deployments[0].rolloutState='IN_PROGRESS',/DEPLOYMENT_CAPACITY_RAW_DEPLOYMENT_NOT_CONVERGED/],
+ ['nonprimary deployment',f=>f.raw.services[0].deployments[0].status='ACTIVE',/DEPLOYMENT_CAPACITY_RAW_DEPLOYMENT_NOT_CONVERGED/],
+ ['wrong deployment task definition',f=>f.raw.services[0].deployments[0].taskDefinition=arn('schoolpilot-production-api-emergency',179),/DEPLOYMENT_CAPACITY_RAW_DEPLOYMENT_NOT_CONVERGED/],
+ ['AWS lookup failure',f=>f.raw.failures.push({reason:'MISSING'}),/DEPLOYMENT_CAPACITY_RAW_FAILURES/],
+ ['missing service',f=>f.raw.services.pop(),/DEPLOYMENT_CAPACITY_RAW_SERVICES_REQUIRED/],
+];
+for(const [name,mutate,expected,repin=true]of invalidCapacityRaw)test('actual raw capacity replay rejects '+name,()=>{
+ const f=capacityFixture();mutate(f);const bytes=Buffer.from(JSON.stringify(f.raw));if(repin)f.completion.capacityBaseline.servicesReceipt.sha256=sha(bytes);
+ assert.throws(()=>validateBuildSecurityCapacityBaselineRaw(f.completion.capacityBaseline,bytes,f.completion.sequence[0].startedAtUtc),expected);
+});
+test('capacity baseline freshness includes exactly30minutes and rejects metadata substitution after raw replay',()=>{
+ const f=capacityFixture(1);f.completion.capacityBaseline.observedAtUtc='2026-10-09T16:30:00.000Z';f.review.capacityBaselineObservedAtUtc=f.completion.capacityBaseline.observedAtUtc;
+ assert.equal(validate(f),f.completion);assert.equal(validateBuildSecurityCapacityBaselineRaw(f.completion.capacityBaseline,f.rawBytes,f.completion.sequence[0].startedAtUtc).passed,true);
+ f.completion.capacityBaseline.desiredCounts.api=2;assert.throws(()=>validateBuildSecurityCapacityBaselineRaw(f.completion.capacityBaseline,f.rawBytes,f.completion.sequence[0].startedAtUtc),/DEPLOYMENT_CAPACITY_RAW_SERVICE_NOT_CONVERGED/);
 });
