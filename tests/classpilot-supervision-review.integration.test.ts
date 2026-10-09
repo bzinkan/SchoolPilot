@@ -1,17 +1,35 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import express from "express";
 import { pool, sessionPool } from "../src/db.js";
 import { runWithTenantContext } from "../src/middleware/tenantContext.js";
 import { commitSupervisionReview, previewSupervision, releaseTemporaryRoomStudents, returnSupervisionStudentsToOwnClass, supervisionSessionOptions } from "../src/services/classpilotSupervisionReview.js";
 import { assignAdHocSupervisionStudents, createSupervisionContextWithStudents, releaseSupervisionStudents } from "../src/services/storage.js";
 import { getClasspilotDashboardActivity } from "../src/services/classpilotDashboardActivity.js";
+import { signUserToken } from "../src/services/jwt.js";
 
 const schools: string[] = [], staff: string[] = [], pupils: string[] = [];
 const scoped = <T>(schoolId: string, operation: () => Promise<T>) => runWithTenantContext({ schoolId }, operation);
-before(() => assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname)));
+let server: Server | undefined, baseUrl: string;
+before(async () => {
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname));
+  const { default: coverageRouter } = await import("../src/routes/classpilot/coverage.js");
+  const app = express();
+  app.use(express.json());
+  app.use("/api", coverageRouter);
+  server = createServer(app);
+  await new Promise<void>(resolve => server!.listen(0, "127.0.0.1", resolve));
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+});
 after(async () => {
   try {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()));
+    }
     for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_session_staff", "classpilot_session_students", "teaching_sessions", "groups", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "audit_logs", "devices", "settings", "school_memberships", "product_licenses"]) {
       await pool.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schools]);
     }
@@ -46,6 +64,12 @@ async function fixture() {
   return { schoolId, adminId, teacherId, receiverId, groupId, studentIds };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
+async function requestJson(data: Fixture, actorId: string, method: string, path: string, body: unknown) {
+  const token = signUserToken({ userId: actorId, email: `${actorId}@example.test` });
+  const response = await fetch(`${baseUrl}${path}`, { method, body: JSON.stringify(body),
+    headers: { authorization: `Bearer ${token}`, "x-school-id": data.schoolId, "content-type": "application/json" } });
+  return { status: response.status, body: await response.json() as { code?: string; context?: { endsAt: string } } };
+}
 const startInput = (data: Fixture, overrides: Record<string, unknown> = {}) => ({ action: "start", studentIds: [data.studentIds[0]], supervisionGroupId: data.groupId,
   assignedStaffId: data.teacherId, contextType: "other", endsAt: new Date(Date.now() + 60 * 60_000).toISOString(), ...overrides });
 const preview = (data: Fixture, input: unknown, actorId = data.adminId) => scoped(data.schoolId, () => previewSupervision({ schoolId: data.schoolId, actorId, input }));
@@ -260,6 +284,70 @@ test("room claims never pull another supervisor's student, including administrat
   const adminSend = await preview(data, { action: "send", contextType: "temporary_room", assignedStaffId: data.receiverId,
     studentIds: [data.studentIds[0]], endsAt: new Date(Date.now() + 30 * 60_000).toISOString() });
   assert.equal(adminSend.students[0]?.eligible, false);
+});
+
+test("legacy HTTP reroute cannot pull another supervisor's students into a room even for its owner or an administrator", async () => {
+  const data = await fixture();
+  const source = await commit(data, await preview(data, startInput(data, {
+    assignedStaffId: data.receiverId, studentIds: [data.studentIds[1]],
+  })));
+  const ownRoom = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  const adminRoom = await commit(data, await preview(data, roomInput(data, { studentIds: [data.studentIds[2]] })), data.adminId);
+  await currentClass(data, data.teacherId, [data.studentIds[1]!]);
+  for (const [actorId, contextId] of [[data.teacherId, ownRoom.context.id], [data.adminId, adminRoom.context.id]]) {
+    const result = await requestJson(data, actorId!, "POST", "/coverage/reroute", {
+      contextId, studentIds: [data.studentIds[1]],
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, "TEMPORARY_ROOM_REVIEW_REQUIRED");
+  }
+  const active = await pool.query("SELECT id,context_id FROM classpilot_supervision_students WHERE school_id=$1 AND student_id=$2 AND released_at IS NULL", [data.schoolId, data.studentIds[1]]);
+  assert.deepEqual(active.rows, [{ id: source.assignments[0]!.id, context_id: source.context.id }]);
+});
+
+test("legacy HTTP reroute cannot bypass the 500-student room cap", async () => {
+  const data = await fixture();
+  const room = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  const additionalIds = Array.from({ length: 499 }, () => randomUUID());
+  pupils.push(...additionalIds);
+  await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status) SELECT unnest($1::text[]),$2,'Room','Student','active'", [additionalIds, data.schoolId]);
+  await pool.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,source) SELECT $1,$2,unnest($3::text[]),$4,'staff_claim'", [data.schoolId, room.context.id, additionalIds, data.teacherId]);
+  await currentClass(data, data.teacherId, [data.studentIds[1]!]);
+  await assert.rejects(preview(data, roomInput(data, { studentIds: [data.studentIds[1]], endsAt: undefined }), data.teacherId), {
+    code: "CLASSROOM_ROSTER_LIMIT", status: 422,
+  });
+  const result = await requestJson(data, data.teacherId, "POST", "/coverage/reroute", {
+    contextId: room.context.id, studentIds: [data.studentIds[1]],
+  });
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, "TEMPORARY_ROOM_REVIEW_REQUIRED");
+  assert.equal((await pool.query("SELECT count(*) FROM classpilot_supervision_students WHERE context_id=$1 AND released_at IS NULL", [room.context.id])).rows[0].count, "500");
+  assert.equal((await pool.query("SELECT count(*) FROM classpilot_supervision_students WHERE school_id=$1 AND student_id=$2 AND released_at IS NULL", [data.schoolId, data.studentIds[1]])).rows[0].count, "0");
+});
+
+test("room HTTP deadline updates require signed review while non-room legacy PATCH and reroute remain supported", async () => {
+  const data = await fixture();
+  const room = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  for (const endsAt of [new Date(Date.now() + 90 * 60_000).toISOString(), new Date(room.context.startsAt.getTime() + 13 * 60 * 60_000).toISOString()]) {
+    const denied = await requestJson(data, data.teacherId, "PATCH", `/coverage/contexts/${room.context.id}`, { endsAt });
+    assert.equal(denied.status, 409);
+    assert.equal(denied.body.code, "TEMPORARY_ROOM_REVIEW_REQUIRED");
+  }
+  assert.equal((await pool.query("SELECT ends_at=$2::timestamp AS unchanged FROM classpilot_supervision_contexts WHERE id=$1", [room.context.id, room.context.endsAt.toISOString()])).rows[0].unchanged, true);
+  const endsAt = new Date(Date.now() + 90 * 60_000).toISOString();
+  const review = await preview(data, { action: "end_time", destinationContextId: room.context.id, endsAt }, data.teacherId);
+  const updated = await requestJson(data, data.teacherId, "PATCH", `/coverage/contexts/${room.context.id}`, { ...review.request, reviewToken: review.reviewToken });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.context?.endsAt, endsAt);
+
+  const normal = await commit(data, await preview(data, startInput(data, { studentIds: [data.studentIds[2]] })));
+  const legacyUpdated = await requestJson(data, data.teacherId, "PATCH", `/coverage/contexts/${normal.context.id}`, { endsAt });
+  assert.equal(legacyUpdated.status, 200);
+  assert.equal(legacyUpdated.body.context?.endsAt, endsAt);
+  await currentClass(data, data.teacherId, [data.studentIds[1]!]);
+  const rerouted = await requestJson(data, data.teacherId, "POST", "/coverage/reroute", { contextId: normal.context.id, studentIds: [data.studentIds[1]] });
+  assert.equal(rerouted.status, 201);
+  assert.equal((await pool.query("SELECT context_id FROM classpilot_supervision_students WHERE school_id=$1 AND student_id=$2 AND released_at IS NULL", [data.schoolId, data.studentIds[1]])).rows[0].context_id, normal.context.id);
 });
 
 test("reviewed room handoffs require the sender and receiver authority and preserve receiving deadline", async () => {

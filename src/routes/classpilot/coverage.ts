@@ -2547,6 +2547,9 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
     if (!context || context.status !== "active" || context.endsAt <= new Date()) {
       return res.status(404).json({ error: "Active coverage context not found" });
     }
+    if (context.contextType === "temporary_room") {
+      return res.status(409).json({ error: "Use reviewed Claim or Send to add students to a room.", code: "TEMPORARY_ROOM_REVIEW_REQUIRED" });
+    }
     await assertActiveStudentsInSchool(schoolId, studentIds);
 
     if (!isAdmin(req, res)) {
@@ -2664,6 +2667,9 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
     if (!isAdmin(req, res) && context.assignedStaffId !== req.authUser!.id) {
       return res.status(403).json({ error: "Only admins or assigned coverage staff can update coverage" });
     }
+    if (context.contextType === "temporary_room") {
+      return res.status(409).json({ error: "Review the current room before changing its end time.", code: "TEMPORARY_ROOM_REVIEW_REQUIRED" });
+    }
     const endsAt = req.body.endsAt ? new Date(req.body.endsAt) : undefined;
     if (endsAt && (!Number.isFinite(endsAt.getTime()) || endsAt <= new Date())) {
       return res.status(400).json({ error: "endsAt must be in the future" });
@@ -2673,9 +2679,6 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
       return res.status(409).json({ error: "This deadline is controlled by scheduling. Update the scheduled activity instead.", code: "SUPERVISION_SCHEDULED_DEADLINE" });
     }
     const assignedStaffId = isAdmin(req, res) && req.body.assignedStaffId ? String(req.body.assignedStaffId) : undefined;
-    if (context.contextType === "temporary_room" && assignedStaffId && assignedStaffId !== context.assignedStaffId) {
-      return res.status(409).json({ error: "Use a reviewed Send to hand off students to another room.", code: "TEMPORARY_ROOM_REVIEWED_HANDOFF_REQUIRED" });
-    }
     if (assignedStaffId) {
       const assignedMembership = await getMembershipByUserAndSchool(assignedStaffId, schoolId);
       if (!assignedMembership || assignedMembership.status !== "active") {
