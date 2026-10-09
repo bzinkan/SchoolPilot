@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "kind": "reviewed_release297_matched_recovery_frontend_preparation",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "role": "fallback-frontend",
+  "source": "cce3f7b4eae30df13378337c01dc4ff2d5db3997",
+  "backendSource": "392970b7ccfea365faadf1eba07da4ad26964c09",
+  "observedAtUtc": "2026-10-09T16:22:05.997Z",
+  "status": "passed",
+  "artifact": {
+    "archiveSha256": "8d6379613dbb1c88783ee0f141ed41c34164fac5142172daee7da7f8d27cd72a",
+    "fileInventorySha256": "3484fa4f9848dc9e48e4e3bfeb384e959f17deccd10125e8b362fb094f29451e",
+    "fileCount": 171,
+    "archiveBytes": 1006752,
+    "nodeEnv": "production"
+  },
+  "sourceScope": "Exact F3 child with only the three reviewed current AI Transparency, Privacy Policy and Subprocessors components. F3 backend inputs remain unchanged; older backend application trees are not merged into main.",
+  "checks": {
+    "lint": true,
+    "build": true,
+    "browsingHistoryBrowser": true,
+    "studentTileBrowser": true,
+    "classroomActionsBrowser": true,
+    "commandContext": true,
+    "preciseResourceMatcher": true,
+    "dashboardIsolation": true,
+    "forbiddenSyntheticOrLocalEndpointsAbsent": true,
+    "fullDashboardLoadStateRepeated": false,
+    "offlineRecoveryPreparation": true,
+    "pureRecoveryGuardTests": 26,
+    "transitiveImportRegressions": true
+  },
+  "producers": {
+    "recoveryProducerSha256": "0363a144bc757256b05e3e6e7ec0ea55c2686be562d9b3b928fda63274fca865",
+    "proofValidatorSha256": "b55929c06d0abab554392d436d691491f6a962a758452ea5820cb876f1c520fb",
+    "inputContractSha256": "57fb97b2c54ae53b4ea58546163e1aa40e3a620bd6a79a3db9818257811fb1a1",
+    "operationFreezeSha256": "df92f52821b931095a6bfbd71a3577a362d5707569e463525cb99731bcd47073",
+    "acceptanceHarnessFreezeSha256": "43d98bc908644acbf3860bad79256ed2b8ae65d44f50d62478eb4c7b02f0a2c2"
+  },
+  "retainedEvidence": {
+    "artifact": {
+      "storage": "private",
+      "format": "json",
+      "path": "fallback-frontend-C-production-01/artifact.json",
+      "sha256": "c1fc6812878fbe695fdfdd22c75ad690509812b81195ddad6d9d9970164779fa"
+    },
+    "checks": {
+      "storage": "private",
+      "format": "json",
+      "path": "fallback-frontend-C-production-01/checks-receipt.json",
+      "sha256": "ec533c5d9c363d1c7a130cb565ddcb428c3fd2f635b5d2b5d28ae29dec561345"
+    },
+    "independentReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/exact-C-frontend-and-final-recovery-producers-root-review-01.json",
+      "sha256": "d9d2d6dbf5ca8605d038bf9ed7a84adf3872e729098480b5ee03f89265ec2039"
+    }
+  },
+  "operationalDependencies": {
+    "actualPredeploymentRecoveryProof": "pending",
+    "actualRecoveryPlan": "pending",
+    "publication": "pending",
+    "alreadyOpenPageAdoption": "pending",
+    "sampleBearingLiveAcceptance": "pending"
+  },
+  "rollbackApplicability": "Current A2/A3 frontend pages-view/cursor behavior is incompatible with F3; recover with the exact separately identified C frontend and reload already-open A2/A3 pages/reset history cursors. C uses F3's earlier Focus and Waypoint UI and does not include A3's current-tab shortcut or activeTabRef status projection. The existing server-enforced opaque Focus command contract is retained.",
+  "historicalF3Frontend02": "ineligible: older legal-copy components; preserved as a historical artifact",
+  "humanApprovalAsserted": false,
+  "managedDeviceValidation": "waived_not_passed",
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

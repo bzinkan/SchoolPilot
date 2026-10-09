@@ -1,27 +1,20 @@
 {
   "schemaVersion": 1,
-  "kind": "release297_build_security_current_observation",
-  "observedAtUtc": "2026-10-09T17:50:46.029Z",
+  "kind": "release297_merged_preparation_main_observation",
+  "observedAtUtc": "2026-10-09T17:36:48.106Z",
   "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
-  "mainSource": "6e33a19662fec14e719a806e73160a84816f120e",
-  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
-  "artifactPair": {
-    "serving-anchor": {
-      "source": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
-      "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
-      "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
-      "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
+  "toolingMainSource": "6e33a19662fec14e719a806e73160a84816f120e",
+  "mergedPreparationSource": "dbf00dbb29945fd316150af047aa55194f59d892",
+  "pullRequest": {
+    "number": 629,
+    "title": "Release 2.9.7: prepare the current CP-protected build-security fallback",
+    "headRefOid": "dbf00dbb29945fd316150af047aa55194f59d892",
+    "mergeCommit": {
+      "oid": "6e33a19662fec14e719a806e73160a84816f120e"
     },
-    "fallback": {
-      "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
-      "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
-      "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
-      "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
-      "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
-    }
+    "mergedAt": "2026-10-09T16:39:46Z"
   },
-  "inventory": {
+  "backendInventory": {
     "sha256": "fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01",
     "fileCount": 564
   },
@@ -29,44 +22,7 @@
     "sha256": "fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4",
     "fileCount": 637
   },
-  "addedPullRequests": [
-    {
-      "number": 626,
-      "title": "Release 2.9.7: bind CP-protected fallback and preserve security hold",
-      "headRefOid": "4c3236fc85d2d0ed0af2d3561583ce3ac0002e8c",
-      "mergeCommit": {
-        "oid": "7ad2405846fb066e4dd43339297aba43a170d002"
-      },
-      "mergedAt": "2026-10-09T10:53:18Z"
-    },
-    {
-      "number": 627,
-      "title": "Keep missing-page heartbeats from flooding student browsing history",
-      "headRefOid": "e30d44531668dbfbcdc0cf4ac07547c4aa9906d1",
-      "mergeCommit": {
-        "oid": "55f91b620d2d48de5ed164a72250ec133450bc0f"
-      },
-      "mergedAt": "2026-10-09T13:21:56Z"
-    },
-    {
-      "number": 628,
-      "title": "Unify student tile Focus and Waypoint lock actions",
-      "headRefOid": "5c184a73deea32404f352204f9e15e2a4d216923",
-      "mergeCommit": {
-        "oid": "2001e8888992674493c3084981fa8aae27d70e1d"
-      },
-      "mergedAt": "2026-10-09T14:38:46Z"
-    },
-    {
-      "number": 629,
-      "title": "Release 2.9.7: prepare the current CP-protected build-security fallback",
-      "headRefOid": "dbf00dbb29945fd316150af047aa55194f59d892",
-      "mergeCommit": {
-        "oid": "6e33a19662fec14e719a806e73160a84816f120e"
-      },
-      "mergedAt": "2026-10-09T16:39:46Z"
-    }
-  ],
+  "applicationInputsEquivalent": true,
   "currentMainCi": {
     "source": "6e33a19662fec14e719a806e73160a84816f120e",
     "branch": "main",
@@ -272,116 +228,32 @@
       }
     }
   },
-  "authorization": {
-    "merge": true,
-    "productionDeployment": true,
-    "registryPublication": true,
-    "inactiveRegistration": true,
-    "storeSubmission": false,
-    "runtimeActivation": false,
-    "githubSettings": false
-  },
-  "directUserRequest": "fix this and deploy",
-  "authorizationBasis": "Direct latest human request includes necessary correction merge, exact artifact publication and required inactive compatible fallback registration as prerequisites to authorized backend/frontend deployment. Exact operations still require passed gates and reviewed plans/windows.",
-  "humanApprovalAsserted": false,
-  "sourceSpecificApplicability": {
-    "status": "approved",
-    "review": {
-      "status": "approved",
-      "path": "docs/release-evidence/release297/cp-protected-build/source-applicability.json",
-      "sha256": "bc16d432a885ee81be222ac3e3d2e595926c5278ba401601832d627f63b3da70"
+  "retainedEvidence": {
+    "mainCi": {
+      "storage": "private",
+      "format": "json",
+      "path": "main-ci-6e33-capture-01/main-ci.json",
+      "sha256": "18ac829bf08739d0eeef1ffc7799e0cf740f9f9e814b812cd43a55a8fc9ce5c2"
+    },
+    "ciIndependentReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/main-ci-6e33-capture-01.review.json",
+      "sha256": "c6447776e33678b39ce5ba03c379412922191bfde05e845bcfdee0ef38604474"
+    },
+    "applicationEquivalence": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/main-6e33-application-equivalence-root-01.private.json",
+      "sha256": "0174083bb6fb88bae3cfa25c0d1fd1278f4374ef2529a32fe65ee30786c4c4dc"
+    },
+    "initialFrozenToolBytes": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/metadata-worktree-frozen-byte-equivalence-02.json",
+      "sha256": "f5326f961c28d5505c66b1219f793d7d9ebfff5a3c54a83f9a276215a34c006d"
     }
-  },
-  "dailyRollup": {
-    "setting": "omitted",
-    "effectiveAtCurrentServingSource": "shadow",
-    "runtimeWorkloadMeasured": false
-  },
-  "rollbackFrontendApplicability": {
-    "automaticBackendRecoveryBeforeMatchedFrontend": true,
-    "laterManualRollbackAfterMatchedFrontendRequiresCompatibleFrontend": true,
-    "compatibleFrontendSelection": "approved",
-    "pageCursorResetRequired": true,
-    "F3RetainsPr627PagesOnlyView": false,
-    "currentProductionFrontendSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-    "automaticRecoveryCompatibility": "exact_C_prepared_and_independently_reviewed",
-    "compatibleFrontendRecoveryBeforeDeployment": "actual_proof_and_plan_pending"
-  },
-  "preparationStatus": "passed",
-  "selectionStatus": "approved",
-  "originalCampaignStatuses": {
-    "currentSchoolAcceptance": "passed",
-    "classroomAcceptance": "passed",
-    "normalLoadAcceptance": "passed",
-    "headroomAcceptance": "failed"
-  },
-  "frontend": {
-    "source": "2001e8888992674493c3084981fa8aae27d70e1d",
-    "archiveSha256": "ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d",
-    "archiveBytes": 1014154,
-    "fileInventorySha256": "3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3",
-    "fileCount": 171,
-    "nodeEnv": "production",
-    "buildPassed": true,
-    "lintPassed": true,
-    "browsingHistoryBrowserPassed": true,
-    "studentTileBrowserPassed": true,
-    "dashboardLoadStatePassed": true,
-    "publication": false,
-    "adoptionVerified": false
-  },
-  "historicalInvalidation": {
-    "previousApplicationReference": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-    "previousToolPreparation": "259642412255fea058532f61699e078b62113152",
-    "changedApplicationInputs": [
-      "src/routes/classpilot/coverage.ts",
-      "src/routes/classpilot/devices.ts",
-      "src/routes/compat.ts",
-      "src/services/classpilotCoverageHydration.ts",
-      "src/services/classpilotRealtimeStatus.ts",
-      "schoolpilot-app"
-    ],
-    "changedBrowserCheck": "Focus/realtime browser and unit checks",
-    "oldCandidateArtifactRecoveryCampaignApplicability": "historical",
-    "freshA3Required": true,
-    "F3SourceAndArtifactUnchanged": true
-  },
-  "retainedMainCiCapture": {
-    "storage": "private",
-    "format": "json",
-    "path": "main-ci-6e33-capture-01/main-ci.json",
-    "sha256": "18ac829bf08739d0eeef1ffc7799e0cf740f9f9e814b812cd43a55a8fc9ce5c2"
   },
   "releaseReady": false,
-  "operationalAuthorization": false,
-  "productionDeploymentExecuted": false,
-  "publicationExecuted": false,
-  "inactiveRegistrationExecuted": false,
-  "externalProductionChange": {
-    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
-    "apiRevision": 180,
-    "workerRevision": 196,
-    "admission": 129,
-    "environmentExceptGitShaUnchanged": true,
-    "prior179195OperationalPlansInvalidated": true,
-    "retainedReview": {
-      "storage": "private",
-      "path": "independent-review/current129-A3-external-state.review.json",
-      "sha256": "4a42810a835040622981a1ce4a1bbcf10b19be8a6805c686c73d8e9be36f550e"
-    },
-    "observedDeploymentWasExternal": true
-  },
-  "mainEquivalence": {
-    "status": "passed",
-    "applicationReference": "2001e8888992674493c3084981fa8aae27d70e1d",
-    "mainSource": "6e33a19662fec14e719a806e73160a84816f120e",
-    "backendInventory": {
-      "sha256": "fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01",
-      "fileCount": 564
-    },
-    "frontendInventory": {
-      "sha256": "fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4",
-      "fileCount": 637
-    }
-  }
+  "operationalAuthorization": false
 }
