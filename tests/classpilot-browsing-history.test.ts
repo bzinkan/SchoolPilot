@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
+import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, resolveHistoryView, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
 const time=(value:string)=>new Date(`2026-09-01T${value}:00.000Z`);
+test("history view defaults to the compatible raw list and rejects malformed filters",()=>{
+  assert.equal(resolveHistoryView(undefined),"all");
+  assert.equal(resolveHistoryView("all"),"all");
+  assert.equal(resolveHistoryView("pages"),"pages");
+  for(const value of [null,"","Pages","unknown",["pages"],{},true])assert.throws(()=>resolveHistoryView(value),{code:"HISTORY_VIEW_INVALID",status:400});
+});
 test("history dates use school midnight including DST and reject invalid dates/ranges",()=>{
   const spring=resolveHistoryDates({startDate:"2026-03-08",endDate:"2026-03-08",timeZone:"America/New_York",now:new Date("2026-03-10T00:00:00Z")});assert.equal(spring.start.toISOString(),"2026-03-08T05:00:00.000Z");assert.equal(spring.end.getTime()-spring.start.getTime(),23*3600000);
   assert.throws(()=>resolveHistoryDates({startDate:"2026-02-30",timeZone:"UTC",now:new Date()}),{code:"HISTORY_DATE_INVALID"});
