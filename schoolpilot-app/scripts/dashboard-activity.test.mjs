@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityParentPath, activityRequestHeaders,
-  activityTransitionKey, normalizeDashboardActivity, resolveActivityView, matchesActivityAuthority, activityPurposeLabel, activityEndLabel, normalizeObservableActivities } from '../src/products/classpilot/lib/dashboardActivity.js';
+  activityTransitionKey, normalizeDashboardActivity, resolveActivityView, matchesActivityAuthority, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, normalizeObservableActivities } from '../src/products/classpilot/lib/dashboardActivity.js';
 import { deriveDashboardCapabilities, resolveCommandTargets, normalizeSessionFabState,
   buildStudentSignOutCommandRequest, studentSupportsScheduledClassroom } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { createTileBatchRequests } from '../src/products/classpilot/lib/tileBatchPolling.js';
@@ -12,6 +12,59 @@ const current = { id: 'test', source: 'scheduled_testing', name: 'Reading MAP',
   startsAt: '2026-09-15T13:11:00Z', endsAt: '2026-09-15T13:15:00Z',
   capabilities: { commands: ['open-tab', 'timer', 'student-sign-out'], fab: true, liveView: true, settings: true } };
 const dto = { enabled: true, schoolId: 'school', viewerId: 'teacher', current };
+const room = { ...current, id: 'room', name: 'My room', teacherId: 'teacher', contextType: 'temporary_room',
+  staffIds: ['teacher'], capabilities: { ...current.capabilities, screenshots: true },
+  source: 'ad_hoc_supervision', purpose: 'claim', contextAuthorityRevision: '8',
+  authority: { supervisionContextId: 'room' }, startsAt: '2026-09-15T13:00:00Z', endsAt: '2026-09-15T16:00:00Z' };
+
+test('a room defaults across reload and bells while explicit Class and Observe workspace choices remain respected', () => {
+  const input = { scopeKey: 'school:teacher', transitionKey: 'class-one', scheduledEnabled: true, defaultView: 'class', room };
+  assert.equal(resolveActivityView(input), 'claimed');
+  const selectedRoom = { scopeKey: input.scopeKey, view: 'claimed', roomId: room.id, transitionKey: input.transitionKey };
+  assert.equal(resolveActivityView({ ...input, transitionKey: 'next-bell', selection: selectedRoom }), 'claimed');
+  assert.equal(resolveActivityView({ ...input, transitionKey: 'next-bell', selection: { ...selectedRoom, view: 'class' } }), 'class');
+  assert.equal(resolveActivityView({ ...input, transitionKey: 'next-bell', selection: { ...selectedRoom, view: 'available' } }), 'available');
+  assert.equal(resolveActivityView({ ...input, room: null, selection: selectedRoom }), 'class', 'An ended room cannot keep the room view selected');
+  assert.equal(resolveActivityView({ ...input, room: { ...room, id: 'replacement' }, selection: { ...selectedRoom, view: 'class' } }), 'claimed');
+});
+
+test('room validation and expiration are independent from the normal current class', () => {
+  const active = normalizeDashboardActivity({ ...dto, room }, 'school', 'teacher', Date.parse('2026-09-15T13:16:00Z'));
+  assert.equal(active.current, null);
+  assert.equal(active.room.id, 'room');
+  assert.equal(normalizeDashboardActivity({ ...dto, room }, 'school', 'teacher', Date.parse(room.endsAt)).room, null);
+  assert.throws(() => normalizeDashboardActivity({ ...dto, room: { ...room, teacherId: 'other' } }, 'school', 'teacher'), /room response/);
+  assert.throws(() => normalizeDashboardActivity({ ...dto, room: { ...room, contextAuthorityRevision: undefined } }, 'school', 'teacher'), /room response/);
+});
+
+test('My room full tools use its exact server capabilities and cannot acquire authority through Observe', () => {
+  const input = { studentView: 'claimed', isTeacher: true, currentUserId: 'teacher', roomActivity: room, scheduledActivity: current };
+  const caps = deriveDashboardCapabilities(input);
+  assert.equal(caps.canUseTeacherFab, true);
+  assert.equal(caps.canUseLiveView, true);
+  assert.equal(caps.canChangeFabSettings, true);
+  assert.equal(caps.allows('timer'), true);
+  assert.deepEqual(caps.authority, { supervisionContextId: 'room' });
+  assert.equal(deriveDashboardCapabilities({ ...input, roomActivity: { ...room, capabilities: { commands: [] } } }).canUseTeacherFab, false);
+  const observed = deriveDashboardCapabilities({ ...input, isAdmin: true, observedSession: { ...room, accessMode: 'observe' } });
+  assert.equal(observed.canUseTeacherFab, false);
+  assert.equal(observed.canUseRemoteControls, false);
+  assert.equal(activityPurposeLabel(room), 'My room');
+  assert.equal(activityTitle(room), 'My room');
+  assert.equal(activityTitle({ ...room, name: 'Mixed grades' }), 'My room: Mixed grades');
+  assert.equal(activityEndLabel(room), 'End room');
+});
+
+test('End room freezes the complete exact roster and rejects empty or stale confirmations', () => {
+  const target = { ...room, expectedStudentIds: ['grade-3', 'grade-4', 'grade-5'] };
+  assert.deepEqual(activityEndRequest(target, ['grade-5', 'grade-4', 'grade-3']), {
+    studentIds: [], releaseReason: 'returned_to_class', expectedStudentIds: target.expectedStudentIds,
+  });
+  assert.throws(() => activityEndRequest({ ...target, expectedStudentIds: [] }, []), /roster is unavailable/);
+  assert.throws(() => activityEndRequest(target, [...target.expectedStudentIds, 'new-student']), /roster changed/);
+  assert.throws(() => activityEndRequest(target, ['grade-3', 'grade-4']), /roster changed/);
+  assert.deepEqual(activityEndRequest(current, []), { studentIds: [], releaseReason: 'returned_to_class' });
+});
 
 test('scheduled authority never becomes a teaching-session request and rejects ambiguous parents', () => {
   assert.deepEqual(activityAuthority(current), { supervisionContextId: 'test' });

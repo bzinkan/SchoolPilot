@@ -62,16 +62,29 @@ export function normalizeDashboardActivity(data, schoolId, viewerId, now = Date.
   // The deadline revokes display authority. Only a newer server read may
   // activate the incoming class; a browser timer never grants it locally.
   const expired = current && endsAt !== null && endsAt <= now;
-  return { ...data, current: expired ? null : current,
+  const room = data.room;
+  if (room && (!activityAuthority(room)?.supervisionContextId || room.contextType !== 'temporary_room'
+    || room.purpose !== 'claim' || room.status !== 'active' || room.teacherId !== viewerId
+    || room.source !== 'ad_hoc_supervision' || !Array.isArray(room.staffIds) || !room.staffIds.includes(viewerId)
+    || !room.capabilities || typeof room.capabilities !== 'object' || !Array.isArray(room.capabilities.commands)
+    || room.capabilities.commands.some(command => typeof command !== 'string')
+    || ['fab', 'liveView', 'settings', 'screenshots'].some(key => typeof room.capabilities[key] !== 'boolean')
+    || !Number.isFinite(Date.parse(room.startsAt)) || !Number.isFinite(Date.parse(room.endsAt))
+    || !Number.isSafeInteger(room.studentCount) || room.studentCount < 0
+    || !/^(0|[1-9]\d*)$/.test(String(room.contextAuthorityRevision ?? room.authority?.contextAuthorityRevision)))) {
+    throw new Error('The temporary room response is incomplete.');
+  }
+  const activeRoom = room && Date.parse(room.startsAt) <= now && Date.parse(room.endsAt) > now ? room : null;
+  return { ...data, current: expired ? null : current, room: activeRoom,
     transitionKey: expired ? `${activityTransitionKey(current)}:ended` : activityTransitionKey(current),
     pending: Boolean(expired || data.status === 'pending') };
 }
 
-export function resolveActivityView({ selection, scopeKey, transitionKey, scheduledEnabled, defaultView }) {
-  if (selection?.scopeKey === scopeKey && (!scheduledEnabled || selection.transitionKey === transitionKey)) {
+export function resolveActivityView({ selection, scopeKey, transitionKey, scheduledEnabled, defaultView, room = null }) {
+  if (selection?.scopeKey === scopeKey && (room ? selection.roomId === room.id : !selection.roomId && (!scheduledEnabled || selection.transitionKey === transitionKey))) {
     return selection.view || defaultView;
   }
-  return scheduledEnabled ? 'class' : defaultView;
+  return room ? 'claimed' : scheduledEnabled ? 'class' : defaultView;
 }
 
 export function matchesActivityAuthority(message, authority) {
@@ -94,11 +107,35 @@ export function activityPurpose(activity) {
 }
 
 export function activityPurposeLabel(activity) {
+  if (activity?.contextType === 'temporary_room') return 'My room';
   return { class: 'Class', testing: 'Testing', coverage: 'Coverage', supervision: 'Supervising', claim: 'Claimed students' }[activityPurpose(activity)];
 }
 
+export function activityTitle(activity) {
+  const label = activityPurposeLabel(activity);
+  const name = activity?.name || activity?.groupName;
+  return !name || name === label ? label : `${label}: ${name}`;
+}
+
 export function activityEndLabel(activity) {
+  if (activity?.contextType === 'temporary_room') return 'End room';
   return { class: 'End class', testing: 'End testing', coverage: 'End coverage', supervision: 'End supervision', claim: 'Release all' }[activityPurpose(activity)];
+}
+
+export function activityEndRequest(target, currentStudentIds) {
+  const body = { studentIds: [], releaseReason: 'returned_to_class' };
+  if (target?.contextType !== 'temporary_room') return body;
+  const expected = target.expectedStudentIds;
+  if (!Array.isArray(expected) || expected.length === 0
+    || expected.some(id => typeof id !== 'string' || !id)
+    || new Set(expected).size !== expected.length) {
+    throw new Error('The room roster is unavailable. Close the confirmation and refresh.');
+  }
+  const current = new Set(currentStudentIds);
+  if (current.size !== expected.length || expected.some(id => !current.has(id))) {
+    throw new Error('The room roster changed. Close the confirmation and review it again.');
+  }
+  return { ...body, expectedStudentIds: [...expected] };
 }
 
 export function normalizeObservableActivities(data) {

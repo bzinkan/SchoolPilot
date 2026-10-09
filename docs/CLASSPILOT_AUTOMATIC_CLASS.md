@@ -1,35 +1,40 @@
 # Automatic Class, testing and next-class transitions
 
-This coordinated SchoolPilot and ClassPilot extension change is shipped disabled.
-It does not deploy itself or change saved class rosters, applied snapshots, report
+Scheduled classroom and supervision-preview modes default on; their separate
+kill switches and school exclusions remain authoritative. These workflows do not
+change saved class rosters, applied snapshots, report
 boundaries or Central Email Copy.
 
 ## Teacher behavior
 
 When enabled, Class displays the teacher's server-confirmed regular class,
 scheduled testing or scheduled-class coverage. Tiles include assigned students who
-are offline. Each new scheduled assignment returns an open Dashboard to Class;
-teachers and administrators can browse Claimed or Available between boundaries;
+are offline. When no temporary room is active, each new scheduled assignment
+returns an open Dashboard to Class. Staff can browse My room or Available;
 administrators can also use Observe. Claim is available to both roles within
 their authorized supervision scope. A refresh,
 partial release or extension of the same assignment does not repeatedly reset that
 choice. Unrelated pages and unfinished scheduling forms are not redirected.
 
-Claimed contains ad hoc pickups and can also show manually started supervision.
-An ordinary claim opens that view, while an explicitly started manual supervision
-context remains eligible as the current Class workspace. The next scheduled
-assignment returns the Dashboard to Class. Browsing does not itself release or
-transfer students.
+My room retains the legacy `claimed` navigation value. Available → Claim reviews
+the exact selection and creates or adds to the staff member's one active
+`temporary_room` context, independent of grade or scheduled homeroom. The first
+claim chooses an end time; additions preserve it. The room remains selected across
+bells and reloads unless staff intentionally choose Class or Observe. Its students
+remain under room authority until expiry, removal, or explicit holder handoff.
+Changing the end time reviews all current members. Browsing never transfers them.
 
-Available → Claim creates neutral **Claimed students** supervision for teachers and
-administrators. A saved testing group's membership can authorize a teacher to claim
+Legacy claim requests retain their previous behavior. A saved testing group's membership can authorize a teacher to claim
 that student, but it does not start testing or select that group as the student's
 current activity. The saved membership remains available for future testing.
 Ordinary claims never replace the teacher's current Class assignment. They retain
 their own recipients, control authority, observation leases and release lifecycle.
 Claim revalidates student availability, the exact staff grants and current group
 membership under the assignment locks; competing claims cannot steal an accepted
-assignment.
+assignment. Combine my supervision reviews personally held students across existing
+contexts before moving them into the room; saved rosters and historical intervals
+remain unchanged. Another supervisor's students require their explicit reviewed
+Send. Room membership cannot be taken through legacy Return to class or Reroute.
 
 The server supplies an activity `purpose`: `class`, `testing`, `coverage`,
 `supervision`, or `claim`. Testing requires an active scheduled testing context or
@@ -41,9 +46,10 @@ assignment proves an ordinary claim (`staff_claim` or `admin_assign`). Mixed or
 unknown origins retain their original supervision name; historical records are
 not rewritten. Explicit sends and manual testing keep their distinct purposes.
 
-Claimed shows automatic screen previews for both teachers and administrators,
-including an enlarged preview on click. Each claimed group uses its own observation
-lease and the authority revision from the personal claimed roster; navigation
+My room shows automatic screen previews for both teachers and administrators,
+including an enlarged preview on click. A room uses its exact observation lease
+and authority revision. Legacy claims retain a separate lease per group from the
+personal claimed roster; navigation
 summary metadata and an unrelated active class cannot authorize these reads.
 Capture notifications refresh only the affected claimed students. Releasing a
 student or losing a group's preview authority removes those images while other
@@ -79,7 +85,8 @@ selection until the administrator selects another class or chooses Stop observin
 
 ## Compatibility and authority
 
-`GET /api/classpilot/dashboard-activity` returns the scoped current activity,
+`GET /api/classpilot/dashboard-activity` returns the scoped current activity and an
+optional `room` activity using the same exact supervision authority contract,
 capabilities, revision, server time, next assignment and next boundary. Activity
 authority is exactly one real `teachingSessionId` or `supervisionContextId`.
 The latter receives full tools for an assigned active supervision context,
@@ -127,16 +134,18 @@ conditions. Pending authority is never presented as a successful transition.
    `classpilot-scheduled-classroom-20260915` expansion adds exclusive activity
    parents to settings, chat, deliveries, hands, polls and classroom state.
    Preserve the existing tenant policies and all retained rows.
-2. Deploy the compatible backend/worker before the dependent Dashboard and
-   extension. Keep `CLASSPILOT_SCHEDULED_CLASSROOM_MODE=off` until reviewed.
-3. Verify the live Chrome Web Store version before selecting a successor version,
-   then follow the separate ClassPilot packaging/review/adoption procedure.
-   SchoolPilot deployment does not publish the extension.
-4. For an authorized canary, set `CLASSPILOT_SCHEDULED_CLASSROOM_MODE=on` and
-   `CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS` to the intended school IDs on both
-   API and worker. Missing mode defaults off; a malformed allowlist fails closed.
-   An omitted/empty allowlist with mode on enables the rollout for all schools.
-   Keep existing protocol-v3 and scoped-authority capability gates enabled.
+2. Deploy the compatible backend/worker before the dependent Dashboard. Temporary
+   rooms reuse existing supervision tables and extension capability contracts;
+   they require no extension release or new database tables.
+3. SchoolPilot deployment does not publish the extension. Any future extension
+   successor follows the separate live-version verification and Store procedure.
+4. `CLASSPILOT_SCHEDULED_CLASSROOM_MODE` and
+   `CLASSPILOT_SUPERVISION_PREVIEW_MODE` default on. Their `off` kill switches and
+   corresponding `*_EXCLUDED_SCHOOL_IDS` carve-outs remain supported; malformed
+   exclusions fail closed. Retired `*_SCHOOL_IDS` allowlists fail startup. Keep
+   existing protocol-v3 and scoped-authority capability gates enabled. The separate
+   schedule-boundary worker still defaults off; do not infer five-second lifecycle
+   processing from the classroom mode alone.
 5. Rehearse Homeroom → 9:11–9:15 testing → actual next class with a connected
    assigned teacher and compatible Chromebook. Verify rendered tiles and a real
    classroom action in addition to backend lifecycle receipts. Check separate

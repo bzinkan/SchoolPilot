@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pool, sessionPool } from "../src/db.js";
 import { runWithTenantContext } from "../src/middleware/tenantContext.js";
-import { commitSupervisionReview, previewSupervision, supervisionSessionOptions } from "../src/services/classpilotSupervisionReview.js";
-import { assignAdHocSupervisionStudents, releaseSupervisionStudents } from "../src/services/storage.js";
+import { commitSupervisionReview, previewSupervision, releaseTemporaryRoomStudents, returnSupervisionStudentsToOwnClass, supervisionSessionOptions } from "../src/services/classpilotSupervisionReview.js";
+import { assignAdHocSupervisionStudents, createSupervisionContextWithStudents, releaseSupervisionStudents } from "../src/services/storage.js";
+import { getClasspilotDashboardActivity } from "../src/services/classpilotDashboardActivity.js";
 
 const schools: string[] = [], staff: string[] = [], pupils: string[] = [];
 const scoped = <T>(schoolId: string, operation: () => Promise<T>) => runWithTenantContext({ schoolId }, operation);
@@ -28,6 +29,7 @@ async function fixture() {
   const studentIds = [randomUUID(), randomUUID(), randomUUID()];
   schools.push(schoolId); staff.push(adminId, teacherId, receiverId); pupils.push(...studentIds);
   await pool.query("INSERT INTO schools(id,name,status,is_active,plan_status) VALUES($1,'Supervision review','active',true,'active')", [schoolId]);
+  await pool.query("INSERT INTO settings(school_id,school_name,ws_shared_key,enable_tracking_hours,after_hours_mode) VALUES($1,'Supervision review','test-only',false,'off')", [schoolId]);
   await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [schoolId]);
   for (const [id, role] of [[adminId, "admin"], [teacherId, "teacher"], [receiverId, "teacher"]]) {
     await pool.query("INSERT INTO users(id,email,first_name,last_name,display_name) VALUES($1,$2,'Review','Teacher','Review Teacher')", [id, `${id}@example.test`]);
@@ -48,6 +50,17 @@ const startInput = (data: Fixture, overrides: Record<string, unknown> = {}) => (
   assignedStaffId: data.teacherId, contextType: "other", endsAt: new Date(Date.now() + 60 * 60_000).toISOString(), ...overrides });
 const preview = (data: Fixture, input: unknown, actorId = data.adminId) => scoped(data.schoolId, () => previewSupervision({ schoolId: data.schoolId, actorId, input }));
 const commit = (data: Fixture, review: Awaited<ReturnType<typeof preview>>, actorId = data.adminId) => scoped(data.schoolId, () => commitSupervisionReview({ schoolId: data.schoolId, actorId, input: review.request, reviewToken: review.reviewToken, action: review.request.action }));
+const roomInput = (data: Fixture, overrides: Record<string, unknown> = {}) => ({ action: "claim_room", studentIds: [data.studentIds[0]],
+  contextType: "temporary_room", endsAt: new Date(Date.now() + 60 * 60_000).toISOString(), ...overrides });
+
+async function currentClass(data: Fixture, teacherId: string, studentIds = data.studentIds) {
+  const classId = randomUUID(), sessionId = randomUUID();
+  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name) VALUES($1,$2,$3,'Current class')", [classId, data.schoolId, teacherId]);
+  await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,now())", [sessionId, data.schoolId, classId, teacherId]);
+  await pool.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'primary')", [data.schoolId, sessionId, teacherId]);
+  for (const pupil of studentIds) await pool.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES($1,$2,$3,$4)", [data.schoolId, sessionId, classId, pupil]);
+  return { classId, sessionId };
+}
 
 test("saved group selection starts exactly reviewed students with explicit purpose and no implicit testing", async () => {
   const data = await fixture();
@@ -188,4 +201,139 @@ test("concurrent reviewed starts have one winner; tenant and scope reads do not 
   await pool.query("DELETE FROM classpilot_coverage_scope_group_members WHERE coverage_group_id=$1 AND student_id=$2", [data.groupId, data.studentIds[2]]);
   assert.deepEqual((await preview(data, startInput(data, { studentIds: [data.studentIds[2]] }), data.teacherId)).students[0], publicDenied,
     "an unauthorized viewer cannot discover saved membership through the reason");
+});
+
+test("three grades join one temporary room with an unchanged deadline and independent dashboard authority", async () => {
+  const data = await fixture();
+  for (const [index, studentId] of data.studentIds.entries()) await pool.query("UPDATE students SET grade_level=$2 WHERE id=$1", [studentId, String(index + 3)]);
+  const endsAt = new Date(Date.now() + 45 * 60_000).toISOString();
+  const first = await commit(data, await preview(data, roomInput(data, { endsAt }), data.teacherId), data.teacherId);
+  for (const studentId of data.studentIds.slice(1)) {
+    const review = await preview(data, roomInput(data, { studentIds: [studentId], endsAt: undefined }), data.teacherId);
+    assert.equal(review.destination.contextId, first.context.id);
+    assert.equal(review.destination.endsAt, endsAt);
+    const joined = await commit(data, review, data.teacherId);
+    assert.equal(joined.context.id, first.context.id);
+    assert.equal(joined.context.endsAt.toISOString(), endsAt);
+  }
+  assert.equal(first.context.purpose, "claim"); assert.equal(first.context.name, "My room");
+  for (const field of ["scheduledConflictId", "scheduleProfileApplicationId", "scheduleProfileDate", "scheduleProfileBlockId"] as const) assert.equal(first.context[field], null);
+  const activity = await scoped(data.schoolId, () => getClasspilotDashboardActivity(data.schoolId, data.teacherId));
+  assert.equal(activity.current, null); assert.equal(activity.room?.id, first.context.id); assert.equal(activity.room?.studentCount, 3);
+  const repeated = await commit(data, await preview(data, roomInput(data, { studentIds: data.studentIds, endsAt: undefined }), data.teacherId), data.teacherId);
+  assert.deepEqual(repeated.outcomes.map(row => row.status), ["already_assigned", "already_assigned", "already_assigned"]);
+  assert.equal(repeated.context.activeStudentCount, 3);
+});
+
+test("teachers consolidate their own scheduled supervision and class students without additional claim grants", async () => {
+  const data = await fixture();
+  const source = await scoped(data.schoolId, () => createSupervisionContextWithStudents({ context: {
+    schoolId: data.schoolId, contextType: "supervision_group", name: "Grade 3 coverage", assignedStaffId: data.teacherId,
+    createdBy: data.adminId, endsAt: new Date(Date.now() + 30 * 60_000), scheduleProfileApplicationId: randomUUID(),
+    scheduleProfileDate: new Date().toISOString().slice(0, 10), scheduleProfileBlockId: randomUUID(),
+  }, studentIds: [data.studentIds[0]!], assignedBy: data.adminId }));
+  await currentClass(data, data.teacherId, [data.studentIds[1]!]);
+  await pool.query("UPDATE classpilot_coverage_assignments SET active=false WHERE school_id=$1 AND staff_id=$2", [data.schoolId, data.teacherId]);
+  await pool.query("UPDATE student_sessions SET last_seen_at=now()-interval '10 minutes' WHERE student_id=ANY($1::text[])", [data.studentIds.slice(0, 2)]);
+  const options = await scoped(data.schoolId, () => supervisionSessionOptions({ schoolId: data.schoolId, actorId: data.teacherId }));
+  assert.deepEqual(options.students.map(row => row.studentId).sort(), data.studentIds.slice(0, 2).sort());
+  const review = await preview(data, roomInput(data, { studentIds: data.studentIds.slice(0, 2) }), data.teacherId);
+  assert.ok(review.students.every(row => row.eligible));
+  const combined = await commit(data, review, data.teacherId);
+  assert.equal(combined.context.activeStudentCount, 2);
+  assert.equal((await pool.query("SELECT status FROM classpilot_supervision_contexts WHERE id=$1", [source.id])).rows[0].status, "ended");
+  const activity = await scoped(data.schoolId, () => getClasspilotDashboardActivity(data.schoolId, data.teacherId));
+  assert.equal(activity.current?.purpose, "class"); assert.equal(activity.room?.id, combined.context.id);
+});
+
+test("room claims never pull another supervisor's student, including administrator claims", async () => {
+  const data = await fixture();
+  const owned = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  for (const actorId of [data.adminId, data.receiverId]) {
+    const review = await preview(data, roomInput(data), actorId);
+    assert.equal(review.students[0]?.eligible, false);
+    assert.match(review.students[0]?.reason || "", /another staff member/);
+    await assert.rejects(commit(data, review, actorId), { code: "SUPERVISION_STUDENTS_UNAVAILABLE" });
+  }
+  const row = await pool.query("SELECT context_id FROM classpilot_supervision_students WHERE student_id=$1 AND released_at IS NULL", [data.studentIds[0]]);
+  assert.equal(row.rows[0].context_id, owned.context.id);
+  const adminSend = await preview(data, { action: "send", contextType: "temporary_room", assignedStaffId: data.receiverId,
+    studentIds: [data.studentIds[0]], endsAt: new Date(Date.now() + 30 * 60_000).toISOString() });
+  assert.equal(adminSend.students[0]?.eligible, false);
+});
+
+test("reviewed room handoffs require the sender and receiver authority and preserve receiving deadline", async () => {
+  const data = await fixture();
+  const source = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  const destination = await commit(data, await preview(data, roomInput(data, { studentIds: [data.studentIds[1]], endsAt: new Date(Date.now() + 25 * 60_000).toISOString() }), data.receiverId), data.receiverId);
+  const review = await preview(data, { action: "send", contextType: "temporary_room", assignedStaffId: data.receiverId, studentIds: [data.studentIds[0]] }, data.teacherId);
+  assert.equal(review.destination.contextId, destination.context.id); assert.equal(review.destination.endsAt, destination.context.endsAt.toISOString());
+  const sent = await commit(data, review, data.teacherId);
+  assert.equal(sent.context.id, destination.context.id); assert.equal(sent.context.activeStudentCount, 2);
+  assert.equal((await pool.query("SELECT status FROM classpilot_supervision_contexts WHERE id=$1", [source.context.id])).rows[0].status, "ended");
+  const remaining = await commit(data, await preview(data, roomInput(data, { studentIds: [data.studentIds[2]] }), data.teacherId), data.teacherId);
+  await pool.query("UPDATE classpilot_coverage_assignments SET active=false WHERE school_id=$1 AND staff_id=$2", [data.schoolId, data.receiverId]);
+  const denied = await preview(data, { action: "send", destinationContextId: destination.context.id, studentIds: [data.studentIds[2]] }, data.teacherId);
+  assert.equal(denied.students[0]?.eligible, false); assert.match(denied.students[0]?.reason || "", /receiving supervisor/);
+  assert.equal(remaining.context.activeStudentCount, 1);
+});
+
+test("legacy return rejects a foreign room atomically even with underlying classroom authority", async () => {
+  const data = await fixture();
+  const ownRoom = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  const otherRoom = await commit(data, await preview(data, roomInput(data, { studentIds: [data.studentIds[1]] }), data.receiverId), data.receiverId);
+  await currentClass(data, data.teacherId, data.studentIds.slice(0, 2));
+  await assert.rejects(scoped(data.schoolId, () => returnSupervisionStudentsToOwnClass({
+    schoolId: data.schoolId, actorId: data.teacherId, studentIds: data.studentIds.slice(0, 2),
+  })), { code: "TEMPORARY_ROOM_OWNER_REQUIRED", status: 409 });
+  const remaining = await pool.query("SELECT context_id FROM classpilot_supervision_students WHERE school_id=$1 AND released_at IS NULL", [data.schoolId]);
+  assert.deepEqual(remaining.rows.map(row => row.context_id).sort(), [ownRoom.context.id, otherRoom.context.id].sort());
+  const returned = await scoped(data.schoolId, () => returnSupervisionStudentsToOwnClass({
+    schoolId: data.schoolId, actorId: data.teacherId, studentIds: [data.studentIds[0]!],
+  }));
+  assert.deepEqual(returned.released.map(row => row.studentId), [data.studentIds[0]]);
+  await assert.rejects(preview(data, { action: "end_time", destinationContextId: otherRoom.context.id,
+    endsAt: new Date(Date.now() + 40 * 60_000).toISOString() }), { code: "TEMPORARY_ROOM_OWNER_REQUIRED" });
+});
+
+test("ending a room requires a nonempty exact roster review while explicit subsets remain supported", async () => {
+  const data = await fixture();
+  const first = await commit(data, await preview(data, roomInput(data), data.teacherId), data.teacherId);
+  const release = (studentIds: unknown, expectedStudentIds?: unknown, actorId = data.teacherId) => scoped(data.schoolId, () => releaseTemporaryRoomStudents({
+    schoolId: data.schoolId, actorId, contextId: first.context.id, studentIds, expectedStudentIds, releaseReason: "returned_to_class",
+  }));
+  await assert.rejects(release([]), { code: "TEMPORARY_ROOM_RELEASE_REVIEW_REQUIRED", status: 400 });
+  await assert.rejects(release([], []), { code: "TEMPORARY_ROOM_RELEASE_INVALID", status: 400 });
+  await assert.rejects(release(undefined, [data.studentIds[0]]), { code: "TEMPORARY_ROOM_RELEASE_INVALID", status: 400 });
+  await commit(data, await preview(data, roomInput(data, { studentIds: [data.studentIds[1]], endsAt: undefined }), data.teacherId), data.teacherId);
+  await assert.rejects(release([], [data.studentIds[0]]), { code: "SUPERVISION_ROSTER_CHANGED", status: 409 });
+  await assert.rejects(release([], data.studentIds.slice(0, 2), data.adminId), { code: "TEMPORARY_ROOM_OWNER_REQUIRED", status: 409 });
+  assert.equal((await pool.query("SELECT count(*) FROM classpilot_supervision_students WHERE context_id=$1 AND released_at IS NULL", [first.context.id])).rows[0].count, "2");
+  assert.deepEqual((await release([data.studentIds[0]])).map(row => row.studentId), [data.studentIds[0]]);
+  assert.deepEqual((await release([], [data.studentIds[1]])).map(row => row.studentId), [data.studentIds[1]]);
+  assert.equal((await pool.query("SELECT status FROM classpilot_supervision_contexts WHERE id=$1", [first.context.id])).rows[0].status, "ended");
+});
+
+test("reviewed handoff creates a receiving room without a saved group using immutable recipient class authority", async () => {
+  const data = await fixture();
+  const sourceClass = await currentClass(data, data.teacherId, [data.studentIds[0]!]);
+  await pool.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'co_teacher')", [data.schoolId, sourceClass.sessionId, data.receiverId]);
+  await pool.query("UPDATE classpilot_coverage_assignments SET active=false WHERE school_id=$1 AND staff_id=$2", [data.schoolId, data.receiverId]);
+  const review = await preview(data, { action: "send", contextType: "temporary_room", assignedStaffId: data.receiverId,
+    studentIds: [data.studentIds[0]], endsAt: new Date(Date.now() + 30 * 60_000).toISOString() }, data.teacherId);
+  assert.equal(review.destination.contextId, null); assert.equal(review.students[0]?.eligible, true);
+  const sent = await commit(data, review, data.teacherId);
+  assert.equal(sent.context.contextType, "temporary_room"); assert.equal(sent.context.assignedStaffId, data.receiverId); assert.equal(sent.context.coverageGroupId, null);
+});
+
+test("concurrent first room claims require a fresh review before joining the one committed room", async () => {
+  const data = await fixture();
+  const reviews = await Promise.all(data.studentIds.slice(0, 2).map(studentId => preview(data, roomInput(data, { studentIds: [studentId] }), data.teacherId)));
+  const results = await Promise.allSettled(reviews.map(review => commit(data, review, data.teacherId)));
+  assert.equal(results.filter(row => row.status === "fulfilled").length, 1);
+  const rejected = results.find(row => row.status === "rejected") as PromiseRejectedResult;
+  assert.equal(rejected.reason.code, "SUPERVISION_REVIEW_STALE");
+  const joined = await commit(data, await preview(data, roomInput(data, { studentIds: data.studentIds.slice(0, 2), endsAt: undefined }), data.teacherId), data.teacherId);
+  assert.equal(joined.context.activeStudentCount, 2);
+  assert.equal((await pool.query("SELECT count(*) FROM classpilot_supervision_contexts WHERE school_id=$1 AND context_type='temporary_room' AND status='active'", [data.schoolId])).rows[0].count, "1");
 });

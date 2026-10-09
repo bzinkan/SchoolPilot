@@ -13,12 +13,19 @@ test('supervision student counts remain distinct from counts of live sessions', 
   // dashboard Claimed badge. Two students in one context must still mean two.
   assert.match(hub, /\{context\.activeStudentCount\} student/,
     'each session must display its server-supplied student count');
-  assert.match(dashboard, /claimedCount=\{ownSupervisionStudentCount\}/,
+  assert.match(dashboard, /claimedCount=\{roomActivity\?\.studentCount \?\? ownSupervisionStudentCount\}/,
     'the Claimed badge must use the student count, never the context count');
   assert.match(summary, /ownSupervisionStudentCount[\s\S]{0,180}ownSupervisionContexts\.reduce\(\(total, context\) => total \+ context\.activeStudentCount, 0\)/,
     'the owner student total must sum authoritative roster counts');
   assert.match(dashboard, /coverageCount=\{activeCoverageCount\}/,
     'the separate Supervision badge may count live contexts');
+});
+
+test('Available counts use the personal summary even while its roster query is paused', () => {
+  assert.match(dashboard, /availableCount=\{availableSupervisionStudentCount\}/);
+  assert.match(summary, /availableSupervisionStudentCount = summaryScopeMatches && summaryCountsReady/);
+  assert.match(summary, /Number\.isSafeInteger\(coverageSummary\.availableStudentCount\)/);
+  assert.match(summary, /\? coverageSummary\.availableStudentCount : null/);
 });
 
 test('hub and reviewed mutations invalidate the scoped dashboard supervision summary', () => {

@@ -443,6 +443,7 @@ export function deriveDashboardCapabilities({
   observedSession,
   coverageCommandTypes = DEFAULT_COVERAGE_COMMANDS,
   scheduledActivity = null,
+  roomActivity = null,
 }) {
   const observedOtherClass = Boolean(
     isAdmin
@@ -451,9 +452,12 @@ export function deriveDashboardCapabilities({
       || String(observedSession.teacherId || '') !== String(currentUserId || '')),
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
-  const scheduledSupervision = Boolean(studentView === 'class' && !observedSession
-    && scheduledActivity?.status === 'active' && activityAuthority(scheduledActivity)?.supervisionContextId
-    && ['scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision'].includes(scheduledActivity.source));
+  const ownedRoom = studentView === 'claimed' && roomActivity?.contextType === 'temporary_room'
+    && roomActivity?.teacherId === currentUserId;
+  const selectedActivity = ownedRoom ? roomActivity : scheduledActivity;
+  const scheduledSupervision = Boolean((studentView === 'class' || ownedRoom) && !observedSession
+    && selectedActivity?.status === 'active' && activityAuthority(selectedActivity)?.supervisionContextId
+    && ['scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision'].includes(selectedActivity.source));
   const ownedClassSession = Boolean(
     studentView === 'class'
     && effectiveSession?.id
@@ -471,7 +475,7 @@ export function deriveDashboardCapabilities({
   );
   const claimedCoverage = studentView === 'claimed' && !observedOtherClass;
   const allowedCommands = new Set(
-    scheduledSupervision ? scheduledActivity.capabilities?.commands || [] : ownedClassSession
+    scheduledSupervision ? selectedActivity.capabilities?.commands || [] : ownedClassSession
       ? CLASS_COMMANDS
       : claimedCoverage
         ? coverageCommandTypes
@@ -489,7 +493,7 @@ export function deriveDashboardCapabilities({
             ? 'available'
             : 'read-only',
     effectiveSession,
-    authority: scheduledSupervision ? activityAuthority(scheduledActivity)
+    authority: scheduledSupervision ? activityAuthority(selectedActivity)
       : activityAuthority(effectiveSession?.authority || { teachingSessionId: effectiveSession?.id }),
     scheduledSupervision,
     observedOtherClass,
@@ -497,9 +501,9 @@ export function deriveDashboardCapabilities({
     claimedCoverage,
     canSelectStudents: ownedClassSession || scheduledSupervision || claimedCoverage,
     canUseRemoteControls: allowedCommands.size > 0,
-    canUseTeacherFab: scheduledSupervision ? scheduledActivity.capabilities?.fab === true : ownedClassSession,
-    canUseLiveView: scheduledSupervision ? scheduledActivity.capabilities?.liveView === true : ownedClassSession,
-    canChangeFabSettings: scheduledSupervision ? scheduledActivity.capabilities?.settings === true : ownedClassSession,
+    canUseTeacherFab: scheduledSupervision ? selectedActivity.capabilities?.fab === true : ownedClassSession,
+    canUseLiveView: scheduledSupervision ? selectedActivity.capabilities?.liveView === true : ownedClassSession,
+    canChangeFabSettings: scheduledSupervision ? selectedActivity.capabilities?.settings === true : ownedClassSession,
     allowedCommands,
     allows(commandType) {
       return allowedCommands.has(commandType);
@@ -782,7 +786,7 @@ export function recipientSnapshotLabel({ selectedCount = 0, subgroupName = null,
   }
   const group = String(subgroupName || '').trim();
   if (group) return `Group: ${group}`;
-  return view === 'claimed' ? 'All claimed students' : 'Whole class';
+  return view === 'room' ? 'All shown room students' : view === 'claimed' ? 'All claimed students' : 'Whole class';
 }
 
 // Class tools' footer: who a new action from the panel would reach right now,

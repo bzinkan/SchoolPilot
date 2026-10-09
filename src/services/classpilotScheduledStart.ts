@@ -534,7 +534,7 @@ export async function buildScheduledCoveragePayload(options: {
   const scheduledTeacherId = occurrence?.teacherId || group.teacherId;
   const [teacher, owners, activeSupervision, activeSessions] = await Promise.all([
     getUserById(scheduledTeacherId, options.dbInstance),
-    getActiveClassOwnersForStudents(schoolId, studentIds, options.dbInstance),
+    getActiveClassOwnersForStudents(schoolId, studentIds, options.dbInstance, options.now ?? new Date()),
     getActiveSupervisionForStudents(schoolId, studentIds, options.dbInstance),
     getActiveSessionsForStudents(schoolId, studentIds, options.dbInstance),
   ]);
@@ -604,7 +604,10 @@ export async function buildScheduledCoveragePayload(options: {
     }
 
     const owner = ownerByStudent.get(row.studentId);
-    if (owner && await isTeacherConnected(owner.session.teacherId)) {
+    // A staff connection is presence, not ownership. A disconnected teacher's
+    // still-current class cannot be advertised as claimable while the locked
+    // claim path correctly refuses to take those students.
+    if (owner) {
       monitoredCount++;
       const key = `${owner.session.teacherId}:${owner.groupId}:${owner.session.id}`;
       let entry = monitoredByKey.get(key);

@@ -44,15 +44,16 @@ export function useScheduledTestingView({ schoolId, viewerId, enabled }) {
   const scheduledActivity = confirmedActivity || (activityQuery.isError && activityQuery.data?.enabled !== false
     ? UNAVAILABLE_ACTIVITY : null);
   const scheduledClassEnabled = Boolean(scheduledActivity);
+  const roomActivity = scheduledActivity?.room || null;
   const scheduledTransitionKey = scheduledActivity?.transitionKey || '';
   // Forget the old choice at the boundary, including when the same regular
   // session resumes after testing. A previous choice must not reappear then.
   if (scheduledClassEnabled && selection?.scopeKey === scopeKey
-    && selection.transitionKey !== scheduledTransitionKey) setSelection(null);
+    && (roomActivity ? selection.roomId !== roomActivity.id : selection.roomId || selection.transitionKey !== scheduledTransitionKey)) setSelection(null);
   const refreshDashboardActivity = activityQuery.refetch;
   useEffect(() => {
     if (!scheduledClassEnabled) return;
-    const deadlines = [scheduledActivity?.nextBoundaryAt, scheduledActivity?.current?.endsAt]
+    const deadlines = [scheduledActivity?.nextBoundaryAt, scheduledActivity?.current?.endsAt, roomActivity?.endsAt]
       .map(value => Date.parse(value) - serverOffset).filter(value => Number.isFinite(value) && value > boundaryTime);
     if (!deadlines.length) return;
     const timer = setTimeout(() => {
@@ -60,7 +61,7 @@ export function useScheduledTestingView({ schoolId, viewerId, enabled }) {
       void refreshDashboardActivity({ cancelRefetch: true });
     }, Math.min(2147483647, Math.max(0, Math.min(...deadlines) - Date.now())));
     return () => clearTimeout(timer);
-  }, [scheduledClassEnabled, scheduledActivity, boundaryTime, refreshDashboardActivity, serverOffset]);
+  }, [scheduledClassEnabled, scheduledActivity, roomActivity?.endsAt, boundaryTime, refreshDashboardActivity, serverOffset]);
   const summaryQueryKey = useMemo(
     () => ['/api/coverage/summary', schoolId, viewerId],
     [schoolId, viewerId],
@@ -108,6 +109,9 @@ export function useScheduledTestingView({ schoolId, viewerId, enabled }) {
   // roster whose query is paused while Class or Available is selected. A
   // committed claim awaiting refresh also makes the previous counts obsolete.
   const summaryCountsReady = !isError && pendingContexts.length === 0;
+  const availableSupervisionStudentCount = summaryScopeMatches && summaryCountsReady
+    && Number.isSafeInteger(coverageSummary.availableStudentCount) && coverageSummary.availableStudentCount >= 0
+    ? coverageSummary.availableStudentCount : null;
   const ownSupervisionStudentCount = hasOwnSupervisionRoster && summaryCountsReady
     ? ownSupervisionContexts.reduce((total, context) => total + context.activeStudentCount, 0) : null;
   const activeCoverageCount = summaryScopeMatches && summaryCountsReady && !summaryHasExpiredContext
@@ -129,10 +133,10 @@ export function useScheduledTestingView({ schoolId, viewerId, enabled }) {
   const automaticallyShowingSupervision = !scheduledClassEnabled && enabled && !manualSelection && displayContexts.length > 0;
   const studentView = resolveActivityView({ selection: scopedSelection, scopeKey,
     transitionKey: scheduledTransitionKey, scheduledEnabled: scheduledClassEnabled,
-    defaultView: automaticallyShowingSupervision ? 'claimed' : 'class' });
+    defaultView: automaticallyShowingSupervision ? 'claimed' : 'class', room: roomActivity });
   const setStudentView = useCallback((view) => {
-    setSelection({ scopeKey, view, transitionKey: scheduledTransitionKey });
-  }, [scopeKey, scheduledTransitionKey, setSelection]);
+    setSelection({ scopeKey, view, transitionKey: scheduledTransitionKey, roomId: roomActivity?.id || null });
+  }, [scopeKey, scheduledTransitionKey, roomActivity?.id, setSelection]);
 
   const showOwnSupervision = useCallback(async (confirmedContexts = []) => {
     const activationId = globalThis.crypto.randomUUID();
@@ -141,24 +145,24 @@ export function useScheduledTestingView({ schoolId, viewerId, enabled }) {
     ));
     setBoundaryTime(Date.now());
     const view = scheduledClassEnabled ? 'claimed' : null;
-    setSelection({ scopeKey, view, transitionKey: scheduledTransitionKey, pendingContexts: pending, activationId, baselineUpdatedAt: dataUpdatedAt });
+    setSelection({ scopeKey, view, transitionKey: scheduledTransitionKey, roomId: roomActivity?.id || null, pendingContexts: pending, activationId, baselineUpdatedAt: dataUpdatedAt });
     try {
       // Cancel reads begun before the committed claim. A failure keeps the
       // confirmed destination visible; Retry repeats only this read.
       await refetch({ cancelRefetch: true, throwOnError: true });
       setSelection(current => current?.scopeKey === scopeKey && current.activationId === activationId
-        ? { scopeKey, view, transitionKey: scheduledTransitionKey } : current);
+        ? { scopeKey, view, transitionKey: scheduledTransitionKey, roomId: roomActivity?.id || null } : current);
     } catch {
       // The query error is displayed separately from the successful mutation.
     }
-  }, [scopeKey, viewerId, refetch, dataUpdatedAt, scheduledClassEnabled, scheduledTransitionKey, setSelection, setBoundaryTime]);
+  }, [scopeKey, viewerId, refetch, dataUpdatedAt, scheduledClassEnabled, scheduledTransitionKey, roomActivity?.id, setSelection, setBoundaryTime]);
   const retrySupervisionSummary = useCallback(() => showOwnSupervision(pendingContexts), [showOwnSupervision, pendingContexts]);
   return {
-    scheduledClassEnabled, scheduledActivity, scheduledTransitionKey, activityQueryKey,
+    scheduledClassEnabled, scheduledActivity, roomActivity, scheduledTransitionKey, activityQueryKey,
     refreshDashboardActivity, dashboardActivityError: activityQuery.isError,
     dashboardActivityLoading: activityQuery.isLoading, dashboardActivityRefreshing: activityQuery.isFetching,
     coverageSummary, summaryQueryKey, ownSupervisionContexts, displaySupervisionContexts: displayContexts,
-    ownSupervisionStudentCount, activeCoverageCount, hasOwnSupervisionRoster, supervisionRosterRevision,
+    ownSupervisionStudentCount, availableSupervisionStudentCount, activeCoverageCount, hasOwnSupervisionRoster, supervisionRosterRevision,
     automaticallyShowingSupervision, studentView, setStudentView, showOwnSupervision,
     // True when staff picked the view shown; false when it follows the
     // supervision groups (or the schedule) by itself.

@@ -91,8 +91,9 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
   }
   // A pickup belongs in Claimed; it must not replace the teacher's current class.
   const current = activities.find(activity => activity.purpose !== "claim") ?? null;
+  const room = activities.find(activity => activity.contextType === "temporary_room") ?? null;
   const schedule = enabled ? await getDashboardSchedule(schoolId, viewerId, current, now, database, futureContexts) : { next: null, nextBoundaryAt: null };
   return { enabled, schoolId, viewerId, serverTime: now.toISOString(),
     revision: `activity-v1:${createHash("sha256").update(JSON.stringify([enabled, activities, identities, schedule.next])).digest("base64url")}`,
-    current, activities, ...schedule };
+    current, room, activities, ...schedule };
 }

@@ -76,12 +76,13 @@ function RemoteControlToolbar({
                       variant="ghost"
                       onClick={() => onPickupViewChange("available")}
                       data-testid="button-view-available-students"
+                      title={availableCount === null ? 'Available student count unavailable' : `${availableCount} available student${availableCount === 1 ? '' : 's'}`}
                       aria-pressed={pickupView === 'available'}
                       className={coverageRailButtonClass(pickupView === "available")}
                     >
                       Available
-                      {availableCount > 0 && (
-                        <span className={coverageCountClass}>{availableCount}</span>
+                      {(availableCount === null || availableCount > 0) && (
+                        <span className={coverageCountClass} aria-label={availableCount === null ? 'Available student count unavailable' : undefined}>{availableCount ?? '—'}</span>
                       )}
                     </Button>
                     <Button
@@ -90,11 +91,11 @@ function RemoteControlToolbar({
                       variant="ghost"
                       onClick={() => onPickupViewChange("claimed")}
                       data-testid="button-view-claimed-students"
-                      title={claimedCount === null ? 'Claimed student count unavailable' : `${claimedCount} personally supervised student${claimedCount === 1 ? '' : 's'}`}
+                      title={claimedCount === null ? 'Room student count unavailable' : `${claimedCount} student${claimedCount === 1 ? '' : 's'} in My room`}
                       aria-pressed={pickupView === 'claimed'}
                       className={coverageRailButtonClass(pickupView === "claimed")}
                     >
-                      Claimed
+                      My room
                       {(claimedCount === null || claimedCount > 0) && (
                         <span className={coverageCountClass} aria-label={claimedCount === null ? 'Claimed student count unavailable' : undefined}>{claimedCount ?? '—'}</span>
                       )}
