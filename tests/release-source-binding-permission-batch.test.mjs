@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bindingHash, createBuildSecurityPermissionQueue } from '../scripts/release-source-binding.mjs';
+import { bindingHash, createBuildSecurityPermissionQueue, replayBuildSecurityRawEvidence } from '../scripts/release-source-binding.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const helper = path.join(repository, 'scripts/deploy-classpilot-runtime-config.ps1');
@@ -23,6 +23,41 @@ function fixture() {
     clean() { assert.ok(path.resolve(directory).startsWith(path.resolve(tmpdir())+path.sep) && path.basename(directory).startsWith('sp-permission-batch-'));rmSync(directory,{recursive:true}); } };
 }
 const queue = (f,run) => createBuildSecurityPermissionQueue(run,f.helper,repository,f.hashes);
+
+test('ordered evidence groups retain duplicate values and references despite out-of-order completion', async () => {
+  const shared={id:'duplicate'},records=[shared,{id:'b'},shared,{id:'d'},{id:'e'}];
+  const finished=[];let active=0,peak=0;
+  const values=await replayBuildSecurityRawEvidence(records,async(record)=>{
+    active++;peak=Math.max(peak,active);
+    await new Promise(resolve=>setTimeout(resolve,record.id==='b'?15:1));
+    finished.push(record.id);active--;return record;
+  });
+  assert.deepEqual(values,records);assert.equal(values[0],values[2]);
+  assert.equal(finished.length,5);assert.equal(peak,4);assert.equal(active,0);assert.equal(finished[3],'b');
+});
+
+test('ordered evidence groups drain all chunks and report the first input failure, including synchronous failures', async () => {
+  const first=Error('first input failure'),later=Error('later faster failure'),finished=[];let active=0,peak=0,mutations=0;
+  await assert.rejects(replayBuildSecurityRawEvidence(Array.from({length:11},(_,index)=>index),(index)=>{
+    if(index===0){finished.push(index);throw first;}
+    active++;peak=Math.max(peak,active);
+    return new Promise((resolve,reject)=>setTimeout(()=>{active--;finished.push(index);index===2?reject(later):resolve(index);},index===1?15:1));
+  }).then(()=>{mutations++;}),error=>error===first);
+  assert.deepEqual([...finished].sort((a,b)=>a-b),Array.from({length:11},(_,index)=>index));
+  assert.ok(peak<=4);assert.equal(active,0);assert.equal(mutations,0);
+});
+
+test('ordered evidence groups batch every permission check and reread repeated evidence without caching', async () => {
+  const f=fixture();try {
+    const batches=[],check=queue(f,async(_executable,args)=>{batches.push(checks(decoded(args)));return {code:0};});
+    const a=f.file('same.json','{"version":1}'),b=f.file('other.json','{"version":2}');
+    const load=async filename=>{await check(filename);return JSON.parse(readFileSync(filename));};
+    const values=await replayBuildSecurityRawEvidence([a,b,a,b,a],load);
+    assert.deepEqual(values.map(value=>value.version),[1,2,1,2,1]);assert.deepEqual(batches,[[a,b,a,b],[a]]);
+    writeFileSync(a,'{"version":3}');assert.deepEqual(await replayBuildSecurityRawEvidence([a,a],load),[{version:3},{version:3}]);
+    assert.deepEqual(batches.at(-1),[a,a]);
+  } finally { f.clean(); }
+});
 
 test('permission batches preserve every FIFO request and duplicate, with at most four checks and one command active', async () => {
   const f=fixture();try {

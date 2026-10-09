@@ -685,6 +685,10 @@ Assert-Condition ($rollbackCloneEnvironment[0].value -is [string] -and
     $rollbackCloneEnvironment[1].value -ceq '2026-07-22T11:58:03.1111111-04:00') `
     "Rollback task-definition deep cloning must not coerce or rewrite timestamp-shaped environment values."
 
+if (-not ($AtomicJsonRaceOnly -or $FailureDiagnosticsOnly -or $StartGateCasesOnly -or $LiveHarnessLifecycleOnly -or $LiveHarnessCasesOnly)) {
+    & (Join-Path $PSScriptRoot 'aws-supervisor-arming-clock.test.ps1')
+}
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("schoolpilot-rollout-test-" + [Guid]::NewGuid().ToString("N"))
 $evidenceDirectory = Join-Path $tempRoot "evidence"
 $global:SchoolPilotTestAwsCalls = [System.Collections.Generic.List[string]]::new()

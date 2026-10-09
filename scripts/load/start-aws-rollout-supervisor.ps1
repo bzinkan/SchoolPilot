@@ -5808,7 +5808,7 @@ try {
                 catch { throw "The AWS monitor arming heartbeat is invalid: $($_.Exception.Message)" }
                 Assert-HealthyMonitorArmingHeartbeat -Heartbeat $candidateHeartbeat -ExpectedRunId $runId `
                     -ExpectedPhase ([string]$config.phase) -MonitorStartedAt $monitorStartedAt `
-                    -Now $now -StaleSeconds $monitorHeartbeatStaleSeconds
+                    -Now ([DateTimeOffset]::UtcNow) -StaleSeconds $monitorHeartbeatStaleSeconds
                 $armedHeartbeat = $candidateHeartbeat
                 break
             }
