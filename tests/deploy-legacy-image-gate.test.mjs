@@ -195,7 +195,7 @@ const deploy = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'u
 const trapStart = deploy.indexOf('deploy_exit_cleanup() {');
 const trapEnd = deploy.indexOf('\n}\n', trapStart) + 3;
 assert.ok(trapStart > 0 && trapEnd > trapStart);
-const start = deploy.indexOf('  if [[ -n "$IMMUTABLE_IMAGE_DIGEST" ]]; then', deploy.indexOf('  preflight_microsoft_sign_in_secret\n'));
+const start = deploy.indexOf('  if [[ -n "$RELEASE_ARTIFACT_PUBLICATION" ]]; then', deploy.indexOf('  preflight_microsoft_sign_in_secret\n'));
 const end = deploy.indexOf('  # Register API, worker, and one-off migration definitions', start);
 assert.ok(start > 0 && end > start);
 const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
@@ -232,7 +232,7 @@ printf 'register-task-definition\\n' >> "$TRACE"
 `);
   const result = spawnSync(bash, [slash(script)], { shell: false, encoding: 'utf8', windowsHide: true,
     env: { ...process.env, FAILURE: failure, TRACE: slash(trace), SCAN_DIR: slash(directory), REAL_NODE: slash(process.execPath),
-      SCRIPT_DIR: '/unused scripts', IMMUTABLE_IMAGE_DIGEST: failure === 'immutable' ? imageId : '', IMMUTABLE_IMAGE_SHA: sourceSha,
+      SCRIPT_DIR: '/unused scripts', RELEASE_ARTIFACT_PUBLICATION: '', IMMUTABLE_IMAGE_DIGEST: failure === 'immutable' ? imageId : '', IMMUTABLE_IMAGE_SHA: sourceSha,
       LOCAL_SHA: sourceSha, NAME: 'schoolpilot-production', IMAGE_TAG: sourceSha, REGION: 'us-east-1', ACCOUNT_ID: '123456789012',
       ECR_REPO: '123456789012.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api', CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION: 'false', TEST_DIGEST: imageId },
     timeout: 15_000 });
