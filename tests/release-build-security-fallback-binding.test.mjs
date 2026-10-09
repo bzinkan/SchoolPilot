@@ -24,9 +24,9 @@ const digest = text => 'sha256:' + bindingHash(text);
 
 test('v5 raw replay bounds concurrency at four and checks every record before any permitted mutation', async () => {
   const records=Array.from({length:11},(_,index)=>({index}));
-  for (const fail of [false,true]) {
+  for (const fail of [false,true,'synchronous']) {
     let active=0,maximum=0,mutations=0;const started=[],finished=[];
-    const load=async record=>{started.push(record.index);active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;finished.push(record.index);if(fail&&[1,7].includes(record.index))throw Error('synthetic rejected raw check');return record;};
+    const load=record=>{started.push(record.index);active++;maximum=Math.max(maximum,active);if(fail==='synchronous'&&[1,7].includes(record.index)){active--;finished.push(record.index);throw Error('synthetic rejected raw check');}return new Promise(resolve=>setTimeout(resolve,2)).then(()=>{active--;finished.push(record.index);if(fail===true&&[1,7].includes(record.index))throw Error('synthetic rejected raw check');return record;});};
     const operation=async()=>{await replayBuildSecurityRawEvidence(records,load);mutations++;};
     if(fail)await assert.rejects(operation(),/synthetic rejected raw check/);else await operation();
     assert.equal(maximum,4);assert.equal(active,0);assert.deepEqual(started,records.map(row=>row.index));assert.deepEqual(finished.sort((a,b)=>a-b),records.map(row=>row.index));assert.equal(mutations,fail?0:1);

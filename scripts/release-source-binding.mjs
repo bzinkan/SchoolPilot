@@ -743,7 +743,7 @@ async function retainedArtifact(record, root, input, run, context) {
 export async function replayBuildSecurityRawEvidence(records, load) {
   const failures = [];
   for (let offset = 0; offset < records.length; offset += 4) {
-    const results = await Promise.allSettled(records.slice(offset, offset + 4).map(record => load(record)));
+    const results = await Promise.allSettled(records.slice(offset, offset + 4).map(record => Promise.resolve().then(() => load(record))));
     for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
   }
   if (failures.length) throw failures[0];
