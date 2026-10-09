@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "kind": "owner_release_source_applicability",
+  "status": "APPROVED_READINESS_SOURCE_ONLY",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "applicationSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+  "inventorySha256": "4478303590f02b854898a241cca07001f7389afec1e6d174a153c1f45b993678",
+  "frontendInventorySha256": "c2f64565160a9bba89cfed1d907e41ca0f49b095719e5bdbdc727adfb18a397f",
+  "policySha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95",
+  "extension": {
+    "version": "2.9.7",
+    "id": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "source": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "mergedSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+    "tree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "zipBytes": 376052
+  },
+  "schema": {
+    "staffIdentityContract": "deferred",
+    "baselineMigrations": 43,
+    "candidateMigrations": 53,
+    "fallbackDeclaredMigrations": 52,
+    "retainedCompletedMigrations": 53,
+    "admissionCounts": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ]
+  },
+  "scope": {
+    "school": "St. Francis DeSales",
+    "clients": 133,
+    "usageRollupMode": "off",
+    "digitalUsageMode": "off",
+    "managedChromebookGate": "waived_not_passed",
+    "liveAcceptanceMinutes": 30
+  },
+  "observedAtUtc": "2026-10-09T13:47:20.883Z",
+  "reviewer": "/root",
+  "reviewBasis": "The user requested fix this and deploy; existing approved readiness policy and fixed acceptance criteria are preserved.",
+  "humanApprovalAsserted": false,
+  "criteriaChanged": false,
+  "privacy": {
+    "credentialBoundaryRetainedInCandidate": true,
+    "fallbackBoundaryRequiresItsOwnReviewedCompiledFixtures": true,
+    "providerCallsForValidation": 0,
+    "ordinaryEmailAndSearchContextStillAllowed": true,
+    "broaderMinimizationAndProviderAccountReview": "pending",
+    "anonymityClaimed": false,
+    "monitoringExpansion": false,
+    "sourceOnlyReviewDoesNotCertifyProduction": true
+  },
+  "dailyRollup": {
+    "setting": "omitted",
+    "effectiveAtCurrentServingSource": "shadow",
+    "runtimeWorkloadMeasured": false
+  },
+  "retainedReview": {
+    "storage": "private",
+    "path": "acceptance-source-applicability-review-A2.json",
+    "sha256": "b5c1d0d60689f2f0520eceffb108ba9bcbaae42f5d7c378976263456cf498f56"
+  },
+  "limitations": [
+    "This authorizes no cloud operation by itself.",
+    "Actual A-F3-A recovery and acceptance evidence must independently pass.",
+    "Managed adoption and sample-bearing live acceptance remain pending. F3 retains CP-AI protection but its older backend does not retain the PR627 pages-only browsing-history view or page-view cursors; recovery may require resetting that view.",
+    "Production deployment rechecks fresh health, catalog/admission, backup and task state.",
+    "Automatic backend recovery occurs before matched A2 frontend adoption. A later manual F3 rollback after A2 frontend adoption requires a separately reviewed compatible frontend plus page-cursor reset; reloading the A2 frontend alone does not preserve pages-only semantics."
+  ],
+  "operationalAuthorization": false,
+  "releaseReady": false,
+  "independentReview": {
+    "storage": "private",
+    "path": "independent-review/source-applicability-A2.review.json",
+    "sha256": "9df7f7cba1765c35e35a459789514b7c19dc7fb68d185b7c71938e8d22e5c439"
+  },
+  "rollbackFrontendApplicability": {
+    "automaticBackendRecoveryBeforeMatchedFrontend": true,
+    "laterManualRollbackAfterA2FrontendRequiresCompatibleFrontend": true,
+    "compatibleFrontendSelection": "pending_review",
+    "resetBrowsingHistoryCursorsRequired": true,
+    "F3RetainsPr627PagesOnlyView": false,
+    "F3RetainsPr627PagesCursors": false
+  }
+}

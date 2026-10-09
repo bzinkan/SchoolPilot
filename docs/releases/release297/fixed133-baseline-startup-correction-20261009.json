@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_fixed133_baseline_startup_correction",
+  "observedAtUtc": "2026-10-09T16:08:26.183Z",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "baselineSource": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "acceptanceBindingId": "release297-current-school-acceptance-2001e888-cp-protected-build-v3",
+  "profile": "release297-blackbox-sole-133-v2",
+  "profileSha256": "59167a96d825a56ed6f951f5327200257a0cacde0f2bc65a02606603cb9998a1",
+  "failedAttempt": {
+    "run": "59b496e9a479",
+    "status": "failed",
+    "failure": "V2_ROLE_EXITED_BEFORE_RESPONSE",
+    "completedAtUtc": "2026-10-09T15:48:48.253Z",
+    "measuredRounds": 0,
+    "remainingRuns": "held_by_existing_stop_policy",
+    "cleanupLimitation": "The original cleanupPassed field covers returned owners and database cleanup; API startup failed before owner return, so it does not establish the missing API final state or log custody. Preserve the original receipt and this limitation."
+  },
+  "causalDiagnostic": {
+    "kind": "baseline_startup_protocol_only_diagnostic",
+    "executionSha256": "99687e66693248d83718fa72f8ded805bc2b1ad0f63ec13201a3cb7a050c57bf",
+    "network": "none",
+    "heartbeatOffers": 0,
+    "exitCode": 1,
+    "cause": "The exact historical baseline rejects three current rollout-map keys it cannot implement."
+  },
+  "sourceReview": {
+    "kind": "independent_root_source_review",
+    "sha256": "780422f5c71e70bfc6e860e51dde3a4a3e74fa61e4838d0f9ef63093f656d94e",
+    "humanApprovalAsserted": false
+  },
+  "correction": {
+    "id": "release297-7af9-fixed133-capability-map-v1",
+    "scope": "Only the allowlisted v3 successor, exact 7af9 baseline arm A and exact fixed133 profile.",
+    "omittedUnsupportedCapabilities": [
+      "preciseRestrictionResourcesV1",
+      "focusTabV1",
+      "privateChatLifecycleV1"
+    ],
+    "omittedUnsupportedFlags": [
+      "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1",
+      "CLASSPILOT_CAP_FOCUS_TAB_V1",
+      "CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1"
+    ],
+    "baselineEffectiveMode": "unsupported_off",
+    "candidateExistingFixed133Mode": "off",
+    "originalCaptureRetained": true,
+    "allOtherEnvironmentEntriesPreserved": true,
+    "otherUnknownMapKeysRejected": true,
+    "failedStartupNativeCustody": "Retain bound inspect and private logs before caller cleanup, mark missing capture explicitly, and never accept failed startup as clean release acceptance."
+  },
+  "validation": {
+    "tests": 55,
+    "passed": 55,
+    "failed": 0,
+    "skipped": 0,
+    "logSha256": "fa0ea3d47b79307a5d128717b6b1ac7c5b7735809d311e07425078f92f113b4f"
+  },
+  "unchanged": [
+    "application images and sources",
+    "original approved policy",
+    "A,A,A,B,B,A,A,B order",
+    "all numerical and safety thresholds",
+    "candidate flags",
+    "production settings",
+    "historical v1 and v2 behavior"
+  ],
+  "correctedStartupVerification": {
+    "protocolExecution": "passed",
+    "executionSha256": "e5f15cd00ea5aec01ba5871f2b19843fb5e782c11ec30de787e7cb0f1187d6b4",
+    "independentReview": "pending",
+    "fullApiStartup": "pending"
+  },
+  "freshHarnessFreeze": "pending",
+  "measuredAcceptance": "pending",
+  "nextAction": "Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt.",
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "productionMutations": 0,
+  "implementationReview": {
+    "status": "passed",
+    "independentFromProducer": true,
+    "sha256": "aef40ba49d04381ba9283b845d05caf40591093611b07bd68f6d82833b3eaf4f",
+    "humanApprovalAsserted": false
+  }
+}

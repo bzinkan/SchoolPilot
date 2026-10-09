@@ -14,6 +14,59 @@ export const SUCCESSOR_BINDING_ID = 'release-297-current-school-fallback-v3';
 export const SUCCESSOR_SOURCE = 'd75fc1c48d0a3918857508d3965904c69023a153';
 export const SUCCESSOR_CORRECTION = '86ea5c5ca5f76406300f5170d2ecb3e3554baeb3';
 export const CP_PROTECTED_BINDING_ID = 'release-297-current-school-cp-protected-fallback-v4';
+export const BUILD_SECURITY_BINDING_ID = 'release-297-current-school-cp-protected-build-fallback-v5';
+export const BUILD_SECURITY_APPLICATION_SOURCE = '2001e8888992674493c3084981fa8aae27d70e1d';
+export const BUILD_SECURITY_ANCHOR_ARTIFACT = Object.freeze({source:BUILD_SECURITY_APPLICATION_SOURCE,localIndex:'sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc',config:'sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943',platform:'sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb',archiveSha256:'b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e'});
+export const BUILD_SECURITY_APPLICATION_INVENTORY = Object.freeze({sha256:'fd578e2f411ca2792a947263e63db6ae01b8c37e015cb2724661925c34969c01',fileCount:564});
+export const BUILD_SECURITY_FRONTEND_INVENTORY = Object.freeze({sha256:'fd8d5e9fcf438c57735e19b524039401324d36c051934af63428775b8c21a6e4',fileCount:637});
+// v5 pins are separate review inputs. Missing pins never establish preparation.
+export const BUILD_SECURITY_SOURCE = "392970b7ccfea365faadf1eba07da4ad26964c09";
+export const BUILD_SECURITY_SOURCE_CREATED_AT = '2026-10-09T12:58:29Z';
+export const BUILD_SECURITY_SOURCE_REVIEW = Object.freeze({
+  "baseline": "6259e768553e55346ba14a6453340772198a3d6b",
+  "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+  "files": [
+    {
+      "path": "package-lock.json",
+      "before": {
+        "mode": "100644",
+        "object": "608236c5f8366de630cba68ee96951edba5eb7a7"
+      },
+      "after": {
+        "mode": "100644",
+        "object": "8c1744a6567b67a7b73164c695afd4c5a9e2bc3a"
+      }
+    },
+    {
+      "path": "package.json",
+      "before": {
+        "mode": "100644",
+        "object": "5e847f1eddda47d28682cb2e977528348e5e514c"
+      },
+      "after": {
+        "mode": "100644",
+        "object": "965f6d1e914114482774d8dff9dd497945aec4b0"
+      }
+    }
+  ],
+  "patchSha256": "2184fac4c1fa58736afe999f5da094a9e478467e7c86e5f7d906523aa55688d0"
+});
+export const BUILD_SECURITY_ARTIFACT = Object.freeze({
+  "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+  "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+  "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+  "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+  "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+});
+export const BUILD_SECURITY_CURRENT_RUNTIME = Object.freeze({
+  source: '55f91b620d2d48de5ed164a72250ec133450bc0f',
+  image: 'sha256:a939d0af0f109f3765355be53137e88cab1859af82ce875aeeff455a4d55c8f3',
+  admissionCount: 129,
+  controls: { storage: 'private', path: 'current-serving-129-A3/controls.private.json', sha256: '4292b4c8ff0719abda45003d02f95718d9e205ca2e4c2ef9c71fccfd0ae20051', format: 'json' },
+  review: { storage: 'private', path: 'current-serving-129-A3/state-review.private.json', sha256: '91cd89c76d2aeb0361c497a261ea86839d98044e99b47048dc1a7f6fe319936c', format: 'json' }
+});
+export const BUILD_SECURITY_OPERATION_DEPENDENCIES = Object.freeze(['scripts/validate-release297-deployment-artifact.mjs', 'scripts/deploy.sh']);
+export const buildSecurityOperationHashes = root => Object.fromEntries(BUILD_SECURITY_OPERATION_DEPENDENCIES.map(file => [file, bindingHash(readFileSync(path.join(root, file)))]));
 // The separate source and artifact are exact review inputs. Their presence
 // does not establish preparation, selection, applicability or authorization.
 export const CP_PROTECTED_SOURCE = '6259e768553e55346ba14a6453340772198a3d6b';
@@ -107,8 +160,12 @@ export const CP_PROTECTED_ARTIFACT = Object.freeze({
   "platform": "sha256:bd70e6f4a091620936cb582c56d131f884fbe0aee5863d98259eadd5323e5048",
   "archiveSha256": "8a17801e557886ee49688b18d7a678cb12f22fa84b16d457d532a21e6de0cc0c"
 });
-export const BINDING_FILES = Object.freeze({ 'release-297-current-school-v2': 'docs/release-bindings/release-297-current-school-v2.json', [SUCCESSOR_BINDING_ID]: 'docs/release-bindings/release-297-current-school-fallback-v3.json', [CP_PROTECTED_BINDING_ID]: 'docs/release-bindings/release-297-current-school-cp-protected-fallback-v4.json' });
-export const isSuccessorSchema = schemaVersion => schemaVersion === 3 || schemaVersion === 4;
+export const BINDING_FILES = Object.freeze({ 'release-297-current-school-v2': 'docs/release-bindings/release-297-current-school-v2.json', [SUCCESSOR_BINDING_ID]: 'docs/release-bindings/release-297-current-school-fallback-v3.json', [CP_PROTECTED_BINDING_ID]: 'docs/release-bindings/release-297-current-school-cp-protected-fallback-v4.json', [BUILD_SECURITY_BINDING_ID]: 'docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json' });
+export const isSuccessorSchema = schemaVersion => schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5;
+const isProtectedSchema = schemaVersion => schemaVersion === 4 || schemaVersion === 5;
+const protectedSource = profile => profile.schemaVersion === 5 ? BUILD_SECURITY_SOURCE : CP_PROTECTED_SOURCE;
+const protectedBindingId = profile => profile.schemaVersion === 5 ? BUILD_SECURITY_BINDING_ID : CP_PROTECTED_BINDING_ID;
+const protectedSourceTime = profile => profile.schemaVersion === 5 ? BUILD_SECURITY_SOURCE_CREATED_AT : '2026-10-08T23:33:09Z';
 export const REQUIRED_EVIDENCE = Object.freeze(['currentSchoolAcceptance', 'classroomAcceptance', 'normalLoadAcceptance', 'headroomAcceptance', 'ordinaryRecovery', 'restrictedRestoration', 'screenshotRuntime']);
 const sha = /^[a-f0-9]{40}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -119,11 +176,11 @@ const equal = (actual, expected, code) => assert.deepEqual(actual, expected, cod
 const fallbackIdentity = fallback => Object.fromEntries(['source', 'localIndex', 'config', 'platform'].map(key => [key, fallback[key]]));
 
 export function bindingSchema(input) {
-  assert.ok([1, 2, 3, 4].includes(input?.schemaVersion), 'BINDING_SCHEMA_UNSUPPORTED');
+  assert.ok([1, 2, 3, 4, 5].includes(input?.schemaVersion), 'BINDING_SCHEMA_UNSUPPORTED');
   if (input.schemaVersion === 1) assert.ok(input.releaseBindingId === undefined, 'LEGACY_BINDING_OVERRIDE_FORBIDDEN');
   else {
     assert.ok(Object.hasOwn(BINDING_FILES, input.releaseBindingId), 'RELEASE_BINDING_NOT_ALLOWLISTED');
-    equal(input.releaseBindingId, input.schemaVersion === 4 ? CP_PROTECTED_BINDING_ID : input.schemaVersion === 3 ? SUCCESSOR_BINDING_ID : 'release-297-current-school-v2', 'BINDING_VERSION_ID_MISMATCH');
+    equal(input.releaseBindingId, input.schemaVersion === 5 ? BUILD_SECURITY_BINDING_ID : input.schemaVersion === 4 ? CP_PROTECTED_BINDING_ID : input.schemaVersion === 3 ? SUCCESSOR_BINDING_ID : 'release-297-current-school-v2', 'BINDING_VERSION_ID_MISMATCH');
     assert.ok(input.artifactSource === undefined, 'CALLER_ARTIFACT_SOURCE_FORBIDDEN');
   }
   return input.schemaVersion;
@@ -366,6 +423,7 @@ export async function resolveReleaseBinding(input, { root, run, fallback, source
   const context = { fallback, sourceDirectory, outputDirectory: input.outputDirectory };
   const load = record => retainedJson(record, root, input.retainedEvidenceDirectory, run, context);
   const fallbackScan = await load(profile.fallbackScan.scan), fallbackReport = await load(profile.fallbackScan.report), fallbackCleanup = await load(profile.fallbackScan.cleanup);
+  const currentRuntime = profile.schemaVersion === 5 ? await loadBuildSecurityCurrentRuntime(profile, load) : undefined;
   assert.ok(Number.isFinite(Date.parse(fallbackScan.createdAt)) && Date.parse(fallbackScan.createdAt) > Date.parse(FALLBACK_FAILED_SCAN_AT), 'BINDING_FALLBACK_SCAN_STALE');
   equal([fallbackScan.schemaVersion, fallbackScan.passed, fallbackScan.sourceSha, fallbackScan.imageId, fallbackScan.configDigest, fallbackScan.scanner, fallbackScan.os, fallbackScan.architecture, fallbackScan.reportSha256], [1, true, fallback.source, fallback.localIndex, fallback.config, SCANNER, 'linux', 'amd64', profile.fallbackScan.report.sha256], 'BINDING_FALLBACK_SCAN_CHANGED');
   const counts = scanCounts(fallbackReport, fallback.config);
@@ -394,7 +452,7 @@ export async function resolveReleaseBinding(input, { root, run, fallback, source
     const artifactRole = input.kind ?? 'serving-anchor';
     equal(['serving-anchor', 'fallback'].includes(artifactRole), true, 'BINDING_ARTIFACT_ROLE_INVALID');
     const artifact = profile.artifacts[artifactRole];
-    return { ...binding, schemaVersion: profile.schemaVersion, artifactRole, artifactSource: artifact.source, artifact, artifactPair: successorArtifactPair(profile), fallback: profile.fallback, servingSource: applicationMain, preparation: profile.preparation, successorSelection: profile.successorSelection };
+    return { ...binding, ...(profile.schemaVersion === 5 ? { operationToolDependencies: buildSecurityOperationHashes(root), currentRuntime } : {}), schemaVersion: profile.schemaVersion, artifactRole, artifactSource: artifact.source, artifact, artifactPair: successorArtifactPair(profile), fallback: profile.fallback, servingSource: applicationMain, preparation: profile.preparation, successorSelection: profile.successorSelection };
   }
   return binding;
 }
@@ -474,28 +532,44 @@ export const CP_PROTECTED_PREPARATION_CHECKS = Object.freeze({ ...SUCCESSOR_PREP
 const successorSchema = { staffIdentityContract: 'deferred', baselineMigrations: 43, candidateMigrations: 53, fallbackDeclaredMigrations: 52, retainedCompletedMigrations: 53, admissionCounts: [121, 125, 126, 127, 128, 129] };
 
 export function validateSuccessorProfile(profile, historicalFallback) {
-  const protectedFallback = profile.schemaVersion === 4;
-  const source = protectedFallback ? CP_PROTECTED_SOURCE : SUCCESSOR_SOURCE;
+  const buildFallback = profile.schemaVersion === 5;
+  const protectedFallback = isProtectedSchema(profile.schemaVersion);
+  const source = protectedFallback ? protectedSource(profile) : SUCCESSOR_SOURCE;
   const checks = protectedFallback ? CP_PROTECTED_PREPARATION_CHECKS : SUCCESSOR_PREPARATION_CHECKS;
-  equal([profile.schemaVersion, profile.kind, profile.id], [protectedFallback ? 4 : 3, 'reviewed_release_source_binding', protectedFallback ? CP_PROTECTED_BINDING_ID : SUCCESSOR_BINDING_ID], 'SUCCESSOR_PROFILE_INVALID');
+  equal([profile.schemaVersion, profile.kind, profile.id], [buildFallback ? 5 : protectedFallback ? 4 : 3, 'reviewed_release_source_binding', protectedFallback ? protectedBindingId(profile) : SUCCESSOR_BINDING_ID], 'SUCCESSOR_PROFILE_INVALID');
   equal(profile.historicalFallback, fallbackIdentity(historicalFallback), 'SUCCESSOR_HISTORY_CHANGED');
   if (protectedFallback) {
-    equal(profile.previousFallback, { source: SUCCESSOR_SOURCE, localIndex: 'sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459', config: 'sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84', platform: 'sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6' }, 'CP_PROTECTED_PREVIOUS_FALLBACK_CHANGED');
+    equal(profile.previousFallback, buildFallback ? fallbackIdentity(CP_PROTECTED_ARTIFACT) : { source: SUCCESSOR_SOURCE, localIndex: 'sha256:cf7ce08efaa73aed0e5322ae22fecf54e650e74db35eb2aea080d3afae70a459', config: 'sha256:f215c48e089bd83cb2306814b05f404c82038d2547a526dc7ae3e4e8fe5f9a84', platform: 'sha256:b5848846b7990714672e52f4785ac562a13fdcbcfce5fdc99e6439170268ecb6' }, 'CP_PROTECTED_PREVIOUS_FALLBACK_CHANGED');
     equal(profile.credentialBoundary, { reviewedSource: '9f3657c6ce0bb13eda62df07924d81bafb85ea60', mergedSource: '092f8fbfe96dd7deed52c279d0b916676e0fc102', policy: 'classpilot-ai-request-input-2026-10-08.1', retainedOnRollback: true }, 'CP_PROTECTED_CREDENTIAL_BOUNDARY_CHANGED');
-    equal(profile.applicationSource, 'ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2', 'CP_PROTECTED_APPLICATION_SOURCE_CHANGED');
+    equal(profile.applicationSource, buildFallback ? BUILD_SECURITY_APPLICATION_SOURCE : 'ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2', 'CP_PROTECTED_APPLICATION_SOURCE_CHANGED');
     // A draft with missing artifact/evidence pins is never usable preparation.
     equal(profile.preparation?.status, 'passed', 'SUCCESSOR_PREPARATION_PENDING');
     equal(profile.buildDependencyAudit?.status, 'passed', 'CP_PROTECTED_BUILD_DEPENDENCY_AUDIT_FAILED');
-    equal([profile.buildDependencyAudit.source, profile.buildDependencyAudit.lockfileGitBlob, profile.buildDependencyAudit.inventory], [CP_PROTECTED_SOURCE, '608236c5f8366de630cba68ee96951edba5eb7a7', profile.fallbackInventory], 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
+    equal([profile.buildDependencyAudit.source, profile.buildDependencyAudit.lockfileGitBlob, profile.buildDependencyAudit.inventory], [source, buildFallback ? BUILD_SECURITY_SOURCE_REVIEW?.files.find(row => row.path === 'package-lock.json')?.after.object : '608236c5f8366de630cba68ee96951edba5eb7a7', profile.fallbackInventory], 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
     for (const field of ['audit', 'sourceChecks']) {
       const record = profile.buildDependencyAudit[field];
       equal(record?.storage, 'private', 'CP_PROTECTED_BUILD_AUDIT_RAW_REQUIRED');
       assert.match(record?.sha256 ?? '', hashPattern, 'CP_PROTECTED_BUILD_AUDIT_RAW_REQUIRED');
       assert.ok(typeof record.path === 'string' && /^[A-Za-z0-9_./-]+\.json$/.test(record.path) && !record.path.split('/').includes('..'), 'CP_PROTECTED_BUILD_AUDIT_RAW_REQUIRED');
     }
-    assert.ok(CP_PROTECTED_SOURCE_REVIEW && CP_PROTECTED_ARTIFACT, 'CP_PROTECTED_REVIEW_PINS_PENDING');
-    equal(profile.sourceDelta, CP_PROTECTED_SOURCE_REVIEW, 'CP_PROTECTED_SOURCE_REVIEW_CHANGED');
-    equal(profile.artifacts?.fallback, CP_PROTECTED_ARTIFACT, 'CP_PROTECTED_ARTIFACT_CHANGED');
+    assert.ok(buildFallback ? BUILD_SECURITY_SOURCE_REVIEW && BUILD_SECURITY_ARTIFACT && BUILD_SECURITY_SOURCE_CREATED_AT : CP_PROTECTED_SOURCE_REVIEW && CP_PROTECTED_ARTIFACT, 'CP_PROTECTED_REVIEW_PINS_PENDING');
+    equal(profile.sourceDelta, buildFallback ? BUILD_SECURITY_SOURCE_REVIEW : CP_PROTECTED_SOURCE_REVIEW, 'CP_PROTECTED_SOURCE_REVIEW_CHANGED');
+    equal(profile.artifacts?.fallback, buildFallback ? BUILD_SECURITY_ARTIFACT : CP_PROTECTED_ARTIFACT, 'CP_PROTECTED_ARTIFACT_CHANGED');
+    if (buildFallback) {
+      equal(profile.currentRuntime, BUILD_SECURITY_CURRENT_RUNTIME, 'BUILD_SECURITY_CURRENT_RUNTIME_CHANGED');
+      assert.ok(BUILD_SECURITY_ANCHOR_ARTIFACT, 'BUILD_SECURITY_ANCHOR_PINS_PENDING');
+      equal(profile.artifacts?.['serving-anchor'], BUILD_SECURITY_ANCHOR_ARTIFACT, 'BUILD_SECURITY_ANCHOR_CHANGED');
+      equal(profile.inventory, BUILD_SECURITY_APPLICATION_INVENTORY, 'BUILD_SECURITY_APPLICATION_INVENTORY_CHANGED');
+      equal(profile.frontendInventory, BUILD_SECURITY_FRONTEND_INVENTORY, 'BUILD_SECURITY_FRONTEND_INVENTORY_CHANGED');
+      equal(profile.inheritedCredentialDelta, CP_PROTECTED_SOURCE_REVIEW, 'BUILD_SECURITY_CREDENTIAL_DELTA_CHANGED');
+      equal(profile.compiledOutputEquivalence?.status, 'passed', 'BUILD_SECURITY_OUTPUT_EQUIVALENCE_PENDING');
+      for (const field of ['execution', 'beforeAlias', 'afterAlias', 'successor', 'independentReview']) {
+        const record = profile.compiledOutputEquivalence[field];
+        equal(record?.storage, 'private', 'BUILD_SECURITY_OUTPUT_RAW_REQUIRED');
+        assert.match(record?.sha256 ?? '', hashPattern, 'BUILD_SECURITY_OUTPUT_RAW_REQUIRED');
+        assert.ok(typeof record.path === 'string' && /^[A-Za-z0-9_./-]+\.json$/.test(record.path) && !record.path.split('/').includes('..'), 'BUILD_SECURITY_OUTPUT_RAW_REQUIRED');
+      }
+    }
   } else equal(profile.correctionSource, SUCCESSOR_CORRECTION, 'SUCCESSOR_CORRECTION_CHANGED');
   equal(profile.fallback.source, source, 'SUCCESSOR_SOURCE_CHANGED');
   equal(profile.imageInputs, IMAGE_INPUTS, 'BINDING_INPUT_SCOPE_CHANGED');
@@ -527,6 +601,28 @@ export function validateSuccessorProfile(profile, historicalFallback) {
     assert.ok(typeof value.path === 'string' && /^docs\/release-evidence\/[A-Za-z0-9_./-]+\.json$/.test(value.path) && !value.path.split('/').includes('..'), 'SUCCESSOR_RECEIPT_PATH_INVALID');
     assert.match(value.sha256 ?? '', hashPattern, 'SUCCESSOR_RECEIPT_HASH_REQUIRED');
   }
+}
+
+async function loadBuildSecurityCurrentRuntime(profile, load) {
+  const review = await load(profile.currentRuntime.review), capabilities = await load(profile.currentRuntime.controls);
+  equal([review.schemaVersion, review.kind, review.source, review.image, review.admissionCount, review.controls, review.newUsageModes, review.dailyUsageRollup, review.newRuntimeActivationAuthorized, review.humanApprovalAsserted, review.operationalAuthorization, review.releaseReady],
+    [1, 'reviewed_existing_current129_serving_state', profile.currentRuntime.source, profile.currentRuntime.image, 129, profile.currentRuntime.controls, 'off/off', 'omitted->shadow', false, false, false, false], 'CURRENT129_REVIEW_CHANGED');
+  assert.ok(capabilities && !Array.isArray(capabilities) && typeof capabilities === 'object' && Object.keys(capabilities).length > 0, 'CURRENT129_CONTROLS_REQUIRED');
+  const controls = value => Object.fromEntries(Object.entries(value).filter(([key]) => key.startsWith('CLASSPILOT_CAP_') || key === 'CLASSPILOT_CAPABILITY_ROLLOUTS_JSON' || key === 'CLASSPILOT_PROTOCOL_V3_ENABLED'));
+  equal(controls(capabilities), capabilities, 'CURRENT129_UNKNOWN_CONTROL');
+  const services = await load(review.services);
+  equal(services.services?.map(row => row.serviceName).sort(), ['schoolpilot-production-api','schoolpilot-production-scheduler-worker'], 'CURRENT129_SERVICE_CAPTURE_INVALID');
+  for (const role of ['api','scheduler-worker']) {
+    const response = await load(review.definitions[role]), task = response.taskDefinition;
+    const container = task?.containerDefinitions?.find(row => row.name === role), values = Object.fromEntries((container?.environment ?? []).map(row => [row.name,row.value]));
+    equal([values.GIT_SHA,container?.image,values.RLS_GUC_ENABLED,values.CLASSPILOT_USAGE_ROLLUP_MODE,values.CLASSPILOT_DIGITAL_USAGE_MODE,values.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE], [profile.currentRuntime.source,`135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@${profile.currentRuntime.image}`,'true','off','off',undefined], 'CURRENT129_CAPTURE_CHANGED');
+    assert.ok(values.RLS_ENABLED_TABLES?.split(',').length === 129 && new Set(values.RLS_ENABLED_TABLES.split(',')).size === 129, 'CURRENT129_CAPTURE_ADMISSION_CHANGED');
+    equal(controls(values), capabilities, 'CURRENT129_CAPTURE_CONTROLS_CHANGED');
+    const service = services.services.find(row => row.serviceName === `schoolpilot-production-${role}`);
+    equal(service?.taskDefinition,task.taskDefinitionArn,'CURRENT129_CAPTURE_SERVICE_CHANGED');
+    assert.ok(service.status === 'ACTIVE' && service.desiredCount > 0 && service.runningCount === service.desiredCount && service.pendingCount === 0 && service.deployments?.length === 1 && service.deployments[0].rolloutState === 'COMPLETED', 'CURRENT129_CAPTURE_UNSTABLE');
+  }
+  return {...profile.currentRuntime,capabilityEnvironment:capabilities};
 }
 
 // Compare semantic leaf deltas, so retaining C578's unrelated tsc-alias does not
@@ -572,6 +668,42 @@ export async function validateProtectedSuccessorSourceDelta(directory, run) {
   equal((await git(run, directory, ['rev-parse', `${CP_PROTECTED_SOURCE}^`])).trim(), SUCCESSOR_SOURCE, 'CP_PROTECTED_PARENT_CHANGED');
   return validateReviewedProtectedDelta(directory, CP_PROTECTED_SOURCE_REVIEW, run);
 }
+// Only two reviewed manifests may differ from F2. Re-prove the inherited CP
+// patch against its original parent rather than trusting a copied receipt.
+export async function validateBuildSecuritySuccessorSourceDelta(directory, run) {
+  assert.ok(BUILD_SECURITY_SOURCE_REVIEW && BUILD_SECURITY_SOURCE, 'BUILD_SECURITY_REVIEW_PINS_PENDING');
+  equal((await git(run, directory, ['rev-parse', 'HEAD'])).trim(), BUILD_SECURITY_SOURCE, 'SUCCESSOR_SOURCE_MOVED');
+  equal((await git(run, directory, ['status', '--porcelain'])).trim(), '', 'SUCCESSOR_SOURCE_DIRTY');
+  equal((await git(run, directory, ['rev-parse', `${BUILD_SECURITY_SOURCE}^`])).trim(), CP_PROTECTED_SOURCE, 'BUILD_SECURITY_PARENT_CHANGED');
+  equal(BUILD_SECURITY_SOURCE_REVIEW.baseline, CP_PROTECTED_SOURCE, 'BUILD_SECURITY_PARENT_CHANGED');
+  equal(BUILD_SECURITY_SOURCE_REVIEW.files.map(row => row.path).sort(), ['package-lock.json', 'package.json'], 'BUILD_SECURITY_MANIFEST_ONLY_REQUIRED');
+  await validateReviewedProtectedDelta(directory, CP_PROTECTED_SOURCE_REVIEW, run);
+  const delta = await validateReviewedProtectedDelta(directory, BUILD_SECURITY_SOURCE_REVIEW, run);
+  const manifest = async ref => JSON.parse(await git(run, directory, ['show', `${ref}:package.json`]));
+  validateCompilerOnlyManifestDelta(await manifest(CP_PROTECTED_SOURCE), await manifest(BUILD_SECURITY_SOURCE));
+  const lock = async ref => JSON.parse(await git(run, directory, ['show', `${ref}:package-lock.json`]));
+  validateCompilerOnlyLockDelta(await lock(CP_PROTECTED_SOURCE), await lock(BUILD_SECURITY_SOURCE));
+  return delta;
+}
+export function validateCompilerOnlyManifestDelta(before, after) {
+  equal(before.scripts?.build, 'tsc && tsc-alias', 'BUILD_SECURITY_ORIGINAL_BUILD_CHANGED');
+  equal(after.scripts?.build, 'tsc', 'BUILD_SECURITY_BUILD_CHANGED');
+  assert.ok(typeof before.devDependencies?.['tsc-alias'] === 'string', 'BUILD_SECURITY_COMPILER_DEPENDENCY_REQUIRED');
+  const expected = structuredClone(before); expected.scripts.build = 'tsc'; delete expected.devDependencies['tsc-alias'];
+  equal(after, expected, 'BUILD_SECURITY_MANIFEST_DELTA_EXCEEDED');
+}
+export function validateCompilerOnlyLockDelta(before, after) {
+  const expected = structuredClone(before);
+  assert.ok(expected.packages?.['']?.devDependencies?.['tsc-alias'], 'BUILD_SECURITY_LOCK_COMPILER_REQUIRED');
+  delete expected.packages[''].devDependencies['tsc-alias'];
+  const removed = Object.keys(expected.packages).filter(key => !Object.hasOwn(after.packages ?? {}, key));
+  assert.ok(removed.length > 0 && removed.includes('node_modules/tsc-alias'), 'BUILD_SECURITY_LOCK_REMOVALS_REQUIRED');
+  for (const key of removed) {
+    equal(expected.packages[key].dev, true, 'BUILD_SECURITY_RUNTIME_PACKAGE_REMOVAL_FORBIDDEN');
+    delete expected.packages[key];
+  }
+  equal(after, expected, 'BUILD_SECURITY_LOCK_DELTA_EXCEEDED');
+}
 export async function validateLockfileOnlyDelta(directory, { baseline, source, correction }, run) {
   for (const value of [baseline, source, correction]) assert.match(value ?? '', sha, 'BINDING_FULL_SOURCE_REQUIRED');
   equal((await git(run, directory, ['diff', '--name-only', baseline, source])).trim(), 'package-lock.json', 'SUCCESSOR_SOURCE_DELTA_EXCEEDED');
@@ -608,25 +740,48 @@ async function retainedArtifact(record, root, input, run, context) {
   equal(digest.digest('hex'), record.sha256, 'BINDING_RETAINED_BYTES_CHANGED');
   return filename;
 }
+export async function replayBuildSecurityRawEvidence(records, load) {
+  const failures = [];
+  for (let offset = 0; offset < records.length; offset += 4) {
+    const results = await Promise.allSettled(records.slice(offset, offset + 4).map(record => Promise.resolve().then(() => load(record))));
+    for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+  }
+  if (failures.length) throw failures[0];
+}
 function successorEvidenceIdentity(value, profile, key) {
   equal([value.releaseBindingId, value.evidenceKind, value.artifactPair, value.passed], [profile.id, key, successorArtifactPair(profile), true], 'SUCCESSOR_EVIDENCE_IDENTITY_CHANGED');
   const observed = Date.parse(value.observedAtUtc);
   assert.ok(Number.isFinite(observed) && observed > Date.parse(FALLBACK_FAILED_SCAN_AT), 'SUCCESSOR_EVIDENCE_STALE');
-  if (profile.schemaVersion === 4) assert.ok(observed >= Date.parse('2026-10-08T23:33:09Z'), 'CP_PROTECTED_EVIDENCE_PREDATES_SOURCE');
+  if (isProtectedSchema(profile.schemaVersion)) assert.ok(observed >= Date.parse(protectedSourceTime(profile)), 'CP_PROTECTED_EVIDENCE_PREDATES_SOURCE');
+}
+export async function validateBuildSecurityExecutionPair(execution, native, profile, retainedDirectory, load) {
+  equal(profile.schemaVersion, 5, 'BUILD_SECURITY_PAIR_SCHEMA_REQUIRED');
+  const record = native.artifactPairBinding;
+  assert.ok(record?.storage === 'private' && record.format === 'json' && hashPattern.test(record.sha256 ?? ''), 'BUILD_SECURITY_RAW_PAIR_REQUIRED');
+  assert.ok(native.rawEvidence?.some(row => row.storage === record.storage && row.path === record.path && row.sha256 === record.sha256 && row.format === record.format), 'BUILD_SECURITY_RAW_PAIR_REQUIRED');
+  const reference = execution.artifactPairBinding;
+  assert.ok(reference && reference.sha256 === record.sha256 && path.resolve(retainedDirectory, reference.path) === path.resolve(retainedDirectory, record.path), 'BUILD_SECURITY_EXECUTION_PAIR_CHANGED');
+  const pair = await load(record);
+  equal(Object.keys(pair).sort(), ['fallback', 'serving-anchor'], 'BUILD_SECURITY_RAW_PAIR_ROLES_CHANGED');
+  const fields = ['source', 'localIndex', 'config', 'platform', 'archiveSha256'];
+  const projected = Object.fromEntries(['serving-anchor', 'fallback'].map(role => [role, Object.fromEntries(fields.map(field => [field, pair[role]?.[field]]))]));
+  equal(projected, successorArtifactPair(profile), 'BUILD_SECURITY_RAW_PAIR_CHANGED');
+  equal(projected, native.artifactPair, 'BUILD_SECURITY_RAW_PAIR_CHANGED');
 }
 export function validateProtectedExecutionEvidence(execution, native, profile, key) {
+  const source = protectedSource(profile), bindingId = protectedBindingId(profile);
   const start = Date.parse(execution.startedAt ?? execution.startedAtUtc), end = Date.parse(execution.completedAt ?? execution.completedAtUtc);
-  assert.ok(Number.isFinite(start) && Number.isFinite(end) && start >= Date.parse('2026-10-08T23:33:09Z') && start < end && end <= Date.parse(native.observedAtUtc), 'CP_PROTECTED_RAW_EXECUTION_STALE');
+  assert.ok(Number.isFinite(start) && Number.isFinite(end) && start >= Date.parse(protectedSourceTime(profile)) && start < end && end <= Date.parse(native.observedAtUtc), 'CP_PROTECTED_RAW_EXECUTION_STALE');
   equal(execution.passed, true, 'CP_PROTECTED_RAW_EXECUTION_FAILED');
   equal(execution.schemaVersion, 1, 'CP_PROTECTED_RAW_EXECUTION_SCHEMA_CHANGED');
   if (['screenshotRuntime', 'requestIpRateLimit', 'credentialBoundary'].includes(key)) {
-    equal([execution.source, execution.image, execution.artifactRole, execution.syntheticFixturesOnly, execution.productionMutations], [CP_PROTECTED_SOURCE, profile.fallback.localIndex, 'fallback', true, 0], 'CP_PROTECTED_RAW_EXECUTION_ROLE_CHANGED');
+    equal([execution.source, execution.image, execution.artifactRole, execution.syntheticFixturesOnly, execution.productionMutations], [source, profile.fallback.localIndex, 'fallback', true, 0], 'CP_PROTECTED_RAW_EXECUTION_ROLE_CHANGED');
     equal(key === 'credentialBoundary' ? execution.externalProviderRequests : execution.providerRequests, 0, 'CP_PROTECTED_EXTERNAL_PROVIDER_REQUESTS_FORBIDDEN');
     for (const field of ['providerRequests', 'externalProviderRequests']) if (Object.hasOwn(execution, field)) equal(execution[field], 0, 'CP_PROTECTED_EXTERNAL_PROVIDER_REQUESTS_FORBIDDEN');
     equal(execution.cleanup?.forced, false, 'CP_PROTECTED_RAW_EXECUTION_FORCED');
     equal(execution.cleanup?.containerAbsent, true, 'CP_PROTECTED_RAW_EXECUTION_CLEANUP_REQUIRED');
     if (key === 'credentialBoundary') {
-      equal([execution.kind, execution.releaseBindingId, execution.actualCompiledClassifier, execution.syntheticProviderInterceptPassed], ['release297_f2_image_credential_boundary', CP_PROTECTED_BINDING_ID, true, true], 'CP_PROTECTED_COMPILED_BOUNDARY_REQUIRED');
+      equal([execution.kind, execution.releaseBindingId, execution.actualCompiledClassifier, execution.syntheticProviderInterceptPassed], [profile.schemaVersion === 5 ? 'release297_f3_image_credential_boundary' : 'release297_f2_image_credential_boundary', bindingId, true, true], 'CP_PROTECTED_COMPILED_BOUNDARY_REQUIRED');
       assert.ok(Number.isSafeInteger(execution.tests) && execution.tests > 0 && execution.tests === execution.passedTests && execution.failedTests === 0 && execution.skippedTests === 0, 'CP_PROTECTED_COMPILED_BOUNDARY_TESTS_FAILED');
       equal([execution.cleanup.exitCode, execution.cleanup.oomKilled, execution.cleanup.unforcedRemoval], [0, false, true], 'CP_PROTECTED_COMPILED_BOUNDARY_CLEANUP_FAILED');
     } else {
@@ -636,7 +791,7 @@ export function validateProtectedExecutionEvidence(execution, native, profile, k
     }
   }
   if (key === 'ordinaryRecovery') {
-    equal([execution.source, execution.releaseBindingId, execution.productionMutations, execution.capacityAccepted, execution.actualApiWorkerProcesses, execution.syntheticSchemaOnly, execution.operationalAuthorization, execution.releaseReady, execution.providerAccessDisabled, execution.completedInsideAuthorizedWindow], [profile.applicationSource, CP_PROTECTED_BINDING_ID, 0, false, true, true, false, false, true, true], 'CP_PROTECTED_RAW_RECOVERY_IDENTITY_CHANGED');
+    equal([execution.source, execution.releaseBindingId, execution.productionMutations, execution.capacityAccepted, execution.actualApiWorkerProcesses, execution.syntheticSchemaOnly, execution.operationalAuthorization, execution.releaseReady, execution.providerAccessDisabled, execution.completedInsideAuthorizedWindow], [profile.applicationSource, bindingId, 0, false, true, true, false, false, true, true], 'CP_PROTECTED_RAW_RECOVERY_IDENTITY_CHANGED');
     equal(execution.admissionChain?.map(row => row.count), [121, 125, 126, 127, 128, 129], 'CP_PROTECTED_RAW_ADMISSION_CHANGED');
     const phases = ['bridge128', 'adopt129', 'fallback129', 'return129'];
     assert.ok(Array.isArray(execution.services) && execution.services.length === 8 && Array.isArray(execution.drains) && execution.drains.length === 8, 'CP_PROTECTED_ACTUAL_SERVICE_PAIRS_REQUIRED');
@@ -652,9 +807,25 @@ export function validateProtectedExecutionEvidence(execution, native, profile, k
     }
     equal([execution.sourceSpecificNative?.baseline?.nativeCompletedMigrations?.length, execution.sourceSpecificNative?.candidate?.nativeCompletedMigrations?.length], [43, 53], 'CP_PROTECTED_RAW_ORDINARY_MIGRATIONS_CHANGED');
     equal([execution.cleanupPassed, execution.gracefulCleanupPassed, execution.networkCleanupPassed, execution.localAdmissionFloorVerified], [true, true, true, true], 'CP_PROTECTED_RAW_RECOVERY_CLEANUP_FAILED');
+    if (profile.schemaVersion === 5) {
+      validateBuildSecurityMigrationOwnership(execution);
+      const baseline = { source: '7af9d0dd5bc2bd3e13b96d35a577725e07f8b678', localIndex: '135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8' };
+      for (const [arm, count, artifact] of [['baseline', 43, baseline], ['candidate', 53, profile.artifacts['serving-anchor']]]) {
+        const proof = execution.sourceSpecificNative[arm], rows = proof.nativeCompletedMigrations;
+        equal([proof.passed, proof.clientEnded, proof.source, proof.applicationImage], [true, true, artifact.source, artifact.localIndex], 'BUILD_SECURITY_NATIVE_MIGRATION_FAILED');
+        assert.ok(rows.length === count && new Set(rows.map(row => row.id)).size === count && rows.every(row => typeof row.id === 'string' && row.id.length > 0 && hashPattern.test(row.checksum ?? '') && row.status === 'complete'), 'BUILD_SECURITY_NATIVE_LEDGER_INVALID');
+      }
+      assert.ok(Array.isArray(execution.migrationExecutions) && execution.migrationExecutions.length === 8, 'BUILD_SECURITY_MIGRATION_EXECUTIONS_REQUIRED');
+      equal(execution.migrationExecutions.map(row => row.arm), ['baseline', 'candidate', 'candidate', 'candidate', 'candidate', 'candidate', 'fallback', 'candidate'], 'BUILD_SECURITY_MIGRATION_EXECUTIONS_REQUIRED');
+      for (const row of execution.migrationExecutions) {
+        const artifact = row.arm === 'baseline' ? baseline : profile.artifacts[row.arm === 'fallback' ? 'fallback' : 'serving-anchor'];
+        equal([row.source, row.image, row.exitCode, row.oomKilled, row.namedSqlConnections, row.actualEntrypoint, row.NODE_ENV], [artifact.source, artifact.localIndex, 0, false, 0, 'node dist/index.js', 'production'], 'BUILD_SECURITY_MIGRATION_EXECUTION_FAILED');
+      }
+      assert.ok(Array.isArray(execution.cleanup) && execution.cleanup.length > 0 && execution.cleanup.every(row => row.removed === true && row.graceful === true && row.forced === false && row.exitCode === 0 && row.oomKilled === false), 'BUILD_SECURITY_RECOVERY_OWNED_CLEANUP_FAILED');
+    }
   }
   if (key === 'restrictedRestoration') {
-    equal([execution.kind, execution.exactFallbackSource, execution.releaseBindingId, execution.productionMutations, execution.operationalAuthorization, execution.releaseReady, execution.ownerPoolEnded, execution.cleanupPassed], ['release297_cp_protected_fallback_restricted_owner_restoration', CP_PROTECTED_SOURCE, CP_PROTECTED_BINDING_ID, 0, false, false, true, true], 'CP_PROTECTED_RAW_RESTORATION_IDENTITY_CHANGED');
+    equal([execution.kind, execution.exactFallbackSource, execution.releaseBindingId, execution.productionMutations, execution.operationalAuthorization, execution.releaseReady, execution.ownerPoolEnded, execution.cleanupPassed], ['release297_cp_protected_fallback_restricted_owner_restoration', source, bindingId, 0, false, false, true, true], 'CP_PROTECTED_RAW_RESTORATION_IDENTITY_CHANGED');
     equal(execution.restorationOwner, { superuser:false, bypassRls:false, inherit:false }, 'CP_PROTECTED_RAW_RESTORATION_ROLE_CHANGED');
     equal(execution.runtimeRole, { superuser:false, bypassRls:false, inherit:false, noSchemaCreate:true, ownsNoTables:true }, 'CP_PROTECTED_RAW_RESTORATION_ROLE_CHANGED');
     assert.ok(Array.isArray(execution.rounds) && execution.rounds.length === 6, 'CP_PROTECTED_RAW_RESTORATION_ROUNDS_REQUIRED');
@@ -676,9 +847,52 @@ export function validateProtectedExecutionEvidence(execution, native, profile, k
     assert.ok(Array.isArray(execution.cleanup) && execution.cleanup.length > 0 && execution.cleanup.every(row => row.removed === true && row.exitCode === 0 && row.oomKilled === false && row.forced === false), 'CP_PROTECTED_RAW_RESTORATION_CLEANUP_FAILED');
   }
 }
+export function validateBuildSecurityMigrationOwnership(execution) {
+  const rows = execution.migrationOwnershipChecks;
+  assert.ok(Array.isArray(rows) && rows.length === 5, 'BUILD_SECURITY_QUERIED_MIGRATION_OWNERSHIP_REQUIRED');
+  equal(rows.map(row => row.phase), ['constructor','baseline43','candidate53','fallbackRetains53','candidateReturn53'], 'BUILD_SECURITY_QUERIED_MIGRATION_OWNERSHIP_REQUIRED');
+  const roleName = rows[0].role?.role;
+  assert.ok(typeof roleName === 'string' && /^[a-z][a-z0-9_]+$/.test(roleName), 'BUILD_SECURITY_QUERIED_MIGRATION_ROLE_INVALID');
+  for (const row of rows) {
+    equal([row.role?.role,row.role?.rolsuper,row.role?.rolbypassrls,row.role?.rolinherit,row.role?.schema_owner,row.role?.schema_usage,row.role?.schema_create,row.allApplicationTablesOwned,row.excludedSourceApplicationTables,row.clientEnded,row.namedMigrationOwnershipConnections], [roleName,false,false,false,false,true,true,true,0,true,0], 'BUILD_SECURITY_QUERIED_MIGRATION_ROLE_CHANGED');
+    assert.ok(Array.isArray(row.applicationTables) && row.applicationTables.length > 0 && row.applicationTables.length === row.applicationTableCount && new Set(row.applicationTables.map(table => table.table_name)).size === row.applicationTableCount && row.applicationTables.every(table => typeof table.table_name === 'string' && table.table_name !== '_health_sentinel' && table.owner === roleName && table.owned === true), 'BUILD_SECURITY_QUERIED_TABLE_OWNERSHIP_CHANGED');
+    assert.ok(Array.isArray(row.excludedOperationalFixtureTables) && row.excludedOperationalFixtureTables.length <= 1 && row.excludedOperationalFixtureTables.every(table => table.table_name === '_health_sentinel'), 'BUILD_SECURITY_UNREVIEWED_TABLE_EXCLUSION');
+    const observed = Date.parse(row.observedAtUtc);
+    assert.ok(Number.isFinite(observed) && observed >= Date.parse(execution.startedAt ?? execution.startedAtUtc) && observed <= Date.parse(execution.completedAt ?? execution.completedAtUtc), 'BUILD_SECURITY_QUERIED_ROLE_EVIDENCE_STALE');
+  }
+  return true;
+}
+export function validateBuildSecurityRestrictedReplayApplicability(prior, current, priorFallback, currentFallback, applicability, restrictedExecution, profile) {
+  equal([applicability?.unchangedExactArtifactRoles,applicability?.unchangedNative43And53MigrationLedger,applicability?.unchangedCanonicalSourceSchema,applicability?.allSixRestrictedRoundsRetainedWithoutRelabeling], [true,true,true,true], 'BUILD_SECURITY_RESTRICTED_REPLAY_APPLICABILITY_REQUIRED');
+  equal(restrictedExecution.sealedServiceReplay?.sha256, applicability.priorActualReplay?.sha256, 'BUILD_SECURITY_RESTRICTED_PRIOR_REPLAY_CHANGED');
+  for (const value of [prior,current]) {
+    equal([value.source,value.releaseBindingId,value.passed,value.cleanupPassed,value.gracefulCleanupPassed,value.networkCleanupPassed,value.productionMutations,value.operationalAuthorization,value.releaseReady,value.artifactRoles], [profile.applicationSource,profile.id,true,true,true,true,0,false,false,{candidate:'serving-anchor',fallback:'fallback'}], 'BUILD_SECURITY_RESTRICTED_PAIR_CHANGED');
+    assert.ok(Array.isArray(value.drains) && value.drains.length === 8 && value.drains.every(row => row.exitCode === 0 && row.oomKilled === false && row.forced === false && row.sqlConnections === 0), 'BUILD_SECURITY_RESTRICTED_PRIOR_DRAIN_FAILED');
+    assert.ok(Array.isArray(value.cleanup) && value.cleanup.length > 0 && value.cleanup.every(row => row.removed === true && row.graceful === true && row.forced === false && row.exitCode === 0 && row.oomKilled === false), 'BUILD_SECURITY_RESTRICTED_PRIOR_CLEANUP_FAILED');
+  }
+  equal(prior.artifactPairBinding,current.artifactPairBinding,'BUILD_SECURITY_RESTRICTED_PAIR_CHANGED');
+  equal(current.ownershipEvidenceCapture?.priorExecution, {path:applicability.priorActualReplay.path,sha256:applicability.priorActualReplay.sha256}, 'BUILD_SECURITY_RESTRICTED_OWNERSHIP_CORRECTION_CHANGED');
+  equal(current.ownershipEvidenceCapture?.onlyReadOnlyAssertionsAdded,true,'BUILD_SECURITY_RESTRICTED_OWNERSHIP_CORRECTION_CHANGED');
+  for (const arm of ['baseline','candidate']) {
+    const previous=prior.sourceSpecificNative?.[arm],next=current.sourceSpecificNative?.[arm],count=arm==='baseline'?43:53;
+    equal([previous?.passed,previous?.clientEnded,previous?.source,previous?.applicationImage], [true,true,next?.source,next?.applicationImage], 'BUILD_SECURITY_RESTRICTED_NATIVE_SOURCE_CHANGED');
+    equal(previous.nativeCompletedMigrations,next.nativeCompletedMigrations,'BUILD_SECURITY_RESTRICTED_NATIVE_LEDGER_CHANGED');
+    equal(previous.nativeCompletedMigrations.length,count,'BUILD_SECURITY_RESTRICTED_NATIVE_LEDGER_CHANGED');
+    assert.match(prior[`${arm}Default`]?.canonicalSchemaSha256 ?? '',hashPattern,'BUILD_SECURITY_RESTRICTED_SCHEMA_REQUIRED');
+    equal(prior[`${arm}Default`].canonicalSchemaSha256,current[`${arm}Default`]?.canonicalSchemaSha256,'BUILD_SECURITY_RESTRICTED_SCHEMA_CHANGED');
+  }
+  for (const proof of [priorFallback,currentFallback]) {
+    equal([proof.source,proof.applicationImage,proof.passed,proof.clientEnded], [profile.fallback.source,profile.fallback.localIndex,true,true], 'BUILD_SECURITY_RESTRICTED_FALLBACK_SOURCE_CHANGED');
+    equal(proof.nativeCompletedMigrations.length,53,'BUILD_SECURITY_RESTRICTED_FALLBACK_LEDGER_CHANGED');
+  }
+  equal(priorFallback.nativeCompletedMigrations,currentFallback.nativeCompletedMigrations,'BUILD_SECURITY_RESTRICTED_FALLBACK_LEDGER_CHANGED');
+  validateBuildSecurityMigrationOwnership(current);
+  return true;
+}
 export function validateProtectedBuildDependencyAudit(audit, sourceChecks, profile) {
-  equal([profile.buildDependencyAudit.source, profile.buildDependencyAudit.lockfileGitBlob, profile.buildDependencyAudit.inventory], [CP_PROTECTED_SOURCE, '608236c5f8366de630cba68ee96951edba5eb7a7', profile.fallbackInventory], 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
-  equal([sourceChecks.schemaVersion, sourceChecks.evidenceKind, sourceChecks.source, sourceChecks.cleanSource], [1, 'protected-fallback-source-checks', CP_PROTECTED_SOURCE, true], 'CP_PROTECTED_BUILD_SOURCE_CHECKS_REQUIRED');
+  const source = protectedSource(profile), lockBlob = profile.schemaVersion === 5 ? BUILD_SECURITY_SOURCE_REVIEW?.files.find(row => row.path === 'package-lock.json')?.after.object : '608236c5f8366de630cba68ee96951edba5eb7a7';
+  equal([profile.buildDependencyAudit.source, profile.buildDependencyAudit.lockfileGitBlob, profile.buildDependencyAudit.inventory], [source, lockBlob, profile.fallbackInventory], 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
+  equal([sourceChecks.schemaVersion, sourceChecks.evidenceKind, sourceChecks.source, sourceChecks.cleanSource], [1, 'protected-fallback-source-checks', source, true], 'CP_PROTECTED_BUILD_SOURCE_CHECKS_REQUIRED');
   const checked = sourceChecks.checks?.fullDependencyAudit;
   equal([checked?.status, checked?.exitCode, checked?.high, checked?.critical, checked?.evidence?.sha256], ['passed', 0, 0, 0, profile.buildDependencyAudit.audit.sha256], 'CP_PROTECTED_BUILD_DEPENDENCY_AUDIT_FAILED');
   equal(audit.auditReportVersion, 2, 'CP_PROTECTED_BUILD_AUDIT_FORMAT_REQUIRED');
@@ -687,14 +901,66 @@ export function validateProtectedBuildDependencyAudit(audit, sourceChecks, profi
   assert.ok(counts && ['info', 'low', 'moderate', 'high', 'critical', 'total'].every(key => Number.isSafeInteger(counts[key]) && counts[key] >= 0), 'CP_PROTECTED_BUILD_AUDIT_COUNTS_REQUIRED');
   equal([counts.high, counts.critical], [0, 0], 'CP_PROTECTED_BUILD_DEPENDENCY_AUDIT_FAILED');
   assert.ok(Object.values(audit.vulnerabilities).every(value => !['high', 'critical'].includes(value.severity)), 'CP_PROTECTED_BUILD_DEPENDENCY_AUDIT_FAILED');
+  if (profile.schemaVersion === 5) {
+    equal(profile.buildDependencyAudit.counts, { high: counts.high, critical: counts.critical, moderate: counts.moderate }, 'BUILD_SECURITY_AUDIT_FINDING_COUNTS_CHANGED');
+    for (const key of ['dependencyInstall', 'backendType', 'backendBuild', 'credentialBoundarySynthetic']) {
+      const result = sourceChecks.checks?.[key];
+      equal([result?.status, result?.exitCode], ['passed', 0], 'BUILD_SECURITY_SOURCE_CHECK_FAILED');
+      assert.match(result.evidence?.sha256 ?? '', hashPattern, 'BUILD_SECURITY_SOURCE_CHECK_RAW_REQUIRED');
+    }
+    const unit = sourceChecks.checks?.unit;
+    assert.ok(['passed', 'passed_with_explicit_skips'].includes(unit?.status) && unit.exitCode === 0, 'BUILD_SECURITY_UNIT_CHECK_FAILED');
+    assert.match(unit.evidence?.sha256 ?? '', hashPattern, 'BUILD_SECURITY_SOURCE_CHECK_RAW_REQUIRED');
+    for (const key of ['unit', 'credentialBoundarySynthetic']) {
+      const counts = sourceChecks.checks[key].evidence;
+      assert.ok(['tests', 'passed', 'failed', 'skipped', 'cancelled'].every(field => Number.isSafeInteger(counts[field]) && counts[field] >= 0) && counts.tests > 0 && counts.tests === counts.passed + counts.skipped && counts.failed === 0 && counts.cancelled === 0, 'BUILD_SECURITY_SOURCE_TEST_COUNTS_FAILED');
+    }
+    assert.ok(Array.isArray(sourceChecks.rawEvidence) && sourceChecks.rawEvidence.length > 0 && sourceChecks.rawEvidence.length <= 64, 'BUILD_SECURITY_SOURCE_RAW_REQUIRED');
+    for (const result of Object.values(sourceChecks.checks)) assert.ok(sourceChecks.rawEvidence.some(row => row.path === result.evidence?.path && row.sha256 === result.evidence?.sha256), 'BUILD_SECURITY_SOURCE_RAW_REQUIRED');
+  }
+}
+export function validateBuildSecurityTestLog(text, evidence) {
+  for (const [field, label] of [['tests', 'tests'], ['passed', 'pass'], ['failed', 'fail'], ['skipped', 'skipped'], ['cancelled', 'cancelled']]) {
+    const found = [...text.matchAll(new RegExp(`^# ${label} (\\d+)\\s*$`, 'gm'))];
+    assert.ok(found.length > 0, 'BUILD_SECURITY_ACTUAL_TEST_LOG_REQUIRED');
+    equal(Number(found.at(-1)[1]), evidence[field], 'BUILD_SECURITY_TEST_LOG_COUNTS_CHANGED');
+  }
+}
+export function validateBuildSecurityOutputEquivalence(execution, beforeAlias, afterAlias, successor, review, profile) {
+  const pins = profile.compiledOutputEquivalence;
+  equal([profile.schemaVersion, profile.id, pins?.status], [5, BUILD_SECURITY_BINDING_ID, 'passed'], 'BUILD_SECURITY_OUTPUT_EQUIVALENCE_PENDING');
+  equal([execution.schemaVersion, execution.kind, execution.f2Source, execution.f3Source, execution.source, execution.artifactRole, execution.complete, execution.passed, execution.cleanSources, execution.cleanSource, execution.runtimeDependenciesEqual, execution.failedTests], [1, 'actual_fallback_compiled_output_equivalence', CP_PROTECTED_SOURCE, BUILD_SECURITY_SOURCE, BUILD_SECURITY_SOURCE, 'fallback', true, true, true, true, true, 0], 'BUILD_SECURITY_OUTPUT_EXECUTION_FAILED');
+  equal([execution.npmCiExitCode, execution.f2NpmCiExitCode, execution.f3NpmCiExitCode, execution.f2BuildExitCode, execution.aliasExitCode, execution.f3BuildExitCode, execution.buildExitCode], [0, 0, 0, 0, 0, 0, 0], 'BUILD_SECURITY_OUTPUT_COMMAND_FAILED');
+  assert.ok(Array.isArray(execution.commands) && execution.commands.length >= 2 && execution.commands.every(row => row.exitCode === 0), 'BUILD_SECURITY_OUTPUT_COMMAND_FAILED');
+  equal(execution.changedCompiledFiles, [], 'BUILD_SECURITY_COMPILED_OUTPUT_CHANGED');
+  equal([execution.beforeAliasSha256, execution.afterAliasSha256, execution.successorSha256], [pins.beforeAlias.sha256, pins.afterAlias.sha256, pins.successor.sha256], 'BUILD_SECURITY_OUTPUT_INVENTORY_CHANGED');
+  const end = Date.parse(execution.observedAtUtc);
+  assert.ok(Number.isFinite(end) && end >= Date.parse(BUILD_SECURITY_SOURCE_CREATED_AT), 'BUILD_SECURITY_OUTPUT_TIME_INVALID');
+  for (const [record, source, phase] of [[beforeAlias, CP_PROTECTED_SOURCE, 'beforeAlias'], [afterAlias, CP_PROTECTED_SOURCE, 'afterAlias'], [successor, BUILD_SECURITY_SOURCE, 'successor']]) {
+    equal([record.source, record.phase], [source, phase], 'BUILD_SECURITY_OUTPUT_SOURCE_CHANGED');
+    assert.ok(Array.isArray(record.files) && record.files.length > 0 && record.files.length <= 10_000, 'BUILD_SECURITY_OUTPUT_FILES_REQUIRED');
+    equal(new Set(record.files.map(row => row.path)).size, record.files.length, 'BUILD_SECURITY_OUTPUT_FILES_DUPLICATED');
+    for (const file of record.files) {
+      assert.ok(typeof file.path === 'string' && /^[A-Za-z0-9_./-]+$/.test(file.path) && !file.path.split('/').some(part => !part || part === '.' || part === '..'), 'BUILD_SECURITY_OUTPUT_PATH_INVALID');
+      assert.match(file.sha256 ?? '', hashPattern, 'BUILD_SECURITY_OUTPUT_FILE_HASH_REQUIRED');
+      assert.ok(Number.isSafeInteger(file.bytes) && file.bytes >= 0, 'BUILD_SECURITY_OUTPUT_FILE_SIZE_REQUIRED');
+    }
+  }
+  equal(execution.fileCount, beforeAlias.files.length, 'BUILD_SECURITY_OUTPUT_FILE_COUNT_CHANGED');
+  equal(beforeAlias.files, afterAlias.files, 'BUILD_SECURITY_ALIAS_CHANGED_OUTPUT');
+  equal(afterAlias.files, successor.files, 'BUILD_SECURITY_COMPILED_OUTPUT_CHANGED');
+  equal([review.schemaVersion, review.kind, review.passed, review.fullIndependentReviewComplete, review.independentFromProducer, review.executionSha256], [1, 'release297_build_security_compiled_output_independent_review', true, true, true, pins.execution.sha256], 'BUILD_SECURITY_OUTPUT_REVIEW_REQUIRED');
+  assert.ok(typeof review.producer === 'string' && review.producer.length > 0 && typeof review.reviewer === 'string' && review.reviewer.length > 0 && review.producer !== review.reviewer, 'BUILD_SECURITY_OUTPUT_REVIEW_NOT_INDEPENDENT');
+  assert.ok(Date.parse(review.observedAtUtc) >= end, 'BUILD_SECURITY_OUTPUT_REVIEW_STALE');
 }
 export async function validateSuccessorPreparation(input, { root, run, fallback, sourceDirectory, source, now = Date.now }) {
   assert.ok(isSuccessorSchema(bindingSchema(input)), 'SUCCESSOR_PREPARATION_SCHEMA_REQUIRED');
   const filename = BINDING_FILES[input.releaseBindingId], local = JSON.parse(ordinaryText(root, filename));
   validateSuccessorProfile(local, fallback);
   const profileRecord = await committedJson(root, filename, run), profile = profileRecord.value;
-  const protectedFallback = profile.schemaVersion === 4;
-  const fallbackSource = protectedFallback ? CP_PROTECTED_SOURCE : SUCCESSOR_SOURCE;
+  const buildFallback = profile.schemaVersion === 5;
+  const protectedFallback = isProtectedSchema(profile.schemaVersion);
+  const fallbackSource = protectedFallback ? protectedSource(profile) : SUCCESSOR_SOURCE;
   const preparationChecks = protectedFallback ? CP_PROTECTED_PREPARATION_CHECKS : SUCCESSOR_PREPARATION_CHECKS;
   equal(local, profile, 'BINDING_PROFILE_CHANGED');
   equal((await git(run, root, ['status', '--porcelain'])).trim(), '', 'TOOL_DIRTY');
@@ -723,15 +989,27 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
   equal(await imageInputInventory(applicationDirectory, applicationMain, run), profile.inventory, 'APPLICATION_BYTES_CHANGED');
   equal(await frontendInputInventory(applicationDirectory, applicationMain, run), profile.frontendInventory, 'FRONTEND_BYTES_CHANGED');
   equal(await frontendInputInventory(applicationDirectory, profile.applicationSource, run), profile.frontendInventory, 'BINDING_REFERENCE_FRONTEND_CHANGED');
-  const sourceDelta = protectedFallback ? await validateProtectedSuccessorSourceDelta(input.fallbackDirectory, run) : await validateSuccessorSourceDelta(input.fallbackDirectory, fallback, run);
+  const sourceDelta = buildFallback ? await validateBuildSecuritySuccessorSourceDelta(input.fallbackDirectory, run) : protectedFallback ? await validateProtectedSuccessorSourceDelta(input.fallbackDirectory, run) : await validateSuccessorSourceDelta(input.fallbackDirectory, fallback, run);
   equal(await imageInputInventory(input.fallbackDirectory, fallbackSource, run), profile.fallbackInventory, 'SUCCESSOR_INVENTORY_CHANGED');
   equal(sourceDelta, profile.sourceDelta, 'SUCCESSOR_SOURCE_DELTA_RECEIPT_CHANGED');
   const context = { fallback, sourceDirectory: applicationDirectory, outputDirectory: input.outputDirectory, extraSourceDirectories: [input.fallbackDirectory] };
+  if (buildFallback) await loadBuildSecurityCurrentRuntime(profile, record => retainedArtifact(record, root, input, run, context));
   if (protectedFallback) {
     const audit = await retainedArtifact(profile.buildDependencyAudit.audit, root, input, run, context);
     const sourceChecks = await retainedArtifact(profile.buildDependencyAudit.sourceChecks, root, input, run, context);
     validateProtectedBuildDependencyAudit(audit, sourceChecks, profile);
     equal((await git(run, input.fallbackDirectory, ['rev-parse', `${fallbackSource}:package-lock.json`])).trim(), profile.buildDependencyAudit.lockfileGitBlob, 'CP_PROTECTED_BUILD_AUDIT_SOURCE_CHANGED');
+    if (buildFallback) {
+      await replayBuildSecurityRawEvidence(sourceChecks.rawEvidence, record => retainedArtifact(record, root, input, run, context));
+      for (const key of ['unit', 'credentialBoundarySynthetic']) {
+        const result = sourceChecks.checks[key], filename = await retainedArtifact(result.evidence, root, input, run, context);
+        validateBuildSecurityTestLog(readFileSync(filename, 'utf8'), result.evidence);
+      }
+    }
+  }
+  if (buildFallback) {
+    const records = await Promise.all(['execution', 'beforeAlias', 'afterAlias', 'successor', 'independentReview'].map(key => retainedArtifact(profile.compiledOutputEquivalence[key], root, input, run, context)));
+    validateBuildSecurityOutputEquivalence(...records, profile);
   }
   const nativeHashes = {};
   for (const [key, checks] of Object.entries(preparationChecks)) {
@@ -754,15 +1032,30 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
     if (key === 'screenshotRuntime' || key === 'requestIpRateLimit' || key === 'credentialBoundary') equal([native.testedArtifactRole, native.source, native.applicationImage], ['fallback', fallbackSource, profile.fallback.localIndex], 'SUCCESSOR_NATIVE_ARTIFACT_ROLE_CHANGED');
     assert.ok(Array.isArray(native.rawEvidence) && native.rawEvidence.length > 0 && native.rawEvidence.length <= 256 && new Set(native.rawEvidence.map(value => `${value.storage}:${value.path}`)).size === native.rawEvidence.length, 'SUCCESSOR_RAW_EVIDENCE_REQUIRED');
     equal(review.rawEvidenceSha256s, native.rawEvidence.map(value => value.sha256), 'SUCCESSOR_REVIEW_RAW_CHANGED');
-    for (const record of native.rawEvidence) await load(record);
+    if (buildFallback) await replayBuildSecurityRawEvidence(native.rawEvidence, load);
+    else for (const record of native.rawEvidence) await load(record);
     if (protectedFallback && key !== 'successorScan') {
       assert.ok(native.executionReceipt && native.rawEvidence.some(record => record.sha256 === native.executionReceipt.sha256 && record.path === native.executionReceipt.path), 'CP_PROTECTED_EXECUTION_RECEIPT_REQUIRED');
       const execution = await load(native.executionReceipt);
+      if (buildFallback && ['ordinaryRecovery', 'restrictedRestoration'].includes(key)) await validateBuildSecurityExecutionPair(execution, native, profile, input.retainedEvidenceDirectory, load);
       validateProtectedExecutionEvidence(execution, native, profile, key);
       if (key === 'restrictedRestoration') {
         assert.ok(native.serviceExecutionReceipt && native.rawEvidence.some(record => record.sha256 === native.serviceExecutionReceipt.sha256 && record.path === native.serviceExecutionReceipt.path), 'CP_PROTECTED_EXECUTION_RECEIPT_REQUIRED');
-        equal(execution.sealedServiceReplay?.sha256, native.serviceExecutionReceipt.sha256, 'CP_PROTECTED_RESTORATION_SERVICE_REPLAY_CHANGED');
-        validateProtectedExecutionEvidence(await load(native.serviceExecutionReceipt), native, profile, 'ordinaryRecovery');
+        const serviceExecution = await load(native.serviceExecutionReceipt);
+        if (buildFallback) await validateBuildSecurityExecutionPair(serviceExecution, native, profile, input.retainedEvidenceDirectory, load);
+        if (buildFallback && execution.sealedServiceReplay?.sha256 !== native.serviceExecutionReceipt.sha256) {
+          const applicability = native.restrictedReplayApplicability;
+          equal(applicability?.currentActualReplay,native.serviceExecutionReceipt,'BUILD_SECURITY_RESTRICTED_CURRENT_REPLAY_CHANGED');
+          const priorRecord = applicability?.priorActualReplay;
+          assert.ok(priorRecord && native.rawEvidence.some(record => record.sha256 === priorRecord.sha256 && record.path === priorRecord.path), 'BUILD_SECURITY_RESTRICTED_PRIOR_REPLAY_REQUIRED');
+          const prior = await load(priorRecord);
+          const fallbackProof = async value => {
+            const record = native.rawEvidence.find(record => path.resolve(input.retainedEvidenceDirectory,record.path) === path.resolve(value.fallbackDefault.file) && record.sha256 === value.fallbackDefault.sha256);
+            assert.ok(record,'BUILD_SECURITY_RESTRICTED_FALLBACK_PROOF_REQUIRED'); return load(record);
+          };
+          validateBuildSecurityRestrictedReplayApplicability(prior,serviceExecution,await fallbackProof(prior),await fallbackProof(serviceExecution),applicability,execution,profile);
+        } else equal(execution.sealedServiceReplay?.sha256, native.serviceExecutionReceipt.sha256, 'CP_PROTECTED_RESTORATION_SERVICE_REPLAY_CHANGED');
+        validateProtectedExecutionEvidence(serviceExecution, native, profile, 'ordinaryRecovery');
       }
     }
     if (key === 'ordinaryRecovery') equal(native.recovery, { baselineMigrations: 43, candidateMigrations: 53, fallbackDeclaredMigrations: 52, retainedCompletedMigrations: 53, admissionCounts: [121, 125, 126, 127, 128, 129], phases: ['baseline43', 'candidate53-dark128', 'candidate53-adopt129', 'fallback-retains53', 'candidate-return53'], sequence: [profile.applicationSource, fallbackSource, profile.applicationSource] }, 'SUCCESSOR_ORDINARY_RECOVERY_CHANGED');

@@ -1224,7 +1224,7 @@ capture_classpilot_tile_auth_observation_final_posture
     );
     assert.match(
       deploySource,
-      /rollback_classpilot_tile_auth_deployment\(\)[\s\S]*--task-definition "\$PRODUCTION_ROLLBACK_API_TASK_DEFINITION"[\s\S]*--task-definition "\$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"[\s\S]*wait_for_production_backend_strict_stability/
+      /rollback_classpilot_tile_auth_deployment\(\)[\s\S]*local recovery_api="\$PRODUCTION_ROLLBACK_API_TASK_DEFINITION"[\s\S]*local recovery_worker="\$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"[\s\S]*if \[\[ -n "\$RELEASE_ARTIFACT_PUBLICATION" \]\]; then[\s\S]*recovery_api="\$RELEASE_ARTIFACT_RECOVERY_API"[\s\S]*recovery_worker="\$RELEASE_ARTIFACT_RECOVERY_WORKER"[\s\S]*--task-definition "\$recovery_api"[\s\S]*--task-definition "\$recovery_worker"[\s\S]*wait_for_production_backend_strict_stability[\s\S]*"\$recovery_api" "\$recovery_worker"/
     );
   });
 

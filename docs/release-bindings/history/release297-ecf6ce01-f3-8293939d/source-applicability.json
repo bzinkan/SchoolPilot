@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "kind": "owner_release_source_applicability",
+  "status": "APPROVED_READINESS_SOURCE_ONLY",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "applicationSource": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
+  "inventorySha256": "91a0708d3bd04a9d9f369326f132270abc6d1410104116e132c47eaae3fd875b",
+  "frontendInventorySha256": "9f5f4824306bbc3af24d631945b6ab9ea3212c62ad57c12edad309fbae4b36ac",
+  "policySha256": "965328a337fe35eaa505610ade00633075f7014fab610da8a869f6b514688f95",
+  "extension": {
+    "version": "2.9.7",
+    "id": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "source": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "mergedSource": "03a9c3633d1e1f7d763ea5cf910f870994400e02",
+    "tree": "f7a3174e5631dcad9d02eb2357b245c5d2df714f",
+    "zipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "zipBytes": 376052
+  },
+  "schema": {
+    "staffIdentityContract": "deferred",
+    "baselineMigrations": 43,
+    "candidateMigrations": 53,
+    "fallbackDeclaredMigrations": 52,
+    "retainedCompletedMigrations": 53,
+    "admissionCounts": [
+      121,
+      125,
+      126,
+      127,
+      128,
+      129
+    ]
+  },
+  "scope": {
+    "school": "St. Francis DeSales",
+    "clients": 133,
+    "usageRollupMode": "off",
+    "digitalUsageMode": "off",
+    "managedChromebookGate": "waived_not_passed",
+    "liveAcceptanceMinutes": 30
+  },
+  "observedAtUtc": "2026-10-09T13:06:46.246Z",
+  "reviewer": "/root",
+  "reviewBasis": "The user requested fix this and deploy; existing approved readiness policy and fixed acceptance criteria are preserved.",
+  "humanApprovalAsserted": false,
+  "criteriaChanged": false,
+  "privacy": {
+    "credentialBoundaryRetainedInCandidate": true,
+    "fallbackBoundaryRequiresItsOwnReviewedCompiledFixtures": true,
+    "providerCallsForValidation": 0,
+    "ordinaryEmailAndSearchContextStillAllowed": true,
+    "broaderMinimizationAndProviderAccountReview": "pending",
+    "anonymityClaimed": false,
+    "monitoringExpansion": false,
+    "sourceOnlyReviewDoesNotCertifyProduction": true
+  },
+  "dailyRollup": {
+    "setting": "omitted",
+    "effectiveAtCurrentServingSource": "shadow",
+    "runtimeWorkloadMeasured": false
+  },
+  "retainedReview": {
+    "storage": "private",
+    "path": "acceptance-source-applicability-review.json",
+    "sha256": "e72a90678491453a126b5977e5d989e29f9191ed08b98e0eb32b56acd859def7"
+  },
+  "limitations": [
+    "This authorizes no cloud operation by itself.",
+    "Actual A-F3-A recovery and acceptance evidence must independently pass.",
+    "Managed adoption and sample-bearing live acceptance remain pending.",
+    "Production deployment rechecks fresh health, catalog/admission, backup and task state."
+  ],
+  "operationalAuthorization": false,
+  "releaseReady": false
+}

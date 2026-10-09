@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "kind": "exact_A3_artifact_preparation_observation",
+  "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "observedAtUtc": "2026-10-09T15:07:11.635Z",
+  "artifactRole": "serving-anchor",
+  "passed": false,
+  "applicableLocalChecksPassed": true,
+  "status": "pending_exact_main_ci",
+  "checks": {
+    "dependencyInstall": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "backendType": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "backendBuild": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "testTypes": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "unit": {
+      "status": "passed_with_explicit_skips",
+      "exitCode": 0,
+      "tests": 2471,
+      "passed": 2467,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 4
+    },
+    "credentialBoundaryAndPreciseSafetyHistory": {
+      "status": "passed",
+      "exitCode": 0,
+      "tests": 169,
+      "passed": 169,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "providerNetworkCalls": 0
+    },
+    "governance": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "exactMainCi": {
+      "status": "pending"
+    },
+    "nativeProcessing": {
+      "status": "passed"
+    },
+    "compiledCredentialBoundary": {
+      "status": "passed",
+      "tests": 53,
+      "externalProviderRequests": 0
+    },
+    "imageScan": {
+      "status": "passed",
+      "counts": {
+        "UNKNOWN": 0,
+        "LOW": 0,
+        "MEDIUM": 1,
+        "HIGH": 0,
+        "CRITICAL": 0
+      }
+    },
+    "frontend": {
+      "status": "passed"
+    }
+  },
+  "frontend": {
+    "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+    "archiveSha256": "ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d",
+    "archiveBytes": 1014154,
+    "fileInventorySha256": "3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3",
+    "fileCount": 171,
+    "nodeEnv": "production",
+    "buildPassed": true,
+    "lintPassed": true,
+    "browsingHistoryBrowserPassed": true,
+    "studentTileBrowserPassed": true,
+    "dashboardLoadStatePassed": true,
+    "publication": false,
+    "adoptionVerified": false
+  },
+  "security": {
+    "fullDependencies": {
+      "info": 0,
+      "low": 0,
+      "moderate": 7,
+      "high": 0,
+      "critical": 0,
+      "total": 7
+    },
+    "runtimeDependencies": {
+      "info": 0,
+      "low": 0,
+      "moderate": 3,
+      "high": 0,
+      "critical": 0,
+      "total": 3
+    },
+    "image": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 1,
+      "HIGH": 0,
+      "CRITICAL": 0
+    }
+  },
+  "retainedEvidence": {
+    "aggregate": {
+      "storage": "private",
+      "path": "pair-refresh-A3/candidate-preparation/aggregate.json",
+      "sha256": "22def5237409c2be890333d2dd873e210542b96a1a1cdd18a56eb7716eae0091"
+    },
+    "frontendArtifact": {
+      "storage": "private",
+      "path": "pair-refresh-A3/candidate-preparation/frontendArtifact.json",
+      "sha256": "b72b181b8d2fae2175f752ecd9d287126745fd7ed748ecaae2ba0fd7cbdf81a2"
+    },
+    "frontendProduction": {
+      "storage": "private",
+      "path": "pair-refresh-A3/candidate-preparation/frontendProduction.json",
+      "sha256": "f301aca9935be13a0adb372b2e8a982ad95558f3f4b554e435cade3224227452"
+    },
+    "frontendZip": {
+      "storage": "private",
+      "path": "pair-refresh-A3/candidate-preparation/frontendZip.json",
+      "sha256": "5bbbbda51dd0833d89be32b6848413d080bcd1821ac9658f6ebd163738b36fef"
+    },
+    "independentReview": {
+      "storage": "private",
+      "path": "pair-refresh-A3/candidate-preparation/independentReview.json",
+      "sha256": "d0960b9c29eb16894c52bbb5594d7ed9bc5bf4ae8e33e8c8fad615c08a35f4b0"
+    }
+  },
+  "limitations": [
+    "A3 remains provisional until exact-main CI is green; no failure waived.",
+    "Fresh A3/F3 recovery, campaigns, selection, operational preflights and sample-bearing live acceptance remain separate.",
+    "F3 conditional frontend/history/cursor rollback limits independently recorded.",
+    "ClassPilot2.9.7 unchanged; no Store upload.",
+    "Initial exact-main Android Maven dependency failure remains retained; an actual successful rerun is required and will be recorded separately.",
+    "This metadata wrapper preserves the original local result and observation time without asserting campaign, production protection or device adoption."
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

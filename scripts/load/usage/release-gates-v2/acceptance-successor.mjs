@@ -6,21 +6,27 @@ import { execFileSync } from 'node:child_process';
 import { PROFILES, profileHash, hash } from './contracts.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 import { remapObservedEnvironment, validateBaselineAdvertisement } from './environment.mjs';
+import { baselineFixedEnvironment } from './baseline-environment-compatibility.mjs';
 import { assertOutside } from './owner.mjs';
 import { SCANNER, scanCounts } from '../../../verify-legacy-deploy-image.mjs';
-import { CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_BINDING_ID, BINDING_FILES, validateProtectedBuildDependencyAudit } from '../../../release-source-binding.mjs';
+import { CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_BINDING_ID, BINDING_FILES, validateProtectedBuildDependencyAudit, BUILD_SECURITY_SOURCE, BUILD_SECURITY_ARTIFACT, BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_APPLICATION_SOURCE, BUILD_SECURITY_ANCHOR_ARTIFACT, validateBuildSecurityOutputEquivalence, validateBuildSecurityMigrationOwnership } from '../../../release-source-binding.mjs';
 
 // One reviewed successor, not a general source override. Historical profiles,
 // their byte hashes and the DDC/54-entry lower-load contract remain unchanged.
 export const ACCEPTANCE_SUCCESSOR_ID = 'release297-current-school-acceptance-ecf6ce01-v1';
 export const CP_PROTECTED_ACCEPTANCE_ID = 'release297-current-school-acceptance-ecf6ce01-cp-protected-v2';
-const protectedFallbackIdentity = () => { assert.ok(CP_PROTECTED_ARTIFACT, 'CP_PROTECTED_ARTIFACT_PINS_PENDING'); return { source: CP_PROTECTED_SOURCE, image: CP_PROTECTED_ARTIFACT.localIndex, config: CP_PROTECTED_ARTIFACT.config, platform: CP_PROTECTED_ARTIFACT.platform, archiveSha256: CP_PROTECTED_ARTIFACT.archiveSha256 }; };
+export const BUILD_SECURITY_ACCEPTANCE_ID = 'release297-current-school-acceptance-2001e888-cp-protected-build-v3';
+const isProtectedAcceptance = id => [CP_PROTECTED_ACCEPTANCE_ID, BUILD_SECURITY_ACCEPTANCE_ID].includes(id);
+const protectedAcceptancePins = id => id === BUILD_SECURITY_ACCEPTANCE_ID ? { source: BUILD_SECURITY_SOURCE, artifact: BUILD_SECURITY_ARTIFACT, id: BUILD_SECURITY_BINDING_ID, schemaVersion: 5 } : { source: CP_PROTECTED_SOURCE, artifact: CP_PROTECTED_ARTIFACT, id: CP_PROTECTED_BINDING_ID, schemaVersion: 4 };
+const protectedFallbackIdentity = id => { const { source, artifact } = protectedAcceptancePins(id); assert.ok(artifact, 'CP_PROTECTED_ARTIFACT_PINS_PENDING'); return { source, image: artifact.localIndex, config: artifact.config, platform: artifact.platform, archiveSha256: artifact.archiveSha256 }; };
 export const ACCEPTANCE_CANDIDATE = 'ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2';
 export const ACCEPTANCE_CANDIDATE_IDENTITIES = Object.freeze({ source: ACCEPTANCE_CANDIDATE,
   image: 'sha256:23f729573155904217586ff4f951d7978f0b29926ce2b76a320ce2106a844c3a',
   config: 'sha256:6b982c4db99aa807c972e834eac786001e7f34b9972273e3c64bbe39333a78f4',
   platform: 'sha256:59ab676f40521e9796ebe7fe543f997c76c0dc4c378bc772b23b0f4377e92de0',
   archiveSha256: '99647f52ecb2ef250e49ab20653fcc91753084dd89089295311d581dea1b0a41' });
+export const BUILD_SECURITY_ACCEPTANCE_CANDIDATE_IDENTITIES = BUILD_SECURITY_ANCHOR_ARTIFACT && Object.freeze({source:BUILD_SECURITY_APPLICATION_SOURCE,image:BUILD_SECURITY_ANCHOR_ARTIFACT.localIndex,config:BUILD_SECURITY_ANCHOR_ARTIFACT.config,platform:BUILD_SECURITY_ANCHOR_ARTIFACT.platform,archiveSha256:BUILD_SECURITY_ANCHOR_ARTIFACT.archiveSha256});
+const candidateIdentity = binding => binding.id === BUILD_SECURITY_ACCEPTANCE_ID ? BUILD_SECURITY_ACCEPTANCE_CANDIDATE_IDENTITIES : ACCEPTANCE_CANDIDATE_IDENTITIES;
 export const ACCEPTANCE_BASELINE = '7af9d0dd5bc2bd3e13b96d35a577725e07f8b678';
 export const ACCEPTANCE_BASELINE_IMAGE = '135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:c87433cdf3d88e0c291a50d1ae74fbc116f167048f7db9d6c2d1d0ebfc52b9e8';
 export const ACCEPTANCE_FALLBACK = 'd75fc1c48d0a3918857508d3965904c69023a153';
@@ -148,6 +154,11 @@ export function assertNativeSuccessorPreparation(proof, binding) {
   assert.equal(inspect.Id, binding.candidate.image); assert.equal(inspect.Config.Labels['org.opencontainers.image.revision'], binding.candidate.source);
   return true;
 }
+export function assertOrdinaryMigrationConnectionRole(role, binding) {
+  assert.deepEqual(role, binding.id === BUILD_SECURITY_ACCEPTANCE_ID
+    ? { superuser: false, bypassRls: false, inherit: false, schemaOwner: false, applicationTableOwner: true, schemaUsageAndCreate: true }
+    : { superuser: false, bypassRls: false, inherit: false, schemaOwner: true, schemaUsageAndCreate: true });
+}
 export function assertOrdinarySuccessorRecovery(proof, binding) {
   const native = readPinnedSuccessorInput(proof.nativeResult).value, review = readPinnedSuccessorInput(proof.independentReview).value, execution = readPinnedSuccessorInput(proof.execution).value;
   const run = evidenceInterval(execution, binding), observed = withinEvidence(native.observedAtUtc, binding), reviewed = withinEvidence(review.observedAtUtc, binding);
@@ -173,7 +184,8 @@ export function assertOrdinarySuccessorRecovery(proof, binding) {
   const migration = readPinnedSuccessorInput(retainedInput(migrationPin)).value;
   assert.equal(migration.kind, 'release_migration_role_independent_review'); assert.equal(migration.passed, true); assert.deepEqual(migration.artifactPair, pair);
   const migrationAt = withinEvidence(migration.observedAtUtc, binding); assert.ok(run.end <= migrationAt && migrationAt <= observed);
-  assert.deepEqual(migration.verified.migrationConnectionRole, { superuser: false, bypassRls: false, inherit: false, schemaOwner: true, schemaUsageAndCreate: true });
+  assertOrdinaryMigrationConnectionRole(migration.verified.migrationConnectionRole, binding);
+  if (binding.id === BUILD_SECURITY_ACCEPTANCE_ID) validateBuildSecurityMigrationOwnership(execution);
   assert.equal(migration.verified.actualVersionedMigrationExecutions, 8); assert.equal(migration.verified.ordinary43to53AndFallbackRetains53, true);
   assert.equal(migration.verified.zeroNamedMigrationSqlConnections, true); assert.ok(migration.rawEvidence.length > 0);
   for (const row of migration.rawEvidence) readPinnedSuccessorBytes(retainedInput(row, false));
@@ -249,14 +261,15 @@ export function assertSuccessorMixedSequence(records, binding, completedAt) {
   return true;
 }
 export function assertAcceptanceSuccessorIdentity(binding, at = Date.now()) {
-  assert.equal(binding.schemaVersion, 1); assert.ok([ACCEPTANCE_SUCCESSOR_ID, CP_PROTECTED_ACCEPTANCE_ID].includes(binding.id), 'ACCEPTANCE_BINDING_NOT_ALLOWLISTED');
+  assert.equal(binding.schemaVersion, 1); assert.ok([ACCEPTANCE_SUCCESSOR_ID, CP_PROTECTED_ACCEPTANCE_ID, BUILD_SECURITY_ACCEPTANCE_ID].includes(binding.id), 'ACCEPTANCE_BINDING_NOT_ALLOWLISTED');
   assert.equal(binding.kind, 'current_school_acceptance_successor_preparation');
   assert.equal(binding.preparationReviewed, true); assert.equal(binding.localSyntheticOnly, true);
   assert.equal(binding.operationalAuthorization, false); assert.equal(binding.releaseReady, false);
-  for (const [key, value] of Object.entries(ACCEPTANCE_CANDIDATE_IDENTITIES)) assert.equal(binding.candidate[key], value);
+  assert.ok(candidateIdentity(binding), 'BUILD_SECURITY_ANCHOR_PINS_PENDING');
+  for (const [key, value] of Object.entries(candidateIdentity(binding))) assert.equal(binding.candidate[key], value);
   assert.equal(binding.baseline.source, ACCEPTANCE_BASELINE);
-  assert.equal(binding.baseline.image, ACCEPTANCE_BASELINE_IMAGE); assert.deepEqual(binding.fallback, binding.id === CP_PROTECTED_ACCEPTANCE_ID ? protectedFallbackIdentity() : ACCEPTANCE_FALLBACK_IDENTITIES);
-  if (binding.id === CP_PROTECTED_ACCEPTANCE_ID) { assert.equal(binding.releaseBindingId, CP_PROTECTED_BINDING_ID); assert.equal(binding.credentialBoundaryRetainedOnRollback, true); }
+  assert.equal(binding.baseline.image, ACCEPTANCE_BASELINE_IMAGE); assert.deepEqual(binding.fallback, isProtectedAcceptance(binding.id) ? protectedFallbackIdentity(binding.id) : ACCEPTANCE_FALLBACK_IDENTITIES);
+  if (isProtectedAcceptance(binding.id)) { assert.equal(binding.releaseBindingId, protectedAcceptancePins(binding.id).id); assert.equal(binding.credentialBoundaryRetainedOnRollback, true); }
   assert.equal(binding.audience, 'DeSales'); assert.equal(binding.clients, 133); assert.equal(binding.extensionVersion, '2.9.7');
   assert.deepEqual(binding.order, FIXED_ORDER);
   assert.deepEqual(binding.profiles, Object.fromEntries(SUCCESSOR_PROFILES.map(profile => [profile.name, profileHash(profile)])));
@@ -267,21 +280,27 @@ export function assertAcceptanceSuccessorIdentity(binding, at = Date.now()) {
   return true;
 }
 export function assertProtectedAcceptanceBuildSecurity(binding) {
-  const filename = join(binding.harness.directory, BINDING_FILES[CP_PROTECTED_BINDING_ID]);
+  const pins = protectedAcceptancePins(binding.id);
+  const filename = join(binding.harness.directory, BINDING_FILES[pins.id]);
   assert.equal(resolve(binding.releaseSourceBinding?.file ?? ''), resolve(filename), 'CP_PROTECTED_ACCEPTANCE_PROFILE_SUBSTITUTED');
   const { value: profile } = readPinnedSuccessorInput(binding.releaseSourceBinding);
-  assert.deepEqual([profile.schemaVersion, profile.id, profile.applicationSource, profile.artifacts?.fallback, profile.operationalAuthorization], [4, CP_PROTECTED_BINDING_ID, ACCEPTANCE_CANDIDATE, CP_PROTECTED_ARTIFACT, false], 'CP_PROTECTED_ACCEPTANCE_PROFILE_CHANGED');
+  assert.deepEqual([profile.schemaVersion, profile.id, profile.applicationSource, profile.artifacts?.fallback, profile.operationalAuthorization], [pins.schemaVersion, pins.id, candidateIdentity(binding)?.source, pins.artifact, false], 'CP_PROTECTED_ACCEPTANCE_PROFILE_CHANGED');
   assert.equal(profile.preparation?.status, 'passed', 'CP_PROTECTED_ACCEPTANCE_PREPARATION_PENDING');
   assert.equal(profile.buildDependencyAudit?.status, 'passed', 'CP_PROTECTED_ACCEPTANCE_BUILD_AUDIT_FAILED');
   assert.equal(binding.buildDependencyAudit.audit.sha256, profile.buildDependencyAudit.audit.sha256, 'CP_PROTECTED_ACCEPTANCE_AUDIT_SUBSTITUTED');
   assert.equal(binding.buildDependencyAudit.sourceChecks.sha256, profile.buildDependencyAudit.sourceChecks.sha256, 'CP_PROTECTED_ACCEPTANCE_AUDIT_SUBSTITUTED');
   validateProtectedBuildDependencyAudit(readPinnedSuccessorInput(binding.buildDependencyAudit.audit).value, readPinnedSuccessorInput(binding.buildDependencyAudit.sourceChecks).value, profile);
+  if (binding.id === BUILD_SECURITY_ACCEPTANCE_ID) {
+    const keys = ['execution', 'beforeAlias', 'afterAlias', 'successor', 'independentReview'];
+    for (const key of keys) assert.equal(binding.compiledOutputEquivalence?.[key]?.sha256, profile.compiledOutputEquivalence?.[key]?.sha256, 'BUILD_SECURITY_ACCEPTANCE_OUTPUT_SUBSTITUTED');
+    validateBuildSecurityOutputEquivalence(...keys.map(key => readPinnedSuccessorInput(binding.compiledOutputEquivalence[key]).value), profile);
+  }
   return true;
 }
 export function validateAcceptanceSuccessor(input, { at = Date.now() } = {}) {
   const { value: binding } = readPinnedSuccessorInput(input);
   assertAcceptanceSuccessorIdentity(binding, at);
-  if (binding.id === CP_PROTECTED_ACCEPTANCE_ID) assertProtectedAcceptanceBuildSecurity(binding);
+  if (isProtectedAcceptance(binding.id)) assertProtectedAcceptanceBuildSecurity(binding);
   // Failed exact fallback security evidence is fatal before Git or Docker work.
   assertFreshSecurityScan(binding.securityScans.fallback, binding.fallback, binding, at);
   assertOutside(binding.candidate.sourceDirectory, input.file); assertOutside(binding.harness.directory, input.file);
@@ -302,15 +321,15 @@ export function validateAcceptanceSuccessor(input, { at = Date.now() } = {}) {
   assert.equal(native.screenshotProcessing, true); assert.equal(native.privateFilesAndPdf, true);
   assertNativeSuccessorPreparation(native, binding);
   const recovery = assertPreparedEvidence(binding.ordinaryRecovery, binding, 'candidate_fallback_candidate_ordinary_recovery');
-  assert.deepEqual(recovery.sources, [ACCEPTANCE_CANDIDATE, binding.fallback.source, ACCEPTANCE_CANDIDATE]);
+  assert.deepEqual(recovery.sources, [binding.candidate.source, binding.fallback.source, binding.candidate.source]);
   assert.equal(recovery.fallbackImage, binding.fallback.image); assert.equal(recovery.fallbackConfig, binding.fallback.config); assert.equal(recovery.fallbackPlatform, binding.fallback.platform);
   assert.deepEqual(recovery.migrationPhases, [43, 53]); assert.deepEqual(recovery.admissionPhases, [121, 125, 126, 127, 128, 129]);
   assert.equal(recovery.retainedCompletedMigrations, 53); assert.equal(recovery.namedSqlConnectionsAfterCleanup, 0);
   for (const key of ['restrictedRole', 'crossSchool', 'resetScope', 'capabilityEquality', 'privateChatFloors', 'focusCleanup', 'screenshotFunctionPermissions', 'privateMessageExpiryAndHistory']) assert.equal(recovery[key], true);
   assertOrdinarySuccessorRecovery(recovery, binding);
-  if (binding.id === CP_PROTECTED_ACCEPTANCE_ID) {
+  if (isProtectedAcceptance(binding.id)) {
     const protection = readPinnedSuccessorInput(binding.credentialBoundaryReview).value;
-    assert.equal(protection.releaseBindingId, CP_PROTECTED_BINDING_ID); assert.equal(protection.source, CP_PROTECTED_SOURCE); assert.equal(protection.applicationImage, binding.fallback.image);
+    assert.equal(protection.releaseBindingId, protectedAcceptancePins(binding.id).id); assert.equal(protection.source, protectedAcceptancePins(binding.id).source); assert.equal(protection.applicationImage, binding.fallback.image);
     assert.equal(protection.passed, true); assert.equal(protection.syntheticFixturesOnly, true); assert.equal(protection.providerRequests, 0);
     assert.equal(protection.operationalAuthorization, false); assert.equal(protection.retainedOnRollback, true); withinEvidence(protection.completedAt, binding, at);
     assert.ok(Array.isArray(protection.inputs) && protection.inputs.length > 0); for (const record of protection.inputs) readPinnedSuccessorBytes(record);
@@ -359,6 +378,13 @@ export function assertSuccessorReceiptBinding(metrics) {
   assert.equal(metrics.helperBindingSha256, helper.binding.sha256); assert.equal(metrics.hostHarnessSource, binding.harness.source);
   assert.equal(metrics.hostHarnessSourceUnchanged, true); assert.equal(metrics.harnessSource, binding.harness.source);
   assert.equal(metrics.observedFlagsSha256, binding.environment.observedFlagsSha256);
+  if (binding.id === BUILD_SECURITY_ACCEPTANCE_ID) {
+    const profile = Object.values(PROFILES).find(value => value.name === metrics.profile); assert.ok(profile);
+    const capture = readPinnedSuccessorInput(binding.environment.capture).value;
+    const remapped = remapObservedEnvironment(capture, binding.environment.scopeBinding, binding.schoolLocalDate);
+    const compatibility = baselineFixedEnvironment({environment:remapped.environment,source:metrics.source,arm:metrics.arm,profile,successorId:binding.id});
+    assert.deepEqual(metrics.baselineEnvironmentCompatibility ?? null, compatibility.proof, 'BASELINE_COMPATIBILITY_RECEIPT_CHANGED');
+  }
   assert.ok(Date.parse(metrics.finishedAt) < Date.parse(binding.validity.expiresAt));
   return result;
 }

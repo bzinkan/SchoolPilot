@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CP_PROTECTED_BINDING_ID, CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_SOURCE_REVIEW } from './release-source-binding.mjs';
+import { CP_PROTECTED_BINDING_ID, CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_SOURCE_REVIEW, BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_APPLICATION_SOURCE, BUILD_SECURITY_ANCHOR_ARTIFACT, BUILD_SECURITY_ARTIFACT } from './release-source-binding.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const INDEX = 'docs/releases/release297/current-release.json';
@@ -31,6 +31,72 @@ function metadataOnly(value) {
     metadataOnly(nested);
   }
 }
+function validateBuildSecurityIndex(index, root) {
+  const receipt = id => JSON.parse(readFileSync(path.join(root, index.evidence[id].path), 'utf8'));
+  const observation = receipt('buildSecurityCurrentObservation'), previous = receipt('buildSecurityPreviousIndex'), binding = receipt('buildSecurityBinding');
+  metadataOnly(observation);
+  assert.ok(stamp(observation.observedAtUtc)&&Date.parse(observation.observedAtUtc)<=Date.parse(index.observedAtUtc),'BUILD_SECURITY_OBSERVATION_TIME_REQUIRED');
+  assert.ok(!previous.evidence.buildSecurityCurrentObservation, 'HISTORICAL_INDEX_MUST_NOT_RECURSE');
+  validateIndex(previous, root);
+  assert.deepEqual([observation.schemaVersion, observation.kind, observation.applicationSource, observation.releaseBindingId, observation.releaseReady, observation.operationalAuthorization, observation.productionDeploymentExecuted], [1, 'release297_build_security_current_observation', BUILD_SECURITY_APPLICATION_SOURCE, BUILD_SECURITY_BINDING_ID, false, false, false], 'BUILD_SECURITY_CURRENT_OBSERVATION_INVALID');
+  assert.deepEqual([observation.humanApprovalAsserted, observation.directUserRequest], [false, 'fix this and deploy'], 'DIRECT_USER_REQUEST_PROVENANCE_REQUIRED');
+  assert.deepEqual(index.authorization, {merge:true,productionDeployment:true,registryPublication:true,inactiveRegistration:true,storeSubmission:false,runtimeActivation:false,githubSettings:false}, 'BUILD_SECURITY_AUTHORIZATION_SCOPE_CHANGED');
+  assert.deepEqual(observation.authorization, index.authorization, 'BUILD_SECURITY_REQUEST_SCOPE_CHANGED');
+  assert.deepEqual([index.sources.schoolpilot.remoteMainObserved,index.sources.schoolpilot.frozenApplicationReference], [observation.mainSource, BUILD_SECURITY_APPLICATION_SOURCE], 'BUILD_SECURITY_CURRENT_SOURCE_CHANGED');
+  assert.deepEqual(index.sources.classpilot, previous.sources.classpilot, 'EXTENSION_SOURCE_CHANGED');
+  assert.deepEqual(binding.artifacts, {'serving-anchor':BUILD_SECURITY_ANCHOR_ARTIFACT,fallback:BUILD_SECURITY_ARTIFACT}, 'BUILD_SECURITY_CURRENT_ARTIFACT_CHANGED');
+  assert.deepEqual([binding.schemaVersion,binding.id,binding.applicationSource], [5,BUILD_SECURITY_BINDING_ID,BUILD_SECURITY_APPLICATION_SOURCE], 'BUILD_SECURITY_CURRENT_BINDING_CHANGED');
+  assert.deepEqual(observation.artifactPair,binding.artifacts,'BUILD_SECURITY_OBSERVED_ARTIFACT_CHANGED');
+  assert.deepEqual(observation.inventory,binding.inventory,'BUILD_SECURITY_OBSERVED_INPUTS_CHANGED');
+  assert.deepEqual(observation.frontendInventory,binding.frontendInventory,'BUILD_SECURITY_OBSERVED_FRONTEND_CHANGED');
+  assert.deepEqual([observation.preparationStatus,observation.selectionStatus,observation.originalCampaignStatuses],[binding.preparation.status,binding.successorSelection.status,Object.fromEntries(['currentSchoolAcceptance','classroomAcceptance','normalLoadAcceptance','headroomAcceptance'].map(key=>[key,binding.evidence[key].status]))],'BUILD_SECURITY_OBSERVED_GATE_STATE_CHANGED');
+  if (observation.mainSource !== BUILD_SECURITY_APPLICATION_SOURCE) {
+    assert.deepEqual(observation.mainEquivalence, {status:'passed',applicationReference:BUILD_SECURITY_APPLICATION_SOURCE,mainSource:observation.mainSource,backendInventory:binding.inventory,frontendInventory:binding.frontendInventory}, 'BUILD_SECURITY_RESULTING_MAIN_EQUIVALENCE_REQUIRED');
+  }
+  const ci = observation.currentMainCi;
+  assert.deepEqual([ci.source,ci.branch,ci.event],[observation.mainSource,'main','push'],'BUILD_SECURITY_MAIN_CI_REQUIRED');
+  assert.ok(Array.isArray(ci.checks)&&ci.checks.length>0&&ci.checks.length<=21&&new Set(ci.checks.map(row=>row.name)).size===ci.checks.length&&ci.checks.every(row=>row.headSha===ci.source),'BUILD_SECURITY_MAIN_CHECK_SET_CHANGED');
+  assert.deepEqual([ci.successes,ci.expectedSkips],[ci.checks.filter(row=>row.conclusion==='success').length,ci.checks.filter(row=>row.conclusion==='skipped').length],'BUILD_SECURITY_MAIN_CHECK_COUNTS_CHANGED');
+  for (const check of ci.checks) {
+    assert.ok(['queued','in_progress','completed'].includes(check.status),'BUILD_SECURITY_MAIN_CHECK_STATUS_INVALID');
+    assert.ok(check.status==='completed'?['success','skipped','neutral','failure','cancelled','timed_out','action_required','stale','startup_failure'].includes(check.conclusion):check.conclusion===null||check.conclusion==='','BUILD_SECURITY_MAIN_CHECK_CONCLUSION_INVALID');
+    const match=check.url.match(/^https:\/\/github\.com\/bzinkan\/SchoolPilot\/actions\/runs\/(\d+)\/job\/\d+$/); assert.ok(match,'BUILD_SECURITY_MAIN_CHECK_URL_REQUIRED');
+    const workflow=ci.workflowRuns[match[1]];assert.ok(workflow,'BUILD_SECURITY_MAIN_WORKFLOW_REQUIRED');
+    assert.deepEqual([workflow.id,workflow.event,workflow.head_branch,workflow.head_sha,workflow.html_url],[Number(match[1]),check.name==='Build, scan, sign, and publish once'?'workflow_run':'push','main',ci.source,`https://github.com/bzinkan/SchoolPilot/actions/runs/${match[1]}`],'BUILD_SECURITY_MAIN_WORKFLOW_CHANGED');
+    assert.ok(['queued','in_progress','completed'].includes(workflow.status),'BUILD_SECURITY_MAIN_WORKFLOW_STATUS_INVALID');
+    assert.ok(workflow.status==='completed'?['success','skipped','neutral','failure','cancelled','timed_out','action_required','stale','startup_failure'].includes(workflow.conclusion):workflow.conclusion===null||workflow.conclusion==='','BUILD_SECURITY_MAIN_WORKFLOW_CONCLUSION_INVALID');
+    if(check.conclusion==='skipped')assert.ok(['Detect changed paths','Build, scan, sign, and publish once'].includes(check.name),'BUILD_SECURITY_UNKNOWN_SKIP');
+  }
+  const failed=ci.checks.some(check=>check.status==='completed'&&!['success','skipped'].includes(check.conclusion))||Object.values(ci.workflowRuns).some(run=>run.status==='completed'&&!['success','skipped'].includes(run.conclusion));
+  const passed=!failed&&ci.checks.length===21&&ci.successes===19&&ci.expectedSkips===2&&[...REQUIRED_MAIN_CHECKS,'Scan Docker image'].every(name=>ci.checks.some(check=>check.name===name&&check.status==='completed'&&check.conclusion==='success'))&&ci.checks.every(check=>check.status==='completed')&&Object.values(ci.workflowRuns).every(run=>run.status==='completed'&&['success','skipped'].includes(run.conclusion));
+  assert.equal(ci.status,failed?'failed':passed?'passed':'pending','BUILD_SECURITY_MAIN_CI_OUTCOME_CHANGED');
+  for(const [id,entry]of Object.entries(previous.evidence))assert.deepEqual(index.evidence[id],entry,'HISTORICAL_EVIDENCE_CHANGED');
+  for(const group of ['artifacts','gates'])for(const prior of previous[group]){
+    const current=index[group].find(row=>row.id===prior.id);assert.ok(current,'HISTORICAL_RECORD_REMOVED');
+    assert.deepEqual([current.status,current.sourceSha,current.evidence],[prior.status,prior.sourceSha,prior.evidence],'HISTORICAL_OUTCOME_RELABELLED');
+    if(group==='artifacts')assert.deepEqual([Object.hasOwn(current,'identity'),current.identity],[Object.hasOwn(prior,'identity'),prior.identity],'HISTORICAL_ARTIFACT_IDENTITY_CHANGED');
+  }
+  for(const prior of previous.inclusionMatrix){const current=index.inclusionMatrix.find(row=>row.repository===prior.repository&&row.number===prior.number);assert.ok(current,'HISTORICAL_MERGE_REMOVED');assert.deepEqual({...current,includedInSource:prior.includedInSource},prior,'HISTORICAL_MERGE_CHANGED');}
+  for(const pr of observation.addedPullRequests){const row=index.inclusionMatrix.find(row=>row.repository==='SchoolPilot'&&row.number===pr.number);assert.ok(row,'CURRENT_MERGE_REQUIRED');assert.deepEqual([row.headSha,row.mergeSha,row.mergedAtUtc,row.state],[pr.headRefOid,pr.mergeCommit.oid,pr.mergedAt,'MERGED'],'CURRENT_MERGE_IDENTITY_CHANGED');}
+  for(const [id,role]of [['backend-current-a3','serving-anchor'],['fallback-build-security-f3','fallback']]){const row=index.artifacts.find(row=>row.id===id),pins=binding.artifacts[role];assert.ok(row,'CURRENT_ARTIFACT_REQUIRED');assert.deepEqual([row.status,row.sourceSha,row.identity],['passed',pins.source,{indexDigest:pins.localIndex,platformManifestDigest:pins.platform,configDigest:pins.config,archiveSha256:pins.archiveSha256}],'CURRENT_ARTIFACT_ROLE_CHANGED');}
+  const frontend=index.artifacts.find(row=>row.id==='frontend-current-a3');assert.ok(frontend,'CURRENT_FRONTEND_REQUIRED');assert.equal(frontend.sourceSha,BUILD_SECURITY_APPLICATION_SOURCE,'CURRENT_FRONTEND_SOURCE_CHANGED');
+  if(observation.frontend){assert.deepEqual([observation.frontend.source,observation.frontend.buildPassed,frontend.status,frontend.identity],[BUILD_SECURITY_APPLICATION_SOURCE,true,'passed',{archiveSha256:observation.frontend.archiveSha256,fileInventorySha256:observation.frontend.fileInventorySha256}],'CURRENT_FRONTEND_ARTIFACT_CHANGED');}else assert.equal(frontend.status,'pending','CURRENT_FRONTEND_EVIDENCE_REQUIRED');
+  assert.ok(index.inclusionMatrix.some(row=>row.repository==='SchoolPilot'&&row.number===627&&row.mergeSha==='55f91b620d2d48de5ed164a72250ec133450bc0f'),'PR627_INVALIDATION_REQUIRED');
+  assert.ok(index.inclusionMatrix.some(row=>row.repository==='SchoolPilot'&&row.number===628&&row.mergeSha===BUILD_SECURITY_APPLICATION_SOURCE),'PR628_INVALIDATION_REQUIRED');
+  const gate=(id,status,source=BUILD_SECURITY_APPLICATION_SOURCE)=>{const row=index.gates.find(value=>value.id===id);assert.ok(row,'BUILD_SECURITY_GATE_REQUIRED');assert.deepEqual([row.status,row.sourceSha],[status,source],'BUILD_SECURITY_GATE_CHANGED');};
+  gate('build-security-main-ci',ci.status,observation.mainSource);gate('build-security-candidate-freeze','passed');
+  gate('build-security-source-applicability',binding.sourceApplicability.status==='approved'?'passed':'pending');
+  gate('build-security-full-audit',binding.buildDependencyAudit.status,BUILD_SECURITY_ARTIFACT.source);
+  gate('build-security-output-equivalence',binding.compiledOutputEquivalence.status,BUILD_SECURITY_ARTIFACT.source);
+  for(const [key,value]of Object.entries(binding.preparation.evidence))gate('build-security-'+key,value.status, key==='ordinaryRecovery'||key==='restrictedRestoration'?BUILD_SECURITY_APPLICATION_SOURCE:BUILD_SECURITY_ARTIFACT.source);
+  gate('build-security-preparation',binding.preparation.status);gate('build-security-selection',binding.successorSelection.status,BUILD_SECURITY_ARTIFACT.source);
+  for(const key of ['currentSchoolAcceptance','classroomAcceptance','normalLoadAcceptance','headroomAcceptance'])gate('build-security-'+key,binding.evidence[key].status==='unknown'?'pending':binding.evidence[key].status);
+  for(const name of ['CLASSPILOT_USAGE_ROLLUP_MODE','CLASSPILOT_DIGITAL_USAGE_MODE'])assert.deepEqual([index.usageModes[name].observedValue,index.usageModes[name].status],['off','passed'],'CURRENT_NEW_USAGE_SETTING_CHANGED');
+  assert.deepEqual([index.usageModes.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE.observedValue,observation.dailyRollup.setting,observation.dailyRollup.effectiveAtCurrentServingSource],['shadow','omitted','shadow'],'CURRENT_DAILY_SETTING_CHANGED');
+  assert.ok(observation.rollbackFrontendApplicability.laterManualRollbackAfterMatchedFrontendRequiresCompatibleFrontend&&observation.rollbackFrontendApplicability.automaticBackendRecoveryBeforeMatchedFrontend,'ROLLBACK_FRONTEND_APPLICABILITY_REQUIRED');
+  assert.deepEqual([index.stages.find(row=>row.id==='deployment').status,index.stages.find(row=>row.id==='activation').status,index.stages.find(row=>row.id==='live').status],['pending','pending','pending'],'PREPARATION_IS_NOT_DEPLOYMENT');
+  return index;
+}
 export function validateIndex(index, root = ROOT) {
   const successorReceiptApplicability = index.evidence?.candidateRefresh ? 'historical' : 'preparation_only';
   sameKeys(index, ['schemaVersion', 'kind', 'releaseId', 'observedAtUtc', 'audience', 'authorization', 'sources', 'usageModes', 'compatibility', 'artifacts', 'stages', 'gates', 'inclusionMatrix', 'evidence']);
@@ -42,7 +108,7 @@ export function validateIndex(index, root = ROOT) {
   sameKeys(index.authorization, ['merge', 'productionDeployment', 'registryPublication', 'inactiveRegistration', 'storeSubmission', 'runtimeActivation', 'githubSettings']);
   // A dated direct-user observation may record an existing deployment request.
   // Recording it never supplies controller authority, execution, or readiness.
-  assert.ok(Object.entries(index.authorization).every(([key, value]) => value === false || (key === 'productionDeployment' && value === true && index.evidence.candidateRefresh)), 'INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION');
+  assert.ok(Object.entries(index.authorization).every(([key, value]) => value === false || (key === 'productionDeployment' && value === true && index.evidence.candidateRefresh) || (index.evidence.buildSecurityCurrentObservation && ['merge','productionDeployment','registryPublication','inactiveRegistration'].includes(key) && value===true)), 'INDEX_IS_NOT_OPERATIONAL_AUTHORIZATION');
   metadataOnly(index);
   sameKeys(index.sources, ['schoolpilot', 'classpilot']);
   for (const source of Object.values(index.sources)) {
@@ -91,7 +157,7 @@ export function validateIndex(index, root = ROOT) {
           assert.match(record.identity.zipSha256, hash, 'ZIP_HASH_INVALID');
           assert.match(record.identity.gitTree, sha, 'EXTENSION_TREE_INVALID');
         } else {
-          const keys = record.id === 'frontend-historical' ? ['archiveSha256'] : ['frontend-preparation', 'frontend-successor'].includes(record.id) ? ['archiveSha256', 'fileInventorySha256'] : record.id === 'backend-preparation' ? ['localImageId', 'configDigest', 'archiveSha256', 'reportSha256'] : ['indexDigest', 'platformManifestDigest', 'configDigest', 'archiveSha256'];
+          const keys = record.id === 'frontend-historical' ? ['archiveSha256'] : ['frontend-preparation', 'frontend-successor', 'frontend-current-a2', 'frontend-current-a3'].includes(record.id) ? ['archiveSha256', 'fileInventorySha256'] : record.id === 'backend-preparation' ? ['localImageId', 'configDigest', 'archiveSha256', 'reportSha256'] : ['indexDigest', 'platformManifestDigest', 'configDigest', 'archiveSha256'];
           sameKeys(record.identity, keys);
           for (const [key, value] of Object.entries(record.identity)) assert.match(value, ['archiveSha256', 'fileInventorySha256', 'reportSha256'].includes(key) ? hash : /^sha256:[a-f0-9]{64}$/, 'ARTIFACT_IDENTITY_INVALID');
         }
@@ -117,6 +183,7 @@ export function validateIndex(index, root = ROOT) {
     // blob bytes, preserving explicit CRLF artifact differences elsewhere.
     assert.equal(digest(readFileSync(filename, 'utf8').replaceAll('\r\n', '\n')), entry.gitBlobSha256, 'EVIDENCE_BYTES_CHANGED');
   }
+  if(index.evidence.buildSecurityCurrentObservation)return validateBuildSecurityIndex(index,root);
   const receipt = id => JSON.parse(readFileSync(path.join(root, index.evidence[id].path), 'utf8'));
   const reconciliation = receipt('reconciliation');
   const resultingMain = index.evidence.resultingMainObservation ? receipt('resultingMainObservation') : null;
@@ -566,7 +633,20 @@ export function validateIndex(index, root = ROOT) {
 }
 const cell = value => String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
 const short = value => value === null ? 'pending' : `\`${value.slice(0, 8)}\``;
+function renderBuildSecurityStatus(index) {
+  const lines=[BEGIN,'## Current release status','',`Observed **${index.observedAtUtc}**. The [current-release index](releases/release297/current-release.json) contains exact identities, evidence and historical outcomes. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', `**DeSales: 133 clients. A3 is ${short(index.sources.schoolpilot.frozenApplicationReference)}; F3 retains CP-AI protection and corrects the failed F2 build dependency chain.** Preparation, exact selection and original classroom/capacity acceptance are separate gates. ClassPilot 2.9.7 is unchanged and needs no new Store upload.`, '', 'The user authorized the necessary correction merge, exact publication, compatible inactive registration and backend/frontend deployment by requesting “fix this and deploy.” Execution remains gated by exact evidence, fresh state and reviewed operation windows. Activation, Store submission and GitHub settings remain separately unauthorized; this index is not a controller authorization receipt.', '', '| Source | Current main observed | Frozen application |','|---|---|---|'];
+  for(const[name,source]of Object.entries(index.sources))lines.push(`| ${name} | ${short(source.remoteMainObserved)} | ${short(source.frozenApplicationReference)} |`);
+  lines.push('', 'PR #628 changed five backend and frontend inputs after the A2 freeze. Exact A2/25964241 artifacts and preparation are historical; fresh A3 evidence is required. PR #627 remains included. C578 and F1 scans and F2’s six-High full audit remain failed historical records. See the [F3 review packet](RELEASE_297_BUILD_SECURITY_FALLBACK.md).', '', '| Stage | Status | Next action |','|---|---|---|');
+  for(const row of index.stages)lines.push(`| ${cell(row.label)} | ${row.status} | ${cell(row.nextAction)} |`);
+  lines.push('', '| Usage setting | Required | Observed |','|---|---|---|');for(const[name,row]of Object.entries(index.usageModes))lines.push(`| \`${name}\` | ${row.requiredValue} | ${row.observedValue??'unknown'} |`);
+  lines.push('', 'The daily setting is independently omitted and defaults to shadow; both new modes off does not establish zero rollup workload.', '', '| Current gate | Status | Evidence and next action |','|---|---|---|');
+  for(const row of index.gates.filter(row=>row.id.startsWith('build-security-')||['managed','store-live-version','store-unchanged-upload','store','live-acceptance','production-fresh','repository-protections','cp-ai-001-deployment','cp-ai-001-live'].includes(row.id))){const refs=row.evidence.map(id=>`[${id}](${index.evidence[id].path.replace(/^docs\//,'')})`).join(', ');lines.push(`| ${cell(row.label)} | ${row.status} | ${refs}${refs?'. ':''}${cell(row.nextAction)} |`);}
+  lines.push('', '### Candidate artifacts', '', '| Artifact | Status | Source | Exact identity and applicability |','|---|---|---|');for(const row of index.artifacts.filter(row=>['backend-current-a3','frontend-current-a3','fallback-build-security-f3','extension'].includes(row.id)))lines.push(`| ${cell(row.label)} | ${row.status} | ${short(row.sourceSha)} | ${cell(row.identity?JSON.stringify(row.identity):'Identity pending')} ${cell(row.rationale)} |`);
+  lines.push('', '### Inclusion and evidence invalidation', '', '| Merge | Change | Affected inputs | Required reruns |','|---|---|---|');for(const row of index.inclusionMatrix)lines.push(`| [${row.repository} #${row.number}](https://github.com/bzinkan/${row.repository}/pull/${row.number}) ${short(row.mergeSha)} | ${cell(row.title)} | ${cell(row.affectedArtifacts.join(', '))} | ${cell(row.requiredReruns)} |`);
+  lines.push('', 'Ordinary recovery retains **43→53** migrations and **121→125→126→127→128→129** admission. The 54-entry rehearsal stays historical. Actual current production already admits 129 with reviewed classroom capability modes on; v5 prepares inactive 129 definitions while preserving their exact environment. Automatic backend recovery precedes matched frontend adoption. A later manual F3 rollback after matched frontend adoption requires a separately reviewed compatible frontend and cursor reset.', '', END);return lines.join('\n');
+}
 export function renderStatus(index, root = ROOT) {
+  if(index.evidence.buildSecurityCurrentObservation)return renderBuildSecurityStatus(index);
   const refreshed = index.evidence.candidateRefresh;
   const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', refreshed ? '**DeSales: 133 clients; both new Usage modes must be off. The exact application/extension sources are frozen for validation; artifact and runtime acceptance remain separately gated. This record is not a controller authorization receipt.**' : '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
   if (index.gates.find(entry => entry.id === 'fallback-scan-current')?.status === 'failed') lines.splice(7, 0, '**Release blocker: the exact retained C578 fallback freshly fails its security scan. Its historical passing scan does not clear the failure; substituting another fallback is not authorized.**', '');

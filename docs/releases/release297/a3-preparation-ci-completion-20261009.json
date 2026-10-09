@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "exact_A3_artifact_preparation_ci_completion",
+  "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "observedAtUtc": "2026-10-09T15:16:41.626Z",
+  "passed": true,
+  "status": "passed",
+  "previousImmutablePreparationObservation": "docs/releases/release297/a3-artifact-preparation-20261009.json",
+  "exactMainCi": {
+    "status": "passed",
+    "workflowAttempt": 2,
+    "checks": 21,
+    "successes": 19,
+    "expectedSkips": 2,
+    "rawCheckRuns": 23,
+    "supersededSkippedPublicationChecks": [
+      {
+        "id": 113881929711,
+        "name": "Build, scan, sign, and publish once",
+        "conclusion": "skipped"
+      },
+      {
+        "id": 113881115763,
+        "name": "Build, scan, sign, and publish once",
+        "conclusion": "skipped"
+      }
+    ]
+  },
+  "retainedEvidence": {
+    "storage": "private",
+    "path": "pair-refresh-A3/candidate-preparation/finalCiSupplement.json",
+    "sha256": "c2fb60d6329562a08bfa5ff6cfc36ba523c66662d18673213a3d7ec55d18e2c0"
+  },
+  "limitations": [
+    "Original pending preparation snapshot and initial Android dependency-resolution failure retain their exact original states and timestamps.",
+    "The same exact A3 artifacts remain tested; no rebuild or evidence relabeling occurred.",
+    "Original candidate campaigns, exact F3 selection, resulting tooling-main CI and operational preflights remain pending."
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false
+}

@@ -9,7 +9,9 @@ import { BEGIN, END, CHECKLIST, INDEX, ROOT, validateIndex, renderStatus, update
 import { SUCCESSOR_BINDING_ID, validateBindingProfile, validateSuccessorPreparation } from '../scripts/release-source-binding.mjs';
 import { FALLBACK } from '../scripts/register-compatible-fallback-inactive.mjs';
 
-const index = () => JSON.parse(readFileSync(path.join(ROOT, INDEX), 'utf8'));
+// Existing regressions keep their immutable dated index/receipt scope when the
+// active release advances; the v5 current overlay has separate regressions.
+const index = () => JSON.parse(readFileSync(path.join(ROOT, 'docs/releases/release297/history/current-release-0fc57be1-20261009.json'), 'utf8'));
 const historicalIndex = () => {
   // Reconstruct the historical validation overlay from retained receipts rather
   // than requiring an ancestor Git object in a shallow CI checkout.

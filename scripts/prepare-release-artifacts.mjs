@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Artifact preparation only. This module never launches tasks or changes services.
 import assert from 'node:assert/strict';
-import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation } from './release-source-binding.mjs';
+import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation, BUILD_SECURITY_OPERATION_DEPENDENCIES } from './release-source-binding.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { archiveConfigDigest, inspectImage, runCommand, scanCounts, SCANNER, validateRegistryManifest, verifyPublishedImage } from './verify-legacy-deploy-image.mjs';
-import { anchor128Stages, ecsRequestTags, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse, retainSuccessorRegistration } from './register-compatible-fallback-inactive.mjs';
+import { anchor128Stages, inventoryFor, ecsRequestTags, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse, retainSuccessorRegistration } from './register-compatible-fallback-inactive.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REGISTRY = Object.freeze({ account: '135775632425', region: 'us-east-1', repository: 'schoolpilot-production-api' });
@@ -37,7 +37,7 @@ function pinned(record) {
 function writeNew(filename, value) { writeFileSync(filename, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 }); }
 function record(filename) { return { path: filename, sha256: hash(readFileSync(ordinaryFile(filename))) }; }
 async function fileHash(filename) { ordinaryFile(filename); const value = createHash('sha256'); for await (const chunk of createReadStream(filename)) value.update(chunk); return value.digest('hex'); }
-function helperHashes() { return Object.fromEntries(helpers.map(file => [file, hash(readFileSync(path.join(root, file)))])); }
+function helperHashes(schemaVersion) { return Object.fromEntries([...helpers, ...(schemaVersion === 5 ? BUILD_SECURITY_OPERATION_DEPENDENCIES : [])].map(file => [file, hash(readFileSync(path.join(root, file)))])); }
 async function checked(run, executable, args, options = {}) {
   const result = await run(executable, args, options); assert.ok(result.code === 0, 'BOUND_COMMAND_FAILED'); return result.stdout;
 }
@@ -90,13 +90,13 @@ async function privatePermissions(directory, inputs, run) {
   await checked(run, 'pwsh', ['-NoProfile', '-File', bridge, '-Helper', helper, '-Directory', directory, '-Repository', root, '-Inputs', path.join(directory, 'private-inputs.json')]);
 }
 async function newPlan(input, operation, run) {
-  assert.ok([1, 2, 3, 4].includes(input.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
+  assert.ok([1, 2, 3, 4, 5].includes(input.schemaVersion) && path.isAbsolute(input.outputDirectory) && !existsSync(input.outputDirectory), 'FRESH_PLAN_DIRECTORY_REQUIRED');
   for (const directory of [root, input.sourceDirectory]) { const relative = path.relative(directory, input.outputDirectory); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PLAN_MUST_BE_OUTSIDE_SOURCE'); }
   const releaseBinding = await sourceContract(input, run);
   const toolSource = (await checked(run, 'git', ['-C', root, 'rev-parse', 'HEAD'])).trim(); assert.match(toolSource, sha, 'TOOL_SOURCE_REQUIRED'); equal((await checked(run, 'git', ['-C', root, 'status', '--porcelain'])).trim(), '', 'TOOL_DIRTY');
   mkdirSync(input.outputDirectory, { recursive: false, mode: 0o700 });
   await privatePermissions(input.outputDirectory, Object.values(input).filter(value => value?.path && value?.sha256).map(value => value.path), run);
-  return { schemaVersion: input.schemaVersion, ...(releaseBinding ? { releaseBinding } : {}), kind: 'release-artifact-preparation', operation, input, toolSource, toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes: helperHashes(), cloudMutationsDuringPlan: 0, servicesMayChange: false, tasksMayLaunch: false, productionDatabaseOperations: 0, signed: false };
+  return { schemaVersion: input.schemaVersion, ...(releaseBinding ? { releaseBinding } : {}), kind: 'release-artifact-preparation', operation, input, toolSource, toolSha256: hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes: helperHashes(input.schemaVersion), cloudMutationsDuringPlan: 0, servicesMayChange: false, tasksMayLaunch: false, productionDatabaseOperations: 0, signed: false };
 }
 export async function planPublication(input, { run = runCommand, verifyScan = validateLocalScan } = {}) {
   const releaseBinding = bindingSchema(input) >= 2 ? await sourceContract(input, run) : undefined;
@@ -115,7 +115,15 @@ export async function planPublication(input, { run = runCommand, verifyScan = va
 }
 function projection(response) { const request = Object.fromEntries(Object.entries(structuredClone(response.taskDefinition)).filter(([key]) => !providerFields.has(key))); const tags = ecsRequestTags(response.tags); if (tags !== undefined) request.tags = tags; return request; }
 export function renderUnused121Pair(sources, live, source, image) {
-  assert.match(source, sha); assert.match(image, digest); const inventory = anchor128Stages()[0];
+  return renderUnusedPair(sources, live, source, image);
+}
+export function renderCurrent129Pair(sources, live, source, image, releaseBinding) {
+  equal(releaseBinding?.schemaVersion, 5, 'CURRENT129_SCHEMA_REQUIRED');
+  bindingSchema({schemaVersion:5,releaseBindingId:releaseBinding.id});
+  return renderUnusedPair(sources, live, source, image, releaseBinding);
+}
+function renderUnusedPair(sources, live, source, image, releaseBinding) {
+  assert.match(source, sha); assert.match(image, digest); const inventory = releaseBinding ? inventoryFor(129) : anchor128Stages()[0];
   assert.ok(live?.services?.length === 2 && (live.failures ?? []).length === 0, 'LIVE_SERVICES_REQUIRED');
   equal(live.services.map(value => value.serviceName).sort(), ['schoolpilot-production-api', 'schoolpilot-production-scheduler-worker'], 'LIVE_SERVICES_INVALID');
   const requests = {};
@@ -123,7 +131,8 @@ export function renderUnused121Pair(sources, live, source, image) {
     const response = sources[role], container = response?.taskDefinition?.containerDefinitions?.find(value => value.name === role);
     const originalSource = container?.environment?.find(value => value.name === 'GIT_SHA')?.value, originalImage = container?.image?.replace(`${uri}@`, '');
     assert.match(originalSource ?? '', sha, 'BASELINE_SOURCE_REQUIRED'); assert.match(originalImage ?? '', digest, 'BASELINE_DIGEST_REQUIRED');
-    validateSourceResponse(response, role, originalSource, originalImage, inventory);
+    validateSourceResponse(response, role, originalSource, originalImage, inventory, releaseBinding);
+    if (releaseBinding) equal([originalSource,originalImage], [releaseBinding.currentRuntime?.source,releaseBinding.currentRuntime?.image], 'CURRENT129_LIVE_IDENTITY_CHANGED');
     const service = live.services.find(value => value.serviceName === `schoolpilot-production-${role === 'api' ? 'api' : 'scheduler-worker'}`);
     equal(service.taskDefinition, response.taskDefinition.taskDefinitionArn, 'SOURCE_IS_NOT_CURRENT_SERVICE');
     assert.ok(service.status === 'ACTIVE' && service.runningCount === service.desiredCount && service.pendingCount === 0 && service.desiredCount >= 1 && service.deployments?.length === 1 && service.deployments[0].status === 'PRIMARY' && service.deployments[0].rolloutState === 'COMPLETED', 'LIVE_SERVICE_NOT_STABLE');
@@ -132,7 +141,7 @@ export function renderUnused121Pair(sources, live, source, image) {
     const restored = structuredClone(request), previous = restored.containerDefinitions.find(value => value.name === role); previous.image = container.image; previous.environment.find(value => value.name === 'GIT_SHA').value = originalSource;
     equal(registrationEnvironmentProjection(restored), registrationEnvironmentProjection(projection(response)), 'UNRELATED_DEFINITION_MUTATION');
     const { tags, ...taskRequest } = request;
-    validateSourceResponse({ taskDefinition: { ...taskRequest, ...Object.fromEntries(Object.entries(response.taskDefinition).filter(([key]) => providerFields.has(key))) }, tags }, role, source, image, inventory);
+    validateSourceResponse({ taskDefinition: { ...taskRequest, ...Object.fromEntries(Object.entries(response.taskDefinition).filter(([key]) => providerFields.has(key))) }, tags }, role, source, image, inventory, releaseBinding);
     requests[role] = request;
   }
   const controls = role => Object.fromEntries(sources[role].taskDefinition.containerDefinitions.find(value => value.name === role).environment.filter(value => value.name.startsWith('CLASSPILOT_CAP_') || ['CLASSPILOT_CAPABILITY_ROLLOUTS_JSON', 'CLASSPILOT_PROTOCOL_V3_ENABLED'].includes(value.name)).map(value => [value.name, value.value]));
@@ -140,6 +149,14 @@ export function renderUnused121Pair(sources, live, source, image) {
   return requests;
 }
 export async function planUnused121(input, { run = runCommand, verifyScan = validateLocalScan } = {}) {
+  assert.notEqual(input.schemaVersion, 5, 'CURRENT129_OPERATION_REQUIRED');
+  return planUnusedAnchor(input, {run,verifyScan});
+}
+export async function planCurrent129Anchor(input, { run = runCommand, verifyScan = validateLocalScan } = {}) {
+  equal(input.schemaVersion,5,'CURRENT129_SCHEMA_REQUIRED'); bindingSchema(input);
+  return planUnusedAnchor(input, {run,verifyScan}, true);
+}
+async function planUnusedAnchor(input, {run,verifyScan}, current129 = false) {
   const releaseBinding = input.schemaVersion >= 2 ? await sourceContract(input, run) : undefined;
   bindingSchema(input);
   equal(input.kind, 'serving-anchor', 'ANCHOR_PUBLICATION_ONLY');
@@ -149,10 +166,10 @@ export async function planUnused121(input, { run = runCommand, verifyScan = vali
   equal([proof.passed, proof.sourceSha, proof.receiptSha256, proof.configDigest, proof.repository, proof.region], [true, boundArtifactSource(releaseBinding) ?? input.source, input.scan.sha256, scan.configDigest, REGISTRY.repository, REGISTRY.region], 'REGISTRY_PROOF_INVALID'); assert.match(proof.digest ?? '', digest);
   if (releaseBinding) assertBoundPublication(publication, releaseBinding, input.source, proof.digest);
   equal(publication.registryDigest, proof.digest, 'PUBLICATION_DIGEST_CHANGED'); validateMainCi(pinned(input.mainCi), input.source);
-  const sources = { api: pinned(input.api), 'scheduler-worker': pinned(input.worker) }, live = pinned(input.liveServices), requests = renderUnused121Pair(sources, live, input.source, proof.digest);
-  const plan = await newPlan(input, 'RegisterUnused121', run); plan.scanCleanupFile = record(path.join(path.dirname(input.scan.path), 'cleanup.json')); plan.registryProof = publication.registryProof; plan.registryDigest = proof.digest; plan.liveServicesSha256 = hash(live.services); plan.generated = {};
+  const sources = { api: pinned(input.api), 'scheduler-worker': pinned(input.worker) }, live = pinned(input.liveServices), requests = current129 ? renderCurrent129Pair(sources, live, input.source, proof.digest,releaseBinding) : renderUnused121Pair(sources, live, input.source, proof.digest);
+  const plan = await newPlan(input, current129 ? 'RegisterInactiveCurrent129' : 'RegisterUnused121', run); plan.scanCleanupFile = record(path.join(path.dirname(input.scan.path), 'cleanup.json')); plan.registryProof = publication.registryProof; plan.registryDigest = proof.digest; plan.liveServicesSha256 = hash(live.services); plan.generated = {};
   for (const role of roles) { const filename = path.join(input.outputDirectory, `${role}.private.json`); writeNew(filename, requests[role]); plan.generated[role] = { ...record(filename), request: requests[role], source: role === 'api' ? input.api : input.worker, sourceArn: sources[role].taskDefinition.taskDefinitionArn }; }
-  const filename = path.join(input.outputDirectory, 'unused121-plan.private.json'); writeNew(filename, plan); return record(filename);
+  const filename = path.join(input.outputDirectory, current129 ? 'current129-plan.private.json' : 'unused121-plan.private.json'); writeNew(filename, plan); return record(filename);
 }
 function authorized(planRecord, plan, authorizationRecord, now) {
   const auth = pinned(authorizationRecord); assert.ok(auth.schemaVersion === 1 && auth.authorized === true && auth.operation === plan.operation && auth.planSha256 === planRecord.sha256, 'EXACT_AUTHORIZATION_REQUIRED');
@@ -163,7 +180,7 @@ function authorized(planRecord, plan, authorizationRecord, now) {
   const inWindow = () => assert.ok(now() >= start && now() < end, 'WINDOW_CLOSED'); inWindow(); return { inWindow, remaining: () => Math.floor(end - now()) };
 }
 async function replayPlan(planRecord, operation, authorizationRecord, { run, now }) {
-  const plan = pinned(planRecord); equal([plan.kind, plan.operation, plan.toolSha256, plan.helperHashes], ['release-artifact-preparation', operation, hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes()], 'PLAN_OR_TOOL_CHANGED');
+  const plan = pinned(planRecord); equal([plan.kind, plan.operation, plan.toolSha256, plan.helperHashes], ['release-artifact-preparation', operation, hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes(plan.schemaVersion)], 'PLAN_OR_TOOL_CHANGED');
   equal([plan.schemaVersion, plan.cloudMutationsDuringPlan, plan.servicesMayChange, plan.tasksMayLaunch, plan.productionDatabaseOperations, plan.signed], [bindingSchema(plan.input), 0, false, false, 0, false], 'PLAN_SCOPE_CHANGED');
   if (operation === 'PublishImage') equal(plan.tags, [plan.input.source, plan.input.source.slice(0, 12)], 'EXACT_SOURCE_TAGS_REQUIRED');
   else { equal(plan.input.kind, 'serving-anchor', 'ANCHOR_PUBLICATION_ONLY'); equal(Object.keys(plan.generated).sort(), [...roles].sort(), 'EXACT_PAIR_REQUIRED'); }
@@ -172,7 +189,7 @@ async function replayPlan(planRecord, operation, authorizationRecord, { run, now
   for (const value of Object.values(plan.input)) if (value?.path && value?.sha256) pinned(value);
   pinned(plan.scanCleanupFile);
   if (plan.releaseBinding) assertBoundScan(pinned(plan.input.scan), plan.releaseBinding);
-  if (plan.releaseBinding && operation === 'RegisterUnused121') assertBoundPublication(pinned(plan.input.publication), plan.releaseBinding, plan.input.source, plan.registryDigest);
+  if (plan.releaseBinding && ['RegisterUnused121','RegisterInactiveCurrent129'].includes(operation)) assertBoundPublication(pinned(plan.input.publication), plan.releaseBinding, plan.input.source, plan.registryDigest);
   window.inWindow(); return { plan, window };
 }
 export function validatePublicationRepository(repository) {
@@ -225,7 +242,7 @@ async function finalSource(plan, run) {
   assertBindingReplay(plan.input, plan.releaseBinding, await sourceContract(plan.input, run));
   equal((await checked(run, 'git', ['-C', root, 'rev-parse', 'HEAD'])).trim(), plan.toolSource, 'TOOL_SOURCE_MOVED');
   equal((await checked(run, 'git', ['-C', root, 'status', '--porcelain'])).trim(), '', 'TOOL_DIRTY');
-  equal([hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes()], [plan.toolSha256, plan.helperHashes], 'TOOL_CHANGED_DURING_OPERATION'); pinned(plan.scanCleanupFile);
+  equal([hash(readFileSync(fileURLToPath(import.meta.url))), helperHashes(plan.schemaVersion)], [plan.toolSha256, plan.helperHashes], 'TOOL_CHANGED_DURING_OPERATION'); pinned(plan.scanCleanupFile);
 }
 function receiptWriter(directory, name, initial) {
   const filename = path.join(directory, name); assert.ok(!existsSync(filename), 'PLAN_ALREADY_USED'); writeNew(filename, initial);
@@ -286,7 +303,16 @@ export async function publishImage(planRecord, authorizationRecord, { run = runC
   } catch { receipt.value.status = 'failed_publication_retained'; receipt.value.errorCode = 'ARTIFACT_PUBLICATION_FAILED'; receipt.save(); throw new Error('ARTIFACT_PUBLICATION_FAILED'); }
 }
 export async function registerUnused121(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyRegistry = validateRegistryManifest, verifyScan = validateLocalScan } = {}) {
-  const { plan, window } = await replayPlan(planRecord, 'RegisterUnused121', authorizationRecord, { run, now });
+  return registerUnusedAnchor(planRecord,authorizationRecord,{run,now,verifyRegistry,verifyScan});
+}
+export async function registerInactiveCurrent129(planRecord, authorizationRecord, { run = runCommand, now = Date.now, verifyRegistry = validateRegistryManifest, verifyScan = validateLocalScan } = {}) {
+  equal(pinned(planRecord).schemaVersion,5,'CURRENT129_SCHEMA_REQUIRED');
+  return registerUnusedAnchor(planRecord,authorizationRecord,{run,now,verifyRegistry,verifyScan},true);
+}
+async function registerUnusedAnchor(planRecord,authorizationRecord,{run,now,verifyRegistry,verifyScan},current129 = false) {
+  const { plan, window } = await replayPlan(planRecord, current129 ? 'RegisterInactiveCurrent129' : 'RegisterUnused121', authorizationRecord, { run, now });
+  if (current129) equal(plan.schemaVersion,5,'CURRENT129_SCHEMA_REQUIRED');
+  else assert.notEqual(plan.schemaVersion,5,'CURRENT129_OPERATION_REQUIRED');
   const receipt = receiptWriter(plan.input.outputDirectory, 'registration.private.json', { schemaVersion: plan.schemaVersion, ...(plan.releaseBinding ? { releaseBinding: plan.releaseBinding, artifactSource: boundArtifactSource(plan.releaseBinding), ...(isSuccessorSchema(plan.schemaVersion) ? { artifactRole: plan.releaseBinding.artifactRole } : {}) } : {}), operation: plan.operation, plan: planRecord, authorization: authorizationRecord, planSha256: planRecord.sha256, source: plan.input.source, status: 'started', registered: [], registrationOutcomeUncertain: false, servicesUpdated: 0, tasksLaunched: 0, productionDatabaseOperations: 0 });
   const call = async (exe, args) => { window.inWindow(); return checked(run, exe, args, { timeout: Math.min(120_000, window.remaining()) }); };
   const serviceArgs = aws(['ecs', 'describe-services', '--cluster', 'schoolpilot-production-cluster', '--services', 'schoolpilot-production-api', 'schoolpilot-production-scheduler-worker']);
@@ -298,7 +324,7 @@ export async function registerUnused121(planRecord, authorizationRecord, { run =
     const before = JSON.parse(await call('aws', serviceArgs)); equal(hash(before.services), plan.liveServicesSha256, 'LIVE_SERVICES_DRIFT');
     const sources = {};
     for (const role of roles) { const generated = plan.generated[role]; sources[role] = JSON.parse(await call('aws', aws(['ecs', 'describe-task-definition', '--task-definition', generated.sourceArn, '--include', 'TAGS']))); equal(registrationEnvironmentProjection(sources[role].taskDefinition), registrationEnvironmentProjection(pinned(generated.source).taskDefinition), 'SOURCE_DEFINITION_DRIFT'); equal(ecsRequestTags(sources[role].tags), ecsRequestTags(pinned(generated.source).tags), 'SOURCE_TAGS_DRIFT'); }
-    const requests = renderUnused121Pair(sources, before, plan.input.source, plan.registryDigest);
+    const requests = current129 ? renderCurrent129Pair(sources, before, plan.input.source, plan.registryDigest,plan.releaseBinding) : renderUnused121Pair(sources, before, plan.input.source, plan.registryDigest);
     for (const role of roles) {
       const generated = plan.generated[role]; equal(hash(readFileSync(ordinaryFile(generated.path))), generated.sha256, 'GENERATED_REQUEST_CHANGED'); equal(pinned(generated), requests[role], 'GENERATED_REQUEST_DRIFT'); equal(generated.request, requests[role], 'PLANNED_REQUEST_DRIFT');
       if (plan.releaseBinding) { await finalSource(plan, run); await currentMain(plan.input, call); }
@@ -311,12 +337,12 @@ export async function registerUnused121(planRecord, authorizationRecord, { run =
       if (!isSuccessorSchema(plan.schemaVersion)) { receipt.value.registered.push({ role, arn: typeof arn === 'string' ? arn : null, requestSha256: generated.sha256 }); receipt.value.registrationOutcomeUncertain = typeof arn !== 'string'; } receipt.save();
       assert.match(arn ?? '', new RegExp(`^arn:aws:ecs:${REGISTRY.region}:${REGISTRY.account}:task-definition/${requests[role].family}:[1-9][0-9]*$`), 'REGISTERED_ARN_INVALID'); assert.ok(arn !== generated.sourceArn, 'NEW_REVISION_REQUIRED'); window.inWindow();
       const actual = JSON.parse(await call('aws', aws(['ecs', 'describe-task-definition', '--task-definition', arn, '--include', 'TAGS'])));
-      validateSourceResponse(actual, role, plan.input.source, plan.registryDigest, anchor128Stages()[0]); equal(registrationEnvironmentProjection(projection(actual)), registrationEnvironmentProjection(requests[role]), 'REGISTERED_DEFINITION_DRIFT');
+      validateSourceResponse(actual, role, plan.input.source, plan.registryDigest, current129 ? inventoryFor(129) : anchor128Stages()[0], current129 ? plan.releaseBinding : undefined); equal(registrationEnvironmentProjection(projection(actual)), registrationEnvironmentProjection(requests[role]), 'REGISTERED_DEFINITION_DRIFT');
     }
     const after = JSON.parse(await call('aws', serviceArgs)); equal(after.services, before.services, 'SERVICES_CHANGED');
     for (const tag of [plan.input.source, plan.input.source.slice(0, 12)]) equal((await remoteTag(tag, call))?.imageId.imageDigest, plan.registryDigest, 'FINAL_TAG_CHANGED');
     for (const service of after.services) for (const arn of [service.taskDefinition, ...(service.deployments ?? []).map(value => value.taskDefinition), ...(service.taskSets ?? []).map(value => value.taskDefinition)]) assert.ok(!receipt.value.registered.some(value => value.arn === arn), 'REGISTERED_ANCHOR_IS_SERVING');
-    await finalSource(plan, run); window.inWindow(); receipt.value.status = 'registered_unused121'; receipt.value.servicesUnchanged = true; receipt.save(); return record(receipt.filename);
+    await finalSource(plan, run); window.inWindow(); receipt.value.status = current129 ? 'registered_unused129' : 'registered_unused121'; receipt.value.servicesUnchanged = true; receipt.save(); return record(receipt.filename);
   } catch { receipt.value.status = 'failed_registration_retained'; receipt.value.errorCode = 'UNUSED121_REGISTRATION_FAILED'; receipt.save(); throw new Error('UNUSED121_REGISTRATION_FAILED'); }
 }
 async function main(args) {
@@ -326,8 +352,10 @@ async function main(args) {
   if (operation === 'ValidateSuccessorPreparation' && args.length === 3) result = await validateSuccessorPreparation(pinned(input), { root, run: runCommand, fallback: FALLBACK, sourceDirectory: pinned(input).sourceDirectory, source: pinned(input).source });
   else if (operation === 'PlanPublication' && args.length === 3) result = await planPublication(pinned(input));
   else if (operation === 'PlanUnused121' && args.length === 3) result = await planUnused121(pinned(input));
+  else if (operation === 'PlanCurrent129Anchor' && args.length === 3) result = await planCurrent129Anchor(pinned(input));
   else if (operation === 'PublishImage' && args.length === 5) result = await publishImage(input, authorization);
   else if (operation === 'RegisterUnused121' && args.length === 5) result = await registerUnused121(input, authorization);
+  else if (operation === 'RegisterInactiveCurrent129' && args.length === 5) result = await registerInactiveCurrent129(input, authorization);
   else throw new Error('EXPECTED_ARTIFACT_PREPARATION_OPERATION');
   console.log(JSON.stringify(result));
 }

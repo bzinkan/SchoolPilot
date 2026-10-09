@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-09T16:08:26.183Z",
+  "observedAtUtc": "2026-10-09T14:17:02.673Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -21,10 +21,10 @@
   "sources": {
     "schoolpilot": {
       "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
-      "remoteMainObserved": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "remoteMainObserved": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
       "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
-      "frozenApplicationReference": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "frozenApplicationReference": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -49,7 +49,7 @@
       "requiredValue": "preserve_observed_value",
       "observedValue": "shadow",
       "status": "passed",
-      "rationale": "Fresh A3 applicability capture independently records daily setting omitted, effective shadow at current serving source; workload is unmeasured.",
+      "rationale": "Fresh A2 applicability capture independently records daily setting omitted, effective shadow at current serving source; workload is unmeasured.",
       "evidence": [
         "buildSecurityCurrentObservation"
       ],
@@ -328,23 +328,23 @@
       }
     },
     {
-      "id": "backend-current-a3",
-      "label": "Current A3 API/worker artifact",
+      "id": "backend-current-a2",
+      "label": "Current A2 API/worker artifact",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Exact source-labelled A3 Linux/amd64 artifact is identified and freshly scanned0High/0Critical/1Medium; pair/campaign acceptance remains separate.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact source-labelled A2 Linux/amd64 artifact is identified and freshly scanned0High/0Critical/1Medium; pair/campaign acceptance remains separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
       ],
       "nextAction": "Preserve exact identity; acceptance, publication and deployment require their own passed evidence.",
       "identity": {
-        "indexDigest": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
-        "platformManifestDigest": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
-        "configDigest": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
-        "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
+        "indexDigest": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
+        "platformManifestDigest": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
+        "configDigest": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
+        "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b"
       }
     },
     {
@@ -353,8 +353,8 @@
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
-      "rationale": "Exact unchanged F3 artifact has passed fresh native/compiled-provider fixtures for A3 pair and retained fresh scan; selection and operational use remain separate.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "rationale": "Exact unchanged F3 artifact has passed fresh native/compiled-provider fixtures for A2 pair and retained fresh scan; selection and operational use remain separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -368,21 +368,21 @@
       }
     },
     {
-      "id": "frontend-current-a3",
-      "label": "Current matched A3 frontend archive",
+      "id": "frontend-current-a2",
+      "label": "Current matched A2 frontend archive",
       "status": "passed",
       "applicability": "preparation_only",
       "identity": {
-        "archiveSha256": "ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d",
-        "fileInventorySha256": "3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3"
+        "archiveSha256": "a107df178142707491f3797d9ebc3dd8270bbd1ad8349b964aeef90bff4e5ea9",
+        "fileInventorySha256": "d8452f43e010b6bac8e677922ffc3d49f9de8afe00862f82b2e7b292628b31a3"
       },
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Exact production-mode A3 frontend archive and171-entry inventory passed lint/build,90 dashboard scenarios and Focus/lock/history/student-tile checks. Exact-main CI remains separately recorded.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact production-mode frontend02 archive,171-entry inventory, lint/build and browsing-history browser checks passed. Frontend01 was built under NODE_ENV=test and remains explicitly ineligible.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCandidatePreparation"
       ],
-      "nextAction": "Retain exact matched production archive; publish only after accepted backend convergence and passed operational gates."
+      "nextAction": "Retain the actual fresh frontend archive and deterministic file inventory after build; publish only after backend convergence."
     }
   ],
   "stages": [
@@ -391,9 +391,9 @@
       "label": "Merged current application and tooling implementation",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "A3 application changes are merged; the bounded v5 tooling/state correction is under preparation review.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "A2 application changes are merged; the bounded v5 tooling/state correction is under preparation review.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -405,23 +405,23 @@
       "label": "Testing",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "All six A3/F3 preparation leaves passed; original classroom/capacity campaigns remain pending.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2/F3 preparation and original classroom/capacity campaigns remain separately gated.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
       ],
-      "nextAction": "Retain passed six-leaf preparation; complete fixed133, three900second mixed, normal capability-on and accepted250headroom gates."
+      "nextAction": "Finish six-leaf preparation, fixed133, three900second mixed, normal capability-on and accepted250headroom gates."
     },
     {
       "id": "packaging",
       "label": "Packaging",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Exact A3 backend/frontend and F3 artifacts passed preparation; complete campaign acceptance remains separate.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact A2 backend and F3 artifacts are identified; matched frontend checks and complete acceptance remain separate.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -435,7 +435,7 @@
       "applicability": "candidate_pending",
       "sourceSha": null,
       "rationale": "Necessary exact artifact publication is authorized as a deployment prerequisite; no publication receipt exists.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -447,9 +447,9 @@
       "label": "Deployment",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "rationale": "Direct user fix/deploy request is authorized; actual execution awaits all required gates and exact completed fallback registration.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -463,7 +463,7 @@
       "applicability": "candidate_pending",
       "sourceSha": null,
       "rationale": "Runtime/pilot activation is outside the deployment authorization and remains separate.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -477,7 +477,7 @@
       "applicability": "candidate_pending",
       "sourceSha": null,
       "rationale": "Actual sample-bearing managed-device and live DeSales acceptance is pending; managed validation stays waived_not_passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation",
         "buildSecurityBinding"
@@ -1648,12 +1648,12 @@
     },
     {
       "id": "build-security-main-ci",
-      "label": "Exact A3 push/main CI",
+      "label": "Exact A2 push/main CI",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Exact2001e emitted workflow/job outcomes are recorded without turning failures or pending work into a pass.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact 55f91 push/main workflows completed:19 success and2 explicit expected skips.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation"
       ],
@@ -1661,29 +1661,29 @@
     },
     {
       "id": "build-security-candidate-freeze",
-      "label": "A3 exact source/artifact freeze",
+      "label": "A2 exact source/artifact freeze",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Exact source2001e and identified backend artifact/inventories replace the changed ecf6 input reference.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Exact source55f91 and identified backend artifact/inventories replace the changed ecf6 input reference.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityCurrentObservation"
       ],
-      "nextAction": "Retain exact A3/F3 identities; changed application inputs invalidate affected evidence."
+      "nextAction": "Retain exact A2/F3 identities; changed application inputs invalidate affected evidence."
     },
     {
       "id": "build-security-source-applicability",
-      "label": "A3 source/policy applicability",
+      "label": "A2 source/policy applicability",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "rationale": "Exact approved policy/order/thresholds remain applicable; source-only review asserts no human artifact approval.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
-      "nextAction": "Retain passed actual pair recovery and complete original campaigns; retain rollback frontend limitation."
+      "nextAction": "Complete actual pair recovery and original campaigns; retain rollback frontend limitation."
     },
     {
       "id": "build-security-full-audit",
@@ -1692,7 +1692,7 @@
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "Fresh raw full audit0High/0Critical/7Moderate; runtime audit0High/0Critical/3Moderate. F2sixHigh failure remains historical.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1705,7 +1705,7 @@
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "All1,574 compiled files are byte-equal across before/after alias and F3 inventories, independently reviewed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1713,12 +1713,12 @@
     },
     {
       "id": "build-security-successorScan",
-      "label": "A3/F3 preparation: successorScan",
+      "label": "A2/F3 preparation: successorScan",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1726,12 +1726,12 @@
     },
     {
       "id": "build-security-screenshotRuntime",
-      "label": "A3/F3 preparation: screenshotRuntime",
+      "label": "A2/F3 preparation: screenshotRuntime",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1739,12 +1739,12 @@
     },
     {
       "id": "build-security-requestIpRateLimit",
-      "label": "A3/F3 preparation: requestIpRateLimit",
+      "label": "A2/F3 preparation: requestIpRateLimit",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1752,12 +1752,12 @@
     },
     {
       "id": "build-security-ordinaryRecovery",
-      "label": "A3/F3 preparation: ordinaryRecovery",
+      "label": "A2/F3 preparation: ordinaryRecovery",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1765,12 +1765,12 @@
     },
     {
       "id": "build-security-restrictedRestoration",
-      "label": "A3/F3 preparation: restrictedRestoration",
+      "label": "A2/F3 preparation: restrictedRestoration",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1778,12 +1778,12 @@
     },
     {
       "id": "build-security-credentialBoundary",
-      "label": "A3/F3 preparation: credentialBoundary",
+      "label": "A2/F3 preparation: credentialBoundary",
       "status": "passed",
       "applicability": "preparation_only",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "Exact pair-bound preparation leaf and independent raw review passed.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1791,12 +1791,12 @@
     },
     {
       "id": "build-security-preparation",
-      "label": "Complete A3/F3 successor preparation",
+      "label": "Complete A2/F3 successor preparation",
       "status": "passed",
       "applicability": "preparation_only",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "rationale": "Complete preparation requires all six reviewed leaves, passed full audit and compiled-output proof.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1809,33 +1809,20 @@
       "applicability": "candidate_pending",
       "sourceSha": "392970b7ccfea365faadf1eba07da4ad26964c09",
       "rationale": "No exact F3 selection is asserted before actual evidence and replacement review are complete.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
       "nextAction": "Root records exact source/image/config/archive selection review after required evidence passes; no invented human approval."
     },
     {
-      "id": "build-security-rollback-frontend-applicability",
-      "label": "Current frontend compatibility with F3 recovery",
-      "status": "pending",
-      "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "External deployment also adopted A2 frontend with PR627 pages-only history; stage order alone no longer establishes current frontend compatibility with F3.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
-      "evidence": [
-        "buildSecurityBinding"
-      ],
-      "nextAction": "Before deployment, review a compatible frontend recovery action and exact artifact; retain old A1 source-only evidence as historical."
-    },
-    {
       "id": "build-security-currentSchoolAcceptance",
       "label": "Original release gate: currentSchoolAcceptance",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Fresh A3 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1846,9 +1833,9 @@
       "label": "Original release gate: classroomAcceptance",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Fresh A3 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1859,9 +1846,9 @@
       "label": "Original release gate: normalLoadAcceptance",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Fresh A3 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1872,9 +1859,9 @@
       "label": "Original release gate: headroomAcceptance",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Fresh A3 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+      "rationale": "Fresh A2 candidate campaign remains required under unchanged approved policy, fixed order and safety thresholds.",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
@@ -1885,26 +1872,13 @@
       "label": "Reviewed v5 tooling merge",
       "status": "pending",
       "applicability": "candidate_pending",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "sourceSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "rationale": "Main-based v5/current129/deployment tooling is reviewable preparation; its resulting-main verification remains pending.",
-      "observedAtUtc": "2026-10-09T15:24:33.431Z",
+      "observedAtUtc": "2026-10-09T14:17:02.673Z",
       "evidence": [
         "buildSecurityBinding"
       ],
       "nextAction": "Review the preparation PR, require applicable green CI, merge the authorized correction and verify resulting main."
-    },
-    {
-      "id": "build-security-fixed133-startup-attempt-01",
-      "label": "First A3 fixed133 baseline startup attempt",
-      "status": "failed",
-      "applicability": "preparation_only",
-      "sourceSha": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
-      "rationale": "Historical baseline refused three unsupported current capability-map entries before any measured round. Original failed receipt and startup cleanup-custody limitation remain retained.",
-      "observedAtUtc": "2026-10-09T16:07:00.936Z",
-      "evidence": [
-        "buildSecurityFixed133StartupCorrection"
-      ],
-      "nextAction": "Review and commit the exact tooling correction, freeze a fresh clean harness and helper bindings, prove corrected startup, then begin a new complete fixed-order block under a fresh quiet window. Retain every failed attempt."
     }
   ],
   "inclusionMatrix": [
@@ -1916,7 +1890,7 @@
       "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
       "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
       "mergedAtUtc": "2026-10-04T22:45:00Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -1933,7 +1907,7 @@
       "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
       "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
       "mergedAtUtc": "2026-10-05T03:23:01Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -1948,7 +1922,7 @@
       "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
       "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
       "mergedAtUtc": "2026-10-05T11:23:21Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -1963,7 +1937,7 @@
       "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
       "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
       "mergedAtUtc": "2026-10-06T22:31:47Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -1980,7 +1954,7 @@
       "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
       "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
       "mergedAtUtc": "2026-10-06T23:19:16Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -1995,7 +1969,7 @@
       "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
       "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
       "mergedAtUtc": "2026-10-07T00:30:35Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2010,7 +1984,7 @@
       "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
       "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
       "mergedAtUtc": "2026-10-07T14:17:37Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "backend",
         "frontend"
@@ -2026,7 +2000,7 @@
       "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
       "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
       "mergedAtUtc": "2026-10-07T16:21:39Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2041,7 +2015,7 @@
       "headSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
       "mergeSha": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b",
       "mergedAtUtc": "2026-10-07T20:57:54Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2057,7 +2031,7 @@
       "headSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
       "mergeSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "mergedAtUtc": "2026-10-07T21:14:48Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "backend-governance",
         "frontend-public-copy"
@@ -2088,7 +2062,7 @@
       "headSha": "106f78059172e2f7fda4632911b28153695ec448",
       "mergeSha": "a5161eb14939132776e0b77eac8e3c485091432c",
       "mergedAtUtc": "2026-10-07T22:06:52Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2104,7 +2078,7 @@
       "headSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
       "mergeSha": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe",
       "mergedAtUtc": "2026-10-07T21:48:32Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release-tooling",
         "ci"
@@ -2120,7 +2094,7 @@
       "headSha": "e55bd455b42dc90e7b264ce6da50ffe8979e5268",
       "mergeSha": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
       "mergedAtUtc": "2026-10-08T01:25:19Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2136,7 +2110,7 @@
       "headSha": "f459a2a96d8b0395c788cf71129d0868d2d7a9fd",
       "mergeSha": "092f8fbfe96dd7deed52c279d0b916676e0fc102",
       "mergedAtUtc": "2026-10-08T15:34:51Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "backend",
         "backend-governance",
@@ -2153,7 +2127,7 @@
       "headSha": "ca38a6236bd332f7069136e1e555b9dbb681caba",
       "mergeSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "mergedAtUtc": "2026-10-08T16:53:51Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2168,7 +2142,7 @@
       "headSha": "238de1358920d3f0b02f0ad5fbaa208eb5fd9024",
       "mergeSha": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
       "mergedAtUtc": "2026-10-08T23:03:22Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2184,13 +2158,13 @@
       "headSha": "4c3236fc85d2d0ed0af2d3561583ce3ac0002e8c",
       "mergeSha": "7ad2405846fb066e4dd43339297aba43a170d002",
       "mergedAtUtc": "2026-10-09T10:53:18Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
       ],
       "reusableEvidence": "Preserved CP-protected F2 historical leaves and failed full audit; no source/artifact selection or deployment inferred.",
-      "requiredReruns": "Fresh v5 tool regressions, exact resulting-main CI, exact A3/F3 applicability and selection."
+      "requiredReruns": "Fresh v5 tool regressions, exact resulting-main CI, exact A2/F3 applicability and selection."
     },
     {
       "repository": "SchoolPilot",
@@ -2200,31 +2174,14 @@
       "headSha": "e30d44531668dbfbcdc0cf4ac07547c4aa9906d1",
       "mergeSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "mergedAtUtc": "2026-10-09T13:21:56Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "includedInSource": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "affectedArtifacts": [
         "backend (three source image inputs)",
         "frontend",
         "frontend browser check"
       ],
-      "reusableEvidence": "Historical ecf6 artifacts/recovery/campaign receipts retain their exact old scope; unchanged F3 artifact proofs require explicit new A3 pair applicability.",
-      "requiredReruns": "Fresh exact A3 backend/frontend build, scan/native, A3→F3→A3 recovery, six restricted rounds and unchanged 133/mixed/normal/headroom acceptance; matched frontend browser checks."
-    },
-    {
-      "repository": "SchoolPilot",
-      "number": 628,
-      "title": "Unify student tile Focus and Waypoint lock actions",
-      "state": "MERGED",
-      "headSha": "5c184a73deea32404f352204f9e15e2a4d216923",
-      "mergeSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "mergedAtUtc": "2026-10-09T14:38:46Z",
-      "includedInSource": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "affectedArtifacts": [
-        "backend (five source image inputs)",
-        "frontend",
-        "Focus/realtime browser and unit checks"
-      ],
-      "reusableEvidence": "A2/25964241 preparation remains historical. Exact F3 source/artifact/security proofs are unchanged; fresh A3/F3 execution and explicit applicability are required.",
-      "requiredReruns": "Fresh exact A3 backend/frontend build, scan/native, A3→F3→A3 recovery, six restricted rounds, Focus/lock/realtime browser checks, original133/mixed/normal/headroom campaigns and exact current-main CI."
+      "reusableEvidence": "Historical ecf6 artifacts/recovery/campaign receipts retain their exact old scope; unchanged F3 artifact proofs require explicit new A2 pair applicability.",
+      "requiredReruns": "Fresh exact A2 backend/frontend build, scan/native, A2→F3→A2 recovery, six restricted rounds and unchanged 133/mixed/normal/headroom acceptance; matched frontend browser checks."
     }
   ],
   "evidence": {
@@ -2470,27 +2427,15 @@
     },
     "buildSecurityBinding": {
       "path": "docs/release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json",
-      "gitBlobSha256": "5a814f95b2f8071d3d53c7f309d3921205f520e2bdad3f02740f666b7ff740a8"
+      "gitBlobSha256": "d0aec2e393245cada7e19527e0c94031f222f72f9c427d6fe0f029306b1ac3ee"
     },
     "buildSecurityCandidatePreparation": {
-      "path": "docs/releases/release297/a3-artifact-preparation-20261009.json",
-      "gitBlobSha256": "a083da550243358fde05187e5b92d1e43b8b69eebe0cf08a5e2997347af10b65"
+      "path": "docs/releases/release297/a2-artifact-preparation-20261009.json",
+      "gitBlobSha256": "be0d259a1585bf16c0f0b60d1ea144aeae5ab44fe73595476ba65565c1f6b3b3"
     },
     "buildSecurityCurrentObservation": {
       "path": "docs/releases/release297/build-security-current-observation-20261009.json",
-      "gitBlobSha256": "b077d43c96976d710554ab38750bee32f3f94b01a7edd638be6c3447eb0e9766"
-    },
-    "buildSecurityCandidatePreparationCi": {
-      "path": "docs/releases/release297/a3-preparation-ci-completion-20261009.json",
-      "gitBlobSha256": "e6ec199b45aca0e4db0d2aea2999b1f6e888d10a1b008eb3be5608aa21b99d2a"
-    },
-    "buildSecurityPreviousA2Manifest": {
-      "path": "docs/release-bindings/history/release297-55f91b62-f3-25964241/index.json",
-      "gitBlobSha256": "ac0429fde167eb3b566ad23f3e477493fdc4d901ce211ee7242659179099f07d"
-    },
-    "buildSecurityFixed133StartupCorrection": {
-      "path": "docs/releases/release297/fixed133-baseline-startup-correction-20261009.json",
-      "gitBlobSha256": "15434c57a3f91b7639b59d4350aa1cc7056c22f23fb0e47cc69cd433962fd3cb"
+      "gitBlobSha256": "79ed23459aa5cc83200ed9e3181470eb6b0d109d766df75497f074628756e50b"
     }
   }
 }

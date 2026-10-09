@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "kind": "exact_A2_artifact_preparation_observation",
+  "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+  "observedAtUtc": "2026-10-09T14:05:23.980Z",
+  "artifactRole": "serving-anchor",
+  "passed": true,
+  "checks": {
+    "dependencyInstall": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "backendType": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "backendBuild": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "testTypes": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "unit": {
+      "status": "passed_with_explicit_skips",
+      "tests": 2470,
+      "passed": 2466,
+      "failed": 0,
+      "skipped": 4,
+      "exitCode": 0
+    },
+    "credentialBoundaryAndPreciseSafetyHistory": {
+      "status": "passed",
+      "tests": 169,
+      "passed": 169,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "governance": {
+      "status": "passed",
+      "exitCode": 0
+    },
+    "dependencyAudits": {
+      "status": "passed"
+    },
+    "exactMainCi": {
+      "status": "passed"
+    },
+    "nativeProcessing": {
+      "status": "passed"
+    },
+    "compiledCredentialBoundary": {
+      "status": "passed",
+      "tests": 53
+    },
+    "imageScan": {
+      "status": "passed"
+    },
+    "frontend": {
+      "status": "passed"
+    }
+  },
+  "backendArtifact": {
+    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "localIndex": "sha256:8303500d39eb68531c30d4005b4b62eb4f4e0e202f10957d8dfe10cf1459a161",
+    "config": "sha256:5d9abde8aa555c102108eb70efe31f317777beeeffcc85ca6a093146358db764",
+    "platform": "sha256:9107848c05833c0d5f7144add4f5a36688873ca30e3c1e40dc585f0560232857",
+    "archiveSha256": "2f66ce42a132f99e6d5dd6f295790ebc96d41b1db2739b954c46443d04a3c88b",
+    "scan": {
+      "path": "C:/Users/zinka/.codex/artifacts/release297-current-candidate-55f91-20261009/scan-01/scan-receipt.json",
+      "sha256": "5b85b1c3fa9df558ac646addf124f95ad71c13d40edc4ba2b82453bbcf1cc4ed",
+      "passed": true
+    }
+  },
+  "frontend": {
+    "source": "55f91b620d2d48de5ed164a72250ec133450bc0f",
+    "archiveSha256": "a107df178142707491f3797d9ebc3dd8270bbd1ad8349b964aeef90bff4e5ea9",
+    "fileInventorySha256": "d8452f43e010b6bac8e677922ffc3d49f9de8afe00862f82b2e7b292628b31a3",
+    "fileCount": 171,
+    "nodeEnv": "production",
+    "buildPassed": true,
+    "lintPassed": true,
+    "browsingHistoryBrowserPassed": true,
+    "publication": false,
+    "adoptionVerified": false
+  },
+  "security": {
+    "image": {
+      "high": 0,
+      "critical": 0,
+      "medium": 1
+    },
+    "fullDependencies": {
+      "high": 0,
+      "critical": 0,
+      "moderate": 7
+    },
+    "runtimeDependencies": {
+      "high": 0,
+      "critical": 0,
+      "moderate": 3
+    }
+  },
+  "retainedEvidence": {
+    "aggregate": {
+      "storage": "private",
+      "path": "pair-refresh-A2/candidate-preparation/aggregate.json",
+      "sha256": "7a22a38c7f890c342b88dc85b0913db42ed197da2e8415ca972de0fa526e0c72"
+    },
+    "frontendArtifact": {
+      "storage": "private",
+      "path": "pair-refresh-A2/candidate-preparation/frontendArtifact.json",
+      "sha256": "ea0e5084a1ce6dbd4771a65e1900141c83adb30965375ef716c6ea0188ef231f"
+    },
+    "frontendProduction": {
+      "storage": "private",
+      "path": "pair-refresh-A2/candidate-preparation/frontendProduction.json",
+      "sha256": "970e294303b6b5080497324399fb51805476ca6824f924d227d13b79ab2c90e8"
+    },
+    "frontendZip": {
+      "storage": "private",
+      "path": "pair-refresh-A2/candidate-preparation/frontendZip.json",
+      "sha256": "17163f92d3dada3860cb94193c832c19d429da5ac6dec0f73e49509025ffb272"
+    }
+  },
+  "limitations": [
+    "The initial optional SQL test failure came from an intentionally unreachable synthetic DATABASE_URL; corrected full pure lane matches CI with URL absent.",
+    "Corrected source and first frontend continuation raw receipts inherited a prior failure field; their explicit checks pass. This final aggregate resolves that inherited metadata without rewriting original receipts.",
+    "Frontend01 inherited NODE_ENV=test and is ineligible for release. Only explicit production frontend02 archive is selected.",
+    "Fresh A2→F3→A2 recovery, new restricted rounds, capacity/classroom campaign, publication/deployment and live acceptance remain separate.",
+    "Finite synthetic credential policy is not universal secret detection or provider-account approval.",
+    "No local production operations, registry publication, Store upload, device adoption or live-state acceptance are claimed."
+  ],
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "independentReview": {
+    "storage": "private",
+    "path": "independent-review/candidate-A2-preparation-checks.review.json",
+    "sha256": "3eda1460478ffa78050440b14ba62e966a9741e5be841044231d8a9cfa1c6c9c"
+  }
+}
