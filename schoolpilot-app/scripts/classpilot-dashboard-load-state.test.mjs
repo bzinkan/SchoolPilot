@@ -6862,6 +6862,73 @@ test('temporary room binds mixed-grade filters, commands, previews and FAB to on
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('room Send to freezes the selected or all shown filtered students and refuses an empty filter', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const room = scheduledTestingActivity({ id: 'send-room', name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '7', studentCount: 3,
+    authority: { supervisionContextId: 'send-room' }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const rows = ['3', '4', '5'].map(grade => student({ studentId: `send-grade-${grade}`, studentName: `Grade ${grade} Student`, gradeLevel: grade,
+    supervisionState: 'temporary_coverage', supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID },
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController({ scoped: success(rows) }),
+    dashboardActivity: { ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room },
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] } });
+  const receiver = { id: 'receiver-room', name: 'Receiver room', endsAt: room.endsAt };
+  const previews = []; const sends = [];
+  await page.route('**/api/coverage/session-options*', route => route.fulfill({ json: { students: rows, groups: [], staff: [], defaultEndsAt: room.endsAt } }));
+  await page.route('**/api/coverage/reroute-targets*', route => route.fulfill({ json: { targets: [], roomTargets: [{
+    id: 'room:receiver', contextType: 'temporary_room', name: 'Receiver room', assignedStaffId: OTHER_TEACHER_ID,
+    assignedStaff: { displayName: 'Receiver Teacher' }, activeContexts: [receiver],
+  }] } }));
+  await page.route('**/api/coverage/preview', async route => {
+    const request = route.request().postDataJSON(); previews.push(request);
+    await route.fulfill({ json: { request, reviewToken: 'filtered-room-send-review', destination: { ...receiver,
+      purpose: 'claim', assignedStaffId: OTHER_TEACHER_ID, supervisorName: 'Receiver Teacher' }, students: request.studentIds.map(studentId => ({
+        studentId, name: rows.find(row => row.studentId === studentId).studentName, eligible: true, currentOwner: 'My room',
+      })) } });
+  });
+  await page.route('**/api/coverage/send', async route => {
+    const request = route.request().postDataJSON(); sends.push(request);
+    await route.fulfill({ json: { context: receiver, outcomes: request.studentIds.map(studentId => ({ studentId, status: 'assigned' })) } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('temporary-room-controls').waitFor();
+  await page.getByTestId('checkbox-select-student-send-grade-4').click();
+  await page.getByTestId('button-reroute-selected').click();
+  const dialog = page.getByTestId('supervision-session-dialog');
+  await dialog.getByRole('checkbox', { name: /Grade 4 Student/ }).waitFor();
+  assert.equal(await dialog.getByRole('checkbox').count(), 1, 'An explicit selection takes precedence over the shown room');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByTestId('button-clear-selection').click();
+  await page.getByLabel('Filter room by grade').selectOption('3');
+  await page.getByTestId('card-student-send-grade-4').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('button-reroute-selected').isEnabled(), true, 'A nonempty filtered room can send with no checked students');
+  await page.getByTestId('button-reroute-selected').click();
+  await dialog.getByRole('checkbox', { name: /Grade 3 Student/ }).waitFor();
+  assert.equal(await dialog.getByRole('checkbox').count(), 1);
+  await dialog.getByLabel('Send to', { exact: true }).selectOption('room:receiver');
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('supervision-review').waitFor();
+  assert.deepEqual(previews[0].studentIds, ['send-grade-3']);
+  assert.equal(previews[0].destinationContextId, receiver.id);
+  assert.equal(previews[0].contextType, 'temporary_room');
+  // A background filter update cannot replace recipients in an open review.
+  await page.getByLabel('Filter room by grade').selectOption('5', { force: true });
+  await page.getByTestId('confirm-supervision-review').click();
+  await page.getByTestId('supervision-results').waitFor();
+  assert.deepEqual(sends[0].studentIds, ['send-grade-3']);
+  assert.equal(sends[0].reviewToken, 'filtered-room-send-review');
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByTestId('card-student-send-grade-5').waitFor();
+  await page.getByPlaceholder('Search student', { exact: true }).fill('Nobody in this room');
+  await page.getByTestId('card-student-send-grade-5').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('button-reroute-selected').isDisabled(), true);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('room removal clears exact private tiles before polling and a late release cannot refresh a replacement room', { timeout: 90_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();

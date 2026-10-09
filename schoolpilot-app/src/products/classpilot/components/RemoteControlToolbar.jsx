@@ -17,6 +17,7 @@ function RemoteControlToolbar({
   onPickupViewChange,
   onOpenCoverage,
   canReroute = false,
+  rerouteTargetCount = selectedStudentIds.size,
   onReroute,
   canViewHistoricalTelemetry = false,
 }) {
@@ -123,9 +124,9 @@ function RemoteControlToolbar({
                     size="sm"
                     variant="ghost"
                     onClick={onReroute}
-                    disabled={selectedStudentIds.size === 0 || !canReroute}
+                    disabled={rerouteTargetCount === 0 || !canReroute}
                     data-testid="button-reroute-selected"
-                    title={!canReroute ? "Select students in your active class to send them to authorized staff" : "Review supervision for selected students"}
+                    title={!canReroute ? "Select students in your active class to send them to authorized staff" : `Review supervision for ${rerouteTargetCount} student${rerouteTargetCount === 1 ? '' : 's'}`}
                     className={coverageActionButtonClass}
                   >
                     <Route className="h-4 w-4 mr-2" />

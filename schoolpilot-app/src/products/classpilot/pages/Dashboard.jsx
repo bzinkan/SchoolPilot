@@ -1094,6 +1094,7 @@ export default function Dashboard() {
   }, [focusControlScopeKey]);
   const activityScopeRef = useRef(activityScopeKey);
   useLayoutEffect(() => { activityScopeRef.current = activityScopeKey; }, [activityScopeKey]);
+  useLayoutEffect(() => { setShowRerouteDialog(false); }, [activityScopeKey, roomDialogScopeKey]);
   // A lost selection belongs to the school and viewer, the scheduled boundary,
   // the view and, in the Class view, the class (or supervision) authority and
   // revision. A change to any of them resets the ticks itself, so it drops the
@@ -3295,6 +3296,9 @@ export default function Dashboard() {
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
+  const roomRerouteStudents = roomWorkspace && !selectionLossActive
+    ? filteredStudents.filter(student => selectedStudentIds.size === 0 || selectedStudentIds.has(student.studentId))
+    : EMPTY_LIST;
   const roomGrades = roomWorkspace ? [...new Set(students.map(student => String(student.gradeLevel || '')).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right, undefined, { numeric: true })) : EMPTY_LIST;
   const roomClasses = roomWorkspace ? [...new Map(students.flatMap(student => student.classes || (student.classId
@@ -7058,7 +7062,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
             onOpenCoverage={!dashboardCapabilities.observedOtherClass ? () => navigate("/classpilot/coverage?tab=live") : undefined}
             canReroute={(roomWorkspace || dashboardCapabilities.ownedClassSession || isAdmin && dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive}
-            onReroute={(roomWorkspace || dashboardCapabilities.ownedClassSession || isAdmin && dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive ? () => setShowRerouteDialog(true) : undefined}
+            rerouteTargetCount={roomWorkspace ? roomRerouteStudents.length : undefined}
+            onReroute={(roomWorkspace || dashboardCapabilities.ownedClassSession || isAdmin && dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive ? () => setShowRerouteDialog({
+              scopeKey: roomDialogScopeKey, authorityKey: activityScopeKey,
+              students: [...(roomWorkspace ? roomRerouteStudents : selectedStudentRoster.filter(student => selectedStudentIds.has(student.studentId)))],
+            }) : undefined}
             canViewHistoricalTelemetry={isAdmin || isTeacher}
           />
         )}
@@ -8216,10 +8224,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           if (roomDialogScopeRef.current !== roomDialogScopeKey) return;
           setRoomEndTimeOpen(false); void refreshDashboardActivity({ cancelRefetch: true });
         }} />}
-      {showRerouteDialog && !dashboardCapabilities.observedOtherClass && (
-        <SupervisionSessionDialog open action="send" onOpenChange={setShowRerouteDialog}
-          students={selectedStudentRoster.filter(student => selectedStudentIds.has(student.studentId))}
+      {showRerouteDialog?.scopeKey === roomDialogScopeKey && showRerouteDialog.authorityKey === activityScopeKey && !dashboardCapabilities.observedOtherClass && (
+        <SupervisionSessionDialog open action="send" onOpenChange={open => { if (!open) setShowRerouteDialog(false); }}
+          students={showRerouteDialog.students}
           onSuccess={(result) => {
+            if (roomDialogScopeRef.current !== showRerouteDialog.scopeKey || activityScopeRef.current !== showRerouteDialog.authorityKey) return;
             clearSelection();
             if (result?.uncertain) toast({ title: 'Supervision refreshed', description: 'Check current student assignments before sending again.' });
           }} />
