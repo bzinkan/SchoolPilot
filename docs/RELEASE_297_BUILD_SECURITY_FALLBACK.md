@@ -58,6 +58,16 @@ corrected protocol and full baseline startup plus the successful eight-run block
 Five baseline latency failures remain retained; the superseded comparison gate
 was not revived. No thresholds, run order or production flags changed.
 
+The failed headroom attempt remains failed. Diagnostic profiling exposed a
+synchronous control-file lookup every 25 ms in the harness's HTTP process. This
+PR changes only that idle lookup to one awaited read, treating only `ENOENT` as
+an absent request; nonce, ordering, immutable replies and cleanup stay intact.
+An actual child/HTTP fixture verifies progress while the idle read is delayed.
+This removes a demonstrated blocking path without claiming it caused the failed
+latency result. A newly reviewed harness/helper freeze and three fresh 250-client
+passes remain required. The six passed gates retain their original harness and
+receipts with separate applicability review.
+
 Ordinary recovery retains migrations **43→53** and admission
 **121→125→126→127→128→129**. The historical 54-entry rehearsal is separate.
 Current production already admits 129; the bounded operational path clones its
@@ -78,7 +88,9 @@ the server-enforced opaque Focus command contract remains intact.
 
 The operator's remaining sequence is explicit:
 
-1. Preserve the headroom failure and establish a reviewed, falsifiable correction before any new attempt. After the required fresh headroom confirmation passes, review/merge the state-only evidence successor and verify
+1. Preserve the headroom failure, review the bounded idle-control-read correction
+   and freeze fresh matching harness/helpers before any new headroom block. After
+   three required fresh headroom passes, review/merge the tooling/evidence successor and verify
    its exact resulting-main CI and application/script equivalence.
 2. Refresh production health, catalog/admission, backups, flags and task state.
    Review exact publication and inactive-registration Plans/windows; publish the
