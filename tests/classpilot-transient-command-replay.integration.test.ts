@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { WebSocket, type WebSocketServer } from "ws";
@@ -342,18 +342,33 @@ describe("transient command replay on student WebSocket auth-success", () => {
   let openTab: Dispatched;
   let liveFrame: Frame;
 
+  // Every case starts with the replay on for every school. A case that needs
+  // another posture sets it itself, so one failing case cannot leave the next
+  // ones running under the wrong switch.
+  beforeEach(() => {
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
+    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
+    delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+  });
+
   it("gives timer/poll a 60 s deadline where the replay is enabled, keeps 15 s for open-tab, and replays nothing while the flag is off", async () => {
+    // This case owns its posture: the replay is off, except around the one
+    // dispatch that must be granted the longer deadline.
+    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
     // One student is connected, so the dispatcher's own live frame is on record.
     const live = await connect(students[1]!);
     // The longer deadline exists to give the replay a window, so the dispatcher
     // grants it only while the replay is enabled for this school.
     process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
     process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
-    pendingPoll = await dispatchWithDeadline(60_000, "poll", {
-      action: "start", question: "Ready to move on?", options: ["Yes", "No"],
-    });
-    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
-    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
+    try {
+      pendingPoll = await dispatchWithDeadline(60_000, "poll", {
+        action: "start", question: "Ready to move on?", options: ["Yes", "No"],
+      });
+    } finally {
+      delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
+      delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
+    }
     assert.equal(pendingPoll.deliveryPolicy, "transient_action");
     await settle(live);
     const delivered = remoteControl(live);
@@ -540,7 +555,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await markReceived(stop.command.id);
   });
 
-  it("a timer for other students does not supersede a pending timer", async () => {
+  it("a timer for other students does not supersede a pending timer, and nothing is superseded while the replay is off", async () => {
     const forFirst = await dispatch("timer", { action: "start", seconds: 90 }, [students[0]!]);
     resetCounters();
     const forSecond = await dispatch("timer", { action: "start", seconds: 45 }, [students[1]!]);
@@ -553,6 +568,27 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await closeClients();
     await markReceived(forFirst.command.id);
     await markReceived(forSecond.command.id);
+
+    // With the replay off there is no re-send to protect, so a later timer
+    // leaves earlier targets on their ordinary deadline. A device receipt that
+    // is still in flight is then accepted, as before this lane existed.
+    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
+    try {
+      const earlier = await dispatch("timer", { action: "start", seconds: 60 });
+      resetCounters();
+      const stop = await dispatch("timer", { action: "stop" });
+      const earlierRows = await targetRows(earlier.command.id);
+      assert.equal(earlierRows.length, students.length);
+      for (const row of earlierRows) {
+        assert.equal(row.status, "sent", "the earlier timer keeps its ordinary deadline");
+        assert.equal(row.error_message, null);
+      }
+      assert.equal(counters().transientCommandTargetSuperseded, undefined);
+      await markReceived(earlier.command.id);
+      await markReceived(stop.command.id);
+    } finally {
+      process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
+    }
   });
 
   it("replays only frames the device will accept: current class, current scheduled control revision, accepted capability, unexpired", async () => {
@@ -726,6 +762,8 @@ describe("transient command replay on student WebSocket auth-success", () => {
     assert.ok(afterClass.frames.some((frame) => frame.type === "auth-success"), "the student still authenticates");
     assert.deepEqual(remoteControl(afterClass), [], "the device would reject a frame for an ended class");
     assert.equal(counters().transientCommandReplayedOnAuth, undefined);
+    assert.ok(Date.now() < start.command.expiresAt!.getTime(),
+      "still inside the deadline: the class fence withheld the frame, not expiry");
     // The target was withheld by the authority fence, not consumed: it is
     // still an undelivered one-shot frame and expires on the normal sweep.
     assert.equal((await targetRow(start.command.id, students[0]!)).status, "sent");

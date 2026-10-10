@@ -21,10 +21,14 @@ export const CLASSPILOT_TRANSIENT_COMMAND_TTL_MS = 15_000;
  * legacy 15 s everywhere else. Open/close/activate-tab always keep 15 s.
  *
  * `CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS` is an explicit override for both
- * cases. The environment is read per call, and an invalid value is ignored
- * instead of producing a NaN deadline.
+ * cases: whole milliseconds from 1 000 to 300 000. The environment is read per
+ * call. Anything else (a fraction, a value in seconds such as 60, an oversized
+ * number) is ignored, so a mistyped value cannot produce an instant or an
+ * invalid deadline.
  */
 const REPLAY_TIMER_POLL_COMMAND_TTL_MS = 60_000;
+const MIN_TIMER_POLL_COMMAND_TTL_OVERRIDE_MS = 1_000;
+const MAX_TIMER_POLL_COMMAND_TTL_OVERRIDE_MS = 300_000;
 const TIMER_POLL_COMMAND_TYPES = new Set(["timer", "poll"]);
 
 export function classpilotTimerPollCommandTtlMs(
@@ -34,15 +38,16 @@ export function classpilotTimerPollCommandTtlMs(
   const raw = env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
   if (raw !== undefined && raw.trim() !== "") {
     const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    if (
+      Number.isInteger(parsed)
+      && parsed >= MIN_TIMER_POLL_COMMAND_TTL_OVERRIDE_MS
+      && parsed <= MAX_TIMER_POLL_COMMAND_TTL_OVERRIDE_MS
+    ) return parsed;
   }
   return schoolId !== undefined && classpilotTransientReplayOnAuthEnabled(schoolId, env)
     ? REPLAY_TIMER_POLL_COMMAND_TTL_MS
     : CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
 }
-
-/** The timer/poll deadline this process started with for a school without the replay. */
-export const CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = classpilotTimerPollCommandTtlMs();
 
 /** Transient command types whose un-received frames are replayed on student WebSocket auth-success. */
 export const CLASSPILOT_REPLAYABLE_TRANSIENT_COMMAND_TYPES = ["timer", "poll"] as const;

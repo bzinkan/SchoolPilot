@@ -21664,7 +21664,8 @@ export async function createClasspilotCommandWithTargets(
             : {}),
           // `pollExpiresAt` is explicit for new clients; `expiresAt` inside
           // command.data preserves the established overlay restore field. The
-          // envelope's top-level expiresAt remains the 15-second delivery TTL.
+          // envelope's top-level expiresAt remains the delivery deadline: 15 s,
+          // or 60 s where the auth-success replay is enabled for the school.
           pollExpiresAt: pollExpiryIso,
           expiresAt: pollExpiryIso,
         },

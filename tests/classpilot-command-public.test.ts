@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { publicClasspilotCommand } from "../src/services/classpilotCommandPublic.js";
 import {
-  CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS,
   CLASSPILOT_TRANSIENT_COMMAND_TTL_MS,
   classpilotCommandDeliveryPolicy,
   classpilotCommandExpiresAt,
@@ -120,8 +119,6 @@ test("command delivery policies are fixed; one-shot actions expire after 15 s an
   for (const commandType of ["open-tab", "close-tab", "close-tabs", "activate-tab", "not-a-command"]) {
     assert.equal(classpilotTransientCommandTtlMs(commandType, replayOn, "school-a"), 15_000, commandType);
   }
-  // The exported constant is the no-replay deadline this process started with.
-  assert.equal(CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS, classpilotTimerPollCommandTtlMs());
 
   const issuedAt = new Date("2026-08-13T12:00:00.000Z");
   withTransientLaneEnv({}, () => {
@@ -150,15 +147,25 @@ test("command delivery policies are fixed; one-shot actions expire after 15 s an
 });
 
 test("CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS overrides only the timer/poll deadline and ignores invalid values", () => {
-  const override = { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "15000" };
-  assert.equal(classpilotTransientCommandTtlMs("timer", override), 15_000);
-  assert.equal(classpilotTransientCommandTtlMs("poll", override), 15_000);
+  // Each case uses a value no default produces, so a build that ignored the
+  // override could not pass.
+  const override = { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "45000" };
+  assert.equal(classpilotTransientCommandTtlMs("timer", override), 45_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", override), 45_000);
   assert.equal(classpilotTransientCommandTtlMs("open-tab", override), 15_000);
+  // The accepted band is inclusive and tolerates surrounding whitespace.
+  assert.equal(classpilotTransientCommandTtlMs("poll", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "1000" }), 1_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "300000" }), 300_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: " 45000 " }), 45_000);
   assert.equal(classpilotTransientCommandTtlMs("poll", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "90000" }), 90_000);
   assert.equal(classpilotTransientCommandTtlMs("open-tab", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "90000" }), 15_000);
   // An invalid value is ignored: the deadline falls back to what the replay
-  // setting alone decides.
-  for (const invalid of ["", "   ", "abc", "0", "-5", "NaN", "Infinity"]) {
+  // setting alone decides. That covers a fraction, a value typed in seconds,
+  // a unit suffix, and anything outside 1 000 to 300 000 ms.
+  for (const invalid of [
+    "", "   ", "abc", "0", "-5", "NaN", "Infinity",
+    "0.5", "60", "999", "45000.5", "300001", "1e16", "45000ms",
+  ]) {
     assert.equal(
       classpilotTransientCommandTtlMs("timer", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: invalid }),
       15_000,
@@ -188,8 +195,12 @@ test("CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS overrides only the timer/poll deadlin
     assert.equal(classpilotCommandExpiresAt("timer", issuedAt, "school-a")?.getTime(), issuedAt.getTime() + 45_000);
     assert.equal(classpilotCommandExpiresAt("open-tab", issuedAt)?.getTime(), issuedAt.getTime() + 15_000);
   });
-  withTimerPollTtlEnv("15000", () => {
-    assert.equal(classpilotCommandExpiresAt("poll", issuedAt)?.getTime(), issuedAt.getTime() + 15_000);
+  // It also shortens the deadline where the replay alone would grant 60 s.
+  withTransientLaneEnv({
+    CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "15000",
+    CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH: "true",
+  }, () => {
+    assert.equal(classpilotCommandExpiresAt("poll", issuedAt, "school-a")?.getTime(), issuedAt.getTime() + 15_000);
   });
 });
 
