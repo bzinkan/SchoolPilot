@@ -239,7 +239,10 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
     return {
       title: summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0 ? 'Partially delivered' : 'Acknowledged',
       description: `${breakdown || `${summary.acknowledged || summary.completed} acknowledged`}. Device acknowledgements are self-reported and are not tamper proof.`,
-      variant: summary.failed > 0 || summary.expired > 0 ? 'destructive' : undefined,
+      // Stragglers that expired after at least one device acknowledged are
+      // informational; only a device-reported failure is destructive here.
+      // Zero acknowledgements are handled above and stay destructive.
+      variant: summary.failed > 0 ? 'destructive' : undefined,
     };
   }
 
@@ -400,9 +403,18 @@ export function latestTransientClassroomUiEffect(current, commandType) {
   return latest;
 }
 
+/**
+ * A timer or poll control stays locked only until the first device of that
+ * command type acknowledges the frame (received or completed). Waiting for
+ * every target let one Chromebook that was briefly off its socket hold every
+ * control for the full 15 s TTL (2026-10-09 connection audit, finding #1).
+ * The straggler target stays tracked and still expires on its own clock.
+ */
 export function hasPendingTransientAction(current, commandType) {
   for (const entry of current.values()) {
-    if (entry.commandType === commandType && entry.summary.awaitingAck > 0) return true;
+    if (entry.commandType !== commandType) continue;
+    const { summary } = entry;
+    if (summary.awaitingAck > 0 && summary.acknowledged === 0 && summary.completed === 0) return true;
   }
   return false;
 }

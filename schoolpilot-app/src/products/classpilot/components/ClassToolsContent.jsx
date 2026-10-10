@@ -84,7 +84,7 @@ export function ClassActivityShortcuts({ tools, onCommand, activePoll, responseC
     {history ? <ToolsHistory tools={tools} events={history.events} onClose={() => setHistory(null)} onMore={history.nextCursor ? () => loadHistory(true) : null} /> : tools.phase >= 3 && <LessonActivities tools={tools} onCommand={onCommand} onShowHistory={() => loadHistory()} />}
     {historyError && <p role="alert" className="text-sm text-red-600">{historyError}</p>}
     <div><h3 className="font-semibold text-sm">Quick checks</h3><p className="text-xs text-slate-500 mt-1">Check understanding before the next step.</p></div>
-    {tools.data?.prompt ? <PromptResults tools={tools} onCommand={onCommand} /> : activePoll ? <Button variant="outline" className="w-full" onClick={onPollClick} disabled={pollPending}>View responses ({responseCount})</Button> : <>
+    {tools.data?.prompt ? <PromptResults tools={tools} onCommand={onCommand} /> : activePoll ? <Button variant="outline" className="w-full" onClick={onPollClick}>View responses ({responseCount})</Button> : <>
       {QUICK_CHECKS.map(preset => <Button key={preset.name} variant="outline" className="w-full justify-start" onClick={() => onPreset(preset)} disabled={pollPending}>{preset.name}</Button>)}
       <Button className="w-full" onClick={onPollClick} disabled={pollPending}>Create poll</Button>
     </>}

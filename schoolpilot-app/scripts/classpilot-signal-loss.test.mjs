@@ -1089,6 +1089,77 @@ test('timer starts only after an ACK update and an expired start remains inactiv
   assert.equal(latestTransientClassroomUiEffect(failedAfterReceipt, 'timer'), null);
 });
 
+test('the first device acknowledgement releases the control while stragglers stay tracked', () => {
+  // 2026-10-09 connection audit, finding #1: a class-wide poll with one
+  // lid-closed Chromebook locked Create poll, End Poll and View responses for
+  // the full 15 s TTL and ended in a red toast (2 of 5 class-wide sends).
+  // The first ACK proves the frame left the server; the straggler keeps its
+  // own per-target outcome and expires on the server clock.
+  const start = classroomTransientResponse({
+    commandId: 'poll-start',
+    commandType: 'poll',
+    action: 'start',
+    pollId: 'poll-1',
+  });
+  const studentIds = ['student-1', 'student-2', 'student-3', 'student-4'];
+  const classWide = {
+    ...start,
+    command: {
+      ...start.command,
+      targets: studentIds.map((studentId) => ({ studentId, status: 'sent' })),
+    },
+    summary: { attempted: 4, pending: 4, awaitingAck: 4 },
+  };
+  const withFirstTarget = (status) => [
+    { studentId: 'student-1', status },
+    ...studentIds.slice(1).map((studentId) => ({ studentId, status: 'sent' })),
+  ];
+
+  const pending = trackTransientCommandResponse(new Map(), classWide, 'poll');
+  assert.equal(hasPendingTransientAction(pending, 'poll'), true);
+
+  const firstAck = applyTransientCommandUpdate(pending, {
+    type: 'classpilot-command-update',
+    commandId: 'poll-start',
+    command: { ...classWide.command, targets: withFirstTarget('received') },
+    summary: { attempted: 4, acknowledged: 1, received: 1, pending: 4, awaitingAck: 3 },
+  });
+  assert.equal(hasPendingTransientAction(firstAck, 'poll'), false, 'acknowledged 1 + awaitingAck 3 is not pending');
+  assert.equal(hasPendingTransientAction(firstAck, 'timer'), false);
+  assert.equal(latestTransientClassroomUiEffect(firstAck, 'poll')?.active, true);
+  assert.equal(
+    findNextTransientExpiry(firstAck, observedAt),
+    observedAt + 15_000,
+    'the three stragglers still expire on the server clock',
+  );
+
+  const completedFirst = applyTransientCommandUpdate(pending, {
+    type: 'classpilot-command-update',
+    commandId: 'poll-start',
+    command: { ...classWide.command, targets: withFirstTarget('completed') },
+    summary: { attempted: 4, acknowledged: 1, completed: 1, pending: 3, awaitingAck: 3 },
+  });
+  assert.equal(hasPendingTransientAction(completedFirst, 'poll'), false, 'a completed target releases the control too');
+
+  const stragglersExpired = expireTransientCommands(firstAck, observedAt + 15_000).get('poll-start');
+  assert.equal(stragglersExpired.summary.expired, 3);
+  assert.equal(stragglersExpired.summary.awaitingAck, 0);
+  const partial = commandDeliveryFeedback({ command: classWide.command, summary: stragglersExpired.summary }, 'poll');
+  assert.equal(partial.title, 'Partially delivered');
+  assert.equal(partial.variant, undefined, 'expired stragglers after an acknowledgement are not destructive');
+  assert.match(partial.description, /1 received/);
+  assert.match(partial.description, /3 expired/);
+
+  // Nobody acknowledged: the control stays locked until the TTL and the toast
+  // stays red.
+  assert.equal(hasPendingTransientAction(pending, 'poll'), true);
+  const nobody = expireTransientCommands(pending, observedAt + 15_000).get('poll-start');
+  assert.equal(hasPendingTransientAction(new Map([['poll-start', nobody]]), 'poll'), false);
+  const undelivered = commandDeliveryFeedback({ command: classWide.command, summary: nobody.summary }, 'poll');
+  assert.equal(undelivered.title, 'Not delivered');
+  assert.equal(undelivered.variant, 'destructive');
+});
+
 test('an expired timer stop or poll close preserves the last acknowledged active state', () => {
   const timerStart = classroomTransientResponse({
     commandId: 'timer-start',

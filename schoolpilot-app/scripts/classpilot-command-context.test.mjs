@@ -661,6 +661,36 @@ test('mixed delivery feedback never hides adverse outcomes behind an acknowledge
   assert.match(feedback.description, /1 failed/);
   assert.match(feedback.description, /1 unavailable/);
   assert.match(feedback.description, /1 expired/);
+  assert.equal(feedback.variant, 'destructive', 'a device-reported failure stays destructive');
+});
+
+test('transient partial delivery is destructive only for failures or zero acknowledgements', () => {
+  // 2026-10-09 connection audit, finding #1: one straggler that expired after
+  // the rest of the class acknowledged painted a red toast. Expired-only is
+  // informational; failures and zero-acknowledgement sends stay destructive.
+  const command = { commandType: 'poll', deliveryPolicy: 'transient_action' };
+  const expiredOnly = commandDeliveryFeedback({
+    command,
+    summary: { requested: 5, attempted: 5, acknowledged: 4, completed: 0, received: 4, pending: 0, failed: 0, unavailable: 0, expired: 1, awaitingAck: 0 },
+  }, 'poll');
+  assert.equal(expiredOnly.title, 'Partially delivered');
+  assert.equal(expiredOnly.variant, undefined);
+  assert.match(expiredOnly.description, /4 received/);
+  assert.match(expiredOnly.description, /1 expired/);
+
+  const failed = commandDeliveryFeedback({
+    command,
+    summary: { requested: 5, attempted: 5, acknowledged: 4, completed: 0, received: 3, pending: 0, failed: 1, unavailable: 0, expired: 1, awaitingAck: 0 },
+  }, 'poll');
+  assert.equal(failed.title, 'Partially delivered');
+  assert.equal(failed.variant, 'destructive');
+
+  const zeroAck = commandDeliveryFeedback({
+    command,
+    summary: { requested: 5, attempted: 5, acknowledged: 0, completed: 0, received: 0, pending: 0, failed: 0, unavailable: 0, expired: 5, awaitingAck: 0 },
+  }, 'poll');
+  assert.equal(zeroAck.title, 'Not delivered');
+  assert.equal(zeroAck.variant, 'destructive');
 });
 
 test('late-sign-in feedback separates pending from undelivered and reports current-page skips', () => {
