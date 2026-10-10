@@ -13,6 +13,36 @@ foreach ($replayFlowMode in @('transient-timer-replay-pilot', 'transient-poll-re
     $replayFlowPlan = Read-RuntimePlan -Path $replayFlowPlanResult.PlanPath -ExpectedSha256 $replayFlowPlanResult.PlanSha256
     Assert-Condition ($replayFlowPlan.profileMode -ceq $replayFlowMode) 'Replay mode must survive the immutable plan round trip.'
     Assert-Condition (-not ([IO.File]::ReadAllText($replayFlowPlanResult.PlanPath)).Contains($testSchoolId)) 'Public plan metadata must not expose the private school scope.'
+    # Production Apply checks the entire reviewed checkout, including imports.
+    # A dependency-only edit must fail even with the same entrypoint and HEAD.
+    $replayEntrypointHash = Get-FileSha256 -Path $helperPath
+    $replayPriorDirty = $global:RuntimeConfigGitState.Dirty
+    $replayPriorAwsHandler = $global:SchoolPilotRuntimeConfigAwsHandler
+    $global:ReplayDependencyAwsCalls = 0
+    try {
+        $global:SchoolPilotRuntimeConfigAwsHandler = {
+            param([string[]]$Arguments)
+            $global:ReplayDependencyAwsCalls++
+            throw 'Changed runtime imports must reject before any AWS call.'
+        }
+        foreach ($replayChangedImport in @('scripts/private-permissions.ps1', 'scripts/classpilot-transient-replay-runtime.ps1')) {
+            $global:RuntimeConfigGitState.Dirty = " M $replayChangedImport"
+            $replayDependencyError = $null
+            try {
+                Invoke-RuntimeConfigApply -Plan $replayFlowPlan -PlanSha256 $replayFlowPlanResult.PlanSha256 `
+                    -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+            } catch { $replayDependencyError = $_ }
+            Assert-Condition ($null -ne $replayDependencyError -and
+                $replayDependencyError.Exception.Message -like 'Runtime configuration deployment requires clean main*') `
+                'Production Apply must reject a changed import for every transient replay profile.'
+            Assert-Condition ($global:ReplayDependencyAwsCalls -eq 0) 'Changed imports must reject before AWS reads or mutations.'
+            Assert-Condition ((Get-FileSha256 -Path $helperPath) -ceq $replayEntrypointHash) 'The dependency custody regression must leave the entrypoint unchanged.'
+        }
+    } finally {
+        $global:RuntimeConfigGitState.Dirty = $replayPriorDirty
+        $global:SchoolPilotRuntimeConfigAwsHandler = $replayPriorAwsHandler
+        Remove-Variable -Name ReplayDependencyAwsCalls -Scope Global
+    }
     if ($replayFlowMode -ceq 'transient-poll-replay-pilot') {
         Assert-Throws {
             Invoke-RuntimeConfigApply -Plan $replayFlowPlan -PlanSha256 $replayFlowPlanResult.PlanSha256 `
