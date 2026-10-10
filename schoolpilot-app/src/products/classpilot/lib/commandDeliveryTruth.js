@@ -25,6 +25,9 @@ function nonNegative(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
+// One-shot actions whose late stragglers leave nothing unenforced.
+const EXPIRY_TOLERANT_TRANSIENT_COMMANDS = new Set(['timer', 'poll']);
+
 export function commandDeliveryPolicy(commandType, value) {
   const supplied = value?.deliveryPolicy ?? value?.command?.deliveryPolicy;
   if (['persistent_control', 'transient_action', 'durable_message', 'server_authoritative'].includes(supplied)) {
@@ -239,10 +242,16 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
     return {
       title: summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0 ? 'Partially delivered' : 'Acknowledged',
       description: `${breakdown || `${summary.acknowledged || summary.completed} acknowledged`}. Device acknowledgements are self-reported and are not tamper proof.`,
-      // Stragglers that expired after at least one device acknowledged are
-      // informational; only a device-reported failure is destructive here.
-      // Zero acknowledgements are handled above and stay destructive.
-      variant: summary.failed > 0 ? 'destructive' : undefined,
+      // For a timer or poll, stragglers that expired after at least one device
+      // acknowledged are informational: the class has it and nothing is left
+      // unenforced. For every other one-shot action (a current-page lock, open
+      // tab, close tabs) an expired target is a student the action did not
+      // reach, so that stays destructive. A device-reported failure is always
+      // destructive, and zero acknowledgements are handled above.
+      variant: summary.failed > 0
+        || (summary.expired > 0 && !EXPIRY_TOLERANT_TRANSIENT_COMMANDS.has(commandType))
+        ? 'destructive'
+        : undefined,
     };
   }
 

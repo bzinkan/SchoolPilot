@@ -691,6 +691,24 @@ test('transient partial delivery is destructive only for failures or zero acknow
   }, 'poll');
   assert.equal(zeroAck.title, 'Not delivered');
   assert.equal(zeroAck.variant, 'destructive');
+
+  // The calmer toast is for timers and polls only. A one-shot action that
+  // enforces something keeps the red toast when a student did not get it.
+  const expiredOnlySummary = { requested: 5, attempted: 5, acknowledged: 4, completed: 4, received: 4, pending: 0, failed: 0, unavailable: 0, expired: 1, awaitingAck: 0 };
+  const timerExpiredOnly = commandDeliveryFeedback({
+    command: { commandType: 'timer', deliveryPolicy: 'transient_action' },
+    summary: expiredOnlySummary,
+  }, 'timer');
+  assert.equal(timerExpiredOnly.title, 'Partially delivered');
+  assert.equal(timerExpiredOnly.variant, undefined);
+  for (const commandType of ['open-tab', 'close-tabs', 'close-tab', 'activate-tab', 'lock-screen']) {
+    const enforcing = commandDeliveryFeedback({
+      command: { commandType, deliveryPolicy: 'transient_action' },
+      summary: expiredOnlySummary,
+    }, commandType);
+    assert.equal(enforcing.title, 'Partially delivered', commandType);
+    assert.equal(enforcing.variant, 'destructive', `${commandType}: a student the action did not reach stays destructive`);
+  }
 });
 
 test('late-sign-in feedback separates pending from undelivered and reports current-page skips', () => {
