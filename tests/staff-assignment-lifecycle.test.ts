@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
+import { localDateInTimeZone } from "../dist/util/schoolTime.js";
 import { users, schools, schoolMemberships } from "../dist/schema/core.js";
 import { auditLogs } from "../dist/schema/shared.js";
 import {
@@ -1544,14 +1545,18 @@ describe("staff assignment lifecycle", () => {
       updateScheduledClassConflictStatus(conflict.id, school.id, "pending")
     );
     assert.equal(pendingConflict?.status, "pending");
-    const scheduledStartAt = new Date("2099-04-02T14:00:00.000Z");
-    const scheduledEndAt = new Date("2099-04-02T14:45:00.000Z");
+    // This writer must reach its mutation after the lock, so its frozen
+    // occurrence needs to be open at the real post-lock claim instant.
+    const claimNow = new Date();
+    const scheduledDate = localDateInTimeZone(claimNow, "America/New_York");
+    const scheduledStartAt = new Date(claimNow.getTime() - 60_000);
+    const scheduledEndAt = new Date(claimNow.getTime() + 45 * 60_000);
     const scheduledOccurrence = await inSchool(school.id, () =>
       createOrReuseScheduledReportSession({
         schoolId: school.id,
         groupId: sessionCandidate.id,
         teacherId: replacement.id,
-        scheduledDate: "2099-04-02",
+        scheduledDate,
         scheduledTimezone: "America/New_York",
         scheduledStartAt,
         scheduledEndAt,
@@ -1563,7 +1568,7 @@ describe("staff assignment lifecycle", () => {
         schoolId: school.id,
         groupId: sessionCandidate.id,
         teacherId: replacement.id,
-        scheduledDate: "2099-04-02",
+        scheduledDate,
         blockStartTime: "10:00",
         blockEndTime: "10:45",
         status: "coverage_needed",

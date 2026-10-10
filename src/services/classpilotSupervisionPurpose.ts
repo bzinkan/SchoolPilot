@@ -9,9 +9,9 @@ export function supervisionActivityPresentation(context: Context, assignments: r
   const scheduledTesting = Boolean(context.scheduleProfileApplicationId && context.scheduleProfileDate && context.scheduleProfileBlockId);
   const hasScheduleMetadata = Boolean(context.scheduleProfileApplicationId || context.scheduleProfileDate || context.scheduleProfileBlockId);
   const ordinaryClaim = !hasScheduleMetadata && !context.scheduledConflictId
-    && (context.contextType === "direct_pickup" || (context.contextType === "supervision_group"
+    && (context.contextType === "temporary_room" || context.contextType === "direct_pickup" || (context.contextType === "supervision_group"
       && assignments.length > 0 && assignments.every(row => ["staff_claim", "admin_assign"].includes(row.source))));
   const purpose: ClasspilotActivityPurpose = scheduledTesting || context.contextType === "state_testing" ? "testing"
     : context.scheduledConflictId ? "coverage" : ordinaryClaim ? "claim" : "supervision";
-  return { purpose, contextType: context.contextType, name: ordinaryClaim ? "Claimed students" : context.name };
+  return { purpose, contextType: context.contextType, name: context.contextType === "temporary_room" ? context.name : ordinaryClaim ? "Claimed students" : context.name };
 }

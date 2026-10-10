@@ -62,6 +62,7 @@ before(async () => {
   await pool.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
   const domain = `${ids.school}.example.edu`;
   await pool.query("INSERT INTO schools(id,name,domain,school_timezone) VALUES($1,'Supervision summaries',$3,'America/New_York'),($2,'Other school',$3,'America/New_York')", [ids.school, ids.otherSchool, domain]);
+  await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [ids.school]);
   for (const teacher of [ids.teacher, ids.replacement, ids.central]) {
     await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Summary','Teacher')", [teacher, `${teacher}@${domain}`]);
     await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [ids.school, teacher]);
@@ -95,6 +96,7 @@ after(async () => {
       await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${ids.school}`);
   });
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
+  await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
   await pool.query("DELETE FROM users WHERE id IN($1,$2,$3)", [ids.teacher, ids.replacement, ids.central]);
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();

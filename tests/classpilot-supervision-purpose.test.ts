@@ -23,3 +23,8 @@ test("explicit manual testing and scheduled authority take precedence over claim
   }
   assert.equal(supervisionActivityPresentation({ ...context, scheduledConflictId: "conflict" }, [{ source: "staff_claim" }]).purpose, "coverage");
 });
+
+test("temporary rooms use claim purpose and retain their room label", () => {
+  assert.deepEqual(supervisionActivityPresentation({ ...context, contextType: "temporary_room", name: "My room" }),
+    { purpose: "claim", contextType: "temporary_room", name: "My room" });
+});
