@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IMAGE_INPUTS, BINDING_FILES, REQUIRED_EVIDENCE, NATIVE_CHECKS, CAMPAIGN_TOPOLOGY, frontendInputInventory, verifyCurrentReleaseMain, bindingHash, publicReceiptHash, bindingSchema, imageInputInventory, resolveReleaseBinding, validateBindingProfile, validateOrdinaryRecovery, assertBindingReplay, assertBoundPublication, assertBoundScan, assertBoundFallbackScan } from '../scripts/release-source-binding.mjs';
+import { IMAGE_INPUTS, PRIVATE_PERMISSION_HELPER, BINDING_FILES, REQUIRED_EVIDENCE, NATIVE_CHECKS, CAMPAIGN_TOPOLOGY, frontendInputInventory, verifyCurrentReleaseMain, bindingHash, publicReceiptHash, bindingSchema, imageInputInventory, resolveReleaseBinding, validateBindingProfile, validateOrdinaryRecovery, assertBindingReplay, assertBoundPublication, assertBoundScan, assertBoundFallbackScan } from '../scripts/release-source-binding.mjs';
 import { FALLBACK, createPlan, createAnchor128Plan, validateAnchorEvidence } from '../scripts/register-compatible-fallback-inactive.mjs';
 import { SCANNER, scanCounts } from '../scripts/verify-legacy-deploy-image.mjs';
 import { planPublication, planUnused121 } from '../scripts/prepare-release-artifacts.mjs';
@@ -58,6 +58,7 @@ async function fixture() {
   }
   write('scripts/deploy-classpilot-runtime-config.ps1', readFileSync(path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1')));
   write('scripts/release-source-binding.mjs', readFileSync(path.join(root, 'scripts/release-source-binding.mjs')));
+  write(PRIVATE_PERMISSION_HELPER, readFileSync(path.join(root, PRIVATE_PERMISSION_HELPER)));
   json(BINDING_FILES[id], profile); const source = commit();
   const reseal = (key, mutate) => {
     const read = record => JSON.parse(readFileSync(path.join(directory, record.path)));

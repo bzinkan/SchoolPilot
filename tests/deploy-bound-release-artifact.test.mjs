@@ -6,19 +6,19 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { validateDeploymentArtifact, validatePublicationScope } from '../scripts/validate-release297-deployment-artifact.mjs';
-import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_OPERATION_DEPENDENCIES } from '../scripts/release-source-binding.mjs';
+import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_OPERATION_DEPENDENCIES, CURRENT_RELEASE_TOOL_DEPENDENCIES, PRIVATE_PERMISSION_HELPER } from '../scripts/release-source-binding.mjs';
 import { bindingForRole } from '../scripts/release-source-binding.mjs';
 import { FALLBACK, inventoryFor } from '../scripts/register-compatible-fallback-inactive.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex'), digest = bytes => `sha256:${sha(bytes)}`;
 const main = 'a'.repeat(40), application = 'b'.repeat(40);
 const helpers = ['scripts/release-source-binding.mjs', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/register-compatible-fallback-inactive.mjs',
-  'scripts/deploy-classpilot-runtime-config.ps1', 'src/config/rlsRegistry.json', ...BUILD_SECURITY_OPERATION_DEPENDENCIES];
+  'scripts/deploy-classpilot-runtime-config.ps1', 'src/config/rlsRegistry.json', ...CURRENT_RELEASE_TOOL_DEPENDENCIES, ...BUILD_SECURITY_OPERATION_DEPENDENCIES];
 function fixture(t, changes = {}) {
   const base = mkdtempSync(path.join(os.tmpdir(), 'sp-bound-deploy-')), root = path.join(base, 'repo'), privateRoot = path.join(base, 'private');
   mkdirSync(root); mkdirSync(privateRoot);
   t.after(() => { assert.ok(path.resolve(base).startsWith(path.resolve(os.tmpdir()) + path.sep)); rmSync(base, { recursive: true }); });
-  for (const file of [...helpers, 'scripts/prepare-release-artifacts.mjs', 'scripts/stamp-release-runtime-identity.mjs']) { mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); writeFileSync(path.join(root, file), `reviewed:${file}`); }
+  for (const file of [...helpers, 'scripts/prepare-release-artifacts.mjs', 'scripts/stamp-release-runtime-identity.mjs']) { mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); writeFileSync(path.join(root, file), file === PRIVATE_PERMISSION_HELPER ? readFileSync(new URL('../' + file, import.meta.url)) : `reviewed:${file}`); }
   const save = (name, value) => { const file = path.join(privateRoot, name); writeFileSync(file, JSON.stringify(value)); return { path: file, sha256: sha(readFileSync(file)) }; };
   const config = digest('config'), manifest = JSON.stringify({ schemaVersion: 2, mediaType: 'application/vnd.oci.image.manifest.v1+json', config: { digest: config }, layers: [] }), imageDigest = digest(manifest);
   const binding = { id: BUILD_SECURITY_BINDING_ID, sha256: sha('binding'), schemaVersion: 5, artifactRole: 'serving-anchor', artifactSource: application,
@@ -75,7 +75,7 @@ function fixture(t, changes = {}) {
       fallbackPublication, registryProof: fallbackProof }, releaseBinding: binding, cloudMutationsDuringPlan: 0, servicesMayChange: false,
     identities: { ...FALLBACK, ...binding.fallback, tag: fallbackSource.slice(0,12) }, generated, registryDigest: fallbackDigest, toolSource: main,
     toolSha256: sha(readFileSync(path.join(root, 'scripts/register-compatible-fallback-inactive.mjs'))), bindingHelperSha256: sha(readFileSync(path.join(root, 'scripts/release-source-binding.mjs'))),
-    identityHelperSha256: sha(readFileSync(path.join(root, 'scripts/stamp-release-runtime-identity.mjs'))), permissionHelperSha256: sha(readFileSync(path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'))) };
+    identityHelperSha256: sha(readFileSync(path.join(root, 'scripts/stamp-release-runtime-identity.mjs'))), permissionHelperSha256: sha(readFileSync(path.join(root, PRIVATE_PERMISSION_HELPER))) };
   changes.fallbackPlan?.(fallbackPlan);
   const fallbackPlanRecord = save('fallback-plan.json', fallbackPlan);
   const fallbackReceipt = { schemaVersion: 5, kind: 'compatible_fallback_inactive', operation: 'RegisterInactive', status: 'registered_inactive', artifactRole: 'fallback',
@@ -281,3 +281,31 @@ test('invalid pinned fallback tool fails before either full replay or AWS', asyn
   await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /FALLBACK_TOOL_CHANGED/);
   assert.equal(replays, 0); assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
 });
+
+test('changed frozen permission helper rejects before PowerShell or AWS', async t => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.root, PRIVATE_PERMISSION_HELPER), '# unreviewed permission helper\n');
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /BINDING_PERMISSION_HELPER_CHANGED/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('historical whole-runtime permission pin cannot authorize a current fallback plan', async t => {
+  const f = fixture(t, { fallbackPlan: plan => { plan.permissionHelperSha256 = FALLBACK.permissionHelperSha256; } });
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /FALLBACK_PERMISSION_TOOL_CHANGED/);
+  assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+});
+
+test('a plan without the standalone permission dependency cannot replay', async t => {
+  const f = fixture(t, { plan: plan => { delete plan.helperHashes[PRIVATE_PERMISSION_HELPER]; } });
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /PUBLICATION_HELPERS_CHANGED/);
+  assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+});
+
+for (const dependency of CURRENT_RELEASE_TOOL_DEPENDENCIES.filter(file => file !== PRIVATE_PERMISSION_HELPER)) {
+  test(`changed imported runtime dependency rejects publication replay: ${dependency}`, async t => {
+    const f = fixture(t);
+    writeFileSync(path.join(f.root, dependency), '# unreviewed imported helper\n');
+    await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /PUBLICATION_HELPERS_CHANGED/);
+    assert.equal(f.calls.filter(call => call.executable === 'aws').length, 0);
+  });
+}

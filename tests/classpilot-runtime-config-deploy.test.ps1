@@ -454,7 +454,7 @@ try {
         "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
         "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
-        "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1'
+        "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', 'pollReplaySafeV1'
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
     Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
@@ -647,6 +647,7 @@ try {
             [pscustomobject]@{ name = [string]$_.Key; value = [string]$_.Value }
         })
     }
+    . (Join-Path $PSScriptRoot 'classpilot-transient-replay-runtime.cases.ps1')
     $legacyGlobalRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $globalRuntime
     $legacyTrackingGlobalRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $trackingGlobalRuntime
     $legacyGlobalState = Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList $legacyGlobalRuntime)
@@ -5112,6 +5113,7 @@ try {
         $turnOperations -cmatch 'must not deploy') `
         "The TURN runbook must constrain the saved production plan before apply."
 
+    . (Join-Path $PSScriptRoot 'classpilot-transient-replay-workflow.cases.ps1')
     Write-Output "ClassPilot runtime-config deployment tests passed ($script:Assertions assertions)."
 }
 finally {

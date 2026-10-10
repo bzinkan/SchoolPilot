@@ -91,6 +91,13 @@ $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
 $script:ScheduledClassroomCapability = "scheduledClassroomV1"
+$script:PollReplayCapability = "pollReplaySafeV1"
+$script:TransientReplayModes = @("transient-replay-off", "transient-timer-replay-pilot", "transient-poll-replay-pilot")
+$script:TransientReplayEnvironmentNames = @(
+    "CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH",
+    "CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS",
+    "CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS"
+)
 # The shipped capabilities a school-scope unpin may release to every school. Each
 # already has a global shape in this tool, so releasing it changes who reaches the
 # capability, never what it does. restrictionAuthPassThroughV1 and
@@ -142,7 +149,8 @@ $script:AdditiveCapabilities = @(
     $script:StudentGatePresenceCapability,
     $script:LateSignInRestrictionSsoCapability,
     $script:RestrictionAuthPassThroughCapability,
-    $script:ScheduledClassroomCapability
+    $script:ScheduledClassroomCapability,
+    $script:PollReplayCapability
 ) + @($script:RoadmapCapabilities)
 # Registry order is fixed: the retired capability keeps the slot it held before
 # kioskLaunchTicketV2, so serialized registries keep their byte order.
@@ -156,8 +164,8 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1') }) + @(
-    "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1'
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability) }) + @(
+    "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1', $script:PollReplayCapability
 )
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
@@ -182,11 +190,12 @@ $script:CapabilityFlags = [ordered]@{
     preciseRestrictionResourcesV1 = "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1"
     focusTabV1                   = "CLASSPILOT_CAP_FOCUS_TAB_V1"
     privateChatLifecycleV1       = 'CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1'
+    pollReplaySafeV1             = 'CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1'
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
     "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON"
-) + @($script:CapabilityFlags.Values)
+) + @($script:CapabilityFlags.Values) + @($script:TransientReplayEnvironmentNames)
 $script:TurnEnvironmentNames = @(
     "CLASSPILOT_TURN_HOSTS",
     "CLASSPILOT_STUN_URLS"
@@ -241,6 +250,7 @@ function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
 }
 
 . (Join-Path $PSScriptRoot 'classpilot-roadmap-release-evidence.ps1')
+. (Join-Path $PSScriptRoot 'classpilot-transient-replay-runtime.ps1')
 
 function Get-ServingProtocolCapabilities {
     param(
@@ -321,6 +331,10 @@ function Select-ServingRuntimeConfiguration {
         [Parameter(Mandatory = $true)]$RuntimeConfiguration,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$KnownCapabilities
     )
+    if ([string]$RuntimeConfiguration.Mode -cin @('transient-timer-replay-pilot', 'transient-poll-replay-pilot') -and
+        $script:PollReplayCapability -cnotin $KnownCapabilities) {
+        throw 'Transient replay pilots require the repaired serving image; deploy it with replay off first.'
+    }
     $unknown = @($script:AllCapabilities | Where-Object { $_ -cnotin $KnownCapabilities })
     if ($unknown.Count -eq 0) { return $RuntimeConfiguration }
     $environment = [ordered]@{}
@@ -637,9 +651,9 @@ function Assert-ExactProperties {
 }
 
 function ConvertTo-RuntimeConfiguration {
-    param([Parameter(Mandatory = $true)]$Profile)
+    param([Parameter(Mandatory = $true)]$Profile, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
     Assert-ExactProperties -Value $Profile -Allowed @(
-        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn"
+        "schemaVersion", "mode", "testSchoolId", "enabledCapabilities", "pilotSchoolId", "turn", "pollReplayEvidence"
     ) -Trail "profile"
     $schemaVersion = [int]$Profile.schemaVersion
     $mode = [string]$Profile.mode
@@ -663,6 +677,7 @@ function ConvertTo-RuntimeConfiguration {
     # Schema 10 retires Live View ICE in place: it turns off only
     # liveViewIceServersV1 and copies every other control from the source.
     $schemaTenModes = @("live-view-retire")
+    $schemaElevenModes = @($script:TransientReplayModes)
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -673,7 +688,8 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 8 -and $mode -cnotin $schemaEightModes) -or
         ($schemaVersion -eq 9 -and $mode -cnotin $schemaNineModes) -or
         ($schemaVersion -eq 10 -and $mode -cnotin $schemaTenModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) {
+        ($schemaVersion -eq 11 -and $mode -cnotin $schemaElevenModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -707,9 +723,12 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -cin @(
         "tracking-window-pilot", "student-gate-pilot", "late-signin-pilot",
         "fast-preview-pilot", "restriction-auth-pilot"
-    ) -or $mode -cin $script:RoadmapPilotModes) {
+    ) -or $mode -cin $script:RoadmapPilotModes -or $mode -cin @('transient-timer-replay-pilot', 'transient-poll-replay-pilot')) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
-        if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+        $schoolPattern = if ($mode -cin $script:TransientReplayModes) {
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        } else { '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' }
+        if ($pilotSchoolId -cnotmatch $schoolPattern) {
             throw "The selected pilot profile requires one canonical UUID school ID."
         }
         if ($mode -ceq "late-signin-pilot") {
@@ -727,6 +746,11 @@ function ConvertTo-RuntimeConfiguration {
     }
     if ($mode -ceq 'precise-restriction-resources-global-on') { Assert-PreciseRestrictionPilotReleaseEvidenceBound }
     if ($mode -ceq 'focus-tab-global-on') { Assert-FocusTabPilotReleaseEvidenceBound }
+    if ($mode -ceq 'transient-poll-replay-pilot') {
+        Assert-PollReplayReleaseEvidence -Profile $Profile -SchoolId $pilotSchoolId -Now $Now
+    } elseif ($Profile.PSObject.Properties.Name -contains 'pollReplayEvidence') {
+        throw 'Only the poll replay pilot may carry poll replay release evidence.'
+    }
 
     $turn = $null
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
@@ -762,6 +786,17 @@ function ConvertTo-RuntimeConfiguration {
         throw "Live View is retired; runtime profiles must not carry TURN inputs and preserve the existing TURN wiring."
     }
 
+    if ($mode -cin $schemaElevenModes) {
+        return [pscustomobject]@{
+            Mode = $mode
+            SchoolScopeCount = if ($mode -ceq 'transient-replay-off') { 0 } else { 1 }
+            EnabledCapabilities = if ($mode -ceq 'transient-poll-replay-pilot') { @($script:PollReplayCapability) } else { @() }
+            Environment = [ordered]@{}
+            Turn = $null
+            RequiresSourceRuntime = $true
+            PilotSchoolId = if ($mode -ceq 'transient-replay-off') { $null } else { $pilotSchoolId }
+        }
+    }
     if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes + $schemaNineModes + $schemaTenModes)) {
         $isUnpin = $mode -cin $schemaNineModes
         $selectedCapability = if ($isUnpin) {
@@ -865,7 +900,10 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         [Parameter(Mandatory = $true)]$SourceTaskDefinition,
         [Parameter(Mandatory = $true)][string]$ContainerName
     )
-    if (-not [bool]$RuntimeIntent.RequiresSourceRuntime) { return $RuntimeIntent }
+    if (-not [bool]$RuntimeIntent.RequiresSourceRuntime) {
+        Copy-TransientReplayEnvironment -RuntimeIntent $RuntimeIntent -SourceTaskDefinition $SourceTaskDefinition -ContainerName $ContainerName
+        return $RuntimeIntent
+    }
     if ([string]$RuntimeIntent.Mode -cnotin @(
         "student-gate-pilot", "student-gate-global-on", "student-gate-off",
         "late-signin-pilot", "late-signin-off",
@@ -873,7 +911,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         "restriction-auth-pilot", "restriction-auth-off",
         "scheduled-classroom-global-on", "scheduled-classroom-off",
         "school-scope-unpin", "live-view-retire"
-    ) -and -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
+    ) -and [string]$RuntimeIntent.Mode -cnotin $script:TransientReplayModes -and
+        -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         throw "The source-preserving runtime intent is unsupported."
     }
 
@@ -917,7 +956,10 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     }
 
     $isUnpinIntent = [string]$RuntimeIntent.Mode -ceq "school-scope-unpin"
-    if ($isUnpinIntent) {
+    if ([string]$RuntimeIntent.Mode -cin $script:TransientReplayModes) {
+        Set-TransientReplayRuntimeIntent -RuntimeIntent $RuntimeIntent -SourceEnvironment $sourceEnvironment -Values $values -Rollouts $rollouts
+    }
+    elseif ($isUnpinIntent) {
         # Every entry and every kill switch was copied from the source above. The
         # only bytes that change are the schoolIds keys on the unpinnable entries.
         # The set is strict: a member that is not already on is refused rather than
@@ -1005,6 +1047,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $environment = [ordered]@{}
     foreach ($name in $script:RuntimeEnvironmentNames) {
         if (-not $values.Contains([string]$name)) {
+            if ($name -cin $script:TransientReplayEnvironmentNames) { continue }
             throw "Source-preserving runtime environment is incomplete."
         }
         $environment[[string]$name] = [string]$values[[string]$name]
@@ -1024,7 +1067,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @(
             "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
             "restriction-auth-pilot"
-        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
+        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes -or
+            [string]$RuntimeIntent.Mode -cin @('transient-timer-replay-pilot', 'transient-poll-replay-pilot')) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
     }
@@ -2648,7 +2692,8 @@ function Get-RuntimeActivationState {
         [string]$script:CapabilityFlags[$_]
     })
     $expectedEnvironmentNames = @($script:RuntimeEnvironmentNames | Where-Object {
-        $_ -cnotin $absentAdditiveFlags
+        $_ -cnotin $absentAdditiveFlags -and
+            ($_ -cnotin $script:TransientReplayEnvironmentNames -or $managed.name -ccontains $_)
     })
     if ($managed.Count -ne $expectedEnvironmentNames.Count -or
         @($expectedEnvironmentNames | Where-Object { $managed.name -cnotcontains $_ }).Count -ne 0 -or
@@ -2685,6 +2730,10 @@ function Get-RuntimeActivationState {
     }
 
     Assert-RoadmapRuntimeControls -Values $values -Rollouts $rollouts
+    $replayState = Get-TransientReplayRuntimeControl -Environment $Environment
+    if ($protocol -ceq 'false' -and $replayState.Mode -cne 'off') {
+        throw 'Protocol-off runtime must disable transient replay first.'
+    }
 
     $readOnlyFlag = [string]$values[$script:CapabilityFlags[$script:ReadOnlyObservationCapability]]
     $readOnlyRollout = $rollouts.$($script:ReadOnlyObservationCapability)
@@ -3069,6 +3118,15 @@ function Assert-AllowedRuntimeTransition {
     $sourceControls = Get-RuntimeCapabilityControls -Environment @($sourceContainer[0].environment)
     $targetControls = Get-RuntimeCapabilityControls -Environment $targetEnvironment
     $roadmapMode = [string]$TargetRuntimeConfiguration.Mode
+    Assert-TransientReplayRuntimeTransition -SourceEnvironment @($sourceContainer[0].environment) `
+        -TargetEnvironment $targetEnvironment -RuntimeConfiguration $TargetRuntimeConfiguration
+    if ($roadmapMode -cin $script:TransientReplayModes) {
+        if ([string]$source.Mode -cnotin @('global-on', 'tracking-window-pilot', 'tracking-window-global-on') -or
+            [string]$source.Mode -cne [string]$target.Mode -or [string]$source.SchoolId -cne [string]$target.SchoolId) {
+            throw 'Transient replay changes must preserve the completed repaired-capability runtime.'
+        }
+        return
+    }
     if ($script:RoadmapProfileCapabilities.ContainsKey($roadmapMode)) {
         $selectedCapability = [string]$script:RoadmapProfileCapabilities[$roadmapMode]
         if ([string]$source.Mode -cnotin @("global-on", "tracking-window-pilot", "tracking-window-global-on") -or
@@ -3550,6 +3608,12 @@ function Assert-RuntimeTaskConfiguration {
         if ($environment.ContainsKey([string]$entry.name)) { throw "Runtime task contains duplicate environment names." }
         $environment[[string]$entry.name] = [string]$entry.value
     }
+    $actualManagedNames = @($environment.Keys | Where-Object { $_ -cin $script:RuntimeEnvironmentNames })
+    $desiredManagedNames = @($RuntimeConfiguration.Environment.Keys)
+    if ($actualManagedNames.Count -ne $desiredManagedNames.Count -or
+        @($actualManagedNames | Where-Object { $_ -cnotin $desiredManagedNames }).Count -ne 0) {
+        throw 'Registered runtime task changed the exact managed environment presence.'
+    }
     foreach ($entry in $RuntimeConfiguration.Environment.GetEnumerator()) {
         if (-not $environment.ContainsKey([string]$entry.Key) -or $environment[[string]$entry.Key] -cne [string]$entry.Value) {
             throw "Registered runtime task does not contain the exact desired capability profile."
@@ -3794,127 +3858,7 @@ function Write-OperationCheckpoint {
     Write-SanitizedJson -Path ([string]$Plan.checkpointPath) -Value $checkpoint
 }
 
-function Test-IsPathWithin {
-    param([Parameter(Mandatory = $true)][string]$Candidate, [Parameter(Mandatory = $true)][string]$Parent)
-    $candidatePath = [IO.Path]::GetFullPath($Candidate)
-    $parentPath = [IO.Path]::GetFullPath($Parent).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-    return $candidatePath.StartsWith($parentPath, [StringComparison]::OrdinalIgnoreCase)
-}
-
-function Assert-NoReparsePointInExistingPath {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $current = [IO.Path]::GetFullPath($Path)
-    while ($current) {
-        if ([IO.File]::Exists($current) -or [IO.Directory]::Exists($current)) {
-            $item = Get-Item -LiteralPath $current -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "Private runtime paths must not traverse a reparse point."
-            }
-        }
-        $parent = [IO.Directory]::GetParent($current)
-        if ($null -eq $parent) { break }
-        $current = $parent.FullName
-    }
-}
-
-function Set-PrivatePathPermissions {
-    param([Parameter(Mandatory = $true)][string]$Path, [switch]$Directory)
-    if ($IsWindows) {
-        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $ownerSid = $identity.User
-        $systemSid = [Security.Principal.SecurityIdentifier]::new(
-            [Security.Principal.WellKnownSidType]::LocalSystemSid, $null
-        )
-        $security = Get-Acl -LiteralPath $Path
-        if ($Directory) {
-            $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
-        }
-        else {
-            $inheritance = [Security.AccessControl.InheritanceFlags]::None
-        }
-        $security.SetAccessRuleProtection($true, $false)
-        foreach ($identityReference in @($security.Access | ForEach-Object { $_.IdentityReference } | Sort-Object Value -Unique)) {
-            $security.PurgeAccessRules($identityReference)
-        }
-        foreach ($sid in @($ownerSid, $systemSid)) {
-            [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
-                $sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance,
-                [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow
-            ))
-        }
-        if ($Directory) {
-            [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($Path), [Security.AccessControl.DirectorySecurity]$security)
-        }
-        else {
-            [IO.FileSystemAclExtensions]::SetAccessControl([IO.FileInfo]::new($Path), [Security.AccessControl.FileSecurity]$security)
-        }
-        $observed = Get-Acl -LiteralPath $Path
-        $allowedSids = @($ownerSid.Value, $systemSid.Value)
-        if (-not $observed.AreAccessRulesProtected -or @($observed.Access | Where-Object {
-            $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowedSids
-        }).Count -gt 0) {
-            throw "Private runtime material permissions did not converge to operator-and-SYSTEM only."
-        }
-        return
-    }
-    $mode = if ($Directory) {
-        [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
-    } else {
-        [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite
-    }
-    [IO.File]::SetUnixFileMode($Path, $mode)
-}
-
-function Assert-PrivatePathPermissions {
-    param([Parameter(Mandatory = $true)][string]$Path, [switch]$Directory)
-    if ($IsWindows) {
-        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $ownerSid = $identity.User.Value
-        $systemSid = [Security.Principal.SecurityIdentifier]::new(
-            [Security.Principal.WellKnownSidType]::LocalSystemSid, $null
-        ).Value
-        $security = Get-Acl -LiteralPath $Path
-        $allowedSids = @($ownerSid, $systemSid)
-        $allowedRules = @($security.Access | Where-Object {
-            $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow
-        })
-        if (-not $security.AreAccessRulesProtected -or $allowedRules.Count -eq 0 -or
-            @($allowedRules | Where-Object {
-                $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowedSids
-            }).Count -gt 0 -or
-            @($allowedRules | Where-Object {
-                $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $ownerSid
-            }).Count -eq 0) {
-            throw "Private runtime material must be accessible only to the operator and SYSTEM."
-        }
-        return
-    }
-    $mode = [IO.File]::GetUnixFileMode($Path)
-    $sharedBits = [IO.UnixFileMode]::GroupRead -bor [IO.UnixFileMode]::GroupWrite -bor [IO.UnixFileMode]::GroupExecute -bor
-        [IO.UnixFileMode]::OtherRead -bor [IO.UnixFileMode]::OtherWrite -bor [IO.UnixFileMode]::OtherExecute
-    if (($mode -band $sharedBits) -ne 0) {
-        throw "Private runtime material must use owner-only permissions."
-    }
-}
-
-function Assert-PrivateInputPath {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot
-    )
-    if (-not [IO.Path]::IsPathRooted($Path)) { throw "Runtime configuration inputs require absolute paths." }
-    Assert-NoReparsePointInExistingPath -Path $Path
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Runtime configuration inputs must be regular private files."
-    }
-    if (Test-IsPathWithin -Candidate $item.FullName -Parent $RepositoryRoot) {
-        throw "Runtime configuration inputs must stay outside the repository."
-    }
-    Assert-PrivatePathPermissions -Path $item.FullName
-    return $item.FullName
-}
+. (Join-Path $PSScriptRoot 'private-permissions.ps1')
 
 function Assert-PrivateExternalRoot {
     param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$RepositoryRoot)
@@ -4122,7 +4066,7 @@ function New-RuntimeConfigPlan {
     }
     $profileSnapshot = Read-StrictJsonSnapshot -Path $PrivateProfilePath
     $profile = $profileSnapshot.Value
-    $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profile
+    $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profile -Now $Now
     $runtime = $runtimeIntent
     $toolSha = if ($SkipRepositoryCheck -or $runtime.Mode -ceq "off") {
         Get-RepositoryHeadSha -RepositoryRoot $RepositoryRoot
@@ -4770,7 +4714,7 @@ function Invoke-RuntimeConfigApply {
     if ([string]$profileSnapshot.Sha256 -cne [string]$Plan.profileSha256) {
         throw "Private runtime profile changed after planning."
     }
-    $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profileSnapshot.Value
+    $runtimeIntent = ConvertTo-RuntimeConfiguration -Profile $profileSnapshot.Value -Now $Now
     $runtime = $runtimeIntent
     $roadmapReleaseSnapshot = $null
     $roadmapPilotSnapshot = $null

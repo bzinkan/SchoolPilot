@@ -66,6 +66,24 @@ export const BUILD_SECURITY_CURRENT_RUNTIME = Object.freeze({
   review: { storage: 'private', path: 'current-serving-129-A3/state-review.private.json', sha256: '91cd89c76d2aeb0361c497a261ea86839d98044e99b47048dc1a7f6fe319936c', format: 'json' }
 });
 export const BUILD_SECURITY_OPERATION_DEPENDENCIES = Object.freeze(['scripts/validate-release297-deployment-artifact.mjs', 'scripts/deploy.sh']);
+// Current permission-tool custody is independent of historical release evidence.
+// The standalone helper contains the unchanged path/ACL checks and imports no
+// deployment code. Keep FALLBACK's historical whole-runtime pins unchanged.
+export const PRIVATE_PERMISSION_HELPER = 'scripts/private-permissions.ps1';
+export const PRIVATE_PERMISSION_HELPER_HASHES = Object.freeze([
+  '2eb519da0254254ac871df7f16dce77f3ccad6380a3e302687967b65c9c14b00', // LF
+  '8e3d19b37c036bca524c4b5a26abc1ac5471b878fca0d6bbccdd3cb85c5da39c', // CRLF
+]);
+export const CURRENT_RELEASE_TOOL_DEPENDENCIES = Object.freeze([
+  PRIVATE_PERMISSION_HELPER,
+  'scripts/classpilot-roadmap-release-evidence.ps1',
+  'scripts/classpilot-transient-replay-runtime.ps1',
+]);
+export function assertPrivatePermissionHelper(root, code = 'BINDING_PERMISSION_HELPER_CHANGED') {
+  const helper = path.join(root, PRIVATE_PERMISSION_HELPER);
+  assert.ok(PRIVATE_PERMISSION_HELPER_HASHES.includes(bindingHash(readFileSync(helper))), code);
+  return helper;
+}
 export const buildSecurityOperationHashes = root => Object.fromEntries(BUILD_SECURITY_OPERATION_DEPENDENCIES.map(file => [file, bindingHash(readFileSync(path.join(root, file)))]));
 // The separate source and artifact are exact review inputs. Their presence
 // does not establish preparation, selection, applicability or authorization.
@@ -338,7 +356,7 @@ export function createBuildSecurityPermissionQueue(run, helper, root, expectedHa
         for (let current = helper; ; current = path.dirname(current)) { assert.ok(!lstatSync(current).isSymbolicLink(), 'BINDING_REPARSE_PATH'); if (current === path.dirname(current)) break; }
         assert.ok(lstatSync(helper).isFile(), 'BINDING_FILE_REQUIRED');
         assert.ok(expectedHashes.includes(bindingHash(readFileSync(helper))), 'BINDING_PERMISSION_HELPER_CHANGED');
-        const script = `$ErrorActionPreference = 'Stop'; if (@(${expectedHashes.map(literal).join(',')}) -cnotcontains (Get-FileHash -LiteralPath ${literal(helper)} -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'BINDING_PERMISSION_HELPER_CHANGED' }; . ${literal(helper)}; $failed = $false; ` + batch.map(entry => `try { [void](Assert-PrivateInputPath -Path ${literal(entry.filename)} -RepositoryRoot ${literal(root)}) } catch { $failed = $true }`).join('; ') + "; if ($failed) { throw 'BINDING_PRIVATE_PERMISSIONS_REQUIRED' }";
+        const script = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version Latest; if (@(${expectedHashes.map(literal).join(',')}) -cnotcontains (Get-FileHash -LiteralPath ${literal(helper)} -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'BINDING_PERMISSION_HELPER_CHANGED' }; . ${literal(helper)}; $failed = $false; ` + batch.map(entry => `try { [void](Assert-PrivateInputPath -Path ${literal(entry.filename)} -RepositoryRoot ${literal(root)}) } catch { $failed = $true }`).join('; ') + "; if ($failed) { throw 'BINDING_PRIVATE_PERMISSIONS_REQUIRED' }";
         const result = await run('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]);
         equal(result.code, 0, 'BINDING_PRIVATE_PERMISSIONS_REQUIRED');
         for (const entry of batch) entry.resolve(result);
@@ -368,10 +386,9 @@ async function retainedJson(record, root, privateDirectory, run, context) {
     const relative = path.relative(path.resolve(directory), privateRoot), reverse = path.relative(privateRoot, path.resolve(directory));
     assert.ok(relative.startsWith('..') && !path.isAbsolute(relative) && reverse.startsWith('..') && !path.isAbsolute(reverse), 'BINDING_PRIVATE_DIRECTORY_OVERLAP');
   }
-  const helper = path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1');
-  assert.ok([context.fallback.permissionHelperSha256, context.fallback.permissionHelperLfSha256].includes(bindingHash(readFileSync(helper))), 'BINDING_PERMISSION_HELPER_CHANGED');
+  const helper = assertPrivatePermissionHelper(root);
   const literal = value => "'" + value.replaceAll("'", "''") + "'";
-  const script = `$ErrorActionPreference = 'Stop'; . ${literal(helper)}; [void](Assert-PrivateInputPath -Path ${literal(path.join(privateRoot, record.path))} -RepositoryRoot ${literal(root)})`;
+  const script = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version Latest; . ${literal(helper)}; [void](Assert-PrivateInputPath -Path ${literal(path.join(privateRoot, record.path))} -RepositoryRoot ${literal(root)})`;
   const permissions = context.privatePermissionQueue ? await context.privatePermissionQueue(path.join(privateRoot, record.path)) : await run('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]);
   equal(permissions.code, 0, 'BINDING_PRIVATE_PERMISSIONS_REQUIRED');
   const raw = ordinaryText(privateDirectory, record.path, false);
@@ -431,10 +448,9 @@ export async function resolveReleaseBinding(input, { root, run, fallback, source
     assert.ok(path.isAbsolute(input.mainCi?.path ?? ''), 'SUCCESSOR_MAIN_CI_SNAPSHOT_REQUIRED');
     const ciPath = path.resolve(input.mainCi.path);
     for (const directory of [root, mainDirectory]) { const relative = path.relative(directory, ciPath); assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'SUCCESSOR_MAIN_CI_PRIVATE_PATH_REQUIRED'); }
-    const permissionHelper = path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1');
-    assert.ok([fallback.permissionHelperSha256, fallback.permissionHelperLfSha256].includes(bindingHash(readFileSync(permissionHelper))), 'BINDING_PERMISSION_HELPER_CHANGED');
+    const permissionHelper = assertPrivatePermissionHelper(root);
     const literal = value => "'" + value.replaceAll("'", "''") + "'";
-    const permissions = await run('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$ErrorActionPreference = 'Stop'; . ${literal(permissionHelper)}; [void](Assert-PrivateInputPath -Path ${literal(ciPath)} -RepositoryRoot ${literal(root)})`, 'utf16le').toString('base64')]);
+    const permissions = await run('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$ErrorActionPreference = 'Stop'; Set-StrictMode -Version Latest; . ${literal(permissionHelper)}; [void](Assert-PrivateInputPath -Path ${literal(ciPath)} -RepositoryRoot ${literal(root)})`, 'utf16le').toString('base64')]);
     equal(permissions.code, 0, 'BINDING_PRIVATE_PERMISSIONS_REQUIRED');
     const ciBytes = ordinaryText(path.dirname(ciPath), path.basename(ciPath), false);
     equal(bindingHash(ciBytes), input.mainCi.sha256, 'SUCCESSOR_MAIN_CI_SNAPSHOT_CHANGED');
@@ -451,7 +467,7 @@ export async function resolveReleaseBinding(input, { root, run, fallback, source
   equal([applicability.value.schemaVersion, applicability.value.kind, applicability.value.status, applicability.value.applicationSource, applicability.value.inventorySha256, applicability.value.policySha256, applicability.value.operationalAuthorization], [1, 'owner_release_source_applicability', 'APPROVED_READINESS_SOURCE_ONLY', profile.applicationSource, profile.inventory.sha256, profile.policy.sha256, false], 'BINDING_SOURCE_APPLICABILITY_INVALID');
   equal([applicability.value.releaseBindingId, applicability.value.frontendInventorySha256, applicability.value.extension, applicability.value.schema], [profile.id, profile.frontendInventory.sha256, profile.extension, profile.schema], 'BINDING_SOURCE_APPLICABILITY_IDENTITY_CHANGED');
   const context = { fallback, sourceDirectory, outputDirectory: input.outputDirectory };
-  if (profile.schemaVersion === 5) context.privatePermissionQueue = createBuildSecurityPermissionQueue(run, path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'), root, [fallback.permissionHelperSha256, fallback.permissionHelperLfSha256]);
+  if (profile.schemaVersion === 5) context.privatePermissionQueue = createBuildSecurityPermissionQueue(run, assertPrivatePermissionHelper(root), root, PRIVATE_PERMISSION_HELPER_HASHES);
   const load = record => retainedJson(record, root, input.retainedEvidenceDirectory, run, context);
   const [fallbackScan, fallbackReport, fallbackCleanup] = profile.schemaVersion === 5
     ? await replayBuildSecurityRawEvidence([profile.fallbackScan.scan, profile.fallbackScan.report, profile.fallbackScan.cleanup], load)
@@ -764,10 +780,9 @@ async function retainedArtifact(record, root, input, run, context) {
   assert.ok(filename.startsWith(privateRoot + path.sep), 'BINDING_PATH_ESCAPE');
   for (let current = filename; ; current = path.dirname(current)) { assert.ok(!lstatSync(current).isSymbolicLink(), 'BINDING_REPARSE_PATH'); if (current === path.dirname(current)) break; }
   assert.ok(lstatSync(filename).isFile(), 'BINDING_FILE_REQUIRED');
-  const helper = path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1');
-  assert.ok([context.fallback.permissionHelperSha256, context.fallback.permissionHelperLfSha256].includes(bindingHash(readFileSync(helper))), 'BINDING_PERMISSION_HELPER_CHANGED');
+  const helper = assertPrivatePermissionHelper(root);
   const literal = value => "'" + value.replaceAll("'", "''") + "'";
-  const permissions = context.privatePermissionQueue ? await context.privatePermissionQueue(filename) : await run('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$ErrorActionPreference = 'Stop'; . ${literal(helper)}; [void](Assert-PrivateInputPath -Path ${literal(filename)} -RepositoryRoot ${literal(root)})`, 'utf16le').toString('base64')]);
+  const permissions = context.privatePermissionQueue ? await context.privatePermissionQueue(filename) : await run('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(`$ErrorActionPreference = 'Stop'; Set-StrictMode -Version Latest; . ${literal(helper)}; [void](Assert-PrivateInputPath -Path ${literal(filename)} -RepositoryRoot ${literal(root)})`, 'utf16le').toString('base64')]);
   equal(permissions.code, 0, 'BINDING_PRIVATE_PERMISSIONS_REQUIRED');
   const digest = createHash('sha256'); for await (const chunk of createReadStream(filename)) digest.update(chunk);
   equal(digest.digest('hex'), record.sha256, 'BINDING_RETAINED_BYTES_CHANGED');
@@ -1030,7 +1045,7 @@ export async function validateSuccessorPreparation(input, { root, run, fallback,
   equal(await imageInputInventory(input.fallbackDirectory, fallbackSource, run), profile.fallbackInventory, 'SUCCESSOR_INVENTORY_CHANGED');
   equal(sourceDelta, profile.sourceDelta, 'SUCCESSOR_SOURCE_DELTA_RECEIPT_CHANGED');
   const context = { fallback, sourceDirectory: applicationDirectory, outputDirectory: input.outputDirectory, extraSourceDirectories: [input.fallbackDirectory] };
-  if (buildFallback) context.privatePermissionQueue = createBuildSecurityPermissionQueue(run, path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'), root, [fallback.permissionHelperSha256, fallback.permissionHelperLfSha256]);
+  if (buildFallback) context.privatePermissionQueue = createBuildSecurityPermissionQueue(run, assertPrivatePermissionHelper(root), root, PRIVATE_PERMISSION_HELPER_HASHES);
   if (buildFallback) await loadBuildSecurityCurrentRuntime(profile, record => retainedArtifact(record, root, input, run, context));
   if (protectedFallback) {
     const load = record => retainedArtifact(record, root, input, run, context);

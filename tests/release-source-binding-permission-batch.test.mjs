@@ -6,10 +6,10 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bindingHash, createBuildSecurityPermissionQueue, replayBuildSecurityRawEvidence } from '../scripts/release-source-binding.mjs';
+import { bindingHash, PRIVATE_PERMISSION_HELPER, createBuildSecurityPermissionQueue, replayBuildSecurityRawEvidence } from '../scripts/release-source-binding.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const helper = path.join(repository, 'scripts/deploy-classpilot-runtime-config.ps1');
+const helper = path.join(repository, PRIVATE_PERMISSION_HELPER);
 const execute = promisify(execFile);
 const literal = value => "'" + value.replaceAll("'", "''") + "'";
 const decoded = args => Buffer.from(args.at(-1), 'base64').toString('utf16le');

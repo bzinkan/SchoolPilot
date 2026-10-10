@@ -26,6 +26,7 @@ import {
   revalidateClasspilotExactCommandTargetsForDispatch,
   withClasspilotStudentControlDeliveryAuthority,
   hasCurrentClasspilotStudentControlAuthority,
+  supersedeClasspilotTransientCommandTargets,
   type ClasspilotCommandWithTargets,
   type ClasspilotCommandPollMutation,
 } from "./storage.js";
@@ -71,6 +72,7 @@ import {
   CLASSPILOT_TRANSIENT_COMMAND_TTL_MS,
   classpilotCommandDeliveryPolicy,
   classpilotCommandExpiresAt,
+  classpilotTransientReplayOnAuthEnabled,
   isPersistentClasspilotControl,
   summarizeClasspilotCommandTargets,
   type ClasspilotCommandDeliveryPolicy,
@@ -115,6 +117,42 @@ export type ResolvedClasspilotCommandTarget = {
   /** Structurally commandable signed-out target admitted by the exact-school gate. */
   lateSignInEligible?: boolean;
 };
+
+/**
+ * Authority revisions frozen on a persisted target row, in the shape the frame
+ * builder expects. Shared by dispatch and by the auth-success replay so a
+ * rebuilt frame carries the same binding envelope as the original.
+ */
+export function classpilotPersistedTargetAuthorityRevisions(result: unknown): Pick<
+  ResolvedClasspilotCommandTarget,
+  "durableAuthorityRevision" | "scheduledAuthorityRevision" | "contextAuthorityRevision" | "controlRevision"
+> {
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : undefined;
+  const integer = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : undefined);
+  return {
+    durableAuthorityRevision: integer(record?.durableAuthorityRevision),
+    scheduledAuthorityRevision: integer(record?.scheduledAuthorityRevision),
+    contextAuthorityRevision: typeof record?.scheduledContextAuthorityRevision === "string"
+      ? record.scheduledContextAuthorityRevision
+      : undefined,
+    controlRevision: integer(record?.frozenControlRevision),
+  };
+}
+
+/**
+ * Class Tools capability a device must have accepted before this command may
+ * be delivered to it. Shared by dispatch and by the auth-success replay.
+ */
+export function classpilotRequiredToolsCapability(
+  commandType: string,
+  payload: Record<string, unknown>
+): "lessonActivitiesV1" | "timerControlsV1" | "exitTicketsV1" | null {
+  return commandType === "lesson-activity" ? "lessonActivitiesV1"
+    : commandType === "timer" && ["pause", "resume", "extend"].includes(String(payload.action)) ? "timerControlsV1"
+      : commandType === "poll" && payload.responseType === "short_text" ? "exitTicketsV1" : null;
+}
 
 export const COVERAGE_COMMAND_TYPES = new Set([
   "open-tab",
@@ -852,6 +890,66 @@ export function classpilotCommandFrameForTarget(
   };
 }
 
+/**
+ * A later timer command, or a poll close, makes the still-undelivered frames
+ * it replaces moot: expire those targets now so the server stops counting
+ * them as awaiting and the auth-success replay lane never re-sends a frame the
+ * teacher already replaced or withdrew. No command update is published for
+ * this, so a dashboard learns of it from its own deadline or a later update.
+ *
+ * Timers: one timer per class, and every timer frame is the complete timer
+ * state, so the latest timer command wins for each student it addresses. That
+ * rule needs no timer identity, which legacy phase-0 payloads do not carry.
+ * Polls: a close supersedes the commands of the same pollId (a second poll
+ * cannot start while one is active).
+ *
+ * Runs only where the auth-success replay is enabled for the school. Elsewhere
+ * earlier targets keep their ordinary deadline, as before this lane existed.
+ *
+ * Best effort: the new command is already dispatched and persisted, and the
+ * deadline sweep remains the backstop.
+ */
+async function supersedeTransientCommandTargetsFor(
+  created: ClasspilotCommandWithTargets,
+  options: {
+    schoolId: string;
+    commandType: string;
+    teachingSessionId?: string | null;
+    supervisionContextId?: string | null;
+  },
+  commandPayload: Record<string, any>
+): Promise<void> {
+  if (created.targets.length === 0) return;
+  // Superseding protects the replay from re-sending a replaced frame. With the
+  // replay off nothing re-sends, and expiring a target early would only turn a
+  // device receipt that is still in flight into a rejected ACK.
+  if (!classpilotTransientReplayOnAuthEnabled(options.schoolId)) return;
+  if (options.commandType === "poll"
+    && !isClasspilotCapabilityActive("pollReplaySafeV1", { schoolId: options.schoolId })) return;
+  const pollId = typeof commandPayload.pollId === "string" ? commandPayload.pollId.trim() : "";
+  const superseded = options.commandType === "timer"
+    ? { commandType: "timer" as const }
+    : options.commandType === "poll" && String(commandPayload.action || "") === "close" && pollId
+      ? { commandType: "poll" as const, pollId }
+      : null;
+  if (!superseded) return;
+  try {
+    await supersedeClasspilotTransientCommandTargets({
+      schoolId: options.schoolId,
+      supersedingCommandId: created.id,
+      studentIds: created.targets.map((target) => target.studentId),
+      teachingSessionId: options.teachingSessionId,
+      supervisionContextId: options.supervisionContextId,
+      ...superseded,
+    });
+  } catch (error) {
+    console.warn(
+      "[ClassPilot] Transient command supersede deferred to the expiry sweep",
+      error instanceof Error ? error.name : "error"
+    );
+  }
+}
+
 async function endStudentSessionsForSignOut(options: {
   schoolId: string;
   teachingSessionId?: string;
@@ -1249,9 +1347,7 @@ export async function executeClasspilotCommand(options: {
         targets: exactTabAuthorization.targets,
     })
     : exactTabAuthorization.targets;
-  const requiredToolsCapability = options.commandType === "lesson-activity" ? "lessonActivitiesV1"
-    : options.commandType === "timer" && ["pause", "resume", "extend"].includes(String(commandPayload.action)) ? "timerControlsV1"
-      : options.commandType === "poll" && commandPayload.responseType === "short_text" ? "exitTicketsV1" : null;
+  const requiredToolsCapability = classpilotRequiredToolsCapability(options.commandType, commandPayload);
   if (requiredToolsCapability || focusNewAction) {
     const evidence = await readClasspilotRealtimeStatusBatch(options.schoolId, effectiveTargets.filter(target => target.available && target.studentSessionId && target.deviceId)
       .map(target => ({ studentId: target.studentId, studentSessionId: target.studentSessionId!, deviceId: target.deviceId! })));
@@ -1313,7 +1409,7 @@ export async function executeClasspilotCommand(options: {
     : classpilotCommandDeliveryPolicy(options.commandType);
   const expiresAt = currentPageRequested
     ? new Date(issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS)
-    : classpilotCommandExpiresAt(options.commandType, issuedAt);
+    : classpilotCommandExpiresAt(options.commandType, issuedAt, options.schoolId);
   const currentUrlResolution = currentPageRequested
     ? await resolveCurrentUrlLockTargets({
         schoolId: options.schoolId,
@@ -1445,28 +1541,7 @@ export async function executeClasspilotCommand(options: {
       available: persisted.status !== "unavailable",
       stateAuthorized: authorityChanged ? false : target.stateAuthorized,
       unavailableReason: persisted.errorMessage || target.unavailableReason,
-      durableAuthorityRevision:
-        persisted.result
-        && typeof persisted.result === "object"
-        && !Array.isArray(persisted.result)
-        && Number.isSafeInteger((persisted.result as Record<string, unknown>).durableAuthorityRevision)
-          ? Number((persisted.result as Record<string, unknown>).durableAuthorityRevision)
-          : undefined,
-      scheduledAuthorityRevision:
-        persisted.result && typeof persisted.result === "object" && !Array.isArray(persisted.result)
-          && Number.isSafeInteger((persisted.result as Record<string, unknown>).scheduledAuthorityRevision)
-            ? Number((persisted.result as Record<string, unknown>).scheduledAuthorityRevision) : undefined,
-      contextAuthorityRevision:
-        persisted.result && typeof persisted.result === "object" && !Array.isArray(persisted.result)
-          && typeof (persisted.result as Record<string, unknown>).scheduledContextAuthorityRevision === "string"
-            ? String((persisted.result as Record<string, unknown>).scheduledContextAuthorityRevision) : undefined,
-      controlRevision:
-        persisted.result
-        && typeof persisted.result === "object"
-        && !Array.isArray(persisted.result)
-        && Number.isSafeInteger((persisted.result as Record<string, unknown>).frozenControlRevision)
-          ? Number((persisted.result as Record<string, unknown>).frozenControlRevision)
-          : undefined,
+      ...classpilotPersistedTargetAuthorityRevisions(persisted.result),
     };
   });
 
@@ -2238,6 +2313,7 @@ export async function executeClasspilotCommand(options: {
     - (targetOrder.get(right.studentId) ?? Number.MAX_SAFE_INTEGER)
   );
   const summary = commandSummary(command);
+  await supersedeTransientCommandTargetsFor(created, options, commandPayload);
   if (["timer", "lesson-activity"].includes(options.commandType) && (options.teachingSessionId || options.supervisionContextId)) {
     const scope = { schoolId: options.schoolId, actorId: options.actorId, contextAuthorityRevision: options.contextAuthorityRevision,
       authority: options.teachingSessionId ? { teachingSessionId: options.teachingSessionId } : { supervisionContextId: options.supervisionContextId! } };

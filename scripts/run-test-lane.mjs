@@ -22,6 +22,7 @@ const RLS_SERIAL = new Set([
   "classpilot-private-chat-lifecycle-rls.test.ts",
   "classpilot-focus.integration.test.ts",
   "classpilot-lesson-prerequisites.integration.test.ts",
+  "classpilot-transient-command-replay.integration.test.ts",
   "passpilot-reports-v2.integration.test.ts",
   "passpilot-appointments-rls.test.ts",
   "classpilot-settings.test.ts",

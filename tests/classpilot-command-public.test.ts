@@ -5,6 +5,9 @@ import {
   CLASSPILOT_TRANSIENT_COMMAND_TTL_MS,
   classpilotCommandDeliveryPolicy,
   classpilotCommandExpiresAt,
+  classpilotTimerPollCommandTtlMs,
+  classpilotTransientCommandTtlMs,
+  classpilotTransientReplayOnAuthEnabled,
   summarizeClasspilotCommandTargets,
 } from "../src/services/classpilotCommandDelivery.js";
 import { classpilotTransientCurrentPageCommandEnvelope } from "../src/services/classpilotTransientCurrentPage.js";
@@ -42,20 +45,63 @@ test("staff command DTO recursively removes internal routing identifiers", () =>
   assert.equal(command.targets[0].deviceId, "device-hidden", "serializer must not mutate storage rows");
 });
 
-test("command delivery policies are fixed and transient actions expire after 15 seconds", () => {
+const pilotSchool = "10000000-0000-4000-8000-000000000001";
+const otherSchool = "10000000-0000-4000-8000-000000000002";
+const timerPilot = { CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH: "true", CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS: pilotSchool };
+const pollPilot = { ...timerPilot, CLASSPILOT_PROTOCOL_V3_ENABLED: "true", CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true", CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1: "true" };
+
+test("delivery deadlines follow the specific replay gate and retain the 15 s rollback", () => {
   assert.equal(classpilotCommandDeliveryPolicy("lock-screen"), "persistent_control");
-  assert.equal(classpilotCommandDeliveryPolicy("temp-unblock"), "persistent_control");
-  assert.equal(classpilotCommandDeliveryPolicy("open-tab"), "transient_action");
-  assert.equal(classpilotCommandDeliveryPolicy("close-tabs"), "transient_action");
   assert.equal(classpilotCommandDeliveryPolicy("teacher-message"), "durable_message");
   assert.equal(classpilotCommandDeliveryPolicy("student-sign-out"), "server_authoritative");
-
+  assert.equal(CLASSPILOT_TRANSIENT_COMMAND_TTL_MS, 15_000);
+  assert.equal(classpilotTimerPollCommandTtlMs({}), 15_000);
+  for (const type of ["open-tab", "close-tab", "close-tabs", "activate-tab", "timer", "poll"]) {
+    assert.equal(classpilotTransientCommandTtlMs(type, {}, pilotSchool), 15_000);
+    assert.equal(classpilotTransientCommandTtlMs(type, pollPilot, otherSchool), 15_000);
+    assert.equal(classpilotTransientCommandTtlMs(type, pollPilot), 15_000);
+  }
+  assert.equal(classpilotTransientCommandTtlMs("timer", timerPilot, pilotSchool), 60_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", timerPilot, pilotSchool), 15_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", pollPilot, pilotSchool), 60_000);
+  assert.equal(classpilotTransientCommandTtlMs("open-tab", pollPilot, pilotSchool), 15_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", { ...pollPilot, CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "false" }, pilotSchool), 15_000);
+  assert.equal(classpilotTransientCommandTtlMs("poll", { ...pollPilot, CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({ scopedAuthorityChecksV1:{mode:"on"},pollReplaySafeV1:{mode:"on",schoolIds:[otherSchool]} }) }, pilotSchool), 15_000);
   const issuedAt = new Date("2026-08-13T12:00:00.000Z");
-  assert.equal(
-    classpilotCommandExpiresAt("open-tab", issuedAt)?.getTime(),
-    issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS
-  );
-  assert.equal(classpilotCommandExpiresAt("lock-screen", issuedAt), null);
+  const names = Object.keys(pollPilot);
+  const saved = names.map(name => process.env[name]);
+  try {
+    Object.assign(process.env, pollPilot);
+    assert.equal(classpilotCommandExpiresAt("timer", issuedAt, pilotSchool)?.getTime(), issuedAt.getTime()+60_000);
+    assert.equal(classpilotCommandExpiresAt("poll", issuedAt, pilotSchool)?.getTime(), issuedAt.getTime()+60_000);
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "false";
+    assert.equal(classpilotCommandExpiresAt("poll", issuedAt, pilotSchool)?.getTime(), issuedAt.getTime()+15_000);
+    assert.equal(classpilotCommandExpiresAt("lock-screen", issuedAt, pilotSchool), null);
+  } finally { names.forEach((name,index) => { if(saved[index]===undefined) delete process.env[name]; else process.env[name]=saved[index]; }); }
+});
+
+test("deadline override is bounded, integral and cannot enable a replay lane", () => {
+  for (const value of ["", " ", "abc", "0", "14999", "60001", "90000", "45000.5", "4.5e4", "NaN", "Infinity"]) {
+    const override = { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: value };
+    assert.equal(classpilotTransientCommandTtlMs("timer", override, pilotSchool), 15_000);
+    assert.equal(classpilotTransientCommandTtlMs("timer", { ...timerPilot,...override }, pilotSchool), 60_000, value);
+    assert.equal(classpilotTransientCommandTtlMs("poll", { ...timerPilot,...override }, pilotSchool), 15_000, value);
+  }
+  for (const value of ["15000", "45000", "60000"]) {
+    const env = { ...pollPilot, CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: value };
+    assert.equal(classpilotTransientCommandTtlMs("timer", env, pilotSchool), Number(value));
+    assert.equal(classpilotTransientCommandTtlMs("poll", env, pilotSchool), Number(value));
+    assert.equal(classpilotTransientCommandTtlMs("open-tab", env, pilotSchool), 15_000);
+  }
+});
+
+test("transient replay requires the explicit flag and one canonical pilot UUID", () => {
+  assert.equal(classpilotTransientReplayOnAuthEnabled(pilotSchool, timerPilot), true);
+  assert.equal(classpilotTransientReplayOnAuthEnabled(otherSchool, timerPilot), false);
+  for (const allowlist of [undefined,"", " ","school-a",pilotSchool+","+otherSchool," "+pilotSchool, pilotSchool+","]) {
+    assert.equal(classpilotTransientReplayOnAuthEnabled(pilotSchool, { CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH:"true",CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS:allowlist }), false);
+  }
+  for (const flag of [undefined,"1","TRUE","false"]) assert.equal(classpilotTransientReplayOnAuthEnabled(pilotSchool,{...timerPilot,CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH:flag}),false);
 });
 
 test("public command DTO adds policy and reports truthful cumulative and outcome counts", () => {

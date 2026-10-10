@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { BINDING_FILES, REQUIRED_EVIDENCE, NATIVE_CHECKS, CAMPAIGN_TOPOLOGY, SUCCESSOR_BINDING_ID, SUCCESSOR_SOURCE, SUCCESSOR_CORRECTION, SUCCESSOR_PREPARATION_CHECKS, bindingSchema, bindingHash, imageInputInventory, frontendInputInventory, successorArtifactPair, validateSuccessorSourceDelta, validateLockfileOnlyDelta, validateSuccessorProfile, validateSuccessorPreparation, validateSuccessorMainCiSnapshot, resolveReleaseBinding, bindingForRole, assertBoundScan, assertBoundPublication, assertBindingReplay } from '../scripts/release-source-binding.mjs';
+import { BINDING_FILES, CURRENT_RELEASE_TOOL_DEPENDENCIES, REQUIRED_EVIDENCE, NATIVE_CHECKS, CAMPAIGN_TOPOLOGY, SUCCESSOR_BINDING_ID, SUCCESSOR_SOURCE, SUCCESSOR_CORRECTION, SUCCESSOR_PREPARATION_CHECKS, bindingSchema, bindingHash, imageInputInventory, frontendInputInventory, successorArtifactPair, validateSuccessorSourceDelta, validateLockfileOnlyDelta, validateSuccessorProfile, validateSuccessorPreparation, validateSuccessorMainCiSnapshot, resolveReleaseBinding, bindingForRole, assertBoundScan, assertBoundPublication, assertBindingReplay } from '../scripts/release-source-binding.mjs';
 import { FALLBACK, createPlan, createAnchor128Plan, validateImageEvidence, retainSuccessorRegistration } from '../scripts/register-compatible-fallback-inactive.mjs';
 import { planPublication, planUnused121, validatePublicationPlatform } from '../scripts/prepare-release-artifacts.mjs';
 import { SCANNER, scanCounts } from '../scripts/verify-legacy-deploy-image.mjs';
@@ -35,7 +35,7 @@ async function fixture() {
   const lock = { lockfileVersion: 3, packages: { '': { name: 'synthetic' }, 'node_modules/proxy-addr': { version: '2.0.7', resolved: 'https://example.invalid/old-proxy' }, 'node_modules/sharp': { version: '0.35.4' }, 'node_modules/@img/sharp-linuxmusl-x64': { version: '0.35.4' }, 'node_modules/tsc-alias': { version: '1.8.16', dev: true } } };
   const repaired = value => { const next = structuredClone(value); next.packages['node_modules/proxy-addr'] = { version: '2.0.8', resolved: 'https://example.invalid/fixed-proxy' }; next.packages['node_modules/sharp'].version = '0.35.5'; next.packages['node_modules/@img/sharp-linuxmusl-x64'].version = '0.35.5'; return next; };
   write('src/app.js', 'export const compatible = true;\n'); write('package.json', '{}\n'); write('schoolpilot-app/src/app.js', 'export const web = true;\n'); json('package-lock.json', lock);
-  for (const name of ['src/config/rlsRegistry.json', 'src/services/classpilotProtocol.ts', 'src/services/classpilotPrivateChatLifecycle.ts', 'src/realtime/websocket.ts', 'scripts/release-source-binding.mjs', 'scripts/prepare-release-artifacts.mjs', 'scripts/register-compatible-fallback-inactive.mjs', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/enforce-deploy-rls-allowlist.mjs', 'scripts/stamp-release-runtime-identity.mjs', 'scripts/deploy-classpilot-runtime-config.ps1']) write(name, readFileSync(path.join(root, name)));
+  for (const name of ['src/config/rlsRegistry.json', 'src/services/classpilotProtocol.ts', 'src/services/classpilotPrivateChatLifecycle.ts', 'src/realtime/websocket.ts', 'scripts/release-source-binding.mjs', 'scripts/prepare-release-artifacts.mjs', 'scripts/register-compatible-fallback-inactive.mjs', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/enforce-deploy-rls-allowlist.mjs', 'scripts/stamp-release-runtime-identity.mjs', 'scripts/deploy-classpilot-runtime-config.ps1', ...CURRENT_RELEASE_TOOL_DEPENDENCIES]) write(name, readFileSync(path.join(root, name)));
   const baseline = commit(); git(['worktree', 'add', '-q', '-b', 'synthetic-fallback', fallbackDirectory, baseline]);
   json('package-lock.json', repaired(lock), fallbackDirectory); const fallbackSource = commit(fallbackDirectory);
   const correctionParentLock = structuredClone(lock); delete correctionParentLock.packages['node_modules/tsc-alias'];
@@ -87,7 +87,7 @@ async function fixture() {
     profile.preparation.evidence[key] = { status: 'passed', ...json('docs/release-evidence/fixture-v3/' + key + '.json', receipt) };
   }
   write(profile.policy.path, readFileSync(path.join(root, profile.policy.path), 'utf8').replaceAll('\r\n', '\n'));
-  for (const name of ['scripts/deploy-classpilot-runtime-config.ps1', 'scripts/release-source-binding.mjs']) write(name, readFileSync(path.join(root, name)));
+  for (const name of ['scripts/deploy-classpilot-runtime-config.ps1', 'scripts/release-source-binding.mjs', ...CURRENT_RELEASE_TOOL_DEPENDENCIES]) write(name, readFileSync(path.join(root, name)));
   const seal = () => { json(BINDING_FILES[SUCCESSOR_BINDING_ID], profile); const source = commit(); value.anchorSource = source; options.source = source; };
   const value = { ...input, anchorDirectory: main, fallbackDirectory, retainedEvidenceDirectory };
   const options = { root: main, run, fallback: FALLBACK, sourceDirectory: main, source: undefined, now };

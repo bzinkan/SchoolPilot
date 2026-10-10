@@ -20,6 +20,13 @@ const COUNTER_NAMES = [
   // Teacher-initiated student sign-out: requested targets, sessions actually
   // ended server-side, and the difference (unavailable, refused, or failed).
   "classpilotStudentSignOutRequested", "classpilotStudentSignOutEnded", "classpilotStudentSignOutNotEnded",
+  // Transient (one-shot) command lane: targets expired by the deadline sweep,
+  // targets expired early because a later timer command or poll close
+  // superseded them, un-received timer/poll frames replayed on student
+  // WebSocket auth-success, and replay preparations that failed (degraded to
+  // no replay; authentication is unaffected).
+  "transientCommandTargetExpired", "transientCommandTargetSuperseded", "transientCommandReplayedOnAuth",
+  "transientCommandReplayFailed",
   ...STUDENT_SIGN_IN_COUNTER_NAMES,
 ] as const;
 

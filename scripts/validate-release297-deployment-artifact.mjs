@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_OPERATION_DEPENDENCIES, bindingSchema,
+import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_OPERATION_DEPENDENCIES, CURRENT_RELEASE_TOOL_DEPENDENCIES, assertPrivatePermissionHelper, bindingSchema,
   resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan,
   boundArtifactSource, verifyCurrentReleaseMain, bindingForRole } from './release-source-binding.mjs';
 import { FALLBACK, inventoryFor, validateSourceResponse, registrationEnvironmentProjection,
@@ -19,7 +19,7 @@ const HASH = /^[a-f0-9]{64}$/, SHA = /^[a-f0-9]{40}$/;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const helperFiles = ['scripts/release-source-binding.mjs', 'scripts/verify-legacy-deploy-image.mjs',
   'scripts/register-compatible-fallback-inactive.mjs', 'scripts/deploy-classpilot-runtime-config.ps1',
-  'src/config/rlsRegistry.json', ...BUILD_SECURITY_OPERATION_DEPENDENCIES];
+  'src/config/rlsRegistry.json', ...CURRENT_RELEASE_TOOL_DEPENDENCIES, ...BUILD_SECURITY_OPERATION_DEPENDENCIES];
 function ordinary(filename) {
   assert.ok(typeof filename === 'string' && path.isAbsolute(filename), 'PRIVATE_ABSOLUTE_PATH_REQUIRED');
   for (let current = path.resolve(filename);;) {
@@ -37,7 +37,7 @@ async function privateFile(filename, root, run) {
   const relative = path.relative(root, filename);
   assert.ok(relative.startsWith('..') && !path.isAbsolute(relative), 'PRIVATE_PATH_OUTSIDE_REPOSITORY_REQUIRED');
   const literal = value => "'" + value.replaceAll("'", "''") + "'";
-  const command = `$ErrorActionPreference='Stop'; . ${literal(path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'))}; [void](Assert-PrivateInputPath -Path ${literal(filename)} -RepositoryRoot ${literal(root)})`;
+  const command = `$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest; . ${literal(assertPrivatePermissionHelper(root))}; [void](Assert-PrivateInputPath -Path ${literal(filename)} -RepositoryRoot ${literal(root)})`;
   await checked(run, 'pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')]);
 }
 async function pinned(record, root, run) {
@@ -90,7 +90,7 @@ async function readFallback(record, expectedMain, root, run) {
   assert.equal(plan.toolSha256, hash(readFileSync(path.join(root, 'scripts/register-compatible-fallback-inactive.mjs'))), 'FALLBACK_TOOL_CHANGED');
   assert.equal(plan.bindingHelperSha256, hash(readFileSync(path.join(root, 'scripts/release-source-binding.mjs'))), 'FALLBACK_VALIDATOR_CHANGED');
   assert.equal(plan.identityHelperSha256, hash(readFileSync(path.join(root, 'scripts/stamp-release-runtime-identity.mjs'))), 'FALLBACK_IDENTITY_TOOL_CHANGED');
-  assert.equal(plan.permissionHelperSha256, hash(readFileSync(path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'))), 'FALLBACK_PERMISSION_TOOL_CHANGED');
+  assert.equal(plan.permissionHelperSha256, hash(readFileSync(assertPrivatePermissionHelper(root))), 'FALLBACK_PERMISSION_TOOL_CHANGED');
   for (const value of Object.values(plan.input)) if (value?.path && value?.sha256) await pinned(value, root, run);
   const authorization = await pinned(receipt.authorization, root, run);
   assert.deepEqual([authorization.schemaVersion, authorization.authorized, authorization.operation, authorization.planSha256],
