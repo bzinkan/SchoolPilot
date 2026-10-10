@@ -57,11 +57,24 @@ async function fixture(t, options = {}) {
     if (pathname.endsWith('/coverage/scheduled')) return route.fulfill({ json: { date:url.searchParams.get('date') || '2026-09-23',timeZone:'America/New_York',items:schoolId === 'school' ? state.scheduled : [] } });
     if (pathname.endsWith('/coverage/supervision-groups/browse')) return route.fulfill({ json: { groups:schoolId === 'school' ? state.groups : [],total:state.groups.length,page:1,totalPages:1,facets:{categories:[],grades:[],staff:[]} } });
     if (pathname.endsWith('/coverage/assignments')) return route.fulfill({ json: { assignments:[] } });
+    if (pathname.endsWith('/coverage/session-options')) return route.fulfill({ json: { groups: [], staff: [{ id: 'teacher', displayName: 'Teacher Fixture' }], students: state.contexts.flatMap(c => c.students), defaultEndsAt: new Date(now() + 3_600_000).toISOString(), room: state.contexts.find(c => c.contextType === 'temporary_room') } });
+    if (pathname.endsWith('/coverage/preview')) {
+      const body = request.postDataJSON();
+      const roster = [...new Map(state.contexts.flatMap(c => c.students).map(s => [s.studentId, s])).values()];
+      return route.fulfill({ json: { request: body, reviewToken: 'mixed-room-review', destination: { name: 'My room', purpose: 'claim', supervisorName: 'Teacher Fixture', endsAt: body.endsAt }, students: body.studentIds.map(id => ({ studentId: id, name: roster.find(s => s.studentId === id).studentName, eligible: true, status: 'ready', currentOwner: { name: 'Scheduled coverage' } })) } });
+    }
+    if (pathname.endsWith('/coverage/claim')) {
+      const body = request.postDataJSON();
+      const selected = state.contexts.flatMap(c => c.students).filter(s => body.studentIds.includes(s.studentId));
+      const room = context('mixed-room', { contextType: 'temporary_room', purpose: 'claim', name: 'My room', students: selected, activeStudentCount: selected.length, endsAt: body.endsAt });
+      state.contexts = [room];
+      return route.fulfill({ json: { context: room, outcomes: selected.map(s => ({ studentId: s.studentId, name: s.studentName, status: 'assigned' })) } });
+    }
     if (pathname.endsWith('/release')) { const id = pathname.split('/').at(-2); state.contexts = state.contexts.filter(c => c.id !== id); return route.fulfill({ json: { released:[] } }); }
     if (pathname.endsWith('/history')) return route.fulfill({ json: { events:[] } });
     return route.fulfill({ json: {} });
   });
-  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/__hub`);
+  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/__hub`, { timeout: 45_000 });
   await page.waitForLoadState('networkidle');
   return {page,state};
 }
@@ -182,4 +195,30 @@ test('release review keeps its exact students when the roster changes without an
   await page.getByText('Close this confirmation and review the current session again.',{exact:true}).waitFor();
   assert.equal(state.writes.length,0,'A newly assigned student is never included in an earlier Release all review');
   assert.deepEqual(state.errors,[]);
+});
+
+test('Combine my supervision reviews both owned grades and excludes another supervisor', {timeout:90_000}, async t => {
+  const grade3 = { studentId: 'grade3-one', studentName: 'Grade Three Student', gradeLevel: '3' };
+  const grade4 = { studentId: 'grade4-one', studentName: 'Grade Four Student', gradeLevel: '4' };
+  const { page, state } = await fixture(t, { role: 'school_admin', contexts: [
+    context('grade3', { purpose: 'coverage', scheduledConflictId: 'conflict3', students: [grade3], activeStudentCount: 1 }),
+    context('grade4', { purpose: 'coverage', scheduledConflictId: 'conflict4', students: [grade4], activeStudentCount: 1 }),
+    context('other', { assignedStaffId: 'other-teacher' }),
+  ] });
+  await page.getByTestId('combine-my-supervision').click();
+  await page.getByRole('checkbox', { name: /Grade Three Student/ }).waitFor();
+  assert.equal(await page.getByRole('checkbox').count(), 2);
+  assert.equal(state.writes.length, 0);
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('confirm-supervision-review').click();
+  await page.getByTestId('supervision-results').waitFor();
+  const commit = state.writes.find(w => w.pathname.endsWith('/coverage/claim'));
+  assert.deepEqual(commit.body.studentIds, ['grade3-one', 'grade4-one']);
+  assert.equal(commit.body.reviewToken, 'mixed-room-review');
+  assert.equal(commit.body.scheduledConflictId, undefined);
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('heading', { name: 'Dashboard destination' }).waitFor();
+  const intent = await page.evaluate(() => window.__location.state.classpilotSupervisionDashboard);
+  assert.equal(intent.contexts[0].id, 'mixed-room');
+  assert.deepEqual(state.errors, []);
 });

@@ -1938,14 +1938,33 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const sourceSession = await inSchool(school.id, () => createTeachingSession({
       groupId: sourceGroup.id,
       teacherId: sourceTeacher.id,
+      startTime: new Date(Date.now() - 60_000),
     } as any));
+
+    // Coverage claims are live mutations: freeze their occurrence around the
+    // real clock instead of leaving a historical January block open. Existing
+    // occurrences also make this fixture independent of CI's weekday.
+    const seedCurrentScheduledWindow = async (group: Awaited<ReturnType<typeof createGroup>>) => {
+      const now = new Date();
+      const date = localDateInTimeZone(now, "America/New_York");
+      await inSchool(school.id, () => createOrReuseScheduledReportSession({
+        schoolId: school.id, groupId: group.id, teacherId: scheduledTeacher.id,
+        scheduledDate: date, scheduledTimezone: "America/New_York",
+        scheduledStartAt: new Date(now.getTime() - 60_000),
+        scheduledEndAt: new Date(now.getTime() + 60 * 60_000),
+        scheduledTeacherEmail: scheduledTeacher.email,
+        scheduledTeacherName: `${scheduledTeacher.firstName} ${scheduledTeacher.lastName}`,
+      }));
+      return { now, date };
+    };
+    const coverageWindow = await seedCurrentScheduledWindow(scheduledGroup);
 
     const coverageNeeded = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: scheduledGroup,
-      scheduledDate: "2026-01-15",
+      scheduledDate: coverageWindow.date,
       scheduledTeacherConnectedOverride: false,
       connectedTeacherIdsOverride: new Set([sourceTeacher.id]),
-      now: new Date("2026-01-15T14:15:00.000Z"),
+      now: coverageWindow.now,
     }));
     assert.equal(coverageNeeded.status, "coverage_needed");
     const scheduledActive = await inSchool(school.id, () => getActiveTeachingSessionForSchool(scheduledTeacher.id, school.id));
@@ -1959,10 +1978,10 @@ describe("ClassPilot supervision coverage storage contracts", () => {
 
     const duplicate = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: scheduledGroup,
-      scheduledDate: "2026-01-15",
+      scheduledDate: coverageWindow.date,
       scheduledTeacherConnectedOverride: false,
       connectedTeacherIdsOverride: new Set([sourceTeacher.id]),
-      now: new Date("2026-01-15T14:15:00.000Z"),
+      now: coverageWindow.now,
     }));
     assert.equal(duplicate.status, "coverage_needed");
     assert.equal(duplicate.status === "coverage_needed" && coverageNeeded.status === "coverage_needed" ? duplicate.conflictId : null, coverageNeeded.status === "coverage_needed" ? coverageNeeded.conflictId : null);
@@ -2064,9 +2083,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(skippedCoverage, undefined);
     const skippedRetry = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: scheduledGroup,
-      scheduledDate: "2026-01-15",
+      scheduledDate: coverageWindow.date,
       scheduledTeacherConnectedOverride: false,
-      now: new Date("2026-01-15T14:15:00.000Z"),
+      now: coverageWindow.now,
     }));
     assert.equal(skippedRetry.status, "skipped");
     if (activeScheduledCoverage) {
@@ -2098,11 +2117,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       blockEndTime: "23:59",
     } as any));
     await inSchool(school.id, () => addGroupStudentsDetailed(loginPickupGroup.id, [scheduledOnlyStudent.id]));
+    const loginPickupWindow = await seedCurrentScheduledWindow(loginPickupGroup);
     const loginPickupStart = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: loginPickupGroup,
-      scheduledDate: "2026-01-15",
+      scheduledDate: loginPickupWindow.date,
       scheduledTeacherConnectedOverride: false,
-      now: new Date("2026-01-15T15:00:00.000Z"),
+      now: loginPickupWindow.now,
     }));
     assert.equal(loginPickupStart.status, "coverage_needed");
     const loginPickupConflictId = loginPickupStart.status === "coverage_needed" ? loginPickupStart.conflictId : "";
@@ -2118,7 +2138,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const pickedUp = await inSchool(school.id, () => startActiveScheduledClassesForTeacher({
       schoolId: school.id,
       teacherId: scheduledTeacher.id,
-      now: new Date("2026-01-15T15:00:00.000Z"),
+      now: loginPickupWindow.now,
     }));
     assert.equal(pickedUp.length, 1);
     assert.equal(pickedUp[0].id, loginPickupReport?.id);
@@ -2204,11 +2224,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       blockEndTime: "11:45",
     } as any));
     await inSchool(school.id, () => addGroupStudentsDetailed(expiringGroup.id, [scheduledOnlyStudent.id]));
+    const expiringWindow = await seedCurrentScheduledWindow(expiringGroup);
     const expiringStart = await inSchool(school.id, () => processScheduledClassAutoStart({
       group: expiringGroup,
-      scheduledDate: "2026-01-15",
+      scheduledDate: expiringWindow.date,
       scheduledTeacherConnectedOverride: false,
-      now: new Date("2026-01-15T16:15:00.000Z"),
+      now: expiringWindow.now,
     }));
     assert.equal(expiringStart.status, "coverage_needed");
     const expiringConflictId = expiringStart.status === "coverage_needed" ? expiringStart.conflictId : "";
@@ -2232,8 +2253,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     } as any));
     const expired = await inSchool(school.id, () => expireScheduledClassConflictsForSchool({
       schoolId: school.id,
-      scheduledDate: "2026-01-15",
-      currentTimeHHMM: "11:46",
+      scheduledDate: expiringWindow.date,
+      currentTimeHHMM: "23:59",
     }));
     assert.equal(expired.length, 1);
     assert.equal(expired[0].id, expiringConflictId);
@@ -2249,7 +2270,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(finalizedReport.rows[0]?.scheduled_finalization_reason, "scheduled_end");
     assert.equal(
       new Date(`${String(finalizedReport.rows[0]!.end_time_text).replace(" ", "T")}Z`).toISOString(),
-      "2026-01-15T16:45:00.000Z"
+      expiringReportSession!.scheduledEndAt!.toISOString()
     );
     const queuedDeliveries = await inSchool(school.id, () =>
       db.execute(sql`

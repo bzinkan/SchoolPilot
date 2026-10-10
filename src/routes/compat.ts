@@ -37,6 +37,7 @@ import {
   isAuthorizedClasspilotSessionStaff,
   getClasspilotSessionStudentRoster,
   getClasspilotStudentControlStates,
+  getCoverageStudentClasses,
   getClasspilotSsoPolicyForSchool,
   getGroupStudents,
   getGroupByIdAndSchool,
@@ -1185,10 +1186,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
     const today = todayInTimeZone(schoolTimezone);
 
     const studentIds = dbStudents.map((s) => s.id);
-    const [snapshotRows, controlStateRows, ssoPolicy] = await Promise.all([
+    const [snapshotRows, controlStateRows, ssoPolicy, roomClasses] = await Promise.all([
       getClasspilotDashboardSnapshot(schoolId, studentIds, today),
       getClasspilotStudentControlStates(schoolId, studentIds),
       getClasspilotSsoPolicyForSchool(schoolId),
+      scheduledContext?.contextType === "temporary_room" ? getCoverageStudentClasses(schoolId, studentIds) : Promise.resolve(null),
     ]);
     const snapshotByStudent = new Map(snapshotRows.map((row) => [row.studentId, row]));
     const controlStateByStudent = new Map(controlStateRows.map((row) => [row.studentId, row]));
@@ -1398,6 +1400,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
           student.email ||
           "Unknown",
         gradeLevel: student.gradeLevel || undefined,
+        ...(roomClasses ? { classes: roomClasses.get(student.id) || [] } : {}),
         classId: "",
         deviceCount: deviceId ? 1 : 0,
         devices: [],

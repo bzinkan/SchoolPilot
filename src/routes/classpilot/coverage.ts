@@ -93,7 +93,7 @@ import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpi
 import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 import { CoverageDeletionError, deleteCoverageStaffAssignments, deleteCoverageSupervisionGroup, type CoverageAssignmentReview } from "../../services/classpilotCoverageDeletion.js";
 import { browseCoverageGroups, getCoverageGroupDetail, listCoverageCategories, mutateCoverageCategory, saveCoverageDirectoryGroup } from "../../services/classpilotCoverageDirectory.js";
-import { commitSupervisionReview, isAdHocSupervisionDestination, previewSupervision, supervisionSessionOptions } from "../../services/classpilotSupervisionReview.js";
+import { commitSupervisionReview, isAdHocSupervisionDestination, previewSupervision, releaseTemporaryRoomStudents, returnSupervisionStudentsToOwnClass, supervisionSessionOptions } from "../../services/classpilotSupervisionReview.js";
 
 const router = Router();
 
@@ -1031,7 +1031,7 @@ async function defaultClaimEndsAt(schoolId: string): Promise<Date> {
   return claimEnd > new Date() ? new Date(Math.min(claimEnd.getTime(), Date.now() + 12 * 60 * 60_000)) : fallback;
 }
 
-async function reviewedSupervisionMutation(req: any, res: any, action: "start" | "send" | "end_time") {
+async function reviewedSupervisionMutation(req: any, res: any, action: "start" | "send" | "end_time" | "claim_room") {
   const schoolId = res.locals.schoolId as string;
   const { reviewToken, ...fields } = req.body;
   const input = { ...fields, ...(action === "end_time" ? { destinationContextId: String(req.params.id) } : {}) };
@@ -1873,8 +1873,11 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
     if (req.query.category !== undefined && !["ad_hoc", "scheduled"].includes(String(req.query.category))) {
       return res.status(400).json({ error: "category must be ad_hoc or scheduled" });
     }
-    const contexts = allContexts.filter((context) => req.query.category === "ad_hoc"
-      ? !scheduledSupervisionSource(context) : req.query.category === "scheduled" ? !!scheduledSupervisionSource(context) : true);
+    if (req.query.contextId !== undefined && (typeof req.query.contextId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(req.query.contextId))) {
+      return res.status(400).json({ error: "contextId must identify one supervision context" });
+    }
+    const contexts = allContexts.filter((context) => (!req.query.contextId || context.id === req.query.contextId)
+      && (req.query.category === "ad_hoc" ? !scheduledSupervisionSource(context) : req.query.category === "scheduled" ? !!scheduledSupervisionSource(context) : true));
     const groupIds = [...new Set(contexts.map((context) => context.coverageGroupId).filter(Boolean))];
     const [allGroups, staffRows, rows] = await Promise.all([
       groupIds.length > 0
@@ -1952,6 +1955,7 @@ async function assignStudentsToSupervisionGroup(options: {
   coverageAssignmentReview?: CoverageAssignmentReview;
 }) {
   const result = await assignAdHocSupervisionStudents({ ...options,
+    roomOwnershipAuthority: { actorId: options.actorId },
     endsAt: await defaultClaimEndsAt(options.schoolId) });
   const rows = await listSupervisionStudentsForContexts(options.schoolId, [result.context.id], { activeOnly: true });
   await syncClasspilotControlStatesToActiveDevices(options.schoolId, rows.map(row => row.studentId));
@@ -1969,6 +1973,7 @@ async function assignStudentsToDirectSupervision(options: {
   coverageAssignmentReview?: CoverageAssignmentReview;
 }) {
   const result = await assignAdHocSupervisionStudents({ ...options, requireAvailable: true,
+    roomOwnershipAuthority: { actorId: options.actorId },
     endsAt: await defaultClaimEndsAt(options.schoolId) });
   const rows = await listSupervisionStudentsForContexts(options.schoolId, [result.context.id], { activeOnly: true });
   await syncClasspilotControlStatesToActiveDevices(options.schoolId, rows.map(row => row.studentId));
@@ -1977,6 +1982,7 @@ async function assignStudentsToDirectSupervision(options: {
 
 router.post("/coverage/claim", ...auth, async (req, res, next) => {
   try {
+    if (req.body.action === "claim_room") return await reviewedSupervisionMutation(req, res, "claim_room");
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.body.supervisionGroupId || req.body.coverageGroupId || "").trim();
@@ -2121,7 +2127,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
       ...supervisionActivityPresentation(result.context, result.assignments) }, assignments: result.assignments });
   } catch (err: any) {
     if (err?.status) return res.status(err.status).json({ error: err.message,
-      ...(err instanceof CoverageDeletionError ? { code: err.code } : {}) });
+      ...(err?.code ? { code: err.code } : {}) });
     next(err);
   }
 });
@@ -2200,41 +2206,8 @@ router.post("/coverage/return-to-class", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "studentIds are required" });
     }
 
-    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
-    if (!session) {
-      return res.status(409).json({ error: "Start a class session before returning students to class" });
-    }
-
-    await assertStudentsInSchool(schoolId, studentIds);
-    const classRows = await getClasspilotSessionStudentRoster(schoolId, session.id);
-    const classStudentIds = new Set(classRows.map((row) => row.studentId));
-    if (studentIds.some((studentId) => !classStudentIds.has(studentId))) {
-      return res.status(403).json({ error: "Teachers can only return students from their active class" });
-    }
-
-    const activeCoverage = await getActiveSupervisionForStudents(schoolId, studentIds);
-    const coverageByStudent = new Map(activeCoverage.map((entry) => [entry.studentId, entry.context]));
-    if (studentIds.some((studentId) => !coverageByStudent.has(studentId))) {
-      return res.status(409).json({ error: "One or more selected students are not currently in supervision" });
-    }
-
-    const studentsByContext = new Map<string, string[]>();
-    for (const studentId of studentIds) {
-      const context = coverageByStudent.get(studentId)!;
-      const rows = studentsByContext.get(context.id) || [];
-      rows.push(studentId);
-      studentsByContext.set(context.id, rows);
-    }
-
-    const released = [];
-    for (const [contextId, contextStudentIds] of studentsByContext.entries()) {
-      const contextReleased = await releaseSupervisionStudents({
-        schoolId,
-        contextId,
-        studentIds: contextStudentIds,
-        releaseReason: "returned_to_class",
-      });
-      released.push(...contextReleased);
+    const result = await returnSupervisionStudentsToOwnClass({ schoolId, actorId: req.authUser!.id, studentIds });
+    for (const { contextId, studentIds: contextStudentIds } of result.contexts) {
       await logAudit({
         schoolId,
         userId: req.authUser!.id,
@@ -2245,7 +2218,7 @@ router.post("/coverage/return-to-class", ...auth, async (req, res, next) => {
         entityId: contextId,
         changes: {
           studentIds: contextStudentIds,
-          teachingSessionId: session.id,
+          teachingSessionId: result.teachingSessionId,
           releaseReason: "returned_to_class",
         },
       });
@@ -2253,9 +2226,9 @@ router.post("/coverage/return-to-class", ...auth, async (req, res, next) => {
 
     await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
 
-    return res.json({ released });
+    return res.json({ released: result.released });
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
     next(err);
   }
 });
@@ -2307,7 +2280,15 @@ router.get("/coverage/reroute-targets", ...auth, async (req, res, next) => {
             endsAt: context.endsAt, revision: String(context.classroomAuthorityRevision) })),
       }))
     );
-    return res.json({ targets, contexts: targets });
+    const staffRows = await getStaffBySchool(schoolId);
+    const roomTargets = staffRows.filter(row => row.status === "active" && ["admin", "school_admin", "teacher", "office_staff"].includes(row.role))
+      .filter(row => row.userId !== req.authUser!.id).map(row => ({
+        id: `room:${row.userId}`, name: "My room", assignedStaffId: row.userId,
+        assignedStaff: { id: row.userId, displayName: staffName(row.user) },
+        activeContexts: liveContexts.filter(context => context.contextType === "temporary_room" && context.assignedStaffId === row.userId)
+          .map(context => ({ id: context.id, name: context.name, purpose: "claim", endsAt: context.endsAt, revision: String(context.classroomAuthorityRevision) })),
+      }));
+    return res.json({ targets, contexts: targets, roomTargets });
   } catch (err) {
     next(err);
   }
@@ -2534,6 +2515,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
       studentIds,
       assignedBy: req.authUser!.id,
       source: admin ? "admin_claim" : "coverage_claim",
+      roomOwnershipAuthority: { actorId: req.authUser!.id },
     });
     await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
     await logAudit({
@@ -2565,6 +2547,9 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
     if (!context || context.status !== "active" || context.endsAt <= new Date()) {
       return res.status(404).json({ error: "Active coverage context not found" });
     }
+    if (context.contextType === "temporary_room") {
+      return res.status(409).json({ error: "Use reviewed Claim or Send to add students to a room.", code: "TEMPORARY_ROOM_REVIEW_REQUIRED" });
+    }
     await assertActiveStudentsInSchool(schoolId, studentIds);
 
     if (!isAdmin(req, res)) {
@@ -2583,6 +2568,7 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
       studentIds,
       assignedBy: req.authUser!.id,
       source: isAdmin(req, res) ? "admin_reroute" : "teacher_reroute",
+      roomOwnershipAuthority: { actorId: req.authUser!.id },
     });
     await syncClasspilotControlStatesToActiveDevices(schoolId, studentIds);
     await logAudit({
@@ -2629,11 +2615,17 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
         return res.status(400).json({ error: "One or more selected students are not active in this coverage context" });
       }
     }
-    const released = await releaseSupervisionStudents({
+    const released = context.contextType === "temporary_room" ? await releaseTemporaryRoomStudents({
+      schoolId, actorId: req.authUser!.id, contextId: context.id,
+      studentIds: req.body.studentIds, expectedStudentIds: req.body.expectedStudentIds, releaseReason,
+      ...(req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
+        ? { contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : {}),
+    }) : await releaseSupervisionStudents({
       schoolId,
       contextId: context.id,
       studentIds,
       releaseReason,
+      roomOwnershipAuthority: { actorId: req.authUser!.id },
       staffReleaseAuthority: { actorId: req.authUser!.id, expectedStudentIds,
         ...(req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
           ? { contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : {}) },
@@ -2675,6 +2667,9 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
     if (!isAdmin(req, res) && context.assignedStaffId !== req.authUser!.id) {
       return res.status(403).json({ error: "Only admins or assigned coverage staff can update coverage" });
     }
+    if (context.contextType === "temporary_room") {
+      return res.status(409).json({ error: "Review the current room before changing its end time.", code: "TEMPORARY_ROOM_REVIEW_REQUIRED" });
+    }
     const endsAt = req.body.endsAt ? new Date(req.body.endsAt) : undefined;
     if (endsAt && (!Number.isFinite(endsAt.getTime()) || endsAt <= new Date())) {
       return res.status(400).json({ error: "endsAt must be in the future" });
@@ -2696,6 +2691,7 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
       contextId: context.id,
       endsAt,
       requireAdHocEndTime: true,
+      roomOwnershipAuthority: { actorId: req.authUser!.id },
       note: req.body.note === undefined ? undefined : String(req.body.note || ""),
       assignedStaffId,
     });

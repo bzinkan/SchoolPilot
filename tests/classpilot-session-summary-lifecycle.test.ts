@@ -1985,7 +1985,9 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     assert.equal(state.rows[0]?.legs_released, true);
   });
 
-  it("creates one frozen occurrence during a delayed in-window tick and preserves schedule, teacher, and roster edits", async () => {
+  it("creates one frozen occurrence during a delayed in-window tick and preserves schedule, teacher, and roster edits", async (t) => {
+    // Claims recheck the server clock against the frozen occurrence window.
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2031-01-07T14:30:00.000Z") });
     const group = await createClass({ name: "frozen_occurrence", scheduled: true, roster: [studentOne] });
     const scheduledDate = "2031-01-07";
     const first = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
@@ -2053,6 +2055,10 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       } as any);
       await storage.linkStudentDevice({ studentId: studentTwo.id, deviceId: addedDeviceId });
       await storage.setActiveStudentForDevice(addedDeviceId, studentTwo.id);
+      // Session timestamps use the database clock; align fixture presence with
+      // this test's frozen application clock before reading or claiming it.
+      await db.execute(sql`UPDATE student_sessions SET last_seen_at=${new Date().toISOString()}::timestamptz
+        WHERE student_id IN (${studentOne.id},${studentTwo.id}) AND is_active=true`);
     });
     const refreshedCoverage = await inSchool(school.id, () =>
       scheduled.buildScheduledCoveragePayload({
@@ -3047,7 +3053,8 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     assert.ok(!["coverage_needed", "claimed", "pending"].includes(conflictFinal.status));
   });
 
-  it("keeps a scheduled coverage claim atomic with End Class and never resurrects supervision or its conflict", async () => {
+  it("keeps a scheduled coverage claim atomic with End Class and never resurrects supervision or its conflict", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2031-01-20T14:05:00.000Z") });
     await setCentralRecipient(null);
     const group = await createClass({ name: "coverage_claim_end_barrier", scheduled: true, roster: [studentOne] });
     const prepared = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({
@@ -3135,7 +3142,8 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     assert.equal(conflictAfterRetry.status, "ended");
   });
 
-  it("lets only one of two simultaneous staff claims own the same scheduled student", async () => {
+  it("lets only one of two simultaneous staff claims own the same scheduled student", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2031-01-23T14:05:00.000Z") });
     await setCentralRecipient(null);
     const group = await createClass({
       name: "two_staff_one_student_claim",

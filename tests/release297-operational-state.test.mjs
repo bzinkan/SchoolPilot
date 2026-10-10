@@ -64,7 +64,7 @@ const invalid=[
 for(const [name,mutate,expected]of invalid)test('operational metadata rejects '+name,()=>{const f=fixture();mutate(f);assert.throws(()=>validate(f),expected);});
 
 function renderingFixture(){
- const current=JSON.parse(readFileSync(join(ROOT,'docs/releases/release297/current-release.json'),'utf8'));
+ const current=JSON.parse(readFileSync(join(ROOT,'docs/releases/release297/history/current-release-e22c790a-predeployment-20261010.json'),'utf8'));
  current.sources.schoolpilot.remoteMainObserved=main;
  current.stages.find(row=>row.id==='testing').status='pending';
  return current;
@@ -76,7 +76,7 @@ test('completed deployment renders the exact matched source while preserving pen
  current.evidence.buildSecurityDeploymentReview={path:'docs/releases/release297/synthetic-render-review.json',gitBlobSha256:sha('synthetic-render-review')};
  const output=renderStatus(current);
  assert.match(output,/Exact matched A3 backend\/worker and frontend `2001e888` are deployed/);
- assert.match(output,/Original release gates, exact artifact publication and inactive129F3 registration are verified/);
+ assert.match(output,/Original release gates, exact artifact publication and registration of the unused admission-129 F3 pair are verified/);
  assert.match(output,/Already-open page adoption and sample-bearing live acceptance remain pending/);
  assert.match(output,/managed-device validation stays `waived_not_passed`/);
  assert.match(output,/PR #628 invalidated the earlier A2 freeze/);
