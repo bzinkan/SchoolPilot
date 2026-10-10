@@ -42,7 +42,7 @@ import ClassroomActions from '../components/ClassroomActions';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
-import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
+import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
@@ -725,6 +725,7 @@ export default function Dashboard() {
   const graceReconciliationLatchRef = useRef({ scopeKey: null, cohortActive: false });
   const commandExpiryTimeoutRef = useRef(null);
   const transientCommandOutcomesRef = useRef(new Map());
+  const knownClassroomCommandIdsRef = useRef(new Set());
   const aggregatedStudentsQueryKeyRef = useRef(null);
   const activeSchoolIdRef = useRef(null);
   const authenticatedSchoolIdRef = useRef(null);
@@ -1080,6 +1081,7 @@ export default function Dashboard() {
   const [lastFocusResult, setLastFocusResult] = useState(null);
   useLayoutEffect(() => {
     focusControlScopeRef.current = focusControlScopeKey;
+    knownClassroomCommandIdsRef.current.clear();
     for (const request of tileLockRequestsRef.current.values()) request.controller.abort();
     tileLockRequestsRef.current.clear();
     setTileLockOperations({});
@@ -1128,7 +1130,6 @@ export default function Dashboard() {
   }, [activeSchoolId, contextAuthorityRevision, activityScopeKey]);
   const effectiveAuthorityRef = useRef(effectiveAuthority);
   const contextAuthorityRevisionRef = useRef(contextAuthorityRevision);
-  contextAuthorityRevisionRef.current = contextAuthorityRevision;
   const scheduledSupervisionId = effectiveAuthority?.supervisionContextId || null;
   const ownActiveSession = scheduledClassEnabled
     ? (scheduledAssignment?.authority?.teachingSessionId ? chosenActivity : null) : activeSession;
@@ -1654,6 +1655,7 @@ export default function Dashboard() {
     // key (or school) while an Observe/teacher context is switching.
     effectiveActivityIdRef.current = effectiveActivityId;
     effectiveAuthorityRef.current = effectiveAuthority;
+    contextAuthorityRevisionRef.current = contextAuthorityRevision;
     aggregatedStudentsQueryKeyRef.current = aggregatedStudentsQueryKey;
     activeSchoolIdRef.current = activeSchoolId;
     coverageKeysRef.current = { summaryQueryKey, claimedStudentsQueryKey };
@@ -1663,7 +1665,7 @@ export default function Dashboard() {
       clearTimeout(realtimeFlushTimeoutRef.current);
       realtimeFlushTimeoutRef.current = null;
     }
-  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority]);
+  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority, contextAuthorityRevision]);
 
   const automaticTestingTargetKey = automaticallyShowingSupervision
     ? displaySupervisionContexts.map((context) => context.id).sort().join(',')
@@ -2188,13 +2190,18 @@ export default function Dashboard() {
             }
             if (message.type === 'classpilot-command-update') {
               const publicCommand = message.command || {};
-              const messageSchoolId = publicCommand.schoolId || message.schoolId;
-              const messageSessionId = publicCommand.teachingSessionId || message.teachingSessionId;
-              if (messageSchoolId && String(messageSchoolId) !== String(activeSchoolIdRef.current)) return;
-              if (
-                messageSessionId
-                && String(messageSessionId) !== String(effectiveActivityIdRef.current)
-              ) return;
+              const commandId = message.commandId || publicCommand.id;
+              const coverageRoster = studentViewRef.current === 'claimed'
+                ? queryClient.getQueryData(coverageKeysRef.current.claimedStudentsQueryKey) : null;
+              const coverageRows = Array.isArray(coverageRoster) ? coverageRoster : coverageRoster?.students || [];
+              if (!matchesCommandUpdateActivity(message, {
+                schoolId: activeSchoolIdRef.current,
+                authority: effectiveAuthorityRef.current,
+                contextAuthorityRevision: contextAuthorityRevisionRef.current,
+                knownCommand: knownClassroomCommandIdsRef.current.has(commandId),
+                legacyCoverageStudents: coverageRows.filter(student => !student.assignedStaff?.id
+                  || student.assignedStaff.id === websocketAuthRef.current?.userId),
+              })) return;
               const focusCommandId = message.commandId || publicCommand.id;
               if (focusCommandId && ['activate-tab', 'focus-tab', 'stop-focus'].includes(publicCommand.commandType)) {
                 const updates = focusCommandUpdatesRef.current;
@@ -2785,7 +2792,8 @@ export default function Dashboard() {
     };
   }, [effectiveActivityId, effectiveAuthorityKey, Boolean(retainedObservedSession), sessionSubscriptionEligible, wsAuthenticated, wsConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    knownClassroomCommandIdsRef.current.clear();
     transientCommandOutcomesRef.current = new Map();
     setTransientPendingControls({ timer: false, poll: false });
     setTimerActive(false);
@@ -5279,6 +5287,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
   const decorateCommandResponse = (data, commandType) => {
     const commandId = data?.command?.id;
+    for (const id of [commandId, ...(data?.commands || []).map(command => command?.id)].filter(Boolean)) {
+      knownClassroomCommandIdsRef.current.add(id);
+      if (knownClassroomCommandIdsRef.current.size > 200) {
+        knownClassroomCommandIdsRef.current.delete(knownClassroomCommandIdsRef.current.values().next().value);
+      }
+    }
     const targets = (data?.command?.targets || data?.targets || []).map((target) => ({
       ...target,
       ...(commandId && !target.commandId ? { commandId } : {}),
@@ -5337,8 +5351,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const { request, target } = buildCommandRequest(commandType, commandPayload, options);
     const commandAuthorityKey = activityAuthorityKey(request);
     const commandScope = activityScopeKey;
+    const commandFocusScope = focusControlScopeKey;
     const data = await requestActivityApi('POST', '/commands', request);
-    if (commandScope !== activityScopeRef.current || commandAuthorityKey !== activityAuthorityKey(effectiveAuthorityRef.current)) {
+    if (commandScope !== activityScopeRef.current || commandFocusScope !== focusControlScopeRef.current
+      || commandAuthorityKey !== activityAuthorityKey(effectiveAuthorityRef.current)) {
       throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
     }
     return decorateCommandResponse({
@@ -5350,6 +5366,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
   const postClaimedCommand = async (commandType, commandPayload, options = {}) => {
     const commandScope = activityScopeKey;
+    const commandFocusScope = focusControlScopeKey;
     const target = resolveActiveCommandTarget(options.studentIds ?? null, { commandType, commandPayload });
     const settlements = await Promise.allSettled(target.groups.map((group) =>
       apiRequest('POST', `/coverage/contexts/${group.id}/commands`, {
@@ -5360,7 +5377,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           ? focusPayloadForStudents(commandPayload, group.targetStudentIds) : commandPayload,
       })
     ));
-    if (commandScope !== activityScopeRef.current) {
+    if (commandScope !== activityScopeRef.current || commandFocusScope !== focusControlScopeRef.current) {
       throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
     }
     const combined = combineCommandSettlements(settlements, target.groups, commandType);

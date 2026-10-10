@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityParentPath, activityRequestHeaders,
-  activityTransitionKey, normalizeDashboardActivity, resolveActivityView, matchesActivityAuthority, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, normalizeObservableActivities } from '../src/products/classpilot/lib/dashboardActivity.js';
+  activityTransitionKey, normalizeDashboardActivity, resolveActivityView, matchesActivityAuthority, matchesCommandUpdateActivity, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, normalizeObservableActivities } from '../src/products/classpilot/lib/dashboardActivity.js';
 import { deriveDashboardCapabilities, resolveCommandTargets, normalizeSessionFabState,
   buildStudentSignOutCommandRequest, studentSupportsScheduledClassroom } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { createTileBatchRequests } from '../src/products/classpilot/lib/tileBatchPolling.js';
 import { applyStudentRealtimeEvents } from '../src/products/classpilot/lib/studentRealtimeCache.js';
+import { applyTransientCommandUpdate, hasPendingTransientAction, latestTransientClassroomUiEffect,
+  trackTransientCommandResponse } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
 
 const current = { id: 'test', source: 'scheduled_testing', name: 'Reading MAP',
   status: 'active', authority: { supervisionContextId: 'test' }, studentCount: 23,
@@ -75,6 +78,114 @@ test('scheduled authority never becomes a teaching-session request and rejects a
   assert.notEqual(activityAuthorityKey(current), activityAuthorityKey({ teachingSessionId: 'test' }));
   assert.equal(matchesActivityAuthority({ teachingSessionId: 'test' }, current), false);
   assert.equal(matchesActivityAuthority({ supervisionContextId: 'test' }, current), true);
+});
+
+function roomCommandUpdate(overrides = {}) {
+  return { type: 'classpilot-command-update', commandId: 'room-poll',
+    command: { id: 'room-poll', schoolId: 'school', supervisionContextId: 'room', commandType: 'poll',
+      commandPayload: { action: 'start', pollId: 'poll', question: 'Ready?', options: ['Yes', 'No'] },
+      targets: [{ studentId: 'student', status: 'received', result: { scheduledContextAuthorityRevision: '8' } }],
+      ...overrides },
+    summary: { requested: 1, attempted: 1, acknowledged: 1, received: 1, awaitingAck: 0 } };
+}
+
+test('late room ACKs cannot repopulate a replacement room or coverage workspace', () => {
+  const oldAck = roomCommandUpdate();
+  const scopes = [
+    { authority: { supervisionContextId: 'replacement' }, contextAuthorityRevision: '0' },
+    { authority: { supervisionContextId: 'coverage' }, contextAuthorityRevision: '4' },
+    { authority: room.authority, contextAuthorityRevision: '9' },
+    { authority: { teachingSessionId: 'class' } },
+  ];
+  for (const scope of scopes) {
+    let tracked = new Map(); // A workspace switch clears the previous outcomes.
+    if (matchesCommandUpdateActivity(oldAck, { schoolId: 'school', ...scope })) {
+      tracked = applyTransientCommandUpdate(trackTransientCommandResponse(tracked, oldAck, 'poll'), oldAck);
+    }
+    assert.equal(tracked.size, 0, 'the old unknown command is refused before tracking');
+    assert.equal(latestTransientClassroomUiEffect(tracked, 'poll'), null);
+    assert.equal(hasPendingTransientAction(tracked, 'poll'), false);
+  }
+  const accepted = matchesCommandUpdateActivity(oldAck, {
+    schoolId: 'school', authority: room.authority, contextAuthorityRevision: '8',
+  });
+  assert.equal(accepted, true, 'a current-room ACK may arrive before its HTTP response');
+  const tracked = applyTransientCommandUpdate(trackTransientCommandResponse(new Map(), oldAck, 'poll'), oldAck);
+  assert.equal(latestTransientClassroomUiEffect(tracked, 'poll')?.poll?.id, 'poll');
+});
+
+test('room command ACKs require an unambiguous frozen tenure and exact parent', () => {
+  const scope = { schoolId: 'school', authority: room.authority, contextAuthorityRevision: '8' };
+  const matches = overrides => matchesCommandUpdateActivity(roomCommandUpdate(overrides), scope);
+  assert.equal(matches({ teachingSessionId: 'room' }), false, 'two parent kinds are ambiguous');
+  assert.equal(matches({ schoolId: 'another-school' }), false);
+  assert.equal(matches({ targets: [{ studentId: 'student', status: 'received' }] }), false);
+  assert.equal(matchesCommandUpdateActivity(roomCommandUpdate({ targets: [{ studentId: 'student', status: 'received' }] }),
+    { ...scope, knownCommand: true }), false, 'known timer/poll IDs still require their frozen tenure');
+  assert.equal(matches({ contextAuthorityRevision: null }), false);
+  assert.equal(matches({ contextAuthorityRevision: '08' }), false);
+  assert.equal(matches({ contextAuthorityRevision: '9' }), false, 'conflicting envelope and frozen target revisions are refused');
+  assert.equal(matches({ targets: [
+    { studentId: 'student', status: 'received', result: { scheduledContextAuthorityRevision: '8' } },
+    { studentId: 'other', status: 'received', result: { scheduledContextAuthorityRevision: '7' } },
+  ] }), false);
+  assert.equal(matches({ targets: [
+    { studentId: 'student', status: 'received', result: { scheduledContextAuthorityRevision: '8' } },
+    { studentId: 'other', status: 'received' },
+  ] }), false, 'one valid target cannot authorize an unversioned acknowledged target');
+  assert.equal(matches({ targets: [
+    { studentId: 'student', status: 'received', result: { scheduledContextAuthorityRevision: '8' } },
+    { studentId: 'offline', status: 'unavailable' },
+  ] }), true, 'unavailable targets need not have frozen authority metadata');
+  const unversioned = roomCommandUpdate({ commandType: 'lock-screen', commandPayload: { currentPage: true },
+    targets: [{ studentId: 'student', status: 'received' }] });
+  assert.equal(matchesCommandUpdateActivity(unversioned, scope), false, 'an old unversioned unknown command cannot enter the room');
+  assert.equal(matchesCommandUpdateActivity(unversioned, { ...scope, knownCommand: true }), true,
+    'an HTTP response already tracked in this exact scope may finish without a tenure field the server never supplies');
+  assert.equal(matchesCommandUpdateActivity(roomCommandUpdate({ commandType: 'stop-focus',
+    targets: [{ studentId: 'student', status: 'completed' }] }), { ...scope, knownCommand: true }), true,
+    'the current exact Stop Focus HTTP command can receive status without a tenure field');
+});
+
+test('teaching aliases and current owned legacy coverage command statuses remain scoped', () => {
+  const classScope = { schoolId: 'school', authority: { teachingSessionId: 'class' } };
+  const teaching = { command: { schoolId: 'school', teachingSessionId: 'class', commandType: 'timer' } };
+  assert.equal(matchesCommandUpdateActivity(teaching, classScope), true);
+  assert.equal(matchesCommandUpdateActivity({ command: { sessionId: 'class' } }, classScope), true);
+  assert.equal(matchesCommandUpdateActivity({ command: { teachingSessionId: 'other' } }, classScope), false);
+  assert.equal(matchesCommandUpdateActivity({ command: {} }, classScope), false);
+  assert.equal(matchesCommandUpdateActivity({ command: {} }, { ...classScope, knownCommand: true }), true);
+  const legacy = roomCommandUpdate({ supervisionContextId: 'legacy', commandType: 'focus-tab',
+    targets: [{ studentId: 'student', status: 'received' }] });
+  const legacyScope = { ...classScope, knownCommand: true, legacyCoverageStudents: [
+    { studentId: 'student', contextId: 'legacy', contextAuthorityRevision: '3' },
+  ] };
+  assert.equal(matchesCommandUpdateActivity(legacy, legacyScope), true);
+  assert.equal(matchesCommandUpdateActivity(legacy, { ...legacyScope, knownCommand: false }), false,
+    'an unversioned legacy ACK must belong to an HTTP command in the current exact scope');
+  assert.equal(matchesCommandUpdateActivity(legacy, { ...legacyScope, authority: room.authority, contextAuthorityRevision: '8' }), false,
+    'a room never falls back to another owned legacy coverage context');
+  assert.equal(matchesCommandUpdateActivity(roomCommandUpdate({ ...legacy.command,
+    targets: [{ studentId: 'student', status: 'received', result: { scheduledContextAuthorityRevision: '3' } }] }),
+  { ...legacyScope, authority: room.authority, contextAuthorityRevision: '3' }), false,
+  'even matching revisions and known owned coverage commands cannot cross a supervision parent boundary');
+  assert.equal(matchesCommandUpdateActivity(legacy, classScope), false);
+  assert.equal(matchesCommandUpdateActivity(roomCommandUpdate({ ...legacy.command,
+    targets: [...legacy.command.targets, { studentId: 'not-owned', status: 'received' }] }), legacyScope), false);
+  assert.equal(matchesCommandUpdateActivity(roomCommandUpdate({ ...legacy.command, commandType: 'poll' }), legacyScope), false,
+    'legacy coverage cannot introduce a classroom poll into the active workspace');
+});
+
+test('Dashboard fences command updates before focus or transient state changes', () => {
+  const source = readFileSync(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8');
+  const handler = source.slice(source.indexOf("if (message.type === 'classpilot-command-update')"));
+  const fence = handler.indexOf('if (!matchesCommandUpdateActivity(message,');
+  assert.ok(fence >= 0);
+  assert.ok(fence < handler.indexOf('focusCommandUpdatesRef.current'));
+  assert.ok(fence < handler.indexOf('setLastFocusResult'));
+  assert.ok(fence < handler.indexOf('trackTransientCommandResponse('));
+  assert.match(source, /useLayoutEffect\(\(\) => \{\s*knownClassroomCommandIdsRef\.current\.clear\(\);\s*transientCommandOutcomesRef\.current = new Map\(\);/);
+  assert.match(source, /knownCommand: knownClassroomCommandIdsRef\.current\.has\(commandId\)/);
 });
 
 test('clock expiry revokes old activity without inventing the next class or erasing offline roster counts', () => {

@@ -97,6 +97,64 @@ export function matchesActivityAuthority(message, authority) {
   return activityAuthorityKey(expected) === activityAuthorityKey(actual);
 }
 
+// Command snapshots carry their parent on `command`. Supervision timer/poll
+// and focus targets also retain the server-frozen tenure in result JSON; ACK
+// input cannot replace that metadata. Older coverage commands have no tenure,
+// so admit those only through the current owned roster, never a room fallback.
+export function matchesCommandUpdateActivity(message, {
+  schoolId, authority, contextAuthorityRevision, knownCommand = false, legacyCoverageStudents = [],
+}) {
+  const command = message?.command || message;
+  const messageSchoolId = command?.schoolId || message?.schoolId;
+  if (messageSchoolId && String(messageSchoolId) !== String(schoolId)) return false;
+  const parent = {
+    teachingSessionId: command?.teachingSessionId || command?.sessionId || message?.teachingSessionId || message?.sessionId,
+    supervisionContextId: command?.supervisionContextId || message?.supervisionContextId,
+  };
+  const actual = activityAuthority(parent);
+  const expected = activityAuthority(authority);
+  const hasParent = Boolean(parent.teachingSessionId || parent.supervisionContextId);
+  // A sessionless legacy update may finish an already tracked command in this
+  // scope. It cannot introduce an unknown command after a workspace switch.
+  if (!actual) return !hasParent && Boolean(expected?.teachingSessionId) && knownCommand;
+  const targets = command?.targets || message?.targets || [];
+  if (!Array.isArray(targets)) return false;
+  let expectedRevision = contextAuthorityRevision;
+  let legacyCoverage = false;
+  if (!matchesActivityAuthority(actual, expected)) {
+    if (expected?.supervisionContextId) return false;
+    if (!actual.supervisionContextId || targets.length === 0) return false;
+    const rows = targets.map(target => legacyCoverageStudents.find(student => student.studentId === target?.studentId
+      && (student.contextId || student.supervisionContext?.id) === actual.supervisionContextId));
+    if (rows.some(row => !row)) return false;
+    const revisions = rows.map(row => row.contextAuthorityRevision ?? row.supervisionContext?.contextAuthorityRevision ?? null);
+    if (revisions.some(revision => String(revision) !== String(revisions[0]))) return false;
+    expectedRevision = revisions[0];
+    legacyCoverage = true;
+  }
+  if (!actual.supervisionContextId) return true;
+
+  const validRevision = value => /^(0|[1-9]\d*)$/.test(String(value ?? ''));
+  const revisions = [command?.contextAuthorityRevision, message?.contextAuthorityRevision,
+    ...targets.map(target => target?.result?.scheduledContextAuthorityRevision)].filter(value => value !== undefined);
+  if (revisions.some(revision => !validRevision(revision) || !validRevision(expectedRevision)
+    || String(revision) !== String(expectedRevision))) return false;
+  const requiresTenure = ['timer', 'poll', 'lesson-activity', 'student-sign-out', 'activate-tab', 'focus-tab'].includes(command?.commandType);
+  // Legacy coverage has no classroom timer/poll authority. Its exact roster
+  // still permits the existing individual tab/focus status updates.
+  if (legacyCoverage) return !['timer', 'poll', 'lesson-activity'].includes(command?.commandType)
+    && (revisions.length > 0 || knownCommand);
+  if (requiresTenure) {
+    if (!validRevision(expectedRevision) || revisions.length === 0) return false;
+    const envelopeRevision = command?.contextAuthorityRevision ?? message?.contextAuthorityRevision;
+    return targets.every(target => !['received', 'completed'].includes(target?.status)
+      || envelopeRevision !== undefined || validRevision(target?.result?.scheduledContextAuthorityRevision));
+  }
+  // Some older transient DTOs have only a parent ID. Their HTTP response must
+  // first establish the command in this scope before a late ACK can affect it.
+  return revisions.length > 0 || knownCommand;
+}
+
 // Purpose is server-derived. Saved group names never establish testing authority.
 export function activityPurpose(activity) {
   if (['class', 'testing', 'coverage', 'supervision', 'claim'].includes(activity?.purpose)) return activity.purpose;

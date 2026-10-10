@@ -7206,4 +7206,110 @@ test('private lifecycle: hard-off retires a held reply while the separate frozen
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('temporary room rejects unknown stale timer and poll ACKs but accepts current tenure before HTTP completes', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  for (const commandType of ['timer', 'poll']) {
+    await context.test(commandType, async subContext => {
+      const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+      await page.clock.install({ time: TESTING_TIME });
+      const room = scheduledTestingActivity({ id: `ack-room-${commandType}`, name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+        source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '8', studentCount: 1,
+        authority: { supervisionContextId: `ack-room-${commandType}` }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+      const row = student({ supervisionState: 'temporary_coverage', supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID },
+        contextAuthorityRevision: '8', acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+        lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() });
+      const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController({ scoped: success([row]) }),
+        acknowledgeSessionSubscriptions: true,
+        dashboardActivity: { ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room },
+        coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] } });
+      const ack = ({ id, type = commandType, parent = room.id, revision = '8', payload } = {}) => ({
+        type: 'classpilot-command-update', schoolId: SCHOOL_ID, commandId: id,
+        command: { id, schoolId: SCHOOL_ID, supervisionContextId: parent, commandType: type,
+          commandPayload: payload || (type === 'timer' ? { action: 'start', seconds: 300 } : {
+            action: 'start', pollId: `${id}-poll`, question: 'Current room poll', options: ['Ready', 'Need help'],
+          }), createdAt: TESTING_TIME.toISOString(), expiresAt: new Date(TESTING_TIME.getTime() + 120_000).toISOString(),
+          deliveryPolicy: 'transient_action', targets: [{ studentId: STUDENT_ID, status: 'received',
+            result: revision === null ? {} : { scheduledContextAuthorityRevision: revision } }] },
+        summary: { requested: 1, attempted: 1, received: 1, acknowledged: 1, awaitingAck: 0 },
+      });
+      let requestBody;
+      let responseSent = false;
+      let releaseResponse;
+      const heldResponse = new Promise(resolve => { releaseResponse = resolve; });
+      subContext.after(async () => {
+        releaseResponse();
+        await page.unrouteAll({ behavior: 'wait' });
+        await page.close();
+      });
+      await page.route('**/api/commands', async route => {
+        requestBody = route.request().postDataJSON();
+        assert.equal(route.request().headers()['x-classpilot-context-authority-revision'], '8');
+        await heldResponse;
+        const message = ack({ id: `current-${commandType}`, payload: {
+          ...requestBody.commandPayload, ...(commandType === 'poll' ? { pollId: 'current-poll' } : {}),
+        } });
+        await route.fulfill({ status: 201, json: { command: { ...message.command,
+          targets: message.command.targets.map(target => ({ ...target, status: 'sent' })) },
+          summary: { requested: 1, attempted: 1, pending: 1, awaitingAck: 1 } } });
+        responseSent = true;
+      });
+      await page.goto(`${baseURL}/classpilot`);
+      await page.getByTestId('temporary-room-controls').waitFor();
+      await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+      await harness.authenticateWebSocket();
+      await page.getByRole('button', { name: 'Class tools', exact: true }).click();
+      const tab = commandType === 'timer' ? 'Tools' : 'Activities';
+      const inactiveName = commandType === 'timer' ? 'Start timer' : 'Create poll';
+      const activeName = commandType === 'timer' ? 'Stop timer' : 'View responses (0)';
+      await page.getByRole('tab', { name: tab, exact: true }).click();
+      await page.getByRole('button', { name: inactiveName, exact: true }).waitFor();
+      for (const stale of [
+        { id: `old-room-${commandType}`, parent: 'previous-room', revision: '7' },
+        { id: `old-coverage-${commandType}`, parent: OWN_TESTING_CONTEXT_ID, revision: '8' },
+        { id: `old-revision-${commandType}`, revision: '7' },
+        { id: `missing-tenure-${commandType}`, revision: null },
+      ]) await harness.sendWebSocketMessage(ack(stale));
+      // A matching ACK for the other tool follows on the same socket. Its
+      // visible control proves the earlier frames were processed before the
+      // negative assertion, without relying on an arbitrary delay.
+      const otherType = commandType === 'timer' ? 'poll' : 'timer';
+      await harness.sendWebSocketMessage(ack({ id: `ordering-${otherType}`, type: otherType }));
+      await page.getByRole('tab', { name: otherType === 'timer' ? 'Tools' : 'Activities', exact: true }).click();
+      await page.getByRole('button', { name: otherType === 'timer' ? 'Stop timer' : 'View responses (0)', exact: true }).waitFor();
+      await page.getByRole('tab', { name: tab, exact: true }).click();
+      assert.equal(await page.getByRole('button', { name: activeName, exact: true }).count(), 0,
+        'An unknown ACK from another parent, prior revision or missing tenure must not activate this room tool');
+      assert.equal(await page.getByRole('button', { name: inactiveName, exact: true }).isVisible(), true);
+      assert.deepEqual(harness.commandPosts, []);
+      await page.getByRole('button', { name: inactiveName, exact: true }).click();
+      if (commandType === 'timer') {
+        await page.getByTestId('button-timer-5min').click();
+        await page.getByTestId('button-start-timer').click();
+      } else {
+        await page.getByTestId('input-poll-question').fill('Current room poll');
+        await page.getByTestId('input-poll-option-0').fill('Ready');
+        await page.getByTestId('input-poll-option-1').fill('Need help');
+        await page.getByTestId('button-create-poll').click();
+      }
+      await waitUntil(() => Boolean(requestBody), 'The current room command must reach the held HTTP request');
+      assert.equal(requestBody.commandType, commandType);
+      assert.equal(requestBody.supervisionContextId, room.id);
+      assert.equal(requestBody.teachingSessionId, undefined);
+      assert.deepEqual(requestBody.targetStudentIds, [STUDENT_ID]);
+      await harness.sendWebSocketMessage(ack({ id: `current-${commandType}`, payload: {
+        ...requestBody.commandPayload, ...(commandType === 'poll' ? { pollId: 'current-poll' } : {}),
+      } }));
+      // The mutation dialog still hides the panel from accessibility queries;
+      // the underlying control must update before the HTTP response closes it.
+      await page.getByRole('button', { name: activeName, exact: true, includeHidden: true }).waitFor({ state: 'attached' });
+      assert.equal(responseSent, false, 'Frozen current-tenure ACKs are accepted before HTTP registers the command ID');
+      releaseResponse();
+      await page.getByTestId(commandType === 'timer' ? 'dialog-timer' : 'dialog-poll').waitFor({ state: 'hidden' });
+      await page.getByRole('button', { name: activeName, exact: true }).waitFor();
+      assert.equal(responseSent, true);
+      assert.deepEqual(harness.pageErrors, []);
+    });
+  }
+});
+
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));
