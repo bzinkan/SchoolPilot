@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { archiveConfigDigest, scanCounts, SCANNER, runCommand, validateRegistryManifest } from './verify-legacy-deploy-image.mjs';
+import { archiveConfigDigest, scanCounts, SCANNER, runCommand, selectRegistryDigestImage, validateRegistryManifest } from './verify-legacy-deploy-image.mjs';
 import { addReviewedRlsTable, verifyLiveRlsEnablementSources, verifyEnabledRlsCandidates } from './enforce-deploy-rls-allowlist.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -352,6 +352,7 @@ async function verifyRemoteRegistry(plan, run, arm = 'fallback') {
   const proof = pinnedJson(arm === 'anchor' ? plan.input.anchorRegistryProof : plan.input.registryProof);
   return validateRegistryManifest(async digest => {
     const response = JSON.parse(await checked(run, 'aws', ['ecr', 'batch-get-image', '--repository-name', FALLBACK.repository, '--image-ids', `imageDigest=${digest}`, '--region', FALLBACK.region, '--output', 'json', '--no-cli-pager']));
+    if (plan.schemaVersion === 5) return selectRegistryDigestImage(response, { registryId: FALLBACK.account, repository: FALLBACK.repository, digest });
     assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0 && response.images[0].repositoryName === FALLBACK.repository, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0];
   }, proof.digest, proof.configDigest);
 }

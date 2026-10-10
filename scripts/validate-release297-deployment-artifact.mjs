@@ -12,7 +12,7 @@ import { BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_OPERATION_DEPENDENCIES, bindi
 import { FALLBACK, inventoryFor, validateSourceResponse, registrationEnvironmentProjection,
   assertOnlyImageIdentityChanged } from './register-compatible-fallback-inactive.mjs';
 import { REGISTRY, validateLocalScan, validatePublicationPlatform } from './prepare-release-artifacts.mjs';
-import { runCommand, validateRegistryManifest } from './verify-legacy-deploy-image.mjs';
+import { runCommand, selectRegistryDigestImage, validateRegistryManifest } from './verify-legacy-deploy-image.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HASH = /^[a-f0-9]{64}$/, SHA = /^[a-f0-9]{40}$/;
@@ -210,6 +210,7 @@ export async function validateDeploymentArtifact(record, expectedMain, {
   assert.equal(fallbackTag.imageDetails[0].imageDigest, fallback.plan.registryDigest, 'FALLBACK_TAG_MOVED');
   const fallbackProof = await validateRegistryManifest(async digest => {
     const response = JSON.parse(await checked(run, 'aws', aws(['ecr', 'batch-get-image', '--repository-name', REGISTRY.repository, '--image-ids', `imageDigest=${digest}`])));
+    if (binding.schemaVersion === 5) return selectRegistryDigestImage(response, { registryId: REGISTRY.account, repository: REGISTRY.repository, digest });
     assert.equal(response.images?.length, 1, 'FALLBACK_REGISTRY_IMAGE_UNAVAILABLE');
     assert.equal(response.failures?.length ?? 0, 0, 'FALLBACK_REGISTRY_IMAGE_UNAVAILABLE');
     assert.equal(response.images[0].repositoryName, REGISTRY.repository, 'FALLBACK_REGISTRY_CHANGED');
