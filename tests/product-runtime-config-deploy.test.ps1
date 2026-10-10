@@ -599,7 +599,8 @@ try {
     Reset-ProductMock; Add-BothTables $script:RulesTables
     $plan = New-TestProductPlan $rulesConfig
     $script:Mock.InjectWorkerFlag = $true
-    Assert-ThrowsMatch { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'does not carry exactly the planned' 'A worker revision with an extra managed value must stop the operation.'
+    # Registration readback rejects the extra name before the later pair check.
+    Assert-ThrowsMatch { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'Registered runtime task changed the exact managed environment presence' 'A worker revision with an extra managed value must stop the operation.'
     $receipt = (Read-StrictJsonSnapshot (Join-Path $script:TestDirectory "$($plan.plan.runId)-result.json")).Value
     Assert-Condition ($receipt.status -ceq 'failed_no_service_mutation' -and -not $script:OperationLockHeld -and @($script:Mock.Calls | Where-Object { $_ -ceq 'ecs update-service' }).Count -eq 0) 'A parity failure must stop before any service mutation and release the fence.'
 
