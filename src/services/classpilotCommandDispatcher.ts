@@ -26,7 +26,6 @@ import {
   revalidateClasspilotExactCommandTargetsForDispatch,
   withClasspilotStudentControlDeliveryAuthority,
   hasCurrentClasspilotStudentControlAuthority,
-  listClasspilotSupersededTransientCommandIds,
   supersedeClasspilotTransientCommandTargets,
   type ClasspilotCommandWithTargets,
   type ClasspilotCommandPollMutation,
@@ -139,6 +138,19 @@ export function classpilotPersistedTargetAuthorityRevisions(result: unknown): Pi
       : undefined,
     controlRevision: integer(record?.frozenControlRevision),
   };
+}
+
+/**
+ * Class Tools capability a device must have accepted before this command may
+ * be delivered to it. Shared by dispatch and by the auth-success replay.
+ */
+export function classpilotRequiredToolsCapability(
+  commandType: string,
+  payload: Record<string, unknown>
+): "lessonActivitiesV1" | "timerControlsV1" | "exitTicketsV1" | null {
+  return commandType === "lesson-activity" ? "lessonActivitiesV1"
+    : commandType === "timer" && ["pause", "resume", "extend"].includes(String(payload.action)) ? "timerControlsV1"
+      : commandType === "poll" && payload.responseType === "short_text" ? "exitTicketsV1" : null;
 }
 
 export const COVERAGE_COMMAND_TYPES = new Set([
@@ -878,13 +890,19 @@ export function classpilotCommandFrameForTarget(
 }
 
 /**
- * A poll close or timer stop makes any still-undelivered frame of the same
- * poll/timer moot: expire those targets now so the dashboard stops awaiting
- * their ACKs and the auth-success replay lane never re-sends a withdrawn
- * start. Legacy phase-0 timer payloads carry no timerId, so a legacy stop
- * supersedes every earlier timer command of its class session or supervision
- * context. Best effort: the new command is already dispatched and persisted,
- * and the deadline sweep remains the backstop.
+ * A later timer command, or a poll close, makes the still-undelivered frames
+ * it replaces moot: expire those targets now so the dashboard stops awaiting
+ * their ACKs and the auth-success replay lane never re-sends a frame the
+ * teacher already replaced or withdrew.
+ *
+ * Timers: one timer per class, and every timer frame is the complete timer
+ * state, so the latest timer command wins for each student it addresses. That
+ * rule needs no timer identity, which legacy phase-0 payloads do not carry.
+ * Polls: a close supersedes the commands of the same pollId (a second poll
+ * cannot start while one is active).
+ *
+ * Best effort: the new command is already dispatched and persisted, and the
+ * deadline sweep remains the backstop.
  */
 async function supersedeTransientCommandTargetsFor(
   created: ClasspilotCommandWithTargets,
@@ -896,35 +914,22 @@ async function supersedeTransientCommandTargetsFor(
   },
   commandPayload: Record<string, any>
 ): Promise<void> {
-  const action = String(commandPayload.action || "");
+  if (created.targets.length === 0) return;
   const pollId = typeof commandPayload.pollId === "string" ? commandPayload.pollId.trim() : "";
-  const timerId = typeof commandPayload.timerId === "string" ? commandPayload.timerId.trim() : "";
-  const query = options.commandType === "poll" && action === "close" && pollId
-    ? { commandType: "poll" as const, resource: { key: "pollId" as const, id: pollId } }
-    : options.commandType === "timer" && action === "stop"
-      ? timerId
-        ? { commandType: "timer" as const, resource: { key: "timerId" as const, id: timerId } }
-        : {
-            commandType: "timer" as const,
-            scope: {
-              teachingSessionId: options.teachingSessionId,
-              supervisionContextId: options.supervisionContextId,
-            },
-          }
+  const superseded = options.commandType === "timer"
+    ? { commandType: "timer" as const }
+    : options.commandType === "poll" && String(commandPayload.action || "") === "close" && pollId
+      ? { commandType: "poll" as const, pollId }
       : null;
-  if (!query) return;
+  if (!superseded) return;
   try {
-    const commandIds = await listClasspilotSupersededTransientCommandIds({
-      schoolId: options.schoolId,
-      supersedingCommandId: created.id,
-      createdBefore: created.createdAt,
-      ...query,
-    });
-    if (commandIds.length === 0) return;
     await supersedeClasspilotTransientCommandTargets({
       schoolId: options.schoolId,
-      commandType: query.commandType,
-      commandIds,
+      supersedingCommandId: created.id,
+      studentIds: created.targets.map((target) => target.studentId),
+      teachingSessionId: options.teachingSessionId,
+      supervisionContextId: options.supervisionContextId,
+      ...superseded,
     });
   } catch (error) {
     console.warn(
@@ -1331,9 +1336,7 @@ export async function executeClasspilotCommand(options: {
         targets: exactTabAuthorization.targets,
     })
     : exactTabAuthorization.targets;
-  const requiredToolsCapability = options.commandType === "lesson-activity" ? "lessonActivitiesV1"
-    : options.commandType === "timer" && ["pause", "resume", "extend"].includes(String(commandPayload.action)) ? "timerControlsV1"
-      : options.commandType === "poll" && commandPayload.responseType === "short_text" ? "exitTicketsV1" : null;
+  const requiredToolsCapability = classpilotRequiredToolsCapability(options.commandType, commandPayload);
   if (requiredToolsCapability || focusNewAction) {
     const evidence = await readClasspilotRealtimeStatusBatch(options.schoolId, effectiveTargets.filter(target => target.available && target.studentSessionId && target.deviceId)
       .map(target => ({ studentId: target.studentId, studentSessionId: target.studentSessionId!, deviceId: target.deviceId! })));

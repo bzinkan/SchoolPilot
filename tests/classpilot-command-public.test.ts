@@ -6,6 +6,7 @@ import {
   CLASSPILOT_TRANSIENT_COMMAND_TTL_MS,
   classpilotCommandDeliveryPolicy,
   classpilotCommandExpiresAt,
+  classpilotTimerPollCommandTtlMs,
   classpilotTransientCommandTtlMs,
   classpilotTransientReplayOnAuthEnabled,
   summarizeClasspilotCommandTargets,
@@ -45,6 +46,19 @@ test("staff command DTO recursively removes internal routing identifiers", () =>
   assert.equal(command.targets[0].deviceId, "device-hidden", "serializer must not mutate storage rows");
 });
 
+/** Run with the timer/poll deadline override set (or unset), whatever the local .env holds. */
+function withTimerPollTtlEnv<T>(value: string | undefined, run: () => T): T {
+  const previous = process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+  if (value === undefined) delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+  else process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = value;
+  try {
+    return run();
+  } finally {
+    if (previous === undefined) delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+    else process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = previous;
+  }
+}
+
 test("command delivery policies are fixed; tab actions expire after 15 s and timer/poll after 60 s", () => {
   assert.equal(classpilotCommandDeliveryPolicy("lock-screen"), "persistent_control");
   assert.equal(classpilotCommandDeliveryPolicy("temp-unblock"), "persistent_control");
@@ -55,34 +69,32 @@ test("command delivery policies are fixed; tab actions expire after 15 s and tim
   assert.equal(classpilotCommandDeliveryPolicy("teacher-message"), "durable_message");
   assert.equal(classpilotCommandDeliveryPolicy("student-sign-out"), "server_authoritative");
 
+  // Defaults, pinned against an explicit environment without the override.
+  const defaults = {};
   assert.equal(CLASSPILOT_TRANSIENT_COMMAND_TTL_MS, 15_000);
-  assert.equal(CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS, 60_000);
+  assert.equal(classpilotTimerPollCommandTtlMs(defaults), 60_000);
   for (const commandType of ["open-tab", "close-tab", "close-tabs", "activate-tab", "not-a-command"]) {
-    assert.equal(classpilotTransientCommandTtlMs(commandType), 15_000, commandType);
+    assert.equal(classpilotTransientCommandTtlMs(commandType, defaults), 15_000, commandType);
   }
   for (const commandType of ["timer", "poll"]) {
-    assert.equal(classpilotTransientCommandTtlMs(commandType), 60_000, commandType);
+    assert.equal(classpilotTransientCommandTtlMs(commandType, defaults), 60_000, commandType);
   }
+  // The exported constant is the effective deadline this process started with.
+  assert.equal(CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS, classpilotTimerPollCommandTtlMs());
 
   const issuedAt = new Date("2026-08-13T12:00:00.000Z");
-  assert.equal(
-    classpilotCommandExpiresAt("open-tab", issuedAt)?.getTime(),
-    issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS
-  );
-  assert.equal(
-    classpilotCommandExpiresAt("close-tabs", issuedAt)?.getTime(),
-    issuedAt.getTime() + 15_000
-  );
-  assert.equal(
-    classpilotCommandExpiresAt("timer", issuedAt)?.getTime(),
-    issuedAt.getTime() + CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS
-  );
-  assert.equal(
-    classpilotCommandExpiresAt("poll", issuedAt)?.getTime(),
-    issuedAt.getTime() + 60_000
-  );
-  assert.equal(classpilotCommandExpiresAt("lock-screen", issuedAt), null);
-  assert.equal(classpilotCommandExpiresAt("teacher-message", issuedAt), null);
+  withTimerPollTtlEnv(undefined, () => {
+    assert.equal(
+      classpilotCommandExpiresAt("open-tab", issuedAt)?.getTime(),
+      issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS
+    );
+    assert.equal(classpilotCommandExpiresAt("close-tabs", issuedAt)?.getTime(), issuedAt.getTime() + 15_000);
+    assert.equal(classpilotCommandExpiresAt("activate-tab", issuedAt)?.getTime(), issuedAt.getTime() + 15_000);
+    assert.equal(classpilotCommandExpiresAt("timer", issuedAt)?.getTime(), issuedAt.getTime() + 60_000);
+    assert.equal(classpilotCommandExpiresAt("poll", issuedAt)?.getTime(), issuedAt.getTime() + 60_000);
+    assert.equal(classpilotCommandExpiresAt("lock-screen", issuedAt), null);
+    assert.equal(classpilotCommandExpiresAt("teacher-message", issuedAt), null);
+  });
 });
 
 test("CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS overrides only the timer/poll deadline and ignores invalid values", () => {
@@ -91,6 +103,7 @@ test("CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS overrides only the timer/poll deadlin
   assert.equal(classpilotTransientCommandTtlMs("poll", override), 15_000);
   assert.equal(classpilotTransientCommandTtlMs("open-tab", override), 15_000);
   assert.equal(classpilotTransientCommandTtlMs("poll", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "90000" }), 90_000);
+  assert.equal(classpilotTransientCommandTtlMs("open-tab", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: "90000" }), 15_000);
   for (const invalid of ["", "   ", "abc", "0", "-5", "NaN", "Infinity"]) {
     assert.equal(
       classpilotTransientCommandTtlMs("timer", { CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS: invalid }),
@@ -100,18 +113,16 @@ test("CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS overrides only the timer/poll deadlin
   }
 
   // The dispatcher reads the deadline per command, so a rollback to the legacy
-  // 15 s deadline needs only the environment variable, not a redeploy.
-  const previous = process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+  // 15 s deadline needs only the environment variable, not a new build.
   const issuedAt = new Date("2026-08-13T12:00:00.000Z");
-  try {
-    process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = "45000";
+  withTimerPollTtlEnv("45000", () => {
     assert.equal(classpilotCommandExpiresAt("poll", issuedAt)?.getTime(), issuedAt.getTime() + 45_000);
     assert.equal(classpilotCommandExpiresAt("timer", issuedAt)?.getTime(), issuedAt.getTime() + 45_000);
     assert.equal(classpilotCommandExpiresAt("open-tab", issuedAt)?.getTime(), issuedAt.getTime() + 15_000);
-  } finally {
-    if (previous === undefined) delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
-    else process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = previous;
-  }
+  });
+  withTimerPollTtlEnv("15000", () => {
+    assert.equal(classpilotCommandExpiresAt("poll", issuedAt)?.getTime(), issuedAt.getTime() + 15_000);
+  });
 });
 
 test("transient replay on auth-success is off by default and honours the school allowlist", () => {

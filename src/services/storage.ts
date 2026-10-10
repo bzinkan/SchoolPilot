@@ -22225,71 +22225,63 @@ export async function listClasspilotReplayableTransientCommandTargets(
   return rows.reverse();
 }
 
+export const CLASSPILOT_SUPERSEDED_TARGET_MESSAGE = "Superseded by a later command before delivery";
+
 /**
- * Earlier commands of the same resource that a later control makes moot and
- * that still hold undelivered targets: `poll` commands for the same pollId
- * (poll close) or `timer` commands for the same timerId (timer stop). Legacy
- * phase-0 timer payloads carry no timerId; those fall back to every earlier
- * timer command in the same teaching session or supervision context.
+ * Expire still-undelivered timer/poll targets that a later command made moot,
+ * for the students that later command addresses:
+ *   - `timer`: every timer frame is the complete timer state for its class (one
+ *     timer per class), so any later timer command supersedes the earlier ones
+ *     of the same teaching session or supervision context. This also covers
+ *     legacy phase-0 timers, whose payloads carry no timerId.
+ *   - `poll`: a close supersedes the commands of the same pollId.
+ * Targets become `expired` with a distinct reason, so the dashboard stops
+ * awaiting their ACKs at once and the auth-success replay lane never re-sends
+ * a frame the teacher already replaced or withdrew. No status value is added:
+ * `expired` is the existing terminal state for undelivered one-shot frames,
+ * and a target the device already received is never touched.
  */
-export async function listClasspilotSupersededTransientCommandIds(
+export async function supersedeClasspilotTransientCommandTargets(
   options: {
     schoolId: string;
     commandType: "timer" | "poll";
     supersedingCommandId: string;
-    createdBefore: Date;
-    resource?: { key: "timerId" | "pollId"; id: string };
-    scope?: { teachingSessionId?: string | null; supervisionContextId?: string | null };
+    studentIds: string[];
+    teachingSessionId?: string | null;
+    supervisionContextId?: string | null;
+    pollId?: string;
+    now?: Date;
   },
   dbInstance: typeof db = db
-): Promise<string[]> {
-  const conditions: SQL[] = [
-    eq(classpilotCommands.schoolId, options.schoolId),
-    eq(classpilotCommands.commandType, options.commandType),
-    ne(classpilotCommands.id, options.supersedingCommandId),
-    lt(classpilotCommands.createdAt, options.createdBefore),
-  ];
-  if (options.resource) {
-    conditions.push(sql`${classpilotCommands.commandPayload}->>${options.resource.key} = ${options.resource.id}`);
-  } else if (options.scope?.teachingSessionId) {
-    conditions.push(eq(classpilotCommands.teachingSessionId, options.scope.teachingSessionId));
-  } else if (options.scope?.supervisionContextId) {
-    conditions.push(eq(classpilotCommands.supervisionContextId, options.scope.supervisionContextId));
-  } else {
-    return [];
-  }
-  const rows = await dbInstance
-    .selectDistinct({ id: classpilotCommands.id })
-    .from(classpilotCommands)
-    .innerJoin(classpilotCommandTargets, and(
-      eq(classpilotCommandTargets.commandId, classpilotCommands.id),
-      eq(classpilotCommandTargets.schoolId, classpilotCommands.schoolId)
-    ))
-    .where(and(
-      ...conditions,
-      inArray(classpilotCommandTargets.status, ["requested", "sent"]),
-      isNull(classpilotCommandTargets.receivedAt)
-    ))
-    .limit(50);
-  return rows.map((row) => row.id);
-}
-
-export const CLASSPILOT_SUPERSEDED_TARGET_MESSAGE = "Superseded by a later command before delivery";
-
-/**
- * Expire the still-undelivered targets of commands a later control made moot
- * (poll close, timer stop). They become `expired` with a distinct reason, so
- * the dashboard stops awaiting their ACKs at once and the auth-success replay
- * lane never re-sends a frame the teacher already withdrew. No status value is
- * added: `expired` is the existing terminal state for undelivered one-shot
- * frames, and a target the device already received is never touched.
- */
-export async function supersedeClasspilotTransientCommandTargets(
-  options: { schoolId: string; commandType: string; commandIds: string[]; now?: Date },
-  dbInstance: typeof db = db
 ): Promise<{ commandIds: string[]; expiredTargets: number }> {
-  const commandIds = [...new Set(options.commandIds.filter(Boolean))];
-  if (commandIds.length === 0) return { commandIds: [], expiredTargets: 0 };
+  const none = { commandIds: [] as string[], expiredTargets: 0 };
+  const studentIds = [...new Set(options.studentIds.map(String).filter(Boolean))];
+  if (studentIds.length === 0) return none;
+  if (Boolean(options.teachingSessionId) === Boolean(options.supervisionContextId)) return none;
+  if (options.commandType === "poll" && !options.pollId) return none;
+
+  const earlierCommands = dbInstance
+    .select({ id: classpilotCommands.id })
+    .from(classpilotCommands)
+    .where(and(
+      eq(classpilotCommands.schoolId, options.schoolId),
+      eq(classpilotCommands.commandType, options.commandType),
+      options.teachingSessionId
+        ? eq(classpilotCommands.teachingSessionId, options.teachingSessionId)
+        : eq(classpilotCommands.supervisionContextId, options.supervisionContextId!),
+      ne(classpilotCommands.id, options.supersedingCommandId),
+      // Compared in the database: created_at has microsecond precision that a
+      // round trip through a JavaScript Date would truncate. Only strictly
+      // earlier commands are superseded, so a slow supersede step can never
+      // expire the targets of a command issued after it.
+      sql`${classpilotCommands.createdAt} < (
+        SELECT superseding.created_at FROM classpilot_commands superseding
+        WHERE superseding.id = ${options.supersedingCommandId}
+      )`,
+      ...(options.commandType === "poll"
+        ? [sql`${classpilotCommands.commandPayload}->>'pollId' = ${options.pollId!}`]
+        : [])
+    ));
   const now = options.now ?? new Date();
   const expired = await dbInstance
     .update(classpilotCommandTargets)
@@ -22300,13 +22292,14 @@ export async function supersedeClasspilotTransientCommandTargets(
     })
     .where(and(
       eq(classpilotCommandTargets.schoolId, options.schoolId),
-      inArray(classpilotCommandTargets.commandId, commandIds),
+      inArray(classpilotCommandTargets.commandId, earlierCommands),
+      inArray(classpilotCommandTargets.studentId, studentIds),
       inArray(classpilotCommandTargets.status, ["requested", "sent"]),
       isNull(classpilotCommandTargets.receivedAt)
     ))
     .returning({ commandId: classpilotCommandTargets.commandId });
-  const touched = [...new Set(expired.map((target) => target.commandId))];
-  for (const commandId of touched) {
+  const commandIds = [...new Set(expired.map((target) => target.commandId))];
+  for (const commandId of commandIds) {
     await updateClasspilotCommandSummary(commandId, dbInstance);
   }
   reportClasspilotTransientCommandTargetOutcome({
@@ -22314,9 +22307,9 @@ export async function supersedeClasspilotTransientCommandTargets(
     counter: "transientCommandTargetSuperseded",
     scope: "dispatch",
     expiredTargetCommandIds: expired.map((target) => target.commandId),
-    commandTypeById: new Map(touched.map((commandId) => [commandId, options.commandType])),
+    commandTypeById: new Map(commandIds.map((commandId) => [commandId, options.commandType])),
   });
-  return { commandIds: touched, expiredTargets: expired.length };
+  return { commandIds, expiredTargets: expired.length };
 }
 
 export type ClasspilotCommandAckTerminalCode =

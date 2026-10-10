@@ -1347,18 +1347,38 @@ export function setupWebSocket(
                           };
                         },
                       });
-                      // Un-received timer/poll frames for this exact binding,
-                      // read under the same student-control lock as command
-                      // persistence so a dispatch cannot interleave between
-                      // this read and the registration below. Flagged, default
-                      // off; the synchronous callback only sends the result.
+                      // Un-received timer/poll frames for this exact binding
+                      // (flagged, default off). The read shares the
+                      // student-control lock with command persistence, so no
+                      // command can be created for this student between this
+                      // read and the registration below. A dispatch already in
+                      // flight (target not yet marked sent) is not selected:
+                      // it reaches this socket live if registration wins, and
+                      // otherwise stays pending for the next auth-success.
+                      // A frame is replayed only if the device will accept it
+                      // against what this same bootstrap delivers: the FAB's
+                      // class contexts, the delivered control revision and the
+                      // capabilities this socket accepted. The synchronous
+                      // callback below only sends the result.
                       const transientReplay = classpilotTransientReplayOnAuthEnabled(schoolId)
                         ? await prepareClasspilotTransientCommandReplay({
                             schoolId,
                             studentId: payload.studentId,
                             studentSessionId: activeSession.id,
                             deviceId,
-                          }, transactionDb)
+                          }, transactionDb, {
+                            activeContexts: fab.activeContexts,
+                            contextAuthorityRevision: "contextAuthorityRevision" in fab
+                              ? fab.contextAuthorityRevision
+                              : null,
+                            controlState: classroomState && classroomStateRow
+                              ? {
+                                  supervisionContextId: classroomStateRow.supervisionContextId,
+                                  revision: classroomState.revision,
+                                }
+                              : null,
+                            acceptedCapabilities: protocol.acceptedCapabilities,
+                          })
                         : [];
                       return {
                         fab,
