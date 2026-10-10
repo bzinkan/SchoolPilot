@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "current_release_index",
   "releaseId": "release297-desales133-usage-off",
-  "observedAtUtc": "2026-10-10T08:52:14.3812035Z",
+  "observedAtUtc": "2026-10-09T20:47:22.162Z",
   "audience": {
     "school": "DeSales",
     "clients": 133,
@@ -21,17 +21,13 @@
   "sources": {
     "schoolpilot": {
       "planningReference": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
-      "remoteMainObserved": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "remoteMainObserved": "6e33a19662fec14e719a806e73160a84816f120e",
       "reviewedHistorical": "766ec202817e3fa5504df599a5832cad13f39693",
       "testedHistorical": "ddc5996b3b8645859fa51a9613486db52c481b7f",
       "frozenApplicationReference": "2001e8888992674493c3084981fa8aae27d70e1d",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityBinding",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview",
-        "buildSecurityLatestRemoteMain",
-        "buildSecurityPredeploymentDocuments"
+        "buildSecurityBinding"
       ]
     },
     "classpilot": {
@@ -55,9 +51,7 @@
       "status": "passed",
       "rationale": "Fresh A3 applicability capture independently records daily setting omitted, effective shadow at current serving source; workload is unmeasured.",
       "evidence": [
-        "buildSecurityCurrentObservation",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityCurrentObservation"
       ],
       "nextAction": "Re-read exact API/worker definitions and preserve the reviewed setting before each operational mutation."
     },
@@ -67,9 +61,7 @@
       "status": "passed",
       "rationale": "Fresh dated API/worker capture independently records off for both services; preserve and re-read before operations.",
       "evidence": [
-        "buildSecurityCurrentObservation",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityCurrentObservation"
       ],
       "nextAction": "Re-read exact API/worker definitions and preserve the reviewed setting before each operational mutation."
     },
@@ -79,9 +71,7 @@
       "status": "passed",
       "rationale": "Fresh dated API/worker capture independently records off for both services; preserve and re-read before operations.",
       "evidence": [
-        "buildSecurityCurrentObservation",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityCurrentObservation"
       ],
       "nextAction": "Re-read exact API/worker definitions and preserve the reviewed setting before each operational mutation."
     }
@@ -347,9 +337,7 @@
       "observedAtUtc": "2026-10-09T15:24:33.431Z",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityBinding",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityBinding"
       ],
       "nextAction": "Preserve exact identity; acceptance, publication and deployment require their own passed evidence.",
       "identity": {
@@ -369,9 +357,7 @@
       "observedAtUtc": "2026-10-09T15:24:33.431Z",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityBinding",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityBinding"
       ],
       "nextAction": "Preserve exact identity; acceptance, publication and deployment require their own passed evidence.",
       "identity": {
@@ -394,9 +380,7 @@
       "rationale": "Exact production-mode A3 frontend archive and171-entry inventory passed lint/build,90 dashboard scenarios and Focus/lock/history/student-tile checks. Exact-main CI remains separately recorded.",
       "observedAtUtc": "2026-10-09T15:24:33.431Z",
       "evidence": [
-        "buildSecurityCandidatePreparation",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityCandidatePreparation"
       ],
       "nextAction": "Retain exact matched production archive; publish only after accepted backend convergence and passed operational gates."
     },
@@ -424,25 +408,23 @@
       "id": "implementation",
       "label": "Merged current application and tooling implementation",
       "status": "passed",
-      "applicability": "historical",
-      "sourceSha": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
-      "rationale": "Actual independently reviewed matched deployment completion records the exact runtime source and artifact pair; activation and live acceptance remain separate.",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
+      "applicability": "current_baseline",
+      "sourceSha": "6e33a19662fec14e719a806e73160a84816f120e",
+      "rationale": "Current application and reviewed v5 tooling are merged with exact-main CI and application equivalence.",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
-        "buildSecurityMergedTooling",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityMergedTooling"
       ],
-      "nextAction": "Retain the actual completion evidence; already-open page adoption and sample-bearing live acceptance remain pending."
+      "nextAction": "Review/merge PR630 including the tested async harness correction and exact accepted evidence; verify resulting main before operations."
     },
     {
       "id": "testing",
       "label": "Testing",
       "status": "passed",
-      "applicability": "historical",
+      "applicability": "current_baseline",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Actual independently reviewed matched deployment completion records the exact runtime source and artifact pair; activation and live acceptance remain separate.",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
+      "rationale": "All seven original release gates and all six preparation leaves passed independently reviewed actual evidence for exact A3/F3. The new normal/mixed/headroom sequence shares f0c/c8fa; fixed133 keeps its original dbf00 binding.",
+      "observedAtUtc": "2026-10-09T20:45:44.339Z",
       "evidence": [
         "buildSecurityBinding",
         "buildSecurityOriginalNormalLoadAcceptance",
@@ -451,59 +433,51 @@
         "buildSecurityOriginalCurrentSchoolAcceptance",
         "buildSecurityOriginalOrdinaryRecovery",
         "buildSecurityOriginalRestrictedRestoration",
-        "buildSecurityOriginalScreenshotRuntime",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityOriginalScreenshotRuntime"
       ],
-      "nextAction": "Retain the actual completion evidence; already-open page adoption and sample-bearing live acceptance remain pending."
+      "nextAction": "Review/merge the exact correction and evidence PR, then verify fresh resulting-main CI, application inventories and frozen scripts before operations."
     },
     {
       "id": "packaging",
       "label": "Packaging",
       "status": "passed",
-      "applicability": "historical",
+      "applicability": "current_baseline",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Actual independently reviewed matched deployment completion records the exact runtime source and artifact pair; activation and live acceptance remain separate.",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
+      "rationale": "Exact A3 backend/frontend, F3 backend and compatible C frontend artifacts are built and identified.",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityCompatibleFrontendPreparation",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityCompatibleFrontendPreparation"
       ],
-      "nextAction": "Retain the actual completion evidence; already-open page adoption and sample-bearing live acceptance remain pending."
+      "nextAction": "Publish only the exact reviewed artifacts after all gates and fresh operation prerequisites pass."
     },
     {
       "id": "publication",
       "label": "Publication",
-      "status": "passed",
-      "applicability": "historical",
-      "sourceSha": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
-      "rationale": "Actual independently reviewed matched deployment completion records the exact runtime source and artifact pair; activation and live acceptance remain separate.",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
+      "status": "pending",
+      "applicability": "candidate_pending",
+      "sourceSha": null,
+      "rationale": "Necessary exact artifact publication is authorized as a deployment prerequisite; no publication receipt exists.",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityBinding",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityBinding"
       ],
-      "nextAction": "Retain the actual completion evidence; already-open page adoption and sample-bearing live acceptance remain pending."
+      "nextAction": "After resulting-main CI and fresh production prerequisites pass, review exact offline Plans/windows and publish only the bound artifacts."
     },
     {
       "id": "deployment",
       "label": "Deployment",
-      "status": "passed",
-      "applicability": "historical",
+      "status": "pending",
+      "applicability": "candidate_pending",
       "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "rationale": "Actual independently reviewed matched deployment completion records the exact runtime source and artifact pair; activation and live acceptance remain separate.",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
+      "rationale": "Direct user fix/deploy request is authorized; actual execution awaits all required gates and exact completed fallback registration.",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityBinding",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityBinding"
       ],
-      "nextAction": "Retain the actual completion evidence; already-open page adoption and sample-bearing live acceptance remain pending."
+      "nextAction": "Verify fresh production health/catalog/backups/task/flags and completed inactive129F3rollback; migrate first, then API/worker and matched frontend."
     },
     {
       "id": "activation",
@@ -1697,19 +1671,17 @@
     },
     {
       "id": "build-security-main-ci",
-      "label": "Deployed source CI and input equivalence",
+      "label": "Exact A3 push/main CI",
       "status": "passed",
-      "applicability": "historical",
-      "sourceSha": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+      "applicability": "current_baseline",
+      "sourceSha": "6e33a19662fec14e719a806e73160a84816f120e",
       "rationale": "Actual main6e33 emitted19successful checks and2known skips; independent provenance replay passed.",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
+      "observedAtUtc": "2026-10-09T17:36:48.106Z",
       "evidence": [
         "buildSecurityCurrentObservation",
-        "buildSecurityMergedTooling",
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
+        "buildSecurityMergedTooling"
       ],
-      "nextAction": "Keep this dated CI observation bound to the deployed runtime source."
+      "nextAction": "Refresh exact resulting-main CI again after the metadata merge before any operation."
     },
     {
       "id": "build-security-candidate-freeze",
@@ -2043,46 +2015,6 @@
         "buildSecurityAsyncControlCorrection"
       ],
       "nextAction": "Preserve the failed original and diagnostic limitations; do not substitute diagnostic results or relabel it as passed."
-    },
-    {
-      "id": "build-security-later-main-applicability",
-      "label": "Later remote main artifact and release applicability",
-      "status": "pending",
-      "applicability": "equivalence_required",
-      "sourceSha": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "observedAtUtc": "2026-10-10T07:34:48.5007499Z",
-      "evidence": [
-        "buildSecurityLatestRemoteMain"
-      ],
-      "rationale": "Later remote main changes backend and frontend inputs; the deployed B5 evidence retains its exact runtime scope.",
-      "nextAction": "Review source-specific artifacts, affected acceptance and recovery compatibility for the later observed production. Review the temporary_room rollback floor before any future F3 reuse; B5 evidence does not transfer."
-    },
-    {
-      "id": "build-security-operational-completion",
-      "label": "Actual matched backend, worker and frontend deployment",
-      "status": "passed",
-      "applicability": "historical",
-      "sourceSha": "2001e8888992674493c3084981fa8aae27d70e1d",
-      "observedAtUtc": "2026-10-10T08:40:42.178Z",
-      "evidence": [
-        "buildSecurityDeploymentCompletion",
-        "buildSecurityDeploymentReview"
-      ],
-      "rationale": "Nine actual operation receipts and independent completion review passed, preserving admission129, ordinary53 and the observed capacity baseline.",
-      "nextAction": "Already-open page adoption and sample-bearing live acceptance remain pending."
-    },
-    {
-      "id": "build-security-later-production-applicability",
-      "label": "Later production release acceptance and frontend applicability",
-      "status": "pending",
-      "applicability": "equivalence_required",
-      "sourceSha": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "observedAtUtc": "2026-10-10T08:52:14.3812035Z",
-      "evidence": [
-        "buildSecurityLatestProduction"
-      ],
-      "rationale": "Read-only observation records a later API/worker pair; no B5 CI, artifact acceptance or frontend verification transfers.",
-      "nextAction": "Obtain source-specific release and frontend evidence and review the temporary_room rollback floor before future recovery. Preserve the dated B5 completion."
     }
   ],
   "inclusionMatrix": [
@@ -2094,7 +2026,7 @@
       "headSha": "766ec202817e3fa5504df599a5832cad13f39693",
       "mergeSha": "047bc64f30d8cd711581ec1edacacfeb49898d61",
       "mergedAtUtc": "2026-10-04T22:45:00Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -2111,7 +2043,7 @@
       "headSha": "e71563a731df797fe85207b0bbc438dd52b1a7b3",
       "mergeSha": "400e71d432bd9b38d36edec2cb6b400100f21809",
       "mergedAtUtc": "2026-10-05T03:23:01Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -2126,7 +2058,7 @@
       "headSha": "229aba4a0654c50dfffd62bac88f4188e8658cb2",
       "mergeSha": "a406735cb2dc75fed350e12a38a8c589155538c7",
       "mergedAtUtc": "2026-10-05T11:23:21Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2141,7 +2073,7 @@
       "headSha": "86ea5c5ca5f76406300f5170d2ecb3e3554baeb3",
       "mergeSha": "13420736ae5f5eaa9c40cbf6c226ff687bce1304",
       "mergedAtUtc": "2026-10-06T22:31:47Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend",
         "frontend",
@@ -2158,7 +2090,7 @@
       "headSha": "eb4e908c6e83e9ef038f340c337bb16e2d3f271f",
       "mergeSha": "048b0e94747032d5d50f586f4591e5b29821ac6d",
       "mergedAtUtc": "2026-10-06T23:19:16Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release tooling"
       ],
@@ -2173,7 +2105,7 @@
       "headSha": "bf58e9abda0341eb5c053c9382ddb44e9c6324a6",
       "mergeSha": "ae41d88555a0a6c15e8ee7baef21c829717eab4d",
       "mergedAtUtc": "2026-10-07T00:30:35Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2188,7 +2120,7 @@
       "headSha": "801f628766dbd454eecc19fc882cf021a1fb52e3",
       "mergeSha": "a14759a231ef47ad01951e8b9519c87de39433bc",
       "mergedAtUtc": "2026-10-07T14:17:37Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend",
         "frontend"
@@ -2204,7 +2136,7 @@
       "headSha": "e00632984d1f0aff0538033533122ebc63aa7bfc",
       "mergeSha": "56df7a4f390b45a2f97ee435c01381ddede5dc2e",
       "mergedAtUtc": "2026-10-07T16:21:39Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2219,7 +2151,7 @@
       "headSha": "5cb78dfa37c29538785ebf8933bba494ad83e593",
       "mergeSha": "d35e3821a00a3a7a35c0d9ac5f2e2d5fe4b60e4b",
       "mergedAtUtc": "2026-10-07T20:57:54Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2235,7 +2167,7 @@
       "headSha": "3b7fe0641d47c33a49f271b47378e05d56be1cae",
       "mergeSha": "eecf85f4a9c4b83940a16fbe085608c2e87d0742",
       "mergedAtUtc": "2026-10-07T21:14:48Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend-governance",
         "frontend-public-copy"
@@ -2266,7 +2198,7 @@
       "headSha": "106f78059172e2f7fda4632911b28153695ec448",
       "mergeSha": "a5161eb14939132776e0b77eac8e3c485091432c",
       "mergedAtUtc": "2026-10-07T22:06:52Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2282,7 +2214,7 @@
       "headSha": "f9bf0f49d0dc07256e967abcbc9a4b4675a79bdc",
       "mergeSha": "03fbd0fc769f3d8ca3aee002e740eba8f6a25bfe",
       "mergedAtUtc": "2026-10-07T21:48:32Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "ci"
@@ -2298,7 +2230,7 @@
       "headSha": "e55bd455b42dc90e7b264ce6da50ffe8979e5268",
       "mergeSha": "bb8db8c59f8ecd099b8c5b6c236498c341cf7fff",
       "mergedAtUtc": "2026-10-08T01:25:19Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2314,7 +2246,7 @@
       "headSha": "f459a2a96d8b0395c788cf71129d0868d2d7a9fd",
       "mergeSha": "092f8fbfe96dd7deed52c279d0b916676e0fc102",
       "mergedAtUtc": "2026-10-08T15:34:51Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend",
         "backend-governance",
@@ -2331,7 +2263,7 @@
       "headSha": "ca38a6236bd332f7069136e1e555b9dbb681caba",
       "mergeSha": "ecf6ce0100e758f5668c5a26427c1c0ea82ea0a2",
       "mergedAtUtc": "2026-10-08T16:53:51Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "frontend"
       ],
@@ -2346,7 +2278,7 @@
       "headSha": "238de1358920d3f0b02f0ad5fbaa208eb5fd9024",
       "mergeSha": "0fc57be11b334416a3a97a60497a492b1d3cdd70",
       "mergedAtUtc": "2026-10-08T23:03:22Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2362,7 +2294,7 @@
       "headSha": "4c3236fc85d2d0ed0af2d3561583ce3ac0002e8c",
       "mergeSha": "7ad2405846fb066e4dd43339297aba43a170d002",
       "mergedAtUtc": "2026-10-09T10:53:18Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "release-evidence"
@@ -2378,7 +2310,7 @@
       "headSha": "e30d44531668dbfbcdc0cf4ac07547c4aa9906d1",
       "mergeSha": "55f91b620d2d48de5ed164a72250ec133450bc0f",
       "mergedAtUtc": "2026-10-09T13:21:56Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend (three source image inputs)",
         "frontend",
@@ -2395,7 +2327,7 @@
       "headSha": "5c184a73deea32404f352204f9e15e2a4d216923",
       "mergeSha": "2001e8888992674493c3084981fa8aae27d70e1d",
       "mergedAtUtc": "2026-10-09T14:38:46Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "backend (five source image inputs)",
         "frontend",
@@ -2412,7 +2344,7 @@
       "headSha": "dbf00dbb29945fd316150af047aa55194f59d892",
       "mergeSha": "6e33a19662fec14e719a806e73160a84816f120e",
       "mergedAtUtc": "2026-10-09T16:39:46Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+      "includedInSource": "6e33a19662fec14e719a806e73160a84816f120e",
       "affectedArtifacts": [
         "release-tooling",
         "state-documentation",
@@ -2420,100 +2352,6 @@
       ],
       "reusableEvidence": "A3/F3 application inputs are unchanged. Actual campaigns bind the exact frozen dbf00 harness. Historical C578/F1/F2 failures remain unchanged.",
       "requiredReruns": "Exact resulting-main CI and real Git backend/frontend equivalence passed; repeat fresh CI/source/state checks for the eventual operation source."
-    },
-    {
-      "mergeSha": "f89735d456627b53ff9d3ce38f88c77de8b6ac62",
-      "mergedAtUtc": "2026-10-09T21:45:18Z",
-      "title": "Complete 2.9.7 acceptance and fix release harness/CI",
-      "reusableEvidence": "Tested A3/F3 application and frontend artifact inputs are unchanged; each actual acceptance receipt retains its historical measured harness identity.",
-      "headSha": "c60c0cb19f51413c4adc0f388bc83090d7c6427c",
-      "repository": "SchoolPilot",
-      "requiredReruns": "Exact B5 main CI and application input equivalence are retained. The later reconciliation PR must pass its own normal CI and resulting-main verification.",
-      "affectedArtifacts": [
-        "release-tooling",
-        "state-documentation",
-        "acceptance-harness",
-        "ci-transport"
-      ],
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "state": "MERGED",
-      "number": 630
-    },
-    {
-      "mergeSha": "b7eb6a568c9df6ecb020649b2bf23945e6e6ca7b",
-      "mergedAtUtc": "2026-10-09T22:15:28Z",
-      "title": "Resolve Trivy Node base through verified official mirror",
-      "reusableEvidence": "Tested A3/F3 application and frontend artifact inputs are unchanged; each actual acceptance receipt retains its historical measured harness identity.",
-      "headSha": "06be119f6e95061f912df4cb208d4b92af5d7af4",
-      "repository": "SchoolPilot",
-      "requiredReruns": "Exact B5 main CI and application input equivalence are retained. The later reconciliation PR must pass its own normal CI and resulting-main verification.",
-      "affectedArtifacts": [
-        "ci-transport"
-      ],
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "state": "MERGED",
-      "number": 632
-    },
-    {
-      "mergeSha": "50832989ffdb354186f3abfc5a6c469c46db0b28",
-      "mergedAtUtc": "2026-10-09T22:52:20Z",
-      "title": "Batch concurrent v5 evidence permission checks without caching",
-      "reusableEvidence": "Tested A3/F3 application and frontend artifact inputs are unchanged; each actual acceptance receipt retains its historical measured harness identity.",
-      "headSha": "8edc89add73df8d8f3452b43d703b6bc113dfce4",
-      "repository": "SchoolPilot",
-      "requiredReruns": "Exact B5 main CI and application input equivalence are retained. The later reconciliation PR must pass its own normal CI and resulting-main verification.",
-      "affectedArtifacts": [
-        "release-tooling"
-      ],
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "state": "MERGED",
-      "number": 633
-    },
-    {
-      "mergeSha": "f3af52c741e31ea74d5654888129795fb9d45438",
-      "mergedAtUtc": "2026-10-09T23:41:26Z",
-      "title": "Fix supervisor arming clock and bound fresh release replay cost",
-      "reusableEvidence": "Tested A3/F3 application and frontend artifact inputs are unchanged; each actual acceptance receipt retains its historical measured harness identity.",
-      "headSha": "f36612b5516baa9c93464574d821a60a68f2fe71",
-      "repository": "SchoolPilot",
-      "requiredReruns": "Exact B5 main CI and application input equivalence are retained. The later reconciliation PR must pass its own normal CI and resulting-main verification.",
-      "affectedArtifacts": [
-        "release-tooling"
-      ],
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "state": "MERGED",
-      "number": 634
-    },
-    {
-      "mergeSha": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
-      "mergedAtUtc": "2026-10-10T02:38:57Z",
-      "title": "Fix v5 registry replay for equivalent ECR digest aliases",
-      "reusableEvidence": "Tested A3/F3 application and frontend artifact inputs are unchanged; each actual acceptance receipt retains its historical measured harness identity.",
-      "headSha": "557a4150ea4f0e9c774a46ef0a07de14b2c9a108",
-      "repository": "SchoolPilot",
-      "requiredReruns": "Exact B5 main CI and application input equivalence are retained. The later reconciliation PR must pass its own normal CI and resulting-main verification.",
-      "affectedArtifacts": [
-        "release-tooling"
-      ],
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "state": "MERGED",
-      "number": 637
-    },
-    {
-      "repository": "SchoolPilot",
-      "number": 631,
-      "title": "Keep mixed-grade claims together in one temporary room",
-      "state": "MERGED",
-      "headSha": "2f835b61543dc5dc7af5bbb6165bf57500d3c1b4",
-      "mergeSha": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "mergedAtUtc": "2026-10-10T07:26:41Z",
-      "includedInSource": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
-      "affectedArtifacts": [
-        "backend",
-        "frontend"
-      ],
-      "reusableEvidence": "Deployed B5 evidence remains dated runtime evidence; it does not establish equivalence or acceptance for this later application change.",
-      "requiredReruns": "Obtain source-specific CI, artifacts and affected recovery and acceptance before publication or deployment. Review the temporary_room rollback floor before future F3 reuse."
     }
   ],
   "evidence": {
@@ -2766,8 +2604,8 @@
       "gitBlobSha256": "a083da550243358fde05187e5b92d1e43b8b69eebe0cf08a5e2997347af10b65"
     },
     "buildSecurityCurrentObservation": {
-      "path": "docs/releases/release297/build-security-operational-observation-20261010-b5.json",
-      "gitBlobSha256": "035e730a8d36b797e1e744823af34b154e27a8243c9677bd4b260aeb7a308cdc"
+      "path": "docs/releases/release297/build-security-current-observation-20261009.json",
+      "gitBlobSha256": "4d97b610fba23740a728a22f736383c10cc35860f2bdc70c11b225918d204d30"
     },
     "buildSecurityCandidatePreparationCi": {
       "path": "docs/releases/release297/a3-preparation-ci-completion-20261009.json",
@@ -2852,34 +2690,6 @@
     "buildSecurityOriginalAcceptanceCompletion": {
       "path": "docs/releases/release297/original-acceptance-completion-20261009.json",
       "gitBlobSha256": "8aed74661c35d3cc48ee05a7052fd90c3a5340486053443b750b38aef4216fa0"
-    },
-    "buildSecurityPredeploymentIndex": {
-      "path": "docs/releases/release297/history/current-release-e22c790a-predeployment-20261010.json",
-      "gitBlobSha256": "a7ec9c3d19b3e9ccaebc0697a287bf1349590ce4c5d8e943b557aad9319f4d91"
-    },
-    "buildSecurityPredeploymentObservation": {
-      "path": "docs/releases/release297/build-security-current-observation-20261009.json",
-      "gitBlobSha256": "4d97b610fba23740a728a22f736383c10cc35860f2bdc70c11b225918d204d30"
-    },
-    "buildSecurityDeploymentCompletion": {
-      "path": "docs/releases/release297/matched-deployment-completion-20261010-b5.json",
-      "gitBlobSha256": "7cf4b33bf08037ba3230633eb7df25a71279c4b3b9ab420fef208ec30a57a096"
-    },
-    "buildSecurityDeploymentReview": {
-      "path": "docs/releases/release297/matched-deployment-completion-review-20261010-b5.json",
-      "gitBlobSha256": "78f8022c2a3ba63d5ea8401ec543cc506cf92202502894fc13794afacfda22ea"
-    },
-    "buildSecurityLatestRemoteMain": {
-      "path": "docs/releases/release297/latest-remote-main-observation-20261010.json",
-      "gitBlobSha256": "4cd8621e60c34ca572c3199beedde3fcd585f35a9a475b463e508a12e7f01dfc"
-    },
-    "buildSecurityPredeploymentDocuments": {
-      "path": "docs/releases/release297/history/predeployment-documents-e22c790a-20261010.json",
-      "gitBlobSha256": "8b12fcc80ac1fd36a051a5f5858a3dfc4a5401d575795f7c97c27c5810e967cf"
-    },
-    "buildSecurityLatestProduction": {
-      "path": "docs/releases/release297/latest-production-observation-20261010.json",
-      "gitBlobSha256": "1c2924b4b18cd107957c82ebe56b46d854db6fa5e078b364f1cb5fb7422f8448"
     }
   }
 }
