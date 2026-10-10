@@ -3,6 +3,7 @@ import errorMonitor from "../services/errorMonitor.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { getDatabaseErrorDetails } from "../util/databaseError.js";
 import { markStudentSignInError } from "../services/classpilotStudentSignInDiagnostics.js";
+import { isRequestTransportDisconnected, recordRequestBodyFailure } from "./requestTransport.js";
 
 const DATABASE_CONTRACT_ERRORS: Record<string, { status: number; code: string; message: string }> = {
   classpilot_active_staff_assignment_membership: {
@@ -108,6 +109,7 @@ const DATABASE_CONTRACT_ERRORS: Record<string, { status: number; code: string; m
 };
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  if (recordRequestBodyFailure(err, req, res)) return;
   markStudentSignInError(req, err);
   const reqId = req.requestId;
   // Prefix the log with the correlation id so it's greppable in CloudWatch.
@@ -124,7 +126,8 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   // Ignore client-side network noise — not actionable server errors:
   // - "request aborted" = client disconnected mid-request (WiFi drop, sleep)
   // - "ECONNRESET" / "socket hang up" = transient TCP issues
-  const isClientNetworkNoise = /request aborted|ECONNRESET|socket hang up|aborted/i.test(errMsg);
+  const isClientNetworkNoise = err.type !== "request.aborted"
+    && /request aborted|ECONNRESET|socket hang up|aborted/i.test(errMsg);
 
   // Shared correlation context recorded on the durable error_logs row.
   const ctx = {
@@ -142,7 +145,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     errorMonitor.trackError("client_error", err, ctx);
   }
 
-  if (res.headersSent) {
+  if (res.headersSent || res.writableEnded || isRequestTransportDisconnected(req, res)) {
     return;
   }
 
