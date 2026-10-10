@@ -32,7 +32,20 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "lateSignInRestrictionSsoV1",
   "restrictionAuthPassThroughV1",
   "restrictionPortalFirstV1",
+  "pollReplaySafeV1",
 ] as const;
+
+test("safe poll replay negotiates only with scoped authority and the enabled school rollout", () => {
+  const env = { CLASSPILOT_PROTOCOL_V3_ENABLED:"true", CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1:"true", CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1:"true" };
+  const accepted = (capabilities: string[], candidate: NodeJS.ProcessEnv = env) => negotiateClasspilotProtocol({
+    clientProtocolVersion:3, advertisedCapabilities:capabilities, scope:{schoolId:"pilot"}, env:candidate,
+  }).acceptedCapabilities.includes("pollReplaySafeV1");
+  assert.equal(accepted(["scopedAuthorityChecksV1","pollReplaySafeV1"]),true);
+  assert.equal(accepted(["pollReplaySafeV1"]),false);
+  assert.equal(accepted(["scopedAuthorityChecksV1"]),false, "2.9.8 retains live delivery without poll replay");
+  assert.equal(accepted(["scopedAuthorityChecksV1","pollReplaySafeV1"], {...env,CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1:"false"}),false);
+  assert.equal(accepted(["scopedAuthorityChecksV1","pollReplaySafeV1"], {...env,CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({scopedAuthorityChecksV1:{mode:"on"},pollReplaySafeV1:{mode:"on",schoolIds:["other"]}})}),false);
+});
 
 test("private chat requires reviewed tenancy admission and both advertised parent capabilities", () => {
   const env: NodeJS.ProcessEnv = {
@@ -134,6 +147,7 @@ test("protocol v3 activates only the advertised and server-enabled intersection"
 
 test("all scoped-authority-dependent capabilities require the repaired scoping marker", () => {
   const env: NodeJS.ProcessEnv = {
+    CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1: "true",
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
     CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
     CLASSPILOT_CAP_AUTH_BOUND_TELEMETRY_V1: "true",

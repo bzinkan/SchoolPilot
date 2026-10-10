@@ -51,6 +51,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "preciseRestrictionResourcesV1",
   "focusTabV1",
   "privateChatLifecycleV1",
+  "pollReplaySafeV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -93,6 +94,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   preciseRestrictionResourcesV1: "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1",
   focusTabV1: "CLASSPILOT_CAP_FOCUS_TAB_V1",
   privateChatLifecycleV1: "CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1",
+  pollReplaySafeV1: "CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -122,6 +124,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "preciseRestrictionResourcesV1",
   "focusTabV1",
   "privateChatLifecycleV1",
+  "pollReplaySafeV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -333,6 +336,8 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "pollReplaySafeV1"
+    && !isClasspilotCapabilityActive("scopedAuthorityChecksV1", scope, env)) return false;
   if (capability === "privateChatLifecycleV1" &&
     (!enabled(env.RLS_GUC_ENABLED) || !hasPrivateChatAdmission(env.RLS_ENABLED_TABLES)
       || !isClasspilotCapabilityActive("scopedAuthorityChecksV1",scope,env)

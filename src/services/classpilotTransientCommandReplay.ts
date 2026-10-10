@@ -123,6 +123,9 @@ export function classpilotTransientReplayFrameFor(
   if (!isClasspilotReplayableTransientCommandType(command.commandType)) return null;
   if (target.status !== "sent" || target.receivedAt) return null;
   if (!target.studentSessionId || !target.deviceId) return null;
+  if (target.schoolId !== command.schoolId
+    || target.teachingSessionId !== command.teachingSessionId
+    || target.supervisionContextId !== command.supervisionContextId) return null;
   if (!command.expiresAt || command.expiresAt.getTime() <= now.getTime()) return null;
   const resolvedTarget: ResolvedClasspilotCommandTarget = {
     studentId: target.studentId,
@@ -137,6 +140,11 @@ export function classpilotTransientReplayFrameFor(
   };
   if (!replayAuthorityCurrent(command, resolvedTarget, authority)) return null;
   const storedPayload = recordOf(command.commandPayload);
+  if (!Number.isSafeInteger(storedPayload.transientOrder) || Number(storedPayload.transientOrder) <= 0) return null;
+  // 2.9.8 cannot preserve a persisted poll answer across duplicate delivery.
+  // Starts AND closes require the successor's durable ordering capability.
+  if (command.commandType === "poll" && (!authority.acceptedCapabilities.includes("pollReplaySafeV1")
+    || !authority.acceptedCapabilities.includes("scopedAuthorityChecksV1"))) return null;
   const requiredCapability = classpilotRequiredToolsCapability(command.commandType, storedPayload);
   if (requiredCapability && !authority.acceptedCapabilities.includes(requiredCapability)) return null;
   const payload = replayPayload(command, storedPayload, now);

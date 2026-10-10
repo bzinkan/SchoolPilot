@@ -21641,6 +21641,22 @@ export async function createClasspilotCommandWithTargets(
       commandData = await prepareToolsCommand(tx as unknown as typeof db, commandData,
         classroomContext?.endsAt ?? teachingSession?.scheduledEndAt ?? new Date((teachingSession?.startTime?.getTime() ?? Date.now()) + 12 * 3600_000));
     }
+    if (["timer", "poll"].includes(commandData.commandType) && options.authority
+      && !options.routineReservation?.replayCommandId) {
+      // Student-control and parent row locks are already held. Allocate intent
+      // order here, never from timestamps or caller input. Routine retries
+      // retain the original persisted payload/order prepared above.
+      await tx.execute(sql`INSERT INTO session_settings(school_id,session_id,supervision_context_id)
+        VALUES(${commandData.schoolId},${commandData.teachingSessionId},${commandData.supervisionContextId}) ON CONFLICT DO NOTHING`);
+      const ordered = await tx.execute<{ tools_revision: number }>(sql`UPDATE session_settings
+        SET tools_revision=tools_revision+1 WHERE school_id=${commandData.schoolId}
+        AND session_id IS NOT DISTINCT FROM ${commandData.teachingSessionId}
+        AND supervision_context_id IS NOT DISTINCT FROM ${commandData.supervisionContextId}
+        RETURNING tools_revision`);
+      const transientOrder = Number(ordered.rows[0]?.tools_revision);
+      if (!Number.isSafeInteger(transientOrder) || transientOrder <= 0) throw new Error("Failed to allocate transient command order");
+      commandData = { ...commandData, commandPayload: { ...(commandData.commandPayload as object), transientOrder } };
+    }
     let pollExpiresAt: Date | undefined;
     if (options.pollMutation?.action === "start") {
       if ((!teachingSession || !commandData.teachingSessionId) && !classroomContext) {
@@ -22186,6 +22202,14 @@ export type ClasspilotReplayableTransientCommandTarget = {
   target: ClasspilotCommandTarget;
 };
 
+/** A historical payload with missing/malformed metadata cannot establish order. */
+function classpilotTransientOrderSql(payload: SQLWrapper): SQL {
+  return sql`CASE WHEN jsonb_typeof(${payload}->'transientOrder')='number'
+    THEN CASE WHEN (${payload}->>'transientOrder')::numeric BETWEEN 1 AND 9007199254740991
+      AND trunc((${payload}->>'transientOrder')::numeric)=(${payload}->>'transientOrder')::numeric
+      THEN (${payload}->>'transientOrder')::numeric END END`;
+}
+
 /**
  * Un-received timer/poll targets of one exact student binding whose command
  * deadline has not passed, oldest first so a later control (poll close, timer
@@ -22202,6 +22226,8 @@ export async function listClasspilotReplayableTransientCommandTargets(
 ): Promise<ClasspilotReplayableTransientCommandTarget[]> {
   const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 20), 100));
   const now = options.now ?? new Date();
+  const order = classpilotTransientOrderSql(classpilotCommands.commandPayload);
+  const newerOrder = classpilotTransientOrderSql(sql`newer.command_payload`);
   const rows = await dbInstance
     .select({ command: classpilotCommands, target: classpilotCommandTargets })
     .from(classpilotCommandTargets)
@@ -22214,13 +22240,42 @@ export async function listClasspilotReplayableTransientCommandTargets(
       eq(classpilotCommandTargets.studentId, binding.studentId),
       eq(classpilotCommandTargets.studentSessionId, binding.studentSessionId),
       eq(classpilotCommandTargets.deviceId, binding.deviceId),
+      sql`${classpilotCommandTargets.teachingSessionId} IS NOT DISTINCT FROM ${classpilotCommands.teachingSessionId}`,
+      sql`${classpilotCommandTargets.supervisionContextId} IS NOT DISTINCT FROM ${classpilotCommands.supervisionContextId}`,
       eq(classpilotCommandTargets.status, "sent"),
       isNull(classpilotCommandTargets.receivedAt),
       inArray(classpilotCommands.commandType, [...CLASSPILOT_REPLAYABLE_TRANSIENT_COMMAND_TYPES]),
       isNotNull(classpilotCommands.expiresAt),
-      gt(classpilotCommands.expiresAt, now)
+      gt(classpilotCommands.expiresAt, now),
+      // Legacy commands remain one-shot. Guard casts even for historical JSON
+      // with malformed metadata; an optional replay read must fail closed.
+      sql`${order} IS NOT NULL`,
+      // Correctness does not depend on best-effort supersede UPDATEs. A newer
+      // intent addressed to this student fences old delivery even after it was
+      // ACKed, expired, failed or unavailable, and even on another binding.
+      sql`NOT EXISTS (SELECT 1 FROM classpilot_commands newer
+        INNER JOIN classpilot_command_targets newer_target ON newer_target.command_id=newer.id AND newer_target.school_id=newer.school_id
+        WHERE newer.school_id=${binding.schoolId} AND newer_target.student_id=${binding.studentId}
+          AND newer.command_type=${classpilotCommands.commandType}
+          AND newer.teaching_session_id IS NOT DISTINCT FROM ${classpilotCommands.teachingSessionId}
+          AND newer.supervision_context_id IS NOT DISTINCT FROM ${classpilotCommands.supervisionContextId}
+          AND ${newerOrder}>${order})`,
+      sql`(${classpilotCommands.commandType}<>'poll' OR EXISTS (SELECT 1 FROM polls replay_poll
+        WHERE replay_poll.school_id=${binding.schoolId}
+          AND replay_poll.id=${classpilotCommands.commandPayload}->>'pollId'
+          AND replay_poll.session_id IS NOT DISTINCT FROM ${classpilotCommands.teachingSessionId}
+          AND replay_poll.supervision_context_id IS NOT DISTINCT FROM ${classpilotCommands.supervisionContextId}
+          AND ((${classpilotCommands.commandPayload}->>'action'='start' AND replay_poll.is_active=true
+            AND replay_poll.closed_at IS NULL
+            AND replay_poll.expires_at>${now}
+            AND (replay_poll.start_command_id=${classpilotCommands.id} OR replay_poll.start_command_id=${classpilotCommands.commandPayload}->>'replayOfCommandId')
+            AND NOT EXISTS (SELECT 1 FROM poll_responses replay_answer WHERE replay_answer.school_id=${binding.schoolId}
+              AND replay_answer.poll_id=replay_poll.id AND replay_answer.student_id=${binding.studentId} AND replay_answer.superseded_at IS NULL))
+          OR (${classpilotCommands.commandPayload}->>'action'='close' AND replay_poll.is_active=false
+            AND replay_poll.closed_at IS NOT NULL
+            AND (replay_poll.close_command_id=${classpilotCommands.id} OR replay_poll.close_command_id=${classpilotCommands.commandPayload}->>'replayOfCommandId')))))`
     ))
-    .orderBy(desc(classpilotCommands.createdAt), desc(classpilotCommands.id))
+    .orderBy(desc(order), desc(classpilotCommands.id))
     .limit(limit);
   return rows.reverse();
 }
@@ -22271,14 +22326,11 @@ export async function supersedeClasspilotTransientCommandTargets(
         ? eq(classpilotCommands.teachingSessionId, options.teachingSessionId)
         : eq(classpilotCommands.supervisionContextId, options.supervisionContextId!),
       ne(classpilotCommands.id, options.supersedingCommandId),
-      // Compared in the database: created_at has microsecond precision that a
-      // round trip through a JavaScript Date would truncate. Only strictly
-      // earlier commands are superseded, so a slow supersede step can never
-      // expire the targets of a command issued after it.
-      sql`${classpilotCommands.createdAt} < (
-        SELECT superseding.created_at FROM classpilot_commands superseding
-        WHERE superseding.id = ${options.supersedingCommandId}
-      )`,
+      // Intent order survives timestamp ties, clock skew and routine retries.
+      sql`${classpilotTransientOrderSql(classpilotCommands.commandPayload)} < (
+          SELECT ${classpilotTransientOrderSql(sql`superseding.command_payload`)} FROM classpilot_commands superseding
+          WHERE superseding.id=${options.supersedingCommandId} AND superseding.school_id=${options.schoolId})
+        `,
       ...(options.commandType === "poll"
         ? [sql`${classpilotCommands.commandPayload}->>'pollId' = ${options.pollId!}`]
         : [])

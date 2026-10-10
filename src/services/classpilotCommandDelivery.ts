@@ -1,3 +1,5 @@
+import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
+
 export type ClasspilotCommandDeliveryPolicy =
   | "persistent_control"
   | "transient_action"
@@ -16,33 +18,32 @@ export const CLASSPILOT_TRANSIENT_COMMAND_TTL_MS = 15_000;
  * time, so the extension counts the full duration from receipt. The replay
  * corrects for that by sending the seconds remaining; a live frame cannot.
  *
- * So the deadline is 60 s, which spans the 7.5-29 s reconnect window measured
- * in production, exactly where the replay is enabled for the school, and the
- * legacy 15 s everywhere else. Open/close/activate-tab always keep 15 s.
+ * Timers get 60 s in the replay pilot; polls additionally require the school's
+ * safe-poll capability rollout. Older poll clients can share that deadline but
+ * never receive poll replay. Open/close/activate-tab always keep 15 s.
  *
- * `CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS` is an explicit override for both
- * cases. The environment is read per call, and an invalid value is ignored
- * instead of producing a NaN deadline.
+ * The override applies only after the command's replay gate is active, and
+ * accepts integral deadlines between the legacy 15 s and the reviewed 60 s.
  */
 const REPLAY_TIMER_POLL_COMMAND_TTL_MS = 60_000;
 const TIMER_POLL_COMMAND_TYPES = new Set(["timer", "poll"]);
 
 export function classpilotTimerPollCommandTtlMs(
   env: NodeJS.ProcessEnv = process.env,
-  schoolId?: string
+  schoolId?: string,
+  commandType: "timer" | "poll" = "timer",
 ): number {
-  const raw = env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
-  if (raw !== undefined && raw.trim() !== "") {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  if (!schoolId || !classpilotTransientReplayOnAuthEnabled(schoolId, env)
+    || (commandType === "poll" && !isClasspilotCapabilityActive("pollReplaySafeV1", { schoolId }, env))) {
+    return CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
   }
-  return schoolId !== undefined && classpilotTransientReplayOnAuthEnabled(schoolId, env)
-    ? REPLAY_TIMER_POLL_COMMAND_TTL_MS
-    : CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
+  const raw = env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+  if (raw !== undefined && /^\d+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (Number.isSafeInteger(parsed) && parsed >= 15_000 && parsed <= 60_000) return parsed;
+  }
+  return REPLAY_TIMER_POLL_COMMAND_TTL_MS;
 }
-
-/** The timer/poll deadline this process started with for a school without the replay. */
-export const CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = classpilotTimerPollCommandTtlMs();
 
 /** Transient command types whose un-received frames are replayed on student WebSocket auth-success. */
 export const CLASSPILOT_REPLAYABLE_TRANSIENT_COMMAND_TYPES = ["timer", "poll"] as const;
@@ -52,8 +53,7 @@ export function isClasspilotReplayableTransientCommandType(commandType: string):
 }
 
 /**
- * Deadline for a transient action by type: 15 s, except timer/poll for a
- * school with the replay enabled (60 s) or under the explicit override.
+ * Deadline by type: 15 s unless that command's school replay gate is enabled.
  */
 export function classpilotTransientCommandTtlMs(
   commandType: string,
@@ -61,26 +61,23 @@ export function classpilotTransientCommandTtlMs(
   schoolId?: string
 ): number {
   return TIMER_POLL_COMMAND_TYPES.has(commandType)
-    ? classpilotTimerPollCommandTtlMs(env, schoolId)
+    ? classpilotTimerPollCommandTtlMs(env, schoolId, commandType as "timer" | "poll")
     : CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
 }
 
 /**
  * Replay of un-received timer/poll frames on student WebSocket auth-success.
- * Default off. `CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH=true` enables it for every
- * school unless `CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS` (comma-separated)
- * narrows it to a canary set.
+ * Default off, with exactly one canonical UUID pilot. An absent, empty or
+ * malformed allowlist never broadens this first rollout to every school.
  */
 export function classpilotTransientReplayOnAuthEnabled(
   schoolId: string,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   if (env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH !== "true") return false;
-  const allowlist = (env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return allowlist.length === 0 || allowlist.includes(schoolId);
+  const pilotSchoolId = env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS ?? "";
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(pilotSchoolId)
+    && schoolId === pilotSchoolId;
 }
 
 const PERSISTENT_CONTROL_COMMAND_TYPES = new Set([

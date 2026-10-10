@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { WebSocket, type WebSocketServer } from "ws";
@@ -18,6 +18,10 @@ delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
 delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
 delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
 delete process.env.CLASSPILOT_CLASS_TOOLS_SCHOOLS_JSON;
+process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
+process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
+process.env.CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1 = "true";
+delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
 
 type Frame = Record<string, any>;
 type Student = { studentId: string; deviceId: string; studentSessionId: string };
@@ -242,7 +246,7 @@ async function settle(connection: Connection): Promise<void> {
 }
 
 /** Authenticate one exact binding over the real socket path and collect every frame. */
-async function connect(student: Student): Promise<Connection> {
+async function connect(student: Student, capabilities = ["scopedAuthorityChecksV1", "pollReplaySafeV1"]): Promise<Connection> {
   const client = new WebSocket(wsUrl);
   const connection: Connection = { client, frames: [] };
   clients.push(client);
@@ -251,6 +255,8 @@ async function connect(student: Student): Promise<Connection> {
   client.send(JSON.stringify({
     type: "auth",
     role: "student",
+    clientProtocolVersion: 3,
+    capabilities,
     deviceId: student.deviceId,
     studentToken: createStudentToken({
       schoolId,
@@ -324,7 +330,7 @@ const classAuthority = (overrides: Partial<ReplayAuthority> = {}): ReplayAuthori
   activeContexts: [{ teachingSessionId }],
   contextAuthorityRevision: null,
   controlState: null,
-  acceptedCapabilities: [],
+  acceptedCapabilities: ["scopedAuthorityChecksV1", "pollReplaySafeV1"],
   ...overrides,
 });
 
@@ -338,6 +344,10 @@ function pendingFor(student: Student, now?: Date): Promise<ReplayEntry[]> {
 }
 
 describe("transient command replay on student WebSocket auth-success", () => {
+  beforeEach(() => {
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
+  });
   let pendingPoll: Dispatched;
   let openTab: Dispatched;
   let liveFrame: Frame;
@@ -389,7 +399,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
     assert.equal(counters().transientCommandReplayedOnAuth, undefined);
     await closeClients();
 
-    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = ` ${schoolId} , ${randomUUID()}`;
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
     const first = await connect(students[0]!);
     const replayed = remoteControl(first);
     assert.equal(replayed.length, 1, JSON.stringify(replayed));
@@ -430,7 +440,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
     assert.equal(counters().transientCommandReplayedOnAuth, 2);
     await closeClients();
 
-    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
     await markReceived(pendingPoll.command.id);
     await markReceived(openTab.command.id);
     // One active poll per class: close it before the next case. Its targets
@@ -575,9 +585,9 @@ describe("transient command replay on student WebSocket auth-success", () => {
     // Capability-gated frames go only to a socket that accepted the capability.
     const shortText = { ...entry, command: { ...entry.command, commandPayload: { ...payloadOf(start), responseType: "short_text" } } };
     assert.equal(build(shortText, classAuthority()), null);
-    assert.equal(build(shortText, classAuthority({ acceptedCapabilities: ["exitTicketsV1"] }))?.commandId, start.command.id);
+    assert.equal(build(shortText, classAuthority({ acceptedCapabilities: ["scopedAuthorityChecksV1", "pollReplaySafeV1", "exitTicketsV1"] }))?.commandId, start.command.id);
     const pause = { ...entry, command: { ...entry.command, commandType: "timer",
-      commandPayload: { action: "pause", timerId: randomUUID(), revision: 2, deadline: null, pausedRemainingMs: 90_000 } } };
+      commandPayload: { transientOrder: 1, action: "pause", timerId: randomUUID(), revision: 2, deadline: null, pausedRemainingMs: 90_000 } } };
     assert.equal(build(pause, classAuthority()), null);
     assert.equal(build(pause, classAuthority({ acceptedCapabilities: ["timerControlsV1"] }))?.command.data.action, "pause");
 
@@ -585,7 +595,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
     // it is still running, dropped once it is over.
     const deadline = new Date(Date.now() + 120_000).toISOString();
     const revisioned = { ...entry, command: { ...entry.command, commandType: "timer",
-      commandPayload: { action: "start", seconds: 300, timerId: randomUUID(), revision: 1, deadline, pausedRemainingMs: null } } };
+      commandPayload: { transientOrder: 1, action: "start", seconds: 300, timerId: randomUUID(), revision: 1, deadline, pausedRemainingMs: null } } };
     const revisionedFrame = build(revisioned, classAuthority());
     assert.equal(revisionedFrame?.command.data.seconds, 300);
     assert.equal(revisionedFrame?.command.data.deadline, deadline);
@@ -605,7 +615,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
       activeContexts: [{ supervisionContextId }],
       contextAuthorityRevision: "3",
       controlState: { supervisionContextId, revision: 7 },
-      acceptedCapabilities: ["scheduledClassroomV1"],
+      acceptedCapabilities: ["scopedAuthorityChecksV1", "pollReplaySafeV1", "scheduledClassroomV1"],
       ...overrides,
     });
     const scheduledFrame = build(scheduled, scheduledAuthority());
@@ -660,16 +670,130 @@ describe("transient command replay on student WebSocket auth-success", () => {
     assert.ok(!line.includes(schoolId) && !line.includes(students[0]!.studentId), "no identifiers in the warning");
   });
 
+  it("a failed supersede update cannot resurrect an older timer after a newer ACK, and order ignores clocks and subset audiences", async () => {
+    const old = await dispatch("timer", { action: "start", seconds: 300 });
+    const functionName = `replay_supersede_${randomUUID().replaceAll("-", "")}`;
+    // Inject a real PostgreSQL UPDATE failure after persistence/delivery. This
+    // is precisely the best-effort cleanup failure the read fence must survive.
+    await admin.query(`CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF OLD.command_id='${old.command.id}' AND NEW.status='expired' THEN RAISE EXCEPTION 'injected supersede failure'; END IF;
+      RETURN NEW; END $$`);
+    await admin.query(`CREATE TRIGGER ${functionName} BEFORE UPDATE ON classpilot_command_targets FOR EACH ROW EXECUTE FUNCTION ${functionName}()`);
+    let replacement: Dispatched;
+    try {
+      replacement = await dispatch("timer", { action: "start", seconds: 60 }, [students[0]!]);
+    } finally {
+      await admin.query(`DROP TRIGGER ${functionName} ON classpilot_command_targets`);
+      await admin.query(`DROP FUNCTION ${functionName}()`);
+    }
+    assert.ok(Number.isSafeInteger(payloadOf(old).transientOrder));
+    assert.ok(payloadOf(replacement).transientOrder > payloadOf(old).transientOrder);
+    await markReceived(replacement.command.id);
+    assert.equal((await targetRow(old.command.id, students[0]!)).status, "sent", "the cleanup really failed");
+    // Equal/inverted wall clocks cannot change the serialized intent order.
+    await admin.query("UPDATE classpilot_commands SET created_at=now()+interval '1 hour' WHERE id=$1", [old.command.id]);
+    await admin.query("UPDATE classpilot_commands SET created_at=now()-interval '1 hour' WHERE id=$1", [replacement.command.id]);
+    assert.deepEqual(await pendingFor(students[0]!), [], "the newer received command still fences the old timer");
+    for (const status of ["expired", "failed", "unavailable", "completed"]) {
+      await admin.query("UPDATE classpilot_command_targets SET status=$1 WHERE command_id=$2", [status, replacement.command.id]);
+      assert.deepEqual(await pendingFor(students[0]!), [], `the newer ${status} intent still fences the old timer`);
+    }
+    assert.equal((await pendingFor(students[1]!))[0]?.command.id, old.command.id, "a different student's replacement cannot fence this student");
+    await admin.query("UPDATE classpilot_commands SET command_payload=command_payload-'transientOrder' WHERE id=$1", [old.command.id]);
+    assert.deepEqual(await pendingFor(students[1]!), [], "historical commands without metadata stay one-shot");
+    await admin.query("UPDATE classpilot_commands SET command_payload=command_payload||'{\"transientOrder\":\"malformed\"}'::jsonb WHERE id=$1", [old.command.id]);
+    assert.deepEqual(await pendingFor(students[1]!), [], "malformed historical metadata cannot abort the query or establish order");
+    await markReceived(old.command.id);
+  });
+
+  it("poll replay requires the successor for starts and closes, and rejects answered or stale canonical resources", async () => {
+    const start = await dispatch("poll", { action: "start", question: "Canonical", options: ["A", "B"] });
+    const pollId = payloadOf(start).pollId as string;
+    assert.deepEqual(remoteControl(await connect(students[0]!, ["scopedAuthorityChecksV1"])), [], "2.9.8 never receives replayed polls");
+    await closeClients();
+    const [entry] = await pendingFor(students[0]!);
+    assert.ok(entry);
+    assert.equal(frameFor(entry, classAuthority({ acceptedCapabilities: ["scopedAuthorityChecksV1"] })), null);
+    assert.equal(frameFor(entry, classAuthority({ acceptedCapabilities: ["pollReplaySafeV1"] })), null);
+    const result = await inSchool(() => storage.createPollResponseFirstWrite({ ...bindingOf(students[0]!), pollId, selectedOption: 0 }));
+    assert.equal(result.disposition, "created");
+    assert.deepEqual(await pendingFor(students[0]!), [], "the accepted answer is canonical even when its success or command receipt was lost");
+    assert.equal((await pendingFor(students[1]!))[0]?.command.id, start.command.id);
+    // The response writer and bootstrap share this advisory lock. Hold an
+    // accepted response's transaction open and prove bootstrap waits, then
+    // sees the committed answer instead of replaying the unanswered snapshot.
+    const writer = await admin.connect();
+    let bootstrap: Promise<unknown> | undefined;
+    try {
+      await writer.query("BEGIN");
+      await writer.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0::bigint))", [`classpilot:student-control:${schoolId}:${students[1]!.studentId}`]);
+      await writer.query("INSERT INTO poll_responses(school_id,poll_id,student_id,device_id,selected_option) VALUES($1,$2,$3,$4,1)", [schoolId,pollId,students[1]!.studentId,students[1]!.deviceId]);
+      bootstrap = inSchool(() => storage.withClasspilotStudentWebSocketBootstrapAuthority(
+        { ...bindingOf(students[1]!), freezeSsoPolicy:true },
+        transactionDb => replay.prepareClasspilotTransientCommandReplay(bindingOf(students[1]!), transactionDb, classAuthority()),
+        (_replies, frames) => frames,
+      ));
+      const limit = Date.now()+5_000;
+      for (;;) {
+        const waiting = await admin.query("SELECT count(*)::integer AS waiting FROM pg_locks WHERE locktype='advisory' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())");
+        if (waiting.rows[0]?.waiting > 0) break;
+        assert.ok(Date.now()<limit,"bootstrap must wait on the response transaction");
+        await new Promise(resolve => setTimeout(resolve,10));
+      }
+      await writer.query("COMMIT");
+      assert.deepEqual(await bootstrap,{authorized:true,value:[]},"bootstrap observes the accepted response after the shared lock");
+    } finally {
+      await writer.query("ROLLBACK");
+      writer.release();
+      await bootstrap?.catch(() => undefined);
+    }
+    const closed = await dispatch("poll", { action: "close", pollId });
+    // Simulate missed cleanup: canonical closed state independently blocks start.
+    await admin.query("UPDATE classpilot_command_targets SET status='sent',received_at=NULL WHERE command_id=$1", [start.command.id]);
+    const closes = await pendingFor(students[1]!);
+    assert.deepEqual(closes.map(row => row.command.id), [closed.command.id]);
+    assert.equal(frameFor(closes[0]!, classAuthority({ acceptedCapabilities: ["scopedAuthorityChecksV1"] })), null, "closes also require the durable cursor");
+    await markReceived(start.command.id);
+    await markReceived(closed.command.id);
+  });
+
+  it("routine timer retries retain original intent order and a later stop gets a higher order", async () => {
+    process.env.CLASSPILOT_CLASS_TOOLS_SCHOOLS_JSON=JSON.stringify({[schoolId]:5});
+    try {
+      const planning=await import("../src/services/classpilotToolsPlanning.js");
+      const routines=await import("../src/services/classpilotToolsRoutines.js");
+      const scope={schoolId,actorId:teacherId,authority:{teachingSessionId}};
+      const template=await inSchool(() => planning.saveToolTemplate(scope,{name:"Retry timer",kind:"routine",
+        content:{title:"Retry timer",steps:[{kind:"timer",title:"Practice",payload:{seconds:60}}]}}));
+      const run=await inSchool(() => routines.startRoutine(scope,template.id,[students[0]!.studentId]));
+      const create=(action:string,reservation?:import("../src/services/classpilotToolsRoutines.js").RoutineReservation) => inSchool(() => storage.createClasspilotCommandWithTargets(
+        {schoolId,teacherId,teachingSessionId,supervisionContextId:null,targetScope:"students",commandType:"timer",commandPayload:{action,seconds:60},expiresAt:new Date(Date.now()+60_000)},
+        [{schoolId,commandId:"reserved",teachingSessionId,studentId:students[0]!.studentId,studentSessionId:students[0]!.studentSessionId,deviceId:students[0]!.deviceId}],
+        {authority:{schoolId,actorId:teacherId,teachingSessionId},routineReservation:reservation},
+      ));
+      const original=await create("start",{runId:run.id,expectedRevision:1,step:0});
+      const order=(original.commandPayload as Record<string,unknown>).transientOrder;
+      assert.ok(Number.isSafeInteger(order));
+      await admin.query("UPDATE classpilot_command_targets SET status='failed' WHERE command_id=$1",[original.id]);
+      const retry=await create("start",{runId:run.id,expectedRevision:2,step:0,replayCommandId:original.id});
+      assert.equal((retry.commandPayload as Record<string,unknown>).transientOrder,order);
+      assert.equal((retry.commandPayload as Record<string,unknown>).replayOfCommandId,original.id);
+      const stop=await create("stop");
+      assert.ok(Number((stop.commandPayload as Record<string,unknown>).transientOrder)>Number(order));
+      await inSchool(() => routines.advanceRoutine(scope,run.id,{action:"end",expectedRevision:3}));
+    } finally { delete process.env.CLASSPILOT_CLASS_TOOLS_SCHOOLS_JSON; }
+  });
+
   it("a timer/poll frame past its (env-overridable) deadline is not replayed, and the sweep accounts the expiry by command type", async () => {
-    process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = "1000";
+    process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = "15000";
     let shortLived: Dispatched;
     try {
-      shortLived = await dispatchWithDeadline(1_000, "poll", { action: "start", question: "Quick check", options: ["Done", "Not yet"] });
+      shortLived = await dispatchWithDeadline(15_000, "poll", { action: "start", question: "Quick check", options: ["Done", "Not yet"] });
     } finally {
       delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
     }
     for (const row of await targetRows(shortLived.command.id)) assert.equal(row.status, "sent");
-    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    await admin.query("UPDATE classpilot_commands SET expires_at=now()-interval '1 second' WHERE id=$1", [shortLived.command.id]);
 
     resetCounters();
     assert.deepEqual(remoteControl(await connect(students[0]!)), [], "an expired frame is never replayed");
