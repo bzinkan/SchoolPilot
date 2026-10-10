@@ -104,6 +104,8 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
     classpilotScreenshotAuthorityForDeliveredControl: () => ({}),
     classpilotControlStateExactBinding: () => ({}),
     clearStaffPresence: () => {},
+    classpilotTransientReplayOnAuthEnabled: () => true,
+    prepareClasspilotTransientCommandReplay: async () => [{ type: "remote-control", _msgId: "replayed-fixture" }],
     authenticateWsClient: () => failure === "socket_delivery" ? false : {},
     removeWsClient: () => { removed += 1; },
     reportStudentWebSocketAuthenticationFailure: (error: unknown, stage: StudentWebSocketAuthStage, job: "studentWebSocketAuth") =>
@@ -133,6 +135,8 @@ describe("student WebSocket bootstrap operational diagnostics", () => {
       assert.equal(result.counters.get("studentWebSocketAuthAttempt"), 1);
       assert.equal(result.counters.get("studentWebSocketAuthSuccess") ?? 0, 0);
       assert.equal(result.counters.get("studentWebSocketAuthDenied") ?? 0, 0);
+      assert.equal(result.counters.get("transientCommandReplayedOnAuth") ?? 0, 0,
+        "a replay queued inside a transaction that did not complete is never counted");
       assert.equal(result.removed, stage === "transaction_completion" ? 1 : 0);
       assert.doesNotMatch(result.diagnostics.join("\n"), /school-fixture|device-fixture|student-fixture|session-fixture|student@example|private SQL|params|school-private/);
       assert.equal(result.alerts[0]?.[3]?.persist, false);
@@ -164,5 +168,16 @@ describe("student WebSocket bootstrap operational diagnostics", () => {
     assert.equal(result.counters.get("studentWebSocketAuthAttempt"), 1);
     assert.equal(result.counters.get("studentWebSocketAuthSuccess"), 1);
     assert.equal(result.closes.length, 0);
+  });
+
+  it("sends replayed transient frames after auth-success and counts them once the transaction completed", async () => {
+    const result = await bootstrapScenario();
+    assert.deepEqual(
+      result.messages.map((message) => message.type),
+      ["auth-success", "remote-control"],
+      "the replay follows the authoritative bootstrap inside the same synchronous delivery callback",
+    );
+    assert.equal((result.messages[1] as { _msgId?: string })._msgId, "replayed-fixture");
+    assert.equal(result.counters.get("transientCommandReplayedOnAuth"), 1);
   });
 });

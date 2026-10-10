@@ -74,6 +74,7 @@ const DB_SERIAL = new Set([
   "health-monitor-round-trip.integration.test.ts",
   "classpilot-class-tools.integration.test.ts",
   "classpilot-fab-sync-pending.integration.test.ts",
+  "classpilot-transient-command-replay.integration.test.ts",
   "classpilot-coverage-directory.integration.test.ts",
   "classpilot-coverage-deletion.integration.test.ts",
   "classpilot-supervision-review.integration.test.ts",

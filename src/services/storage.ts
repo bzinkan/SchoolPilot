@@ -4,6 +4,7 @@ import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, s
 import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
 import type { HeartbeatScreenshotOwnerRow } from "./classpilotHeartbeatScreenshotEvidence.js";
 import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
+import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
 import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
 import { focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
@@ -54,7 +55,10 @@ import {
   createClasspilotReportAuthorizationMarker,
   isClasspilotReportAuthorizedStaff,
 } from "./classpilotReportAuthorization.js";
-import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
+import {
+  CLASSPILOT_REPLAYABLE_TRANSIENT_COMMAND_TYPES,
+  isPersistentClasspilotControl,
+} from "./classpilotCommandDelivery.js";
 import { assertClasspilotEntitled, classpilotEntitledSchoolPredicate } from "./classpilotEntitlement.js";
 import {
   assertClasspilotSynchronousAuthorityResult,
@@ -22100,7 +22104,7 @@ export async function expireClasspilotTransientCommandTargets(
   ));
 
   const dueCommands = await dbInstance
-    .selectDistinct({ id: classpilotCommands.id })
+    .selectDistinct({ id: classpilotCommands.id, commandType: classpilotCommands.commandType })
     .from(classpilotCommands)
     .innerJoin(
       classpilotCommandTargets,
@@ -22132,7 +22136,187 @@ export async function expireClasspilotTransientCommandTargets(
   for (const commandId of commandIds) {
     await updateClasspilotCommandSummary(commandId, dbInstance);
   }
+  reportClasspilotTransientCommandTargetOutcome({
+    event: "classpilot_transient_command_targets_expired",
+    counter: "transientCommandTargetExpired",
+    scope: options.commandId ? "command" : options.schoolId || options.teacherId ? "filtered" : "sweep",
+    expiredTargetCommandIds: expired.map((target) => target.commandId),
+    commandTypeById: new Map(dueCommands.map((command) => [command.id, command.commandType])),
+  });
   return commandIds;
+}
+
+/**
+ * One aggregate line per batch so expiry and supersede outcomes are queryable
+ * in CloudWatch Logs Insights by command type. Counts only: no tenant, person,
+ * device or command identifiers.
+ */
+function reportClasspilotTransientCommandTargetOutcome(options: {
+  event: "classpilot_transient_command_targets_expired" | "classpilot_transient_command_targets_superseded";
+  counter: "transientCommandTargetExpired" | "transientCommandTargetSuperseded";
+  scope: string;
+  expiredTargetCommandIds: string[];
+  commandTypeById: ReadonlyMap<string, string>;
+}): void {
+  if (options.expiredTargetCommandIds.length === 0) return;
+  const byCommandType: Record<string, number> = {};
+  for (const commandId of options.expiredTargetCommandIds) {
+    const commandType = options.commandTypeById.get(commandId) ?? "unknown";
+    byCommandType[commandType] = (byCommandType[commandType] ?? 0) + 1;
+  }
+  recordRuntimePerformanceCounter(options.counter, options.expiredTargetCommandIds.length);
+  console.info(JSON.stringify({
+    event: options.event,
+    scope: options.scope,
+    targets: options.expiredTargetCommandIds.length,
+    commands: new Set(options.expiredTargetCommandIds).size,
+    byCommandType,
+  }));
+}
+
+export type ClasspilotTransientCommandExactBinding = {
+  schoolId: string;
+  studentId: string;
+  studentSessionId: string;
+  deviceId: string;
+};
+
+export type ClasspilotReplayableTransientCommandTarget = {
+  command: ClasspilotCommand;
+  target: ClasspilotCommandTarget;
+};
+
+/**
+ * Un-received timer/poll targets of one exact student binding whose command
+ * deadline has not passed, oldest first so a later control (poll close, timer
+ * stop) lands after the frame it follows. When more than `limit` are pending
+ * the newest `limit` are kept. Read inside the student WebSocket bootstrap
+ * authority so the rows are fenced by the same student-control lock as
+ * command persistence. The deadline is compared on the application clock,
+ * exactly as the dispatcher wrote it and as the expiry sweep reads it.
+ */
+export async function listClasspilotReplayableTransientCommandTargets(
+  binding: ClasspilotTransientCommandExactBinding,
+  dbInstance: typeof db = db,
+  options: { limit?: number; now?: Date } = {}
+): Promise<ClasspilotReplayableTransientCommandTarget[]> {
+  const limit = Math.max(1, Math.min(Math.floor(options.limit ?? 20), 100));
+  const now = options.now ?? new Date();
+  const rows = await dbInstance
+    .select({ command: classpilotCommands, target: classpilotCommandTargets })
+    .from(classpilotCommandTargets)
+    .innerJoin(classpilotCommands, and(
+      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
+      eq(classpilotCommands.schoolId, classpilotCommandTargets.schoolId)
+    ))
+    .where(and(
+      eq(classpilotCommandTargets.schoolId, binding.schoolId),
+      eq(classpilotCommandTargets.studentId, binding.studentId),
+      eq(classpilotCommandTargets.studentSessionId, binding.studentSessionId),
+      eq(classpilotCommandTargets.deviceId, binding.deviceId),
+      eq(classpilotCommandTargets.status, "sent"),
+      isNull(classpilotCommandTargets.receivedAt),
+      inArray(classpilotCommands.commandType, [...CLASSPILOT_REPLAYABLE_TRANSIENT_COMMAND_TYPES]),
+      isNotNull(classpilotCommands.expiresAt),
+      gt(classpilotCommands.expiresAt, now)
+    ))
+    .orderBy(desc(classpilotCommands.createdAt), desc(classpilotCommands.id))
+    .limit(limit);
+  return rows.reverse();
+}
+
+/**
+ * Earlier commands of the same resource that a later control makes moot and
+ * that still hold undelivered targets: `poll` commands for the same pollId
+ * (poll close) or `timer` commands for the same timerId (timer stop). Legacy
+ * phase-0 timer payloads carry no timerId; those fall back to every earlier
+ * timer command in the same teaching session or supervision context.
+ */
+export async function listClasspilotSupersededTransientCommandIds(
+  options: {
+    schoolId: string;
+    commandType: "timer" | "poll";
+    supersedingCommandId: string;
+    createdBefore: Date;
+    resource?: { key: "timerId" | "pollId"; id: string };
+    scope?: { teachingSessionId?: string | null; supervisionContextId?: string | null };
+  },
+  dbInstance: typeof db = db
+): Promise<string[]> {
+  const conditions: SQL[] = [
+    eq(classpilotCommands.schoolId, options.schoolId),
+    eq(classpilotCommands.commandType, options.commandType),
+    ne(classpilotCommands.id, options.supersedingCommandId),
+    lt(classpilotCommands.createdAt, options.createdBefore),
+  ];
+  if (options.resource) {
+    conditions.push(sql`${classpilotCommands.commandPayload}->>${options.resource.key} = ${options.resource.id}`);
+  } else if (options.scope?.teachingSessionId) {
+    conditions.push(eq(classpilotCommands.teachingSessionId, options.scope.teachingSessionId));
+  } else if (options.scope?.supervisionContextId) {
+    conditions.push(eq(classpilotCommands.supervisionContextId, options.scope.supervisionContextId));
+  } else {
+    return [];
+  }
+  const rows = await dbInstance
+    .selectDistinct({ id: classpilotCommands.id })
+    .from(classpilotCommands)
+    .innerJoin(classpilotCommandTargets, and(
+      eq(classpilotCommandTargets.commandId, classpilotCommands.id),
+      eq(classpilotCommandTargets.schoolId, classpilotCommands.schoolId)
+    ))
+    .where(and(
+      ...conditions,
+      inArray(classpilotCommandTargets.status, ["requested", "sent"]),
+      isNull(classpilotCommandTargets.receivedAt)
+    ))
+    .limit(50);
+  return rows.map((row) => row.id);
+}
+
+export const CLASSPILOT_SUPERSEDED_TARGET_MESSAGE = "Superseded by a later command before delivery";
+
+/**
+ * Expire the still-undelivered targets of commands a later control made moot
+ * (poll close, timer stop). They become `expired` with a distinct reason, so
+ * the dashboard stops awaiting their ACKs at once and the auth-success replay
+ * lane never re-sends a frame the teacher already withdrew. No status value is
+ * added: `expired` is the existing terminal state for undelivered one-shot
+ * frames, and a target the device already received is never touched.
+ */
+export async function supersedeClasspilotTransientCommandTargets(
+  options: { schoolId: string; commandType: string; commandIds: string[]; now?: Date },
+  dbInstance: typeof db = db
+): Promise<{ commandIds: string[]; expiredTargets: number }> {
+  const commandIds = [...new Set(options.commandIds.filter(Boolean))];
+  if (commandIds.length === 0) return { commandIds: [], expiredTargets: 0 };
+  const now = options.now ?? new Date();
+  const expired = await dbInstance
+    .update(classpilotCommandTargets)
+    .set({
+      status: "expired",
+      errorMessage: CLASSPILOT_SUPERSEDED_TARGET_MESSAGE,
+      updatedAt: now,
+    })
+    .where(and(
+      eq(classpilotCommandTargets.schoolId, options.schoolId),
+      inArray(classpilotCommandTargets.commandId, commandIds),
+      inArray(classpilotCommandTargets.status, ["requested", "sent"]),
+      isNull(classpilotCommandTargets.receivedAt)
+    ))
+    .returning({ commandId: classpilotCommandTargets.commandId });
+  const touched = [...new Set(expired.map((target) => target.commandId))];
+  for (const commandId of touched) {
+    await updateClasspilotCommandSummary(commandId, dbInstance);
+  }
+  reportClasspilotTransientCommandTargetOutcome({
+    event: "classpilot_transient_command_targets_superseded",
+    counter: "transientCommandTargetSuperseded",
+    scope: "dispatch",
+    expiredTargetCommandIds: expired.map((target) => target.commandId),
+    commandTypeById: new Map(touched.map((commandId) => [commandId, options.commandType])),
+  });
+  return { commandIds: touched, expiredTargets: expired.length };
 }
 
 export type ClasspilotCommandAckTerminalCode =

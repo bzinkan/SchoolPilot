@@ -6,6 +6,66 @@ export type ClasspilotCommandDeliveryPolicy =
 
 export const CLASSPILOT_TRANSIENT_COMMAND_TTL_MS = 15_000;
 
+/**
+ * Timer and poll frames carry their own end time (`deadline`/`timerExpiresAt`,
+ * the poll record), so a late delivery still renders correctly: the student
+ * sees the remaining time or the still-open poll, never a stale one-shot
+ * action. They therefore stay deliverable for 60 s by default, which spans the
+ * 7.5-29 s reconnect window measured in production. Open/close/activate-tab
+ * keep the 15 s one-shot deadline above.
+ *
+ * `CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS` overrides the default (15000 restores
+ * the legacy deadline). The environment is read per call so a rollback needs
+ * no redeploy of a module constant and an invalid value falls back to the
+ * default instead of producing a NaN deadline.
+ */
+const DEFAULT_TIMER_POLL_COMMAND_TTL_MS = 60_000;
+const TIMER_POLL_COMMAND_TYPES = new Set(["timer", "poll"]);
+
+export function classpilotTimerPollCommandTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_TIMER_POLL_COMMAND_TTL_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_TIMER_POLL_COMMAND_TTL_MS;
+}
+
+export const CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = classpilotTimerPollCommandTtlMs();
+
+/** Transient command types whose un-received frames are replayed on student WebSocket auth-success. */
+export const CLASSPILOT_REPLAYABLE_TRANSIENT_COMMAND_TYPES = ["timer", "poll"] as const;
+
+export function isClasspilotReplayableTransientCommandType(commandType: string): boolean {
+  return TIMER_POLL_COMMAND_TYPES.has(commandType);
+}
+
+/** Deadline for a transient action by type: 60 s (env-overridable) for timer/poll, 15 s otherwise. */
+export function classpilotTransientCommandTtlMs(
+  commandType: string,
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  return TIMER_POLL_COMMAND_TYPES.has(commandType)
+    ? classpilotTimerPollCommandTtlMs(env)
+    : CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
+}
+
+/**
+ * Replay of un-received timer/poll frames on student WebSocket auth-success.
+ * Default off. `CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH=true` enables it for every
+ * school unless `CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS` (comma-separated)
+ * narrows it to a canary set.
+ */
+export function classpilotTransientReplayOnAuthEnabled(
+  schoolId: string,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  if (env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH !== "true") return false;
+  const allowlist = (env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return allowlist.length === 0 || allowlist.includes(schoolId);
+}
+
 const PERSISTENT_CONTROL_COMMAND_TYPES = new Set([
   "lock-screen",
   "unlock-screen",
@@ -49,7 +109,7 @@ export function classpilotCommandExpiresAt(
   issuedAt: Date = new Date()
 ): Date | null {
   return classpilotCommandDeliveryPolicy(commandType) === "transient_action"
-    ? new Date(issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS)
+    ? new Date(issuedAt.getTime() + classpilotTransientCommandTtlMs(commandType))
     : null;
 }
 

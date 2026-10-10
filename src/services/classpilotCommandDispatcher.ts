@@ -26,6 +26,8 @@ import {
   revalidateClasspilotExactCommandTargetsForDispatch,
   withClasspilotStudentControlDeliveryAuthority,
   hasCurrentClasspilotStudentControlAuthority,
+  listClasspilotSupersededTransientCommandIds,
+  supersedeClasspilotTransientCommandTargets,
   type ClasspilotCommandWithTargets,
   type ClasspilotCommandPollMutation,
 } from "./storage.js";
@@ -115,6 +117,29 @@ export type ResolvedClasspilotCommandTarget = {
   /** Structurally commandable signed-out target admitted by the exact-school gate. */
   lateSignInEligible?: boolean;
 };
+
+/**
+ * Authority revisions frozen on a persisted target row, in the shape the frame
+ * builder expects. Shared by dispatch and by the auth-success replay so a
+ * rebuilt frame carries the same binding envelope as the original.
+ */
+export function classpilotPersistedTargetAuthorityRevisions(result: unknown): Pick<
+  ResolvedClasspilotCommandTarget,
+  "durableAuthorityRevision" | "scheduledAuthorityRevision" | "contextAuthorityRevision" | "controlRevision"
+> {
+  const record = result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : undefined;
+  const integer = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : undefined);
+  return {
+    durableAuthorityRevision: integer(record?.durableAuthorityRevision),
+    scheduledAuthorityRevision: integer(record?.scheduledAuthorityRevision),
+    contextAuthorityRevision: typeof record?.scheduledContextAuthorityRevision === "string"
+      ? record.scheduledContextAuthorityRevision
+      : undefined,
+    controlRevision: integer(record?.frozenControlRevision),
+  };
+}
 
 export const COVERAGE_COMMAND_TYPES = new Set([
   "open-tab",
@@ -852,6 +877,63 @@ export function classpilotCommandFrameForTarget(
   };
 }
 
+/**
+ * A poll close or timer stop makes any still-undelivered frame of the same
+ * poll/timer moot: expire those targets now so the dashboard stops awaiting
+ * their ACKs and the auth-success replay lane never re-sends a withdrawn
+ * start. Legacy phase-0 timer payloads carry no timerId, so a legacy stop
+ * supersedes every earlier timer command of its class session or supervision
+ * context. Best effort: the new command is already dispatched and persisted,
+ * and the deadline sweep remains the backstop.
+ */
+async function supersedeTransientCommandTargetsFor(
+  created: ClasspilotCommandWithTargets,
+  options: {
+    schoolId: string;
+    commandType: string;
+    teachingSessionId?: string | null;
+    supervisionContextId?: string | null;
+  },
+  commandPayload: Record<string, any>
+): Promise<void> {
+  const action = String(commandPayload.action || "");
+  const pollId = typeof commandPayload.pollId === "string" ? commandPayload.pollId.trim() : "";
+  const timerId = typeof commandPayload.timerId === "string" ? commandPayload.timerId.trim() : "";
+  const query = options.commandType === "poll" && action === "close" && pollId
+    ? { commandType: "poll" as const, resource: { key: "pollId" as const, id: pollId } }
+    : options.commandType === "timer" && action === "stop"
+      ? timerId
+        ? { commandType: "timer" as const, resource: { key: "timerId" as const, id: timerId } }
+        : {
+            commandType: "timer" as const,
+            scope: {
+              teachingSessionId: options.teachingSessionId,
+              supervisionContextId: options.supervisionContextId,
+            },
+          }
+      : null;
+  if (!query) return;
+  try {
+    const commandIds = await listClasspilotSupersededTransientCommandIds({
+      schoolId: options.schoolId,
+      supersedingCommandId: created.id,
+      createdBefore: created.createdAt,
+      ...query,
+    });
+    if (commandIds.length === 0) return;
+    await supersedeClasspilotTransientCommandTargets({
+      schoolId: options.schoolId,
+      commandType: query.commandType,
+      commandIds,
+    });
+  } catch (error) {
+    console.warn(
+      "[ClassPilot] Transient command supersede deferred to the expiry sweep",
+      error instanceof Error ? error.name : "error"
+    );
+  }
+}
+
 async function endStudentSessionsForSignOut(options: {
   schoolId: string;
   teachingSessionId?: string;
@@ -1445,28 +1527,7 @@ export async function executeClasspilotCommand(options: {
       available: persisted.status !== "unavailable",
       stateAuthorized: authorityChanged ? false : target.stateAuthorized,
       unavailableReason: persisted.errorMessage || target.unavailableReason,
-      durableAuthorityRevision:
-        persisted.result
-        && typeof persisted.result === "object"
-        && !Array.isArray(persisted.result)
-        && Number.isSafeInteger((persisted.result as Record<string, unknown>).durableAuthorityRevision)
-          ? Number((persisted.result as Record<string, unknown>).durableAuthorityRevision)
-          : undefined,
-      scheduledAuthorityRevision:
-        persisted.result && typeof persisted.result === "object" && !Array.isArray(persisted.result)
-          && Number.isSafeInteger((persisted.result as Record<string, unknown>).scheduledAuthorityRevision)
-            ? Number((persisted.result as Record<string, unknown>).scheduledAuthorityRevision) : undefined,
-      contextAuthorityRevision:
-        persisted.result && typeof persisted.result === "object" && !Array.isArray(persisted.result)
-          && typeof (persisted.result as Record<string, unknown>).scheduledContextAuthorityRevision === "string"
-            ? String((persisted.result as Record<string, unknown>).scheduledContextAuthorityRevision) : undefined,
-      controlRevision:
-        persisted.result
-        && typeof persisted.result === "object"
-        && !Array.isArray(persisted.result)
-        && Number.isSafeInteger((persisted.result as Record<string, unknown>).frozenControlRevision)
-          ? Number((persisted.result as Record<string, unknown>).frozenControlRevision)
-          : undefined,
+      ...classpilotPersistedTargetAuthorityRevisions(persisted.result),
     };
   });
 
@@ -2238,6 +2299,7 @@ export async function executeClasspilotCommand(options: {
     - (targetOrder.get(right.studentId) ?? Number.MAX_SAFE_INTEGER)
   );
   const summary = commandSummary(command);
+  await supersedeTransientCommandTargetsFor(created, options, commandPayload);
   if (["timer", "lesson-activity"].includes(options.commandType) && (options.teachingSessionId || options.supervisionContextId)) {
     const scope = { schoolId: options.schoolId, actorId: options.actorId, contextAuthorityRevision: options.contextAuthorityRevision,
       authority: options.teachingSessionId ? { teachingSessionId: options.teachingSessionId } : { supervisionContextId: options.supervisionContextId! } };

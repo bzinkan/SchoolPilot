@@ -130,8 +130,10 @@ import {
 import { publicClasspilotCommand } from "../services/classpilotCommandPublic.js";
 import {
   classpilotCommandDeliveryPolicy,
+  classpilotTransientReplayOnAuthEnabled,
   summarizeClasspilotCommandTargets,
 } from "../services/classpilotCommandDelivery.js";
+import { prepareClasspilotTransientCommandReplay } from "../services/classpilotTransientCommandReplay.js";
 import {
   assertClasspilotEntitled,
   resolveClasspilotEntitlement,
@@ -1203,6 +1205,7 @@ export function setupWebSocket(
               }
 
               let studentBootstrapAuthenticated = false;
+              let transientCommandsReplayed = 0;
               let authStage: StudentWebSocketAuthStage = "tenant_checkout";
               try {
                 const schoolId = payload.schoolId;
@@ -1344,12 +1347,26 @@ export function setupWebSocket(
                           };
                         },
                       });
+                      // Un-received timer/poll frames for this exact binding,
+                      // read under the same student-control lock as command
+                      // persistence so a dispatch cannot interleave between
+                      // this read and the registration below. Flagged, default
+                      // off; the synchronous callback only sends the result.
+                      const transientReplay = classpilotTransientReplayOnAuthEnabled(schoolId)
+                        ? await prepareClasspilotTransientCommandReplay({
+                            schoolId,
+                            studentId: payload.studentId,
+                            studentSessionId: activeSession.id,
+                            deviceId,
+                          }, transactionDb)
+                        : [];
                       return {
                         fab,
                         classroomState,
                         focusCleanup,
                         screenshotPolicy,
                         deliveryWithheld: authDelivery.withheld,
+                        transientReplay,
                       };
                     },
                     (teacherReplies, prepared) => {
@@ -1432,6 +1449,15 @@ export function setupWebSocket(
                           fromName: "Teacher",
                         }));
                       }
+                      // Replayed one-shot frames follow the authoritative
+                      // bootstrap so the device applies them against the state
+                      // it just received. Each carries a fresh `_msgId`: the
+                      // original never reached a socket (or its receipt was
+                      // lost), and timer/poll overlays re-render idempotently.
+                      for (const frame of prepared.transientReplay) {
+                        ws.send(JSON.stringify(frame));
+                      }
+                      transientCommandsReplayed = prepared.transientReplay.length;
                       authStage = "transaction_completion";
                     }
                   );
@@ -1445,6 +1471,9 @@ export function setupWebSocket(
                 }
                 activity.studentAuthenticated += 1;
                 recordRuntimePerformanceCounter("studentWebSocketAuthSuccess");
+                if (transientCommandsReplayed > 0) {
+                  recordRuntimePerformanceCounter("transientCommandReplayedOnAuth", transientCommandsReplayed);
+                }
               } catch (error) {
                 if (studentBootstrapAuthenticated) {
                   removeWsClient(ws);
