@@ -5,6 +5,7 @@ const INTERVAL_MS = 60_000;
 const COUNTER_NAMES = [
   "tenantCheckouts", "poolAcquisitionSuccess", "poolAcquisitionFailure", "auditWriteFailure",
   "apiPoolReadinessStalled", "apiPoolReadinessRecovered", "apiPoolReadinessProbeDeferred",
+  "requestDisconnectedBeforeBodyParser", "requestBodyParserCancelled", "requestBodyParserLiveUnreadable",
   "aiProviderCalls", "aiProviderFailures", "aiProviderTimeouts", "aiProviderSaturated",
   "importStageCompleted", "importStageRetry", "importStageFailed",
   "dailyRollupSchools", "studentWebSocketAuthAttempt", "studentWebSocketAuthSuccess",

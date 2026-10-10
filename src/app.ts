@@ -10,6 +10,7 @@ import { sessionPool, apiPoolReadiness } from "./db.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { myDeskUpstreamErrorBoundary } from "./middleware/mydeskUpstreamErrorBoundary.js";
 import { requestId } from "./middleware/requestId.js";
+import { guardRequestTransportBeforeBody } from "./middleware/requestTransport.js";
 import { studentSignInDiagnostics } from "./services/classpilotStudentSignInDiagnostics.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
@@ -249,6 +250,10 @@ export function createApp() {
     }
     return webSession(req, res, next);
   }));
+
+  // A session-store continuation can arrive after dashboard cancellation. Do
+  // not hand a disconnected IncomingMessage to raw-body or later middleware.
+  app.use(guardRequestTransportBeforeBody);
 
   // Browser runtime telemetry is intentionally narrow, CSRF-exempt, and capped
   // before the general 1mb JSON parser. It may use session cookies for optional
