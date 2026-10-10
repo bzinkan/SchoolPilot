@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -462,6 +463,24 @@ describe("transient command replay on student WebSocket auth-success", () => {
   });
 
   it("a poll close supersedes the undelivered start at dispatch: start targets expire and only the close is replayed", async () => {
+    process.env.CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1 = "false";
+    try {
+      const oneShot = await dispatchWithDeadline(15_000, "poll", {
+        action: "start", question: "Timer-only pilot", options: ["A", "B"],
+      });
+      resetCounters();
+      const oneShotClose = await dispatchWithDeadline(15_000, "poll", {
+        action: "close", pollId: payloadOf(oneShot).pollId,
+      });
+      for (const row of await targetRows(oneShot.command.id)) {
+        assert.equal(row.status, "sent", "poll receipts remain valid while only timer replay is enabled");
+      }
+      assert.equal(counters().transientCommandTargetSuperseded, undefined);
+      await markReceived(oneShot.command.id);
+      await markReceived(oneShotClose.command.id);
+    } finally {
+      process.env.CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1 = "true";
+    }
     const start = await dispatch("poll", { action: "start", question: "Second poll", options: ["A", "B"] });
     const pollId = payloadOf(start).pollId as string;
     for (const row of await targetRows(start.command.id)) assert.equal(row.status, "sent");
@@ -741,6 +760,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await closeClients();
     const [entry] = await pendingFor(students[0]!);
     assert.ok(entry);
+    const contractStart = frameFor(entry, classAuthority());
     assert.equal(frameFor(entry, classAuthority({ acceptedCapabilities: ["scopedAuthorityChecksV1"] })), null);
     assert.equal(frameFor(entry, classAuthority({ acceptedCapabilities: ["pollReplaySafeV1"] })), null);
     const result = await inSchool(() => storage.createPollResponseFirstWrite({ ...bindingOf(students[0]!), pollId, selectedOption: 0 }));
@@ -781,6 +801,17 @@ describe("transient command replay on student WebSocket auth-success", () => {
     const closes = await pendingFor(students[1]!);
     assert.deepEqual(closes.map(row => row.command.id), [closed.command.id]);
     assert.equal(frameFor(closes[0]!, classAuthority({ acceptedCapabilities: ["scopedAuthorityChecksV1"] })), null, "closes also require the durable cursor");
+    // Optional cross-repository fixture: production persistence, eligibility
+    // read, authority checks and frame builder all produce these wire frames.
+    // The extension browser harness rebases only test binding/context and time.
+    if (process.env.CLASSPILOT_REPLAY_FRAME_FIXTURE_OUTPUT) {
+      const [closeEntry] = await pendingFor(students[0]!);
+      assert.ok(closeEntry);
+      const contractClose = frameFor(closeEntry, classAuthority());
+      assert.ok(contractStart && contractClose);
+      await writeFile(process.env.CLASSPILOT_REPLAY_FRAME_FIXTURE_OUTPUT,
+        JSON.stringify({ start: contractStart, close: contractClose }, null, 2) + "\n", "utf8");
+    }
     await markReceived(start.command.id);
     await markReceived(closed.command.id);
   });

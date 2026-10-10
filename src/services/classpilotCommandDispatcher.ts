@@ -924,6 +924,8 @@ async function supersedeTransientCommandTargetsFor(
   // replay off nothing re-sends, and expiring a target early would only turn a
   // device receipt that is still in flight into a rejected ACK.
   if (!classpilotTransientReplayOnAuthEnabled(options.schoolId)) return;
+  if (options.commandType === "poll"
+    && !isClasspilotCapabilityActive("pollReplaySafeV1", { schoolId: options.schoolId })) return;
   const pollId = typeof commandPayload.pollId === "string" ? commandPayload.pollId.trim() : "";
   const superseded = options.commandType === "timer"
     ? { commandType: "timer" as const }
