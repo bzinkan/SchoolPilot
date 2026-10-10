@@ -1089,6 +1089,103 @@ test('timer starts only after an ACK update and an expired start remains inactiv
   assert.equal(latestTransientClassroomUiEffect(failedAfterReceipt, 'timer'), null);
 });
 
+test('the first device acknowledgement releases the control while stragglers stay tracked', () => {
+  // 2026-10-09 connection audit, finding #1: a class-wide poll with one
+  // lid-closed Chromebook locked Create poll, End Poll and View responses for
+  // the full 15 s TTL and ended in a red toast (2 of 5 class-wide sends).
+  // The first ACK proves the frame left the server; the straggler keeps its
+  // own per-target outcome and expires on the server clock.
+  const start = classroomTransientResponse({
+    commandId: 'poll-start',
+    commandType: 'poll',
+    action: 'start',
+    pollId: 'poll-1',
+  });
+  const studentIds = ['student-1', 'student-2', 'student-3', 'student-4'];
+  const classWide = {
+    ...start,
+    command: {
+      ...start.command,
+      targets: studentIds.map((studentId) => ({ studentId, status: 'sent' })),
+    },
+    summary: { attempted: 4, pending: 4, awaitingAck: 4 },
+  };
+  const withFirstTarget = (status) => [
+    { studentId: 'student-1', status },
+    ...studentIds.slice(1).map((studentId) => ({ studentId, status: 'sent' })),
+  ];
+
+  const pending = trackTransientCommandResponse(new Map(), classWide, 'poll');
+  assert.equal(hasPendingTransientAction(pending, 'poll'), true);
+
+  const firstAck = applyTransientCommandUpdate(pending, {
+    type: 'classpilot-command-update',
+    commandId: 'poll-start',
+    command: { ...classWide.command, targets: withFirstTarget('received') },
+    summary: { attempted: 4, acknowledged: 1, received: 1, pending: 4, awaitingAck: 3 },
+  });
+  assert.equal(hasPendingTransientAction(firstAck, 'poll'), false, 'acknowledged 1 + awaitingAck 3 is not pending');
+  assert.equal(hasPendingTransientAction(firstAck, 'timer'), false);
+  assert.equal(latestTransientClassroomUiEffect(firstAck, 'poll')?.active, true);
+  assert.equal(
+    findNextTransientExpiry(firstAck, observedAt),
+    observedAt + 15_000,
+    'the three stragglers still expire on the server clock',
+  );
+
+  const completedFirst = applyTransientCommandUpdate(pending, {
+    type: 'classpilot-command-update',
+    commandId: 'poll-start',
+    command: { ...classWide.command, targets: withFirstTarget('completed') },
+    summary: { attempted: 4, acknowledged: 1, completed: 1, pending: 3, awaitingAck: 3 },
+  });
+  assert.equal(hasPendingTransientAction(completedFirst, 'poll'), false, 'a completed target releases the control too');
+
+  // One device acknowledged and three never did: the control was released on
+  // the first ACK, but most of the class missed the poll, so the toast is red.
+  const stragglersExpired = expireTransientCommands(firstAck, observedAt + 15_000).get('poll-start');
+  assert.equal(stragglersExpired.summary.expired, 3);
+  assert.equal(stragglersExpired.summary.awaitingAck, 0);
+  const mostlyMissed = commandDeliveryFeedback({ command: classWide.command, summary: stragglersExpired.summary }, 'poll');
+  assert.equal(mostlyMissed.title, 'Partially delivered');
+  assert.equal(mostlyMissed.variant, 'destructive', 'most of the class missed it');
+  assert.match(mostlyMissed.description, /1 received/);
+  assert.match(mostlyMissed.description, /3 expired/);
+
+  // Three devices acknowledged and one lid-closed Chromebook expired: the
+  // class has the poll, so the single straggler is informational.
+  const threeAcked = applyTransientCommandUpdate(pending, {
+    type: 'classpilot-command-update',
+    commandId: 'poll-start',
+    command: {
+      ...classWide.command,
+      targets: [
+        ...studentIds.slice(0, 3).map((studentId) => ({ studentId, status: 'received' })),
+        { studentId: 'student-4', status: 'sent' },
+      ],
+    },
+    summary: { attempted: 4, acknowledged: 3, received: 3, pending: 4, awaitingAck: 1 },
+  });
+  assert.equal(hasPendingTransientAction(threeAcked, 'poll'), false);
+  const oneStraggler = expireTransientCommands(threeAcked, observedAt + 15_000).get('poll-start');
+  assert.equal(oneStraggler.summary.expired, 1);
+  assert.equal(oneStraggler.summary.awaitingAck, 0);
+  const partial = commandDeliveryFeedback({ command: classWide.command, summary: oneStraggler.summary }, 'poll');
+  assert.equal(partial.title, 'Partially delivered');
+  assert.equal(partial.variant, undefined, 'one expired straggler after the class acknowledged is not destructive');
+  assert.match(partial.description, /3 received/);
+  assert.match(partial.description, /1 expired/);
+
+  // Nobody acknowledged: the control stays locked until the TTL and the toast
+  // stays red.
+  assert.equal(hasPendingTransientAction(pending, 'poll'), true);
+  const nobody = expireTransientCommands(pending, observedAt + 15_000).get('poll-start');
+  assert.equal(hasPendingTransientAction(new Map([['poll-start', nobody]]), 'poll'), false);
+  const undelivered = commandDeliveryFeedback({ command: classWide.command, summary: nobody.summary }, 'poll');
+  assert.equal(undelivered.title, 'Not delivered');
+  assert.equal(undelivered.variant, 'destructive');
+});
+
 test('an expired timer stop or poll close preserves the last acknowledged active state', () => {
   const timerStart = classroomTransientResponse({
     commandId: 'timer-start',
@@ -1325,4 +1422,28 @@ test('the transient dashboard map remains bounded', () => {
   assert.equal(tracked.size, MAX_TRACKED_TRANSIENT_COMMANDS);
   assert.equal(tracked.has('command-1'), false);
   assert.equal(tracked.has(`command-${MAX_TRACKED_TRANSIENT_COMMANDS + 5}`), true);
+});
+
+test('End Poll and View responses stay available while a poll delivery is pending', () => {
+  // 2026-10-09 connection audit, finding #1: one straggler greyed out both
+  // buttons for the whole delivery deadline. End Poll waits only for its own
+  // request, and View responses is a read-only action.
+  const dashboardSource = readFileSync(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const endPoll = dashboardSource
+    .split('\n')
+    .find((line) => line.includes('data-testid="button-end-poll"'));
+  assert.ok(endPoll, 'End Poll button not found');
+  assert.match(endPoll, /disabled=\{closePollMutation\.isPending\}/);
+  assert.doesNotMatch(endPoll, /pollDeliveryPending|pollPending/);
+
+  const toolsSource = readFileSync(
+    new URL('../src/products/classpilot/components/ClassToolsContent.jsx', import.meta.url),
+    'utf8',
+  );
+  const viewResponses = toolsSource.match(/<Button[^>]*>View responses \(\{responseCount\}\)<\/Button>/);
+  assert.ok(viewResponses, 'View responses button not found');
+  assert.doesNotMatch(viewResponses[0], /disabled/);
 });

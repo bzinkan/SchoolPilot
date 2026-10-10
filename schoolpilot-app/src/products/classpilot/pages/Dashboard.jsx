@@ -8801,7 +8801,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowPollResultsDialog(false)} data-testid="button-close-results">Close</Button>
-            <Button variant="destructive" onClick={handleClosePoll} disabled={closePollMutation.isPending || pollDeliveryPending} data-testid="button-end-poll"><X className="h-4 w-4 mr-2" />End Poll</Button>
+            <Button variant="destructive" onClick={handleClosePoll} disabled={closePollMutation.isPending} data-testid="button-end-poll"><X className="h-4 w-4 mr-2" />End Poll</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

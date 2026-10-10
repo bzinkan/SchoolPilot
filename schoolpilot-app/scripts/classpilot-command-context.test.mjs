@@ -661,6 +661,88 @@ test('mixed delivery feedback never hides adverse outcomes behind an acknowledge
   assert.match(feedback.description, /1 failed/);
   assert.match(feedback.description, /1 unavailable/);
   assert.match(feedback.description, /1 expired/);
+  assert.equal(feedback.variant, 'destructive', 'a device-reported failure stays destructive');
+});
+
+test('transient partial delivery is destructive only for failures or zero acknowledgements', () => {
+  // 2026-10-09 connection audit, finding #1: one straggler that expired after
+  // the rest of the class acknowledged painted a red toast. Expired-only is
+  // informational; failures and zero-acknowledgement sends stay destructive.
+  const command = { commandType: 'poll', deliveryPolicy: 'transient_action' };
+  const expiredOnly = commandDeliveryFeedback({
+    command,
+    summary: { requested: 5, attempted: 5, acknowledged: 4, completed: 0, received: 4, pending: 0, failed: 0, unavailable: 0, expired: 1, awaitingAck: 0 },
+  }, 'poll');
+  assert.equal(expiredOnly.title, 'Partially delivered');
+  assert.equal(expiredOnly.variant, undefined);
+  assert.match(expiredOnly.description, /4 received/);
+  assert.match(expiredOnly.description, /1 expired/);
+
+  const failed = commandDeliveryFeedback({
+    command,
+    summary: { requested: 5, attempted: 5, acknowledged: 4, completed: 0, received: 3, pending: 0, failed: 1, unavailable: 0, expired: 1, awaitingAck: 0 },
+  }, 'poll');
+  assert.equal(failed.title, 'Partially delivered');
+  assert.equal(failed.variant, 'destructive');
+
+  const zeroAck = commandDeliveryFeedback({
+    command,
+    summary: { requested: 5, attempted: 5, acknowledged: 0, completed: 0, received: 0, pending: 0, failed: 0, unavailable: 0, expired: 5, awaitingAck: 0 },
+  }, 'poll');
+  assert.equal(zeroAck.title, 'Not delivered');
+  assert.equal(zeroAck.variant, 'destructive');
+
+  // The calmer toast is for timers and polls only. A one-shot action that
+  // enforces something keeps the red toast when a student did not get it.
+  const expiredOnlySummary = { requested: 5, attempted: 5, acknowledged: 4, completed: 4, received: 4, pending: 0, failed: 0, unavailable: 0, expired: 1, awaitingAck: 0 };
+  const timerExpiredOnly = commandDeliveryFeedback({
+    command: { commandType: 'timer', deliveryPolicy: 'transient_action' },
+    summary: expiredOnlySummary,
+  }, 'timer');
+  assert.equal(timerExpiredOnly.title, 'Partially delivered');
+  assert.equal(timerExpiredOnly.variant, undefined);
+  for (const commandType of ['open-tab', 'close-tabs', 'close-tab', 'activate-tab', 'lock-screen']) {
+    const enforcing = commandDeliveryFeedback({
+      command: { commandType, deliveryPolicy: 'transient_action' },
+      summary: expiredOnlySummary,
+    }, commandType);
+    assert.equal(enforcing.title, 'Partially delivered', commandType);
+    assert.equal(enforcing.variant, 'destructive', `${commandType}: a student the action did not reach stays destructive`);
+  }
+
+  // The calmer toast is for a few stragglers. When as many targets expired as
+  // acknowledged, most of the class missed the timer or poll and nothing sends
+  // it again, so the teacher still gets the red toast.
+  for (const commandType of ['timer', 'poll']) {
+    const delivery = (acknowledged, expired) => commandDeliveryFeedback({
+      command: { commandType, deliveryPolicy: 'transient_action' },
+      summary: {
+        requested: acknowledged + expired,
+        attempted: acknowledged + expired,
+        acknowledged,
+        completed: 0,
+        received: acknowledged,
+        pending: 0,
+        failed: 0,
+        unavailable: 0,
+        expired,
+        awaitingAck: 0,
+      },
+    }, commandType);
+    assert.equal(delivery(24, 1).variant, undefined, `${commandType}: one straggler in a class`);
+    assert.equal(delivery(13, 12).variant, undefined, `${commandType}: most of the class has it`);
+    assert.equal(delivery(12, 12).variant, 'destructive', `${commandType}: half the class missed it`);
+    assert.equal(delivery(1, 24).variant, 'destructive', `${commandType}: most of the class missed it`);
+    assert.equal(delivery(1, 1).variant, 'destructive', `${commandType}: one of two selected students missed it`);
+    assert.equal(delivery(1, 24).title, 'Partially delivered');
+  }
+  // Completed targets count as delivered even where the summary carries no
+  // separate acknowledgement count.
+  const completedMajority = commandDeliveryFeedback({
+    command: { commandType: 'timer', deliveryPolicy: 'transient_action' },
+    summary: { requested: 5, attempted: 5, acknowledged: 0, completed: 4, received: 0, pending: 0, failed: 0, unavailable: 0, expired: 1, awaitingAck: 0 },
+  }, 'timer');
+  assert.equal(completedMajority.variant, undefined);
 });
 
 test('late-sign-in feedback separates pending from undelivered and reports current-page skips', () => {
