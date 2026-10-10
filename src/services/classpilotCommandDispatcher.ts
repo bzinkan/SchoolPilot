@@ -72,6 +72,7 @@ import {
   CLASSPILOT_TRANSIENT_COMMAND_TTL_MS,
   classpilotCommandDeliveryPolicy,
   classpilotCommandExpiresAt,
+  classpilotTransientReplayOnAuthEnabled,
   isPersistentClasspilotControl,
   summarizeClasspilotCommandTargets,
   type ClasspilotCommandDeliveryPolicy,
@@ -902,6 +903,9 @@ export function classpilotCommandFrameForTarget(
  * Polls: a close supersedes the commands of the same pollId (a second poll
  * cannot start while one is active).
  *
+ * Runs only where the auth-success replay is enabled for the school. Elsewhere
+ * earlier targets keep their ordinary deadline, as before this lane existed.
+ *
  * Best effort: the new command is already dispatched and persisted, and the
  * deadline sweep remains the backstop.
  */
@@ -916,6 +920,10 @@ async function supersedeTransientCommandTargetsFor(
   commandPayload: Record<string, any>
 ): Promise<void> {
   if (created.targets.length === 0) return;
+  // Superseding protects the replay from re-sending a replaced frame. With the
+  // replay off nothing re-sends, and expiring a target early would only turn a
+  // device receipt that is still in flight into a rejected ACK.
+  if (!classpilotTransientReplayOnAuthEnabled(options.schoolId)) return;
   const pollId = typeof commandPayload.pollId === "string" ? commandPayload.pollId.trim() : "";
   const superseded = options.commandType === "timer"
     ? { commandType: "timer" as const }
