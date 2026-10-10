@@ -28,6 +28,14 @@ function nonNegative(value, fallback = 0) {
 // One-shot actions whose late stragglers leave nothing unenforced.
 const EXPIRY_TOLERANT_TRANSIENT_COMMANDS = new Set(['timer', 'poll']);
 
+// Expired targets are informational only for a timer or poll that most of the
+// addressed devices acknowledged. When as many expired as acknowledged, most
+// of the class missed it and nothing sends it again, so the teacher is told.
+function expiredStragglersAreInformational(commandType, summary) {
+  if (!EXPIRY_TOLERANT_TRANSIENT_COMMANDS.has(commandType)) return false;
+  return summary.expired < Math.max(summary.acknowledged, summary.completed);
+}
+
 export function commandDeliveryPolicy(commandType, value) {
   const supplied = value?.deliveryPolicy ?? value?.command?.deliveryPolicy;
   if (['persistent_control', 'transient_action', 'durable_message', 'server_authoritative'].includes(supplied)) {
@@ -242,14 +250,16 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
     return {
       title: summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0 ? 'Partially delivered' : 'Acknowledged',
       description: `${breakdown || `${summary.acknowledged || summary.completed} acknowledged`}. Device acknowledgements are self-reported and are not tamper proof.`,
-      // For a timer or poll, stragglers that expired after at least one device
-      // acknowledged are informational: the class has it and nothing is left
-      // unenforced. For every other one-shot action (a current-page lock, open
-      // tab, close tabs) an expired target is a student the action did not
-      // reach, so that stays destructive. A device-reported failure is always
-      // destructive, and zero acknowledgements are handled above.
+      // For a timer or poll, a few stragglers that expired while most of the
+      // addressed devices acknowledged are informational: the class has it and
+      // nothing is left unenforced. If as many expired as acknowledged, most of
+      // the class missed it, so the toast stays destructive. For every other
+      // one-shot action (a current-page lock, open tab, close tabs) an expired
+      // target is a student the action did not reach, so that stays
+      // destructive too. A device-reported failure is always destructive, and
+      // zero acknowledgements are handled above.
       variant: summary.failed > 0
-        || (summary.expired > 0 && !EXPIRY_TOLERANT_TRANSIENT_COMMANDS.has(commandType))
+        || (summary.expired > 0 && !expiredStragglersAreInformational(commandType, summary))
         ? 'destructive'
         : undefined,
     };
