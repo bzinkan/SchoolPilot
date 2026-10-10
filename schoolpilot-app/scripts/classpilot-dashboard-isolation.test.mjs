@@ -767,12 +767,14 @@ test('A to B switches replace the complete realtime routing context before queue
     'utf8',
   );
   const routingLayoutEffect = dashboard.match(
-    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveActivityIdRef\.current = effectiveActivityId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority\]\);/,
+    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveActivityIdRef\.current = effectiveActivityId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority, contextAuthorityRevision\]\);/,
   );
   assert.ok(
     routingLayoutEffect,
     'session, query key, school, and queued events must switch atomically in one layout effect',
   );
+  assert.match(routingLayoutEffect[0], /effectiveAuthorityRef\.current = effectiveAuthority;\s*contextAuthorityRevisionRef\.current = contextAuthorityRevision;/,
+    'the supervision parent and its tenure must switch together before socket delivery');
   assert.doesNotMatch(
     dashboard,
     /useEffect\(\(\) => \{\s*aggregatedStudentsQueryKeyRef\.current/,
