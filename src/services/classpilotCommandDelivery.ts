@@ -7,28 +7,41 @@ export type ClasspilotCommandDeliveryPolicy =
 export const CLASSPILOT_TRANSIENT_COMMAND_TTL_MS = 15_000;
 
 /**
- * Timer and poll frames carry their own end time (`deadline`/`timerExpiresAt`,
- * the poll record), so a late delivery still renders correctly: the student
- * sees the remaining time or the still-open poll, never a stale one-shot
- * action. They therefore stay deliverable for 60 s by default, which spans the
- * 7.5-29 s reconnect window measured in production. Open/close/activate-tab
- * keep the 15 s one-shot deadline above.
+ * Timer and poll targets may stay deliverable longer than the 15 s one-shot
+ * deadline, but only where something can still deliver them: the auth-success
+ * replay. Where the replay is off, a longer deadline re-delivers nothing. It
+ * only keeps a missed target awaiting for longer, which holds the dashboard's
+ * timer and poll controls until the deadline, and it lets a late live frame
+ * run late on the device: a phase-0 timer frame carries a duration, not an end
+ * time, so the extension counts the full duration from receipt. The replay
+ * corrects for that by sending the seconds remaining; a live frame cannot.
  *
- * `CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS` overrides the default (15000 restores
- * the legacy deadline). The environment is read per call so a rollback needs
- * no redeploy of a module constant and an invalid value falls back to the
- * default instead of producing a NaN deadline.
+ * So the deadline is 60 s, which spans the 7.5-29 s reconnect window measured
+ * in production, exactly where the replay is enabled for the school, and the
+ * legacy 15 s everywhere else. Open/close/activate-tab always keep 15 s.
+ *
+ * `CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS` is an explicit override for both
+ * cases. The environment is read per call, and an invalid value is ignored
+ * instead of producing a NaN deadline.
  */
-const DEFAULT_TIMER_POLL_COMMAND_TTL_MS = 60_000;
+const REPLAY_TIMER_POLL_COMMAND_TTL_MS = 60_000;
 const TIMER_POLL_COMMAND_TYPES = new Set(["timer", "poll"]);
 
-export function classpilotTimerPollCommandTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+export function classpilotTimerPollCommandTtlMs(
+  env: NodeJS.ProcessEnv = process.env,
+  schoolId?: string
+): number {
   const raw = env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
-  if (raw === undefined || raw.trim() === "") return DEFAULT_TIMER_POLL_COMMAND_TTL_MS;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_TIMER_POLL_COMMAND_TTL_MS;
+  if (raw !== undefined && raw.trim() !== "") {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return schoolId !== undefined && classpilotTransientReplayOnAuthEnabled(schoolId, env)
+    ? REPLAY_TIMER_POLL_COMMAND_TTL_MS
+    : CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
 }
 
+/** The timer/poll deadline this process started with for a school without the replay. */
 export const CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS = classpilotTimerPollCommandTtlMs();
 
 /** Transient command types whose un-received frames are replayed on student WebSocket auth-success. */
@@ -38,13 +51,17 @@ export function isClasspilotReplayableTransientCommandType(commandType: string):
   return TIMER_POLL_COMMAND_TYPES.has(commandType);
 }
 
-/** Deadline for a transient action by type: 60 s (env-overridable) for timer/poll, 15 s otherwise. */
+/**
+ * Deadline for a transient action by type: 15 s, except timer/poll for a
+ * school with the replay enabled (60 s) or under the explicit override.
+ */
 export function classpilotTransientCommandTtlMs(
   commandType: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  schoolId?: string
 ): number {
   return TIMER_POLL_COMMAND_TYPES.has(commandType)
-    ? classpilotTimerPollCommandTtlMs(env)
+    ? classpilotTimerPollCommandTtlMs(env, schoolId)
     : CLASSPILOT_TRANSIENT_COMMAND_TTL_MS;
 }
 
@@ -106,10 +123,11 @@ export function classpilotCommandDeliveryPolicy(
 
 export function classpilotCommandExpiresAt(
   commandType: string,
-  issuedAt: Date = new Date()
+  issuedAt: Date = new Date(),
+  schoolId?: string
 ): Date | null {
   return classpilotCommandDeliveryPolicy(commandType) === "transient_action"
-    ? new Date(issuedAt.getTime() + classpilotTransientCommandTtlMs(commandType))
+    ? new Date(issuedAt.getTime() + classpilotTransientCommandTtlMs(commandType, process.env, schoolId))
     : null;
 }
 

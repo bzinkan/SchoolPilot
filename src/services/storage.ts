@@ -22235,9 +22235,10 @@ export const CLASSPILOT_SUPERSEDED_TARGET_MESSAGE = "Superseded by a later comma
  *     of the same teaching session or supervision context. This also covers
  *     legacy phase-0 timers, whose payloads carry no timerId.
  *   - `poll`: a close supersedes the commands of the same pollId.
- * Targets become `expired` with a distinct reason, so the dashboard stops
- * awaiting their ACKs at once and the auth-success replay lane never re-sends
- * a frame the teacher already replaced or withdrew. No status value is added:
+ * Targets become `expired` with a distinct reason, so the server stops
+ * counting them as awaiting and the auth-success replay lane never re-sends
+ * a frame the teacher already replaced or withdrew. Dashboards are not pushed
+ * an update for this; they learn from their own deadline. No status value is added:
  * `expired` is the existing terminal state for undelivered one-shot frames,
  * and a target the device already received is never touched.
  */

@@ -891,9 +891,10 @@ export function classpilotCommandFrameForTarget(
 
 /**
  * A later timer command, or a poll close, makes the still-undelivered frames
- * it replaces moot: expire those targets now so the dashboard stops awaiting
- * their ACKs and the auth-success replay lane never re-sends a frame the
- * teacher already replaced or withdrew.
+ * it replaces moot: expire those targets now so the server stops counting
+ * them as awaiting and the auth-success replay lane never re-sends a frame the
+ * teacher already replaced or withdrew. No command update is published for
+ * this, so a dashboard learns of it from its own deadline or a later update.
  *
  * Timers: one timer per class, and every timer frame is the complete timer
  * state, so the latest timer command wins for each student it addresses. That
@@ -1398,7 +1399,7 @@ export async function executeClasspilotCommand(options: {
     : classpilotCommandDeliveryPolicy(options.commandType);
   const expiresAt = currentPageRequested
     ? new Date(issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS)
-    : classpilotCommandExpiresAt(options.commandType, issuedAt);
+    : classpilotCommandExpiresAt(options.commandType, issuedAt, options.schoolId);
   const currentUrlResolution = currentPageRequested
     ? await resolveCurrentUrlLockTargets({
         schoolId: options.schoolId,

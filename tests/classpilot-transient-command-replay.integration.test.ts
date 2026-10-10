@@ -342,12 +342,18 @@ describe("transient command replay on student WebSocket auth-success", () => {
   let openTab: Dispatched;
   let liveFrame: Frame;
 
-  it("gives timer/poll a 60 s deadline, keeps 15 s for open-tab, and replays nothing while the flag is off", async () => {
+  it("gives timer/poll a 60 s deadline where the replay is enabled, keeps 15 s for open-tab, and replays nothing while the flag is off", async () => {
     // One student is connected, so the dispatcher's own live frame is on record.
     const live = await connect(students[1]!);
+    // The longer deadline exists to give the replay a window, so the dispatcher
+    // grants it only while the replay is enabled for this school.
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
+    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
     pendingPoll = await dispatchWithDeadline(60_000, "poll", {
       action: "start", question: "Ready to move on?", options: ["Yes", "No"],
     });
+    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
+    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
     assert.equal(pendingPoll.deliveryPolicy, "transient_action");
     await settle(live);
     const delivered = remoteControl(live);
@@ -698,8 +704,16 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await markReceived(closed.command.id);
   });
 
-  it("a pending frame is not replayed after its class has ended", async () => {
-    const start = await dispatch("poll", { action: "start", question: "Before the bell", options: ["A", "B"] });
+  it("with the replay off a poll keeps the 15 s deadline, and a pending frame is not replayed after its class has ended", async () => {
+    // Production posture at deploy: the replay is off, so the dispatcher keeps
+    // the one-shot deadline. Shipping this code alone changes no deadline.
+    delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
+    let start: Dispatched;
+    try {
+      start = await dispatchWithDeadline(15_000, "poll", { action: "start", question: "Before the bell", options: ["A", "B"] });
+    } finally {
+      process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
+    }
     const [pending] = await pendingFor(students[0]!);
     assert.equal(pending?.command.id, start.command.id, "pending and replayable while the class is running");
 
