@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_immutable_predeployment_document_history",
+  "source": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+  "observedAtUtc": "2026-10-10T07:35:47.397Z",
+  "canonicalUtf8Lf": true,
+  "records": [
+    {
+      "source": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+      "originalPath": "docs/releases/release297/current-release.json",
+      "path": "docs/releases/release297/history/current-release-e22c790a-predeployment-20261010.json",
+      "gitBlobSha256": "a7ec9c3d19b3e9ccaebc0697a287bf1349590ce4c5d8e943b557aad9319f4d91",
+      "bytes": 148108
+    },
+    {
+      "source": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+      "originalPath": "docs/RELEASE_297_OPERATOR_HANDOFF.md",
+      "path": "docs/releases/release297/history/operator-handoff-e22c790a-predeployment-20261010.md",
+      "gitBlobSha256": "67c0fa9755aca606af0cabaa0d4eef73ea28954acafb9526cecbdf1a52b33c94",
+      "bytes": 10188
+    },
+    {
+      "source": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+      "originalPath": "docs/releases/release297/README.md",
+      "path": "docs/releases/release297/history/release-record-readme-e22c790a-predeployment-20261010.md",
+      "gitBlobSha256": "90eb7d20d21931a938bf7ada6593e7564895e998fa42a61267cdb135246c0f25",
+      "bytes": 3612
+    },
+    {
+      "source": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+      "originalPath": "docs/RELEASE_297_BUILD_SECURITY_FALLBACK.md",
+      "path": "docs/releases/release297/history/build-security-packet-e22c790a-predeployment-20261010.md",
+      "gitBlobSha256": "bc90877b3ef113e1dee752e5d6c23ead2aa5816e81c70d68bcb9339d95798af3",
+      "bytes": 10475
+    },
+    {
+      "source": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+      "originalPath": "docs/RELEASE_2_9_7_OPERATOR_CHECKLIST.md",
+      "path": "docs/releases/release297/history/operator-checklist-e22c790a-predeployment-20261010.md",
+      "gitBlobSha256": "d880aa6fa6005cbcb8406d19571f2909d14895f2064a8c728903c82cffd442bb",
+      "bytes": 66059
+    }
+  ]
+}

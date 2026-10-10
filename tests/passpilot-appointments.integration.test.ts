@@ -219,7 +219,14 @@ describe("PassPilot appointments: staff authority, atomic activation and lifecyc
     } finally { await locker.query("ROLLBACK"); locker.release(); }
   });
   it("does not auto-issue ended/future windows; explicit ended activation persists missed", async () => {
-    const future = await created(legacy, 0, { startsAt: new Date(Date.now() + 600000).toISOString() });
+    const now = Date.now(), futureStartsAt = new Date(now + 600000);
+    // These synthetic lifecycle windows may cross a UTC weekend boundary.
+    await f.schedule(legacy, { dateOverrides: {
+      [new Date(now - 60000).toISOString().slice(0, 10)]: { instructional: true },
+      [new Date(now).toISOString().slice(0, 10)]: { instructional: true },
+      [futureStartsAt.toISOString().slice(0, 10)]: { instructional: true },
+    } });
+    const future = await created(legacy, 0, { startsAt: futureStartsAt.toISOString() });
     assert.equal((await f.activate(legacy, future.id)).body.code, "APPOINTMENT_TOO_EARLY");
     const ended = await created(legacy, 1);
     await f.sql("UPDATE passpilot_appointments SET starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour' WHERE id=$1", [ended.id]);

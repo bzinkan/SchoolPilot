@@ -1,61 +1,19 @@
 # Current release record
 
-`current-release.json` is the current preparation index for the bounded DeSales
-133-client release. It records observed source state and evidence applicability,
-not deployment readiness or operational authorization. Historical receipts remain
-immutable; failed attempts and `waived_not_passed` retain their original outcomes.
+The [current-release index](current-release.json) records the dated matched B5/A3 deployment, exact artifact identities, original acceptance, later source observations and remaining activation/adoption work. The [deployment completion](matched-deployment-completion-20261010-b5.json) and independently authored review retain the operation receipts' exact private hashes. The [operator handoff](../../RELEASE_297_OPERATOR_HANDOFF.md) provides the concise operational context.
 
-Update this index when a new source, artifact or reviewed observation supersedes a
-current fact. Set a frozen application reference only after the reviewed release
-changes are selected. Record real source-specific receipts before changing a gate
-to passed; application changes require refreshed affected acceptance, while
-tool/document-only changes require proven application equivalence and fresh
-applicable CI. Refresh live-state observations before each separately authorized
-operator action. Unknown values must remain unknown.
+The dated completed runtime B5 was `e22c790aee125a5312c0b4ec37ea594ff56ed999`, with the exact tested A3 application and frontend. Later observed remote main `96f136e6953c60b8ca2effeea88f0cbdef5e91c7` contains separate backend/frontend changes. A subsequent production observation recorded API 186 / worker 202 at that source; current frontend identity and release acceptance remain unknown. See the [separate production observation](latest-production-observation-20261010.json). Dated B5 CI/equivalence and A3 acceptance do not establish validation of that later source. Its future applicability remains pending, including review of the temporary_room rollback floor before any future F3 reuse.
 
-Each `gitBlobSha256` hashes canonical UTF-8 Git text with LF line endings. It
-identifies tracked receipt content equally on Windows and Linux; it does not
-replace raw artifact/archive/scan hashes or erase CRLF differences in a packaged
-extension. The fresh extension record carries the canonical verification pass
-and the distinct retained raw-Git comparison failure.
+Historical records are immutable. The [predeployment index](history/current-release-e22c790a-predeployment-20261010.json), whole earlier handoff/README/packet/checklist and their hashes retain at-the-time next actions. Earlier C578/F1 scan failures, F2 audit failure, startup failures and headroom failure keep their actual outcomes. Current annotations link later corrections without rewriting those records.
 
-The fresh local artifact observation records preparation-only backend/frontend
-identities and a Linux screenshot-processing pass. These sources are not frozen
-resulting main. The exact retained C578 fallback's fresh scan is **failed** with
-one Critical and one High finding. Its historical passing scan remains dated
-evidence; resolve the failure through separate review before executable release
-plans. This index does not authorize substituting another fallback.
+Each gitBlobSha256 identifies canonical UTF-8 Git text with LF line endings. It does not replace raw artifact, archive, scan, native-receipt or private-capture hashes. Public metadata contains source, artifact and aggregate outcomes only; identifiers, credentials, environments and raw provider responses remain private.
 
-The focused coordinator record preserves the original failed Windows infrastructure
-lane and the later 35-test/339-test reruns. It pins the exact tested patch files to
-tooling PR #620 without claiming a complete infrastructure rerun. A compact
-preparation summary links immutable canonical operator-packet receipts for local
-baseline checks, public-copy PR CI and disposable full-schema database/RLS tests.
-The external Git blob hashes were verified when the summary was prepared; the
-offline checker verifies the retained local summary and link structure without
-refetching those external commits. PR CI is separate from resulting-main CI;
-full-schema fixture checks are separate from ordinary migration/recovery, and the
-existing 2.9.3 CI capture is separate from 2.9.7 managed adoption.
-
-Freeze application A after required copy/governance merges, build/test its exact
-image/config and matched frontend, then seal the reviewed tooling/document binding
-on final main B. Require proven A/B backend and frontend input equivalence and fresh
-exact-main CI; reuse the exact tested image/config for later authorized publication.
-
-Generate the operator checklist's current section offline:
+Generate and check the operator checklist offline:
 
 ```text
 node scripts/release297-current-state.mjs
 node scripts/release297-current-state.mjs --check
-node --test tests/release297-current-state.test.mjs
+node --test tests/release297-current-state.test.mjs tests/release297-build-security-state.test.mjs tests/release297-operational-state.test.mjs tests/release297-deployment-reconciliation.test.mjs
 ```
 
-The checker verifies referenced evidence content, source/merge and artifact
-metadata, key release invariants and the generated section. Its `--check` mode
-does not write files or query providers. It is included in the unit test lane via
-the current-state regression suite. Passing this checker is documentation
-validation, not candidate acceptance.
-
-Public records contain only source, artifact and aggregate operational metadata.
-Keep identifiers, credentials, private captures and raw runtime exports in the
-protected operator evidence location.
+The checker verifies retained content, source identities, evidence applicability and the generated section. It performs no provider calls and grants no operational authority. Passing documentation tests is separate from candidate acceptance and deployed-runtime verification. Unknown facts remain unknown; managed-device validation remains waived_not_passed, and page adoption and sample-bearing live acceptance remain pending.

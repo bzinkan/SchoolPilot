@@ -1,0 +1,376 @@
+{
+  "schemaVersion": 3,
+  "kind": "release297_matched_deployment_completion",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "mainSource": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "releaseBindingSha256": "8d66e4be314d422014a72e496d40db2156f716e66429f807bffef3f2ba2fcfef",
+  "artifactPair": {
+    "serving-anchor": {
+      "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+      "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+      "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
+      "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
+      "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e"
+    },
+    "fallback": {
+      "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+      "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+      "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+      "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+      "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b"
+    }
+  },
+  "operationalOutcomeUncertain": false,
+  "activationExecuted": false,
+  "sampleBearingLiveAcceptanceComplete": false,
+  "managedDeviceValidation": "waived_not_passed",
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "completedAtUtc": "2026-10-10T08:33:28.667Z",
+  "capacityBaseline": {
+    "observedAtUtc": "2026-10-10T06:27:41.4073689Z",
+    "servicesReceipt": {
+      "storage": "private",
+      "path": "migration-capacity-b5-01/services.raw.json",
+      "sha256": "ecfc6239e6b89841688c59e2edefa658e3e0cc426a81ab5c29db498d22863dd5",
+      "format": "json"
+    },
+    "desiredCounts": {
+      "api": 1,
+      "scheduler-worker": 1
+    },
+    "taskDefinitions": {
+      "api": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:180",
+      "scheduler-worker": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:196"
+    }
+  },
+  "operations": {
+    "servingPublication": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "92e542bf4a7573bd006a9a72b11e0c7d5c32b79dd47211baeb169ca87c666207",
+        "format": "json",
+        "path": "completion-receipts-b5-01/servingPublication.private.json"
+      }
+    },
+    "fallbackPublication": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "8381079f7d83668e0c4231cba7fc50aca3940185d5ed5edabbce51e7ef1c274d",
+        "format": "json",
+        "path": "completion-receipts-b5-01/fallbackPublication.private.json"
+      }
+    },
+    "current129AnchorRegistration": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "5b90cae89f50d6cbfe3bf17846d21941fed1b68bc7b1f19d429c0d489ddb23e2",
+        "format": "json",
+        "path": "completion-receipts-b5-01/current129AnchorRegistration.private.json"
+      }
+    },
+    "compatibleFallback129Registration": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "5ca455e8f781ecf2e1e18acf92dc9b258f16f20bbd55341233c114e192ee10b8",
+        "format": "json",
+        "path": "completion-receipts-b5-01/compatibleFallback129Registration.private.json"
+      }
+    },
+    "backendMigration": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "576aac3833a29f7669c8b72c76c4e9bea6e8dc8f447e6e1148269c419ce44b6e",
+        "format": "json",
+        "path": "completion-receipts-b5-01/backendMigration.private.json"
+      }
+    },
+    "backendWorkerDeployment": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "70426ee7cb47477002a6eba8741fffd25fb6cec549b0e6d96f827c5d2b003174",
+        "format": "json",
+        "path": "completion-receipts-b5-01/backendWorkerDeployment.private.json"
+      }
+    },
+    "matchedFrontendDeployment": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "5f6b8bd18b12cd92a2a9155b5a1df135bc989fe0dab90e89c248a6d9e1ce8586",
+        "format": "json",
+        "path": "completion-receipts-b5-01/matchedFrontendDeployment.private.json"
+      }
+    },
+    "postdeploymentTaskAndFlagReadback": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "4a306f0b2b01d66bf98d2850c94d48b01a38472368167b8d3546523547a348ac",
+        "format": "json",
+        "path": "completion-receipts-b5-01/postdeploymentTaskAndFlagReadback.private.json"
+      }
+    },
+    "publicFrontendByteVerification": {
+      "status": "passed",
+      "operationalOutcomeUncertain": false,
+      "receipt": {
+        "storage": "private",
+        "sha256": "4cc5f76ece84d6c65a51fde0f0db5b755282f19448d9368834eed779704b2df7",
+        "format": "json",
+        "path": "completion-receipts-b5-01/publicFrontendByteVerification.private.json"
+      }
+    }
+  },
+  "frontend": {
+    "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+    "archiveSha256": "ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d",
+    "fileInventorySha256": "3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3",
+    "fileCount": 171,
+    "publicStaticBytesVerified": true,
+    "alreadyOpenPageAdoption": "pending"
+  },
+  "fallbackFrontend": {
+    "source": "cce3f7b4eae30df13378337c01dc4ff2d5db3997",
+    "archiveSha256": "8d6379613dbb1c88783ee0f141ed41c34164fac5142172daee7da7f8d27cd72a",
+    "fileInventorySha256": "3484fa4f9848dc9e48e4e3bfeb384e959f17deccd10125e8b362fb094f29451e",
+    "fileCount": 171,
+    "preparedAndReviewed": true
+  },
+  "registeredFallback": {
+    "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+    "admissionCount": 129,
+    "inactive": true,
+    "registrationOutcomeUncertain": false,
+    "apiTaskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:184",
+    "workerTaskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:200",
+    "registrationMeaning": "Registered and unused by services; inactive here does not assert ECS task-definition status INACTIVE."
+  },
+  "postdeployment": {
+    "admissionCount": 129,
+    "completedMigrations": 53,
+    "capabilityModesPreserved": true,
+    "desiredCountsPreserved": true,
+    "migrationConnectionClosed": true,
+    "usageModes": {
+      "CLASSPILOT_USAGE_ROLLUP_MODE": "off",
+      "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": "omitted",
+      "CLASSPILOT_DIGITAL_USAGE_MODE": "off"
+    },
+    "registry": {
+      "serving-anchor": {
+        "source": "2001e8888992674493c3084981fa8aae27d70e1d",
+        "localIndex": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc",
+        "config": "sha256:ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943",
+        "platform": "sha256:5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb",
+        "archiveSha256": "b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e",
+        "digest": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc"
+      },
+      "fallback": {
+        "source": "392970b7ccfea365faadf1eba07da4ad26964c09",
+        "localIndex": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e",
+        "config": "sha256:2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b",
+        "platform": "sha256:4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a",
+        "archiveSha256": "e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b",
+        "digest": "sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e"
+      }
+    },
+    "services": {
+      "api": {
+        "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:185",
+        "desiredCount": 1,
+        "runningCount": 1,
+        "pendingCount": 0,
+        "rolloutState": "COMPLETED",
+        "roleHealthContractPassed": true,
+        "healthCheckConfigured": true,
+        "taskHealthStatus": "HEALTHY",
+        "containerHealthStatus": "HEALTHY",
+        "runtimeSource": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+        "imageDigest": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc"
+      },
+      "scheduler-worker": {
+        "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:201",
+        "desiredCount": 1,
+        "runningCount": 1,
+        "pendingCount": 0,
+        "rolloutState": "COMPLETED",
+        "roleHealthContractPassed": true,
+        "healthCheckConfigured": false,
+        "taskHealthStatus": "UNKNOWN",
+        "containerHealthStatus": "UNKNOWN",
+        "runtimeSource": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+        "imageDigest": "sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc"
+      }
+    },
+    "roleHealthContractsPassed": true,
+    "allActualTasksRunning": true,
+    "effectiveDailyMode": "shadow",
+    "dailyModeExplanation": "The daily setting is omitted and defaults to shadow; both new Usage modes off does not establish zero daily work.",
+    "migrationConnectionClosureScope": "Three observed zero counts for both verified principals at the exact stopped-task IP under recorded visibility; this does not prove migrator pool.end completion. The inspector connectionClosed field records only inspector client shutdown.",
+    "migrationConnectionObservationTimesUtc": [
+      "2026-10-10T08:27:59.574Z",
+      "2026-10-10T08:28:00.582Z",
+      "2026-10-10T08:28:01.587Z"
+    ]
+  },
+  "sequence": [
+    {
+      "stage": "migration",
+      "startedAtUtc": "2026-10-10T06:29:57.343Z",
+      "completedAtUtc": "2026-10-10T06:30:30.423Z"
+    },
+    {
+      "stage": "api-worker-convergence",
+      "startedAtUtc": "2026-10-10T06:30:30.423Z",
+      "completedAtUtc": "2026-10-10T06:41:50.895Z"
+    },
+    {
+      "stage": "matched-frontend",
+      "startedAtUtc": "2026-10-10T06:55:39.9282929Z",
+      "completedAtUtc": "2026-10-10T06:58:43.8261276Z"
+    }
+  ],
+  "sequenceScope": "The API/worker convergence phase is bounded by the actual migration stoppedAt and native backend completion. Individual update-call times were not timestamped and are not asserted.",
+  "semanticEvidence": {
+    "catalogReceipt": {
+      "storage": "private",
+      "format": "json",
+      "path": "postdeployment-catalog-run-b5-01/receipt.json",
+      "sha256": "b25bea5d468f3d672dc01e859ba349d79d96786852dcf8fbaef04d79caae74c5"
+    },
+    "catalogSemanticReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/catalog08-B5-postdeployment-semantic-01.review.private.json",
+      "sha256": "a971a1809ae07b6c0ad569f79329c8fc7730350c7583c89399aed8b8b1e6b49e"
+    },
+    "catalogPhysicalReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/catalog08-B5-actual-physical-and-transport-01.independent-review.private.json",
+      "sha256": "c78afa4298f49a0851cf394c72a1143a9ac0161755fef7e0a2c0fea418fbe1d6"
+    },
+    "publicFrontendByteReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/B5-actual-full171-public-byte-verification-01.independent-review.private.json",
+      "sha256": "608b15daa0b66d26f488066442605194f53b8ba4362b22683877978f15cad118"
+    },
+    "migrationConnectionReceipt": {
+      "storage": "private",
+      "format": "json",
+      "path": "postdeployment-connection-run-b5-07/receipt.json",
+      "sha256": "114bee8326eef6fd3c9f5104d7e009f78c029e57136a9c21bb89682cd84c8d87"
+    },
+    "migrationConnectionSemanticReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/connection07-B5-postdeployment-semantic-01.independent-review.private.json",
+      "sha256": "40b93711ad5fcc2448b8020ab4686cfa717714b234310313bd8c3283b818d70f"
+    },
+    "migrationConnectionPhysicalReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/B5-connection07-actual-physical-and-transport-01.independent-review.private.json",
+      "sha256": "cab4a75c9b4da65100d3091ddd24d32cb0d05b4c3b0824998cbfc1332bc2ac01"
+    },
+    "scalingClaimScope": "Complete scalable target and scheduled-action configurations restored. No before/after scaling-policy comparison is claimed.",
+    "migrationConnectionReportSha256": "853951a621ff072bbec51c1dc3bc2d6ef00c9fa68cb18036d7c2f24adafa671f",
+    "scalingRestorationReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/B5-actual-postdeployment-connection-context-02.review.private.json",
+      "sha256": "7dab84353089845d4515975d68e0d785badd721a760e35b267028d1daf7e1269"
+    }
+  },
+  "historicalFailedConnectionInspections": [
+    {
+      "attempt": "05",
+      "receipt": {
+        "storage": "private",
+        "format": "json",
+        "path": "postdeployment-connection-run-b5-05/receipt.json",
+        "sha256": "4636e780d2e2bb394cf44ddcc09c5b167ced9e2a7c9e9a76e54def53178393f7"
+      },
+      "physicalReview": {
+        "storage": "private",
+        "format": "json",
+        "path": "independent-review/B5-connection05-actual-failed-physical-and-transport-01.independent-review.private.json",
+        "sha256": "537e891703ecb00d5fae2ed1b425f53cff4bdf79e59e18afe3bbe2d4d2267ea1"
+      },
+      "sqlObservations": 0,
+      "scope": "Failed inspector exited 1, owned task stopped and definition deregistered; no SQL absence or unique cause is established."
+    },
+    {
+      "attempt": "06",
+      "receipt": {
+        "storage": "private",
+        "format": "json",
+        "path": "postdeployment-connection-run-b5-06/receipt.json",
+        "sha256": "420d2d4b272567fd22b34ffafa67f513fc0994615dfb3f66b27e4e7bc3db8967"
+      },
+      "physicalReview": {
+        "storage": "private",
+        "format": "json",
+        "path": "independent-review/B5-connection06-actual-failed-physical-and-transport-01.independent-review.private.json",
+        "sha256": "9fbeca9b6cdf22ee38dae11a822319d77becbf10551b30a757ba6550ea416f23"
+      },
+      "sqlObservations": 0,
+      "scope": "Failed inspector reached targets/TARGET_CHANGED and exited 1; no particular rejected query component or earlier-attempt cause is established."
+    }
+  ],
+  "connectionInspectionCorrectionHistory": {
+    "localCaByteReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/A3-local-ca-byte-inspection-02.private.json",
+      "sha256": "82ac19ec174dacfedd601407100445964a2c8cf3cb8b5ae60cc1cb34df626b5c"
+    },
+    "finiteDiagnostic06Review": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/B5-connection-finite-diagnostic-bundle06-01.independent-review.private.json",
+      "sha256": "e01bfca469c7f0b44100b9b353b71c95f30b804f81b756ae67227f895628b1d6"
+    },
+    "finiteDiagnostic06Preparation": {
+      "storage": "private",
+      "format": "json",
+      "path": "connection-diagnostic06-local-fixture-02/execution.private.json",
+      "sha256": "caed8d3aa688657f8fbdf1e7f268cd56004714212e0203d733b599c48c057c49"
+    },
+    "tlsQuery07Review": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/B5-connection-verified-TLS-query-bundle07-01.independent-review.private.json",
+      "sha256": "aa4ecaaed75e70ede7ed27b18c9d3442f265b145d5acaceab45a5c9c579610a7"
+    },
+    "tlsQuery07Preparation": {
+      "storage": "private",
+      "format": "json",
+      "path": "connection-tls-query07-local-fixture-01/execution.private.json",
+      "sha256": "bc9cb849d73372c5c2f14d25ab822aa81de8146510e493a46599833bfcfe8da5"
+    },
+    "controls": {
+      "finiteDiagnosticCases": 12,
+      "tlsQueryCases": 17
+    },
+    "scope": "Local controls and retained corrections are preparation evidence. Only actual SQL07 and its separate reviews establish observed absence; no unique cause for failed05/06 is claimed."
+  },
+  "recordingScope": "Dated completion of deployed B5 with tested A3 artifacts. Later observed remote main96f is separate and receives no CI, artifact, acceptance or deployment transfer."
+}
