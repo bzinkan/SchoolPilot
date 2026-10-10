@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import SupervisionSessionDialog from "../components/SupervisionSessionDialog";
+import TemporaryRoomDialog from "../components/TemporaryRoomDialog";
 import SupervisionGroupEditor from "../components/SupervisionGroupEditor";
 import { refreshSupervisionSetup } from "../components/supervisionGroupQueries";
 import SupervisionGroupDirectory from "../components/SupervisionGroupDirectory";
@@ -45,6 +46,7 @@ function purposeLabel(purpose) {
   return ({ claim: "Claim", testing: "Testing", coverage: "Coverage", class: "Class", supervision: "Supervision" })[purpose] || "Supervision";
 }
 function endLabel(context) {
+  if (context?.contextType === "temporary_room") return "End room";
   return ({ claim: "Release all", testing: "End testing", coverage: "End coverage" })[context?.purpose] || "End supervision";
 }
 function scheduledStateLabel(state) {
@@ -126,6 +128,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
   const [historyContextId, setHistoryContextId] = useState("");
   const [boundaryTime, setBoundaryTime] = useState(() => Date.now());
   const [sessionDialog, setSessionDialog] = useState(null);
+  const [combineRoom, setCombineRoom] = useState(null);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [releaseDialog, setReleaseDialog] = useState(null);
   const [releaseReason, setReleaseReason] = useState("returned_to_class");
@@ -224,6 +227,11 @@ function CoverageWorkspace({ currentUser, timeZone }) {
     && Number(context.activeStudentCount) > 0 && Date.parse(context.startsAt) <= contextsQuery.dataUpdatedAt
     && Date.parse(context.endsAt) > Math.max(contextsQuery.dataUpdatedAt, boundaryTime)), [contextsQuery.data, contextsQuery.dataUpdatedAt, boundaryTime]);
   const refreshContexts = contextsQuery.refetch;
+  const ownRoom = contexts.find(context => context.assignedStaffId === currentUser?.id && context.contextType === "temporary_room");
+  const combineSources = contexts.filter(context => context.assignedStaffId === currentUser?.id && context.contextType !== "temporary_room");
+  const combineStudents = [...new Map(combineSources.flatMap(context => context.students || []).map(student => [student.studentId, student])).values()];
+  const canCombine = combineSources.length > 0 && !contextsQuery.isError
+    && combineSources.every(context => (context.students || []).length === context.activeStudentCount);
   useEffect(() => {
     if (!contexts.length) return;
     const deadline = Math.min(...contexts.map(context => Date.parse(context.endsAt)));
@@ -717,7 +725,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
           <div className="flex flex-wrap gap-2">
             {shell && <Button variant="outline" onClick={refreshCoverage}><RefreshCw className="h-4 w-4 mr-2" />Refresh</Button>}
             <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "available" }) })}>Available students</Button>
-            <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "claimed" }) })}>Claimed students</Button>
+            <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "claimed" }) })}>My room</Button>
           </div>
         </div>
         <Tabs value={visibleTab} onValueChange={setActiveTab}>
@@ -731,7 +739,10 @@ function CoverageWorkspace({ currentUser, timeZone }) {
           <TabsContent value="live" className="space-y-4 mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">{isAdmin ? "Current supervision across the school. Observe keeps the current supervisor in control." : "Your current supervision sessions. Open a session to see its student previews and controls."}</p>
-              <Button onClick={() => setSessionDialog({ action: "start" })}><Plus className="h-4 w-4 mr-2" />Start session</Button>
+              <div className="flex flex-wrap gap-2">
+                {combineSources.length > 0 && <Button variant="outline" disabled={!canCombine} onClick={() => setCombineRoom({ students: combineStudents, scope: setupScope })} data-testid="combine-my-supervision">Combine my supervision</Button>}
+                <Button onClick={() => setSessionDialog({ action: "start" })}><Plus className="h-4 w-4 mr-2" />Start session</Button>
+              </div>
             </div>
             {contextsQuery.isError && <p role="alert" className="rounded-md border p-3 text-sm text-destructive">Live supervision could not load. Use Refresh to try again.</p>}
             {observedQuery.isError && <p role="alert" className="text-sm text-destructive">Observe is unavailable. Refresh to load current viewing permissions.</p>}
@@ -742,7 +753,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
                 const scheduled = context.scheduleProfileApplicationId || context.scheduleProfileDate || context.scheduleProfileBlockId || context.scheduledConflictId;
                 return <div key={context.id} data-testid={`live-session-${context.id}`} className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
                   <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2"><h2 className="break-words font-medium">{context.name}</h2><Badge variant="secondary">{purposeLabel(context.purpose)}</Badge></div>
+                    <div className="flex flex-wrap items-center gap-2"><h2 className="break-words font-medium">{context.name}</h2><Badge variant="secondary">{context.contextType === "temporary_room" ? "My room" : purposeLabel(context.purpose)}</Badge></div>
                     <p className="text-sm text-muted-foreground">Supervisor: {context.assignedStaff?.displayName || "Staff"}</p>
                     <p className="text-sm text-muted-foreground">{context.activeStudentCount} student{context.activeStudentCount === 1 ? "" : "s"} · Ends {formatTime(context.endsAt, timeZone)}</p>
                   </div>
@@ -873,6 +884,12 @@ function CoverageWorkspace({ currentUser, timeZone }) {
       </AlertDialog>
 
       {sessionDialog && <SupervisionSessionDialog key={`${schoolId}:${currentUser.id}:${sessionDialog.group?.id || sessionDialog.context?.id || ""}`} open onOpenChange={open => { if (!open) setSessionDialog(null); }} {...sessionDialog} onSuccess={sessionComplete} />}
+      {combineRoom?.scope === setupScope && <TemporaryRoomDialog open schoolId={schoolId} students={combineRoom.students} room={ownRoom}
+        onOpenChange={open => { if (!open) setCombineRoom(null); }} onCommitted={result => {
+          setCombineRoom(null); invalidateCoverage();
+          if (result?.context) openDashboard(result.context);
+          else navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "claimed" }) });
+        }} />}
 
       <Dialog open={isAdmin && assignmentOpen} onOpenChange={open => open ? setAssignmentOpen(true) : closeAssignment()}>
         <DialogContent className="max-w-3xl">

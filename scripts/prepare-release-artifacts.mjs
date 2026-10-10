@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { archiveConfigDigest, inspectImage, runCommand, scanCounts, SCANNER, validateRegistryManifest, verifyPublishedImage } from './verify-legacy-deploy-image.mjs';
+import { archiveConfigDigest, inspectImage, runCommand, scanCounts, SCANNER, selectRegistryDigestImage, validateRegistryManifest, verifyPublishedImage } from './verify-legacy-deploy-image.mjs';
 import { anchor128Stages, inventoryFor, ecsRequestTags, FALLBACK, registrationEnvironmentProjection, validateCleanupCustody, validateSourceResponse, retainSuccessorRegistration } from './register-compatible-fallback-inactive.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -261,7 +261,7 @@ export async function publishImage(planRecord, authorizationRecord, { run = runC
     inspectImage(JSON.parse(await call('docker', ['--host', scan.dockerHost, 'image', 'inspect', scan.imageId])), scan.imageId, boundArtifactSource(plan.releaseBinding) ?? plan.input.source);
     const before = await Promise.all(plan.tags.map(tag => remoteTag(tag, call))); let publishedDigest;
     for (const image of before.filter(Boolean)) {
-      const proof = await validateRegistryManifest(async imageDigest => { const response = JSON.parse(await call('aws', aws(['ecr', 'batch-get-image', '--registry-id', REGISTRY.account, '--repository-name', REGISTRY.repository, '--image-ids', `imageDigest=${imageDigest}`]))); assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0]; }, image.imageId.imageDigest, scan.configDigest);
+      const proof = await validateRegistryManifest(async imageDigest => { const response = JSON.parse(await call('aws', aws(['ecr', 'batch-get-image', '--registry-id', REGISTRY.account, '--repository-name', REGISTRY.repository, '--image-ids', `imageDigest=${imageDigest}`]))); if (plan.schemaVersion === 5) return selectRegistryDigestImage(response, { registryId: REGISTRY.account, repository: REGISTRY.repository, digest: imageDigest }); assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0]; }, image.imageId.imageDigest, scan.configDigest);
       validatePublicationPlatform(plan.input.kind, proof, scan.configDigest, plan.releaseBinding);
       if (publishedDigest) equal(proof.digest, publishedDigest, 'SOURCE_TAG_CONFLICT'); publishedDigest = proof.digest;
     }
@@ -319,7 +319,7 @@ async function registerUnusedAnchor(planRecord,authorizationRecord,{run,now,veri
   try {
     await identity(run, call); await currentMain(plan.input, call); await verifyScan(plan.input, plan.releaseBinding);
     const proof = pinned(plan.registryProof), publication = pinned(plan.input.publication); equal([publication.status, publication.registryDigest, publication.registryProof], ['published', plan.registryDigest, plan.registryProof], 'PUBLICATION_CHANGED');
-    const remote = await verifyRegistry(async imageDigest => { const response = JSON.parse(await call('aws', aws(['ecr', 'batch-get-image', '--registry-id', REGISTRY.account, '--repository-name', REGISTRY.repository, '--image-ids', `imageDigest=${imageDigest}`]))); assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0]; }, plan.registryDigest, proof.configDigest); equal(remote, { digest: proof.digest, platformDigest: proof.platformDigest, configDigest: proof.configDigest }, 'REGISTRY_CHANGED');
+    const remote = await verifyRegistry(async imageDigest => { const response = JSON.parse(await call('aws', aws(['ecr', 'batch-get-image', '--registry-id', REGISTRY.account, '--repository-name', REGISTRY.repository, '--image-ids', `imageDigest=${imageDigest}`]))); if (plan.schemaVersion === 5) return selectRegistryDigestImage(response, { registryId: REGISTRY.account, repository: REGISTRY.repository, digest: imageDigest }); assert.ok(response.images?.length === 1 && (response.failures ?? []).length === 0, 'REGISTRY_IMAGE_UNAVAILABLE'); return response.images[0]; }, plan.registryDigest, proof.configDigest); equal(remote, { digest: proof.digest, platformDigest: proof.platformDigest, configDigest: proof.configDigest }, 'REGISTRY_CHANGED');
     for (const tag of [plan.input.source, plan.input.source.slice(0, 12)]) equal((await remoteTag(tag, call))?.imageId.imageDigest, plan.registryDigest, 'SOURCE_TAG_CONFLICT');
     const before = JSON.parse(await call('aws', serviceArgs)); equal(hash(before.services), plan.liveServicesSha256, 'LIVE_SERVICES_DRIFT');
     const sources = {};

@@ -767,12 +767,14 @@ test('A to B switches replace the complete realtime routing context before queue
     'utf8',
   );
   const routingLayoutEffect = dashboard.match(
-    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveActivityIdRef\.current = effectiveActivityId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority\]\);/,
+    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveActivityIdRef\.current = effectiveActivityId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority, contextAuthorityRevision\]\);/,
   );
   assert.ok(
     routingLayoutEffect,
     'session, query key, school, and queued events must switch atomically in one layout effect',
   );
+  assert.match(routingLayoutEffect[0], /effectiveAuthorityRef\.current = effectiveAuthority;\s*contextAuthorityRevisionRef\.current = contextAuthorityRevision;/,
+    'the supervision parent and its tenure must switch together before socket delivery');
   assert.doesNotMatch(
     dashboard,
     /useEffect\(\(\) => \{\s*aggregatedStudentsQueryKeyRef\.current/,
@@ -1188,8 +1190,8 @@ test('the Messages roster and the student grid share one last-name order, and ro
   assert.match(dashboard, /import \{ compareStudentsByLastName \} from '\.\.\/lib\/studentOrder';/);
   assert.doesNotMatch(dashboard, /getLastName|localeCompare\(\w+\(b\.studentName\)\)/, 'no second copy of the student order');
   assert.match(
-    dashboard,
-    /const filteredClassStudents = sessionFilteredStudents\s+\.filter\([\s\S]{0,300}?\}\)\s+\.sort\(compareStudentsByLastName\);/,
+    dashboard.slice(dashboard.indexOf('const filteredClassStudents ='), dashboard.indexOf('const filteredAvailableStudents =')),
+    /const filteredClassStudents = sessionFilteredStudents\s+\.filter\([\s\S]*?\}\)\s+\.sort\(compareStudentsByLastName\);/,
     'the class grid sorts with the shared comparator',
   );
   assert.match(roster, /import \{ compareStudentsByLastName \} from '\.\/studentOrder\.js';/);
@@ -1245,13 +1247,15 @@ test('a selection cleared automatically is refused, never widened, and every cla
     between('const resolveActiveCommandTarget = (', 'const getActiveCommandStudents'),
     /selectionLoss: commandType && commandAudienceIsServerDerived\(commandType, commandPayload\)\s*\? null\s*: activeSelectionLoss,/,
   );
-  // A lost selection belongs to one school and viewer, schedule boundary, view
+  // A lost selection belongs to one school and viewer, workspace boundary, view
   // and (Class view only) class authority revision: buildSelectionScopeKey
-  // leaves the class session out of the Claimed view's scope.
+  // leaves the class session out of the legacy Claimed view's scope. A room
+  // keeps its own boundary across normal bells; ordinary Class keeps the schedule.
+  assert.match(dashboard, /const workspaceTransitionKey = roomWorkspace \? activityTransitionKey\(roomActivity\) : scheduledTransitionKey;/);
   assert.match(
     dashboard,
-    /const selectionScopeKey = buildSelectionScopeKey\(\{\s*readerKey: classReaderKey, transitionKey: scheduledTransitionKey, view: studentView, authorityKey: effectiveAuthorityKey,\s*\}\);/,
-    'a lost selection belongs to one school, schedule boundary, view and Class-view authority revision',
+    /const selectionScopeKey = buildSelectionScopeKey\(\{\s*readerKey: classReaderKey, transitionKey: workspaceTransitionKey, view: studentView, authorityKey: effectiveAuthorityKey,\s*\}\);/,
+    'a lost selection belongs to one school, workspace boundary, view and exact authority revision',
   );
   assert.match(dashboard, /const activeSelectionLoss = selectionLoss\?\.scopeKey === selectionScopeKey \? selectionLoss : null;/);
 
@@ -1324,7 +1328,8 @@ test('a selection cleared automatically is refused, never widened, and every cla
   // clears the other ticks (which would leave every claimed student targeted).
   assert.match(between('const deselectStudents = (studentIds = []) => {', '\n  };'), /setSelectedStudentIds\(\(prev\) => \{[\s\S]*!removed\.has\(studentId\)/);
   assert.doesNotMatch(between('const deselectStudents = (studentIds = []) => {', '\n  };'), /setSelectionLoss/);
-  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /onSuccess: \(_data, variables\) => \{ if \(variables\.scope === supervisionScopeRef\.current\) \{ deselectStudents\(variables\.students\.map\(\(student\) => student\.studentId\)\);/);
+  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /onSuccess: \(_data, variables\) => \{ if \(releaseScopeCurrent\(variables\)\)/);
+  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /const releasedIds = new Set\(variables\.students\.map\(\(student\) => student\.studentId\)\);[\s\S]*deselectStudents\(\[\.\.\.releasedIds\]\);/);
   assert.doesNotMatch(between('const releaseClaimMutation = useMutation', 'const endTestingMutation'), /clearSelection\(\)/);
   assert.match(between('const returnToClassMutation = useMutation', 'onError'), /deselectStudents\(variables\?\.studentIds\);/);
 

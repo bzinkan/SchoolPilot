@@ -33,11 +33,12 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
   const [targetId, setTargetId] = useState('');
   const [destinationId, setDestinationId] = useState('');
   const [staffId, setStaffId] = useState(actorId);
-  const [kind, setKind] = useState('other');
-  const [name, setName] = useState(group?.name || 'Supervision');
+  const [kind, setKind] = useState(action === 'claim_room' ? 'temporary_room' : 'other');
+  const [name, setName] = useState(context?.name || group?.name || (action === 'claim_room' ? 'My room' : 'Supervision'));
   const [end, setEnd] = useState(context?.endsAt ? formatInTimeZone(context.endsAt, timezone, "yyyy-MM-dd'T'HH:mm") : '');
   const [selection, setSelection] = useState(() => initialStudents || group?.id ? null : new Set());
   const [search, setSearch] = useState('');
+  const [grade, setGrade] = useState('all');
   const [review, setReview] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -58,11 +59,15 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
     queryFn: ({ signal }) => apiRequest('GET', '/coverage/reroute-targets', undefined, { signal, headers: { 'X-School-Id': schoolId } }),
     enabled: action === 'send', retry: false,
   });
-  const target = targets.data?.targets?.find(row => row.id === targetId);
+  const sendTargets = [...(targets.data?.roomTargets || []), ...(targets.data?.targets || [])];
+  const target = sendTargets.find(row => row.id === targetId);
+  const roomTarget = target?.contextType === 'temporary_room' || target?.destinationKind === 'temporary_room' || target?.id?.startsWith('room:');
   const existing = target?.activeContexts?.find(row => row.id === destinationId);
   const rows = initialStudents || options.data?.students || [];
   const ids = selection || new Set(rows.map(studentId));
   const chosen = rows.filter(row => ids.has(studentId(row)));
+  const grades = [...new Set(rows.map(row => String(row.gradeLevel || '')).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const activeRoom = action === 'claim_room' ? context || options.data?.room : null;
   const endValue = end || (options.data?.defaultEndsAt ? formatInTimeZone(options.data.defaultEndsAt, timezone, "yyyy-MM-dd'T'HH:mm") : '');
   const formatTime = value => value ? new Intl.DateTimeFormat(undefined, { timeZone: timezone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : 'Unavailable';
   const invalidate = () => Promise.all(roots.map(root => queryClient.invalidateQueries({ queryKey: [root] })));
@@ -72,11 +77,15 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
     setBusy(true); setError('');
     try {
       const requestedIds = onlyIds || chosen.map(studentId);
-      const request = action === 'end_time' ? { action, destinationContextId: context.id, endsAt: fromZonedTime(endValue, timezone).toISOString() } : {
+      const request = action === 'claim_room' ? {
+        action, studentIds: requestedIds, contextType: 'temporary_room',
+        ...(activeRoom ? { destinationContextId: activeRoom.id } : { name: name.trim(), endsAt: fromZonedTime(endValue, timezone).toISOString() }),
+      } : action === 'end_time' ? { action, destinationContextId: context.id, endsAt: fromZonedTime(endValue, timezone).toISOString() } : {
         action, studentIds: requestedIds,
         ...(action === 'send' ? { supervisionGroupId: target?.supervisionGroupId, assignedStaffId: target?.assignedStaffId,
           ...(destinationId ? { destinationContextId: destinationId } : {}) } : { ...(groupId ? { supervisionGroupId: groupId } : {}), assignedStaffId: staffId }),
-        ...(!destinationId ? { contextType: kind, name: action === 'send' ? target?.name : name.trim(), endsAt: fromZonedTime(endValue, timezone).toISOString() } : {}),
+        ...(roomTarget ? { contextType: 'temporary_room', destinationKind: 'temporary_room' } : {}),
+        ...(!destinationId ? { contextType: roomTarget ? 'temporary_room' : kind, name: action === 'send' ? target?.name : name.trim(), endsAt: fromZonedTime(endValue, timezone).toISOString() } : {}),
       };
       const data = await apiRequest('POST', '/coverage/preview', request, { headers: { 'X-School-Id': schoolId } });
       if (!alive.current) return;
@@ -89,7 +98,7 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
     if (!review || busy || uncertain) return;
     setBusy(true); setError('');
     try {
-      const path = action === 'start' ? '/coverage/contexts' : action === 'send' ? '/coverage/send' : `/coverage/contexts/${encodeURIComponent(context.id)}`;
+      const path = action === 'claim_room' ? '/coverage/claim' : action === 'start' ? '/coverage/contexts' : action === 'send' ? '/coverage/send' : `/coverage/contexts/${encodeURIComponent(context.id)}`;
       const data = await apiRequest(action === 'end_time' ? 'PATCH' : 'POST', path, { ...review.request, reviewToken: review.reviewToken }, { headers: { 'X-School-Id': schoolId } });
       await invalidate();
       if (alive.current) setResult(data);
@@ -105,23 +114,24 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
   const reconcile = async () => {
     setBusy(true); setError('');
     try {
+      const activity = action === 'claim_room' ? await apiRequest('GET', '/classpilot/dashboard-activity', undefined, { headers: { 'X-School-Id': schoolId } }) : null;
       await apiRequest('GET', '/coverage/contexts', undefined, { headers: { 'X-School-Id': schoolId } });
       await invalidate();
       if (!alive.current) return;
       onOpenChange(false);
-      onSuccess?.({ uncertain: true });
+      onSuccess?.({ uncertain: true, context: activity?.schoolId === schoolId && activity?.viewerId === actorId ? activity.room : undefined });
     } catch (err) { if (alive.current) setError(errorMessage(err)); }
     finally { if (alive.current) setBusy(false); }
   };
   const excluded = review?.students?.filter(row => !row.eligible) || [];
   const included = review?.students?.filter(row => row.eligible) || [];
-  const label = action === 'send' ? 'Send students' : action === 'end_time' ? 'Change end time' : review?.destination?.purpose === 'testing' || kind === 'state_testing' ? 'Start testing' : 'Start supervision';
+  const label = action === 'claim_room' ? activeRoom ? 'Add to my room' : 'Claim into my room' : action === 'send' ? 'Send students' : action === 'end_time' ? 'Change end time' : review?.destination?.purpose === 'testing' || kind === 'state_testing' ? 'Start testing' : 'Start supervision';
   const done = () => { onOpenChange(false); onSuccess?.(result); };
   return <Dialog open onOpenChange={value => { if (!busy && !value) void close(); }}>
     <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto" data-testid="supervision-session-dialog">
       <DialogHeader>
-        <DialogTitle>{result ? 'Supervision updated' : action === 'end_time' ? 'Change end time' : action === 'send' ? 'Send students' : 'Start a session'}</DialogTitle>
-        <DialogDescription>{result ? 'Review the outcome for each selected student.' : action === 'end_time' ? 'This change affects everyone currently in this session.' : 'Choose the students, supervisor, and end time. Saved group membership stays unchanged.'}</DialogDescription>
+        <DialogTitle>{result ? 'Supervision updated' : action === 'claim_room' ? 'Add students to my room' : action === 'end_time' ? 'Change end time' : action === 'send' ? 'Send students' : 'Start a session'}</DialogTitle>
+        <DialogDescription>{result ? 'Review the outcome for each selected student.' : action === 'claim_room' ? 'All selected grades share one room. Students stay with you until its end time or an explicit handoff.' : action === 'end_time' ? 'This change affects everyone currently in this session.' : 'Choose the students, supervisor, and end time. Saved group membership stays unchanged.'}</DialogDescription>
       </DialogHeader>
       {error && <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
       {uncertain ? <div className="space-y-3 rounded-md border p-4" role="status"><p>The outcome could not be confirmed. Refresh supervision to see the current assignments before starting another transfer.</p><Button onClick={reconcile} disabled={busy}>Refresh supervision</Button></div>
@@ -133,16 +143,18 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
         {excluded.length > 0 && <div className="space-y-2"><p className="text-sm">{excluded.length} selected student{excluded.length === 1 ? ' is' : 's are'} unavailable. No assignments have changed.</p><Button variant="outline" disabled={busy || included.length === 0} onClick={() => getReview(included.map(row => row.studentId))}>Continue with {included.length} available student{included.length === 1 ? '' : 's'}</Button></div>}
       </div> : <fieldset disabled={busy} className="space-y-4">
         {(options.isError || targets.isError) && <p role="alert" className="text-sm text-destructive">Session options could not load. <button className="underline" onClick={() => { void options.refetch(); if (action === 'send') void targets.refetch(); }}>Retry</button></p>}
-        {action === 'send' ? <div className="grid gap-2"><Label htmlFor="supervision-target">Send to</Label><select id="supervision-target" className={selectClass} value={targetId} onChange={event => edit(() => { setTargetId(event.target.value); setDestinationId(''); })}><option value="">Choose a group and authorized supervisor</option>{targets.data?.targets?.map(row => <option key={row.id} value={row.id}>{row.name} · {row.assignedStaff?.displayName || 'Staff'}</option>)}</select>{target && <><Label htmlFor="supervision-destination">Session</Label><select id="supervision-destination" className={selectClass} value={destinationId} onChange={event => edit(() => setDestinationId(event.target.value))}><option value="">Create a new session</option>{target.activeContexts?.map(row => <option key={row.id} value={row.id}>{row.name} ({row.purpose === 'testing' ? 'Testing' : 'Supervision'}) · ends {formatTime(row.endsAt)}</option>)}</select></>}</div> : action === 'start' && <div className="grid gap-2"><Label htmlFor="supervision-group">Saved group</Label><select id="supervision-group" className={selectClass} value={groupId} onChange={event => edit(() => { setGroupId(event.target.value); setSelection(event.target.value ? null : new Set()); setName(options.data?.groups?.find(row => row.id === event.target.value)?.name || 'Supervision'); })}><option value="">Choose students directly</option>{options.data?.groups?.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></div>}
-        {action !== 'end_time' && !destinationId && <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="supervision-purpose">Purpose</Label><select id="supervision-purpose" className={selectClass} value={kind} onChange={event => edit(() => setKind(event.target.value))}><option value="other">Supervision</option><option value="state_testing">Testing</option></select></div>{action === 'start' && <div className="grid gap-2"><Label htmlFor="supervision-name">Session name</Label><Input id="supervision-name" value={name} maxLength={120} onChange={event => edit(() => setName(event.target.value))} /></div>}</div>}
+        {action === 'send' ? <div className="grid gap-2"><Label htmlFor="supervision-target">Send to</Label><select id="supervision-target" className={selectClass} value={targetId} onChange={event => edit(() => { const next = sendTargets.find(row => row.id === event.target.value); setTargetId(event.target.value); setDestinationId(next?.id?.startsWith('room:') ? next.activeContexts?.[0]?.id || '' : ''); })}><option value="">Choose a room or authorized group supervisor</option>{sendTargets.map(row => <option key={row.id} value={row.id}>{row.name} · {row.assignedStaff?.displayName || 'Staff'}</option>)}</select>{target && !roomTarget && <><Label htmlFor="supervision-destination">Session</Label><select id="supervision-destination" className={selectClass} value={destinationId} onChange={event => edit(() => setDestinationId(event.target.value))}><option value="">Create a new session</option>{target.activeContexts?.map(row => <option key={row.id} value={row.id}>{row.name} ({row.purpose === 'testing' ? 'Testing' : 'Supervision'}) · ends {formatTime(row.endsAt)}</option>)}</select></>}</div> : action === 'start' && <div className="grid gap-2"><Label htmlFor="supervision-group">Saved group</Label><select id="supervision-group" className={selectClass} value={groupId} onChange={event => edit(() => { setGroupId(event.target.value); setSelection(event.target.value ? null : new Set()); setName(options.data?.groups?.find(row => row.id === event.target.value)?.name || 'Supervision'); })}><option value="">Choose students directly</option>{options.data?.groups?.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></div>}
+        {action !== 'end_time' && action !== 'claim_room' && !roomTarget && !destinationId && <div className="grid gap-4 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="supervision-purpose">Purpose</Label><select id="supervision-purpose" className={selectClass} value={kind} onChange={event => edit(() => setKind(event.target.value))}><option value="other">Supervision</option><option value="state_testing">Testing</option></select></div>{action === 'start' && <div className="grid gap-2"><Label htmlFor="supervision-name">Session name</Label><Input id="supervision-name" value={name} maxLength={120} onChange={event => edit(() => setName(event.target.value))} /></div>}</div>}
+        {action === 'claim_room' && !activeRoom && <div className="grid gap-2"><Label htmlFor="room-name">Room name</Label><Input id="room-name" value={name} maxLength={120} onChange={event => edit(() => setName(event.target.value))} /></div>}
         {action === 'start' && <div className="grid gap-2"><Label htmlFor="supervision-staff">Supervisor</Label>{isAdmin ? <select id="supervision-staff" className={selectClass} value={staffId} onChange={event => edit(() => setStaffId(event.target.value))}>{options.data?.staff?.map(row => <option key={row.id} value={row.id}>{row.displayName}</option>)}</select> : <p className="text-sm">{currentUser.displayName}</p>}</div>}
-        {existing ? <p className="rounded-md border bg-muted/20 p-3 text-sm">Ends {formatTime(existing.endsAt)} ({timezone}). Adding students keeps this deadline.</p> : <div className="grid gap-2"><Label htmlFor="supervision-end">End time ({timezone})</Label><Input id="supervision-end" type="datetime-local" value={endValue} onChange={event => edit(() => setEnd(event.target.value))} /></div>}
+        {existing || activeRoom ? <p className="rounded-md border bg-muted/20 p-3 text-sm">Ends {formatTime((existing || activeRoom).endsAt)} ({timezone}). Adding students keeps this deadline.</p> : <div className="grid gap-2"><Label htmlFor="supervision-end">End time ({timezone})</Label><Input id="supervision-end" type="datetime-local" value={endValue} onChange={event => edit(() => setEnd(event.target.value))} /></div>}
         {action !== 'end_time' && <fieldset className="space-y-2"><legend className="text-sm font-medium">Students ({chosen.length} selected)</legend><Input aria-label="Search session students" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search students" />
-          <div className="max-h-56 overflow-y-auto rounded-md border">{rows.filter(row => studentName(row).toLowerCase().includes(search.toLowerCase())).map(row => <label key={studentId(row)} className="flex items-center gap-3 border-b p-3 text-sm last:border-b-0"><input type="checkbox" checked={ids.has(studentId(row))} onChange={event => edit(() => { const next = new Set(ids); if (event.target.checked) next.add(studentId(row)); else next.delete(studentId(row)); setSelection(next); })} /><span>{studentName(row)}</span></label>)}{rows.length === 0 && <p className="p-3 text-sm text-muted-foreground">{options.isPending ? 'Loading students…' : 'No students available in this scope.'}</p>}</div>
+          {grades.length > 1 && <select aria-label="Filter session students by grade" className={selectClass} value={grade} onChange={event => setGrade(event.target.value)}><option value="all">All grades</option>{grades.map(value => <option key={value} value={value}>Grade {value}</option>)}</select>}
+          <div className="max-h-56 overflow-y-auto rounded-md border">{rows.filter(row => (grade === 'all' || String(row.gradeLevel || '') === grade) && studentName(row).toLowerCase().includes(search.toLowerCase())).map(row => <label key={studentId(row)} className="flex items-center gap-3 border-b p-3 text-sm last:border-b-0"><input type="checkbox" checked={ids.has(studentId(row))} onChange={event => edit(() => { const next = new Set(ids); if (event.target.checked) next.add(studentId(row)); else next.delete(studentId(row)); setSelection(next); })} /><span>{studentName(row)}{row.gradeLevel && <span className="ml-2 text-muted-foreground">Grade {row.gradeLevel}</span>}</span></label>)}{rows.length === 0 && <p className="p-3 text-sm text-muted-foreground">{options.isPending ? 'Loading students…' : 'No students available in this scope.'}</p>}</div>
         </fieldset>}
       </fieldset>}
       <DialogFooter className="gap-2">
-        {result ? <Button onClick={done}>Done</Button> : <><Button variant="outline" onClick={() => review && !uncertain ? setReview(null) : close()} disabled={busy}>{review && !uncertain ? 'Back' : 'Cancel'}</Button>{!uncertain && (review ? <Button disabled={busy || excluded.length > 0 || (action !== 'end_time' && included.length === 0)} onClick={commit} data-testid="confirm-supervision-review">{busy ? 'Saving…' : label}</Button> : <Button onClick={() => getReview()} disabled={busy || action !== 'end_time' && (options.isPending || options.isError || chosen.length === 0) || action === 'send' && !target || (!destinationId && !endValue) || action === 'start' && !name.trim()} data-testid="review-supervision">{busy ? 'Checking…' : 'Review'}</Button>)}</>}
+        {result ? <Button onClick={done}>Done</Button> : <><Button variant="outline" onClick={() => review && !uncertain ? setReview(null) : close()} disabled={busy}>{review && !uncertain ? 'Back' : 'Cancel'}</Button>{!uncertain && (review ? <Button disabled={busy || excluded.length > 0 || (action !== 'end_time' && included.length === 0)} onClick={commit} data-testid="confirm-supervision-review">{busy ? 'Saving…' : label}</Button> : <Button onClick={() => getReview()} disabled={busy || action !== 'end_time' && (options.isPending || options.isError || chosen.length === 0) || action === 'send' && !target || (!destinationId && !activeRoom && !endValue) || (action === 'start' || action === 'claim_room') && !name.trim()} data-testid="review-supervision">{busy ? 'Checking…' : 'Review'}</Button>)}</>}
       </DialogFooter>
     </DialogContent>
   </Dialog>;

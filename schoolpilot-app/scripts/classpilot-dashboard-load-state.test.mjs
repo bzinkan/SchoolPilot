@@ -3239,7 +3239,7 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
   await assertPickupView(page, 'claimed');
   await page.clock.fastForward(2_000);
   await page.getByText('Supervision started; students could not load.', { exact: false }).waitFor();
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
   assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
@@ -3254,57 +3254,74 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
   assert.deepEqual(harness.pageErrors, []);
 });
 
+async function installRoomPreview(page, rows, eligible = () => true, defaultEndsAt = '2026-09-14T16:00:00Z') {
+  await page.route('**/api/coverage/session-options*', route => route.fulfill({ json: {
+    students: rows, groups: [], staff: [], defaultEndsAt,
+  } }));
+  await page.route('**/api/coverage/preview', async route => {
+    const request = { ...route.request().postDataJSON(), action: 'claim_room', contextType: 'temporary_room', name: 'My room' };
+    await route.fulfill({ json: { request, reviewToken: 'synthetic-room-review', destination: { name: 'My room', purpose: 'claim',
+      assignedStaffId: ADMIN_ID, supervisorName: 'Alex Admin', endsAt: request.endsAt }, students: request.studentIds.map(studentId => ({
+        studentId, name: rows.find(row => row.studentId === studentId)?.studentName || 'Student', eligible: eligible(studentId),
+        status: eligible(studentId) ? 'ready' : 'unavailable', reason: eligible(studentId) ? null : 'Another supervisor controls this student.',
+      })) } });
+  });
+}
+
 for (const userRole of ['teacher', 'admin']) {
-test(`Dashboard ${userRole} claims keep partial successes visible and automatic return remains enabled`, { timeout: 75_000 }, async context => {
+test(`Dashboard ${userRole} claims review unavailable students and commit one exact room cohort`, { timeout: 75_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
   const available = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((id, index) => ({
-    ...testingStudent(id, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned',
+    ...testingStudent(id, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned', gradeLevel: String(index + 3),
     matchingGroups: [{ id: `claim-group-${index}`, name: `Claim group ${index}` }],
   }));
+  const room = scheduledTestingActivity({ id: OWN_TESTING_CONTEXT_ID, name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '1', studentCount: 1,
+    startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const aggregate = aggregateController();
   const claimRequests = [];
-  const harness = await configureDashboard(page, {
-    aggregate: aggregateController(), userRole, availableStudents: available,
-    coverageSummary: ownSupervisionSummary([]),
+  const harness = await configureDashboard(page, { aggregate, userRole, availableStudents: available, coverageSummary: ownSupervisionSummary([]),
     claimResponse: async request => {
-      const body = request.postDataJSON();
-      claimRequests.push({ body, schoolId: request.headers()['x-school-id'] });
-      if (body.studentIds.includes(SIGNED_OUT_STUDENT_ID)) {
-        return { status: 409, body: { error: 'Another teacher already claimed this student.' } };
-      }
-      harness.setCoverageSummary(ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Claim group 0' }]));
-      harness.setClaimedStudents([testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)]);
-      return { context: { id: OWN_TESTING_CONTEXT_ID, name: 'Claim group 0', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' } };
+      const body = request.postDataJSON(); claimRequests.push({ body, schoolId: request.headers()['x-school-id'] });
+      harness.setDashboardActivity({ ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room });
+      aggregate.setScopedResponse(success([available[0]]));
+      return { context: { ...room, assignedStaffId: ADMIN_ID } };
     },
   });
+  await installRoomPreview(page, available, id => id !== SIGNED_OUT_STUDENT_ID);
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
-  assert.equal(await page.getByTestId('select-admin-observe').count(), userRole === 'admin' ? 1 : 0,
-    'Observe is available only to administrators, while both roles can claim');
   await page.getByTestId('button-claim-all-students').click();
+  await page.getByTestId('supervision-session-dialog').waitFor();
+  assert.equal(claimRequests.length, 0, 'Selecting students opens a review without claiming');
+  await page.getByTestId('review-supervision').click();
+  await page.getByRole('button', { name: 'Continue with 1 available student', exact: true }).click();
+  await page.getByTestId('confirm-supervision-review').click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
   await assertPickupView(page, 'claimed');
+  await page.getByTestId('temporary-room-controls').waitFor();
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
-  await page.getByTestId('assigned-supervision-notice').waitFor();
   assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0);
-  assert.equal(claimRequests.length, 2);
-  assert(claimRequests.every(request => request.schoolId === SCHOOL_ID));
-  assert(claimRequests.every(request => !request.body.supervisionGroupId && !request.body.coverageGroupId), 'Saved permission groups never become claim destinations');
+  assert.equal(claimRequests.length, 1);
+  assert.equal(claimRequests[0].schoolId, SCHOOL_ID);
+  assert.deepEqual(claimRequests[0].body.studentIds, [STUDENT_ID]);
+  assert.equal(claimRequests[0].body.reviewToken, 'synthetic-room-review');
+  assert.equal(claimRequests[0].body.scheduledConflictId, undefined);
+  assert.equal(claimRequests[0].body.supervisionGroupId, undefined);
   await harness.authenticateWebSocket();
-  harness.setCoverageSummary(ownSupervisionSummary([]));
-  harness.setClaimedStudents([]);
-  harness.setActiveSession(teachingSession());
-  harness.setAllSessions([teachingSession()]);
-  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  harness.setDashboardActivity(scheduledActivityResponse(scheduledClassActivity({ startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' }), { serverTime: TESTING_TIME.toISOString() }));
+  await harness.sendWebSocketMessage({ type: 'dashboard-activity-updated', schoolId: SCHOOL_ID });
   await assertPickupView(page, 'class');
-  await page.getByTestId(userRole === 'admin' ? 'button-admin-end-session' : 'badge-active-session').waitFor();
-  await page.clock.fastForward(10_100);
-  assert.equal(claimRequests.length, 2, 'Settling a partial claim never retries either mutation automatically');
+  await page.getByTestId('temporary-room-controls').waitFor({ state: 'hidden' });
+  assert.equal(claimRequests.length, 1, 'Room end never repeats a claim mutation');
   assert.deepEqual(harness.pageErrors, []);
 });
 }
 
-test('a delayed own claim cannot switch the Dashboard after the teacher changes schools', { timeout: 75_000 }, async context => {
+for (const identityChange of ['school', 'role']) {
+test(`a delayed reviewed room claim cannot switch the Dashboard after a ${identityChange} change`, { timeout: 75_000 }, async context => {
   const entry = `
     import React from 'react'; import {createRoot} from 'react-dom/client';
     import {MemoryRouter} from 'react-router-dom';
@@ -3314,7 +3331,7 @@ test('a delayed own claim cannot switch the Dashboard after the teacher changes 
     import {ThemeProvider} from '/src/contexts/ThemeContext.jsx';
     import {queryClient} from '/src/lib/queryClient.js';
     import Dashboard from '/src/products/classpilot/pages/Dashboard.jsx'; import '/src/index.css';
-    function Bridge(){const auth=useAuth();React.useEffect(()=>{window.__switchClaimSchool=auth.switchSchool;},[auth.switchSchool]);return React.createElement('div',{'data-testid':'claim-school'},auth.activeSchoolId);}
+    function Bridge(){const auth=useAuth();React.useEffect(()=>{window.__switchClaimSchool=auth.switchSchool;window.__refreshClaimUser=auth.refetchUser;},[auth.switchSchool,auth.refetchUser]);return React.createElement('div',{'data-testid':'claim-school'},auth.activeSchoolId);}
     createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(LicenseProvider,null,React.createElement(ThemeProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(Bridge),React.createElement(Dashboard))))))));
   `;
   const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: [{
@@ -3335,13 +3352,15 @@ test('a delayed own claim cannot switch the Dashboard after the teacher changes 
   const claimGate = new Promise(resolve => { completeClaim = resolve; });
   context.after(() => completeClaim());
   let claimSchool = null;
+  let claimRole = 'teacher';
   const harness = await configureDashboard(page, {
     aggregate: aggregateController(), userRole: 'teacher',
     authentication: request => {
       const schoolId = request.headers()['x-school-id'] || SCHOOL_ID;
       return { ...authResponse(), activeSchoolId: schoolId,
-        memberships: [SCHOOL_ID, SECOND_SCHOOL_ID].map(id => ({ schoolId: id, role: 'teacher', schoolName: `School ${id.slice(0, 4)}`, schoolTimezone: 'America/New_York' })) };
+        memberships: [SCHOOL_ID, SECOND_SCHOOL_ID].map(id => ({ schoolId: id, role: claimRole, schoolName: `School ${id.slice(0, 4)}`, schoolTimezone: 'America/New_York' })) };
     },
+    expectedWebsocketRole: () => claimRole === 'teacher' ? 'teacher' : 'school_admin',
     availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }],
     coverageSummary: request => ({ ...ownSupervisionSummary([]), schoolId: request.headers()['x-school-id'] || SCHOOL_ID }),
     claimResponse: async request => {
@@ -3350,23 +3369,35 @@ test('a delayed own claim cannot switch the Dashboard after the teacher changes 
       return { context: { id: OWN_TESTING_CONTEXT_ID, name: 'Old school claim', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' } };
     },
   });
+  await installRoomPreview(page, [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }]);
   await page.goto(`${baseURL}/__delayed-claim-school`);
   await page.getByTestId('button-view-available-students').click();
   await page.getByTestId('button-claim-all-students').click();
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('confirm-supervision-review').click();
   await waitUntil(() => claimSchool === SCHOOL_ID, 'The original claim is submitted under school A');
-  await page.evaluate(schoolId => window.__switchClaimSchool(schoolId), SECOND_SCHOOL_ID);
-  await page.waitForFunction(id => document.querySelector('[data-testid="claim-school"]')?.textContent === id, SECOND_SCHOOL_ID);
-  await assertPickupView(page, 'class');
+  if (identityChange === 'school') {
+    await page.evaluate(schoolId => window.__switchClaimSchool(schoolId), SECOND_SCHOOL_ID);
+    await page.waitForFunction(id => document.querySelector('[data-testid="claim-school"]')?.textContent === id, SECOND_SCHOOL_ID);
+  } else {
+    claimRole = 'admin';
+    await page.evaluate(() => window.__refreshClaimUser());
+    await page.getByTestId('select-admin-observe').waitFor();
+  }
+  await page.getByTestId('supervision-session-dialog').waitFor({ state: 'hidden' });
+  const expectedView = identityChange === 'school' ? 'class' : 'available';
+  await assertPickupView(page, expectedView);
   const response = page.waitForResponse(reply => new URL(reply.url()).pathname === '/api/coverage/claim');
   completeClaim();
   await response;
   await page.clock.fastForward(500);
-  await assertPickupView(page, 'class');
+  await assertPickupView(page, expectedView);
   assert.equal(await page.getByTestId('assigned-supervision-notice').count(), 0);
   assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0);
   assert.equal(harness.coverageMutationRequests.filter(request => request.pathname.endsWith('/claim')).length, 1);
   assert.deepEqual(harness.pageErrors, []);
 });
+}
 
 function ownTestingSummary(contextIds = [], { schoolId = SCHOOL_ID, viewerId = ADMIN_ID } = {}) {
   return {
@@ -5122,7 +5153,7 @@ test('supervision badge read failures are unknown and Retry keeps the selected C
   await assertPickupView(page, 'class');
   await waitUntil(() => harness.coverageSummaryRequests.length > 0, 'Summary must be requested');
   await page.clock.fastForward(2_000);
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
   assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
@@ -5138,7 +5169,7 @@ test('supervision badge read failures are unknown and Retry keeps the selected C
   unavailable = true;
   await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
   await page.clock.fastForward(2_000);
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'A cached positive count is visibly uncertain after a failed refresh');
   count = 0;
@@ -5146,7 +5177,7 @@ test('supervision badge read failures are unknown and Retry keeps the selected C
   await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
   await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
   await assertPickupView(page, 'class');
-  assert.equal(await page.getByLabel('Claimed student count unavailable', { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('Room student count unavailable', { exact: true }).count(), 0);
   assert.deepEqual(harness.coverageMutationRequests, [], 'Retry repeats reads only');
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -5162,13 +5193,13 @@ test('supervision badge remains unknown for legacy or malformed own metadata whi
       claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
     });
     await page.goto(`${baseURL}/classpilot`);
-    await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+    await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
     await assertPickupView(page, 'class');
     assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), [3]);
     assert.deepEqual(harness.claimedRosterRequests, []);
     await page.getByTestId('button-view-claimed-students').click();
     await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
-    await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+    await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
     assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'The cached manually loaded roster is not substituted for unknown ownership metadata');
     assert.deepEqual(harness.coverageMutationRequests, []);
     assert.deepEqual(harness.pageErrors, []);
@@ -5195,7 +5226,7 @@ test('the first valid supervision summary refreshes a manually loaded roster aft
   await page.clock.fastForward(2_000);
   await page.getByTestId('button-view-claimed-students').click();
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Room student count unavailable', { exact: true }).waitFor();
   const earlierReads = harness.claimedRosterRequests.length;
   ready = true;
   // Refresh just the lightweight summary, as its independent polling does.
@@ -5212,7 +5243,7 @@ test('the first valid supervision summary refreshes a manually loaded roster aft
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('a confirmed Dashboard claim keeps supervision badges unknown until its summary settles and retries only reads', { timeout: 75_000 }, async context => {
+test('a confirmed reviewed room claim retains exact membership while its summary fails and retries only reads', { timeout: 75_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
@@ -5221,8 +5252,13 @@ test('a confirmed Dashboard claim keeps supervision badges unknown until its sum
   let releaseSummary;
   const summaryGate = new Promise(resolve => { releaseSummary = resolve; });
   context.after(() => releaseSummary());
+  const room = scheduledTestingActivity({ id: OWN_TESTING_CONTEXT_ID, name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '1', studentCount: 1,
+    startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const row = { ...testingStudent(STUDENT_ID, room.id), contextAuthorityRevision: '1' };
   const harness = await configureDashboard(page, {
-    aggregate: aggregateController(),
+    aggregate: aggregateController({ scoped: success([row]) }),
+    dashboardActivity: scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }),
     availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }],
     coverageSummary: async () => {
       if (phase === 'initial') return { ...ownSupervisionSummary([]), activeContextCount: 0, claimedStudentCount: 0 };
@@ -5231,32 +5267,35 @@ test('a confirmed Dashboard claim keeps supervision badges unknown until its sum
         await summaryGate;
         return { status: 503, body: { error: 'The committed supervision summary could not refresh' } };
       }
-      return { ...ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Other' }]), activeContextCount: 1, claimedStudentCount: 1 };
+      return { ...ownSupervisionSummary([{ id: room.id, name: 'My room' }]), activeContextCount: 1, claimedStudentCount: 1 };
     },
     claimedStudents: () => phase === 'ready' ? [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)]
       : { status: 503, body: { error: 'The committed supervision roster could not refresh' } },
     claimResponse: async () => {
       phase = 'pending';
-      return { context: { id: OWN_TESTING_CONTEXT_ID, name: 'Other', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' } };
+      harness.setDashboardActivity({ ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room });
+      return { context: { ...room, assignedStaffId: ADMIN_ID } };
     },
   });
+  await installRoomPreview(page, [row]);
   await page.goto(`${baseURL}/classpilot`);
   await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
   await page.getByTestId('button-view-available-students').click();
   await page.getByTestId('button-claim-all-students').click();
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('confirm-supervision-review').click();
   await assertPickupView(page, 'claimed');
   await waitUntil(() => pendingSummaryStarted, 'The committed claim must request a fresh supervision summary');
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
-  await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
-  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'The previous confirmed zero is no longer authoritative after the claim commits');
-  assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
+  await page.getByTestId('temporary-room-controls').waitFor();
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [1], 'The exact activity room count remains known independently of summary recovery');
   releaseSummary();
   await page.clock.fastForward(2_000);
-  await page.getByText('Supervision started; students could not load.', { exact: false }).waitFor();
-  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByTestId('supervision-results').waitFor();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
   phase = 'ready';
-  await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
+  await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.refetchQueries({ queryKey: ['/api/coverage/summary'] }); });
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await waitForSupervisionBadges(page, { claimed: 1, coverage: 1 });
   await assertPickupView(page, 'claimed');
@@ -6471,13 +6510,14 @@ test('Observe selection stays scoped when a refresh removes the observed class',
 });
 
 
-test('ordinary claims from an inactive testing group open neutral Claimed and preserve the current class', { timeout: 75_000 }, async context => {
+test('ordinary claims from an inactive testing group open a neutral room and preserve the current class', { timeout: 75_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
   const own = scheduledClassActivity({ startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
-  const claim = { id: OWN_TESTING_CONTEXT_ID, name: 'Claimed students', purpose: 'claim', source: 'ad_hoc_supervision',
-    contextType: 'direct_pickup', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' };
+  const claim = scheduledTestingActivity({ id: OWN_TESTING_CONTEXT_ID, name: 'My room', purpose: 'claim', source: 'ad_hoc_supervision',
+    contextType: 'temporary_room', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], assignedStaffId: ADMIN_ID, contextAuthorityRevision: '2', studentCount: 1,
+    startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
   const claimed = { ...testingStudent(STUDENT_ID, claim.id), purpose: 'claim', contextName: 'Claimed students', contextAuthorityRevision: '2' };
   let claimedNow = false;
   let released = false;
@@ -6488,41 +6528,54 @@ test('ordinary claims from an inactive testing group open neutral Claimed and pr
     availableStudents: [{ ...claimed, matchingGroups: [{ id: 'saved-testing-group', name: 'Reading MAP' }] }],
     claimedStudents: () => claimedNow && !released ? [claimed] : [],
     coverageSummary: () => ({ ...ownSupervisionSummary(claimedNow && !released ? [claim] : []), ownAdHocContexts: claimedNow && !released ? [{ ...claim, activeStudentCount: 1 }] : [] }),
-    claimResponse: request => { assert.deepEqual(request.postDataJSON(), { studentIds: [STUDENT_ID] }); claimedNow = true; return { context: claim }; },
+    claimResponse: request => {
+      assert.deepEqual(request.postDataJSON().studentIds, [STUDENT_ID]);
+      assert.equal(request.postDataJSON().action, 'claim_room');
+      assert.equal(request.postDataJSON().reviewToken, 'synthetic-room-review');
+      claimedNow = true;
+      harness.setDashboardActivity({ ...scheduledActivityResponse(own, { serverTime: TESTING_TIME.toISOString() }), room: claim });
+      return { context: claim };
+    },
   });
+  await installRoomPreview(page, [claimed]);
+  await page.route('**/api/students-aggregated*', route => route.fulfill({ json: new URL(route.request().url()).searchParams.get('supervisionContextId') === claim.id
+    ? [claimed] : [student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Own class student' })] }));
   await page.route(`**/api/coverage/contexts/${claim.id}/release`, async route => {
     assert.deepEqual(route.request().postDataJSON().studentIds, [STUDENT_ID]);
     assert.equal(route.request().headers()['x-classpilot-context-authority-revision'], '2');
-    released = true; await route.fulfill({ json: { releasedCount: 1 } });
+    released = true; harness.setDashboardActivity(scheduledActivityResponse(own, { serverTime: TESTING_TIME.toISOString() }));
+    await route.fulfill({ json: { releasedCount: 1 } });
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
   await page.getByTestId('button-claim-all-students').click();
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('confirm-supervision-review').click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
   await assertPickupView(page, 'claimed');
-  await page.getByRole('heading', { name: 'Claimed students', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'My room', exact: true }).waitFor();
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   assert.equal(await page.getByRole('button', { name: 'End testing', exact: true }).count(), 0);
-  await page.getByRole('button', { name: 'Release student', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Remove from room', exact: true }).waitFor();
   await page.getByTestId('button-view-class-students').click();
   await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
   await page.getByTestId('button-view-claimed-students').click();
-  await page.getByRole('button', { name: 'Release all', exact: true }).click();
+  await page.getByRole('button', { name: 'Remove from room', exact: true }).click();
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'hidden' });
   assert.equal(released, true);
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Available scheduled Claim opens owner Coverage and renders only independently stamped V3 wire frames', { timeout: 75_000 }, async context => {
+test('Available scheduled Claim opens one room and renders only independently stamped V3 wire frames', { timeout: 75_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   const now = new Date('2026-09-15T13:11:30Z');
   await page.clock.setFixedTime(now);
   const regular = scheduledClassActivity({ teacherId: ADMIN_ID, endsAt: '2026-09-15T14:00:00Z' });
-  const claimed = scheduledTestingActivity({ source: 'scheduled_coverage', purpose: 'coverage',
-    name: 'Scheduled Supervision: Grade 6 SS', teacherId: ADMIN_ID, studentCount: 2 });
+  const claimed = scheduledTestingActivity({ source: 'ad_hoc_supervision', purpose: 'claim', contextType: 'temporary_room',
+    name: 'My room', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], studentCount: 2, endsAt: '2026-09-15T14:00:00Z' });
   const conflictId = 'scheduled-coverage-conflict';
-  const claimContext = { id: claimed.id, name: claimed.name, purpose: 'coverage', contextType: 'supervision_group',
-    assignedStaffId: ADMIN_ID, scheduledConflictId: conflictId, startsAt: claimed.startsAt, endsAt: claimed.endsAt };
+  const claimContext = { ...claimed, assignedStaffId: ADMIN_ID };
   const roster = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((studentId, index) => student({
     studentId, studentName: `Coverage student ${index + 1}`, extensionVersion: '2.9.2',
     lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString(), realtimeBinding: `coverage-binding-${index}`,
@@ -6553,20 +6606,27 @@ test('Available scheduled Claim opens owner Coverage and renders only independen
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
     screenshotTiles: () => wireResponse,
     claimResponse: request => {
-      assert.deepEqual(request.postDataJSON(), { scheduledConflictId: conflictId, studentIds: roster.map(row => row.studentId) });
+      assert.deepEqual(request.postDataJSON().studentIds, roster.map(row => row.studentId));
+      assert.equal(request.postDataJSON().scheduledConflictId, undefined);
+      assert.equal(request.postDataJSON().action, 'claim_room');
+      assert.equal(request.postDataJSON().reviewToken, 'synthetic-room-review');
       aggregate.setScopedResponse(success(roster));
-      harness.setDashboardActivity({ ...scheduledActivityResponse(claimed, { serverTime: now.toISOString() }), activities: [claimed, regular] });
+      harness.setDashboardActivity({ ...scheduledActivityResponse(regular, { serverTime: now.toISOString() }), room: claimed });
       return { context: claimContext };
     },
   });
+  await installRoomPreview(page, available, () => true, claimed.endsAt);
   await page.route('**/api/coverage/available-students', route => route.fulfill({ json: { students: [], scheduledCoverageGroups: [{
     id: conflictId, className: 'Grade 6 SS', label: 'Scheduled Supervision Needed: Grade 6 SS', students: available,
   }] } }));
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
   await page.getByTestId(`button-claim-scheduled-coverage-${conflictId}`).click();
-  await assertPickupView(page, 'class');
-  await page.getByRole('button', { name: 'End coverage', exact: true }).waitFor();
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('confirm-supervision-review').click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await assertPickupView(page, 'claimed');
+  await page.getByRole('button', { name: 'End room', exact: true }).waitFor();
   for (const row of roster) {
     await page.getByTestId(`screenshot-stale-${row.studentId}`).getByText('Preview delayed', { exact: true }).waitFor();
     assert.equal(await page.getByTestId(`screenshot-${row.studentId}`).count(), 0,
@@ -6700,6 +6760,245 @@ async function installHubNavigation(page, state) {
     if (location.pathname === '/classpilot') history.replaceState({ ...history.state, usr: value }, '');
   }, state);
 }
+
+test('temporary room binds mixed-grade filters, commands, previews and FAB to one authority across bells and reload', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  await page.clock.install({ time: TESTING_TIME });
+  const room = scheduledTestingActivity({ id: 'mixed-room', name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '7', studentCount: 3,
+    authority: { supervisionContextId: 'mixed-room' }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const roomRows = ['3', '4', '5'].map(grade => student({ studentId: `room-grade-${grade}`, studentName: `Grade ${grade} Student`, gradeLevel: grade,
+    classes: [{ id: `homeroom-${grade}`, name: `Grade ${grade} Homeroom` }], supervisionState: 'temporary_coverage',
+    supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID }, contextAuthorityRevision: '7',
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
+  const regular = scheduledClassActivity({ startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T12:41:00Z' });
+  const response = current => ({ ...scheduledActivityResponse(current, { serverTime: TESTING_TIME.toISOString() }), room });
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), acknowledgeSessionSubscriptions: true,
+    dashboardActivity: response(regular), coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [], availableStudentCount: 6 },
+    screenshotTiles: body => ({ tiles: body.studentIds.map(studentId => ({ studentId, bindingVersion: `room:${studentId}`, screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: `room:${studentId}`, timestamp: TESTING_TIME.toISOString(),
+    } })) }) });
+  const rosterReads = [];
+  const commands = [];
+  const privateReads = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (['/api/teacher/messages', '/api/teacher/raised-hands'].includes(url.pathname)) privateReads.push(url);
+  });
+  await page.route('**/api/students-aggregated*', async route => {
+    const url = new URL(route.request().url()); rosterReads.push(url);
+    await route.fulfill({ json: url.searchParams.get('supervisionContextId') === room.id ? roomRows : [student({ studentId: 'normal-class-only', studentName: 'Normal class student' })] });
+  });
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); commands.push({ body, revision: route.request().headers()['x-classpilot-context-authority-revision'] });
+    await route.fulfill({ json: { command: { id: `room-command-${commands.length}`, ...body,
+      targets: body.targetStudentIds.map(studentId => ({ studentId, status: 'completed' })) } } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('temporary-room-controls').waitFor();
+  await assertPickupView(page, 'claimed');
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-available-students'), [6], 'Available count loads independently from opening its roster');
+  for (const row of roomRows) await page.getByTestId(`card-student-${row.studentId}`).waitFor();
+  const roomEvidence = process.env.CLASSPILOT_ACTIVITY_EVIDENCE_DIR;
+  if (roomEvidence) {
+    mkdirSync(roomEvidence, { recursive: true });
+    await page.screenshot({ path: path.join(roomEvidence, 'temporary-room-mixed-grade.png'), fullPage: true });
+  }
+  assert.equal(await page.getByTestId('card-student-normal-class-only').count(), 0);
+  await page.getByRole('button', { name: 'Class tools', exact: true }).waitFor();
+  await page.getByLabel('Filter room by grade').selectOption('3');
+  await page.getByTestId('card-student-room-grade-4').waitFor({ state: 'hidden' });
+  await page.getByTestId('button-open-tab').click();
+  await page.getByTestId('input-open-tab-url').fill('https://lesson.example.edu');
+  await page.getByTestId('button-confirm-open-tab').click();
+  await waitUntil(() => commands.length === 1, 'Filtered room action must dispatch');
+  assert.deepEqual(commands[0].body.targetStudentIds, ['room-grade-3']);
+  assert.equal(commands[0].body.supervisionContextId, room.id);
+  assert.equal(commands[0].body.teachingSessionId, undefined);
+  assert.equal(commands[0].revision, '7');
+  assert(harness.tileRequests.some(request => request.body.supervisionContextId === room.id && request.contextAuthorityRevision === '7'));
+  assert(privateReads.length > 0 && privateReads.every(url => url.searchParams.get('supervisionContextId') === room.id));
+  assert(harness.websocketMessages.some(message => message.type === 'subscribe-session' && message.supervisionContextId === room.id));
+  harness.setDashboardActivity(response({ ...regular, id: OBSERVED_SESSION_ID, name: 'Next normal class', authority: { teachingSessionId: OBSERVED_SESSION_ID },
+    startsAt: '2026-09-14T12:41:00Z', endsAt: '2026-09-14T13:00:00Z' }));
+  await page.clock.fastForward(61_000);
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId('temporary-room-controls').waitFor();
+  assert.equal(await page.getByLabel('Filter room by grade').inputValue(), '3');
+  await page.reload();
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId('temporary-room-controls').waitFor();
+  await page.getByTestId('button-view-class-students').click();
+  await assertPickupView(page, 'class');
+  await page.getByTestId('card-student-normal-class-only').waitFor();
+  await harness.sendWebSocketMessage({ type: 'dashboard-activity-updated', schoolId: SCHOOL_ID });
+  await page.clock.fastForward(1100);
+  await assertPickupView(page, 'class');
+  assert(rosterReads.some(url => url.searchParams.get('teachingSessionId') === OBSERVED_SESSION_ID));
+  await page.getByTestId('button-view-claimed-students').click();
+  await page.getByLabel('Filter room by grade').selectOption('3');
+  await page.getByRole('button', { name: 'End room', exact: true }).click();
+  roomRows.push(student({ ...roomRows[0], studentId: 'room-new-member', studentName: 'New room member', gradeLevel: '6' }));
+  await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.refetchQueries({ queryKey: ['/api/students-aggregated'] }); });
+  await page.getByRole('button', { name: 'End room and release all', exact: true }).click();
+  await page.getByText('The room roster changed. Close the confirmation and review it again.', { exact: true }).waitFor();
+  assert.equal(harness.coverageMutationRequests.length, 0, 'A new member under the same revision cannot broaden an open End room confirmation');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const releases = [];
+  await page.route(`**/api/coverage/contexts/${room.id}/release`, async route => {
+    releases.push({ body: route.request().postDataJSON(), revision: route.request().headers()['x-classpilot-context-authority-revision'] });
+    harness.setDashboardActivity({ ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room: null });
+    await route.fulfill({ json: { releasedCount: roomRows.length } });
+  });
+  await page.getByRole('button', { name: 'End room', exact: true }).click();
+  await page.getByRole('button', { name: 'End room and release all', exact: true }).click();
+  await waitUntil(() => releases.length === 1, 'Confirmed End room must send its complete frozen roster');
+  assert.deepEqual(releases[0].body, { studentIds: [], releaseReason: 'returned_to_class', expectedStudentIds: roomRows.map(row => row.studentId) });
+  assert.equal(releases[0].revision, '7');
+  await page.getByTestId('temporary-room-controls').waitFor({ state: 'hidden' });
+  await assertPickupView(page, 'class');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('room Send to freezes the selected or all shown filtered students and refuses an empty filter', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const room = scheduledTestingActivity({ id: 'send-room', name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '7', studentCount: 3,
+    authority: { supervisionContextId: 'send-room' }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const rows = ['3', '4', '5'].map(grade => student({ studentId: `send-grade-${grade}`, studentName: `Grade ${grade} Student`, gradeLevel: grade,
+    supervisionState: 'temporary_coverage', supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID },
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController({ scoped: success(rows) }),
+    dashboardActivity: { ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room },
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] } });
+  const receiver = { id: 'receiver-room', name: 'Receiver room', endsAt: room.endsAt };
+  const previews = []; const sends = [];
+  await page.route('**/api/coverage/session-options*', route => route.fulfill({ json: { students: rows, groups: [], staff: [], defaultEndsAt: room.endsAt } }));
+  await page.route('**/api/coverage/reroute-targets*', route => route.fulfill({ json: { targets: [], roomTargets: [{
+    id: 'room:receiver', contextType: 'temporary_room', name: 'Receiver room', assignedStaffId: OTHER_TEACHER_ID,
+    assignedStaff: { displayName: 'Receiver Teacher' }, activeContexts: [receiver],
+  }] } }));
+  await page.route('**/api/coverage/preview', async route => {
+    const request = route.request().postDataJSON(); previews.push(request);
+    await route.fulfill({ json: { request, reviewToken: 'filtered-room-send-review', destination: { ...receiver,
+      purpose: 'claim', assignedStaffId: OTHER_TEACHER_ID, supervisorName: 'Receiver Teacher' }, students: request.studentIds.map(studentId => ({
+        studentId, name: rows.find(row => row.studentId === studentId).studentName, eligible: true, currentOwner: 'My room',
+      })) } });
+  });
+  await page.route('**/api/coverage/send', async route => {
+    const request = route.request().postDataJSON(); sends.push(request);
+    await route.fulfill({ json: { context: receiver, outcomes: request.studentIds.map(studentId => ({ studentId, status: 'assigned' })) } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('temporary-room-controls').waitFor();
+  await page.getByTestId('checkbox-select-student-send-grade-4').click();
+  await page.getByTestId('button-reroute-selected').click();
+  const dialog = page.getByTestId('supervision-session-dialog');
+  await dialog.getByRole('checkbox', { name: /Grade 4 Student/ }).waitFor();
+  assert.equal(await dialog.getByRole('checkbox').count(), 1, 'An explicit selection takes precedence over the shown room');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByTestId('button-clear-selection').click();
+  await page.getByLabel('Filter room by grade').selectOption('3');
+  await page.getByTestId('card-student-send-grade-4').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('button-reroute-selected').isEnabled(), true, 'A nonempty filtered room can send with no checked students');
+  await page.getByTestId('button-reroute-selected').click();
+  await dialog.getByRole('checkbox', { name: /Grade 3 Student/ }).waitFor();
+  assert.equal(await dialog.getByRole('checkbox').count(), 1);
+  await dialog.getByLabel('Send to', { exact: true }).selectOption('room:receiver');
+  await page.getByTestId('review-supervision').click();
+  await page.getByTestId('supervision-review').waitFor();
+  assert.deepEqual(previews[0].studentIds, ['send-grade-3']);
+  assert.equal(previews[0].destinationContextId, receiver.id);
+  assert.equal(previews[0].contextType, 'temporary_room');
+  // A background filter update cannot replace recipients in an open review.
+  await page.getByLabel('Filter room by grade').selectOption('5', { force: true });
+  await page.getByTestId('confirm-supervision-review').click();
+  await page.getByTestId('supervision-results').waitFor();
+  assert.deepEqual(sends[0].studentIds, ['send-grade-3']);
+  assert.equal(sends[0].reviewToken, 'filtered-room-send-review');
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByTestId('card-student-send-grade-5').waitFor();
+  await page.getByPlaceholder('Search student', { exact: true }).fill('Nobody in this room');
+  await page.getByTestId('card-student-send-grade-5').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('button-reroute-selected').isDisabled(), true);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('room removal clears exact private tiles before polling and a late release cannot refresh a replacement room', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const room = scheduledTestingActivity({ id: 'remove-room', name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+    source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '7', studentCount: 3,
+    authority: { supervisionContextId: 'remove-room' }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const rows = ['3', '4', '5'].map(grade => student({ studentId: `remove-grade-${grade}`, studentName: `Grade ${grade} Student`, gradeLevel: grade,
+    supervisionState: 'temporary_coverage', supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID }, contextAuthorityRevision: '7',
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
+  const replacement = { ...room, id: 'replacement-room', studentCount: 1, contextAuthorityRevision: '8', authority: { supervisionContextId: 'replacement-room' } };
+  const replacementRows = [{ ...rows[0], studentId: 'replacement-member', studentName: 'Replacement member',
+    supervisionContext: { id: replacement.id, assignedStaffId: ADMIN_ID }, contextAuthorityRevision: '8' }];
+  let currentRoom = room;
+  let roomRows = rows;
+  const response = () => ({ ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room: currentRoom });
+  const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController(), acknowledgeSessionSubscriptions: true,
+    dashboardActivity: response(), coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+    screenshotTiles: body => ({ tiles: body.studentIds.map(studentId => ({ studentId, bindingVersion: `removal:${studentId}`, screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: `removal:${studentId}`, timestamp: TESTING_TIME.toISOString(),
+    } })) }) });
+  const reads = [];
+  await page.route('**/api/students-aggregated*', route => {
+    const contextId = new URL(route.request().url()).searchParams.get('supervisionContextId'); reads.push(contextId);
+    return route.fulfill({ json: contextId === room.id ? roomRows : contextId === replacement.id ? replacementRows : [] });
+  });
+  let releaseLate;
+  const held = new Promise(resolve => { releaseLate = resolve; });
+  context.after(() => releaseLate());
+  let heldRequest = false;
+  await page.route(`**/api/coverage/contexts/${room.id}/release`, async route => {
+    const ids = route.request().postDataJSON().studentIds;
+    assert.equal(route.request().headers()['x-classpilot-context-authority-revision'], '7');
+    if (ids.includes(rows[1].studentId)) { heldRequest = true; await held; }
+    roomRows = roomRows.filter(row => !ids.includes(row.studentId));
+    if (currentRoom.id === room.id) { currentRoom = { ...room, studentCount: roomRows.length }; harness.setDashboardActivity(response()); }
+    await route.fulfill({ json: { releasedCount: ids.length } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  for (const row of rows) await page.getByTestId(`card-student-${row.studentId}`).waitFor();
+  await page.getByTestId(`screenshot-${rows[0].studentId}`).waitFor();
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1000)));
+  const frozenTime = await page.evaluate(() => Date.now());
+  const initialReads = reads.length;
+  await page.getByTestId(`button-release-student-${rows[0].studentId}`).click();
+  await page.getByTestId(`card-student-${rows[0].studentId}`).waitFor({ state: 'hidden' });
+  await waitUntil(() => reads.length > initialReads, 'Room removal immediately reconciles the exact aggregate without a timer or socket');
+  assert(reads.slice(initialReads).every(id => id === room.id));
+  assert.equal(await page.getByTestId(`screenshot-${rows[0].studentId}`).count(), 0);
+  await page.getByTestId(`card-student-${rows[1].studentId}`).waitFor();
+  assert.equal(await page.evaluate(() => Date.now()), frozenTime, 'No polling boundary advanced');
+
+  await page.getByTestId(`button-release-student-${rows[1].studentId}`).click();
+  await waitUntil(() => heldRequest, 'The old-room release is pending');
+  currentRoom = replacement; harness.setDashboardActivity(response());
+  await page.evaluate(async () => { const { queryClient } = await import('/src/lib/queryClient.js'); await queryClient.refetchQueries({ queryKey: ['/api/classpilot/dashboard-activity'] }); });
+  // TanStack batches observer notifications on a timer. Flush those callbacks
+  // after the frozen-clock removal proof, without reaching any polling interval.
+  await page.clock.runFor(50);
+  await page.getByTestId('card-student-replacement-member').waitFor();
+  const beforeLateResponse = [...reads];
+  const completed = page.waitForResponse(reply => new URL(reply.url()).pathname === `/api/coverage/contexts/${room.id}/release`);
+  releaseLate(); await completed;
+  await page.waitForTimeout(300);
+  assert.deepEqual(reads, beforeLateResponse, 'A late release marks only its old aggregate stale and never refreshes the replacement room');
+  await page.getByTestId('card-student-replacement-member').waitFor();
+  assert.equal(await page.getByTestId(`card-student-${rows[1].studentId}`).count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
 
 test('Supervision hub Open waits for authority and selects the requested owner session among two active sessions', { timeout: 90_000 }, async context => {
   const { createSupervisionDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
@@ -6905,6 +7204,112 @@ test('private lifecycle: hard-off retires a held reply while the separate frozen
   assert.equal(mutations.find(row => row.pathname.endsWith('/close-chat')).body.expectedPrivateChatLifecycle.schoolEpoch, 2, 'cleanup remains authorized after the private channel closes');
   await threadText(page, storedChatMessage().content).waitFor();
   assert.deepEqual(harness.pageErrors, []);
+});
+
+test('temporary room rejects unknown stale timer and poll ACKs but accepts current tenure before HTTP completes', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  for (const commandType of ['timer', 'poll']) {
+    await context.test(commandType, async subContext => {
+      const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+      await page.clock.install({ time: TESTING_TIME });
+      const room = scheduledTestingActivity({ id: `ack-room-${commandType}`, name: 'My room', purpose: 'claim', contextType: 'temporary_room',
+        source: 'ad_hoc_supervision', teacherId: ADMIN_ID, staffIds: [ADMIN_ID], contextAuthorityRevision: '8', studentCount: 1,
+        authority: { supervisionContextId: `ack-room-${commandType}` }, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+      const row = student({ supervisionState: 'temporary_coverage', supervisionContext: { id: room.id, assignedStaffId: ADMIN_ID },
+        contextAuthorityRevision: '8', acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+        lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() });
+      const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController({ scoped: success([row]) }),
+        acknowledgeSessionSubscriptions: true,
+        dashboardActivity: { ...scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }), room },
+        coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] } });
+      const ack = ({ id, type = commandType, parent = room.id, revision = '8', payload } = {}) => ({
+        type: 'classpilot-command-update', schoolId: SCHOOL_ID, commandId: id,
+        command: { id, schoolId: SCHOOL_ID, supervisionContextId: parent, commandType: type,
+          commandPayload: payload || (type === 'timer' ? { action: 'start', seconds: 300 } : {
+            action: 'start', pollId: `${id}-poll`, question: 'Current room poll', options: ['Ready', 'Need help'],
+          }), createdAt: TESTING_TIME.toISOString(), expiresAt: new Date(TESTING_TIME.getTime() + 120_000).toISOString(),
+          deliveryPolicy: 'transient_action', targets: [{ studentId: STUDENT_ID, status: 'received',
+            result: revision === null ? {} : { scheduledContextAuthorityRevision: revision } }] },
+        summary: { requested: 1, attempted: 1, received: 1, acknowledged: 1, awaitingAck: 0 },
+      });
+      let requestBody;
+      let responseSent = false;
+      let releaseResponse;
+      const heldResponse = new Promise(resolve => { releaseResponse = resolve; });
+      subContext.after(async () => {
+        releaseResponse();
+        await page.unrouteAll({ behavior: 'wait' });
+        await page.close();
+      });
+      await page.route('**/api/commands', async route => {
+        requestBody = route.request().postDataJSON();
+        assert.equal(route.request().headers()['x-classpilot-context-authority-revision'], '8');
+        await heldResponse;
+        const message = ack({ id: `current-${commandType}`, payload: {
+          ...requestBody.commandPayload, ...(commandType === 'poll' ? { pollId: 'current-poll' } : {}),
+        } });
+        await route.fulfill({ status: 201, json: { command: { ...message.command,
+          targets: message.command.targets.map(target => ({ ...target, status: 'sent' })) },
+          summary: { requested: 1, attempted: 1, pending: 1, awaitingAck: 1 } } });
+        responseSent = true;
+      });
+      await page.goto(`${baseURL}/classpilot`);
+      await page.getByTestId('temporary-room-controls').waitFor();
+      await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+      await harness.authenticateWebSocket();
+      await page.getByRole('button', { name: 'Class tools', exact: true }).click();
+      const tab = commandType === 'timer' ? 'Tools' : 'Activities';
+      const inactiveName = commandType === 'timer' ? 'Start timer' : 'Create poll';
+      const activeName = commandType === 'timer' ? 'Stop timer' : 'View responses (0)';
+      await page.getByRole('tab', { name: tab, exact: true }).click();
+      await page.getByRole('button', { name: inactiveName, exact: true }).waitFor();
+      for (const stale of [
+        { id: `old-room-${commandType}`, parent: 'previous-room', revision: '7' },
+        { id: `old-coverage-${commandType}`, parent: OWN_TESTING_CONTEXT_ID, revision: '8' },
+        { id: `old-revision-${commandType}`, revision: '7' },
+        { id: `missing-tenure-${commandType}`, revision: null },
+      ]) await harness.sendWebSocketMessage(ack(stale));
+      // A matching ACK for the other tool follows on the same socket. Its
+      // visible control proves the earlier frames were processed before the
+      // negative assertion, without relying on an arbitrary delay.
+      const otherType = commandType === 'timer' ? 'poll' : 'timer';
+      await harness.sendWebSocketMessage(ack({ id: `ordering-${otherType}`, type: otherType }));
+      await page.getByRole('tab', { name: otherType === 'timer' ? 'Tools' : 'Activities', exact: true }).click();
+      await page.getByRole('button', { name: otherType === 'timer' ? 'Stop timer' : 'View responses (0)', exact: true }).waitFor();
+      await page.getByRole('tab', { name: tab, exact: true }).click();
+      assert.equal(await page.getByRole('button', { name: activeName, exact: true }).count(), 0,
+        'An unknown ACK from another parent, prior revision or missing tenure must not activate this room tool');
+      assert.equal(await page.getByRole('button', { name: inactiveName, exact: true }).isVisible(), true);
+      assert.deepEqual(harness.commandPosts, []);
+      await page.getByRole('button', { name: inactiveName, exact: true }).click();
+      if (commandType === 'timer') {
+        await page.getByTestId('button-timer-5min').click();
+        await page.getByTestId('button-start-timer').click();
+      } else {
+        await page.getByTestId('input-poll-question').fill('Current room poll');
+        await page.getByTestId('input-poll-option-0').fill('Ready');
+        await page.getByTestId('input-poll-option-1').fill('Need help');
+        await page.getByTestId('button-create-poll').click();
+      }
+      await waitUntil(() => Boolean(requestBody), 'The current room command must reach the held HTTP request');
+      assert.equal(requestBody.commandType, commandType);
+      assert.equal(requestBody.supervisionContextId, room.id);
+      assert.equal(requestBody.teachingSessionId, undefined);
+      assert.deepEqual(requestBody.targetStudentIds, [STUDENT_ID]);
+      await harness.sendWebSocketMessage(ack({ id: `current-${commandType}`, payload: {
+        ...requestBody.commandPayload, ...(commandType === 'poll' ? { pollId: 'current-poll' } : {}),
+      } }));
+      // The mutation dialog still hides the panel from accessibility queries;
+      // the underlying control must update before the HTTP response closes it.
+      await page.getByRole('button', { name: activeName, exact: true, includeHidden: true }).waitFor({ state: 'attached' });
+      assert.equal(responseSent, false, 'Frozen current-tenure ACKs are accepted before HTTP registers the command ID');
+      releaseResponse();
+      await page.getByTestId(commandType === 'timer' ? 'dialog-timer' : 'dialog-poll').waitFor({ state: 'hidden' });
+      await page.getByRole('button', { name: activeName, exact: true }).waitFor();
+      assert.equal(responseSent, true);
+      assert.deepEqual(harness.pageErrors, []);
+    });
+  }
 });
 
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));

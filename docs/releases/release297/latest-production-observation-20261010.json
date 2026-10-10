@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_later_production_observation",
+  "observedAtUtc": "2026-10-10T08:52:14.3812035Z",
+  "completedReleaseMainSource": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+  "completedReleaseCompletionSha256": "7cf4b33bf08037ba3230633eb7df25a71279c4b3b9ab420fef208ec30a57a096",
+  "source": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+  "services": {
+    "api": {
+      "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:186",
+      "imageDigest": "sha256:ccf7d2150a3d399540639d66a9478c8a015813c42be4a90636e25114633bc30f",
+      "desiredCount": 1,
+      "runningCount": 1,
+      "pendingCount": 0,
+      "rolloutState": "COMPLETED",
+      "healthCheckConfigured": true,
+      "taskHealthStatus": "HEALTHY",
+      "containerHealthStatus": "HEALTHY"
+    },
+    "scheduler-worker": {
+      "taskDefinition": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:202",
+      "imageDigest": "sha256:ccf7d2150a3d399540639d66a9478c8a015813c42be4a90636e25114633bc30f",
+      "desiredCount": 1,
+      "runningCount": 1,
+      "pendingCount": 0,
+      "rolloutState": "COMPLETED",
+      "healthCheckConfigured": false,
+      "taskHealthStatus": "UNKNOWN",
+      "containerHealthStatus": "UNKNOWN"
+    }
+  },
+  "usageModes": {
+    "CLASSPILOT_USAGE_ROLLUP_MODE": "off",
+    "CLASSPILOT_DIGITAL_USAGE_MODE": "off",
+    "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": "shadow"
+  },
+  "rawDailySetting": "omitted",
+  "acceptanceStatus": "unknown",
+  "frontendVerification": "unknown",
+  "equivalenceClaimed": false,
+  "acceptanceTransferClaimed": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "retainedEvidence": {
+    "actualObservation": {
+      "storage": "private",
+      "format": "json",
+      "path": "production-successor-current-01/observation.private.json",
+      "sha256": "0ce1926b39c2fcd40842612be9241b10e362ed2c05aef2ed5e7e384da741fa1b"
+    },
+    "independentReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/production-successor-current-actual-01.independent-review.private.json",
+      "sha256": "62afb57336616e6bfa20eac052b31972ed06fd173997dfbafe830d482025e6ae"
+    }
+  },
+  "scope": "Dated service/task/source/image and public-health observation only. Whole environment and secret-reference preservation, current database catalog and migrations, current frontend identity or bytes, and original release acceptance for this source are not established. The earlier B5/A3 completion remains historical evidence and does not transfer."
+}

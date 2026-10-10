@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 3,
+  "kind": "independent_release297_matched_deployment_completion_review",
+  "passed": true,
+  "independentFromProducer": true,
+  "humanApprovalAsserted": false,
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "mainSource": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+  "releaseBindingId": "release-297-current-school-cp-protected-build-fallback-v5",
+  "completionSha256": "7cf4b33bf08037ba3230633eb7df25a71279c4b3b9ab420fef208ec30a57a096",
+  "actualPrivateReceiptsReplayed": true,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "operationReceiptSha256s": {
+    "servingPublication": "92e542bf4a7573bd006a9a72b11e0c7d5c32b79dd47211baeb169ca87c666207",
+    "fallbackPublication": "8381079f7d83668e0c4231cba7fc50aca3940185d5ed5edabbce51e7ef1c274d",
+    "current129AnchorRegistration": "5b90cae89f50d6cbfe3bf17846d21941fed1b68bc7b1f19d429c0d489ddb23e2",
+    "compatibleFallback129Registration": "5ca455e8f781ecf2e1e18acf92dc9b258f16f20bbd55341233c114e192ee10b8",
+    "backendMigration": "576aac3833a29f7669c8b72c76c4e9bea6e8dc8f447e6e1148269c419ce44b6e",
+    "backendWorkerDeployment": "70426ee7cb47477002a6eba8741fffd25fb6cec549b0e6d96f827c5d2b003174",
+    "matchedFrontendDeployment": "5f6b8bd18b12cd92a2a9155b5a1df135bc989fe0dab90e89c248a6d9e1ce8586",
+    "postdeploymentTaskAndFlagReadback": "4a306f0b2b01d66bf98d2850c94d48b01a38472368167b8d3546523547a348ac",
+    "publicFrontendByteVerification": "4cc5f76ece84d6c65a51fde0f0db5b755282f19448d9368834eed779704b2df7"
+  },
+  "reviewedAtUtc": "2026-10-10T08:40:03.666Z",
+  "baselineServicesSha256": "ecfc6239e6b89841688c59e2edefa658e3e0cc426a81ab5c29db498d22863dd5",
+  "actualCapacityBaselineServicesReplayed": true,
+  "capacityBaselineObservedAtUtc": "2026-10-10T06:27:41.4073689Z",
+  "capacityBaselineDesiredCounts": {
+    "api": 1,
+    "scheduler-worker": 1
+  },
+  "capacityBaselineTaskDefinitions": {
+    "api": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:180",
+    "scheduler-worker": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:196"
+  },
+  "actualRoleHealthContractsReplayed": true,
+  "actualRoleHealthDefinitionsAndTasksReplayed": true,
+  "actualWorkerBaselineHealthCheckAbsenceReplayed": true,
+  "roleHealthReadbackSha256": "4a306f0b2b01d66bf98d2850c94d48b01a38472368167b8d3546523547a348ac",
+  "actualCatalog53Replay": true,
+  "actualScreenshotBodyAndAclReplay": true,
+  "actual129RlsReplay": true,
+  "actualThreeSqlObservedZerosReplay": true,
+  "actualScalingRestorationReplay": true,
+  "actualAll171PublicByteReplay": true
+}

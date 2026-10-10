@@ -1,129 +1,26 @@
-# Release 2.9.7 build-security fallback
+# Release 2.9.7 exact build-security fallback and matched deployment
 
-F3 corrects issue #625's six High build-dependency findings while retaining the
-CP-AI credential boundary. The exact F3 backend and separate compatible C
-frontend were independently selected. The [current release index](releases/release297/current-release.json)
-and generated [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) are the
-current status records. This packet identifies the reviewed artifacts and next
-operations; it is not an operational authorization receipt.
+Use the [current-release index](releases/release297/current-release.json), [accepted v5 binding](release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json), [deployment completion](releases/release297/matched-deployment-completion-20261010-b5.json) and independent review for exact identities and evidence. This packet reports dated results and grants no future operational authority. The [complete predeployment packet](releases/release297/history/build-security-packet-e22c790a-predeployment-20261010.md) retains earlier findings and at-the-time actions unchanged.
 
-Application reference A3 is `2001e8888992674493c3084981fa8aae27d70e1d`. PR #629
-merged the reviewed tooling at `6e33a19662fec14e719a806e73160a84816f120e` from
-`dbf00dbb29945fd316150af047aa55194f59d892`. Exact resulting-main CI passed with
-19 successful checks and two known skips, and real Git inventories preserve A3's
-564 backend and 637 frontend inputs. Every eventual operation still requires
-fresh exact-main CI, clean source and the reviewed frozen script bytes.
+The dated matched deployment used runtime B5 `e22c790aee125a5312c0b4ec37ea594ff56ed999`, with tested application A3 `2001e8888992674493c3084981fa8aae27d70e1d`. B5's backend inventory of 564 files and frontend inventory of 637 files matched A3, and its exact resulting-main CI passed 19 checks with two expected skips. PR #631 subsequently advanced remote main to 96f with backend/frontend changes. A later read-only observation recorded API 186 / worker 202 at 96f using a different image. Its frontend identity and release acceptance remain unknown; B5 CI, A3 acceptance and earlier public-file verification do not transfer. The [separate production observation](releases/release297/latest-production-observation-20261010.json) retains exact evidence. Source-specific validation and review of its temporary_room rollback floor are required.
 
-| Artifact role | Exact source | Artifact identities |
-| --- | --- | --- |
-| Serving backend A3 | `2001e8888992674493c3084981fa8aae27d70e1d` | Index `88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc`; platform `5e061a32ad491557e7685bfcb8876b031a197c76594e1b03be76c55774e543fb`; config `ae1680620e484439e10298b7cac433ab501f2a00ce4ecbc2251a9c3b0ee5c943`; archive `b228d66a208de3e49f0bb0751ad2d1501d3f1185fceece754adcdaa5c723ec6e` |
-| Matched frontend A3 | Same A3 | ZIP `ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d`; 171-file inventory `3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3` |
-| Fallback backend F3 | `392970b7ccfea365faadf1eba07da4ad26964c09` | Index `6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e`; platform `4073299e7bdea7ac0886c9875ae29989c1007769565424328b63f66a7bdbb41a`; config `2452ce7a09e2e97765a1217670ba69cd6a72350efa4e054c85e8b0a31079343b`; archive `e74e71e1d73af9aa8ecc5210ba012b78aca4aab12a4e54ec03d7d95dcbc1b06b` |
-| Compatible recovery frontend C | `cce3f7b4eae30df13378337c01dc4ff2d5db3997` | ZIP `8d6379613dbb1c88783ee0f141ed41c34164fac5142172daee7da7f8d27cd72a`; 171-file inventory `3484fa4f9848dc9e48e4e3bfeb384e959f17deccd10125e8b362fb094f29451e` |
-| Unchanged ClassPilot 2.9.7 | Main `03a9c3633d1e1f7d763ea5cf910f870994400e02` | ZIP `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; no new Store upload |
+| Role | Source | Exact artifact |
+|---|---|---|
+| Dated matched A3 backend/worker | `2001e8888992674493c3084981fa8aae27d70e1d` | Index `sha256:88d012d047e47a4bc33352290baf1800772777ee4260a4be64f5caacd7a249cc`; exact config/platform/archive are pinned in v5. |
+| F3 recovery backend/worker | `392970b7ccfea365faadf1eba07da4ad26964c09` | Index `sha256:6a039cf5ec60efcfa054bde5166e04dd62d70dbdd8e9785a6954accf7eeb684e`; exact config/platform/archive are pinned in v5. |
+| Dated matched A3 frontend | A3 | ZIP `ca200bf37c33277a49c0cd83707ddfa2c123634eaf1d881b417778b334adb41d`, inventory `3035336e3f9836c437a893b368e3aba7b7e4a118b51dfca2ac5dfd2cf25733f3`, 171 production files. |
+| Compatible recovery C frontend | `cce3f7b4eae30df13378337c01dc4ff2d5db3997` | ZIP `8d6379613dbb1c88783ee0f141ed41c34164fac5142172daee7da7f8d27cd72a`, 171 production files; prepared and reviewed, not deployed. |
 
-The [v5 binding](release-bindings/release-297-current-school-cp-protected-build-fallback-v5.json)
-separates candidate and fallback roles. F3 is an exact child of F2 with only
-`package.json` and `package-lock.json` changed; its binary patch SHA-256 is
-`2184fac4c1fa58736afe999f5da094a9e478467e7c86e5f7d906523aa55688d0`.
-F2 output before/after the unused alias transform and F3 output have the same
-1,574 paths, sizes and hashes. F3's older application tree is retained only as a
-recovery source and must not be merged into main.
+F3 retains the CP-AI protection and removes F2's unused alias-compiler development dependency chain. Exact source/build/audit/native-processing evidence and lower-severity limitations remain linked by the index. C578/F1 scans and F2's six-High audit remain failed historical evidence. No artifact rebuild, source substitution or safety-threshold change accompanies this deployment.
 
-F3's image scan reports zero High/Critical and one Medium finding. Its full npm
-audit reports zero High/Critical and seven Moderate findings; production
-dependencies report three Moderate findings. The source checks, nine actual
-native Linux/musl processing/IP checks, 53 compiled-image credential fixtures and
-unforced cleanup passed. C's production dependency audit has no advisories; its
-reported development findings remain one High and one Low under the existing
-production/reachability policy, without a waiver. Precise-resource matching and
-the opaque teacher-command contract are unchanged.
+All seven original release gates passed. The fixed 133-client campaign used the approved A,A,A,B,B,A,A,B order and retained its exact dbf00 measured harness; the first startup-failed attempt remains historical. After the reviewed async idle-control correction, fresh normal load used 340 clients for 60 seconds. Three consecutive 900-second mixed runs persisted 36,309 heartbeats across 45 lifecycle rounds, with full continuous heartbeat p95 values 32.071456/41.069281/33.549954 ms. Three fresh 250-client headroom runs each persisted 1,500 heartbeats, with heartbeat p95 values 34.619877/36.302964/29.168858 ms and all 14 criteria true. The earlier 544.68 ms failure remains unchanged. Diagnostic instrumentation results are not acceptance. Historical receipts retain their own source/helper/binding identities.
 
-| Original release gate | Current outcome | Actual evidence |
-| --- | --- | --- |
-| DeSales 133-client campaign | Passed | Eight fixed-order 60-second runs; 6,384 offers, successful responses and persisted rows; all nine approved amended criteria |
-| Capability-on normal load | Passed | Fresh 340 clients for 60 seconds; 2,040 successful/persisted heartbeats; p95 48.866331 ms with persistence, error, safety and cleanup review |
-| Mixed classroom endurance | Passed | Fresh three consecutive 900-second runs, 45 rounds and 36,309 successful/persisted heartbeats; full continuous ordinary-heartbeat p95 32.071456 / 41.069281 / 33.549954 ms |
-| Ordinary recovery | Passed | Exact A3→F3→A3, eight API/worker processes and eight graceful drains, queried restricted migration roles and retained 53-entry ledger |
-| Restricted restoration | Passed | Six fresh actual rounds bound to the same A3/F3 ordinary replay |
-| Screenshot/native processing | Passed | Source-bound actual processing and scan evidence, separate from preparation receipts |
-| Accepted 250-client headroom | Passed | Three fresh 60-second runs; 4,500 successful/persisted heartbeats; p95 34.619877 / 36.302964 / 29.168858 ms, below the unchanged 400 ms limit; all 14 checks per run and graceful cleanup passed |
+Exact A3 and F3 registry publication and current admission-129 registration passed under their separately reviewed Plans and windows. The unused A3 anchor is API 181 / worker 197; the registered unused F3 recovery pair is API 184 / worker 200. Registered-unused does not mean ECS task-definition INACTIVE. Migration ran before serving API 185 / worker 201 converged, followed by the matched A3 frontend and completed CloudFront invalidation. Native and wrapper outcomes are certain in their actual retained receipts.
 
-Every passed original gate has a separate native result and independent review
-linked from the index. Mixed p95 figures above use each full 900-second continuous
-ordinary-heartbeat sample; sealed first-60-second round samples remain separately
-labeled. The [startup correction completion](releases/release297/fixed133-baseline-startup-completion-20261009.json)
-preserves the original zero-round failure/custody limitation, then records actual
-corrected protocol and full baseline startup plus the successful eight-run block.
-Five baseline latency failures remain retained; the superseded comparison gate
-was not revived. No thresholds, run order or production flags changed.
+The fresh capacity baseline was desired/running 1+1. API 185 retains its configured probe and actual HEALTHY task/container status. Worker 201 retains baseline 196's absence of a probe and reports UNKNOWN while RUNNING; no blanket worker HEALTHY claim is made. Whole environment, capability configuration and secret references were preserved. Both new Usage modes are off; daily is omitted and defaults to shadow. Complete scalable target and scheduled-action configurations were restored; no before/after scaling-policy comparison was captured.
 
-The [failed headroom attempt](releases/release297/headroom250-failed-attempt-20261009.json)
-remains failed: run `21f119c74dbd` had p95 544.682706 ms above the approved
-400 ms limit, with 1,500 successful/persisted requests, CPU 0.423284 and other
-checks/cleanup passed. Its two remaining attempts were held. Diagnostic profiling exposed a
-synchronous control-file lookup every 25 ms in the harness's HTTP process. This
-PR changes only that idle lookup to one awaited read, treating only `ENOENT` as
-an absent request; nonce, ordering, immutable replies and cleanup stay intact.
-An actual child/HTTP fixture verifies progress while the idle read is delayed.
-This removes a demonstrated blocking path without claiming it caused the failed
-latency result. The [reviewed correction](releases/release297/async-idle-control-correction-20261009.json)
-passed 65 meaningful harness regressions, including nine actual role-entry child
-cases. Fresh normal load, three mixed runs and three headroom runs now pass under
-one exact `f0c8705a` harness, freeze `1d686cf1` and acceptance input `c8fa1836`.
-The full independent headroom review also replayed its same-binding lower-load
-prerequisites. The 133-client campaign retains its original `dbf00dbb` binding;
-all older receipts and diagnostic limitations remain historical and unchanged.
+Read-only durable catalog verification confirmed all 53 ordered ordinary migrations, exact checksums/modes/status, 129 application tables with forced RLS and the screenshot function body/permissions. Separate public verification matched all 171 static files and 3,430,420 bytes after frontend invalidation, including lazy/legal assets. The native frontend script checked index and direct assets; the separate 171 receipt supplies the complete static-file comparison. Three read-only observations found zero sessions for both verified migrator principals at the exact stopped-task IP under recorded visibility. This establishes observed absence, not completion of the migrator pool.end mechanism; inspector connectionClosed records only inspector client shutdown. Failed inspections 05 and 06 remain retained historical attempts with no SQL observations.
 
-Ordinary recovery retains migrations **43→53** and admission
-**121→125→126→127→128→129**. The historical 54-entry rehearsal is separate.
-Current production already admits 129; the bounded operational path clones its
-exact emergency-API/worker definitions into inactive 129 candidate/fallback pairs,
-preserving existing capability modes, environment, secrets and desired counts.
-Both new Usage modes stay off. The separately omitted daily-rollup setting
-continues to default to shadow; this does not establish zero rollup workload.
+F3 does not support current A2/A3 pages/cursors. Any future F3 backend recovery requires the exact compatible C frontend and reload/reset of already-open newer pages and history cursors, plus fresh operational evidence. C retains F3's earlier Focus/Waypoint UI and opaque server-enforced command contract; it lacks A3's current-tab shortcut/activeTabRef projection. PR #631's later temporary_room rollback floor requires separate compatibility review before future F3 reuse.
 
-[Exact selection](release-evidence/release297/cp-protected-build/exact-F3-C-successor-selection.json)
-and [C preparation](release-evidence/release297/cp-protected-build/fallback-frontend-C-preparation.json)
-identify one F3 backend and the compatible recovery frontend. Current A2/A3
-pages-view/cursor behavior is incompatible with F3. Before backend deployment,
-establish the strict actual recovery proof and bounded C recovery Plan after
-publication/registration. If F3 recovery is needed, publish exact C and reload
-already-open A2/A3 pages/reset history cursors. C uses F3's earlier Focus and
-Waypoint UI without A3's current-tab shortcut or activeTabRef status projection;
-the server-enforced opaque Focus command contract remains intact.
-
-The operator's remaining sequence is explicit:
-
-1. Review/merge the exact tooling/evidence successor, then verify fresh
-   resulting-main CI and application/script equivalence. The accepted v5 profile
-   records all seven original gates and exact F3/C selection; historical failures
-   remain immutable.
-2. Refresh production health, catalog/admission, backups, flags and task state.
-   Preserve the freshly observed service capacity; the scheduled minimum change
-   permits an ordinary API count of one through three with one worker. Deployment
-   completion must replay an independently reviewed actual capacity baseline no
-   older than 30 minutes before migration, rather than force an older count.
-   Review exact publication and inactive-registration Plans/windows; publish the
-   bound A3/F3 artifacts, register inactive129 pairs and establish C recovery proof.
-3. Run migration-first backend/worker deployment, converge on the exact candidate,
-   then publish the matched A3 frontend. Retain all actual operation/readback and
-   public-byte evidence, including any uncertain outcome.
-4. Collect already-open page adoption and sample-bearing live acceptance: sign-in,
-   IXL Entire Website, precise resources, mixed Flight Paths, Focus/Attention,
-   Classroom commands, messaging, reconnect and relevant PassPilot/GoPilot flows.
-
-The user authorized necessary correction merges/publication/registration and
-backend/frontend deployment through "fix this and deploy." Execution remains
-gated; runtime/pilot activation, Store submission and GitHub settings are separate.
-Managed-device validation stays `waived_not_passed`. Public bytes, synthetic
-campaigns and task health do not establish managed adoption or live acceptance.
-Later global promotion retains the existing per-capability windows and freshness.
-
-C578/F1 failed scans, F2's six-High audit, earlier A/A2 artifacts/recovery and the
-initial failed startup remain historical. [The merged dbf00 snapshot](release-bindings/history/release297-2001e888-f3-dbf00dbb/index.json)
-preserves the previous packet/profile/index/observation; prior
-[A](release-bindings/history/release297-ecf6ce01-f3-8293939d/index.json) and
-[A2](release-bindings/history/release297-55f91b62-f3-25964241/index.json)
-snapshots remain intact. None certifies changed application inputs or actual live
-production state.
+Already-open-page adoption, runtime/pilot activation and sample-bearing live acceptance remain pending; managed-device validation remains waived_not_passed. Static bytes, task convergence, synthetic acceptance and documentation tests do not establish those outcomes. ClassPilot 2.9.7 and its existing Store package are unchanged; no upload occurred or is required for this release.

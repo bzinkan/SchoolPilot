@@ -23788,7 +23788,7 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
       .map((row) => row.studentId);
     if (restorableIds.length === 0) return [];
 
-    const owners = await getActiveClassOwnersForStudents(options.schoolId, restorableIds, transactionDb);
+    const owners = await getActiveClassOwnersForStudents(options.schoolId, restorableIds, transactionDb, now);
     const ownerByStudent = new Map(owners.map((owner) => [owner.studentId, owner]));
     const restored: ClasspilotStudentControlState[] = [];
     for (const studentId of restorableIds) {
@@ -25913,6 +25913,7 @@ export async function assignAdHocSupervisionStudents(options: {
   source: string; endsAt: Date; note?: string; group?: { id: string; name: string };
   requireAvailable?: boolean; requiredCoverageGroupId?: string;
   coverageAssignmentReview?: CoverageAssignmentReview;
+  roomOwnershipAuthority?: { actorId: string; allowDestinationRoom?: boolean };
 }, dbInstance: Pick<typeof db, "transaction"> = db): Promise<{ context: ClasspilotSupervisionContext; assignments: ClasspilotSupervisionStudent[] }> {
   const studentIds = [...new Set(options.studentIds.filter(Boolean))].sort();
   return dbInstance.transaction(async tx => {
@@ -25997,14 +25998,15 @@ export async function assignAdHocSupervisionStudents(options: {
         note: options.note || existing.note || null, coverageAssignmentReview: options.coverageAssignmentReview }, database);
       if (!context) throw new CoverageDeletionError("This supervision has ended. Refresh before trying again.", "COVERAGE_CONTEXT_EXPIRED", 409);
       const assignments = await assignStudentsToSupervisionContext({ schoolId: options.schoolId, contextId: context.id,
-        studentIds, assignedBy: options.actorId, source: options.source }, database);
+        studentIds, assignedBy: options.actorId, source: options.source, roomOwnershipAuthority: options.roomOwnershipAuthority }, database);
       return { context, assignments };
     }
     const context = await createSupervisionContextWithStudents({ context: {
       schoolId: options.schoolId, contextType: options.group ? "supervision_group" : "direct_pickup",
       name: options.group?.name || "Claimed students", status: "active", assignedStaffId: options.assignedStaffId,
       coverageGroupId: options.group?.id || null, createdBy: options.actorId, note: options.note || null, endsAt: options.endsAt,
-    }, studentIds, assignedBy: options.actorId, source: options.source, coverageAssignmentReview: options.coverageAssignmentReview }, database);
+    }, studentIds, assignedBy: options.actorId, source: options.source, coverageAssignmentReview: options.coverageAssignmentReview,
+      roomOwnershipAuthority: options.roomOwnershipAuthority }, database);
     const assignments = await tx.select().from(classpilotSupervisionStudents).where(and(
       eq(classpilotSupervisionStudents.schoolId, options.schoolId), eq(classpilotSupervisionStudents.contextId, context.id),
       isNull(classpilotSupervisionStudents.releasedAt)));
@@ -26062,6 +26064,7 @@ export async function claimScheduledCoverageStudents(options: {
       options.schoolId
     );
     if (!lifecycleLocked) throw new Error("School not found");
+    await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
     await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageAssignmentReview);
     await assertActiveSchoolStaffMembership(
       options.assignedStaffId,
@@ -26137,6 +26140,21 @@ export async function claimScheduledCoverageStudents(options: {
       });
     }
 
+    // The frozen occurrence, rather than the request's default school-day
+    // deadline, owns every scheduled claim's lifetime. Recheck the real clock
+    // after the occurrence/conflict locks so a request queued across the bell
+    // cannot create or revive authority for an ended block.
+    const now = new Date();
+    const scheduledEndsAt = occurrence.scheduledEndAt
+      ? effectiveClasspilotScheduledControlEndAt(occurrence.scheduledEndAt,
+          new Date((occurrence.scheduledStartAt || occurrence.startTime).getTime() + 12 * 60 * 60_000))
+      : null;
+    if (!occurrence.scheduledStartAt || occurrence.scheduledStartAt > now || !scheduledEndsAt || scheduledEndsAt <= now) {
+      throw Object.assign(new Error("This scheduled block has ended or is not active yet."), {
+        status: 409, code: "SCHEDULED_CONFLICT_EXPIRED",
+      });
+    }
+
     if (uniqueStudentIds.length > 0) {
       // Student rows provide a stable lock even when no current supervision
       // assignment exists, so two staff cannot both observe "claimable" and
@@ -26152,7 +26170,7 @@ export async function claimScheduledCoverageStudents(options: {
         .for("update");
     }
 
-    const [existing] = await tx
+    const [candidateContext] = await tx
       .select()
       .from(classpilotSupervisionContexts)
       .where(and(
@@ -26164,6 +26182,17 @@ export async function claimScheduledCoverageStudents(options: {
       .orderBy(desc(classpilotSupervisionContexts.createdAt))
       .limit(1)
       .for("update");
+    let existing: ClasspilotSupervisionContext | undefined = candidateContext;
+    if (existing && existing.endsAt <= now) {
+      await releaseSupervisionStudents({ schoolId: options.schoolId, contextId: existing.id,
+        releaseReason: "supervision_window_ended" }, transactionDb);
+      existing = undefined;
+    }
+    if (existing && existing.startsAt > now) {
+      throw Object.assign(new Error("This supervision has not started yet."), {
+        status: 409, code: "SCHEDULED_COVERAGE_STUDENT_UNAVAILABLE",
+      });
+    }
 
     const activeAssignments = uniqueStudentIds.length > 0
       ? await tx
@@ -26181,7 +26210,7 @@ export async function claimScheduledCoverageStudents(options: {
             inArray(classpilotSupervisionStudents.studentId, uniqueStudentIds),
             isNull(classpilotSupervisionStudents.releasedAt),
             eq(classpilotSupervisionContexts.status, "active"),
-            sql`${classpilotSupervisionContexts.endsAt} > now()`
+            gt(classpilotSupervisionContexts.endsAt, now)
           ))
       : [];
     if (activeAssignments.some((assignment) => assignment.contextId !== existing?.id)) {
@@ -26193,7 +26222,8 @@ export async function claimScheduledCoverageStudents(options: {
     const activeOwners = await getActiveClassOwnersForStudents(
       options.schoolId,
       uniqueStudentIds,
-      tx as unknown as typeof db
+      tx as unknown as typeof db,
+      now
     );
     if (activeOwners.length > 0) {
       throw Object.assign(new Error("One or more students are already active in another class"), {
@@ -26202,7 +26232,6 @@ export async function claimScheduledCoverageStudents(options: {
       });
     }
 
-    const now = new Date();
     const summaryContextIds = await captureSupervisionSummarySources(
       options.schoolId, uniqueStudentIds, existing ? [existing.id] : [], now, transactionDb
     );
@@ -26211,7 +26240,7 @@ export async function claimScheduledCoverageStudents(options: {
       const [updated] = await tx
         .update(classpilotSupervisionContexts)
         .set({
-          endsAt: existing.endsAt < options.endsAt ? options.endsAt : existing.endsAt,
+          endsAt: scheduledEndsAt,
           note: options.note || existing.note || null,
           updatedAt: now,
         })
@@ -26231,7 +26260,8 @@ export async function claimScheduledCoverageStudents(options: {
           scheduledConflictId: conflict.id,
           createdBy: options.actorId,
           note: options.note || null,
-          endsAt: options.endsAt,
+          startsAt: now,
+          endsAt: scheduledEndsAt,
         })
         .returning();
       if (!created) throw new Error("Failed to create scheduled supervision context");
@@ -26261,8 +26291,8 @@ export async function claimScheduledCoverageStudents(options: {
           })))
           .returning()
       : [];
-    const contextWasExtended = Boolean(existing && context.endsAt > existing.endsAt);
-    if (contextWasExtended) {
+    const contextDeadlineChanged = Boolean(existing && context.endsAt.getTime() !== existing.endsAt.getTime());
+    if (contextDeadlineChanged) {
       const activeContextAssignments = await tx
         .select({ studentId: classpilotSupervisionStudents.studentId })
         .from(classpilotSupervisionStudents)
@@ -26300,6 +26330,7 @@ export async function claimScheduledCoverageStudents(options: {
         eq(classpilotScheduledConflicts.schoolId, options.schoolId),
         inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
       ));
+    await finalizeReassignedSupervisionSources(options.schoolId, context.id, uniqueStudentIds, summaryContextIds, now, transactionDb);
     await syncSupervisionActivityReports({
       schoolId: options.schoolId,
       contextIds: [...summaryContextIds, context.id],
@@ -26417,7 +26448,8 @@ async function captureSupervisionSummarySources(
   now: Date,
   database: typeof db
 ): Promise<string[]> {
-  if (!supervisionActivityReportingEnabled(now)) return contextIds;
+  // Source contexts must be discovered even with summary capture disabled:
+  // moving their last student still ends their live authority and tools.
   const assignments = studentIds.length ? await database
     .select({ contextId: classpilotSupervisionStudents.contextId })
     .from(classpilotSupervisionStudents)
@@ -26427,8 +26459,58 @@ async function captureSupervisionSummarySources(
       isNull(classpilotSupervisionStudents.releasedAt)
     )) : [];
   const affected = [...new Set([...contextIds, ...assignments.map((row) => row.contextId)])].sort();
-  await syncSupervisionActivityReports({ schoolId, contextIds: affected, now }, database);
+  if (supervisionActivityReportingEnabled(now)) {
+    await syncSupervisionActivityReports({ schoolId, contextIds: affected, now }, database);
+  }
   return affected;
+}
+
+/** Caller holds the school lifecycle and affected student authority locks. */
+async function assertTemporaryRoomOwnership(
+  schoolId: string,
+  contextIds: string[],
+  authority: { actorId: string } | undefined,
+  now: Date,
+  database: typeof db,
+  requireActive = false
+): Promise<void> {
+  if (!authority || contextIds.length === 0) return;
+  const contexts = await database.select().from(classpilotSupervisionContexts).where(and(
+    eq(classpilotSupervisionContexts.schoolId, schoolId), inArray(classpilotSupervisionContexts.id, contextIds),
+    eq(classpilotSupervisionContexts.contextType, "temporary_room")));
+  if (contexts.some(context => {
+    const active = context.status === "active" && context.endsAt > now;
+    // An expired source is cleanup history, not an authority that may prevent
+    // a newly reviewed claim. Destinations and direct room edits stay strict.
+    return (requireActive && (!active || context.startsAt > now))
+      || (active && (context.startsAt > now || context.assignedStaffId !== authority.actorId));
+  })) {
+    throw new CoverageDeletionError("Only the current room supervisor can change this room.", "TEMPORARY_ROOM_OWNER_REQUIRED", 409);
+  }
+}
+
+/** Transfers clean the outgoing activity without restoring its former students. */
+async function finalizeReassignedSupervisionSources(
+  schoolId: string,
+  destinationContextId: string,
+  studentIds: string[],
+  sourceContextIds: string[],
+  now: Date,
+  database: typeof db
+): Promise<void> {
+  for (const contextId of sourceContextIds.filter(id => id !== destinationContextId)) {
+    const remaining = await database.select({ id: classpilotSupervisionStudents.id }).from(classpilotSupervisionStudents)
+      .where(and(eq(classpilotSupervisionStudents.schoolId, schoolId), eq(classpilotSupervisionStudents.contextId, contextId),
+        isNull(classpilotSupervisionStudents.releasedAt))).limit(1);
+    if (remaining.length) {
+      await releaseScheduledClassroomStudentTools(schoolId, contextId, studentIds, now, database);
+      continue;
+    }
+    const ended = await database.update(classpilotSupervisionContexts).set({ status: "ended", endedAt: now, updatedAt: now })
+      .where(and(eq(classpilotSupervisionContexts.schoolId, schoolId), eq(classpilotSupervisionContexts.id, contextId),
+        eq(classpilotSupervisionContexts.status, "active"))).returning({ id: classpilotSupervisionContexts.id });
+    if (ended.length) await finalizeScheduledClassroomTools(schoolId, contextId, now, database);
+  }
 }
 
 export async function createSupervisionContextWithStudents(options: {
@@ -26437,6 +26519,7 @@ export async function createSupervisionContextWithStudents(options: {
   assignedBy: string;
   source?: string;
   coverageAssignmentReview?: CoverageAssignmentReview;
+  roomOwnershipAuthority?: { actorId: string; allowDestinationRoom?: boolean };
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionContext> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   return dbInstance.transaction(async (tx) => {
@@ -26469,6 +26552,11 @@ export async function createSupervisionContextWithStudents(options: {
     const summaryContextIds = await captureSupervisionSummarySources(
       options.context.schoolId, uniqueStudentIds, [], summaryAt, transactionDb
     );
+    await assertTemporaryRoomOwnership(options.context.schoolId, summaryContextIds, options.roomOwnershipAuthority, summaryAt, transactionDb);
+    if (options.roomOwnershipAuthority && !options.roomOwnershipAuthority.allowDestinationRoom && options.context.contextType === "temporary_room"
+      && options.context.assignedStaffId !== options.roomOwnershipAuthority.actorId) {
+      throw new CoverageDeletionError("A temporary room must belong to its supervisor.", "TEMPORARY_ROOM_OWNER_REQUIRED", 409);
+    }
     const [context] = await tx
       .insert(classpilotSupervisionContexts)
       .values(options.context)
@@ -26503,6 +26591,7 @@ export async function createSupervisionContextWithStudents(options: {
       }, tx as unknown as typeof db);
     }
 
+    await finalizeReassignedSupervisionSources(context.schoolId, context.id, uniqueStudentIds, summaryContextIds, summaryAt, transactionDb);
     await syncSupervisionActivityReports({
       schoolId: context.schoolId,
       contextIds: [...summaryContextIds, context.id],
@@ -26519,6 +26608,7 @@ export async function assignStudentsToSupervisionContext(options: {
   studentIds: string[];
   assignedBy: string;
   source?: string;
+  roomOwnershipAuthority?: { actorId: string; allowDestinationRoom?: boolean };
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionStudent[]> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   if (uniqueStudentIds.length === 0) return [];
@@ -26541,6 +26631,12 @@ export async function assignStudentsToSupervisionContext(options: {
     const summaryContextIds = await captureSupervisionSummarySources(
       options.schoolId, uniqueStudentIds, [options.contextId], summaryAt, tx as unknown as typeof db
     );
+    await assertTemporaryRoomOwnership(options.schoolId, summaryContextIds.filter(id => id !== options.contextId),
+      options.roomOwnershipAuthority, summaryAt, tx as unknown as typeof db);
+    if (!options.roomOwnershipAuthority?.allowDestinationRoom) {
+      await assertTemporaryRoomOwnership(options.schoolId, [options.contextId], options.roomOwnershipAuthority,
+        summaryAt, tx as unknown as typeof db, true);
+    }
     await tx
       .update(classpilotSupervisionStudents)
       .set({ releasedAt: summaryAt, releaseReason: "reassigned" })
@@ -26570,6 +26666,7 @@ export async function assignStudentsToSupervisionContext(options: {
       supervisionContextId: options.contextId,
       studentIds: uniqueStudentIds,
     }, tx as unknown as typeof db);
+    await finalizeReassignedSupervisionSources(options.schoolId, options.contextId, uniqueStudentIds, summaryContextIds, summaryAt, tx as unknown as typeof db);
     await syncSupervisionActivityReports({
       schoolId: options.schoolId, contextIds: summaryContextIds, now: summaryAt,
     }, tx as unknown as typeof db);
@@ -26584,6 +26681,7 @@ export async function releaseSupervisionStudents(options: {
   releaseReason?: string;
   scheduledClassroomAuthority?: { actorId: string; contextAuthorityRevision: string };
   staffReleaseAuthority?: { actorId: string; contextAuthorityRevision?: string; expectedStudentIds?: string[] };
+  roomOwnershipAuthority?: { actorId: string };
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionStudent[]> {
   const conditions: SQL[] = [
     eq(classpilotSupervisionStudents.schoolId, options.schoolId),
@@ -26605,6 +26703,7 @@ export async function releaseSupervisionStudents(options: {
       releasing.map((row) => row.studentId),
       tx as unknown as typeof db
     );
+    await assertTemporaryRoomOwnership(options.schoolId, [options.contextId], options.roomOwnershipAuthority, new Date(), tx as unknown as typeof db, true);
     if (options.staffReleaseAuthority) {
       const authority = options.staffReleaseAuthority;
       const [context] = await tx.select().from(classpilotSupervisionContexts).where(and(
@@ -26695,6 +26794,7 @@ export async function extendSupervisionContext(options: {
   coverageGroupId?: string | null;
   scheduledConflictId?: string | null;
   coverageAssignmentReview?: CoverageAssignmentReview;
+  roomOwnershipAuthority?: { actorId: string };
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionContext | undefined> {
   const data: Partial<InsertClasspilotSupervisionContext> & { updatedAt: Date } = {
     updatedAt: new Date(),
@@ -26713,8 +26813,10 @@ export async function extendSupervisionContext(options: {
     );
     if (!lifecycleLocked) return undefined;
     await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageAssignmentReview);
+    await assertTemporaryRoomOwnership(options.schoolId, [options.contextId], options.roomOwnershipAuthority, new Date(), transactionDb, true);
     const [currentContext] = await tx
-      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId, coverageGroupId: classpilotSupervisionContexts.coverageGroupId,
+      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId, contextType: classpilotSupervisionContexts.contextType,
+        coverageGroupId: classpilotSupervisionContexts.coverageGroupId,
         endsAt: classpilotSupervisionContexts.endsAt, scheduledConflictId: classpilotSupervisionContexts.scheduledConflictId,
         scheduleProfileApplicationId: classpilotSupervisionContexts.scheduleProfileApplicationId,
         scheduleProfileDate: classpilotSupervisionContexts.scheduleProfileDate, scheduleProfileBlockId: classpilotSupervisionContexts.scheduleProfileBlockId })
@@ -26727,6 +26829,10 @@ export async function extendSupervisionContext(options: {
       ))
       .limit(1);
     if (!currentContext) return undefined;
+    if (options.roomOwnershipAuthority && currentContext.contextType === "temporary_room"
+      && options.assignedStaffId && options.assignedStaffId !== currentContext.assignedStaffId) {
+      throw new CoverageDeletionError("Send students to another supervisor through a reviewed room transfer.", "TEMPORARY_ROOM_OWNER_REQUIRED", 409);
+    }
     if (options.requireAdHocEndTime && options.endsAt && options.endsAt.getTime() !== currentContext.endsAt.getTime()
       && (currentContext.scheduledConflictId || currentContext.scheduleProfileApplicationId || currentContext.scheduleProfileDate || currentContext.scheduleProfileBlockId)) {
       throw new CoverageDeletionError("This deadline is controlled by scheduling. Update the scheduled activity instead.", "SUPERVISION_SCHEDULED_DEADLINE", 409);

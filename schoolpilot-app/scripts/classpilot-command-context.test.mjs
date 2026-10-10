@@ -1101,6 +1101,8 @@ test('recipient copy names the frozen audience and who was left out', () => {
   assert.equal(recipientSnapshotLabel({}), 'Whole class');
   assert.equal(recipientSnapshotLabel(), 'Whole class');
   assert.equal(recipientSnapshotLabel({ view: 'claimed' }), 'All claimed students');
+  assert.equal(recipientSnapshotLabel({ view: 'room' }), 'All shown room students');
+  assert.equal(recipientSnapshotLabel({ view: 'room', selectedCount: 1 }), '1 selected student');
 
   const one = snapshotCommandRecipients({ target: { targetStudentIds: ['a'] }, students: recipientRoster, label: '1 selected student' });
   const three = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster, label: 'Group: Reading table' });

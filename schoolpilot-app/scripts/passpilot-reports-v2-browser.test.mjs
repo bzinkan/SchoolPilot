@@ -158,8 +158,12 @@ test(`a known ${failure.status} report failure aborts a held export before it ca
     await page.getByRole('button', { name: 'Export passes CSV' }).click();
     await state.exportReady;
     state.summaryFailure = failure;
-    const exportAborted = page.waitForEvent('requestfailed', { predicate: request => new URL(request.url()).pathname.endsWith('/reports/export.csv'), timeout: 10_000 });
-    void exportAborted.catch(() => {});
+    // Login navigation can destroy the old context before Chromium emits
+    // requestfailed. The synchronous native-abort record below survives it.
+    const exportAborted = failure.status === 401 ? null : page.waitForEvent('requestfailed', {
+      predicate: request => new URL(request.url()).pathname.endsWith('/reports/export.csv'), timeout: 10_000,
+    });
+    void exportAborted?.catch(() => {});
     await page.getByRole('button', { name: 'Refresh report', exact: true }).click();
     if (failure.status === 401) await page.waitForURL('**/login');
     else await page.getByText(failure.status === 409
@@ -169,7 +173,7 @@ test(`a known ${failure.status} report failure aborts a held export before it ca
     assert.ok(exportAbortUrl, 'The held export never received an explicit native XHR abort');
     assert.ok(new URL(exportAbortUrl).pathname.endsWith('/reports/export.csv'));
     state.releaseExport();
-    await exportAborted;
+    if (exportAborted) await exportAborted;
     await page.waitForLoadState('networkidle');
     assert.equal(downloaded, false, 'a verified authority or snapshot failure must retire the pending export');
     assert.equal(await page.getByText('CSV downloaded. The server recorded this export.', { exact: true }).count(), 0);

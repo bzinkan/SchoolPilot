@@ -239,7 +239,7 @@ test("control snapshots and legacy classroom states share one transaction bounda
 });
 
 test("delegated supervision owns a revisioned snapshot and restores class authority on every end path", async () => {
-  const [schema, migration, storage, dispatcher, coverage, scheduler, delivery] = await Promise.all([
+  const [schema, migration, storage, dispatcher, coverage, scheduler, delivery, review] = await Promise.all([
     readFile(new URL("src/schema/classpilot.ts", root), "utf8"),
     readFile(new URL("src/index.ts", root), "utf8"),
     readFile(new URL("src/services/storage.ts", root), "utf8"),
@@ -247,6 +247,7 @@ test("delegated supervision owns a revisioned snapshot and restores class author
     readFile(new URL("src/routes/classpilot/coverage.ts", root), "utf8"),
     readFile(new URL("src/services/scheduler.ts", root), "utf8"),
     readFile(new URL("src/services/classpilotControlStateDelivery.ts", root), "utf8"),
+    readFile(new URL("src/services/classpilotSupervisionReview.ts", root), "utf8"),
   ]);
   assert.match(schema, /supervisionContextId: varchar\("supervision_context_id"\)/);
   assert.match(migration, /classpilot_student_control_states ADD COLUMN IF NOT EXISTS supervision_context_id/);
@@ -258,16 +259,18 @@ test("delegated supervision owns a revisioned snapshot and restores class author
   assert.match(storage, /export async function restoreClasspilotStudentControlStatesAfterSupervision/);
   assert.match(storage, /export async function releaseExpiredClasspilotSupervisionContexts/);
   assert.match(storage, /export async function extendSupervisionContext[\s\S]*replaceClasspilotSupervisionControlSnapshots/);
-  assert.match(storage, /const contextWasExtended[\s\S]*activeContextAssignments[\s\S]*replaceClasspilotSupervisionControlSnapshots/);
+  assert.match(storage, /const contextDeadlineChanged[\s\S]*activeContextAssignments[\s\S]*replaceClasspilotSupervisionControlSnapshots/);
   assert.match(storage, /revision: sql`\$\{classpilotStudentControlStates\.revision\} \+ 1`/);
   assert.match(dispatcher, /persistActiveSupervisionState/);
   assert.match(dispatcher, /stateAuthorizedTargets = committedTargets\.filter/);
   assert.match(dispatcher, /supervisionContextId: options\.supervisionContextId/);
   assert.match(coverage, /syncClasspilotControlStatesToActiveDevices/);
   assert.ok(
-    (coverage.match(/getClasspilotSessionStudentRoster\(schoolId, session\.id\)/g) || []).length >= 3,
-    "active coverage send/return/reroute authorization must use the frozen session roster"
+    (coverage.match(/getClasspilotSessionStudentRoster\(schoolId, session\.id\)/g) || []).length >= 2,
+    "active coverage send/reroute authorization must use the frozen session roster"
   );
+  assert.match(coverage, /await returnSupervisionStudentsToOwnClass\(\{ schoolId, actorId: req\.authUser!\.id, studentIds \}\)/);
+  assert.match(review, /export async function returnSupervisionStudentsToOwnClass[\s\S]*getClasspilotSessionStudentRoster\(options\.schoolId, session\.id, database\)/);
   assert.match(scheduler, /expireClasspilotSupervisionContexts/);
   assert.match(delivery, /type: "classroom-state-sync"/);
   assert.doesNotMatch(delivery, /deviceId["']?\s*:\s*req\./);

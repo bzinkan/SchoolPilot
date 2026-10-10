@@ -78,6 +78,7 @@ const DB_SERIAL = new Set([
   "classpilot-coverage-directory.integration.test.ts",
   "classpilot-coverage-deletion.integration.test.ts",
   "classpilot-supervision-review.integration.test.ts",
+  "classpilot-supervision-storage.integration.test.ts",
   "classpilot-portal-first-login.integration.test.ts",
   "classpilot-precise-restriction-fence.integration.test.ts",
   "classpilot-precise-restriction-dispatch.test.ts",

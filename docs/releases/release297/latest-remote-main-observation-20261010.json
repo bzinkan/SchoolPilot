@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "release297_later_remote_main_observation",
+  "source": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+  "deployedMainSource": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+  "applicationSource": "2001e8888992674493c3084981fa8aae27d70e1d",
+  "parent": "e22c790aee125a5312c0b4ec37ea594ff56ed999",
+  "observedAtUtc": "2026-10-10T07:34:48.5007499Z",
+  "pullRequest": {
+    "headRefOid": "2f835b61543dc5dc7af5bbb6165bf57500d3c1b4",
+    "mergeCommit": {
+      "oid": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7"
+    },
+    "mergedAt": "2026-10-10T07:26:41Z",
+    "number": 631,
+    "state": "MERGED",
+    "title": "Keep mixed-grade claims together in one temporary room",
+    "url": "https://github.com/bzinkan/SchoolPilot/pull/631"
+  },
+  "applicationInputsChanged": true,
+  "frontendInputsChanged": true,
+  "equivalenceClaimed": false,
+  "acceptanceTransferClaimed": false,
+  "releasePublicationOrDeploymentAuthorized": false,
+  "releaseReady": false,
+  "operationalAuthorization": false,
+  "currentMainCi": {
+    "source": "96f136e6953c60b8ca2effeea88f0cbdef5e91c7",
+    "status": "unknown",
+    "rationale": "CI for this later source was not observed; deployed runtime CI does not transfer."
+  },
+  "retainedEvidence": {
+    "actualObservation": {
+      "storage": "private",
+      "format": "json",
+      "path": "remote-main-afterdeployment-96f136e6-01/observation.private.json",
+      "sha256": "3227f162584b42286ed35c2f528c9c41d8508927dc13ef9ce44e9bfaf9a99b0d"
+    },
+    "independentReview": {
+      "storage": "private",
+      "format": "json",
+      "path": "independent-review/B5-runtime-and-new-remote-main-01.independent-review.private.json",
+      "sha256": "6cf16984a689d73dd56e930f64cd3e953ff12e5f4f4822dd6feeef9b0ed76f90"
+    }
+  },
+  "futureCompatibilityReview": "PR631 introduces temporary_room ownership and a new rollback floor. Review that floor before any future F3 reuse after deploying this later source. The later source is not part of the actual B5 deployment."
+}
