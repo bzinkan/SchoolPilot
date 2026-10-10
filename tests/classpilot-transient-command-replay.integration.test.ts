@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { sql } from "drizzle-orm";
+import pg from "pg";
 import { WebSocket, type WebSocketServer } from "ws";
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "../src/db/classpilotScheduledClassroomMigration.js";
 import { CLASSPILOT_TOOLS_SQL } from "../src/db/classpilotToolsMigration.js";
@@ -24,8 +25,9 @@ type TargetRow = { student_id: string; status: string; error_message: string | n
 type Connection = { client: WebSocket; frames: Frame[] };
 
 const tag = `transient_replay_${randomUUID().replaceAll("-", "")}`;
+let admin: pg.Pool;
 let db: typeof import("../src/db.js").default;
-let pool: import("pg").Pool;
+let pool: pg.Pool;
 let storage: typeof import("../src/services/storage.js");
 let dispatcher: typeof import("../src/services/classpilotCommandDispatcher.js");
 let replay: typeof import("../src/services/classpilotTransientCommandReplay.js");
@@ -52,7 +54,35 @@ const clients: WebSocket[] = [];
 const inSchool = <T>(fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
 
 before(async () => {
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname),
+    "transient replay tests require the local fixture");
+  // Fixture rows and assertions use an independent bootstrap connection, so
+  // every statement issued by the code under test runs as the application
+  // role inside tenant context. The ordinary lane and the restricted-role RLS
+  // lane (the production posture) therefore exercise identical paths.
+  admin = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL, max: 2 });
   ({ default: db, pool } = await import("../src/db.js"));
+  if (process.env.RLS_GUC_ENABLED === "true") {
+    // In the RLS lane this suite is the evidence that the replay read and the
+    // supersede update work in the production posture, so prove the posture:
+    // a restricted, non-owner application role with row security on both
+    // command tables. Both lanes swallow failures by design (best-effort
+    // supersede, fail-safe replay), so a silent bypass must be impossible.
+    const role = await pool.query(
+      "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user",
+    );
+    assert.equal(role.rows[0]?.rolsuper, false, "the application role must not be a superuser");
+    assert.equal(role.rows[0]?.rolbypassrls, false, "the application role must not bypass row security");
+    const secured = await admin.query(
+      "SELECT relname, relrowsecurity, pg_get_userbyid(relowner) = $1 AS owned FROM pg_class WHERE oid IN ('classpilot_commands'::regclass, 'classpilot_command_targets'::regclass) ORDER BY relname",
+      [new URL(process.env.DATABASE_URL || "").username],
+    );
+    assert.equal(secured.rows.length, 2);
+    for (const table of secured.rows) {
+      assert.equal(table.relrowsecurity, true, `${table.relname} must have row security enabled`);
+      assert.equal(table.owned, false, `${table.relname} must not be owned by the application role`);
+    }
+  }
   storage = await import("../src/services/storage.js");
   dispatcher = await import("../src/services/classpilotCommandDispatcher.js");
   replay = await import("../src/services/classpilotTransientCommandReplay.js");
@@ -63,24 +93,36 @@ before(async () => {
   ({ createStudentToken } = await import("../src/services/deviceJwt.js"));
   ({ runWithTenantContext } = await import("../src/middleware/tenantContext.js"));
   // classpilot_timers is migration-owned (not in the drizzle push); a legacy
-  // timer stop tombstones it. Install it exactly as the class-tools lane does:
-  // the scheduled classroom SQL first, which defines the parent guard the tools
-  // SQL references.
-  await pool.query(CLASSPILOT_SCHEDULED_CLASSROOM_SQL);
-  await pool.query(CLASSPILOT_TOOLS_SQL);
+  // timer stop tombstones it. Where the lane has not installed it, install it
+  // exactly as the class-tools lane does: the scheduled classroom SQL first,
+  // which defines the parent guard the tools SQL references.
+  const installed = await admin.query("SELECT to_regclass('public.classpilot_timers') AS timers");
+  if (!installed.rows[0]?.timers) {
+    await admin.query(CLASSPILOT_SCHEDULED_CLASSROOM_SQL);
+    await admin.query(CLASSPILOT_TOOLS_SQL);
+  }
 
-  const school = await storage.createSchool({ name: tag, slug: tag, domain: `${tag}.example.edu` });
-  schoolId = school.id;
+  schoolId = randomUUID();
+  teacherId = randomUUID();
+  await admin.query(
+    "INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,$2,$3,'active','active')",
+    [schoolId, tag, `${tag}.example.edu`],
+  );
+  await admin.query(
+    "INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Replay','Teacher')",
+    [teacherId, `teacher@${tag}.example.edu`],
+  );
+  await admin.query(
+    "INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')",
+    [schoolId, teacherId],
+  );
+  await admin.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [schoolId]);
   // Student WebSocket auth requires a monitoring policy of "full": a settings
   // row without tracking hours is always inside the instructional window.
-  await pool.query(
+  await admin.query(
     "INSERT INTO settings (school_id, school_name, ws_shared_key, enable_tracking_hours, after_hours_mode, pause_chat_during_testing) VALUES ($1, $2, 'test-only', false, 'off', false)",
     [schoolId, tag],
   );
-  const teacher = await storage.createUser({ email: `teacher@${tag}.example.edu`, firstName: "Replay", lastName: "Teacher" });
-  teacherId = teacher.id;
-  await storage.createMembership({ schoolId, userId: teacherId, role: "teacher", status: "active" });
-  await storage.createProductLicense({ schoolId, product: "CLASSPILOT", status: "active" });
   await inSchool(async () => {
     const group = await storage.createGroup({ schoolId, teacherId, name: tag, groupType: "teacher_created" });
     for (let index = 0; index < 2; index += 1) {
@@ -110,14 +152,17 @@ after(async () => {
   await closeClients();
   if (wss) await new Promise<void>((resolve) => wss!.close(() => resolve()));
   if (httpServer) await new Promise<void>((resolve) => httpServer!.close(() => resolve()));
-  if (teachingSessionId && !classEnded) {
-    await lifecycle.finalizeClasspilotSession({ schoolId, sessionId: teachingSessionId, reason: "manual_end" }).catch(() => undefined);
-  }
+  if (teachingSessionId && !classEnded) await endClass().catch(() => undefined);
   await pushes.flushClasspilotLifecyclePushes().catch(() => undefined);
-  await pool.query("DELETE FROM schools WHERE id = $1", [schoolId]).catch(() => undefined);
+  await admin.query("DELETE FROM schools WHERE id = $1", [schoolId]).catch(() => undefined);
+  await admin.query("DELETE FROM users WHERE id = $1", [teacherId]).catch(() => undefined);
   const { sessionPool } = await import("../src/db.js");
-  await Promise.all([pool.end(), sessionPool.end()]);
+  await Promise.all([pool.end(), sessionPool.end(), admin.end()]);
 });
+
+function endClass() {
+  return inSchool(() => lifecycle.finalizeClasspilotSession({ schoolId, sessionId: teachingSessionId, reason: "manual_end" }));
+}
 
 const bindingOf = (student: Student) => ({
   schoolId,
@@ -246,7 +291,7 @@ const counters = () => runtime.snapshotRuntimePerformanceMetrics().counters as R
 const resetCounters = () => { runtime.snapshotRuntimePerformanceMetrics({ reset: true }); };
 
 async function targetRows(commandId: string): Promise<TargetRow[]> {
-  const result = await pool.query(
+  const result = await admin.query(
     "SELECT student_id, status, error_message, received_at FROM classpilot_command_targets WHERE command_id = $1 ORDER BY student_id",
     [commandId],
   );
@@ -261,7 +306,7 @@ async function targetRow(commandId: string, student: Student): Promise<TargetRow
 
 /** Stand in for the device's `received` ACK so later cases start clean. */
 async function markReceived(commandId: string): Promise<void> {
-  await pool.query(
+  await admin.query(
     "UPDATE classpilot_command_targets SET status = 'received', ack_state = 'received', received_at = now(), updated_at = now() WHERE command_id = $1 AND status = 'sent'",
     [commandId],
   );
@@ -578,26 +623,31 @@ describe("transient command replay on student WebSocket auth-success", () => {
   it("a failing replay read degrades to no replay without poisoning the authentication transaction", async () => {
     resetCounters();
     const warnings = capture("warn");
-    let frames: unknown[] = [{ sentinel: true }];
-    let transactionUsable = false;
+    let preparedFrames: unknown[] = [{ sentinel: true }];
+    let outcome: { authorized: true; value: number } | { authorized: false };
     try {
-      await inSchool(() => db.transaction(async (tx) => {
-        const transactionDb = tx as unknown as typeof db;
-        frames = await replay.prepareClasspilotTransientCommandReplay(
-          bindingOf(students[0]!),
-          transactionDb,
-          classAuthority(),
-          { list: async () => { await transactionDb.execute(sql`SELECT 1 / 0`); return []; } },
-        );
-        // The mandatory bootstrap queries that follow must still run.
-        const probe: any = await transactionDb.execute(sql`SELECT 1 AS ok`);
-        transactionUsable = Number(probe.rows[0]?.ok) === 1;
-      }));
+      // The real bootstrap authority: its own mandatory exact-binding check
+      // runs after the prepare step, in the same transaction, and would fail
+      // with "current transaction is aborted" if the replay read had left the
+      // transaction poisoned.
+      outcome = await inSchool(() => storage.withClasspilotStudentWebSocketBootstrapAuthority(
+        { ...bindingOf(students[0]!), freezeSsoPolicy: true },
+        async (transactionDb) => {
+          preparedFrames = await replay.prepareClasspilotTransientCommandReplay(
+            bindingOf(students[0]!),
+            transactionDb,
+            classAuthority(),
+            { list: async () => { await transactionDb.execute(sql`SELECT 1 / 0`); return []; } },
+          );
+          return preparedFrames.length;
+        },
+        (_teacherReplies, replayed) => replayed,
+      ));
     } finally {
       warnings.restore();
     }
-    assert.deepEqual(frames, []);
-    assert.equal(transactionUsable, true);
+    assert.deepEqual(preparedFrames, []);
+    assert.deepEqual(outcome, { authorized: true, value: 0 }, "authentication completes with nothing replayed");
     assert.equal(counters().transientCommandReplayFailed, 1);
     const line = warnings.lines.find((entry) => entry.includes("Transient command replay skipped"));
     assert.ok(line, JSON.stringify(warnings.lines));
@@ -653,7 +703,7 @@ describe("transient command replay on student WebSocket auth-success", () => {
     const [pending] = await pendingFor(students[0]!);
     assert.equal(pending?.command.id, start.command.id, "pending and replayable while the class is running");
 
-    await lifecycle.finalizeClasspilotSession({ schoolId, sessionId: teachingSessionId, reason: "manual_end" });
+    await endClass();
     classEnded = true;
     await pushes.flushClasspilotLifecyclePushes().catch(() => undefined);
 
