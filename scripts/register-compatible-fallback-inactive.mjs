@@ -2,7 +2,7 @@
 // Preparation-only controller: rendering is offline; registration never launches
 // a task, updates a service, changes admission, or publishes an image.
 import assert from 'node:assert/strict';
-import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, verifyCurrentReleaseMain, publicReceiptHash, assertBoundScan, assertBoundFallbackScan, bindingForRole, validateSuccessorPreparation, BUILD_SECURITY_OPERATION_DEPENDENCIES, BUILD_SECURITY_BINDING_ID } from './release-source-binding.mjs';
+import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, verifyCurrentReleaseMain, publicReceiptHash, assertBoundScan, assertBoundFallbackScan, bindingForRole, validateSuccessorPreparation, BUILD_SECURITY_OPERATION_DEPENDENCIES, CURRENT_RELEASE_TOOL_DEPENDENCIES, assertPrivatePermissionHelper, BUILD_SECURITY_BINDING_ID } from './release-source-binding.mjs';
 import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -258,9 +258,9 @@ export async function verifyRecoveryMutationSource(plan, releaseBinding, run) {
   await verifyCurrentReleaseMain(plan.input.anchorSource, run);
 }
 async function privatePermissions(directory, inputFiles, run, initialize = false) {
-  const helper = path.join(repositoryRoot, 'scripts/deploy-classpilot-runtime-config.ps1'); assert.ok([FALLBACK.permissionHelperSha256, FALLBACK.permissionHelperLfSha256].includes(hash(readFileSync(helper))), 'PERMISSION_HELPER_CHANGED');
+  const helper = assertPrivatePermissionHelper(repositoryRoot, 'PERMISSION_HELPER_CHANGED');
   const bridge = path.join(directory, 'private-permissions.ps1');
-  const bridgeSource = 'param([string]$ToolPath,[string]$DirectoryPath,[string]$RepositoryPath,[string]$InputsPath,[switch]$Initialize)\n. $ToolPath\nAssert-NoReparsePointInExistingPath -Path $DirectoryPath\nif ($Initialize) { Set-PrivatePathPermissions -Path $DirectoryPath -Directory }\nAssert-PrivatePathPermissions -Path $DirectoryPath -Directory\nforeach ($entry in (Get-Content -LiteralPath $InputsPath -Raw | ConvertFrom-Json)) { [void](Assert-PrivateInputPath -Path $entry -RepositoryRoot $RepositoryPath) }\n';
+  const bridgeSource = 'param([string]$ToolPath,[string]$DirectoryPath,[string]$RepositoryPath,[string]$InputsPath,[switch]$Initialize)\n$ErrorActionPreference = "Stop"\nSet-StrictMode -Version Latest\n. $ToolPath\nAssert-NoReparsePointInExistingPath -Path $DirectoryPath\nif ($Initialize) { Set-PrivatePathPermissions -Path $DirectoryPath -Directory }\nAssert-PrivatePathPermissions -Path $DirectoryPath -Directory\nforeach ($entry in (Get-Content -LiteralPath $InputsPath -Raw | ConvertFrom-Json)) { [void](Assert-PrivateInputPath -Path $entry -RepositoryRoot $RepositoryPath) }\n';
   if (initialize) { writeNew(bridge, bridgeSource); writeNew(path.join(directory, 'private-input-paths.json'), inputFiles); }
   equal(readFileSync(bridge, 'utf8'), bridgeSource, 'PERMISSION_BRIDGE_CHANGED'); equal(JSON.parse(readFileSync(path.join(directory, 'private-input-paths.json'), 'utf8')), inputFiles, 'PERMISSION_INPUTS_CHANGED');
   const args = ['-NoProfile', '-File', bridge, '-ToolPath', helper, '-DirectoryPath', directory, '-RepositoryPath', repositoryRoot, '-InputsPath', path.join(directory, 'private-input-paths.json')]; if (initialize) args.push('-Initialize');
@@ -317,7 +317,7 @@ export async function createPlan(input, { run = runCommand, now = Date.now } = {
   equal(managed(states[0]), managed(states[1]), 'PAIR_CAPABILITY_MISMATCH');
   for (const state of states) assert.ok(Object.keys(JSON.parse(state.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON ?? '{}')).every(key => capabilities.includes(key)), 'UNKNOWN_CAPABILITY_KEY');
   const helper = path.join(repositoryRoot, 'scripts/stamp-release-runtime-identity.mjs'); const identityHelperSha256 = hash(readFileSync(helper)); assert.ok([FALLBACK.identityHelperSha256, FALLBACK.identityHelperLfSha256].includes(identityHelperSha256), 'IDENTITY_HELPER_CHANGED');
-  const permissionHelperSha256 = hash(readFileSync(path.join(repositoryRoot, 'scripts/deploy-classpilot-runtime-config.ps1')));
+  const permissionHelperSha256 = hash(readFileSync(assertPrivatePermissionHelper(repositoryRoot, 'PERMISSION_HELPER_CHANGED')));
   mkdirSync(input.outputDirectory, { recursive: false, mode: 0o700 });
   await privatePermissions(input.outputDirectory, [input.api.path, input.worker.path], run, true);
   const generated = {};
@@ -383,7 +383,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
   await checkAnchorSource(plan.input, run, releaseBinding); await verifyLocalScan(plan);
   await sourceContract(repositoryRoot, plan.toolSource, run);
   equal(hash(readFileSync(path.join(repositoryRoot, 'scripts/stamp-release-runtime-identity.mjs'))), plan.identityHelperSha256, 'IDENTITY_HELPER_BYTES_CHANGED');
-  equal(hash(readFileSync(path.join(repositoryRoot, 'scripts/deploy-classpilot-runtime-config.ps1'))), plan.permissionHelperSha256, 'PERMISSION_HELPER_BYTES_CHANGED');
+  equal(hash(readFileSync(assertPrivatePermissionHelper(repositoryRoot, 'PERMISSION_HELPER_CHANGED'))), plan.permissionHelperSha256, 'PERMISSION_HELPER_BYTES_CHANGED');
   if (releaseBinding) await verifyCurrentReleaseMain(plan.input.anchorSource, run);
   await privatePermissions(plan.input.outputDirectory, [plan.input.api.path, plan.input.worker.path], run);
   const originalRun = run; let commandIndex = 0;
@@ -432,7 +432,7 @@ export async function registerInactive(planRecord, authorizationRecord, { run = 
   finally { writeFileSync(receiptPath, JSON.stringify(result, null, 2) + '\n', { mode: 0o600 }); }
   return { registered: result.registered, receiptPath, receiptSha256: hash(readFileSync(receiptPath)), servicesUpdated: 0, tasksLaunched: 0 };
 }
-const anchorHelperFiles = ['scripts/release-source-binding.mjs', 'scripts/enforce-deploy-rls-allowlist.mjs', 'src/config/rlsRegistry.json', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/deploy-classpilot-runtime-config.ps1'];
+const anchorHelperFiles = ['scripts/release-source-binding.mjs', 'scripts/enforce-deploy-rls-allowlist.mjs', 'src/config/rlsRegistry.json', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/deploy-classpilot-runtime-config.ps1', ...CURRENT_RELEASE_TOOL_DEPENDENCIES];
 function anchorHelperHashes(schemaVersion) { return Object.fromEntries([...anchorHelperFiles, ...(schemaVersion === 5 ? BUILD_SECURITY_OPERATION_DEPENDENCIES : [])].map(file => [file, hash(readFileSync(path.join(repositoryRoot, file)))])); }
 function anchorEvidence(input, releaseBinding) {
   validatePublicationBinding(input, releaseBinding);

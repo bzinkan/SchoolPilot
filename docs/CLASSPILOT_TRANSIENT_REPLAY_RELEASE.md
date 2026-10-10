@@ -36,8 +36,9 @@ log JSON bodies, student data, arbitrary URLs, or credentials to diagnose it.
   retains live poll delivery and receives no poll replay.
 - The successor persists an ordered poll cursor and sticky answer state before
   acknowledging the safe poll path. Its canonical renderer must preserve drafts
-  and pending answers, reject stale starts/closes, and upgrade existing content
-  scripts without reloading student pages.
+  and pending answers, reject stale starts/closes, and upgrade existing
+  authenticated content scripts without reloading student pages. Signed-out or
+  gated pages retain the conservative manual page reload before a fresh PIN.
 
 Protocol remains version 3. No command status or teacher targeting contract is
 added. No database migration or new tenant-table admission is required.
@@ -47,6 +48,12 @@ added. No database migration or new tenant-table admission is required.
 Use `scripts/deploy-classpilot-runtime-config.ps1` with its documented private
 input directory, immutable Plan, reviewed plan hash, Apply, verification, and
 Rollback workflow. Never edit ECS task environment manually.
+
+Current release tools use the separately pinned `scripts/private-permissions.ps1`
+helper and bind all runtime imports in their plan inventories. Historical release
+evidence and hashes remain unchanged. Regenerate a plan after changing tools;
+replay of a plan made with different helper bytes must fail. Production replay
+profiles require clean `main` at the reviewed tool commit for Plan and Apply.
 
 ```json
 {"schemaVersion":11,"mode":"transient-replay-off"}

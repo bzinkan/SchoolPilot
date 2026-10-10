@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Artifact preparation only. This module never launches tasks or changes services.
 import assert from 'node:assert/strict';
-import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation, BUILD_SECURITY_OPERATION_DEPENDENCIES } from './release-source-binding.mjs';
+import { bindingSchema, isSuccessorSchema, resolveReleaseBinding, assertBindingReplay, assertBoundPublication, assertBoundScan, boundArtifactSource, validateSuccessorPreparation, BUILD_SECURITY_OPERATION_DEPENDENCIES, CURRENT_RELEASE_TOOL_DEPENDENCIES, assertPrivatePermissionHelper } from './release-source-binding.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -17,7 +17,7 @@ const sha = /^[a-f0-9]{40}$/, digest = /^sha256:[a-f0-9]{64}$/, hashPattern = /^
 const roles = ['api', 'scheduler-worker'];
 const providerFields = new Set(['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'compatibilities', 'registeredAt', 'registeredBy', 'deregisteredAt']);
 const imageInputs = ['src', 'package.json', 'package-lock.json', 'tsconfig.json', 'drizzle.config.ts', 'Dockerfile', '.dockerignore', 'config', 'docs/soc2'];
-const helpers = ['scripts/release-source-binding.mjs', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/register-compatible-fallback-inactive.mjs', 'scripts/deploy-classpilot-runtime-config.ps1', 'src/config/rlsRegistry.json'];
+const helpers = ['scripts/release-source-binding.mjs', 'scripts/verify-legacy-deploy-image.mjs', 'scripts/register-compatible-fallback-inactive.mjs', 'scripts/deploy-classpilot-runtime-config.ps1', 'src/config/rlsRegistry.json', ...CURRENT_RELEASE_TOOL_DEPENDENCIES];
 const canonical = value => JSON.stringify(value && typeof value === 'object' ? Array.isArray(value) ? value.map(sort) : sort(value) : value);
 function sort(value) { return Array.isArray(value) ? value.map(sort) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sort(value[key])])) : value; }
 export const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
@@ -83,10 +83,10 @@ export async function validateLocalScan(input, releaseBinding) {
   return scan;
 }
 async function privatePermissions(directory, inputs, run) {
-  const helper = path.join(root, 'scripts/deploy-classpilot-runtime-config.ps1'); assert.ok([FALLBACK.permissionHelperSha256, FALLBACK.permissionHelperLfSha256].includes(hash(readFileSync(helper))), 'PERMISSION_HELPER_CHANGED');
+  const helper = assertPrivatePermissionHelper(root, 'PERMISSION_HELPER_CHANGED');
   const bridge = path.join(directory, 'private-paths.ps1');
   writeNew(path.join(directory, 'private-inputs.json'), inputs);
-  writeFileSync(bridge, 'param([string]$Helper,[string]$Directory,[string]$Repository,[string]$Inputs)\n. $Helper\nAssert-NoReparsePointInExistingPath -Path $Directory\nSet-PrivatePathPermissions -Path $Directory -Directory\nAssert-PrivatePathPermissions -Path $Directory -Directory\nforeach ($entry in (Get-Content -LiteralPath $Inputs -Raw | ConvertFrom-Json)) { [void](Assert-PrivateInputPath -Path $entry -RepositoryRoot $Repository) }\n', { flag: 'wx', mode: 0o600 });
+  writeFileSync(bridge, 'param([string]$Helper,[string]$Directory,[string]$Repository,[string]$Inputs)\n$ErrorActionPreference = "Stop"\nSet-StrictMode -Version Latest\n. $Helper\nAssert-NoReparsePointInExistingPath -Path $Directory\nSet-PrivatePathPermissions -Path $Directory -Directory\nAssert-PrivatePathPermissions -Path $Directory -Directory\nforeach ($entry in (Get-Content -LiteralPath $Inputs -Raw | ConvertFrom-Json)) { [void](Assert-PrivateInputPath -Path $entry -RepositoryRoot $Repository) }\n', { flag: 'wx', mode: 0o600 });
   await checked(run, 'pwsh', ['-NoProfile', '-File', bridge, '-Helper', helper, '-Directory', directory, '-Repository', root, '-Inputs', path.join(directory, 'private-inputs.json')]);
 }
 async function newPlan(input, operation, run) {
