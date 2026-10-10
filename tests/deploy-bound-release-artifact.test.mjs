@@ -108,10 +108,15 @@ function fixture(t, changes = {}) {
     const requestedFallback = args.some(arg => arg === `imageTag=${fallbackSource.slice(0,12)}` || arg === `imageDigest=${fallbackDigest}`);
     if (args[0] === 'ecs') { const value = structuredClone(actualDefinitions[args[args.indexOf('--task-definition')+1]]); if (changes.definitionMoved) value.taskDefinition.containerDefinitions[0].environment.push({ name: 'UNREVIEWED', value: 'true' }); return { code: 0, stdout: JSON.stringify(value) }; }
     const value = args[0] === 'sts' ? { Account: '135775632425' } : args[1] === 'describe-images' ? { imageDetails: [{ imageDigest: changes.tagMoved ? digest('substitution') : imageDigest }] } :
-      { images: [{ repositoryName: 'schoolpilot-production-api', imageId: { imageDigest }, imageManifest: manifest, imageManifestMediaType: 'application/vnd.oci.image.manifest.v1+json' }], failures: [] };
+      { images: [{ registryId: '135775632425', repositoryName: 'schoolpilot-production-api', imageId: { imageDigest }, imageManifest: manifest, imageManifestMediaType: 'application/vnd.oci.image.manifest.v1+json' }], failures: [] };
     if (requestedFallback) {
       if (args[1] === 'describe-images') value.imageDetails[0].imageDigest = changes.fallbackTagMoved ? digest('substitution') : fallbackDigest;
       else { value.images[0].imageId.imageDigest = fallbackDigest; value.images[0].imageManifest = fallbackManifest; }
+    }
+    if (args[1] === 'batch-get-image' && changes.digestAliases) {
+      value.images = [main, main.slice(0,12), 'e'.repeat(40), 'e'.repeat(12)].map(imageTag => ({ ...structuredClone(value.images[0]), imageId: { ...value.images[0].imageId, imageTag } }));
+      if (changes.reverseAliases) value.images.reverse();
+      if (requestedFallback) changes.aliasMutation?.(value);
     }
     return { code: 0, stdout: JSON.stringify(value) };
   };
@@ -123,6 +128,24 @@ test('accepted serving publication is replayed read-only and stays explicitly un
   const f = fixture(t); const result = await validateDeploymentArtifact(f.record, main, f.options);
   assert.deepEqual([result.passed, result.mainSource, result.applicationSource, result.signed, result.cloudMutations], [true, main, application, false, 0]);
   assert.ok(f.calls.some(call => call.executable === 'aws'));
+});
+for (const reverseAliases of [false, true]) test(`both immutable serving and fallback digests accept four identical tag aliases in ${reverseAliases ? 'reverse' : 'original'} order`, async t => {
+  const f = fixture(t, { digestAliases: true, reverseAliases });
+  assert.equal((await validateDeploymentArtifact(f.record, main, f.options)).passed, true);
+  assert.equal(f.calls.filter(call => call.executable === 'aws' && call.args[1] === 'batch-get-image').length, 2);
+  assert.equal(f.calls.filter(call => call.executable === 'aws' && call.args[0] === 'ecs').length, 2);
+});
+for (const [name, aliasMutation] of Object.entries({
+  registry: value => { value.images[1].registryId = '000000000000'; },
+  repository: value => { value.images[1].repositoryName = 'other-repository'; },
+  digest: value => { value.images[1].imageId.imageDigest = digest('substitution'); },
+  manifest: value => { value.images[1].imageManifest += '\n'; },
+  mediaType: value => { value.images[1].imageManifestMediaType = 'application/vnd.docker.distribution.manifest.v2+json'; },
+  failure: value => { value.failures.push({ failureCode: 'ImageNotFound' }); },
+})) test(`conflicting fallback alias ${name} rejects before registered-definition readback`, async t => {
+  const f = fixture(t, { digestAliases: true, aliasMutation });
+  await assert.rejects(validateDeploymentArtifact(f.record, main, f.options), /REGISTRY_/);
+  assert.equal(f.calls.filter(call => call.executable === 'aws' && call.args[0] === 'ecs').length, 0);
 });
 for (const [name, changes] of Object.entries({ pending: { pending: true }, mixedRole: { receipt: r => { r.artifactRole = 'fallback'; } },
   crossBinding: { receipt: r => { r.releaseBinding.sha256 = sha('other binding'); } }, changedTool: { plan: p => { p.toolSha256 = sha('changed'); } },

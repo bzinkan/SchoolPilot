@@ -203,6 +203,25 @@ export async function scanBuiltImage({ directory, sourceSha, imageRef }, { run =
   }
 }
 
+export function selectRegistryDigestImage(response, { registryId, repository, digest }) {
+  assert.match(registryId, /^\d{12}$/, 'REGISTRY_ACCOUNT_REQUIRED');
+  assert.match(repository, /^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/, 'REGISTRY_REPOSITORY_REQUIRED');
+  assert.match(digest, DIGEST, 'REGISTRY_DIGEST_REQUIRED');
+  assert.ok(Array.isArray(response?.failures) && response.failures.length === 0, 'REGISTRY_IMAGE_FAILURES');
+  assert.ok(Array.isArray(response.images) && response.images.length > 0 && response.images.length <= 100, 'REGISTRY_IMAGE_ROWS_INVALID');
+  const first = response.images[0];
+  assert.ok(typeof first?.imageManifest === 'string' && first.imageManifest.length > 0
+    && typeof first.imageManifestMediaType === 'string' && first.imageManifestMediaType.length > 0, 'REGISTRY_MANIFEST_REQUIRED');
+  // Digest queries can emit one row per tag. Every alias must bind the same bytes.
+  for (const image of response.images) {
+    assert.deepEqual([image?.registryId, image?.repositoryName, image?.imageId?.imageDigest],
+      [registryId, repository, digest], 'REGISTRY_IMAGE_IDENTITY_CHANGED');
+    assert.equal(image.imageManifest, first.imageManifest, 'REGISTRY_ALIAS_MANIFEST_CHANGED');
+    assert.equal(image.imageManifestMediaType, first.imageManifestMediaType, 'REGISTRY_ALIAS_MEDIA_TYPE_CHANGED');
+  }
+  return first;
+}
+
 export async function validateRegistryManifest(fetchManifest, digest, expectedImageId) {
   assert.match(digest, DIGEST); assert.match(expectedImageId, DIGEST);
   const top = await fetchManifest(digest);
