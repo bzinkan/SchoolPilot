@@ -82,6 +82,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Canonical Usage contracts inspect exact historical baseline sources.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
