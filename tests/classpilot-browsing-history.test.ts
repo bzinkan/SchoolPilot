@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, resolveHistoryView, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
+import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, resolveHistoryGrouping, resolveHistoryView, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
 import { encodeHistoryLookupCursor, resolveHistoryLookup } from "../src/services/classpilotBrowsingHistoryLookupModel.js";
 const time=(value:string)=>new Date(`2026-09-01T${value}:00.000Z`);
 test("history view defaults to the compatible raw list and rejects malformed filters",()=>{
@@ -8,6 +8,12 @@ test("history view defaults to the compatible raw list and rejects malformed fil
   assert.equal(resolveHistoryView("all"),"all");
   assert.equal(resolveHistoryView("pages"),"pages");
   for(const value of [null,"","Pages","unknown",["pages"],{},true])assert.throws(()=>resolveHistoryView(value),{code:"HISTORY_VIEW_INVALID",status:400});
+});
+test("history grouping defaults to observations and only accepts the explicit visit contract",()=>{
+  assert.equal(resolveHistoryGrouping(undefined),"observations");
+  assert.equal(resolveHistoryGrouping("observations"),"observations");
+  assert.equal(resolveHistoryGrouping("visits"),"visits");
+  for(const value of [null,"","Visits","pages",["visits"],{},true])assert.throws(()=>resolveHistoryGrouping(value),{code:"HISTORY_GROUPING_INVALID",status:400});
 });
 test("history dates use school midnight including DST and reject invalid dates/ranges",()=>{
   const spring=resolveHistoryDates({startDate:"2026-03-08",endDate:"2026-03-08",timeZone:"America/New_York",now:new Date("2026-03-10T00:00:00Z")});assert.equal(spring.start.toISOString(),"2026-03-08T05:00:00.000Z");assert.equal(spring.end.getTime()-spring.start.getTime(),23*3600000);

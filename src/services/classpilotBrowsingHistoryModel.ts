@@ -4,6 +4,7 @@ import { addLocalDays, localDateInTimeZone, localDateStartUtc } from "../util/sc
 export type HistoryWindow={start:Date;end:Date};
 export const HISTORY_MAX_GAP_SECONDS=60;
 export type HistoryView="all"|"pages";
+export type HistoryGrouping="observations"|"visits";
 // These are missing-page labels emitted by clients or used by the history UI,
 // not evidence of a page visit. A nonblank URL always makes a row page-bearing.
 export const HISTORY_EMPTY_PAGE_TITLES=["","unknown","page details unavailable","no page details","browser observation"] as const;
@@ -12,6 +13,11 @@ export function resolveHistoryView(value:unknown):HistoryView{
   if(value===undefined)return "all";
   if(value==="all"||value==="pages")return value;
   throw historyError("HISTORY_VIEW_INVALID","Choose pages or all for the browsing history view.");
+}
+export function resolveHistoryGrouping(value:unknown):HistoryGrouping{
+  if(value===undefined)return "observations";
+  if(value==="observations"||value==="visits")return value;
+  throw historyError("HISTORY_GROUPING_INVALID","Choose observations or visits for browsing history grouping.");
 }
 export function historyDate(value:unknown,fallback:string):string{
   if(value===undefined)return fallback;
