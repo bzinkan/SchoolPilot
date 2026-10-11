@@ -1,6 +1,8 @@
 import { before,after,describe,it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import pg from "pg";
+import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
 process.env.REDIS_URL="";
 const schoolId=randomUUID(),otherSchoolId=randomUUID(),studentId=randomUUID(),teacherId=randomUUID(),otherTeacherId=randomUUID(),groupId=randomUUID(),sessionId=randomUUID(),contextId=randomUUID();
 const now=new Date("2026-09-01T18:00:00Z");
@@ -15,6 +17,21 @@ before(async()=>{
   const module=await import("../src/db.js");pool=module.pool;database=module.default;
   ({runWithTenantContext:tenant}=await import("../src/middleware/tenantContext.js"));history=await import("../src/services/classpilotBrowsingHistory.js");
   lookup=await import("../src/services/classpilotBrowsingHistoryLookup.js");
+  // Drizzle-only CI omits these migration-owned tables. Install the exact
+  // reporting contract before fixtures and cleanup, independently of test order.
+  const connectionString = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
+  assert.ok(connectionString);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(connectionString).hostname));
+  const fixture = new pg.Client({ connectionString });
+  await fixture.connect();
+  try {
+    if (!(await fixture.query("SELECT to_regclass('public.classpilot_supervision_report_segments') AS table_name")).rows[0].table_name) {
+      await fixture.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
+      const role = (await pool.query("SELECT current_user AS role")).rows[0].role;
+      assert.match(role, /^[a-zA-Z_][a-zA-Z0-9_]*$/);
+      await fixture.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON classpilot_supervision_report_segments,classpilot_supervision_student_reports,classpilot_supervision_summary_deliveries TO "${role}"`);
+    }
+  } finally { await fixture.end(); }
   await pool.query("INSERT INTO schools(id,name,school_timezone) VALUES($1,'History fixture','America/New_York'),($2,'Other history fixture','America/New_York')",[schoolId,otherSchoolId]);
   await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'History','Teacher'),($3,$4,'Coverage','Teacher')",[teacherId,`${teacherId}@example.edu`,otherTeacherId,`${otherTeacherId}@example.edu`]);
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active'),($1,$3,'teacher','active')",[schoolId,teacherId,otherTeacherId]);
