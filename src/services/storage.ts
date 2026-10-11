@@ -21653,7 +21653,9 @@ export async function createClasspilotCommandWithTargets(
       // nothing here runs. Creating the session_settings row for a class that
       // has none raises its FAB revision from "no row" (0) to 1 behind the
       // dashboard's back, and the teacher's next hand-raising, messaging or
-      // pause toggle is then refused as stale.
+      // pause toggle is then refused as stale. A student's hand raise and, at
+      // Class Tools phase 2 and above, tools history create the same row; those
+      // paths are older than this lane.
       await tx.execute(sql`INSERT INTO session_settings(school_id,session_id,supervision_context_id)
         VALUES(${commandData.schoolId},${commandData.teachingSessionId},${commandData.supervisionContextId}) ON CONFLICT DO NOTHING`);
       const ordered = await tx.execute<{ tools_revision: number }>(sql`UPDATE session_settings
@@ -22266,6 +22268,11 @@ export async function listClasspilotReplayableTransientCommandTargets(
       // example on a task that had not yet received a pilot setting or had
       // just lost it. It cannot be ranked by intent order, so a later creation
       // time fences conservatively: not replaying is the safe side.
+      // created_at is the start of the command transaction, taken before the
+      // class locks. Two same-type commands for one student that overlap on
+      // tasks with different lane settings can therefore commit in the other
+      // order, and that interleaving is not fenced. Lane settings are applied
+      // outside class time for this reason.
       sql`NOT EXISTS (SELECT 1 FROM classpilot_commands newer
         INNER JOIN classpilot_command_targets newer_target ON newer_target.command_id=newer.id AND newer_target.school_id=newer.school_id
         WHERE newer.school_id=${binding.schoolId} AND newer_target.student_id=${binding.studentId}

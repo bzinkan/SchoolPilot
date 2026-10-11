@@ -127,13 +127,24 @@ test("intent ordering follows the replay lane and is off with every lane control
   assert.equal(classpilotTransientOrderingEnabled(otherSchool, timerPilot), false);
   assert.equal(classpilotTransientOrderingEnabled(pilotSchool, pollPilot), true);
   // An active safe-poll capability orders intents even without the replay
-  // gate, so a client that negotiated it never receives an unordered intent.
+  // gate, so a task that negotiates it with a client also orders what it sends.
   const capabilityOnly = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
     CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
     CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1: "true",
   };
   assert.equal(classpilotTransientOrderingEnabled(otherSchool, capabilityOnly), true);
+  // The capability is read for the command's own school: a rollout pinned to
+  // one school orders that school only.
+  const capabilityForPilotSchool = {
+    ...capabilityOnly,
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      scopedAuthorityChecksV1: { mode: "on" },
+      pollReplaySafeV1: { mode: "on", schoolIds: [pilotSchool] },
+    }),
+  };
+  assert.equal(classpilotTransientOrderingEnabled(pilotSchool, capabilityForPilotSchool), true);
+  assert.equal(classpilotTransientOrderingEnabled(otherSchool, capabilityForPilotSchool), false);
   // The capability flag alone, without its protocol prerequisites, is not active.
   assert.equal(classpilotTransientOrderingEnabled(otherSchool, { CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1: "true" }), false);
 });

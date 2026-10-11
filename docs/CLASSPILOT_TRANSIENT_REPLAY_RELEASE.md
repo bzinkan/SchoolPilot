@@ -26,14 +26,23 @@ log JSON bodies, student data, arbitrary URLs, or credentials to diagnose it.
   while the existing student-control and classroom-parent locks are held. Other
   tools may leave gaps. Retries retain the original intent's order. Auth replay
   never allocates a new order.
-- With every replay control unset no order is allocated, stored or sent, and a
-  timer or poll does not touch `session_settings`. A replay-off deployment
-  therefore dispatches timers and polls exactly as before this lane existed.
+- With every replay control unset no order is allocated, stored or sent, and
+  the lane adds no `session_settings` write. A replay-off deployment therefore
+  dispatches timers and polls exactly as before this lane existed. At Class
+  Tools phase 0 and 1 a timer or poll does not touch `session_settings` at all.
 - Replay independently rejects a command replaced by a later same-type intent
   addressing that student in the same classroom, even when the replacement was
   acknowledged or supersede cleanup failed. A later intent without an order,
   created by a task where the lane was off during a rollout, fences by its
   creation time. Missing order means no replay.
+- Each API task decides ordering from its own environment. While a lane setting
+  rolls across tasks, a socket that negotiated `pollReplaySafeV1` can still be
+  sent a timer or poll without `transientOrder`. The successor must apply such
+  a frame as an ordinary live frame, without comparing it to or advancing its
+  cursor. The creation time used for the fence above is the start of the
+  command transaction, so two overlapping same-type commands on tasks with
+  different lane settings can commit in the other order and are not fenced.
+  Apply lane profiles outside class time.
 - Exact authenticated binding, classroom authority, accepted capability, target
   receipt state, and delivery deadline remain mandatory. Replay never marks a
   target received. Optional replay failure must not fail authentication.
@@ -153,22 +162,33 @@ school-day observations remain operator release stages until recorded as passed.
 
 ## Open before the timer pilot
 
-Confirmed by the independent review of 2026-10-10. None affects a replay-off
-deployment.
+Found by the independent review of 2026-10-10. The first two do not affect a
+replay-off deployment. The third applies to any deployment of this image once a
+runtime profile other than the emergency `off` has been applied.
 
 - Order allocation creates the class's `session_settings` row when none exists,
   which raises the FAB revision from "no row" (0) to 1. A dashboard that loaded
-  the class before its first timer or poll then gets one 409 on its next
-  hand-raising, messaging or pause toggle, and in a supervision-context
-  classroom every toggle fails until the page reloads. The pilot school would
-  see this. Either allocate without creating a FAB-visible row, or make both
-  dashboards refresh their FAB revision after a revision conflict.
+  the class before its first timer or poll then has its next hand-raising,
+  messaging or pause toggle refused: once in a regular class (409
+  `FAB_REVISION_STALE`), and on every attempt until the page reloads in a
+  supervision-context classroom (409 `SETTINGS_REVISION_CONFLICT`). The pilot
+  school would see this. The same row is also created by a student's hand
+  raise (trigger `cp_help_snapshot_revision`) and, at Class Tools phase 2 and
+  above, by tools history, both older than this lane. Allocating the order
+  without creating a FAB-visible row would therefore not cover every path, and
+  refreshing after a conflict still leaves one refused toggle. Prefer a remedy
+  that covers every writer: refresh the dashboard's FAB revision after a timer
+  or poll dispatch and after a hand-raise event, or stop treating an implicitly
+  created default row as a new revision.
 - The emergency `off` runtime profile is refused while a replay pilot is active
   ("Protocol-off runtime must disable transient replay first."). Replay can then
-  be cleared only by `transient-replay-off` or Rollback, which admit at most
-  three API tasks and need clean main. Let `off` clear the replay controls
-  itself, and cover it with a Plan/Apply case at four to six API tasks.
-- Once any runtime profile has been applied on this image, the capability
-  registry carries a `pollReplaySafeV1` entry that an image built before this
-  lane refuses to boot with. Plan with `-RegistryTargetAppSha` set to the older
-  commit before reverting the image past this lane.
+  be cleared only by `transient-replay-off` (Plan and Apply need clean main) or
+  by Rollback of the pilot plan (needs that plan's result evidence and the pilot
+  task definitions still serving). Both admit at most three API tasks outside
+  the weekday 04:45-05:59 ET protected window. Let `off` clear the replay
+  controls itself, and cover it with a Plan/Apply case at four to six API tasks.
+- Once a runtime profile other than the emergency `off` has been applied on
+  this image, the capability registry carries a `pollReplaySafeV1` entry that an
+  image built before this lane refuses to boot with. Plan with
+  `-RegistryTargetAppSha` set to the older commit before reverting the image
+  past this lane.

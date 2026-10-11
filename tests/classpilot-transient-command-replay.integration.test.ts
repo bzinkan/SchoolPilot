@@ -385,10 +385,11 @@ describe("transient command replay on student WebSocket auth-success", () => {
 
     await withLaneOff(async () => {
       const live = await connect(students[1]!);
-      const timerStart = await dispatch("timer", { action: "start", seconds: 60, message: "Warm-up" });
-      const timerStop = await dispatch("timer", { action: "stop" });
-      const pollStart = await dispatch("poll", { action: "start", question: "Warm-up?", options: ["Yes", "No"] });
-      const pollClose = await dispatch("poll", { action: "close", pollId: payloadOf(pollStart).pollId });
+      // Every one-shot deadline stays at 15 s, proven on the clock that wrote it.
+      const timerStart = await dispatchWithDeadline(15_000, "timer", { action: "start", seconds: 60, message: "Warm-up" });
+      const timerStop = await dispatchWithDeadline(15_000, "timer", { action: "stop" });
+      const pollStart = await dispatchWithDeadline(15_000, "poll", { action: "start", question: "Warm-up?", options: ["Yes", "No"] });
+      const pollClose = await dispatchWithDeadline(15_000, "poll", { action: "close", pollId: payloadOf(pollStart).pollId });
       const dispatched = [timerStart, timerStop, pollStart, pollClose];
       await settle(live);
 
@@ -416,10 +417,6 @@ describe("transient command replay on student WebSocket auth-success", () => {
       assert.equal(frames.length, dispatched.length, JSON.stringify(frames));
       for (const frame of frames) {
         assert.equal("transientOrder" in frame.command.data, false, "no order reaches a device while the lane is off");
-      }
-      for (const entry of dispatched) {
-        assert.equal(entry.command.expiresAt!.getTime() - entry.command.createdAt.getTime() <= 15_000 + 1_000, true,
-          "every one-shot deadline stays at 15 s");
       }
 
       await closeClients();
@@ -824,9 +821,8 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await markReceived(replacement.command.id);
   });
 
-  // Keep this case after the one above: it leaves a timer command with a
-  // creation time in the future and malformed order metadata, which the
-  // conservative fence treats as a later intent without an order.
+  // This case moves creation times and corrupts order metadata on purpose, and
+  // restores the creation times before it ends.
   it("a failed supersede update cannot resurrect an older timer after a newer ACK, and order ignores clocks and subset audiences", async () => {
     const old = await dispatch("timer", { action: "start", seconds: 300 });
     const functionName = `replay_supersede_${randomUUID().replaceAll("-", "")}`;
@@ -861,6 +857,11 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await admin.query("UPDATE classpilot_commands SET command_payload=command_payload||'{\"transientOrder\":\"malformed\"}'::jsonb WHERE id=$1", [old.command.id]);
     assert.deepEqual(await pendingFor(students[1]!), [], "malformed historical metadata cannot abort the query or establish order");
     await markReceived(old.command.id);
+    // Put the real creation times back. Left an hour ahead and without a valid
+    // order, `old` would read as a later intent without an order and fence
+    // every timer replay for this class in any case that follows.
+    await admin.query("UPDATE classpilot_commands SET created_at=$1 WHERE id=$2", [old.command.createdAt, old.command.id]);
+    await admin.query("UPDATE classpilot_commands SET created_at=$1 WHERE id=$2", [replacement.command.createdAt, replacement.command.id]);
   });
 
   it("poll replay requires the successor for starts and closes, and rejects answered or stale canonical resources", async () => {

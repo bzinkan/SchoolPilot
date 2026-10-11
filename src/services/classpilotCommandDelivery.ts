@@ -85,9 +85,14 @@ export function classpilotTransientReplayOnAuthEnabled(
  * `transientOrder`. The order exists for the replay lane, so it follows the
  * lane: on where the replay is enabled for the school, or where the school's
  * safe-poll capability is active. With every lane control unset a timer or
- * poll is persisted and sent exactly as before the lane existed: no
- * session_settings write in the command transaction, and no extra field in the
- * stored payload or on the wire.
+ * poll is persisted and sent exactly as before the lane existed: the lane adds
+ * no session_settings write to the command transaction, and no field to the
+ * stored payload or the wire. At Class Tools phase 0 and 1 that means a timer
+ * or poll does not touch session_settings at all.
+ *
+ * Each API task decides this from its own environment. While a lane setting
+ * rolls across tasks, a socket that negotiated the capability can therefore
+ * still be sent an intent without an order by a task where the lane is off.
  */
 export function classpilotTransientOrderingEnabled(
   schoolId: string,
