@@ -5,12 +5,12 @@ import { runHeavyUsageWorkers } from './usage-checks.mjs';
 import { checkPersistence } from './persistence.mjs';
 import { DISTINCT_REPORT_CONTRACT, distinctReportContractHash, distinctReportCases, distinctCsvCases, distinctCanonicalKey,
   assertDistinctOracle, prepareDistinctReports, distinctPreparedStateHash, sanitizedDistinctReportFailure } from './distinct-reports.mjs';
+import {assertUsageSourceIdentity,HISTORICAL_USAGE_SOURCE} from './usage-source-binding.mjs';
 
 // A future, separately registered operation after the three original cold
 // runs. The shared router/owner implementation remains a separate slice.
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const validHash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-const source = 'ddc5996b3b8645859fa51a9613486db52c481b7f';
 export const DISTINCT_SERVICE_LIMITS = Object.freeze({
   apiTasks: 3, apiCpu: 1, apiMemoryBytes: 2 * 1024 ** 3, apiMainPool: 16, apiSessionPool: 2,
   workerCpu: .5, workerMemoryBytes: 1024 ** 3, workerMainPool: 2, workerSchedulerPool: 5, workerLockPool: 8,
@@ -35,14 +35,18 @@ const safeError = sanitizedDistinctOperationFailure;
 const allZero = value => value && Object.keys(value).length > 0 && Object.values(value).every(count => Number.isSafeInteger(count) && count === 0);
 
 export function validateDistinctRegistration(registration, fixture, apis, { worker, observer, generator }) {
+  const source=registration.usageSourceBinding?assertUsageSourceIdentity(registration.usageSourceBinding,{source:registration.source,
+    schemaInputSha256:registration.schemaInputSha256,canonicalSourceSchemaSha256:registration.canonicalSourceSchemaSha256}).source:HISTORICAL_USAGE_SOURCE;
   assert.equal(registration.source, source); assert.equal(fixture.sourceRevision, source);
   assert.equal(registration.profile, DISTINCT_ENDPOINT_OPERATION.name);
   assert.equal(registration.operationContractSha256, distinctEndpointOperationHash());
   assert.equal(registration.reportContractSha256, distinctReportContractHash());
   for (const key of ['helperBindingSha256', 'snapshotManifestSha256', 'restorationReceiptSha256', 'operationalFixtureReceiptSha256'])
     assert.ok(validHash(registration[key]), key);
-  assert.equal(registration.schemaInputSha256, '6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3');
-  assert.equal(registration.canonicalSourceSchemaSha256, '3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570');
+  if(!registration.usageSourceBinding){
+    assert.equal(registration.schemaInputSha256, '6b40d8811ce1f50eb3f33b3a5ca39256b404699b994c3802c48f86119d0542e3');
+    assert.equal(registration.canonicalSourceSchemaSha256, '3afe69c3b2dcdeaae049f24d766c542c5e12cf762227b194db329dc0368df570');
+  }
   assert.equal(registration.actualRestorationPassed, true); assert.equal(registration.healthHookAppliedAfterOriginalVerification, true);
   assert.equal(registration.healthHookRelabeledCanonicalSchema, false); assert.equal(registration.sessionCookiePathVerified, true);
   assert.equal(registration.generatedEndpointOverrideVerified, true);
@@ -131,8 +135,9 @@ export function verifyDistinctWorkloadOverlap(workers, traffic, reports, startsA
       startDelayMs: startedAtMs - startsAtMs })) };
 }
 
-export function verifyDistinctEndpointReportResult(value, prepared, fixture, oracle) {
-  assert.equal(value.source, source); assert.equal(value.profile, DISTINCT_REPORT_CONTRACT.name);
+export function verifyDistinctEndpointReportResult(value, prepared, fixture, oracle, usageSourceBinding=null) {
+  const source=usageSourceBinding?assertUsageSourceIdentity(usageSourceBinding,{source:fixture.sourceRevision}).source:HISTORICAL_USAGE_SOURCE;
+  assert.equal(fixture.sourceRevision,source);assert.equal(value.source, source); assert.equal(value.profile, DISTINCT_REPORT_CONTRACT.name);
   assert.equal(value.passed, true); assert.equal(value.capacityAcceptance, false);
   assert.equal(value.contractSha256, prepared.contractSha256); assert.equal(value.preparedHash, prepared.preparedHash);
   assert.equal(value.expectedReportsSha256, prepared.expectedSha256); assert.equal(value.independentOracleSha256, prepared.oracleSha256);
@@ -161,8 +166,9 @@ export function verifyDistinctEndpointReportResult(value, prepared, fixture, ora
   return true;
 }
 
-export function verifyDistinctPostProof(proof, oracle, fixture) {
-  assert.equal(proof.source, source); assert.equal(proof.cutoff, oracle.cutoff); assert.equal(proof.passed, true);
+export function verifyDistinctPostProof(proof, oracle, fixture, usageSourceBinding=null) {
+  const source=usageSourceBinding?assertUsageSourceIdentity(usageSourceBinding,{source:fixture.sourceRevision}).source:HISTORICAL_USAGE_SOURCE;
+  assert.equal(fixture.sourceRevision,source);assert.equal(proof.source, source); assert.equal(proof.cutoff, oracle.cutoff); assert.equal(proof.passed, true);
   assert.equal(proof.coverageBeforeSha256, distinctCoverageHash(oracle));
   assert.equal(proof.coverageAfterSha256, proof.coverageBeforeSha256); assert.equal(proof.coverageUnchanged, true);
   assert.equal(proof.rawOracleSha256, digest(oracle)); assert.equal(proof.auditCount, 8);
@@ -181,6 +187,7 @@ export function verifyDistinctPostProof(proof, oracle, fixture) {
  */
 export async function runDistinctEndpointOperation({ registration, fixture, apis, worker, observer, generator,
   now = Date.now, pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }) {
+  const source=registration.source;
   const checkOwners = () => validateDistinctRegistration(registration, fixture, apis, { worker, observer, generator });
   checkOwners();
   // ownRole revalidates every RPC response binding. Recheck the registered
@@ -232,7 +239,7 @@ export async function runDistinctEndpointOperation({ registration, fixture, apis
     assert.ok(settled.every(row => row.status === 'fulfilled'));
     const [traffic, distinct, workers] = settled.map(row => row.value);
     verifyDistinctHeartbeatTraffic(traffic); requireWorkers(workers);
-    verifyDistinctEndpointReportResult(distinct, prepared, fixture, oracle);
+    verifyDistinctEndpointReportResult(distinct, prepared, fixture, oracle, registration.usageSourceBinding);
     result.actualWorkloadOverlap = verifyDistinctWorkloadOverlap(workers, traffic, distinct, startsAtMs);
     result.reports = distinct;
     result.phases.push('6000-offers-distinct64-csv8-and-recomputation-settled');
@@ -242,7 +249,7 @@ export async function runDistinctEndpointOperation({ registration, fixture, apis
     assert.equal(after.total - before.total, 6000); assert.equal(after.invalid, 0);
     const native = await rpc(observer, 'distinctAudit', { source, cutoff, oracleSha256: canonical.oracleSha256,
       coverageBeforeSha256: distinctCoverageHash(oracle) });
-    verifyDistinctPostProof(native, oracle, fixture);
+    verifyDistinctPostProof(native, oracle, fixture, registration.usageSourceBinding);
     result.native = Object.fromEntries(['source', 'cutoff', 'passed', 'coverageBeforeSha256', 'coverageAfterSha256', 'coverageUnchanged',
       'rawOracleSha256', 'auditCount', 'expectedAuditKeysSha256', 'auditRecordsSha256', 'privateRawProofSha256', 'violations'].map(key => [key, native[key]]));
     result.apiSnapshots = await Promise.all(apis.map(owner => rpc(owner, 'snapshot')));

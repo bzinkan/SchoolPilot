@@ -28,6 +28,7 @@ export function verifyOriginalUsagePrerequisites(inputs, expected) {
   const contractBytes=readFileSync(join(campaign.directory,'contract.json')),journalBytes=readFileSync(join(campaign.directory,'journal.json'));
   assert.equal(hash(contractBytes),campaign.contractSha256);assert.equal(hash(journalBytes),campaign.journalSha256);
   const contract=JSON.parse(contractBytes),journal=JSON.parse(journalBytes);
+  assert.deepEqual(contract.usageSourceBinding,expected.usageSourceBinding??undefined);
   verifyOriginalUsageCampaignOrder({contract,journal,inputs,source:expected.source,contractSha256:campaign.contractSha256});
   const receipts=[];
   const rows = inputs.map((input,index) => {
@@ -37,6 +38,7 @@ export function verifyOriginalUsagePrerequisites(inputs, expected) {
     assert.deepEqual(receipt,attempt.receipt);
     assert.equal(receipt.profile, PROFILES.usage.name); assert.equal(receipt.contractSha256, profileHash(PROFILES.usage));
     for (const key of ['source', 'applicationImage', 'schemaSha256']) assert.equal(receipt[key], expected[key]);
+    assert.deepEqual(receipt.usageSourceBinding,expected.usageSourceBinding??undefined);
     assert.equal(receipt.arm, 'C'); assert.equal(receipt.runPassed, true); assert.equal(receipt.cleanupPassed, true);
     assert.equal(receipt.sourceUnchanged, true); assert.ok(receipt.usagePostVerificationContractSha256);
     assertUsagePostVerificationEvidence(receipt);
@@ -87,6 +89,7 @@ export async function executeDistinctProfile({ options, metrics, preparation, fi
   assert.deepEqual(metrics.databasePreparation.distinctHeavyRows, [{ schoolIndex: 0, count: 1_000_000 }, { schoolIndex: 1, count: 1_000_000 }]);
   const apis = [0, 1, 2].map(index => active.get(index));
   const registration = { run: options.run, source: options.source, profile: PROFILES.usageDistinct.name,
+    ...(metrics.usageSourceBinding?{usageSourceBinding:metrics.usageSourceBinding}:{}),
     operationContractSha256: distinctEndpointOperationHash(), reportContractSha256: distinctReportContractHash(),
     helperBindingSha256: options.helperBindingSha256, helperImage: options.helperImage,
     snapshotManifestSha256: options.snapshotManifestSha256, restorationReceiptSha256: hash(restoreBytes),

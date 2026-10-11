@@ -27,6 +27,7 @@ import { sanitizedDistinctOperationFailure } from './distinct-report-operation.m
 import {assertLowerRun,lowerCreateArguments,assertLowerReservation,assertLowerPostRls,lowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 import {validateAcceptanceSuccessor,assertSuccessorRunBinding} from './acceptance-successor.mjs';
 import { baselineFixedEnvironment, BASELINE_COMPATIBILITY_SUCCESSOR } from './baseline-environment-compatibility.mjs';
+import {loadUsageSourceBinding,assertUsageSourceIdentity,assertUsageSourceDatabase,assertUsageSourceCheckout,HISTORICAL_USAGE_SOURCE} from './usage-source-binding.mjs';
 
 const execute = promisify(execFile), read = path => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 const save = (directory, name, value) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
@@ -35,6 +36,7 @@ const git = (directory, args) => execFileSync('git', ['-C', directory, ...args],
 
 export async function runV2(options) {
   const profile = profileFor(options.profile), output = resolve(options.outputDirectory), control = resolve(options.privateDirectory);
+  const usageSourceBinding=loadUsageSourceBinding(options,{required:profile.usage&&options.source!==HISTORICAL_USAGE_SOURCE});
   const successor=options.acceptanceSuccessor?validateAcceptanceSuccessor(options.acceptanceSuccessor):null;
   const successorBinding=successor?assertSuccessorRunBinding(options,profile,successor):null;
   const lower=profile.lowerLoadEnvelope?assertLowerRun(options,profile):null;
@@ -44,6 +46,7 @@ export async function runV2(options) {
   assertOutside(options.sourceDirectory, output); assertOutside(options.sourceDirectory, control); assertOutside(output, control);
   assert.equal(existsSync(output), false); assert.equal(existsSync(control), false);
   assert.equal(git(options.sourceDirectory, ['rev-parse', 'HEAD']), options.source); assert.equal(git(options.sourceDirectory, ['status', '--porcelain']), '');
+  if(usageSourceBinding)assertUsageSourceCheckout(usageSourceBinding,options.sourceDirectory);
   for (const key of ['helperImage', 'helperConfigDigest', 'postgresImage', 'redisImage']) assert.match(options[key], /^sha256:[a-f0-9]{64}$/);
   const bindingBytes = readFileSync(options.helperBindingFile); assert.equal(hash(bindingBytes), options.helperBindingSha256);
   const binding = JSON.parse(bindingBytes); assert.equal(binding.applicationSource, options.source); assert.equal(binding.helperImage, options.helperImage);
@@ -51,11 +54,15 @@ export async function runV2(options) {
   assert.match(binding.helperContainerImage, /^sha256:[a-f0-9]{64}$/);
   const prepBytes = readFileSync(options.preparationFile); assert.equal(hash(prepBytes), binding.preparationSha256);
   const preparation = JSON.parse(prepBytes); assert.equal(preparation.applicationSource, options.source); assert.equal(preparation.applicationImage, binding.applicationImage);
+  assert.deepEqual(preparation.usageSourceBinding,usageSourceBinding??undefined);
+  if(usageSourceBinding)assertUsageSourceIdentity(usageSourceBinding,{source:options.source,applicationImage:binding.applicationImage});
+  if(usageSourceBinding)assert.equal(preparation.imageBindingSha256,usageSourceBinding.binding.imageBindingSha256);
   const envBytes = readFileSync(options.observedEnvironmentFile); assert.equal(hash(envBytes), options.observedEnvironmentSha256);
-  const preparedSnapshot=profile.usage?loadSnapshot(options.snapshotDirectory,options.snapshotManifestSha256,{source:options.source,today:today()}):null;
+  const preparedSnapshot=profile.usage?loadSnapshot(options.snapshotDirectory,options.snapshotManifestSha256,{source:options.source,today:today(),usageSourceBinding}):null;
   if(preparedSnapshot){
     const native=readFileSync(options.schemaFile);assert.equal(hash(native),options.schemaSha256);
     assert.equal(canonicalSchemaFingerprint(native.toString('utf8')),preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256,'Native and populated schema identities differ');
+    if(usageSourceBinding)assertUsageSourceIdentity(usageSourceBinding,{source:options.source,applicationImage:binding.applicationImage,schemaInputSha256:options.schemaSha256,canonicalSourceSchemaSha256:preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256});
   }
   const remapped = remapObservedEnvironment(JSON.parse(envBytes), options.scopeBinding, today(),preparedSnapshot?.data['cold-fixture-state.json'].schools.map(row=>row.id));
   const baselineCompatibility = baselineFixedEnvironment({ environment: remapped.environment, source: options.source,
@@ -68,8 +75,11 @@ export async function runV2(options) {
   const reservationBytes=readFileSync(options.reservationFile);assert.equal(hash(reservationBytes),options.reservationSha256);
   const reservation=JSON.parse(reservationBytes);assert.equal(reservation.run,options.run);assert.equal(reservation.source,options.source);assert.equal(reservation.arm,options.arm);
   assert.equal(reservation.profile,profile.name);assert.equal(reservation.contractSha256,profileHash(profile));assert.equal(reservation.observedFlagsSha256,remapped.observedFlagsSha256);
+  assert.equal(reservation.usageSourceBindingSha256,usageSourceBinding?.bindingSha256);assert.equal(reservation.usageSourceReviewSha256,usageSourceBinding?.reviewSha256);
   if(lower)assertLowerReservation(reservation,lower);
   const requiredUsagePostVerification=assertUsagePostVerificationReservation(reservation,options,profile);
+  if(usageSourceBinding&&profile.name===profileFor('release297-usage-shared-db-three-api-100-v2').name&&options.preparationSmoke!==true)
+    assert.equal(requiredUsagePostVerification,true,'Final-source cold Usage requires the full classroom post-verification contract');
   const hostHarnessDirectory=resolve(dirname(fileURLToPath(import.meta.url)),'../../../..');
   let originalColdRunPrerequisites;
   if(profile.distinctReports){
@@ -78,7 +88,7 @@ export async function runV2(options) {
     assert.equal(git(hostHarnessDirectory,['status','--porcelain']),'');
     assertDistinctGeneratedBinding(preparation,hostHarnessDirectory);
     originalColdRunPrerequisites=verifyOriginalUsagePrerequisites(options.originalUsageRuns,{source:options.source,
-      applicationImage:binding.applicationImage,schemaSha256:preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256,originalUsageCampaign:options.originalUsageCampaign});
+      applicationImage:binding.applicationImage,schemaSha256:preparedSnapshot.data['schema-fingerprint.json'].canonicalSha256,originalUsageCampaign:options.originalUsageCampaign,usageSourceBinding});
     assert.deepEqual(reservation.originalUsageReceiptManifestSha256s,originalColdRunPrerequisites.map(row=>row.receiptManifestSha256));
     assert.equal(reservation.originalUsageCampaignContractSha256,options.originalUsageCampaign.contractSha256);
     assert.equal(reservation.originalUsageCampaignJournalSha256,options.originalUsageCampaign.journalSha256);
@@ -105,6 +115,7 @@ export async function runV2(options) {
     scopeBindingSha256: remapped.scopeBindingSha256, quietWindowSha256: options.quietWindowSha256,
     snapshotManifestSha256: options.snapshotManifestSha256 ?? null, schemaSha256: options.schemaSha256 ?? null,
     operationalFixtureBootstrapRequired: true,
+    ...(usageSourceBinding?{usageSourceBinding}:{}),
     ...(successorBinding?{acceptanceSuccessor:successorBinding,hostHarnessSource:options.hostHarnessSource}:{}),
     ...(baselineCompatibility.proof?{baselineEnvironmentCompatibility:baselineCompatibility.proof}:{}),
     ...(lower?{lowerLoad:lower,hostHarnessSource:options.hostHarnessSource,lowerAuthorizedWindow:{startsAt:window.startsAt,expiresAt:window.expiresAt}}:{}),
@@ -159,6 +170,7 @@ export async function runV2(options) {
       const verification = await seeder.rpc('verify'); assert.equal(verification.passed, true);
       if (schemaReceipt) assert.deepEqual(verification.migrations, schemaReceipt.migrations);
       metrics.databasePreparation = verification; metrics.schemaSha256 = configuration.schemaSha256; metrics.schemaInputSha256=configuration.schemaInputSha256??null;
+      if(usageSourceBinding)assertUsageSourceDatabase(usageSourceBinding,{migrations:verification.migrations,tables:verification.catalog.map(row=>row.relname)});
       metrics.fixtureLogicalSha256 = fixture.logicalFixtureSha256 ?? hash(JSON.stringify({ today: fixture.today, schools: fixture.schools }));
       assert.equal((await stop(seeder)).clean, true);
       await restart();
@@ -337,11 +349,11 @@ export async function runV2(options) {
   }
   try {
     if (profile.usage) {
-      const snapshot = loadSnapshot(options.snapshotDirectory, options.snapshotManifestSha256, { source: options.source, today: today() });
+      const snapshot = loadSnapshot(options.snapshotDirectory, options.snapshotManifestSha256, { source: options.source, today: today(),usageSourceBinding });
       const fixture = structuredClone(snapshot.data['cold-fixture-state.json']);
       const date = new Date(fixture.today + 'T12:00:00Z'), localDay = n => new Date(date.getTime() + n * 86400_000).toISOString().slice(0, 10);
       Object.assign(fixture, { heavyDate: localDay(-2), emptyDate: localDay(-3), gapDate: localDay(-5), from: localDay(-365), historyDays: 361 });
-      await withUsageSnapshotV2({ ...options, source: options.source, evidenceDirectory: output, privateDirectory: control,
+      await withUsageSnapshotV2({ ...options, usageSourceBinding, source: options.source, evidenceDirectory: output, privateDirectory: control,
         mode: 'diagnostic', planFile, planSha256, purpose: 'New v2 three-API synthetic campaign; original single-API contract is unchanged' }, async context => {
         const configuration = read(context.configurationFile); configuration.pgContainerId = context.ready.pgContainerId; configuration.schemaSha256 = snapshot.data['schema-fingerprint.json'].canonicalSha256;
         configuration.schemaInputSha256=options.schemaSha256;
@@ -352,6 +364,7 @@ export async function runV2(options) {
       });
     } else {
       mkdirSync(output); mkdirSync(control); save(output, 'run-plan.json', plan);
+      if(usageSourceBinding)save(output,'usage-source-binding.json',usageSourceBinding);
       await withCommonDatabase({ ...options, outputDirectory: output, privateDirectory: control }, dockerInput, (configuration, restart) => measure(configuration, restart));
     }
   } catch (error) { failure = profile.distinctReports?sanitizedDistinctOperationFailure(error).code:error.code || error.message || 'V2_RUN_FAILED'; if (error.privateDetail && existsSync(control)) writeFileSync(join(control, 'failure.private'), error.privateDetail, { flag: 'wx', mode: 0o600 }); }

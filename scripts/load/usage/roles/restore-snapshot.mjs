@@ -81,10 +81,11 @@ export async function withRestoredSnapshot(rawOptions,useFixture){
   const {run,source,sourceDirectory,snapshotDirectory,snapshotManifestSha256,evidenceDirectory:output,privateDirectory,endpoint}=options;
   const startedAt=new Date().toISOString();
   const today=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-  const snapshot=loadSnapshot(snapshotDirectory,snapshotManifestSha256,{source,today});
+  const snapshot=loadSnapshot(snapshotDirectory,snapshotManifestSha256,{source,today,usageSourceBinding:options.usageSourceBinding});
   assert.equal(realpathSync(sourceDirectory),resolve(sourceDirectory));
   assert.ok(existsSync(join(sourceDirectory,'.git')));assert.equal(existsSync(join(sourceDirectory,'.git/objects/info/alternates')),false);
   mkdirSync(output,{recursive:false});mkdirSync(privateDirectory,{recursive:false});
+  if(options.usageSourceBinding)save(output,'usage-source-binding.json',options.usageSourceBinding);
   if(options.planFile){const raw=readFileSync(options.planFile);assert.equal(snapshotHash(raw),options.planSha256);const plan=JSON.parse(raw);assert.equal(plan.run,run);assert.equal(plan.source,source);assert.equal(plan.mode,options.mode);assert.ok(Date.parse(plan.declaredAt)<Date.parse(startedAt));writeFileSync(join(output,'run-plan.json'),raw,{flag:'wx'});}
   const environment={...process.env};for(const key of Object.keys(environment))if(/^DOCKER_|^BUILDX_BUILDER$/.test(key))delete environment[key];
   const docker=options.docker??'docker',image=snapshot.manifest.pgImage,name='schoolpilot-usage-scale-'+run,database='schoolpilot_redesign_usage_scale_'+run;
@@ -132,7 +133,7 @@ export async function withRestoredSnapshot(rawOptions,useFixture){
     const reference=call(['exec',name,'pg_dump','-U',owner,'-d',referenceDatabase,'--schema-only','--no-owner','--no-privileges']);writeFileSync(join(output,'reference-rendered-schema.sql'),reference,{flag:'wx'});
     const schemaComparison=compareNativeSchemas(original,reference,restored);save(output,'schema-comparison.json',schemaComparison);
     call(['exec',name,'dropdb','-U',owner,referenceDatabase],{log:'reference-drop.log'});
-    stage='data-validation';const configuration={sourceDirectory,snapshotDirectory,snapshotManifestSha256,adminUrl,appUrl,resultFile:join(output,'database-validation.json')},configurationFile=join(privateDirectory,'validation.json');save(privateDirectory,'validation.json',configuration);
+    stage='data-validation';const configuration={sourceDirectory,snapshotDirectory,snapshotManifestSha256,adminUrl,appUrl,resultFile:join(output,'database-validation.json'),...(options.usageSourceBinding?{usageSourceBinding:options.usageSourceBinding}:{})},configurationFile=join(privateDirectory,'validation.json');save(privateDirectory,'validation.json',configuration);
     const result=spawnSync(process.execPath,[join(ownDirectory,'validate-snapshot-database.mjs'),configurationFile],{env:{...environment,NODE_ENV:'test',SCHEDULER_ENABLED:'false',DATABASE_URL:appUrl,DATABASE_URL_PRIVILEGED:appUrl,ADMIN_DATABASE_URL:adminUrl,DOTENV_CONFIG_QUIET:'true',DOTENV_CONFIG_PATH:join(privateDirectory,'absent-dotenv')},encoding:'utf8',maxBuffer:2*1024*1024,timeout:180000});writeFileSync(join(output,'database-validation.log'),(result.stdout||'')+(result.stderr||''),{flag:'wx'});assert.equal(result.status,0);
     const databaseValidation=JSON.parse(readFileSync(configuration.resultFile));assert.equal(databaseValidation.passed,true);assert.equal(databaseValidation.clientsClosed,true);
     assert.equal(schemaComparison.originalCanonicalSha256,snapshot.data['schema-fingerprint.json'].canonicalSha256);

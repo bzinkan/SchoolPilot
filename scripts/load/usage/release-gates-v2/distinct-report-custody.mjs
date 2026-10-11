@@ -10,6 +10,7 @@ import { assertDistinctOracle, countDistinctCurrentObservations, assertDistinctA
   prepareDistinctReports, distinctPreparedStateHash } from './distinct-reports.mjs';
 import { DISTINCT_SERVICE_LIMITS, distinctEndpointOperationHash, verifyDistinctEndpointReportResult,
   verifyDistinctPostProof, verifyDistinctOwnerDrains, verifyDistinctWorkloadOverlap, verifyDistinctHeartbeatTraffic, validateDistinctRegistration } from './distinct-report-operation.mjs';
+import {assertUsageSourceReceipt,assertUsageSourceDatabase} from './usage-source-binding.mjs';
 
 const digest = value => hash(JSON.stringify(value));
 const contained = (root, name) => {
@@ -91,10 +92,12 @@ export function verifyDistinctReceiptCustody(receiptDirectory, privateDirectory,
   assert.equal(metrics.distinctReportRpc, true); assert.equal(metrics.originalColdRunPrerequisites?.length, 3);
   assert.equal(new Set(metrics.originalColdRunPrerequisites.map(row => row.run)).size, 3);
   const root = realpathSync(privateDirectory), receiptRoot = realpathSync(receiptDirectory);
+  const usageSourceBinding=assertUsageSourceReceipt(receiptRoot,metrics);
   const recorded = read(contained(receiptRoot, 'distinct-endpoint-operation.json'));
   assert.deepEqual(recorded, metrics.distinctOperation); assert.equal(recorded.passed, true);
   assert.equal(recorded.operationContractSha256, distinctEndpointOperationHash());
   const registration = read(contained(receiptRoot, 'distinct-registration.json'));
+  assert.deepEqual(registration.usageSourceBinding,usageSourceBinding??undefined);
   assert.equal(digest(registration), recorded.registrationSha256);
   assert.deepEqual(registration.serviceLimits, DISTINCT_SERVICE_LIMITS);
   assert.equal(registration.source, metrics.source); assert.equal(registration.run, metrics.run);
@@ -119,7 +122,8 @@ export function verifyDistinctReceiptCustody(receiptDirectory, privateDirectory,
   assert.equal(validated.passed, true); assert.equal(validated.clientsClosed, true); assert.equal(validated.source, metrics.source);
   assert.equal(validated.snapshotManifestSha256, metrics.snapshotManifestSha256);
   assert.equal(validated.schools.length, 2); assert.ok(validated.schools.every(row => row.raw === 1_000_001 && row.heavyBindings.invalid === 0));
-  assert.equal(validated.migrations,54);assert.equal(validated.admittedTables,129);assert.deepEqual(validated.migrationRows,metrics.databasePreparation.migrations);
+  assert.equal(validated.migrations,usageSourceBinding?.binding.expectedMigrations.length??54);assert.equal(validated.admittedTables,usageSourceBinding?.binding.rlsTables.length??129);assert.deepEqual(validated.migrationRows,metrics.databasePreparation.migrations);
+  if(usageSourceBinding){assert.equal(validated.usageSourceBindingSha256,usageSourceBinding.bindingSha256);assertUsageSourceDatabase(usageSourceBinding,{migrations:validated.migrationRows,tables:metrics.databasePreparation.catalog.map(row=>row.relname),registrySha256:validated.registrySha256});}
   assert.equal(validated.role.superuser,false);assert.equal(validated.role.bypassRls,false);assert.equal(validated.role.freshCredentialRole,true);
   assert.deepEqual(validated.screenshotEvidence,{signature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',
     runtimeExecute:true,publicExecute:false,exactDefinition:true});
@@ -149,12 +153,12 @@ export function verifyDistinctReceiptCustody(receiptDirectory, privateDirectory,
   assert.equal(before.audits.length, 0); const audits = assertDistinctAuditRecords(fixture, after.audits);
   const native = only(observer, 'distinctAudit').value; assert.equal(native.privateRawProofSha256, hash(afterBytes));
   assert.equal(native.auditRecordsSha256, digest(after.audits)); assert.equal(native.expectedAuditKeysSha256, audits.expectedKeysSha256);
-  assert.deepEqual(recorded.native, native); verifyDistinctPostProof(native, oracle, fixture);
+  assert.deepEqual(recorded.native, native); verifyDistinctPostProof(native, oracle, fixture, usageSourceBinding);
   assert.deepEqual(only(observer, 'distinctOracle').value, oracle);
   const prepared = only(generator, 'prepareDistinctReports').value, canonical = prepareDistinctReports(fixture, oracle);
   assert.equal(prepared.preparedHash, distinctPreparedStateHash({ run: metrics.run, fixture, oracle, prepared: canonical }));
   const reports = only(generator, 'distinctReports'); assert.equal(reports.request.value.preparedHash, prepared.preparedHash);
-  assert.deepEqual(reports.value, recorded.reports); verifyDistinctEndpointReportResult(reports.value, prepared, fixture, oracle);
+  assert.deepEqual(reports.value, recorded.reports); verifyDistinctEndpointReportResult(reports.value, prepared, fixture, oracle, usageSourceBinding);
   const phase = only(generator, 'phase').value; assert.deepEqual(phase, metrics.continuousTraffic);
   assert.ok(only(generator,'initialize').request.id<only(generator,'prepareDistinctReports').request.id
     &&only(generator,'prepareDistinctReports').request.id<only(generator,'phase').request.id

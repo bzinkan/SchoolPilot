@@ -1,6 +1,6 @@
 #requires -Version 7.5
 [CmdletBinding()]
-param()
+param([switch]$ContainmentInterruptionFixture, [string]$InterruptionDirectory)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Assertions = 0
@@ -16,7 +16,15 @@ foreach ($name in @('Assert-Condition', 'Assert-Throws', 'Get-ArgumentValue', 'N
 }
 . (Join-Path $PSScriptRoot '../scripts/deploy-product-runtime-config.ps1')
 
+$script:ProductTestFile = $PSCommandPath
 $script:TestDirectory = Join-Path ([IO.Path]::GetTempPath()) ('product-runtime-mock-' + [Guid]::NewGuid().ToString('N'))
+if ($ContainmentInterruptionFixture) {
+    if (-not [IO.Path]::IsPathFullyQualified($InterruptionDirectory)) { throw 'Interruption fixture requires an absolute private mock directory.' }
+    $interruptedRoot = [IO.Path]::GetFullPath($InterruptionDirectory)
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $interruptedRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($interruptedRoot) -notlike 'product-runtime-mock-*') { throw 'Unsafe interruption fixture path.' }
+    $script:TestDirectory = $interruptedRoot
+}
 [void][IO.Directory]::CreateDirectory($script:TestDirectory)
 $script:TestSha = 'a' * 40
 $script:CurrentToolSha = $script:TestSha
@@ -106,11 +114,17 @@ function Reset-ProductMock {
         Scaling = [pscustomobject]@{ Min = 3; Max = 6; DynamicIn = $false; DynamicOut = $false; Scheduled = $false }
         Calls = [Collections.Generic.List[string]]::new(); Requests = [Collections.Generic.List[object]]::new()
         CompatibleUsageWriter = $true; CompatibleAppointmentWriter = $true; CompatibleReportsWriter = $true; CompatibleReportAuthority = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
+        Unhealthy = $false; ProtectedWindow = $false; OtherLease = $false; FailApiOnce = $false; FailedApi = $false
+        FailBoundsRestore = $false; FailScalingRestore = $false; FailBoundsSetOnce = $false; FailedBoundsSet = $false
+        DriftAfterHold = $false; DriftDuringRecovery = $false; LoseFenceDuringWorker = $false
+        InterruptWorker = $false
     }
     $script:CurrentToolSha = $script:TestSha
     $script:ApiServiceMutationStarted = $false; $script:WorkerServiceMutationStarted = $false
     $script:ScalingHoldAcquired = $false; $script:PriorScalingState = $null
     $script:OperationLockHeld = $false; $script:OperationLockState = $null
+    $script:DeploymentBoundsChanged = $false; $script:PriorDeploymentConfigurations = $null
+    $script:UsageOffContainment = $false
 }
 
 # All external interactions are replaced below. The default mock fails closed
@@ -146,13 +160,46 @@ function Invoke-AwsJson {
         }
         'ecs update-service' {
             $service = Get-ArgumentValue $Arguments '--service'
-            $arn = Get-ArgumentValue $Arguments '--task-definition'
             $role = if ($service -ceq $script:ApiService) { 'Api' } else { 'Worker' }
+            $configurationPath = if ($Arguments -ccontains '--deployment-configuration') { Get-ArgumentValue $Arguments '--deployment-configuration' } else { $null }
+            if ($configurationPath) {
+                $configuration = [IO.File]::ReadAllText($configurationPath.Substring(7)) | ConvertFrom-Json -Depth 50 -DateKind String
+                $script:Mock.Calls.Add("bounds:$role`:$($configuration.minimumHealthyPercent)/$($configuration.maximumPercent)")
+                if ($script:Mock.FailBoundsRestore -and $configuration.maximumPercent -eq 200) { throw 'Deployment bounds restoration failed' }
+                $script:Mock.Services.$role.deploymentConfiguration = $configuration
+                if ($script:Mock.FailBoundsSetOnce -and -not $script:Mock.FailedBoundsSet) {
+                    $script:Mock.FailedBoundsSet = $true
+                    throw 'Ambiguous bounds response after accepted update'
+                }
+                return [pscustomobject]@{}
+            }
+            $arn = Get-ArgumentValue $Arguments '--task-definition'
+            if ($role -ceq 'Worker' -and $script:Mock.InterruptWorker) {
+                # A separate process exits without unwinding Apply's catch or
+                # finally blocks, immediately before the worker update. The
+                # only transport in that process is this mock.
+                Write-SanitizedJson (Join-Path $script:TestDirectory 'interruption-state.json') ([pscustomobject]@{
+                    planPath = $script:InterruptionPlan.path; planHash = $script:InterruptionPlan.sha256
+                    apiMode = (Get-ServingState Api)['CLASSPILOT_USAGE_ROLLUP_MODE']
+                    workerMode = (Get-ServingState Worker)['CLASSPILOT_USAGE_ROLLUP_MODE']
+                    fenceHeld = $script:OperationLockHeld; fenceState = $script:OperationLockState
+                    fenceOwner = $script:OperationLockOwner; fenceToken = $script:OperationLockFence
+                    scalingHeld = $script:ScalingHoldAcquired; boundsHeld = $script:DeploymentBoundsChanged
+                })
+                exit 73
+            }
             $script:Mock.Calls.Add("update:$role")
-            $count = if ($role -ceq 'Api') { 3 } else { 1 }
-            $script:Mock.Services.$role = New-TestService $role.ToLowerInvariant() $arn $count
+            $count = $script:Mock.Services.$role.desiredCount
+            $configuration = $script:Mock.Services.$role.deploymentConfiguration
+            $script:Mock.Services.$role = New-TestService $role.ToLowerInvariant() $arn $count -DeploymentConfiguration $configuration
+            if ($role -ceq 'Api' -and $script:Mock.FailApiOnce -and -not $script:Mock.FailedApi) {
+                $script:Mock.FailedApi = $true
+                throw 'Ambiguous API response after accepted update.'
+            }
             if ($role -ceq 'Worker' -and $script:Mock.FailWorkerOnce -and -not $script:Mock.FailedWorker) {
                 $script:Mock.FailedWorker = $true
+                if ($script:Mock.DriftDuringRecovery) { $script:Mock.Services.Api.deploymentConfiguration.maximumPercent = 150 }
+                if ($script:Mock.LoseFenceDuringWorker) { $script:OperationLockHeld = $false }
                 throw 'Ambiguous worker response after accepted update.'
             }
             return [pscustomobject]@{}
@@ -162,35 +209,54 @@ function Invoke-AwsJson {
 }
 function Get-ServiceSnapshot { return Copy-TestValue $script:Mock.Services }
 function Start-Sleep { param($Seconds) } # Bounded poll loops remain deterministic under mocked transport.
-function Assert-ApiTargetHealth { param($ApiService, $ExpectedDesiredCount, $Mode) return $true }
+function Assert-ApiTargetHealth { param($ApiService, $ExpectedDesiredCount, $Mode) if ($script:Mock.Unhealthy) { throw 'Unhealthy API targets' }; return $true }
 function Get-ScalingSnapshot { return Copy-TestValue $script:Mock.Scaling }
 function Assert-ScheduledScalingContract { }
-function Assert-RuntimeConfigMutationWindow { }
+function Assert-RuntimeConfigMutationWindow { if ($script:Mock.ProtectedWindow) { throw 'Protected production mutation window' } }
 function Assert-RepositoryIdentity { param($RepositoryRoot, $ExpectedSha) if ($ExpectedSha -and $ExpectedSha -cne $script:CurrentToolSha) { throw 'Tool SHA drift' }; return $script:CurrentToolSha }
 function Assert-PrivateExternalRoot { param($Root, $RepositoryRoot) return $Root }
 function Assert-PrivateInputPath { param($Path, $RepositoryRoot) if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'Missing test input' }; return $Path }
 function Set-PrivatePathPermissions { param($Path) }
-function Acquire-OperationLock { param($RunId, $PlanSha256) $script:OperationLockHeld = $true; $script:OperationLockState = 'preparing'; $script:Mock.Calls.Add('lock') }
+function Acquire-OperationLock { param($RunId, $PlanSha256) if ($script:Mock.OtherLease) { throw 'Another runtime operation holds the lease' }; $script:OperationLockHeld = $true; $script:OperationLockState = 'preparing'; $script:OperationLockOwner = "$RunId-mockowner"; $script:OperationLockFence = 42; $script:Mock.Calls.Add('lock') }
 function Maintain-OperationLock { if (-not $script:OperationLockHeld) { throw 'Missing operation fence' } }
 function Start-OperationMutationWindow { if ($script:Mock.FailStart) { throw 'Fence acquisition failed' }; $script:OperationLockState = 'mutating' }
 function Complete-OperationMutationWindow { if ($script:OperationLockState -cne 'mutating') { throw 'Not mutating' }; $script:OperationLockState = 'terminal_safe' }
 function Release-OperationLock { $script:OperationLockHeld = $false; $script:Mock.Calls.Add('unlock') }
-function Acquire-ScalingHold { $script:PriorScalingState = Copy-TestValue $script:Mock.Scaling; $script:ScalingHoldAcquired = $true; $script:Mock.Scaling.DynamicIn = $true; $script:Mock.Scaling.DynamicOut = $true; $script:Mock.Scaling.Scheduled = $true; $script:Mock.Calls.Add('hold') }
+function Acquire-ScalingHold { $script:PriorScalingState = Copy-TestValue $script:Mock.Scaling; $script:ScalingHoldAcquired = $true; $script:Mock.Scaling.DynamicIn = $true; $script:Mock.Scaling.DynamicOut = $true; $script:Mock.Scaling.Scheduled = $true; $script:Mock.Calls.Add('hold'); if ($script:Mock.DriftAfterHold) { $script:Mock.Services.Api.desiredCount++ } }
 function Assert-ScalingHoldExact { if (-not $script:ScalingHoldAcquired) { throw 'Missing scaling hold' }; return $true }
-function Restore-ScalingHold { $script:Mock.Scaling = Copy-TestValue $script:PriorScalingState; $script:ScalingHoldAcquired = $false; $script:Mock.Calls.Add('restore'); return $true }
+function Restore-ScalingHold { if ($script:Mock.FailScalingRestore) { throw 'Autoscaling restoration failed' }; $script:Mock.Scaling = Copy-TestValue $script:PriorScalingState; $script:ScalingHoldAcquired = $false; $script:Mock.Calls.Add('restore'); return $true }
 function Wait-ExactServicePairConvergence {
     param($ExpectedApiArn, $ExpectedWorkerArn, $ExpectedDesiredCount)
     $script:Mock.Calls.Add('wait')
     if ($script:Mock.FailRecovery -and $script:Mock.FailedWorker) { throw 'Recovery could not converge' }
-    if ($script:Mock.Services.Api.taskDefinition -cne $ExpectedApiArn -or $script:Mock.Services.Worker.taskDefinition -cne $ExpectedWorkerArn -or $ExpectedDesiredCount -ne 3) { throw 'Incorrect convergence pair' }
+    if ($script:Mock.Services.Api.taskDefinition -cne $ExpectedApiArn -or $script:Mock.Services.Worker.taskDefinition -cne $ExpectedWorkerArn -or $ExpectedDesiredCount -ne $script:Mock.Services.Api.desiredCount) { throw 'Incorrect convergence pair' }
     return $true
 }
 
 function New-TestConfig([hashtable]$Environment) { return [pscustomobject]@{ schemaVersion = 1; environment = [pscustomobject]$Environment } }
-function New-TestProductPlan($Config, $EvidencePath = $null, $UsageEvidencePath = $null) {
+function New-TestProductPlan($Config, $EvidencePath = $null, $UsageEvidencePath = $null, [switch]$UsageOffContainment) {
     # Plan against whatever pair is serving now, as an operator would.
     return New-ProductPlan $Config $script:TestDirectory $script:Mock.Services.Api.taskDefinition $script:Mock.Services.Worker.taskDefinition `
-        $script:TestDigest $script:TestSha $EvidencePath $UsageEvidencePath
+        $script:TestDigest $script:TestSha $EvidencePath $UsageEvidencePath -UsageOffContainment:$UsageOffContainment
+}
+function Initialize-TestUsageOn([int]$DesiredCount = 3) {
+    Reset-ProductMock
+    Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'
+    Set-BothEnvironment 'CLASSPILOT_DIGITAL_USAGE_MODE' 'on'
+    $script:Mock.Services.Api = New-TestService api $script:TestApiArn $DesiredCount
+    $script:Mock.Scaling.Min = if ($DesiredCount -eq 1) { 1 } else { 3 }
+}
+function Read-TestProductReceipt($Plan) {
+    return (Read-StrictJsonSnapshot (Join-Path $script:TestDirectory "$($Plan.plan.runId)-result.json")).Value
+}
+function Assert-AllRegisteredUsageOff([string]$Message) {
+    foreach ($request in $script:Mock.Requests) {
+        $environment = @($request.containerDefinitions[0].environment)
+        foreach ($name in @('CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')) {
+            $entries = @($environment | Where-Object name -CEQ $name)
+            Assert-Condition ($entries.Count -eq 1 -and $entries[0].value -ceq 'off') $Message
+        }
+    }
 }
 function Assert-NoMutation([string]$Message) {
     $mutations = @($script:Mock.Calls | Where-Object { $_ -cin @('ecs register-task-definition', 'ecs update-service', 'lock', 'hold') })
@@ -234,6 +300,14 @@ function Invoke-TestRollback($Plan) {
     $script:Action = 'Rollback'; $script:Execute = $true; $script:ManifestPath = $Plan.path; $script:ManifestHash = $Plan.sha256; $script:DailyUsageEvidencePath = $null
     $script:UsageObservationEvidencePath = $null
     Invoke-ProductMain
+}
+
+if ($ContainmentInterruptionFixture) {
+    Initialize-TestUsageOn 6
+    $script:InterruptionPlan = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off'; CLASSPILOT_DIGITAL_USAGE_MODE = 'off' }) -UsageOffContainment
+    $script:Mock.InterruptWorker = $true
+    [void](Invoke-ProductApply $script:InterruptionPlan.plan $script:InterruptionPlan.sha256 $script:TestDirectory)
+    throw 'Interruption fixture unexpectedly completed.'
 }
 
 try {
@@ -674,6 +748,144 @@ try {
     Assert-Condition ($script:OperationLockHeld -and $script:Mock.Requests.Count -eq 0) 'A failed mutation-window transition must keep its fence without registering anything.'
     Assert-Condition (-not $script:ApiServiceMutationStarted -and -not $script:WorkerServiceMutationStarted) 'Sequential operations must reset their service-mutation markers.'
 
+    # --- Usage off containment: separate v2 contract, never weaker activation ---
+    $bothOff = New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off'; CLASSPILOT_DIGITAL_USAGE_MODE = 'off' }
+    foreach ($desiredCount in @(1, 3, 4, 6)) {
+        Initialize-TestUsageOn $desiredCount
+        $priorConfigurations = Get-CanonicalJsonSha256 @($script:Mock.Services.Api.deploymentConfiguration, $script:Mock.Services.Worker.deploymentConfiguration)
+        $priorScaling = Get-CanonicalJsonSha256 $script:Mock.Scaling
+        $plan = New-TestProductPlan $bothOff -UsageOffContainment
+        Assert-Condition ($plan.plan.schemaVersion -eq 2 -and $plan.plan.operationMode -ceq 'usage_off_containment' -and $plan.plan.apiDesired -eq $desiredCount) 'Containment must bind its operation mode and exact capacity in a v2 manifest.'
+        Assert-Condition ((Read-ProductPlan $plan.path $plan.sha256).operationMode -ceq 'usage_off_containment') 'A v2 containment manifest must round-trip through strict validation.'
+        Assert-Condition (@($plan.plan.activations).Count -eq 0) 'Containment cannot activate anything.'
+        Assert-NoMutation 'Containment Plan must be read-only.'
+        $applied = Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory
+        Assert-Condition ($applied.status -ceq 'applied' -and $applied.schemaVersion -eq 2 -and $applied.operationMode -ceq 'usage_off_containment') 'Containment receipt must retain its v2 mode.'
+        Assert-Condition ($applied.operationLockOwner -ceq "$($plan.plan.runId)-mockowner" -and $applied.operationLockFence -eq 42) 'Containment receipt must bind the exact run owner and fence for interrupted-process recovery.'
+        Assert-Condition ($script:Mock.Services.Api.desiredCount -eq $desiredCount -and -not $script:OperationLockHeld -and -not $script:ScalingHoldAcquired -and -not $script:DeploymentBoundsChanged) 'Successful containment must preserve capacity and release only restored holds.'
+        Assert-Condition ((Get-CanonicalJsonSha256 @($script:Mock.Services.Api.deploymentConfiguration, $script:Mock.Services.Worker.deploymentConfiguration)) -ceq $priorConfigurations -and (Get-CanonicalJsonSha256 $script:Mock.Scaling) -ceq $priorScaling) 'Containment must restore complete deployment configurations and scaling state.'
+        $minimum = if ($desiredCount -eq 1) { 100 } else { [int][Math]::Floor((($desiredCount - 1) * 100) / $desiredCount) }
+        $maximum = if ($desiredCount -eq 1) { 200 } else { 100 }
+        $order = @($script:Mock.Calls | Where-Object { $_ -clike 'bounds:*' -or $_ -clike 'update:*' -or $_ -cin @('wait', 'restore', 'unlock') }) -join ','
+        Assert-Condition ($order -ceq "bounds:Api:$minimum/$maximum,bounds:Worker:0/100,update:Api,wait,update:Worker,wait,bounds:Api:100/200,bounds:Worker:100/200,restore,unlock") 'Containment must set reviewed bounds, converge API before worker, then restore bounds/scaling before unlock.'
+        Assert-AllRegisteredUsageOff 'Every containment candidate must explicitly turn both Usage modes off.'
+        foreach ($role in @('Api', 'Worker')) {
+            Assert-Condition ((Get-ServingState $role)['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'off' -and (Get-ServingState $role)['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'off') 'Both serving services must be OFF.'
+        }
+        Assert-ThrowsMatch { Invoke-TestRollback $plan } 'cannot activate Usage' 'Containment rollback must never re-enable Usage.'
+    }
+    foreach ($desiredCount in @(4, 6)) {
+        Initialize-TestUsageOn $desiredCount
+        Assert-ThrowsMatch { New-TestProductPlan $bothOff } 'stable release posture' 'Ordinary v1 off plans must retain the original three-task ceiling.'
+        Assert-NoMutation 'An ordinary capacity refusal must not mutate.'
+    }
+    foreach ($badConfig in @(
+            (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off' }),
+            (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off'; CLASSPILOT_DIGITAL_USAGE_MODE = $null }),
+            (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; CLASSPILOT_DIGITAL_USAGE_MODE = 'off' }),
+            (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off'; CLASSPILOT_DIGITAL_USAGE_MODE = 'off'; PASSPILOT_RULES_MODE = 'off' }))) {
+        Initialize-TestUsageOn
+        Assert-ThrowsMatch { New-TestProductPlan $badConfig -UsageOffContainment } 'exactly both Usage modes' 'Containment must reject every configuration except exact explicit both-OFF.'
+        Assert-NoMutation 'Invalid containment configurations must not mutate.'
+    }
+    Initialize-TestUsageOn
+    $plan = New-TestProductPlan $bothOff -UsageOffContainment
+    foreach ($mutation in @(
+            { param($p) $p.operationMode = 'ordinary' },
+            { param($p) $p.operationMode = 'USAGE_OFF_CONTAINMENT' },
+            { param($p) $p.schemaVersion = 1 },
+            { param($p) $p.schemaVersion = 3 },
+            { param($p) $p.PSObject.Properties.Remove('operationMode') },
+            { param($p) $p.apiDesired = 7 },
+            { param($p) $p.config.environment | Add-Member PASSPILOT_RULES_MODE 'off' },
+            { param($p) $p.config.environment.CLASSPILOT_USAGE_ROLLUP_MODE = 'on' })) {
+        $badPlan = Copy-TestValue $plan.plan
+        & $mutation $badPlan
+        $badPath = Write-TestEvidence $badPlan
+        Assert-Throws { Read-ProductPlan $badPath (Get-FileSha256 $badPath) } 'Even rehashed malformed/tampered containment manifests must fail semantic validation.'
+    }
+    $script:CurrentToolSha = 'c' * 40
+    Assert-ThrowsMatch { Read-ProductPlan $plan.path $plan.sha256 } 'Tool SHA drift' 'Containment also binds the reviewed tool SHA.'
+    $script:CurrentToolSha = $script:TestSha
+    Assert-NoMutation 'Manifest rejection must never mutate.'
+
+    foreach ($refusal in @('Unhealthy', 'ProtectedWindow', 'OtherLease')) {
+        Initialize-TestUsageOn 6
+        $plan = New-TestProductPlan $bothOff -UsageOffContainment
+        $script:Mock[$refusal] = $true
+        Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } "Containment must preserve the $refusal refusal."
+        Assert-NoMutation 'Containment cannot bypass health, protected-window or concurrent-operation guards.'
+    }
+    Initialize-TestUsageOn 6; $script:Mock.Unhealthy = $true
+    Assert-ThrowsMatch { New-TestProductPlan $bothOff -UsageOffContainment } 'Unhealthy' 'Unhealthy targets must block containment Plan as well as Apply.'
+    foreach ($drift in @(
+            { $script:Mock.Services.Api.desiredCount = 4; $script:Mock.Services.Api.runningCount = 4; $script:Mock.Services.Api.deployments[0].desiredCount = 4; $script:Mock.Services.Api.deployments[0].runningCount = 4 },
+            { Set-TestEnvironment (Get-TestTask api) 'CLIENT_URL' 'https://drift.invalid' },
+            { $script:Mock.Services.Api.deploymentConfiguration.maximumPercent = 150 },
+            { $script:Mock.Scaling.Min = 1 })) {
+        Initialize-TestUsageOn 6
+        $plan = New-TestProductPlan $bothOff -UsageOffContainment
+        & $drift
+        Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'Containment must reject capacity, task, deployment or scaling drift.'
+        Assert-NoMutation 'Preflight drift refusal must not mutate.'
+    }
+    Initialize-TestUsageOn 6
+    $plan = New-TestProductPlan $bothOff -UsageOffContainment
+    $plan.plan.createdAt = [DateTimeOffset]::UtcNow.AddHours(-3).ToString('o')
+    Assert-ThrowsMatch { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'fresh' 'Containment manifests expire after two hours.'
+    Initialize-TestUsageOn 6
+    $plan = New-TestProductPlan $bothOff -UsageOffContainment
+    $script:Mock.DriftAfterHold = $true
+    Assert-ThrowsMatch { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'Service state changed' 'Drift after taking the scaling hold must still block service mutation.'
+    Assert-Condition ((Read-TestProductReceipt $plan).status -ceq 'failed_no_service_mutation' -and 'update:Api' -cnotin $script:Mock.Calls -and -not $script:OperationLockHeld) 'Post-hold drift must release only after restoring the owned hold.'
+
+    foreach ($failure in @('FailApiOnce', 'FailWorkerOnce')) {
+        Initialize-TestUsageOn 6
+        $plan = New-TestProductPlan $bothOff -UsageOffContainment
+        $script:Mock[$failure] = $true
+        Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'An ambiguous accepted update remains a failed attempt even when forward recovery succeeds.'
+        $receipt = Read-TestProductReceipt $plan
+        Assert-Condition ($receipt.status -ceq 'recovered_off' -and $script:Mock.Requests.Count -eq 4 -and -not $script:OperationLockHeld -and -not $script:ScalingHoldAcquired -and -not $script:DeploymentBoundsChanged) 'Successful forward recovery must report recovered_off and restore all holds before unlock.'
+        Assert-AllRegisteredUsageOff 'Forward containment recovery must never register a Usage-ON revision.'
+        Assert-Condition ((Get-ServingState Api)['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'off' -and (Get-ServingState Worker)['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'off') 'Forward recovery must leave both services OFF.'
+    }
+    foreach ($failure in @('FailRecovery', 'FailBoundsRestore', 'FailScalingRestore', 'DriftDuringRecovery', 'LoseFenceDuringWorker')) {
+        Initialize-TestUsageOn 6
+        $plan = New-TestProductPlan $bothOff -UsageOffContainment
+        $script:Mock[$failure] = $true
+        if ($failure -cin @('FailRecovery', 'DriftDuringRecovery', 'LoseFenceDuringWorker')) { $script:Mock.FailWorkerOnce = $true }
+        Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'Unproven off recovery must remain fenced for operator attention.'
+        $receipt = Read-TestProductReceipt $plan
+        Assert-Condition ($receipt.status -ceq 'recovery_required' -and 'unlock' -cnotin $script:Mock.Calls -and $script:ScalingHoldAcquired) 'Recovery uncertainty must never release the lease or scaling hold.'
+        Assert-AllRegisteredUsageOff 'No failure path after containment mutation may register Usage ON.'
+        Assert-Condition ($receipt.priorApiArn -ceq $script:TestApiArn -and $receipt.priorWorkerArn -ceq $script:TestWorkerArn -and $receipt.planSha256 -ceq $plan.sha256 -and $null -ne $receipt.priorDeploymentConfigurations -and $null -ne $receipt.priorScalingState) 'Interrupted containment must preserve run-bound source and restoration evidence.'
+    }
+    Initialize-TestUsageOn 6
+    $plan = New-TestProductPlan $bothOff -UsageOffContainment
+    $script:Mock.FailBoundsSetOnce = $true
+    Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'An ambiguous deployment-bounds update must be repaired before releasing the fence.'
+    Assert-Condition ((Read-TestProductReceipt $plan).status -ceq 'failed_no_service_mutation' -and -not $script:DeploymentBoundsChanged -and -not $script:ScalingHoldAcquired -and -not $script:OperationLockHeld) 'A pre-task-update bounds failure may release only after exact settings restoration.'
+    Assert-Condition ('update:Api' -cnotin $script:Mock.Calls -and 'update:Worker' -cnotin $script:Mock.Calls) 'A bounds preflight failure must not roll tasks.'
+    Initialize-TestUsageOn 6
+    $plan = New-TestProductPlan $bothOff -UsageOffContainment
+    $script:Mock.FailBoundsSetOnce = $true; $script:Mock.FailBoundsRestore = $true
+    Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'Unproven restoration after a partial bounds mutation must stay fenced.'
+    Assert-Condition ((Read-TestProductReceipt $plan).status -ceq 'recovery_required' -and $script:OperationLockHeld -and $script:ScalingHoldAcquired -and $script:DeploymentBoundsChanged) 'Partial bounds mutation plus restoration failure must retain all recovery state.'
+    Initialize-TestUsageOn 6
+    $plan = New-TestProductPlan $bothOff -UsageOffContainment
+    $script:Mock.FailStart = $true
+    Assert-Throws { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'Ambiguous containment fence acquisition must remain unresolved.'
+    Assert-Condition ((Read-TestProductReceipt $plan).status -ceq 'recovery_required' -and $script:OperationLockHeld -and $script:Mock.Requests.Count -eq 0) 'An interrupted fence transition must retain its receipt and never guess that release is safe.'
+    $interruptionRoot = Join-Path $script:TestDirectory 'product-runtime-mock-interrupted'
+    & (Get-Process -Id $PID).Path -NoProfile -File $script:ProductTestFile -ContainmentInterruptionFixture -InterruptionDirectory $interruptionRoot 2>&1 | Out-Null
+    Assert-Condition ($LASTEXITCODE -eq 73) 'The interrupted mock process must exit before Apply recovery can execute.'
+    $interrupted = (Read-StrictJsonSnapshot (Join-Path $interruptionRoot 'interruption-state.json')).Value
+    $interruptedPlan = Read-ProductPlan $interrupted.planPath $interrupted.planHash
+    $interruptedReceipt = (Read-StrictJsonSnapshot (Join-Path $interruptionRoot "$($interruptedPlan.runId)-result.json")).Value
+    Assert-Condition ($interruptedReceipt.status -ceq 'worker_update_pending' -and $interrupted.apiMode -ceq 'off' -and $interrupted.workerMode -ceq 'on') 'Process termination must leave an honest checkpoint identifying the partial API/worker rollout.'
+    Assert-Condition ($interrupted.fenceHeld -and $interrupted.fenceState -ceq 'mutating' -and $interrupted.scalingHeld -and $interrupted.boundsHeld) 'Process termination must not silently release the fence or owned scaling/deployment bounds.'
+    Assert-Condition ($interruptedReceipt.operationLockOwner -ceq $interrupted.fenceOwner -and $interruptedReceipt.operationLockFence -eq $interrupted.fenceToken -and $null -ne $interruptedReceipt.priorDeploymentConfigurations -and $null -ne $interruptedReceipt.containmentDeploymentConfigurations) 'The persisted checkpoint must identify the exact interrupted lease and settings needed for forward-OFF operator recovery.'
+
     # --- Entry point: private strict JSON file, Execute gate ---
     Reset-ProductMock; Add-BothTables $script:RulesTables
     $configPath = Join-Path $script:TestDirectory 'product-config.json'
@@ -695,6 +907,24 @@ try {
     Assert-ThrowsMatch { Invoke-ProductMain } 'bound into the plan' 'Apply must use only the evidence bound into the plan.'
     $script:DailyUsageEvidencePath = $null
     Assert-NoMutation 'Refused entry points must not mutate.'
+    foreach ($operation in @('Apply', 'Rollback')) {
+        $script:Action = $operation; $script:UsageOffContainment = $true
+        Assert-ThrowsMatch { Invoke-ProductMain } 'Plan-only' 'Apply and Rollback must derive containment exclusively from the reviewed manifest.'
+    }
+    Initialize-TestUsageOn 6
+    [IO.File]::WriteAllText($configPath, '{"schemaVersion":1,"environment":{"CLASSPILOT_USAGE_ROLLUP_MODE":"off","CLASSPILOT_DIGITAL_USAGE_MODE":"off"}}')
+    $script:Action = 'Plan'; $script:UsageOffContainment = $true
+    Invoke-ProductMain
+    $entryPointPlan = Get-ChildItem -LiteralPath $script:TestDirectory -Filter '*-plan.json' | Where-Object {
+        $candidatePlan = (Read-StrictJsonSnapshot $_.FullName).Value
+        $candidatePlan.schemaVersion -eq 2 -and $candidatePlan.apiDesired -eq 6 -and $candidatePlan.prior.CLASSPILOT_USAGE_ROLLUP_MODE -ceq 'on'
+    } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    Assert-Condition ($null -ne $entryPointPlan) 'The Plan-only CLI switch must emit a v2 containment manifest.'
+    Assert-NoMutation 'The containment CLI Plan remains read-only.'
+    $script:UsageOffContainment = $false
+    $script:Action = 'Apply'; $script:Execute = $true; $script:ManifestPath = $entryPointPlan.FullName; $script:ManifestHash = Get-FileSha256 $entryPointPlan.FullName
+    Invoke-ProductMain
+    Assert-Condition ((Get-ServingState Api)['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'off' -and (Get-ServingState Worker)['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'off') 'CLI Apply must honor the manifest-bound containment mode without a switch argument.'
 
     Write-Host "Product runtime configuration tests passed ($script:Assertions assertions)."
 } finally {

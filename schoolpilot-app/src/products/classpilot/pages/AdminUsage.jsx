@@ -9,7 +9,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { adminIdentityKey } from '../lib/adminNavigation';
-import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageError, usageGrades, usageLocalDate, usagePresentationState, usageQuery } from '../lib/digitalUsage';
+import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageError, usageGrades, usageIsDisabled, usageLocalDate, usagePresentationState, usageQuery } from '../lib/digitalUsage';
 
 const API = '/classpilot/admin/usage';
 const selectClass = 'h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -19,8 +19,8 @@ function Picker({ label, value, onChange, children, disabled = false }) {
   return <label className="grid min-w-0 gap-2 text-sm font-medium">{label}<select aria-label={label} className={selectClass} value={value} onChange={event => onChange(event.target.value)} disabled={disabled}>{children}</select></label>;
 }
 
-function Notice({ children, error = false }) {
-  return <div role={error ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${error ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100'}`}>{children}</div>;
+function Notice({ children, error = false, neutral = false }) {
+  return <div role={error ? 'alert' : 'status'} className={`rounded-lg border px-4 py-3 text-sm ${error ? 'border-destructive/30 bg-destructive/5 text-destructive' : neutral ? 'border-border bg-muted/50 text-muted-foreground' : 'border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100'}`}>{children}</div>;
 }
 
 function Sites({ title, domains }) {
@@ -109,6 +109,7 @@ function UsagePage({ school, identity }) {
       throw error;
     }
   }, enabled: query !== null, gcTime: 0, retry: false });
+  const reportDisabled = report.isError && usageIsDisabled(report.error);
   const change = callback => { cancelExport(); setExportError(null); callback(); };
   const refresh = () => { cancelExport(); setExportError(null); setClock(new Date()); void report.refetch(); };
   const download = async () => {
@@ -124,7 +125,7 @@ function UsagePage({ school, identity }) {
   };
   return <div className="max-w-6xl space-y-6">
     <div className="flex flex-wrap items-start justify-between gap-4"><div className="max-w-2xl"><h2 className="text-xl font-semibold tracking-tight">Browser activity observed by ClassPilot</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Monitored Browser Time covers browser activity observed on managed Chromebooks. It does not measure total device screen time, engagement, or learning.</p></div><div className="flex gap-2"><Button variant="outline" size="sm" disabled={!query || report.isFetching} onClick={refresh}><RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />Refresh</Button><Button size="sm" disabled={!query || !report.data || report.isFetching || report.isError || exporting || report.data.dataState === 'unavailable'} onClick={() => { void download(); }}><Download className="mr-2 h-4 w-4" aria-hidden="true" />{exporting ? 'Exporting…' : 'Export CSV'}</Button></div></div>
-    <Card><CardContent className="space-y-4 pt-6"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Picker label="Scope" value={scope} onChange={value => change(() => { setScope(value); setId(''); setSearch(''); })}><option value="school">School</option><option value="grade">Grade</option><option value="class">Official class</option><option value="student">Student</option></Picker>
+    <Card><CardContent className="space-y-4 pt-6"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Picker label="Scope" value={scope} onChange={value => change(() => { setScope(value); setId(''); setSearch(''); })}><option value="school">Entire school</option><option value="grade">Grade</option><option value="class">Official class</option><option value="student">Student</option></Picker>
       {scope !== 'school' ? <Picker label={scope === 'class' ? 'Official class' : scope === 'grade' ? 'Grade' : 'Student'} value={id} disabled={directoryLoading || Boolean(directoryError)} onChange={value => change(() => setId(value))}><option value="">{directoryLoading ? 'Loading…' : `Choose a ${scope}`}</option>{options.filter(option => !search || option.id === id || option.label.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(option => <option value={option.id} key={option.id}>{option.label}</option>)}</Picker> : <div className="grid content-center gap-1"><span className="text-xs text-muted-foreground">Reporting school</span><span className="truncate text-sm font-medium">{school.name}</span></div>}
       <Picker label="Date range" value={period} onChange={value => change(() => setPeriod(value))}><option value="today">Today</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></Picker><div className="grid content-center gap-1"><span className="text-xs text-muted-foreground">School time zone</span><span className="text-sm">{school.timezone}</span></div></div>
       {scope === 'student' && <label className="grid max-w-sm gap-2 text-sm font-medium">Find a student<Input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search names" /></label>}
@@ -136,7 +137,7 @@ function UsagePage({ school, identity }) {
     {scope !== 'school' && directoryError && <Notice error>Could not load {scope} choices. {usageError(directoryError)} <Button variant="link" size="sm" onClick={() => { void (scope === 'class' ? classes.refetch() : students.refetch()); if (scope === 'grade') void settings.refetch(); }}>Retry choices</Button></Notice>}
     {scope !== 'school' && !directoryLoading && !directoryError && !validSelection && <p role="status" className="text-sm text-muted-foreground">Choose a {scope} to view its report.</p>}
     {query && report.isPending && <p role="status" className="py-8 text-center text-sm text-muted-foreground">Loading Monitored Browser Time…</p>}
-    {query && report.isError && <Notice error>{usageError(report.error)} <Button variant="link" size="sm" disabled={report.isFetching} onClick={refresh}>Try again</Button></Notice>}
+    {query && report.isError && <Notice error={!reportDisabled} neutral={reportDisabled}>{usageError(report.error)} {!reportDisabled && <Button variant="link" size="sm" disabled={report.isFetching} onClick={refresh}>Try again</Button>}</Notice>}
     {exportError && <Notice error>CSV was not exported. {exportError}</Notice>}
     {query && !report.isError && report.data && <Report report={report.data} />}
   </div>;

@@ -14,6 +14,7 @@ import { SCHOOL_DAY_AI_PROFILE, schoolDayAiDecisionSamples } from './school-day-
 import { fixtureRlsContract, assertFixtureRuntimeModes, assertCompleteFixtureCatalog } from './fixture-rls-contract.mjs';
 import { offerOpenLoopHeartbeats } from './open-loop-heartbeats.mjs';
 import { COLD_OPEN_LOOP_PROFILE, assertColdFixtureSnapshot } from './cold-open-loop-profile.mjs';
+import {loadFixtureUsageSourceBinding,assertUsageSourceDatabase} from './release-gates-v2/usage-source-binding.mjs';
 const wall = value => value.toISOString().replace('T',' ').replace('Z','');
 const sleep = ms => new Promise(done => setTimeout(done,ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -26,6 +27,7 @@ export async function runSchoolDayScale({ aiScenario = false, openLoop = false, 
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const registryPath = resolve(root,'src/config/rlsRegistry.json');
   const rlsContract = fixtureRlsContract(JSON.parse(readFileSync(registryPath,'utf8')),hash(registryPath),process.env);
+  const usageSourceBinding=loadFixtureUsageSourceBinding(process.env);
   if (openLoop) {
     rlsContract.heartbeatOfferedCapabilities = [...COLD_OPEN_LOOP_PROFILE.classPilot.capabilities];
     rlsContract.heartbeatExtensionIdentity = Object.fromEntries(Object.entries(COLD_OPEN_LOOP_PROFILE.classPilot).filter(([key]) => key !== 'capabilities'));
@@ -73,7 +75,8 @@ export async function runSchoolDayScale({ aiScenario = false, openLoop = false, 
     if (rlsContract.name !== 'classpilotUsageRollupDaysPostExpand') {
       metrics.currentContractMigrations = (await admin.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
       assert.ok(metrics.currentContractMigrations.length > 0 && metrics.currentContractMigrations.every(row => row.status === 'complete'));
-      for (const id of ['20260824_staff_identity_integrity_contract','classpilot-usage-rollup-days-20260930','passpilot-appointments-expand-20260930']) assert.ok(metrics.currentContractMigrations.some(row => row.id === id),'Current constraint/ledger/admission migrations required');
+      if(usageSourceBinding)assertUsageSourceDatabase(usageSourceBinding,{migrations:metrics.currentContractMigrations,tables:rlsContract.tables,registrySha256:rlsContract.registrySha256});
+      else for (const id of ['20260824_staff_identity_integrity_contract','classpilot-usage-rollup-days-20260930','passpilot-appointments-expand-20260930']) assert.ok(metrics.currentContractMigrations.some(row => row.id === id),'Current constraint/ledger/admission migrations required');
       if(rlsContract.name==='classpilotPrivateChatLifecyclePostExpand') assert.ok(metrics.currentContractMigrations.some(row=>row.id==='classpilot-private-chat-lifecycle-20261002'),'Current129 lifecycle migration required');
     }
     const rlsTables = ['heartbeats','classpilot_usage_rollups','classpilot_usage_rollup_days', ...(aiScenario ? ['classpilot_ai_decisions'] : [])];

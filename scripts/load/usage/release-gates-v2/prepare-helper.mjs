@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { hash } from './contracts.mjs';
 import { patchGeneratorV2, patchProcessV2, patchDrainV2 } from './patch.mjs';
 import { patchDistinctGeneratorRpc, patchDistinctObserverRpc, patchDistinctRoleEntryRpc } from './distinct-report-rpc-overlay.mjs';
+import {loadUsageSourceBinding,assertUsageSourceIdentity,assertUsageSourceCheckout} from './usage-source-binding.mjs';
 const directory = fileURLToPath(new URL('.', import.meta.url));
 const repo = resolve(directory, '../../../..');
 const git = args => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 ** 2 }).trim();
@@ -24,10 +25,14 @@ export function generatedHelperFile(name, source, { distinctReportRpc = false } 
   return generated;
 }
 export function prepareHelper(options) {
+  const usageSourceBinding=loadUsageSourceBinding(options);
+  if(usageSourceBinding)assertUsageSourceIdentity(usageSourceBinding,{source:options.applicationSource,applicationImage:options.applicationImage});
+  if(usageSourceBinding)assertUsageSourceCheckout(usageSourceBinding,options.applicationSourceDirectory);
   assert.ok(options.distinctReportRpc === undefined || typeof options.distinctReportRpc === 'boolean');
   assert.match(options.applicationSource, /^[a-f0-9]{40}$/); assert.match(options.applicationImage, /(?:^sha256:|@sha256:)[a-f0-9]{64}$/);
   assert.match(options.imageBindingSha256, /^[a-f0-9]{64}$/);
   const imageBindingBytes = readFileSync(options.imageBindingFile); assert.equal(hash(imageBindingBytes), options.imageBindingSha256);
+  if(usageSourceBinding)assert.equal(options.imageBindingSha256,usageSourceBinding.binding.imageBindingSha256);
   const imageBinding = JSON.parse(imageBindingBytes);
   assert.equal(imageBinding.source, options.applicationSource); assert.equal(imageBinding.image, options.applicationImage);
   assert.equal(imageBinding.verified, true, 'Application image needs independently captured source/digest proof');
@@ -47,6 +52,7 @@ export function prepareHelper(options) {
   for (const name of generatedNames) {
     const path = join(overlay, name); writeFileSync(path, generatedHelperFile(name, readFileSync(path, 'utf8'), options));
   }
+  if(usageSourceBinding)write(join(overlay,'release-gates-v2/usage-source-binding.json'),JSON.stringify(usageSourceBinding)+'\n');
   const executed = {};
   function walk(path, prefix = '') { for (const name of readdirSync(path, { withFileTypes: true })) { if (name.isDirectory()) walk(join(path, name.name), prefix + name.name + '/'); else executed[prefix + name.name] = hash(readFileSync(join(path, name.name))); } }
   walk(join(context, 'overlay'));
@@ -57,6 +63,7 @@ export function prepareHelper(options) {
   const preparation = { schemaVersion: 2, applicationSource: options.applicationSource, applicationImage: options.applicationImage,
     imageBindingSha256: options.imageBindingSha256, harnessSource, canonicalFiles: files, executedFiles: executed,
     contractKind: 'release297-new-v2-only', originalContractUnchanged: true, context, capacityAccepted: false,
+    ...(usageSourceBinding?{usageSourceBinding}:{}),
     ...(options.distinctReportRpc ? { distinctReportRpc: true, distinctRpcComposition: 'after-existing-v2' } : {}) };
   write(join(context, 'preparation.json'), JSON.stringify(preparation, null, 2) + '\n'); return preparation;
 }

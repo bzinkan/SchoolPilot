@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, resolveHistoryView, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
+import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, resolveHistoryGrouping, resolveHistoryView, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
+import { encodeHistoryLookupCursor, resolveHistoryLookup } from "../src/services/classpilotBrowsingHistoryLookupModel.js";
 const time=(value:string)=>new Date(`2026-09-01T${value}:00.000Z`);
 test("history view defaults to the compatible raw list and rejects malformed filters",()=>{
   assert.equal(resolveHistoryView(undefined),"all");
   assert.equal(resolveHistoryView("all"),"all");
   assert.equal(resolveHistoryView("pages"),"pages");
   for(const value of [null,"","Pages","unknown",["pages"],{},true])assert.throws(()=>resolveHistoryView(value),{code:"HISTORY_VIEW_INVALID",status:400});
+});
+test("history grouping defaults to observations and only accepts the explicit visit contract",()=>{
+  assert.equal(resolveHistoryGrouping(undefined),"observations");
+  assert.equal(resolveHistoryGrouping("observations"),"observations");
+  assert.equal(resolveHistoryGrouping("visits"),"visits");
+  for(const value of [null,"","Visits","pages",["visits"],{},true])assert.throws(()=>resolveHistoryGrouping(value),{code:"HISTORY_GROUPING_INVALID",status:400});
 });
 test("history dates use school midnight including DST and reject invalid dates/ranges",()=>{
   const spring=resolveHistoryDates({startDate:"2026-03-08",endDate:"2026-03-08",timeZone:"America/New_York",now:new Date("2026-03-10T00:00:00Z")});assert.equal(spring.start.toISOString(),"2026-03-08T05:00:00.000Z");assert.equal(spring.end.getTime()-spring.start.getTime(),23*3600000);
@@ -50,4 +57,54 @@ test("default-date cursors preserve their original day after midnight and keep t
   const read=readHistoryCursor(cursor,later)!;
   const dates=resolveHistoryDates({startDate:read.startDate,endDate:read.endDate,timeZone:"America/New_York",now:later});
   assert.equal(dates.startDate,"2026-09-01");assert.equal(read.anchor,anchor.toISOString());assert.equal(Math.min(dates.end.getTime(),Date.parse(read.anchor)),anchor.getTime());
+});
+
+test("student history lookup bounds searches and binds cursors to school, actor, role and search", () => {
+  const input = { schoolId: "school", actorId: "teacher", role: "teacher", search: "  History STUDENT  " };
+  const query = resolveHistoryLookup(input);
+  assert.equal(query.search, "history student");
+  assert.equal(query.limit, 50);
+  assert.equal(resolveHistoryLookup({ ...input, limit: 1000 }).limit, 100);
+  const cursor = encodeHistoryLookupCursor(query.scope, "history student", "student");
+  assert.equal(resolveHistoryLookup({ ...input, cursor }).cursor?.id, "student");
+  const legacyScope = historyScopeHash(["history-student-lookup-v1", input.schoolId, input.actorId, input.role, "history student"]);
+  const legacyCursor = encodeHistoryLookupCursor(legacyScope, "history student", "legacy-student");
+  assert.equal(resolveHistoryLookup({ ...input, cursor: legacyCursor }).cursor?.id, "legacy-student", "Unfiltered continuations issued before filters were introduced remain valid");
+  assert.throws(() => resolveHistoryLookup({ ...input, classId: "class-one", cursor: legacyCursor }), { code: "HISTORY_CURSOR_INVALID" });
+  for (const changed of [{ schoolId: "other" }, { actorId: "other" }, { role: "admin" }, { search: "other" }]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, ...changed, cursor }), { code: "HISTORY_CURSOR_INVALID" });
+  }
+  for (const search of [["name"], "x".repeat(151), "name\u0000"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, search }), { code: "HISTORY_SEARCH_INVALID" });
+  }
+  for (const limit of [0, -1, 1.5, [2], "bad"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, limit }), { code: "HISTORY_LIMIT_INVALID" });
+  }
+  for (const malformed of ["invalid!", "e30", [], "x".repeat(4097)]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, cursor: malformed }), { code: "HISTORY_CURSOR_INVALID" });
+  }
+});
+
+test("student history lookup normalizes class/grade filters and binds cursors to their intersection", () => {
+  const input = { schoolId: "school", actorId: "teacher", role: "teacher", search: "Student", classId: "  class-one  ", grade: "  7  " };
+  const query = resolveHistoryLookup(input);
+  assert.equal(query.classId, "class-one");
+  assert.equal(query.grade, "7");
+  const cursor = encodeHistoryLookupCursor(query.scope, "student name", "student-id");
+  assert.equal(resolveHistoryLookup({ ...input, classId: "class-one", grade: "7", cursor }).cursor?.id, "student-id");
+  for (const changed of [{ classId: "class-two" }, { grade: "8" }, { classId: undefined }, { grade: undefined }, { classId: "" }, { grade: "" }]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, ...changed, cursor }), { code: "HISTORY_CURSOR_INVALID" });
+  }
+  const empty = resolveHistoryLookup({ ...input, classId: "   ", grade: " " });
+  const absent = resolveHistoryLookup({ schoolId: input.schoolId, actorId: input.actorId, role: input.role, search: input.search });
+  assert.equal(empty.classId, null);
+  assert.equal(empty.grade, null);
+  assert.equal(empty.scope, absent.scope);
+  for (const classId of [null, ["class-one"], {}, true, 123, "x".repeat(257), "class\u0000one", "class\nname", "class-one\n"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, classId }), { code: "HISTORY_FILTER_INVALID", status: 400 });
+  }
+  for (const grade of [null, ["7"], {}, true, 7, "x".repeat(101), "grade\u0000seven", "grade\nseven", "7\t"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, grade }), { code: "HISTORY_FILTER_INVALID", status: 400 });
+  }
+  assert.equal(resolveHistoryLookup({ ...input, grade: "Kindergarten" }).grade, "Kindergarten", "Configured grade labels do not have to be numeric");
 });

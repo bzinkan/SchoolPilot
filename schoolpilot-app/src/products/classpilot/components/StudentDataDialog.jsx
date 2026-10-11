@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, Download, RefreshCw, Users } from 'lucide-react';
 
 import { Button } from '../../../components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import StudentHistoryLookup from './StudentHistoryLookup';
 import {
   Dialog,
   DialogContent,
@@ -314,6 +316,7 @@ export default function StudentDataDialog({
 }) {
   const queryClient = useQueryClient();
   const [period, setPeriod] = useState('today');
+  const [view, setView] = useState('summary');
   const [scopeChoice, setScopeChoice] = useState(null);
   const [studentChoice, setStudentChoice] = useState(null);
   const [accessChanged, setAccessChanged] = useState(false);
@@ -355,10 +358,10 @@ export default function StudentDataDialog({
     queryKey: ['classpilot', 'student-data', schoolKey, viewerKey, roleKey, 'scopes'],
     queryFn: () => apiRequest('GET', studentDataScopesQueryUrl()),
     select: normalizeStudentDataScopesResponse,
-    enabled: open && Boolean(schoolId && viewerId),
+    enabled: open && view === 'summary' && Boolean(schoolId && viewerId),
     retry: false,
     staleTime: 0,
-    refetchInterval: open ? PROVISIONAL_REFRESH_MS : false,
+    refetchInterval: open && view === 'summary' ? PROVISIONAL_REFRESH_MS : false,
     refetchIntervalInBackground: false,
     refetchOnMount: 'always',
     refetchOnWindowFocus: 'always',
@@ -447,6 +450,7 @@ export default function StudentDataDialog({
       expectedPeriod: period,
     }),
     enabled: open
+      && view === 'summary'
       && !scopesAccessDenied
       && !teacherHasNoAssignedClasses
       && Boolean(selectedScope && reportUrl),
@@ -540,11 +544,22 @@ export default function StudentDataDialog({
         <DialogHeader>
           <DialogTitle>Student Data</DialogTitle>
           <DialogDescription>
-            Activity time is derived from monitoring heartbeats. Screenshots are not used for time calculations.
+            Review activity summaries or look up a student's recorded browsing by date, including when they are offline.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <Tabs value={view} onValueChange={setView} className="py-4">
+          <TabsList aria-label="Student Data views">
+            <TabsTrigger value="summary">Summary</TabsTrigger>
+            <TabsTrigger value="history">Browsing history</TabsTrigger>
+          </TabsList>
+          <TabsContent value="history" className="mt-4">
+            {schoolId && viewerId ? (
+              <StudentHistoryLookup key={authorizationContextKey} schoolId={schoolId} viewerId={viewerId} viewerRole={viewerRole} />
+            ) : <p role="alert" className="text-sm">Choose a school before looking up browsing history.</p>}
+          </TabsContent>
+          <TabsContent value="summary" className="mt-4 space-y-4">
+          <p className="text-xs text-muted-foreground">Activity time is derived from monitoring heartbeats. Screenshots are not used for time calculations.</p>
           {!schoolId || !viewerId ? (
             <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
               <p className="font-medium">Choose a school before opening Student Data.</p>
@@ -751,10 +766,11 @@ export default function StudentDataDialog({
               )}
             </>
           )}
-        </div>
+          </TabsContent>
+        </Tabs>
 
         <DialogFooter className="flex justify-between sm:justify-between">
-          <Button
+          {view === 'summary' ? <Button
             type="button"
             variant="outline"
             size="sm"
@@ -765,7 +781,7 @@ export default function StudentDataDialog({
           >
             <Download className="h-4 w-4" />
             Export CSV
-          </Button>
+          </Button> : null}
           <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-close-student-data">
             Close
           </Button>

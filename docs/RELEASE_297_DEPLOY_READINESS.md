@@ -2,6 +2,12 @@
 
 Current preparation is maintained in the [machine-readable index](releases/release297/current-release.json) and [generated operator status](RELEASE_2_9_7_OPERATOR_CHECKLIST.md#current-release-status). The source inclusion matrix records #603 and its merged successors; fresh acceptance/artifacts remain pending for the successor.
 
+The separately selected [Monitored Browser Time activation policy](CLASSPILOT_USAGE_ACTIVATION.md)
+requires the full original strict capacity gate and both 800-client survival
+variants. Historical Usage-off current-school amendments below remain dated
+evidence and grant no Usage activation waiver. Its [successor status](releases/usage-activation/current.json)
+does not replace or relabel any historical receipt.
+
 ## October 4 merge and operator-tool follow-up
 
 This dated checkpoint is [archived verbatim](RELEASE_2_9_7_PREPARATION_HISTORY.md#archived-readiness-preface--superseded-as-current-state-on-october-7). Its held/open-PR wording is historical; use current status above.

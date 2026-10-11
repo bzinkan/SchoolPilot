@@ -17,6 +17,12 @@ const stateText = {
 };
 function safeLink(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : null; } catch { return null; } }
 function observationTime(value, timeZone) { return new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(new Date(value)); }
+function visitTime(entry, timeZone) {
+  const start = entry.startedAt || entry.timestamp;
+  const end = entry.endedAt || entry.timestamp;
+  if (start === end) return observationTime(start, timeZone);
+  return new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }).formatRange(new Date(start), new Date(end));
+}
 
 export default function StudentBrowsingHistory({ studentId }) {
   const { activeMembership, user } = useAuth();
@@ -27,19 +33,22 @@ export default function StudentBrowsingHistory({ studentId }) {
   const base = `/classpilot/students/${encodeURIComponent(studentId)}/browsing-history`;
   const key = ['student-browsing-history', activeMembership?.schoolId, user?.id, activeMembership?.id, activeMembership?.role, studentId, dates.startDate, dates.endDate];
   const invalidRange = dates.startDate && dates.endDate && dates.startDate > dates.endDate;
-  const domains = useQuery({ queryKey: [...key, 'domains'], queryFn: ({ signal }) => apiRequest('GET', `${base}/domains?${params}`, undefined, { signal }), enabled: Boolean(studentId) && !invalidRange, retry: false });
-  const history = useInfiniteQuery({ queryKey: [...key, view], initialPageParam: null, queryFn: ({ pageParam, signal }) => { const query = new URLSearchParams(params); query.set('limit', '100'); query.set('view', view); if (pageParam) query.set('cursor', pageParam); return apiRequest('GET', `${base}?${query}`, undefined, { signal }); }, getNextPageParam: page => page.nextCursor || undefined, enabled: Boolean(studentId) && !invalidRange, retry: false });
+  const domains = useQuery({ queryKey: [...key, 'domains'], queryFn: ({ signal }) => apiRequest('GET', `${base}/domains?${params}`, undefined, { signal }), enabled: Boolean(studentId) && !invalidRange, retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchOnReconnect: 'always' });
+  const history = useInfiniteQuery({ queryKey: [...key, view, 'visits'], initialPageParam: null, queryFn: ({ pageParam, signal }) => { const query = new URLSearchParams(params); query.set('limit', '100'); query.set('view', view); query.set('grouping', 'visits'); if (pageParam) query.set('cursor', pageParam); return apiRequest('GET', `${base}?${query}`, undefined, { signal }); }, getNextPageParam: page => page.nextCursor || undefined, enabled: Boolean(studentId) && !invalidRange, retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchOnReconnect: 'always' });
   const meta = history.data?.pages[0] || domains.data;
-  const entries = history.data?.pages.flatMap(page => page.entries) || [];
-  const state = history.error ? historyFailure(history.error) : meta?.state;
+  const accessDenied = (history.error && historyFailure(history.error) === 'denied')
+    || (domains.error && historyFailure(domains.error) === 'denied');
+  const entries = history.error || accessDenied ? [] : history.data?.pages.flatMap(page => page.entries) || [];
+  const state = accessDenied ? 'denied' : history.error ? historyFailure(history.error) : meta?.state;
   const emptyText = state === 'empty' && !includeUnavailable
     ? 'No page details were recorded in the selected accessible dates. Include observations without page details to check for monitoring activity.'
     : stateText[state];
-  const timeZone = meta?.timeZone || 'America/New_York';
+  const timeZone = meta?.timeZone || activeMembership?.schoolTimezone || 'America/New_York';
+  const today = meta?.today || new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   return <div className="space-y-5" data-testid="student-browsing-history">
     <div className="space-y-2"><h3 className="text-sm font-semibold">Browsing history</h3><div className="flex flex-wrap items-end gap-3">
-      <label className="space-y-1 text-xs"><span className="block">Start date</span><input type="date" aria-label="History start date" data-testid="history-start-date" value={dates.startDate || meta?.startDate || ''} className="rounded-md border bg-background px-3 py-2 text-sm" onChange={event => setDates(previous => ({ startDate: event.target.value, endDate: previous.endDate || meta?.endDate || event.target.value }))} /></label>
-      <label className="space-y-1 text-xs"><span className="block">End date</span><input type="date" aria-label="History end date" data-testid="history-end-date" value={dates.endDate || meta?.endDate || ''} className="rounded-md border bg-background px-3 py-2 text-sm" onChange={event => setDates(previous => ({ startDate: previous.startDate || meta?.startDate || event.target.value, endDate: event.target.value }))} /></label>
+      <label className="space-y-1 text-xs"><span className="block">Start date</span><input type="date" aria-label="History start date" data-testid="history-start-date" value={dates.startDate || meta?.startDate || today} className="rounded-md border bg-background px-3 py-2 text-sm" onChange={event => setDates(previous => ({ startDate: event.target.value, endDate: previous.endDate || meta?.endDate || today }))} /></label>
+      <label className="space-y-1 text-xs"><span className="block">End date</span><input type="date" aria-label="History end date" data-testid="history-end-date" value={dates.endDate || meta?.endDate || today} className="rounded-md border bg-background px-3 py-2 text-sm" onChange={event => setDates(previous => ({ startDate: previous.startDate || meta?.startDate || today, endDate: event.target.value }))} /></label>
       <Button size="sm" variant="outline" onClick={() => setDates({ startDate: '', endDate: '' })}>Today</Button>
     </div><p className="text-xs text-muted-foreground">Dates and times use {timeZone}.{meta?.retentionDays ? ` Detailed browsing is retained for ${meta.retentionDays} days.` : ''}{meta?.scope === 'supervised_intervals' ? ' Only your supervised intervals are included.' : ''}</p>
       {invalidRange && <p role="alert" className="text-sm text-destructive">The end date must be on or after the start date.</p>}
@@ -47,23 +56,23 @@ export default function StudentBrowsingHistory({ studentId }) {
     </div>
     <section className="space-y-2" aria-label="Top domains by day"><h4 className="text-sm font-medium">Top domains by day</h4>
       {domains.isPending && !invalidRange && <p className="text-xs text-muted-foreground">Loading day summaries…</p>}
-      {domains.data?.days?.map(day => <div key={day.date} className="rounded-lg border p-3"><p className="mb-2 text-sm font-medium">{day.date}</p><div className="space-y-1">{day.domains.map(domain => <div key={domain.domain} className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all">{domain.domain}{domain.contentCategory && <span className="ml-2 text-muted-foreground">{domain.contentCategory}</span>}</span><span className="shrink-0 text-muted-foreground">~{formatDuration(domain.seconds)}</span></div>)}</div></div>)}
-      {domains.data?.note && <p className="text-xs text-muted-foreground">{domains.data.note}</p>}
+      {!domains.error && !accessDenied && domains.data?.days?.map(day => <div key={day.date} className="rounded-lg border p-3"><p className="mb-2 text-sm font-medium">{day.date}</p><div className="space-y-1">{day.domains.map(domain => <div key={domain.domain} className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all">{domain.domain}{domain.contentCategory && <span className="ml-2 text-muted-foreground">{domain.contentCategory}</span>}</span><span className="shrink-0 text-muted-foreground">~{formatDuration(domain.seconds)}</span></div>)}</div></div>)}
+      {!domains.error && !accessDenied && domains.data?.note && <p className="text-xs text-muted-foreground">{domains.data.note}</p>}
       {domains.error && <p className="text-xs text-muted-foreground">{stateText[historyFailure(domains.error)]}</p>}
     </section>
-    <section className="space-y-2" aria-label="Observed browsing"><h4 className="text-sm font-medium">Observed browsing</h4><p className="text-xs text-muted-foreground">Durations estimate time between observations at most 60 seconds apart. Gaps, unsupported intervals and the final observation add no time.</p>
+    <section className="space-y-2" aria-label="Observed browsing"><h4 className="text-sm font-medium">Observed page visits</h4><p className="text-xs text-muted-foreground">Consecutive observations of the same page are grouped into visits. Page changes, missing page details and connection gaps keep visits separate. Durations estimate time between observations at most 60 seconds apart; gaps and the final observation add no time.</p>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeUnavailable} onChange={event => setIncludeUnavailable(event.target.checked)} className="h-4 w-4 accent-primary" />Include observations without page details</label>
       {!includeUnavailable && <p className="text-xs text-muted-foreground">Observations without a page URL or meaningful title are hidden. Select the option above to include them. Missing page details do not mean the student was offline.</p>}
-      {history.isPending && !invalidRange && <p role="status" className="text-sm">Loading observations…</p>}
+      {history.isPending && !invalidRange && <p role="status" className="text-sm">Loading visits…</p>}
       {!history.isPending && !invalidRange && entries.length === 0 && emptyText && <p role={history.error ? 'alert' : 'status'} className="rounded-lg border p-5 text-sm text-muted-foreground">{emptyText}</p>}
-      {entries.map(entry => { const link = safeLink(entry.activeTabUrl); return <article key={entry.id} className="space-y-1 rounded-lg border p-3" data-testid="history-observation"><div className="flex flex-wrap items-start justify-between gap-2"><p className="min-w-0 break-words text-sm font-medium">{getBrowsingActivityTitle(entry.activeTabTitle, entry.activeTabUrl)}</p>{entry.aiCategory === 'non-educational' && <Badge variant="destructive">Off-task{entry.contentCategory ? `: ${entry.contentCategory}` : ''}</Badge>}</div>
+      {entries.map(entry => { const link = safeLink(entry.activeTabUrl); return <article key={entry.id} className="space-y-1 rounded-lg border p-3" data-testid="history-observation"><div className="flex flex-wrap items-start justify-between gap-2"><p className="min-w-0 break-words text-sm font-medium">{getBrowsingActivityTitle(entry.activeTabTitle, entry.activeTabUrl)}</p>{(entry.hasOffTaskObservation || entry.aiCategory === 'non-educational') && <Badge variant="destructive">{entry.hasOffTaskObservation ? 'Off-task observed' : 'Off-task'}{entry.contentCategory ? `: ${entry.contentCategory}` : ''}</Badge>}</div>
         {link ? <a href={link} target="_blank" rel="noopener noreferrer" className="block break-all text-xs text-primary underline">{entry.activeTabUrl}</a> : <p className="break-all text-xs text-muted-foreground">{entry.activeTabUrl || 'No page URL recorded'}</p>}
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{observationTime(entry.timestamp, timeZone)}</span><span>{entry.estimatedSeconds > 0 ? `~${formatDuration(entry.estimatedSeconds)}` : 'Observation only'}</span>{entry.screenLocked && <span>Waypoint</span>}{entry.cameraActive && <span>Camera active</span>}</div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span data-testid="history-visit-range">{visitTime(entry, timeZone)}</span><span>{entry.estimatedSeconds > 0 ? `~${formatDuration(Math.round(entry.estimatedSeconds))}` : 'Observation only'}</span>{entry.observationCount > 1 && <span>{entry.observationCount} observations</span>}{entry.screenLocked && <span>Waypoint</span>}{entry.cameraActive && <span>Camera active</span>}</div>
       </article>; })}
       {history.error && entries.length > 0 && <p role="alert" className="text-sm text-destructive">{stateText[state]}</p>}
       {history.error && <Button variant="outline" size="sm" onClick={() => history.refetch()}>Retry history</Button>}
-      {history.hasNextPage && <Button variant="outline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? 'Loading…' : 'Load older observations'}</Button>}
-      {entries.length > 0 && <p className="text-xs text-muted-foreground">Showing {entries.length} {includeUnavailable ? 'observations' : 'page observations'}{history.hasNextPage ? '' : ' · End of retained results'}</p>}
+      {!history.error && !accessDenied && history.hasNextPage && <Button variant="outline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? 'Loading…' : 'Load older visits'}</Button>}
+      {entries.length > 0 && <p className="text-xs text-muted-foreground">Showing {entries.length} {includeUnavailable ? 'visits and observations' : entries.length === 1 ? 'visit' : 'visits'}{history.hasNextPage ? '' : ' · End of retained results'}</p>}
     </section>
   </div>;
 }

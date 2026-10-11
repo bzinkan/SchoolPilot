@@ -47,8 +47,10 @@ Everything else is refused, including:
 
 - To turn a wave-1 feature on or off, or change the School Library allowlist, after
   the feature's release is serving with its mode unset.
-- For an emergency turn-off. A turn-off needs no RLS admission and no evidence;
-  only the steadiness checks under "Before you start" apply.
+- For a reviewed turn-off. Turning Usage off at stable API capacity 1–6 uses the
+  dedicated `-UsageOffContainment` Plan mode below. A turn-off needs no Usage
+  activation evidence or RLS admission; all serving-identity, health, drift,
+  protected-window, lease and fencing checks still apply.
 
 ## Before you start
 
@@ -61,10 +63,13 @@ Everything else is refused, including:
 - One runtime-config operation at a time. This tool holds the same DynamoDB lease
   (`schoolpilot/production/classpilot-runtime-config-v1` in `schoolpilot-terraform-locks`)
   as the ClassPilot and My Desk tools.
-- Not on weekdays 04:45–05:59 America/New_York (Apply refuses) and not inside a
-  declared deploy freeze or school-day soak.
+- Not on weekdays 04:45–05:59 America/New_York (Apply refuses). Ordinary changes
+  also stay outside a declared deploy freeze or school-day soak. A separately
+  approved, time-limited Usage off authority may permit guarded both-off during
+  that observation window; it does not override the tool's protected clock or
+  unhealthy/unstable-service refusals.
 - Production must be steady: both services stable on one completed deployment, API
-  desired count 1–3, the reviewed `100/200` deployment configuration, autoscaling not
+  desired count 1–3 (1–6 for Usage off containment), the reviewed `100/200` deployment configuration, autoscaling not
   held, the reviewed task sizes (API 1024 CPU / 2048 MiB, worker 512 / 1024), and API
   and worker carrying identical values for all eight names.
 - Use a dedicated evidence directory: an absolute path outside the repository,
@@ -118,6 +123,10 @@ first 12 characters).
 ```
 
 Add `-DailyUsageEvidencePath $EvidencePath` only when promoting the daily rollup.
+Add `-UsageObservationEvidencePath $EvidencePath` when activating Digital Usage;
+use the collector and independent replay described in
+[Usage activation](CLASSPILOT_USAGE_ACTIVATION.md). Fleet worker counters alone
+cannot establish school/day computation coverage.
 Plan is read-only against AWS: it reads STS, ECS, ECR and Application Auto Scaling.
 Locally it writes only `<runId>-plan.json` (and, on first use, the evidence directory
 and its marker). It prints the plan path, its SHA-256, each change
@@ -126,7 +135,8 @@ and its marker). It prints the plan path, its SHA-256, each change
 ## Review
 
 Open the plan file and check `changes`, `activations`, `prior`, `desired`,
-`dailyUsageEvidence`, `apiArn`, `workerArn`, `imageDigest` and `toolSha`. The reviewer
+`dailyUsageEvidence`, `usageObservationEvidence`, `apiArn`, `workerArn`, `imageDigest`
+and `toolSha`. A schema-2 plan also binds `operationMode`. The reviewer
 approves the printed SHA-256; Apply accepts only that exact hash and refuses a plan
 whose recorded fields disagree with its own configuration.
 
@@ -159,6 +169,51 @@ waits again, restores autoscaling and writes `<runId>-result.json` with status
    Repeat for the worker ARN; the two lists must be identical.
 2. `https://school-pilot.net/health` returns 200.
 3. Run the feature's own smoke check from its documentation.
+
+## Guarded Usage off containment
+
+This is a Plan-only option; Apply reads its mode from the reviewed manifest.
+The configuration must contain exactly these two explicit values:
+
+```json
+{
+  "schemaVersion": 1,
+  "environment": {
+    "CLASSPILOT_USAGE_ROLLUP_MODE": "off",
+    "CLASSPILOT_DIGITAL_USAGE_MODE": "off"
+  }
+}
+```
+
+```powershell
+./scripts/deploy-product-runtime-config.ps1 -Action Plan -UsageOffContainment `
+  -ConfigPath $BothOffConfigPath -OutDir $EvidenceDirectory `
+  -ApiArn $ServingApiArn -WorkerArn $ServingWorkerArn `
+  -ImageDigest $ServingImageDigest -AppSha $DeployedCommit
+```
+
+Review its exact hash, then use the ordinary Apply command without the switch.
+The manifest has `schemaVersion: 2` and
+`operationMode: "usage_off_containment"`; schema-1 normal plans retain their
+existing semantics. The mode cannot enable Usage or alter another setting.
+Stable API capacity from one through six is accepted. The shared containment
+helpers hold scaling and temporarily bound deployment to prevent capacity growth,
+converge the API before the worker, then restore captured deployment settings and
+the scaling state appropriate to the current clock before releasing the fence.
+
+After service mutation starts, every automatic recovery attempt pursues both-off.
+It never restores enabled Usage. A proven forward recovery records `recovered_off`
+while the original Apply attempt still reports failure. Any unproven convergence,
+settings restoration, scaling restoration or lease transition keeps
+`recovery_required` and its fence. The private receipt contains the owner/fence
+tokens and captured settings needed for incident recovery. Containment cannot be
+rolled back to on; re-enablement needs a new reviewed normal Plan.
+
+Plans expire after two hours and become invalid on capacity or serving drift.
+Refresh a prepared off plan throughout an attended observation. If a protected
+window or unhealthy/unstable service blocks it, enter incident response under the
+shared-fence recovery runbook. The refusal never authorizes a direct, unlocked
+task-definition edit. No fixed recovery duration is promised.
 
 ## Rollback
 
@@ -210,8 +265,12 @@ encounter confidentiality and strict audited CSV. This setter does not authorize
 arbitrary older appointment writers after first appointment activation.
 
 **Digital usage needs the rollup.** In every plan's resulting state,
-`CLASSPILOT_DIGITAL_USAGE_MODE=on` requires `CLASSPILOT_USAGE_ROLLUP_MODE=on`. Turn them on
-together or the rollup first; turn them off together or digital usage first.
+`CLASSPILOT_DIGITAL_USAGE_MODE=on` requires `CLASSPILOT_USAGE_ROLLUP_MODE=on`. The
+selected activation policy requires two separately approved operations: rollup on
+with reporting off, followed by reporting on only after full school-day observation
+and actual ledger proof for every eligible school. Simultaneous activation is not
+an approved rollout. Incident containment sets both modes explicitly off. See
+[Usage activation](CLASSPILOT_USAGE_ACTIVATION.md) for the full capacity and live gates.
 
 **Daily rollup promotion.** Moving `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` from shadow
 (unset or `shadow`) to `set_based` or `on` requires an evidence file. Promotion from
@@ -260,6 +319,7 @@ changing the file afterwards blocks Apply.
 | `applied` | Both services converged on the planned values; autoscaling restored; lease released. | Verify. |
 | `failed_no_service_mutation` | Failed before any `update-service`; the serving pair never changed; lease released. Unused revisions may remain registered. | Fix the cause and plan again. |
 | `rolled_back` | A service update failed; fresh clones with the exact prior values were rolled out to both services and proven; lease released. | Read the error and plan again. |
+| `recovered_off` | Usage off containment failed initially, then both-off convergence and deployment/scaling restoration were proven; lease released. | Preserve the original failure, notify the owner and assess the incident. Re-enabling needs a new normal Plan. |
 | `recovery_required` (or a stale `preparing`, `api_update_pending`, `worker_update_pending`) | Recovery could not be proven, or the lease transition was ambiguous. The lease, and possibly the autoscaling hold, are kept on purpose. | Follow "Manual recovery" in `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md` (same lease) before any new Plan. |
 
 A plan that already has a receipt is never applied again; create a new plan.

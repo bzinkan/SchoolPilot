@@ -1,18 +1,37 @@
 import { before,after,describe,it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import pg from "pg";
+import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
 process.env.REDIS_URL="";
 const schoolId=randomUUID(),otherSchoolId=randomUUID(),studentId=randomUUID(),teacherId=randomUUID(),otherTeacherId=randomUUID(),groupId=randomUUID(),sessionId=randomUUID(),contextId=randomUUID();
 const now=new Date("2026-09-01T18:00:00Z");
 let pool:import("pg").Pool, database:typeof import("../src/db.js").default;
 let tenant:typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
 let history:typeof import("../src/services/classpilotBrowsingHistory.js");
+let lookup:typeof import("../src/services/classpilotBrowsingHistoryLookup.js");
 const scoped=<T>(fn:()=>Promise<T>)=>tenant({schoolId},fn);
 const request={schoolId,studentId,actorId:teacherId,role:"admin" as const,startDate:"2026-09-01",endDate:"2026-09-01",now};
 before(async()=>{
   assert.ok(["localhost","127.0.0.1","::1"].includes(new URL(process.env.DATABASE_URL||"").hostname),"History integration tests require local fixtures.");
   const module=await import("../src/db.js");pool=module.pool;database=module.default;
   ({runWithTenantContext:tenant}=await import("../src/middleware/tenantContext.js"));history=await import("../src/services/classpilotBrowsingHistory.js");
+  lookup=await import("../src/services/classpilotBrowsingHistoryLookup.js");
+  // Drizzle-only CI omits these migration-owned tables. Install the exact
+  // reporting contract before fixtures and cleanup, independently of test order.
+  const connectionString = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
+  assert.ok(connectionString);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(connectionString).hostname));
+  const fixture = new pg.Client({ connectionString });
+  await fixture.connect();
+  try {
+    if (!(await fixture.query("SELECT to_regclass('public.classpilot_supervision_report_segments') AS table_name")).rows[0].table_name) {
+      await fixture.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
+      const role = (await pool.query("SELECT current_user AS role")).rows[0].role;
+      assert.match(role, /^[a-zA-Z_][a-zA-Z0-9_]*$/);
+      await fixture.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON classpilot_supervision_report_segments,classpilot_supervision_student_reports,classpilot_supervision_summary_deliveries TO "${role}"`);
+    }
+  } finally { await fixture.end(); }
   await pool.query("INSERT INTO schools(id,name,school_timezone) VALUES($1,'History fixture','America/New_York'),($2,'Other history fixture','America/New_York')",[schoolId,otherSchoolId]);
   await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'History','Teacher'),($3,$4,'Coverage','Teacher')",[teacherId,`${teacherId}@example.edu`,otherTeacherId,`${otherTeacherId}@example.edu`]);
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active'),($1,$3,'teacher','active')",[schoolId,teacherId,otherTeacherId]);
@@ -30,9 +49,290 @@ before(async()=>{
   });
 });
 after(async()=>{
-  if(!pool)return;await tenant({isSuper:true},async()=>{const {sql}=await import("drizzle-orm");for(const table of ["heartbeats","daily_usage","classpilot_supervision_students","classpilot_supervision_contexts","classpilot_session_usage","classpilot_session_staff","classpilot_session_students","classpilot_session_reports","teaching_sessions","groups","students","settings"])await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);});
+  if(!pool)return;await tenant({isSuper:true},async()=>{const {sql}=await import("drizzle-orm");await database.execute(sql`DELETE FROM group_teachers WHERE group_id IN(SELECT id FROM groups WHERE school_id IN(${schoolId},${otherSchoolId}))`);await database.execute(sql`DELETE FROM group_students WHERE group_id IN(SELECT id FROM groups WHERE school_id IN(${schoolId},${otherSchoolId}))`);for(const table of ["heartbeats","daily_usage","classpilot_supervision_student_reports","classpilot_supervision_report_segments","classpilot_supervision_students","classpilot_supervision_contexts","classpilot_session_usage","classpilot_session_staff","classpilot_session_students","classpilot_session_reports","teaching_sessions","groups","students","settings"])await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);await database.execute(sql`DELETE FROM groups WHERE school_id=${otherSchoolId}`);await database.execute(sql`DELETE FROM students WHERE school_id=${otherSchoolId}`);});
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1",[schoolId]);await pool.query("DELETE FROM users WHERE id IN($1,$2)",[teacherId,otherTeacherId]);await pool.query("DELETE FROM schools WHERE id IN($1,$2)",[schoolId,otherSchoolId]);const {sessionPool}=await import("../src/db.js");await Promise.all([pool.end(),sessionPool.end()]);
 });
+
+describe("Offline student discovery for browsing history", () => {
+  const ids = {
+    inactive: randomUUID(), currentOnly: randomUUID(), unattended: randomUUID(),
+    historical: randomUUID(), delegated: randomUUID(), ownSupervision: randomUUID(),
+    expired: randomUUID(), foreign: randomUUID(), tenureStudent: randomUUID(),
+    ownGroup: randomUUID(), unattendedSession: randomUUID(), expiredSession: randomUUID(),
+    delegatedContext: randomUUID(), ownContext: randomUUID(), tenureContext: randomUUID(), segment: randomUUID(),
+  };
+  const weekend = new Date("2026-09-05T18:00:00Z");
+  const searchRequest = { schoolId, actorId: teacherId, role: "teacher" as const, now: weekend, search: "Lookup" };
+
+  before(async () => {
+    const { sql } = await import("drizzle-orm");
+    await scoped(async () => {
+      for (const [key, label] of Object.entries({ inactive: "Inactive", currentOnly: "Current only", unattended: "Unattended", historical: "Historical", delegated: "Delegated", ownSupervision: "Supervision", expired: "Expired", tenureStudent: "Tenure" })) {
+        const id = ids[key as keyof typeof ids];
+        await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,email,status) VALUES(${id},${schoolId},'Lookup',${label},${`${id}@lookup.example.edu`},${key === "inactive" || key === "historical" ? "inactive" : "active"})`);
+      }
+      await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${ids.ownGroup},${schoolId},${teacherId},'Current assignments do not authorize history','admin_class','active')`);
+      await database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.ownGroup},${ids.currentOnly})`);
+      for (const id of [ids.historical, ids.delegated]) {
+        await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${id},'2026-09-01 13:00:00Z')`);
+      }
+      for (const [id, student, date, mode] of [
+        [ids.unattendedSession, ids.unattended, "2026-09-01", "scheduled_report"],
+        [ids.expiredSession, ids.expired, "2026-07-01", "live"],
+      ]) {
+        await database.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,end_time,roster_snapshot_completed_at) VALUES(${id},${schoolId},${ids.ownGroup},${teacherId},${mode},${date + " 13:00:00"}::timestamp,${date + " 14:00:00"}::timestamp,${date + " 13:00:00Z"}::timestamptz)`);
+        await database.execute(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role,captured_at) VALUES(${schoolId},${id},${teacherId},'primary',${date + " 13:00:00Z"}::timestamptz)`);
+        await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${id},${ids.ownGroup},${student},${date + " 13:00:00Z"}::timestamptz)`);
+      }
+      for (const [id, student, staff] of [
+        [ids.delegatedContext, ids.delegated, otherTeacherId],
+        [ids.ownContext, ids.ownSupervision, teacherId],
+        [ids.tenureContext, ids.tenureStudent, otherTeacherId],
+      ]) {
+        await database.execute(sql`INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,status,assigned_staff_id,created_by,starts_at,ends_at,ended_at) VALUES(${id},${schoolId},'coverage','Lookup coverage','ended',${staff},${staff},'2026-09-01 13:00:00','2026-09-01 14:00:00','2026-09-01 14:00:00')`);
+        await database.execute(sql`INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,assigned_at,released_at) VALUES(${schoolId},${id},${student},${staff},'2026-09-01 13:00:00','2026-09-01 14:00:00')`);
+      }
+    });
+    await tenant({ schoolId: otherSchoolId }, () => database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name) VALUES(${ids.foreign},${otherSchoolId},'Lookup','Foreign')`));
+  });
+
+  it("finds inactive/offline school students with bounded stable pagination and literal name/email search", async () => {
+    let cursor: string | null = null;
+    const seen: string[] = [];
+    do {
+      const page = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, role: "admin", limit: 2, ...(cursor ? { cursor } : {}) }));
+      seen.push(...page.students.map(student => student.studentId));
+      assert(page.students.every(student => Object.keys(student).sort().join(",") === "email,name,studentId"));
+      cursor = page.nextCursor;
+      assert(seen.length < 20);
+    } while (cursor);
+    assert.equal(seen.length, 8);
+    assert.equal(new Set(seen).size, 8);
+    assert(seen.includes(ids.inactive));
+    assert(!seen.includes(ids.foreign));
+    const byEmail = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, role: "school_admin", search: ids.inactive.toUpperCase() + "@lookup.example.edu" }));
+    assert.deepEqual(byEmail.students.map(student => student.studentId), [ids.inactive]);
+    const literal = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, role: "admin", search: "%" }));
+    assert.deepEqual(literal.students, []);
+  });
+
+  it("uses retained frozen staff and own supervision while excluding current-only, unattended and fully delegated students", async () => {
+    const page = await scoped(() => lookup.findStudentBrowsingHistory(searchRequest));
+    assert.deepEqual(new Set(page.students.map(student => student.studentId)), new Set([ids.historical, ids.ownSupervision]));
+    const first = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, limit: 1 }));
+    assert(first.nextCursor);
+    await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, actorId: otherTeacherId, cursor: first.nextCursor })), { code: "HISTORY_CURSOR_INVALID" });
+    const { sql } = await import("drizzle-orm");
+    try {
+      await scoped(() => database.execute(sql`UPDATE settings SET retention_hours='24' WHERE school_id=${schoolId}`));
+      const shortened = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, cursor: first.nextCursor }));
+      assert.deepEqual(shortened.students, [], "Every next page reapplies current retention");
+    } finally {
+      await scoped(() => database.execute(sql`UPDATE settings SET retention_hours='720' WHERE school_id=${schoolId}`));
+    }
+    const foreign = await tenant({ schoolId: otherSchoolId }, () => lookup.findStudentBrowsingHistory({ ...searchRequest, schoolId: otherSchoolId }));
+    assert.deepEqual(foreign.students, []);
+  });
+
+  it("keeps recorded staff tenures and expired tombstones authoritative after supervision reassignment", async () => {
+    const previous = process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM;
+    const { sql } = await import("drizzle-orm");
+    process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM = "2026-08-01T00:00:00Z";
+    try {
+      await scoped(async () => {
+        await database.execute(sql`INSERT INTO classpilot_supervision_report_segments(id,school_id,context_id,staff_id,context_type,window_start,window_end,state,timezone,settle_at,expires_at) VALUES(${ids.segment},${schoolId},${ids.tenureContext},${teacherId},'coverage','2026-09-01 13:00:00Z','2026-09-01 13:30:00Z','ready','America/New_York','2026-09-01 13:30:30Z','2026-10-01 13:30:00Z')`);
+        await database.execute(sql`INSERT INTO classpilot_supervision_student_reports(school_id,report_id,student_id,student_name_snapshot,participation_intervals) VALUES(${schoolId},${ids.segment},${ids.tenureStudent},'Lookup Tenure',${JSON.stringify([{ assignmentId: "tenure-assignment", start: "2026-09-01T13:10:00Z", end: "2026-09-01T13:20:00Z" }])}::jsonb)`);
+      });
+      const own = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, search: "Lookup Tenure" }));
+      assert.deepEqual(own.students.map(student => student.studentId), [ids.tenureStudent]);
+      const replacement = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, search: "Lookup Tenure", actorId: otherTeacherId }));
+      assert.deepEqual(replacement.students, []);
+      await scoped(() => database.execute(sql`UPDATE classpilot_supervision_report_segments SET state='expired',detail_expired_at=${weekend.toISOString()}::timestamptz WHERE id=${ids.segment}`));
+      await scoped(() => database.execute(sql`UPDATE classpilot_supervision_contexts SET assigned_staff_id=${teacherId} WHERE id=${ids.tenureContext}`));
+      const expired = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, search: "Lookup Tenure" }));
+      assert.deepEqual(expired.students, [], "A retained tombstone prevents falling back to the current owner");
+    } finally {
+      if (previous === undefined) delete process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM;
+      else process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM = previous;
+    }
+  });
+});
+describe("Browsing history grade and class filters", () => {
+  const ids = {
+    primary: randomUUID(), linkedPrimary: randomUUID(), coTaught: randomUUID(), otherClass: randomUUID(),
+    archivedClass: randomUUID(), informalClass: randomUUID(), foreignClass: randomUUID(),
+    observerClass: randomUUID(), alpha: randomUUID(), beta: randomUUID(), linkedStudent: randomUUID(), coStudent: randomUUID(),
+    outside: randomUUID(), currentOnly: randomUUID(), delegated: randomUUID(), unattended: randomUUID(),
+    expired: randomUUID(), inactive: randomUUID(), historicalOnly: randomUUID(), orphan: randomUUID(),
+    archived: randomUUID(), informal: randomUUID(), foreign: randomUUID(),
+    unattendedSession: randomUUID(), expiredSession: randomUUID(), delegatedContext: randomUUID(),
+  };
+  const weekend = new Date("2026-09-05T18:00:00Z");
+  const teacherRequest = { schoolId, actorId: teacherId, role: "teacher" as const, search: "Filter", now: weekend };
+  const studentIds = (page: Awaited<ReturnType<typeof lookup.findStudentBrowsingHistory>>) => page.students.map(student => student.studentId);
+
+  before(async () => {
+    const { sql } = await import("drizzle-orm");
+    await scoped(async () => {
+      const fixtures = [
+        [ids.alpha, "Alpha", "7"], [ids.beta, "Beta", "8"], [ids.linkedStudent, "Linked primary", "K"], [ids.coStudent, "Co teacher", "8"],
+        [ids.outside, "Outside", "7"], [ids.currentOnly, "Current only", "7"],
+        [ids.delegated, "Delegated", "7"], [ids.unattended, "Unattended", "7"],
+        [ids.expired, "Expired", "7"], [ids.inactive, "Inactive", "7"],
+        [ids.historicalOnly, "Historical only", "11"], [ids.orphan, "Orphan", "10"],
+        [ids.archived, "Archived", "5"], [ids.informal, "Informal", "6"],
+      ];
+      for (const [id, label, grade] of fixtures) {
+        const email = `${id}@filter.example.edu`;
+        await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,email,email_lc,grade_level,status) VALUES(${id},${schoolId},'Filter',${label},${email},${email},${grade},${id === ids.inactive ? "inactive" : "active"})`);
+      }
+      for (const [id, owner, label, grade, type, status] of [
+        [ids.primary, teacherId, "Filter primary", "7", "admin_class", "active"],
+        [ids.linkedPrimary, otherTeacherId, "Filter linked primary", "K", "admin_class", "active"],
+        [ids.coTaught, otherTeacherId, "Filter co-taught", "8", "admin_class", "active"],
+        [ids.otherClass, otherTeacherId, "Filter another teacher", "7", "admin_class", "active"],
+        [ids.observerClass, otherTeacherId, "Filter observer only", "9", "admin_class", "active"],
+        [ids.archivedClass, teacherId, "Filter archived", "5", "admin_class", "archived"],
+        [ids.informalClass, teacherId, "Filter informal", "6", "teacher_created", "active"],
+      ]) {
+        await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status) VALUES(${id},${schoolId},${owner},${label},${grade},${type},${status})`);
+      }
+      await database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.linkedPrimary},${teacherId},'primary'),(${ids.coTaught},${teacherId},'co-teacher'),(${ids.observerClass},${teacherId},'observer')`);
+      for (const [group, roster] of [
+        [ids.primary, [ids.alpha, ids.beta, ids.currentOnly, ids.delegated, ids.unattended, ids.expired, ids.inactive]],
+        [ids.linkedPrimary, [ids.linkedStudent]], [ids.coTaught, [ids.coStudent, ids.beta]], [ids.otherClass, [ids.outside]],
+        [ids.archivedClass, [ids.archived]], [ids.informalClass, [ids.informal]],
+      ] as const) {
+        for (const id of roster) await database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${group},${id})`);
+      }
+      // Historical authority is independent of today's roster. No device or
+      // online session is created for any of these lookup identities.
+      for (const id of [ids.alpha, ids.beta, ids.linkedStudent, ids.coStudent, ids.outside, ids.delegated, ids.inactive, ids.historicalOnly, ids.archived, ids.informal]) {
+        await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${id},'2026-09-01 13:00:00Z')`);
+      }
+      for (const [id, student, date, mode] of [
+        [ids.unattendedSession, ids.unattended, "2026-09-01", "scheduled_report"],
+        [ids.expiredSession, ids.expired, "2026-07-01", "live"],
+      ]) {
+        await database.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,end_time,roster_snapshot_completed_at) VALUES(${id},${schoolId},${ids.primary},${teacherId},${mode},${date + " 13:00:00"}::timestamp,${date + " 14:00:00"}::timestamp,${date + " 13:00:00Z"}::timestamptz)`);
+        await database.execute(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role,captured_at) VALUES(${schoolId},${id},${teacherId},'primary',${date + " 13:00:00Z"}::timestamptz)`);
+        await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${id},${ids.primary},${student},${date + " 13:00:00Z"}::timestamptz)`);
+      }
+      await database.execute(sql`INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,status,assigned_staff_id,created_by,starts_at,ends_at,ended_at) VALUES(${ids.delegatedContext},${schoolId},'coverage','Filter delegated','ended',${otherTeacherId},${otherTeacherId},'2026-09-01 13:00:00','2026-09-01 14:00:00','2026-09-01 14:00:00')`);
+      await database.execute(sql`INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,assigned_at,released_at) VALUES(${schoolId},${ids.delegatedContext},${ids.delegated},${otherTeacherId},'2026-09-01 13:00:00','2026-09-01 14:00:00')`);
+    });
+    await tenant({ schoolId: otherSchoolId }, async () => {
+      await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,grade_level) VALUES(${ids.foreign},${otherSchoolId},'Filter','Foreign','12')`);
+      await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status) VALUES(${ids.foreignClass},${otherSchoolId},${teacherId},'Filter foreign','12','admin_class','active')`);
+      await database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.foreignClass},${ids.foreign})`);
+      await database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.foreignClass},${teacherId},'co-teacher')`);
+    });
+  });
+
+  it("offers current official primary/co-teacher filters to teachers and school-wide filters to administrators", async () => {
+    const teacher = await scoped(() => lookup.findStudentBrowsingHistory(teacherRequest));
+    assert.deepEqual(new Set(teacher.filterOptions.classes.filter(row => row.name.startsWith("Filter ")).map(row => row.classId)), new Set([ids.primary, ids.linkedPrimary, ids.coTaught]));
+    assert(teacher.filterOptions.grades.includes("K"), "Canonical primary assignment links are included");
+    assert(teacher.filterOptions.grades.includes("7"));
+    assert(teacher.filterOptions.grades.includes("8"), "Mixed-grade roster and co-taught grades are available");
+    for (const grade of ["5", "6", "9", "10", "11", "12"]) assert(!teacher.filterOptions.grades.includes(grade));
+    assert(teacher.filterOptions.classes.every(row => Object.keys(row).sort().join(",") === "classId,gradeLevel,grades,name"));
+    assert.deepEqual(teacher.filterOptions.classes.find(row => row.classId === ids.primary)?.grades, ["7", "8"], "Mixed-grade class options carry both class and roster grades");
+    for (const role of ["admin", "school_admin"] as const) {
+      const admin = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, role }));
+      assert.deepEqual(new Set(admin.filterOptions.classes.filter(row => row.name.startsWith("Filter ")).map(row => row.classId)), new Set([ids.primary, ids.linkedPrimary, ids.coTaught, ids.otherClass, ids.observerClass]));
+      assert(admin.filterOptions.grades.includes("10"), "Administrators can filter students without a current class");
+      assert(!admin.filterOptions.grades.includes("12"), "Another school's class/student grades stay private");
+    }
+    const emptySearch = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, search: "No matching fixture students" }));
+    assert.deepEqual(emptySearch.students, []);
+    assert.deepEqual(emptySearch.filterOptions, teacher.filterOptions, "Filter choices do not disappear after a search with no matching history students");
+  });
+
+  it("intersects filters with retained history authority while keeping offline and inactive students discoverable", async () => {
+    const primary = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary }));
+    assert.deepEqual(new Set(studentIds(primary)), new Set([ids.alpha, ids.beta, ids.inactive]));
+    const coTeacher = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.coTaught, grade: "8" }));
+    assert.deepEqual(new Set(studentIds(coTeacher)), new Set([ids.beta, ids.coStudent]));
+    const grade = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, grade: "7" }));
+    assert.deepEqual(new Set(studentIds(grade)), new Set([ids.alpha, ids.beta, ids.inactive]), "The taught class grade includes its mixed-grade roster, without other teachers' same-grade students");
+    const unfiltered = await scoped(() => lookup.findStudentBrowsingHistory(teacherRequest));
+    assert(studentIds(unfiltered).includes(ids.outside));
+    assert(studentIds(unfiltered).includes(ids.historicalOnly), "Current filters do not remove previously authorized students from All students");
+    const matching = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary, grade: "8", search: "FILTER BETA" }));
+    assert.deepEqual(studentIds(matching), [ids.beta]);
+    const empty = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.coTaught, grade: "7", search: "Filter" }));
+    assert.deepEqual(empty.students, [], "A student in both grade-7 and grade-8 classes cannot make the selected grade-8 class match grade 7");
+    const adminEmpty = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, role: "admin", classId: ids.coTaught, grade: "7" }));
+    assert.deepEqual(adminEmpty.students, [], "Administrator class/grade intersection also uses the selected class context");
+    const admin = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, role: "admin", grade: "10" }));
+    assert.deepEqual(studentIds(admin), [ids.orphan]);
+    const adminPrimary = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, role: "admin", classId: ids.primary, grade: "7" }));
+    assert.deepEqual(new Set(studentIds(adminPrimary)), new Set([ids.alpha, ids.beta, ids.currentOnly, ids.delegated, ids.unattended, ids.expired, ids.inactive]));
+    await assert.rejects(scoped(() => history.getStudentBrowsingHistory({ ...request, role: "teacher", studentId: ids.currentOnly, now: weekend })), { code: "HISTORY_DENIED" });
+  });
+
+  it("applies class and grade predicates before pagination and binds continuation cursors to both filters", async () => {
+    const input = { ...teacherRequest, classId: ids.primary, grade: "7", limit: 1 };
+    let cursor: string | null = null;
+    let firstCursor: string | null = null;
+    const seen: string[] = [];
+    do {
+      const page = await scoped(() => lookup.findStudentBrowsingHistory({ ...input, ...(cursor ? { cursor } : {}) }));
+      assert.equal(page.students.length, 1);
+      seen.push(...studentIds(page));
+      cursor = page.nextCursor;
+      firstCursor ??= cursor;
+      assert(seen.length < 5);
+    } while (cursor);
+    assert.deepEqual(seen, [ids.alpha, ids.beta, ids.inactive]);
+    assert(firstCursor);
+    for (const changed of [{ classId: ids.coTaught }, { grade: "8" }, { classId: undefined }, { grade: undefined }, { role: "admin" as const }, { schoolId: otherSchoolId }]) {
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...input, ...changed, cursor: firstCursor })), { code: "HISTORY_CURSOR_INVALID" });
+    }
+  });
+
+  it("rejects unauthorized, retired and foreign filter values instead of broadening student discovery", async () => {
+    for (const classId of [ids.otherClass, ids.observerClass, ids.archivedClass, ids.informalClass, ids.foreignClass, randomUUID()]) {
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId })), { code: "HISTORY_FILTER_DENIED", status: 403 });
+    }
+    for (const grade of ["10", "11", "12", "nonexistent"]) {
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, grade })), { code: "HISTORY_FILTER_DENIED", status: 403 });
+    }
+    for (const classId of [ids.archivedClass, ids.informalClass, ids.foreignClass]) {
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, role: "admin", classId })), { code: "HISTORY_FILTER_DENIED", status: 403 });
+    }
+    await assert.rejects(scoped(() => Reflect.apply(lookup.findStudentBrowsingHistory, undefined, [{ ...teacherRequest, role: "office_staff", classId: ids.primary }])), { code: "HISTORY_DENIED", status: 403 });
+  });
+
+  it("rechecks current assignments and current roster membership on every filtered page without revoking frozen detail authority", async () => {
+    const { sql } = await import("drizzle-orm");
+    const first = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary, limit: 1 }));
+    assert(first.nextCursor);
+    try {
+      await scoped(() => database.execute(sql`UPDATE groups SET teacher_id=${otherTeacherId} WHERE school_id=${schoolId} AND id=${ids.primary}`));
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary, cursor: first.nextCursor })), { code: "HISTORY_FILTER_DENIED" });
+      await scoped(() => database.execute(sql`DELETE FROM group_teachers WHERE group_id=${ids.coTaught} AND teacher_id=${teacherId}`));
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.coTaught })), { code: "HISTORY_FILTER_DENIED" });
+      await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, grade: "7" })), { code: "HISTORY_FILTER_DENIED" });
+      const all = await scoped(() => lookup.findStudentBrowsingHistory(teacherRequest));
+      assert(studentIds(all).includes(ids.alpha));
+      const detail = await scoped(() => history.getStudentBrowsingHistory({ ...request, role: "teacher", studentId: ids.alpha, now: weekend }));
+      assert.equal(detail.state, "empty", "Frozen authority still permits the student's historical day even without heartbeat rows");
+    } finally {
+      await scoped(() => database.execute(sql`UPDATE groups SET teacher_id=${teacherId} WHERE school_id=${schoolId} AND id=${ids.primary}`));
+      await scoped(() => database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.coTaught},${teacherId},'co-teacher') ON CONFLICT(group_id,teacher_id) DO NOTHING`));
+    }
+    try {
+      await scoped(() => database.execute(sql`DELETE FROM group_students WHERE group_id=${ids.primary} AND student_id IN(${ids.beta},${ids.inactive})`));
+      const next = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary, cursor: first.nextCursor }));
+      assert.deepEqual(next.students, [], "A cursor cannot retain students removed from the selected current roster");
+    } finally {
+      await scoped(() => database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.primary},${ids.beta}),(${ids.primary},${ids.inactive}) ON CONFLICT DO NOTHING`));
+    }
+  });
+});
+
 describe("Student browsing history authorization and pagination",()=>{
   it("paginates stable microsecond timestamps without device IDs or invented tail durations",async()=>{
     let cursor:string|null=null;const seen:string[]=[];let pages=0;do{const page=await scoped(()=>history.getStudentBrowsingHistory({...request,limit:2,...(cursor?{cursor}:{})}));seen.push(...page.entries.map(row=>row.id));assert(page.entries.every(row=>!("deviceId" in row)));cursor=page.nextCursor;pages++;assert(pages<10);}while(cursor);
@@ -142,5 +442,124 @@ describe("Student browsing history authorization and pagination",()=>{
     await scoped(()=>database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,active_tab_url,timestamp) VALUES(${liveId+'new'},${schoolId},${studentId},'history-live-device','Newer fixture','https://example.edu',clock_timestamp() AT TIME ZONE 'UTC')`));
     const second=await scoped(()=>history.getStudentBrowsingHistory({...liveRequest,limit:2,cursor:first.nextCursor}));
     assert.equal(second.asOf,first.asOf);assert.equal(second.startDate,first.startDate);assert(second.entries.every(row=>row.id!==liveId+'new'));assert(second.entries.some(row=>row.id===liveId+'10'));
+  });
+});
+
+describe("Consecutive browsing history visits",()=>{
+  type Observation={at:string;url?:string|null;title?:string;device?:string;category?:string|null;contentCategory?:string|null;intent?:string|null;locked?:boolean;camera?:boolean};
+  const start=Date.parse("2026-09-01T13:00:00Z");
+  const at=(seconds:number)=>new Date(start+seconds*1000).toISOString();
+  async function fixture(observations:Observation[]){
+    const {sql}=await import("drizzle-orm"),id=randomUUID();
+    await scoped(async()=>{
+      await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name) VALUES(${id},${schoolId},'Visit','Fixture')`);
+      await database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,active_tab_url,timestamp,ai_category,content_category,teacher_intent_source,screen_locked,camera_active) VALUES ${sql.join(observations.map((row,index)=>sql`(${id+'-'+String(index).padStart(4,'0')},${schoolId},${id},${row.device||'visit-device'},${row.title??'Visit page'},${row.url===undefined?'https://example.edu/page':row.url},${row.at}::timestamp,${row.category??null},${row.contentCategory??null},${row.intent??null},${row.locked??false},${row.camera??false})`),sql`,`)}`);
+    });
+    return {...request,studentId:id,grouping:"visits",view:"pages"};
+  }
+
+  it("returns a long same-page stay as one complete visit across page limits and ignores title updates",async()=>{
+    const input=await fixture([...Array.from({length:130},(_,i)=>({at:at(i*10),title:i===129?'Updated page title':'Original title'})),{at:at(1300),url:"https://example.edu/next"}]);
+    const first=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1}));
+    assert.equal(first.entries.length,1);assert.equal(first.entries[0]!.observationCount,1);assert.equal(first.entries[0]!.estimatedSeconds,0);assert(first.nextCursor);
+    const second=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1,cursor:first.nextCursor}));
+    const visit=second.entries[0]!;
+    assert.equal(visit.observationCount,130);assert.equal(visit.estimatedSeconds,1300);
+    assert.equal(visit.activeTabTitle,"Updated page title");assert.equal(visit.startedAt,"2026-09-01T13:00:00.000000Z");
+    assert.equal(visit.timestamp,"2026-09-01T13:21:30.000000Z");assert.equal(visit.endedAt,"2026-09-01T13:21:40.000000Z");
+    assert.equal(second.nextCursor,null);assert.equal(second.hasMore,false);assert.equal(second.asOf,first.asOf);
+    assert(!("deviceId" in visit));assert(!("device_id" in visit));
+    const raw=await scoped(()=>history.getStudentBrowsingHistory({...input,grouping:undefined,limit:500}));
+    assert.equal(raw.entries.length,131,"Legacy callers retain every observation");
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,grouping:"observations",cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,view:"all",cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,actorId:otherTeacherId,cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,startDate:"2026-08-31",cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(tenant({schoolId:otherSchoolId},()=>history.getStudentBrowsingHistory({...input,schoolId:otherSchoolId})),{code:"HISTORY_DENIED"});
+  });
+
+  it("keeps A-B-A visits and exact query/fragment changes separate",async()=>{
+    const a="https://example.edu/page?q=1#one",b="https://example.edu/other";
+    const input=await fixture([{at:at(0),url:a},{at:at(10),url:a},{at:at(20),url:b},{at:at(30),url:a},{at:at(40),url:a},{at:at(50),url:"https://example.edu/page?q=2#one"},{at:at(60),url:"https://example.edu/page?q=2#two"}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));
+    assert.deepEqual(page.entries.map(row=>[row.activeTabUrl,row.observationCount,row.estimatedSeconds]),[
+      ["https://example.edu/page?q=2#two",1,0],["https://example.edu/page?q=2#one",1,10],[a,2,20],[b,1,10],[a,2,20],
+    ]);
+  });
+
+  it("breaks visits at hidden missing-page observations before filtering and keeps blanks individual in all view",async()=>{
+    const input=await fixture([{at:at(0)},{at:at(10)},{at:at(20),url:null,title:"Unknown"},{at:at(30),url:" ",title:" Browser observation "},{at:at(40)},{at:at(50)}]);
+    const pages=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1}));assert(pages.nextCursor);
+    assert.equal(pages.entries[0]!.observationCount,2);assert.equal(pages.entries[0]!.estimatedSeconds,10);
+    const older=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1,cursor:pages.nextCursor}));
+    assert.equal(older.entries[0]!.observationCount,2);assert.equal(older.entries[0]!.estimatedSeconds,20);assert.equal(older.hasMore,false);
+    const all=await scoped(()=>history.getStudentBrowsingHistory({...input,view:"all"}));
+    assert.deepEqual(all.entries.map(row=>row.observationCount),[2,1,1,2]);
+    assert.equal(all.entries.at(-1)!.endedAt,"2026-09-01T13:00:20.000000Z","Only the interval ending at the first unknown observation is credited");
+  });
+
+  it("groups meaningful title-only pages while retaining missing-page placeholders as boundaries",async()=>{
+    const input=await fixture([{at:at(0),url:null,title:" Signing in "},{at:at(10),url:null,title:"Signing in"},{at:at(20),url:null,title:"Unknown"},{at:at(30),url:null,title:"Signing in"},{at:at(40),url:"chrome://settings",title:"Unknown"}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));
+    assert.deepEqual(page.entries.map(row=>[row.activeTabUrl,row.observationCount,row.estimatedSeconds]),[["chrome://settings",1,0],[null,1,10],[null,2,20]]);
+  });
+
+  it("does not bridge long connection gaps or intervening device observations",async()=>{
+    const gap=await fixture([{at:at(0)},{at:at(10)},{at:at(71)},{at:at(81)}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(gap));
+    assert.deepEqual(page.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[2,10]]);
+    assert.equal(page.entries[1]!.endedAt,"2026-09-01T13:00:10.000000Z");
+    const devices=await fixture([{at:at(0),device:"one"},{at:at(10),device:"two"},{at:at(20),device:"one"},{at:at(30),device:"one"}]);
+    const switched=await scoped(()=>history.getStudentBrowsingHistory(devices));
+    assert.deepEqual(switched.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[1,0],[1,0]]);
+  });
+
+  it("keeps equal-time ordering stable and never invents time for a final observation",async()=>{
+    const input=await fixture([{at:"2026-09-01T13:00:00.123456Z"},{at:"2026-09-01T13:00:00.123456Z"},{at:"2026-09-01T13:00:05.123456Z"}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));
+    assert.equal(page.entries.length,1);assert.equal(page.entries[0]!.observationCount,3);assert.equal(page.entries[0]!.estimatedSeconds,5);
+    assert.equal(page.entries[0]!.endedAt,"2026-09-01T13:00:05.123456Z");assert(page.entries[0]!.id.endsWith("0002"));
+  });
+
+  it("separates school-local days and clips selected dates, retention and the initial cursor horizon",async()=>{
+    const input=await fixture([{at:"2026-09-01T03:59:50Z"},{at:"2026-09-01T04:00:00Z"},{at:"2026-09-01T04:00:10Z"}]);
+    const both=await scoped(()=>history.getStudentBrowsingHistory({...input,startDate:"2026-08-31"}));
+    assert.deepEqual(both.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[1,0]]);
+    const day=await scoped(()=>history.getStudentBrowsingHistory(input));assert.equal(day.entries.length,1);assert.equal(day.entries[0]!.observationCount,2);
+    const {sql}=await import("drizzle-orm");
+    try{
+      await scoped(()=>database.execute(sql`UPDATE settings SET retention_hours='24' WHERE school_id=${schoolId}`));
+      const clipped=await scoped(()=>history.getStudentBrowsingHistory({...input,startDate:"2026-08-31",now:new Date("2026-09-02T04:00:05Z")}));
+      assert.equal(clipped.entries.length,1);assert.equal(clipped.entries[0]!.observationCount,1);assert.equal(clipped.entries[0]!.estimatedSeconds,0);
+    }finally{await scoped(()=>database.execute(sql`UPDATE settings SET retention_hours='720' WHERE school_id=${schoolId}`));}
+    const horizon=await fixture([{at:at(0)},{at:at(10),url:"https://example.edu/b"},{at:at(20),url:"https://example.edu/c"}]);
+    const first=await scoped(()=>history.getStudentBrowsingHistory({...horizon,limit:1}));assert(first.nextCursor);
+    await scoped(()=>database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,active_tab_url,timestamp) VALUES(${horizon.studentId+'future'},${schoolId},${horizon.studentId},'visit-device','Future','https://example.edu/future','2026-09-01 18:00:01')`));
+    const next=await scoped(()=>history.getStudentBrowsingHistory({...horizon,now:new Date("2026-09-01T18:01:00Z"),limit:2,cursor:first.nextCursor}));
+    assert.equal(next.asOf,first.asOf);assert.equal(next.entries.length,2);assert(next.entries.every(row=>!row.id.endsWith('future')));
+  });
+
+  it("reapplies teacher authority before grouping and never joins across a delegated interval",async()=>{
+    const {sql}=await import("drizzle-orm");
+    const input=await fixture([{at:"2026-09-01T13:14:40Z"},{at:"2026-09-01T13:14:50Z"},{at:"2026-09-01T13:15:00Z"},{at:"2026-09-01T13:29:50Z"},{at:"2026-09-01T13:30:00Z"},{at:"2026-09-01T13:30:10Z"}]);
+    await scoped(async()=>{
+      await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${input.studentId},'2026-09-01 13:00:00Z')`);
+      await database.execute(sql`INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,assigned_at,released_at) VALUES(${schoolId},${contextId},${input.studentId},${otherTeacherId},'2026-09-01 13:15:00','2026-09-01 13:30:00')`);
+    });
+    const owner=await scoped(()=>history.getStudentBrowsingHistory({...input,role:"teacher"}));
+    assert.deepEqual(owner.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[2,10]]);
+    assert.equal(owner.entries[1]!.endedAt,"2026-09-01T13:14:50.000000Z");
+    const coverage=await scoped(()=>history.getStudentBrowsingHistory({...input,role:"teacher",actorId:otherTeacherId}));
+    assert.deepEqual(coverage.entries.map(row=>row.observationCount),[1,1]);
+  });
+
+  it("keeps monitoring labels conservative and preserves off-task evidence within a mixed visit",async()=>{
+    const input=await fixture([{at:at(0),category:"educational",contentCategory:"Productivity",intent:"teacher",locked:true,camera:true},{at:at(10),category:"non-educational",contentCategory:"Gaming",intent:null,locked:false,camera:true}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));const visit=page.entries[0]!;
+    assert.equal(visit.observationCount,2);assert.equal(visit.aiCategory,null);assert.equal(visit.contentCategory,null);assert.equal(visit.teacherIntentSource,null);
+    assert.equal(visit.screenLocked,false);assert.equal(visit.cameraActive,true);assert.equal(visit.hasOffTaskObservation,true);
+    const uniform=await fixture([{at:at(0),category:"educational",contentCategory:"Productivity",intent:"teacher",locked:true},{at:at(10),category:"educational",contentCategory:"Productivity",intent:"teacher",locked:true}]);
+    const retained=(await scoped(()=>history.getStudentBrowsingHistory(uniform))).entries[0]!;
+    assert.equal(retained.aiCategory,"educational");assert.equal(retained.contentCategory,"Productivity");assert.equal(retained.teacherIntentSource,"teacher");assert.equal(retained.screenLocked,true);assert.equal(retained.hasOffTaskObservation,false);
   });
 });

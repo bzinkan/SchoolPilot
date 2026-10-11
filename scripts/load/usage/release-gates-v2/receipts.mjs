@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { resolve, relative, isAbsolute, join } from 'node:path';
-import { hash, profileFor, profileHash } from './contracts.mjs';
+import { hash, profileFor, profileHash, PROFILES } from './contracts.mjs';
 import { validateRound } from './validation.mjs';
 import { classifyLog, runNegativeProbes, negativeLogCoverage } from './measurements.mjs';
 import { verifyOperationalFixtureCustody } from './operational-fixture.mjs';
@@ -10,6 +10,7 @@ import {verifyUsagePostVerificationCustody} from './usage-post-verification.mjs'
 import {verifyDistinctReceiptCustody} from './distinct-report-custody.mjs';
 import {lowerContractHash,assertLowerPostRls,verifyLowerNativeCustody,verifyLowerPersistenceCustody,lowerAcquisitionLogProof} from './lower-load.mjs';
 import {assertSuccessorReceiptBinding} from './acceptance-successor.mjs';
+import {assertUsageSourceReceipt,HISTORICAL_USAGE_SOURCE} from './usage-source-binding.mjs';
 const json=path=>JSON.parse(readFileSync(path,'utf8'));
 export function loadReceipt(directory, manifestSha256, privateDirectory) {
   const root=realpathSync(directory), path=join(root,'receipt-manifest.json'), bytes=readFileSync(path);
@@ -28,6 +29,11 @@ export function loadReceipt(directory, manifestSha256, privateDirectory) {
   assert.equal(metrics.profile,profile.name);assert.equal(metrics.contractSha256,profileHash(profile));
   assert.equal(metrics.source,manifest.source);assert.equal(metrics.run,manifest.run);assert.equal(metrics.planSha256,manifest.planSha256);
   assertSuccessorReceiptBinding(metrics);
+  if(profile.usage&&metrics.source!==HISTORICAL_USAGE_SOURCE)assert.ok(metrics.usageSourceBinding,'Final-source Usage receipt omitted its reviewed binding');
+  if(metrics.usageSourceBinding&&profile.name===PROFILES.usage.name&&metrics.preparationSmoke!==true)
+    assert.ok(metrics.usagePostVerificationContractSha256,'Final-source cold Usage receipt omitted its classroom post-verification contract');
+  if(metrics.usageSourceBinding)assert.ok(manifest.records['usage-source-binding.json']);
+  assertUsageSourceReceipt(root,metrics);
   if(profile.lowerLoadEnvelope){assert.equal(metrics.lowerLoad?.contractSha256,lowerContractHash());assert.ok(manifest.records['lower-post-rls-verification.json']);
     assert.equal(metrics.lowerLoad.detailedQueryRecorder,false);assert.equal(metrics.lowerLoad.cpuProfiler,false);assert.equal(metrics.arm,'B');
     assert.deepEqual(json(join(root,'lower-post-rls-verification.json')),metrics.postLowerRlsVerification);

@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageGrades, usageLocalDate, usagePresentationState, usageQuery } from '../src/products/classpilot/lib/digitalUsage.js';
+import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageError, usageGrades, usageIsDisabled, usageLocalDate, usagePresentationState, usageQuery } from '../src/products/classpilot/lib/digitalUsage.js';
+
+test('disabled reporting is distinct from authorization, overload and coded coverage failures', () => {
+  for (const data of [{ error: 'Not found' }, { code: 'CLASSPILOT_USAGE_UNAVAILABLE', error: 'Not found' }]) {
+    const error = { response: { status: 404, data } };
+    assert.equal(usageIsDisabled(error), true);
+    assert.equal(usageError(error), 'Monitored Browser Time is not turned on yet. Nothing is wrong, and no action is needed.');
+  }
+  for (const status of [401, 403, 500, 503]) assert.equal(usageIsDisabled({ response: { status } }), false);
+  const coverage = { response: { status: 404, data: { code: 'COVERAGE_MISSING', error: 'Coverage unavailable' } } };
+  assert.equal(usageIsDisabled(coverage), false);
+  assert.equal(usageError(coverage), 'Coverage unavailable');
+  assert.equal(usageError({ response: { status: 503, data: { code: 'CLASSPILOT_USAGE_BUSY' } } }), 'Reports are busy. Wait a moment, then try again.');
+});
 
 test('presets count inclusive school calendar dates across DST and UTC boundaries', () => {
   const today = usageLocalDate(new Date('2026-03-09T03:00:00Z'), 'America/Los_Angeles');
