@@ -84,6 +84,17 @@ const LARGE_STUDENTS = Object.freeze(Array.from({ length: 600 }, (_, index) => O
   domains: index > 0 ? [{ domain: 'example.org', seconds: index }] : [],
   topDomains: index > 0 ? [{ domain: 'example.org', seconds: index }] : [],
 })));
+const HISTORY_FILTER_CLASSES = Object.freeze([
+  Object.freeze({ classId: 'math', name: 'Grade 5 Math', gradeLevel: '5', grades: ['5'] }),
+  Object.freeze({ classId: 'science', name: 'Grade 5 Science', gradeLevel: '5', grades: ['5'] }),
+  Object.freeze({ classId: 'art', name: 'Grade 6 Art', gradeLevel: '6', grades: ['6'] }),
+]);
+const HISTORY_FILTER_STUDENTS = Object.freeze([
+  Object.freeze({ studentId: 'student-a', name: 'Ada Student', email: 'ada@school.test', grade: '5', classIds: ['math'] }),
+  Object.freeze({ studentId: 'student-b', name: 'Grace Student', email: 'grace@school.test', grade: '5', classIds: ['science'] }),
+  Object.freeze({ studentId: 'student-c', name: 'Alan Student', email: 'alan@school.test', grade: '5', classIds: ['math'] }),
+  Object.freeze({ studentId: 'student-d', name: 'Katherine Student', email: 'katherine@school.test', grade: '6', classIds: ['art'] }),
+]);
 
 function startServer() {
   return spawn(process.execPath, [vite, '--host', '127.0.0.1', '--port', '4178', '--strictPort'], {
@@ -157,8 +168,9 @@ async function preparePage(browser, scenario) {
   const lookupRequests = [];
   const apiRequests = [];
   const errors = [];
-  const isAdmin = ['admin', 'large-admin', 'history-admin'].includes(scenario);
+  const isAdmin = ['admin', 'large-admin', 'history-admin', 'history-filters-admin'].includes(scenario);
   const isOffline = scenario.startsWith('history-');
+  const hasFilterStudents = scenario.startsWith('history-filters-');
   if (isOffline) {
     // UTC Sunday is still Saturday in the school's timezone, including when denied responses have no date metadata.
     await page.clock.setFixedTime(new Date('2026-10-11T01:00:00Z'));
@@ -169,6 +181,8 @@ async function preparePage(browser, scenario) {
   let scopesDenialDelayMs = 0;
   let historyLookupDenied = false;
   let historyLookupDenialDelayMs = 0;
+  let nextHistoryLookupDelayMs = 0;
+  let historyMathRevoked = false;
   let largeRosterShrunk = false;
 
   page.on('pageerror', (error) => errors.push(error.message));
@@ -196,7 +210,12 @@ async function preparePage(browser, scenario) {
     const url = new URL(route.request().url());
     const search = url.searchParams.get('search') || '';
     const cursor = url.searchParams.get('cursor');
-    lookupRequests.push({ search, cursor });
+    const classId = url.searchParams.get('classId') || '';
+    const grade = url.searchParams.get('grade') || '';
+    lookupRequests.push({ search, cursor, classId, grade });
+    const delayMs = nextHistoryLookupDelayMs;
+    nextHistoryLookupDelayMs = 0;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     if (historyLookupDenied) {
       if (historyLookupDenialDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, historyLookupDenialDelayMs));
@@ -204,15 +223,34 @@ async function preparePage(browser, scenario) {
       await route.fulfill({ status: 403, json: { state: 'denied', error: 'Historical access revoked' } });
       return;
     }
-    const allStudents = STUDENTS.map(({ studentId, name }) => ({ studentId, name }));
-    const students = search
-      ? allStudents.filter((student) => student.name.toLowerCase().includes(search.toLowerCase()))
-      : cursor ? allStudents.slice(1) : allStudents.slice(0, 1);
+    if (historyMathRevoked && classId === 'math') {
+      await route.fulfill({ status: 403, json: { code: 'HISTORY_FILTER_DENIED', error: 'History filter no longer available' } });
+      return;
+    }
+    const availableClasses = (isAdmin ? HISTORY_FILTER_CLASSES : hasFilterStudents ? HISTORY_FILTER_CLASSES.slice(0, 2) : [])
+      .filter((group) => !historyMathRevoked || group.classId !== 'math');
+    const filterOptions = { classes: availableClasses, grades: isAdmin ? ['5', '6'] : hasFilterStudents ? ['5'] : [] };
+    const allStudents = hasFilterStudents
+      ? HISTORY_FILTER_STUDENTS.filter((student) => isAdmin || student.grade === '5')
+      : STUDENTS.map(({ studentId, name }) => ({ studentId, name }));
+    const filteredStudents = allStudents.filter((student) => (
+      (!search || `${student.name} ${student.email || ''}`.toLowerCase().includes(search.toLowerCase()))
+      && (!classId || student.classIds?.includes(classId))
+      && (!grade || student.grade === grade)
+    ));
+    const pageOffset = hasFilterStudents ? Number(cursor?.split(':').at(-1) || 0) : cursor ? 1 : 0;
+    const students = (hasFilterStudents || !search)
+      ? filteredStudents.slice(pageOffset, pageOffset + 1)
+      : filteredStudents;
+    const hasMore = (hasFilterStudents || !search) && pageOffset + 1 < filteredStudents.length;
     await route.fulfill({
       json: {
-        students,
-        nextCursor: !search && !cursor ? 'history-lookup-page2' : null,
-        hasMore: !search && !cursor,
+        students: students.map(({ studentId, name, email }) => ({ studentId, name, ...(email ? { email } : {}) })),
+        nextCursor: hasMore
+          ? hasFilterStudents ? `history-filter:${pageOffset + 1}` : 'history-lookup-page2'
+          : null,
+        hasMore,
+        filterOptions,
       },
     });
   });
@@ -360,6 +398,8 @@ async function preparePage(browser, scenario) {
       historyLookupDenied = true;
       historyLookupDenialDelayMs = delayMs;
     },
+    revokeHistoryMathClass: () => { historyMathRevoked = true; },
+    delayNextHistoryLookup: (delayMs) => { nextHistoryLookupDelayMs = delayMs; },
   };
 }
 
@@ -591,6 +631,9 @@ async function offlineHistoryScenario(browser, role) {
     await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
     await page.getByTestId('button-history-student-student-a').waitFor();
     assert.equal(historyRequests.length, 0, 'student lookup must not fetch browsing until a student is chosen');
+    if (!isAdmin) {
+      assert.equal(await page.getByLabel('Filter browsing history students by class', { exact: true }).locator('option[value="math"]').count(), 0, 'a teacher without current assignments must still be able to use unfiltered retained history');
+    }
 
     await page.getByRole('button', { name: 'Load more students', exact: true }).click();
     await page.getByTestId('button-history-student-student-b').waitFor();
@@ -694,11 +737,109 @@ async function historyWithoutSummaryAccessScenario(browser) {
   }
 }
 
+async function changeHistoryLookup(page, expected, change) {
+  const response = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return url.pathname === '/api/classpilot/students/browsing-history'
+      && Object.entries(expected).every(([key, value]) => (url.searchParams.get(key) || '') === value);
+  });
+  await change();
+  assert.equal((await response).status(), 200);
+}
+
+async function historyFiltersScenario(browser, role) {
+  const isAdmin = role === 'school_admin';
+  const { context, page, lookupRequests, historyRequests, apiRequests, errors } = await preparePage(
+    browser,
+    isAdmin ? 'history-filters-admin' : 'history-filters-teacher',
+  );
+  try {
+    await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=${role}`, { waitUntil: 'networkidle' });
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    const gradeSelect = page.getByLabel('Filter browsing history students by grade', { exact: true });
+    const classSelect = page.getByLabel('Filter browsing history students by class', { exact: true });
+    const classIds = await classSelect.locator('option').evaluateAll((options) => options.map((option) => option.value).filter(Boolean));
+    const grades = await gradeSelect.locator('option').evaluateAll((options) => options.map((option) => option.value).filter(Boolean));
+    assert.deepEqual(classIds, isAdmin ? ['math', 'science', 'art'] : ['math', 'science'], 'class options must preserve the server-authorized role scope');
+    assert.deepEqual(grades, isAdmin ? ['5', '6'] : ['5'], 'teachers must only see their taught grades; administrators may use school grades');
+    assert.equal(historyRequests.length, 0, 'filters must not select or fetch a student’s history automatically');
+
+    await page.getByRole('button', { name: 'Load more students', exact: true }).click();
+    await page.getByTestId('button-history-student-student-b').waitFor();
+    assert.ok(lookupRequests.some((request) => request.cursor === 'history-filter:1'));
+    await changeHistoryLookup(page, { grade: '5', classId: '', cursor: '' }, () => gradeSelect.selectOption('5'));
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    assert.equal(await page.getByTestId('button-history-student-student-b').count(), 0, 'grade changes must discard old pagination rows');
+    await changeHistoryLookup(page, { grade: '5', classId: 'math', cursor: '' }, () => classSelect.selectOption('math'));
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    await page.getByRole('button', { name: 'Load more students', exact: true }).click();
+    await page.getByTestId('button-history-student-student-c').waitFor();
+    assert.ok(lookupRequests.some((request) => request.grade === '5' && request.classId === 'math' && request.cursor === 'history-filter:1'), 'pagination must retain both selected filters');
+
+    await page.getByTestId('button-history-student-student-a').click();
+    await page.getByLabel('History start date').waitFor();
+    await selectHistoryDate(page, HISTORY_THURSDAY);
+    await page.getByText(isAdmin ? 'Ada retained school observation' : 'Ada supervised Thursday observation', { exact: true }).waitFor();
+    await changeHistoryLookup(page, { grade: '5', classId: 'science', cursor: '' }, () => classSelect.selectOption('science'));
+    await page.getByTestId('button-history-student-student-b').waitFor();
+    assert.equal(await page.getByTestId('student-browsing-history').count(), 0, 'class changes must clear the selected student and private history');
+    assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0);
+    assert.equal(await page.getByTestId('button-history-student-student-c').count(), 0, 'class changes must discard earlier paginated students');
+
+    await page.getByLabel('Search students for browsing history', { exact: true }).fill('grace@school.test');
+    await changeHistoryLookup(page, { search: 'grace@school.test', grade: '5', classId: 'science', cursor: '' }, () => page.getByRole('button', { name: 'Search', exact: true }).click());
+    await page.getByTestId('button-history-student-student-b').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Load more students', exact: true }).count(), 0, 'combined search and filters must use the filtered result pagination');
+    await page.getByLabel('Search students for browsing history', { exact: true }).fill('');
+    await changeHistoryLookup(page, { search: '', grade: '5', classId: 'science', cursor: '' }, () => page.getByRole('button', { name: 'Search', exact: true }).click());
+    await page.getByTestId('button-history-student-student-b').waitFor();
+
+    if (isAdmin) {
+      await changeHistoryLookup(page, { grade: '6', classId: '', cursor: '' }, () => gradeSelect.selectOption('6'));
+      await page.getByTestId('button-history-student-student-d').waitFor();
+      assert.equal(await classSelect.inputValue(), '', 'changing grades must clear an incompatible selected class');
+      assert.equal(await classSelect.locator('option[value="science"]').count(), 0, 'the class menu must narrow to the selected grade');
+      await changeHistoryLookup(page, { grade: '6', classId: 'art', cursor: '' }, () => classSelect.selectOption('art'));
+      await page.getByTestId('button-history-student-student-d').waitFor();
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.getByTestId('student-history-lookup').evaluate((element) => element.scrollWidth <= element.clientWidth), true, 'grade/class/search controls must fit a mobile dialog without horizontal overflow');
+    const artifacts = path.join(root, 'artifacts', 'classpilot-roadmap');
+    await mkdir(artifacts, { recursive: true });
+    await page.screenshot({ path: path.join(artifacts, `student-data-history-filters-mobile-${role}.png`), fullPage: true });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const selectedEmail = isAdmin ? 'katherine@school.test' : 'grace@school.test';
+    await page.getByLabel('Search students for browsing history', { exact: true }).fill(selectedEmail);
+    await changeHistoryLookup(page, {
+      search: selectedEmail,
+      grade: isAdmin ? '6' : '5',
+      classId: isAdmin ? 'art' : 'science',
+      cursor: '',
+    }, () => page.getByRole('button', { name: 'Search', exact: true }).click());
+    await page.getByTestId(`button-history-student-${isAdmin ? 'student-d' : 'student-b'}`).click();
+    await page.getByLabel('History start date').waitFor();
+    await page.getByLabel('Search students for browsing history', { exact: true }).fill('Unsubmitted search');
+    await changeHistoryLookup(page, { search: '', grade: '', classId: '', cursor: '' }, () => page.getByRole('button', { name: 'Clear filters', exact: true }).click());
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    assert.equal(await gradeSelect.inputValue(), '');
+    assert.equal(await classSelect.inputValue(), '');
+    assert.equal(await page.getByLabel('Search students for browsing history', { exact: true }).inputValue(), '');
+    assert.equal(await page.getByTestId('student-browsing-history').count(), 0, 'Clear filters must discard selected history and reset both typed and submitted search');
+    assert.equal(apiRequests.some((request) => /\/(?:devices|teaching-sessions|commands|student-analytics)(?:[/?]|$)/.test(request)), false, 'offline grade/class filtering must not depend on live devices or teaching sessions');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+}
+
 async function historyLookupRevocationScenario(browser) {
-  const { context, page, denyHistoryLookup, errors } = await preparePage(browser, 'history-teacher');
+  const { context, page, denyHistoryLookup, errors } = await preparePage(browser, 'history-filters-teacher');
   try {
     await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=teacher`, { waitUntil: 'networkidle' });
     await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByLabel('Filter browsing history students by class', { exact: true }).locator('option[value="math"]').waitFor({ state: 'attached' });
     await page.getByTestId('button-history-student-student-a').click();
     await page.getByLabel('History start date').waitFor();
     await selectHistoryDate(page, HISTORY_THURSDAY);
@@ -709,6 +850,8 @@ async function historyLookupRevocationScenario(browser) {
     await page.getByText('Your account is not authorized to look up browsing history.', { exact: true }).waitFor();
     assert.equal(await page.getByTestId('history-observation').count(), 0, 'lookup access revocation must hide a selected student’s loaded history');
     assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0, 'lookup denial must hide cached private student rows');
+    assert.equal(await page.locator('[aria-label="Filter browsing history students by class"] option[value="math"]').count(), 0, 'lookup denial must hide cached class labels');
+    assert.equal(await page.locator('[aria-label="Filter browsing history students by grade"] option[value="5"]').count(), 0, 'lookup denial must hide cached grade options');
 
     await page.getByTestId('button-close-student-data').click();
     await page.getByTestId('dialog-student-data').waitFor({ state: 'detached' });
@@ -718,7 +861,85 @@ async function historyLookupRevocationScenario(browser) {
     await page.waitForTimeout(100);
     assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0, 'reopening must not flash cached lookup rows during delayed authorization');
     assert.equal(await page.getByTestId('history-observation').count(), 0, 'reopening must not flash cached observations during delayed authorization');
+    assert.equal(await page.locator('[aria-label="Filter browsing history students by class"] option[value="math"]').count(), 0, 'reopening must not flash cached class labels during delayed authorization');
     await page.getByText('Your account is not authorized to look up browsing history.', { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function historyFilterRevocationScenario(browser) {
+  const { context, page, revokeHistoryMathClass, lookupRequests, errors } = await preparePage(browser, 'history-filters-teacher');
+  try {
+    await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=teacher`, { waitUntil: 'networkidle' });
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    const classSelect = page.getByLabel('Filter browsing history students by class', { exact: true });
+    await changeHistoryLookup(page, { classId: 'math', cursor: '' }, () => classSelect.selectOption('math'));
+    await page.getByTestId('button-history-student-student-a').click();
+    await page.getByLabel('History start date').waitFor();
+    await selectHistoryDate(page, HISTORY_THURSDAY);
+    await page.getByText('Ada supervised Thursday observation', { exact: true }).waitFor();
+
+    revokeHistoryMathClass();
+    await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+    await page.getByText('This grade or class is no longer available. Clear the filters and try again.', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('student-browsing-history').count(), 0, 'a revoked filter must hide the previously selected student’s history');
+    assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0, 'a denied filter must hide its cached student rows');
+    assert.equal(await classSelect.locator('option[value="math"]').count(), 0, 'a denied filter must hide its cached class label');
+    await changeHistoryLookup(page, { search: '', grade: '', classId: '', cursor: '' }, () => page.getByRole('button', { name: 'Clear filters', exact: true }).click());
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    assert.equal(await classSelect.inputValue(), '');
+    assert.equal(await classSelect.locator('option[value="math"]').count(), 0, 'recovery must use the refreshed authorized class options');
+    assert.equal(await classSelect.locator('option[value="science"]').count(), 1);
+    assert.equal(lookupRequests.at(-1).cursor, null, 'filter recovery must start a new first page');
+    assert.equal(await page.getByTestId('student-browsing-history').count(), 0, 'recovery must require a fresh student selection');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function newHistoryFilterDenialRecoveryScenario(browser) {
+  const { context, page, revokeHistoryMathClass, delayNextHistoryLookup, lookupRequests, errors } = await preparePage(browser, 'history-filters-teacher');
+  try {
+    await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=teacher`, { waitUntil: 'networkidle' });
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    const classSelect = page.getByLabel('Filter browsing history students by class', { exact: true });
+    const gradeSelect = page.getByLabel('Filter browsing history students by grade', { exact: true });
+    assert.equal(await classSelect.locator('option[value="math"]').count(), 1);
+    assert.equal(await classSelect.locator('option[value="science"]').count(), 1);
+    assert.equal(await gradeSelect.locator('option[value="5"]').count(), 1);
+
+    // This query has never succeeded: its first request fails after the unfiltered query loaded labels.
+    revokeHistoryMathClass();
+    await classSelect.selectOption('math');
+    await page.getByText('This grade or class is no longer available. Clear the filters and try again.', { exact: true }).waitFor();
+    assert.equal(lookupRequests.filter((request) => request.classId === 'math').length, 1);
+    assert.equal(await classSelect.locator('option[value="math"]').count(), 0);
+    assert.equal(await classSelect.locator('option[value="science"]').count(), 0);
+
+    delayNextHistoryLookup(2_000);
+    const recoveryRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === '/api/classpilot/students/browsing-history'
+        && !url.searchParams.get('classId') && !url.searchParams.get('grade') && !url.searchParams.get('search');
+    });
+    await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+    await recoveryRequest;
+    await page.getByRole('status').filter({ hasText: 'Loading students…' }).waitFor();
+    assert.equal(await classSelect.locator('option[value="math"]').count(), 0, 'pending recovery must not resurrect the revoked class label from an older successful query');
+    assert.equal(await classSelect.locator('option[value="science"]').count(), 0, 'pending recovery must not resurrect other cached class labels either');
+    assert.equal(await gradeSelect.locator('option[value="5"]').count(), 0, 'pending recovery must wait for fresh grade authorization');
+    assert.equal(await classSelect.isDisabled(), true);
+    assert.equal(await gradeSelect.isDisabled(), true);
+    assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0);
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    assert.equal(await classSelect.locator('option[value="math"]').count(), 0);
+    assert.equal(await classSelect.locator('option[value="science"]').count(), 1);
+    assert.equal(await gradeSelect.locator('option[value="5"]').count(), 1);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -740,8 +961,12 @@ try {
   await offlineHistoryScenario(browser, 'teacher');
   await offlineHistoryScenario(browser, 'school_admin');
   await historyWithoutSummaryAccessScenario(browser);
+  await historyFiltersScenario(browser, 'teacher');
+  await historyFiltersScenario(browser, 'school_admin');
   await historyLookupRevocationScenario(browser);
-  console.log('ClassPilot Student Data browser checks passed, including offline browsing lookup and historical access.');
+  await historyFilterRevocationScenario(browser);
+  await newHistoryFilterDenialRecoveryScenario(browser);
+  console.log('ClassPilot Student Data browser checks passed, including scoped grade/class filters, offline browsing lookup, and historical access.');
 } finally {
   await browser?.close();
   await stopServer(server);

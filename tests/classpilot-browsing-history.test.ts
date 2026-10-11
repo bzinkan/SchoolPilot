@@ -61,6 +61,10 @@ test("student history lookup bounds searches and binds cursors to school, actor,
   assert.equal(resolveHistoryLookup({ ...input, limit: 1000 }).limit, 100);
   const cursor = encodeHistoryLookupCursor(query.scope, "history student", "student");
   assert.equal(resolveHistoryLookup({ ...input, cursor }).cursor?.id, "student");
+  const legacyScope = historyScopeHash(["history-student-lookup-v1", input.schoolId, input.actorId, input.role, "history student"]);
+  const legacyCursor = encodeHistoryLookupCursor(legacyScope, "history student", "legacy-student");
+  assert.equal(resolveHistoryLookup({ ...input, cursor: legacyCursor }).cursor?.id, "legacy-student", "Unfiltered continuations issued before filters were introduced remain valid");
+  assert.throws(() => resolveHistoryLookup({ ...input, classId: "class-one", cursor: legacyCursor }), { code: "HISTORY_CURSOR_INVALID" });
   for (const changed of [{ schoolId: "other" }, { actorId: "other" }, { role: "admin" }, { search: "other" }]) {
     assert.throws(() => resolveHistoryLookup({ ...input, ...changed, cursor }), { code: "HISTORY_CURSOR_INVALID" });
   }
@@ -73,4 +77,28 @@ test("student history lookup bounds searches and binds cursors to school, actor,
   for (const malformed of ["invalid!", "e30", [], "x".repeat(4097)]) {
     assert.throws(() => resolveHistoryLookup({ ...input, cursor: malformed }), { code: "HISTORY_CURSOR_INVALID" });
   }
+});
+
+test("student history lookup normalizes class/grade filters and binds cursors to their intersection", () => {
+  const input = { schoolId: "school", actorId: "teacher", role: "teacher", search: "Student", classId: "  class-one  ", grade: "  7  " };
+  const query = resolveHistoryLookup(input);
+  assert.equal(query.classId, "class-one");
+  assert.equal(query.grade, "7");
+  const cursor = encodeHistoryLookupCursor(query.scope, "student name", "student-id");
+  assert.equal(resolveHistoryLookup({ ...input, classId: "class-one", grade: "7", cursor }).cursor?.id, "student-id");
+  for (const changed of [{ classId: "class-two" }, { grade: "8" }, { classId: undefined }, { grade: undefined }, { classId: "" }, { grade: "" }]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, ...changed, cursor }), { code: "HISTORY_CURSOR_INVALID" });
+  }
+  const empty = resolveHistoryLookup({ ...input, classId: "   ", grade: " " });
+  const absent = resolveHistoryLookup({ schoolId: input.schoolId, actorId: input.actorId, role: input.role, search: input.search });
+  assert.equal(empty.classId, null);
+  assert.equal(empty.grade, null);
+  assert.equal(empty.scope, absent.scope);
+  for (const classId of [null, ["class-one"], {}, true, 123, "x".repeat(257), "class\u0000one", "class\nname", "class-one\n"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, classId }), { code: "HISTORY_FILTER_INVALID", status: 400 });
+  }
+  for (const grade of [null, ["7"], {}, true, 7, "x".repeat(101), "grade\u0000seven", "grade\nseven", "7\t"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, grade }), { code: "HISTORY_FILTER_INVALID", status: 400 });
+  }
+  assert.equal(resolveHistoryLookup({ ...input, grade: "Kindergarten" }).grade, "Kindergarten", "Configured grade labels do not have to be numeric");
 });
