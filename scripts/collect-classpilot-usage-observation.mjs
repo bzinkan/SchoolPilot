@@ -222,9 +222,17 @@ function readRuns(logExport, spec, eligibleCount) {
     integer(event.timestamp, 'Log event timestamp');
     assert(event.timestamp >= Date.parse(spec.startedAt) && event.timestamp <= Date.parse(spec.endedAt), 'Log event is outside the declared export window');
     assert(typeof event.message === 'string', 'Worker log message must be an exported string');
+    assert(!event.message.includes('[ClassPilot] Monitored Browser Time rollup failed'), 'Worker failure log invalidates observation even without its final counter sample');
     let sample;
     try { sample = parseBytes(Buffer.from(event.message), 'Worker message'); }
     catch (error) { if (event.message.includes('classpilot_usage_rollup')) throw error; else continue; }
+    for (const metric of ['UsageRollupFailedSchools', 'UsageRollupDeferredDays']) {
+      if (sample && Object.hasOwn(sample, metric)) {
+        integer(sample[metric], `Worker ${metric}`);
+        assert(sample[metric] === 0, 'Worker failure/deferral metric invalidates observation even without its final counter sample');
+      }
+    }
+    assert(typeof sample?.event !== 'string' || !sample.event.startsWith('classpilot_usage_rollup') || sample.event === 'classpilot_usage_rollup', 'Unsupported worker Usage rollup event requires review');
     if (sample?.event !== 'classpilot_usage_rollup') continue;
     exact(sample, ['event', ...COUNTERS, 'budgetExhausted', 'deadline'], 'Worker rollup sample');
     for (const name of COUNTERS) integer(sample[name], `Worker ${name}`);

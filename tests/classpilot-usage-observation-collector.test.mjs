@@ -157,6 +157,23 @@ test('clean restart duplicates are checked but do not increase observed hourly r
   assert.throws(() => collect(f), /Missing hourly bucket/);
 });
 
+test('standalone scheduler failure logs and EMF failures cannot hide behind complete clean hourly samples', () => {
+  const emf = metric => JSON.stringify({ _aws: { Timestamp: Date.parse('2026-10-09T07:00:01Z'),
+    CloudWatchMetrics: [{ Namespace: 'SchoolPilot/ClassPilot', Dimensions: [['Environment']], Metrics: [{ Name: metric, Unit: 'Count' }] }] },
+    Environment: 'test', [metric]: 1 });
+  for (const message of ['[ClassPilot] Monitored Browser Time rollup failed',
+    emf('UsageRollupFailedSchools'), emf('UsageRollupDeferredDays')]) {
+    const f = fixture();
+    f.logs.events.push({ ...f.logs.events[2], eventId: 'failure-before-counter-sample', message });
+    assert.throws(() => collect(f), /Worker failure/);
+  }
+  refused(f => { f.logs.events.push({ ...f.logs.events[2], eventId: 'bad-metric', message: JSON.stringify({ UsageRollupFailedSchools: '1' }) }); }, /must be an integer/);
+  refused(f => { f.logs.events.push({ ...f.logs.events[2], eventId: 'unknown-event', message: JSON.stringify({ event: 'classpilot_usage_rollup_failed' }) }); }, /Unsupported worker Usage rollup event/);
+  const f = fixture();
+  f.logs.events.push({ ...f.logs.events[2], eventId: 'unrelated-metric', message: JSON.stringify({ OtherWorkerCount: 1 }) });
+  assert.equal(collect(f).evidence.schoolDays[0].observedRuns, 25);
+});
+
 test('a dirty duplicate cannot hide behind a clean sample from the same hour', () => {
   const f = fixture();
   f.logs.events.push({ ...f.logs.events[1], eventId: 'restart-dirty-run' });
