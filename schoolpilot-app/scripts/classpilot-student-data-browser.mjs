@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -43,6 +43,15 @@ const SCHOOL_SCOPE = Object.freeze({
   activeTeachingSessionId: null,
   isActive: false,
 });
+const INACTIVE_MATH_SCOPE = Object.freeze({
+  ...MATH_SCOPE,
+  activeTeachingSessionId: null,
+  isActive: false,
+});
+const HISTORY_TODAY = '2026-10-10';
+const HISTORY_THURSDAY = '2026-10-08';
+const HISTORY_DENIED_DATE = '2026-10-07';
+const HISTORY_EMPTY_PAGES_TEXT = 'No page details were recorded in the selected accessible dates. Include observations without page details to check for monitoring activity.';
 const STUDENTS = Object.freeze([
   Object.freeze({
     studentId: 'student-a',
@@ -115,7 +124,7 @@ function reportFor(scope, url, availableStudents = STUDENTS) {
     ? availableStudents.filter((student) => student.studentId === studentId)
     : [...availableStudents];
   const monitoredSeconds = students.reduce((sum, student) => sum + student.monitoredSeconds, 0);
-  const dataState = scope.key === MATH_SCOPE.key ? 'live' : 'final';
+  const dataState = scope.isActive ? 'live' : 'final';
   return {
     schemaVersion: 2,
     revision: `browser-${scope.key}-${url.searchParams.get('period')}-${studentId || 'all'}`,
@@ -144,14 +153,116 @@ async function preparePage(browser, scenario) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block' });
   const page = await context.newPage();
   const requests = [];
+  const historyRequests = [];
+  const lookupRequests = [];
+  const apiRequests = [];
+  const errors = [];
+  const isAdmin = ['admin', 'large-admin', 'history-admin'].includes(scenario);
+  const isOffline = scenario.startsWith('history-');
+  if (isOffline) {
+    // UTC Sunday is still Saturday in the school's timezone, including when denied responses have no date metadata.
+    await page.clock.setFixedTime(new Date('2026-10-11T01:00:00Z'));
+  }
   let scienceRevoked = false;
   let mathRevoked = false;
-  let scopesDenied = false;
+  let scopesDenied = scenario === 'history-no-summary';
   let scopesDenialDelayMs = 0;
+  let historyLookupDenied = false;
+  let historyLookupDenialDelayMs = 0;
   let largeRosterShrunk = false;
+
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith('/api/')) apiRequests.push(`${request.method()} ${url.pathname}${url.search}`);
+  });
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, body: '' }));
   await page.route('https://fonts.gstatic.com/**', (route) => route.fulfill({ status: 200, body: '' }));
+  await page.route('**/api/auth/me', (route) => route.fulfill({
+    json: {
+      user: { id: isAdmin ? 'admin-browser' : 'teacher-browser' },
+      activeSchoolId: 'school-browser',
+      memberships: [{
+        id: isAdmin ? 'admin-membership-browser' : 'teacher-membership-browser',
+        schoolId: 'school-browser',
+        schoolTimezone: 'America/New_York',
+        role: isAdmin ? 'school_admin' : 'teacher',
+      }],
+      licenses: {},
+    },
+  }));
+  await page.route(/\/api\/classpilot\/students\/browsing-history(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const search = url.searchParams.get('search') || '';
+    const cursor = url.searchParams.get('cursor');
+    lookupRequests.push({ search, cursor });
+    if (historyLookupDenied) {
+      if (historyLookupDenialDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, historyLookupDenialDelayMs));
+      }
+      await route.fulfill({ status: 403, json: { state: 'denied', error: 'Historical access revoked' } });
+      return;
+    }
+    const allStudents = STUDENTS.map(({ studentId, name }) => ({ studentId, name }));
+    const students = search
+      ? allStudents.filter((student) => student.name.toLowerCase().includes(search.toLowerCase()))
+      : cursor ? allStudents.slice(1) : allStudents.slice(0, 1);
+    await route.fulfill({
+      json: {
+        students,
+        nextCursor: !search && !cursor ? 'history-lookup-page2' : null,
+        hasMore: !search && !cursor,
+      },
+    });
+  });
+  await page.route('**/api/classpilot/students/*/browsing-history**', async (route) => {
+    const url = new URL(route.request().url());
+    const studentId = decodeURIComponent(url.pathname.split('/')[4]);
+    const startDate = url.searchParams.get('startDate') || HISTORY_TODAY;
+    const endDate = url.searchParams.get('endDate') || HISTORY_TODAY;
+    historyRequests.push({ studentId, startDate, endDate, path: url.pathname, query: url.search, view: url.searchParams.get('view') });
+    if (startDate === HISTORY_DENIED_DATE || (!isAdmin && startDate === HISTORY_TODAY)) {
+      await route.fulfill({ status: 403, json: { state: 'denied', code: 'HISTORY_DENIED', error: 'Historical supervision required' } });
+      return;
+    }
+    const hasObservations = studentId === 'student-a'
+      && startDate === HISTORY_THURSDAY && endDate === HISTORY_THURSDAY;
+    const meta = {
+      studentId,
+      timeZone: 'America/New_York',
+      today: HISTORY_TODAY,
+      startDate,
+      endDate,
+      retentionDays: 30,
+      partiallyExpired: false,
+      scope: isAdmin ? 'school' : 'supervised_intervals',
+      state: hasObservations ? 'available' : 'empty',
+    };
+    await route.fulfill({
+      json: url.pathname.endsWith('/domains')
+        ? {
+            ...meta,
+            days: hasObservations ? [{
+              date: HISTORY_THURSDAY,
+              domains: [{ domain: 'classroom.google.com', seconds: 45, contentCategory: null }],
+            }] : [],
+          }
+        : {
+            ...meta,
+            entries: hasObservations ? [{
+              id: `${studentId}-${HISTORY_THURSDAY}`,
+              timestamp: '2026-10-08T13:00:00.123456Z',
+              activeTabUrl: 'https://classroom.google.com/c/retained-lesson',
+              activeTabTitle: isAdmin ? 'Ada retained school observation' : 'Ada supervised Thursday observation',
+              aiCategory: 'educational',
+              contentCategory: null,
+              estimatedSeconds: 45,
+            }] : [],
+            nextCursor: null,
+          },
+    });
+  });
   await page.route('**/api/classpilot/student-data**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -168,10 +279,12 @@ async function preparePage(browser, scenario) {
         });
         return;
       }
-      const payload = scenario === 'admin' || scenario === 'large-admin'
-        ? { schemaVersion: 1, defaultScopeKey: 'school', scopes: [SCHOOL_SCOPE, MATH_SCOPE] }
+      const payload = isAdmin
+        ? { schemaVersion: 1, defaultScopeKey: 'school', scopes: [SCHOOL_SCOPE, isOffline ? INACTIVE_MATH_SCOPE : MATH_SCOPE] }
         : scenario === 'no-classes'
           ? { schemaVersion: 1, defaultScopeKey: 'mine', scopes: [MINE_SCOPE] }
+          : isOffline
+            ? { schemaVersion: 1, defaultScopeKey: 'mine', scopes: [MINE_SCOPE] }
           : {
               schemaVersion: 1,
               defaultScopeKey: mathRevoked ? 'mine' : 'class:math',
@@ -203,7 +316,7 @@ async function preparePage(browser, scenario) {
       ? SCHOOL_SCOPE
       : scopeKind === 'mine'
         ? MINE_SCOPE
-        : MATH_SCOPE;
+        : isOffline ? INACTIVE_MATH_SCOPE : MATH_SCOPE;
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -212,7 +325,19 @@ async function preparePage(browser, scenario) {
         url,
         scenario === 'large-admin'
           ? largeRosterShrunk ? LARGE_STUDENTS.slice(0, 2) : LARGE_STUDENTS
-          : STUDENTS,
+          : isOffline
+            ? STUDENTS.map((student) => ({
+                ...student,
+                monitoredSeconds: 0,
+                siteCount: 0,
+                topDomain: null,
+                domains: [],
+                topDomains: [],
+                activities: [],
+                topActivities: [],
+                topActivity: null,
+              }))
+            : STUDENTS,
       )),
     });
   });
@@ -221,12 +346,20 @@ async function preparePage(browser, scenario) {
     context,
     page,
     requests,
+    historyRequests,
+    lookupRequests,
+    apiRequests,
+    errors,
     revokeMathAssignment: () => { mathRevoked = true; },
     denyScopeAccess: (delayMs = 0) => {
       scopesDenied = true;
       scopesDenialDelayMs = delayMs;
     },
     shrinkLargeRoster: () => { largeRosterShrunk = true; },
+    denyHistoryLookup: (delayMs = 0) => {
+      historyLookupDenied = true;
+      historyLookupDenialDelayMs = delayMs;
+    },
   };
 }
 
@@ -431,6 +564,167 @@ async function largeAdminScenario(browser) {
   }
 }
 
+async function selectHistoryDate(page, date) {
+  await page.getByLabel('History start date', { exact: true }).fill(date);
+  await page.getByLabel('History end date', { exact: true }).fill(date);
+}
+
+async function offlineHistoryScenario(browser, role) {
+  const isAdmin = role === 'school_admin';
+  const defaultHistoryText = isAdmin
+    ? HISTORY_EMPTY_PAGES_TEXT
+    : 'You can view browsing only during classes or supervision you actually taught.';
+  const { context, page, requests, historyRequests, lookupRequests, apiRequests, errors } = await preparePage(
+    browser,
+    isAdmin ? 'history-admin' : 'history-teacher',
+  );
+  try {
+    await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=${role}`, { waitUntil: 'networkidle' });
+    if (!isAdmin) {
+      await page.getByTestId('student-data-no-scopes').waitFor();
+      assert.deepEqual(
+        requests.filter((entry) => !entry.endsWith('/student-data/scopes')),
+        [],
+        'a teacher with no current classes must not need an aggregate report to open retained history',
+      );
+    }
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByTestId('button-history-student-student-a').waitFor();
+    assert.equal(historyRequests.length, 0, 'student lookup must not fetch browsing until a student is chosen');
+
+    await page.getByRole('button', { name: 'Load more students', exact: true }).click();
+    await page.getByTestId('button-history-student-student-b').waitFor();
+    assert.ok(lookupRequests.some((request) => request.cursor === 'history-lookup-page2'), 'lookup must follow server pagination');
+
+    await page.getByTestId('button-history-student-student-a').click();
+    await page.getByText(defaultHistoryText, { exact: true }).last().waitFor();
+    assert.equal(await page.getByLabel('History start date').inputValue(), HISTORY_TODAY);
+    assert.equal(await page.getByLabel('History end date').inputValue(), HISTORY_TODAY);
+
+    await selectHistoryDate(page, HISTORY_THURSDAY);
+    const observationTitle = isAdmin ? 'Ada retained school observation' : 'Ada supervised Thursday observation';
+    await page.getByText(observationTitle, { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('history-observation').count(), 1);
+    const historyText = await page.getByTestId('student-browsing-history').innerText();
+    assert.match(historyText, /America\/New_York/);
+    assert.equal(historyText.includes('Only your supervised intervals are included.'), !isAdmin);
+    assert.ok(historyRequests.some((request) => (
+      request.studentId === 'student-a'
+      && request.startDate === HISTORY_THURSDAY
+      && request.endDate === HISTORY_THURSDAY
+      && !request.path.endsWith('/domains')
+      && request.view === 'pages'
+    )), 'offline history must query the selected student and inclusive school-local date');
+    const artifacts = path.join(root, 'artifacts', 'classpilot-roadmap');
+    await mkdir(artifacts, { recursive: true });
+    await page.screenshot({
+      path: path.join(artifacts, `student-data-offline-browsing-${role}.png`),
+      fullPage: true,
+    });
+    if (!isAdmin) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({
+        path: path.join(artifacts, 'student-data-offline-browsing-mobile.png'),
+        fullPage: true,
+      });
+      await page.getByRole('button', { name: 'Choose another student', exact: true }).click();
+      await page.screenshot({
+        path: path.join(artifacts, 'student-data-history-lookup-mobile.png'),
+        fullPage: true,
+      });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.screenshot({
+        path: path.join(artifacts, 'student-data-history-lookup-desktop.png'),
+        fullPage: true,
+      });
+      await page.getByTestId('button-history-student-student-a').click();
+      await page.getByLabel('History start date').waitFor();
+      await selectHistoryDate(page, HISTORY_THURSDAY);
+      await page.getByText(observationTitle, { exact: true }).waitFor();
+    }
+
+    if (!isAdmin) {
+      await selectHistoryDate(page, HISTORY_DENIED_DATE);
+      await page.getByText('You can view browsing only during classes or supervision you actually taught.', { exact: true }).last().waitFor();
+      assert.equal(await page.getByTestId('history-observation').count(), 0, 'denied dates must hide previously loaded observations');
+      assert.equal(await page.getByText(observationTitle, { exact: true }).count(), 0);
+    }
+
+    await page.getByRole('tab', { name: 'Summary', exact: true }).click();
+    assert.equal(await page.getByTestId('student-browsing-history').count(), 0, 'returning to Summary must unmount the private history view');
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    const chooseAnother = page.getByRole('button', { name: 'Choose another student', exact: true });
+    if (await chooseAnother.count()) await chooseAnother.click();
+    await page.getByLabel('Search students for browsing history', { exact: true }).fill('Grace');
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByTestId('button-history-student-student-b').waitFor();
+    assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0, 'search must replace earlier lookup rows');
+    await page.getByTestId('button-history-student-student-b').click();
+    await page.getByText(defaultHistoryText, { exact: true }).last().waitFor();
+    await selectHistoryDate(page, HISTORY_THURSDAY);
+    await page.getByText(HISTORY_EMPTY_PAGES_TEXT, { exact: true }).waitFor();
+    assert.equal(await page.getByText(observationTitle, { exact: true }).count(), 0, 'a different student must never display the earlier student’s history');
+    assert.equal(await page.getByTestId('history-observation').count(), 0);
+    assert.ok(lookupRequests.some((request) => request.search === 'Grace'));
+    assert.equal(
+      apiRequests.some((request) => /\/(?:devices|teaching-sessions|commands|student-analytics)(?:[/?]|$)/.test(request)),
+      false,
+      'offline history lookup must not depend on devices, an active teaching session, or legacy analytics',
+    );
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+}
+
+async function historyWithoutSummaryAccessScenario(browser) {
+  const { context, page, historyRequests, errors } = await preparePage(browser, 'history-no-summary');
+  try {
+    await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=teacher`, { waitUntil: 'networkidle' });
+    await page.getByText('Your account is not authorized to view Student Data.', { exact: true }).waitFor();
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByTestId('button-history-student-student-a').click();
+    await page.getByLabel('History start date').waitFor();
+    await selectHistoryDate(page, HISTORY_THURSDAY);
+    await page.getByText('Ada supervised Thursday observation', { exact: true }).waitFor();
+    assert.ok(historyRequests.some((request) => request.startDate === HISTORY_THURSDAY && request.endDate === HISTORY_THURSDAY));
+    assert.deepEqual(errors, [], 'retained historical authority must work independently of current aggregate access');
+  } finally {
+    await context.close();
+  }
+}
+
+async function historyLookupRevocationScenario(browser) {
+  const { context, page, denyHistoryLookup, errors } = await preparePage(browser, 'history-teacher');
+  try {
+    await page.goto(`${baseURL}/classpilot-student-data-regression.html?role=teacher`, { waitUntil: 'networkidle' });
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.getByTestId('button-history-student-student-a').click();
+    await page.getByLabel('History start date').waitFor();
+    await selectHistoryDate(page, HISTORY_THURSDAY);
+    await page.getByText('Ada supervised Thursday observation', { exact: true }).waitFor();
+
+    denyHistoryLookup();
+    await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+    await page.getByText('Your account is not authorized to look up browsing history.', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('history-observation').count(), 0, 'lookup access revocation must hide a selected student’s loaded history');
+    assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0, 'lookup denial must hide cached private student rows');
+
+    await page.getByTestId('button-close-student-data').click();
+    await page.getByTestId('dialog-student-data').waitFor({ state: 'detached' });
+    denyHistoryLookup(500);
+    await page.getByTestId('button-reopen-student-data').click();
+    await page.getByRole('tab', { name: 'Browsing history', exact: true }).click();
+    await page.waitForTimeout(100);
+    assert.equal(await page.getByTestId('button-history-student-student-a').count(), 0, 'reopening must not flash cached lookup rows during delayed authorization');
+    assert.equal(await page.getByTestId('history-observation').count(), 0, 'reopening must not flash cached observations during delayed authorization');
+    await page.getByText('Your account is not authorized to look up browsing history.', { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+}
+
 const server = startServer();
 let browser;
 try {
@@ -443,7 +737,11 @@ try {
   await unmountCachePurgeScenario(browser);
   await adminScenario(browser);
   await largeAdminScenario(browser);
-  console.log('ClassPilot teacher-scoped Student Data browser checks passed.');
+  await offlineHistoryScenario(browser, 'teacher');
+  await offlineHistoryScenario(browser, 'school_admin');
+  await historyWithoutSummaryAccessScenario(browser);
+  await historyLookupRevocationScenario(browser);
+  console.log('ClassPilot Student Data browser checks passed, including offline browsing lookup and historical access.');
 } finally {
   await browser?.close();
   await stopServer(server);

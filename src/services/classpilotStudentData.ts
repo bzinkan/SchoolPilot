@@ -695,11 +695,10 @@ function retainedSessionAuthoritySql(authority: StudentDataAuthorityWindow): SQL
   )`;
 }
 
-/** Historical URL authority shares Student Data's frozen staff, roster and retained-report rules. */
-export async function getClasspilotStudentHistoryAuthority(options:{schoolId:string;actorId:string;studentId:string;now:Date;retentionCutoff:Date;dbInstance?:typeof db}):Promise<{windows:HistoryWindow[];sessions:Array<{id:string;start:Date;end:Date;timeZone:string|null;final:boolean}>;hasSupervision:boolean}>{
-  const database=options.dbInstance||db;
-  const sessions=await database.execute<{id:string;start:Date;end:Date;aggregate_start:Date;aggregate_end:Date;time_zone:string|null;is_final:boolean}>(sql`
-    SELECT session.id,
+/** Shared source intervals keep history discovery and URL reads on the same authority rules. */
+export function classpilotStudentHistoryAuthorityQueries(options:{schoolId:string;actorId:string;studentId:string|SQL;now:Date;retentionCutoff:Date}) {
+  const sessions = sql`
+    SELECT frozen_roster.student_id, session.id,
       GREATEST(session.start_time AT TIME ZONE 'UTC',frozen_roster.captured_at,staff.captured_at) AS start,
       LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours',${options.now.toISOString()}::timestamptz) AS end,
       COALESCE(report.window_start,session.start_time AT TIME ZONE 'UTC') AS aggregate_start,
@@ -712,23 +711,21 @@ export async function getClasspilotStudentHistoryAuthority(options:{schoolId:str
     INNER JOIN ${groups} AS class_group ON class_group.school_id=${options.schoolId} AND class_group.id=session.group_id AND class_group.group_type='admin_class'
     LEFT JOIN ${classpilotSessionReports} AS report ON report.school_id=${options.schoolId} AND report.teaching_session_id=session.id
     WHERE staff.school_id=${options.schoolId} AND staff.staff_id=${options.actorId} AND session.roster_snapshot_completed_at IS NOT NULL AND ${retainedSessionAuthoritySql(options)}
-    ORDER BY session.start_time DESC,session.id LIMIT 5001
-  `);
+  `;
   const tenureEnabled = supervisionActivityReportingEnabled(options.now);
   const legacyOwnership = tenureEnabled
     ? sql`NOT ${supervisionContextHasReportsSql(options.schoolId, sql`context.id`)}`
     : sql`true`;
-  const supervision=await database.execute<{assigned_staff_id:string;legacy_ownership:boolean;start:Date;end:Date}>(sql`
-    SELECT context.assigned_staff_id,${legacyOwnership} AS legacy_ownership,
+  const supervision = sql`
+    SELECT member.student_id, context.assigned_staff_id,${legacyOwnership} AS legacy_ownership,
       GREATEST(member.assigned_at,context.starts_at) AT TIME ZONE 'UTC' AS start,
       LEAST(COALESCE(member.released_at,'infinity'::timestamp),COALESCE(context.ended_at,'infinity'::timestamp),context.ends_at,${options.now.toISOString()}::timestamp) AT TIME ZONE 'UTC' AS end
     FROM ${classpilotSupervisionStudents} AS member INNER JOIN ${classpilotSupervisionContexts} AS context ON context.school_id=${options.schoolId} AND context.id=member.context_id
     WHERE member.school_id=${options.schoolId} AND member.student_id=${options.studentId}
       AND member.assigned_at<${options.now.toISOString()}::timestamp AND context.ends_at>=${options.retentionCutoff.toISOString()}::timestamp
-    ORDER BY member.assigned_at DESC LIMIT 5001
-  `);
-  const recorded = tenureEnabled ? await database.execute<{start:Date;end:Date}>(sql`
-    SELECT GREATEST(tenure.window_start,(participation.value->>'start')::timestamptz,${options.retentionCutoff.toISOString()}::timestamptz) AS start,
+  `;
+  const recorded = tenureEnabled ? sql`
+    SELECT detail.student_id, GREATEST(tenure.window_start,(participation.value->>'start')::timestamptz,${options.retentionCutoff.toISOString()}::timestamptz) AS start,
       LEAST(COALESCE((participation.value->>'end')::timestamptz,'infinity'::timestamptz),
         COALESCE(tenure.window_end,'infinity'::timestamptz),
         COALESCE(context.ended_at AT TIME ZONE 'UTC','infinity'::timestamptz),
@@ -740,8 +737,17 @@ export async function getClasspilotStudentHistoryAuthority(options:{schoolId:str
     WHERE tenure.school_id=${options.schoolId} AND tenure.staff_id=${options.actorId}
       AND detail.student_id=${options.studentId} AND tenure.detail_expired_at IS NULL
       AND tenure.state <> 'expired' AND (tenure.expires_at IS NULL OR tenure.expires_at>${options.now.toISOString()}::timestamptz)
-    ORDER BY tenure.window_start DESC LIMIT 5001
-  `) : { rows: [] };
+  ` : null;
+  return { sessions, supervision, recorded };
+}
+
+/** Historical URL authority shares Student Data's frozen staff, roster and retained-report rules. */
+export async function getClasspilotStudentHistoryAuthority(options:{schoolId:string;actorId:string;studentId:string;now:Date;retentionCutoff:Date;dbInstance?:typeof db}):Promise<{windows:HistoryWindow[];sessions:Array<{id:string;start:Date;end:Date;timeZone:string|null;final:boolean}>;hasSupervision:boolean}>{
+  const database=options.dbInstance||db;
+  const queries=classpilotStudentHistoryAuthorityQueries(options);
+  const sessions=await database.execute<{id:string;start:Date;end:Date;aggregate_start:Date;aggregate_end:Date;time_zone:string|null;is_final:boolean}>(sql`${queries.sessions} ORDER BY session.start_time DESC,session.id LIMIT 5001`);
+  const supervision=await database.execute<{assigned_staff_id:string;legacy_ownership:boolean;start:Date;end:Date}>(sql`${queries.supervision} ORDER BY member.assigned_at DESC LIMIT 5001`);
+  const recorded=queries.recorded ? await database.execute<{start:Date;end:Date}>(sql`${queries.recorded} ORDER BY tenure.window_start DESC LIMIT 5001`) : { rows: [] };
   if(sessions.rows.length>5000||supervision.rows.length>5000||recorded.rows.length>5000)throw new ClasspilotStudentDataUnavailableError();
   const coverage=supervision.rows.map(row=>({start:new Date(row.start),end:new Date(row.end)}));
   const ownCoverage=[

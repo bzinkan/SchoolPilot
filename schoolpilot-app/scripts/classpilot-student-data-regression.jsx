@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import '../src/index.css';
 import StudentDataDialog from '../src/products/classpilot/components/StudentDataDialog';
+import { AuthProvider } from '../src/contexts/AuthContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +44,8 @@ function StudentDataRegressionHarness() {
 
 createRoot(document.getElementById('root')).render(
   <QueryClientProvider client={queryClient}>
-    <StudentDataRegressionHarness />
+    <AuthProvider>
+      <StudentDataRegressionHarness />
+    </AuthProvider>
   </QueryClientProvider>,
 );

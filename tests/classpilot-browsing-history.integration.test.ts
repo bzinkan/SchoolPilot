@@ -1,18 +1,37 @@
 import { before,after,describe,it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import pg from "pg";
+import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
 process.env.REDIS_URL="";
 const schoolId=randomUUID(),otherSchoolId=randomUUID(),studentId=randomUUID(),teacherId=randomUUID(),otherTeacherId=randomUUID(),groupId=randomUUID(),sessionId=randomUUID(),contextId=randomUUID();
 const now=new Date("2026-09-01T18:00:00Z");
 let pool:import("pg").Pool, database:typeof import("../src/db.js").default;
 let tenant:typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
 let history:typeof import("../src/services/classpilotBrowsingHistory.js");
+let lookup:typeof import("../src/services/classpilotBrowsingHistoryLookup.js");
 const scoped=<T>(fn:()=>Promise<T>)=>tenant({schoolId},fn);
 const request={schoolId,studentId,actorId:teacherId,role:"admin" as const,startDate:"2026-09-01",endDate:"2026-09-01",now};
 before(async()=>{
   assert.ok(["localhost","127.0.0.1","::1"].includes(new URL(process.env.DATABASE_URL||"").hostname),"History integration tests require local fixtures.");
   const module=await import("../src/db.js");pool=module.pool;database=module.default;
   ({runWithTenantContext:tenant}=await import("../src/middleware/tenantContext.js"));history=await import("../src/services/classpilotBrowsingHistory.js");
+  lookup=await import("../src/services/classpilotBrowsingHistoryLookup.js");
+  // Drizzle-only CI omits these migration-owned tables. Install the exact
+  // reporting contract before fixtures and cleanup, independently of test order.
+  const connectionString = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
+  assert.ok(connectionString);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(connectionString).hostname));
+  const fixture = new pg.Client({ connectionString });
+  await fixture.connect();
+  try {
+    if (!(await fixture.query("SELECT to_regclass('public.classpilot_supervision_report_segments') AS table_name")).rows[0].table_name) {
+      await fixture.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
+      const role = (await pool.query("SELECT current_user AS role")).rows[0].role;
+      assert.match(role, /^[a-zA-Z_][a-zA-Z0-9_]*$/);
+      await fixture.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON classpilot_supervision_report_segments,classpilot_supervision_student_reports,classpilot_supervision_summary_deliveries TO "${role}"`);
+    }
+  } finally { await fixture.end(); }
   await pool.query("INSERT INTO schools(id,name,school_timezone) VALUES($1,'History fixture','America/New_York'),($2,'Other history fixture','America/New_York')",[schoolId,otherSchoolId]);
   await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'History','Teacher'),($3,$4,'Coverage','Teacher')",[teacherId,`${teacherId}@example.edu`,otherTeacherId,`${otherTeacherId}@example.edu`]);
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active'),($1,$3,'teacher','active')",[schoolId,teacherId,otherTeacherId]);
@@ -30,8 +49,113 @@ before(async()=>{
   });
 });
 after(async()=>{
-  if(!pool)return;await tenant({isSuper:true},async()=>{const {sql}=await import("drizzle-orm");for(const table of ["heartbeats","daily_usage","classpilot_supervision_students","classpilot_supervision_contexts","classpilot_session_usage","classpilot_session_staff","classpilot_session_students","classpilot_session_reports","teaching_sessions","groups","students","settings"])await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);});
+  if(!pool)return;await tenant({isSuper:true},async()=>{const {sql}=await import("drizzle-orm");await database.execute(sql`DELETE FROM group_students WHERE group_id IN(SELECT id FROM groups WHERE school_id=${schoolId})`);for(const table of ["heartbeats","daily_usage","classpilot_supervision_student_reports","classpilot_supervision_report_segments","classpilot_supervision_students","classpilot_supervision_contexts","classpilot_session_usage","classpilot_session_staff","classpilot_session_students","classpilot_session_reports","teaching_sessions","groups","students","settings"])await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);await database.execute(sql`DELETE FROM students WHERE school_id=${otherSchoolId}`);});
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1",[schoolId]);await pool.query("DELETE FROM users WHERE id IN($1,$2)",[teacherId,otherTeacherId]);await pool.query("DELETE FROM schools WHERE id IN($1,$2)",[schoolId,otherSchoolId]);const {sessionPool}=await import("../src/db.js");await Promise.all([pool.end(),sessionPool.end()]);
+});
+
+describe("Offline student discovery for browsing history", () => {
+  const ids = {
+    inactive: randomUUID(), currentOnly: randomUUID(), unattended: randomUUID(),
+    historical: randomUUID(), delegated: randomUUID(), ownSupervision: randomUUID(),
+    expired: randomUUID(), foreign: randomUUID(), tenureStudent: randomUUID(),
+    ownGroup: randomUUID(), unattendedSession: randomUUID(), expiredSession: randomUUID(),
+    delegatedContext: randomUUID(), ownContext: randomUUID(), tenureContext: randomUUID(), segment: randomUUID(),
+  };
+  const weekend = new Date("2026-09-05T18:00:00Z");
+  const searchRequest = { schoolId, actorId: teacherId, role: "teacher" as const, now: weekend, search: "Lookup" };
+
+  before(async () => {
+    const { sql } = await import("drizzle-orm");
+    await scoped(async () => {
+      for (const [key, label] of Object.entries({ inactive: "Inactive", currentOnly: "Current only", unattended: "Unattended", historical: "Historical", delegated: "Delegated", ownSupervision: "Supervision", expired: "Expired", tenureStudent: "Tenure" })) {
+        const id = ids[key as keyof typeof ids];
+        await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,email,status) VALUES(${id},${schoolId},'Lookup',${label},${`${id}@lookup.example.edu`},${key === "inactive" || key === "historical" ? "inactive" : "active"})`);
+      }
+      await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${ids.ownGroup},${schoolId},${teacherId},'Current assignments do not authorize history','admin_class','active')`);
+      await database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.ownGroup},${ids.currentOnly})`);
+      for (const id of [ids.historical, ids.delegated]) {
+        await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${id},'2026-09-01 13:00:00Z')`);
+      }
+      for (const [id, student, date, mode] of [
+        [ids.unattendedSession, ids.unattended, "2026-09-01", "scheduled_report"],
+        [ids.expiredSession, ids.expired, "2026-07-01", "live"],
+      ]) {
+        await database.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,end_time,roster_snapshot_completed_at) VALUES(${id},${schoolId},${ids.ownGroup},${teacherId},${mode},${date + " 13:00:00"}::timestamp,${date + " 14:00:00"}::timestamp,${date + " 13:00:00Z"}::timestamptz)`);
+        await database.execute(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role,captured_at) VALUES(${schoolId},${id},${teacherId},'primary',${date + " 13:00:00Z"}::timestamptz)`);
+        await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${id},${ids.ownGroup},${student},${date + " 13:00:00Z"}::timestamptz)`);
+      }
+      for (const [id, student, staff] of [
+        [ids.delegatedContext, ids.delegated, otherTeacherId],
+        [ids.ownContext, ids.ownSupervision, teacherId],
+        [ids.tenureContext, ids.tenureStudent, otherTeacherId],
+      ]) {
+        await database.execute(sql`INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,status,assigned_staff_id,created_by,starts_at,ends_at,ended_at) VALUES(${id},${schoolId},'coverage','Lookup coverage','ended',${staff},${staff},'2026-09-01 13:00:00','2026-09-01 14:00:00','2026-09-01 14:00:00')`);
+        await database.execute(sql`INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,assigned_at,released_at) VALUES(${schoolId},${id},${student},${staff},'2026-09-01 13:00:00','2026-09-01 14:00:00')`);
+      }
+    });
+    await tenant({ schoolId: otherSchoolId }, () => database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name) VALUES(${ids.foreign},${otherSchoolId},'Lookup','Foreign')`));
+  });
+
+  it("finds inactive/offline school students with bounded stable pagination and literal name/email search", async () => {
+    let cursor: string | null = null;
+    const seen: string[] = [];
+    do {
+      const page = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, role: "admin", limit: 2, ...(cursor ? { cursor } : {}) }));
+      seen.push(...page.students.map(student => student.studentId));
+      assert(page.students.every(student => Object.keys(student).sort().join(",") === "email,name,studentId"));
+      cursor = page.nextCursor;
+      assert(seen.length < 20);
+    } while (cursor);
+    assert.equal(seen.length, 8);
+    assert.equal(new Set(seen).size, 8);
+    assert(seen.includes(ids.inactive));
+    assert(!seen.includes(ids.foreign));
+    const byEmail = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, role: "school_admin", search: ids.inactive.toUpperCase() + "@lookup.example.edu" }));
+    assert.deepEqual(byEmail.students.map(student => student.studentId), [ids.inactive]);
+    const literal = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, role: "admin", search: "%" }));
+    assert.deepEqual(literal.students, []);
+  });
+
+  it("uses retained frozen staff and own supervision while excluding current-only, unattended and fully delegated students", async () => {
+    const page = await scoped(() => lookup.findStudentBrowsingHistory(searchRequest));
+    assert.deepEqual(new Set(page.students.map(student => student.studentId)), new Set([ids.historical, ids.ownSupervision]));
+    const first = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, limit: 1 }));
+    assert(first.nextCursor);
+    await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, actorId: otherTeacherId, cursor: first.nextCursor })), { code: "HISTORY_CURSOR_INVALID" });
+    const { sql } = await import("drizzle-orm");
+    try {
+      await scoped(() => database.execute(sql`UPDATE settings SET retention_hours='24' WHERE school_id=${schoolId}`));
+      const shortened = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, cursor: first.nextCursor }));
+      assert.deepEqual(shortened.students, [], "Every next page reapplies current retention");
+    } finally {
+      await scoped(() => database.execute(sql`UPDATE settings SET retention_hours='720' WHERE school_id=${schoolId}`));
+    }
+    const foreign = await tenant({ schoolId: otherSchoolId }, () => lookup.findStudentBrowsingHistory({ ...searchRequest, schoolId: otherSchoolId }));
+    assert.deepEqual(foreign.students, []);
+  });
+
+  it("keeps recorded staff tenures and expired tombstones authoritative after supervision reassignment", async () => {
+    const previous = process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM;
+    const { sql } = await import("drizzle-orm");
+    process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM = "2026-08-01T00:00:00Z";
+    try {
+      await scoped(async () => {
+        await database.execute(sql`INSERT INTO classpilot_supervision_report_segments(id,school_id,context_id,staff_id,context_type,window_start,window_end,state,timezone,settle_at,expires_at) VALUES(${ids.segment},${schoolId},${ids.tenureContext},${teacherId},'coverage','2026-09-01 13:00:00Z','2026-09-01 13:30:00Z','ready','America/New_York','2026-09-01 13:30:30Z','2026-10-01 13:30:00Z')`);
+        await database.execute(sql`INSERT INTO classpilot_supervision_student_reports(school_id,report_id,student_id,student_name_snapshot,participation_intervals) VALUES(${schoolId},${ids.segment},${ids.tenureStudent},'Lookup Tenure',${JSON.stringify([{ assignmentId: "tenure-assignment", start: "2026-09-01T13:10:00Z", end: "2026-09-01T13:20:00Z" }])}::jsonb)`);
+      });
+      const own = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, search: "Lookup Tenure" }));
+      assert.deepEqual(own.students.map(student => student.studentId), [ids.tenureStudent]);
+      const replacement = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, search: "Lookup Tenure", actorId: otherTeacherId }));
+      assert.deepEqual(replacement.students, []);
+      await scoped(() => database.execute(sql`UPDATE classpilot_supervision_report_segments SET state='expired',detail_expired_at=${weekend.toISOString()}::timestamptz WHERE id=${ids.segment}`));
+      await scoped(() => database.execute(sql`UPDATE classpilot_supervision_contexts SET assigned_staff_id=${teacherId} WHERE id=${ids.tenureContext}`));
+      const expired = await scoped(() => lookup.findStudentBrowsingHistory({ ...searchRequest, search: "Lookup Tenure" }));
+      assert.deepEqual(expired.students, [], "A retained tombstone prevents falling back to the current owner");
+    } finally {
+      if (previous === undefined) delete process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM;
+      else process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM = previous;
+    }
+  });
 });
 describe("Student browsing history authorization and pagination",()=>{
   it("paginates stable microsecond timestamps without device IDs or invented tail durations",async()=>{

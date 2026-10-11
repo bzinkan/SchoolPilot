@@ -106,7 +106,12 @@ try {
   await page.getByText('Older raw observation', { exact: true }).waitFor();
   assert.equal(await historyRows.count(), 4);
   assert.ok(historyRequests().some(item => item.view === 'all' && item.cursor === 'next-all-cursor'));
+  const pageRequestsBeforeReturn = historyRequests().filter(item => item.view === 'pages' && item.cursor === null).length;
   await includeUnavailable.uncheck();
+  await page.getByText('Current page', { exact: true }).waitFor();
+  assert.equal(await historyRows.count(), 1, 'Returning to a view starts fresh authorization and pagination');
+  assert.ok(historyRequests().filter(item => item.view === 'pages' && item.cursor === null).length > pageRequestsBeforeReturn);
+  await loadOlder.click();
   await page.getByText('Older page', { exact: true }).waitFor();
   assert.equal(await historyRows.count(), 2);
   assert.equal(await blankRows.count(), 0);

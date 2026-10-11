@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, historyAggregateCovered, historyScopeHash, mergeHistoryWindows, readHistoryCursor, resolveHistoryDates, resolveHistoryView, subtractHistoryWindows } from "../src/services/classpilotBrowsingHistoryModel.js";
+import { encodeHistoryLookupCursor, resolveHistoryLookup } from "../src/services/classpilotBrowsingHistoryLookupModel.js";
 const time=(value:string)=>new Date(`2026-09-01T${value}:00.000Z`);
 test("history view defaults to the compatible raw list and rejects malformed filters",()=>{
   assert.equal(resolveHistoryView(undefined),"all");
@@ -50,4 +51,26 @@ test("default-date cursors preserve their original day after midnight and keep t
   const read=readHistoryCursor(cursor,later)!;
   const dates=resolveHistoryDates({startDate:read.startDate,endDate:read.endDate,timeZone:"America/New_York",now:later});
   assert.equal(dates.startDate,"2026-09-01");assert.equal(read.anchor,anchor.toISOString());assert.equal(Math.min(dates.end.getTime(),Date.parse(read.anchor)),anchor.getTime());
+});
+
+test("student history lookup bounds searches and binds cursors to school, actor, role and search", () => {
+  const input = { schoolId: "school", actorId: "teacher", role: "teacher", search: "  History STUDENT  " };
+  const query = resolveHistoryLookup(input);
+  assert.equal(query.search, "history student");
+  assert.equal(query.limit, 50);
+  assert.equal(resolveHistoryLookup({ ...input, limit: 1000 }).limit, 100);
+  const cursor = encodeHistoryLookupCursor(query.scope, "history student", "student");
+  assert.equal(resolveHistoryLookup({ ...input, cursor }).cursor?.id, "student");
+  for (const changed of [{ schoolId: "other" }, { actorId: "other" }, { role: "admin" }, { search: "other" }]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, ...changed, cursor }), { code: "HISTORY_CURSOR_INVALID" });
+  }
+  for (const search of [["name"], "x".repeat(151), "name\u0000"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, search }), { code: "HISTORY_SEARCH_INVALID" });
+  }
+  for (const limit of [0, -1, 1.5, [2], "bad"]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, limit }), { code: "HISTORY_LIMIT_INVALID" });
+  }
+  for (const malformed of ["invalid!", "e30", [], "x".repeat(4097)]) {
+    assert.throws(() => resolveHistoryLookup({ ...input, cursor: malformed }), { code: "HISTORY_CURSOR_INVALID" });
+  }
 });
