@@ -11,9 +11,11 @@ import { WebSocket, type WebSocketServer } from "ws";
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "../src/db/classpilotScheduledClassroomMigration.js";
 import { CLASSPILOT_TOOLS_SQL } from "../src/db/classpilotToolsMigration.js";
 
-// Mirrors production: no Redis in this lane, Class Tools at phase 0 (legacy
-// timer payloads carry no timerId and no deadline), replay lane and deadline
-// override unset.
+// No Redis in this lane and Class Tools at phase 0 (legacy timer payloads carry
+// no timerId and no deadline), as in production. The protocol and the safe-poll
+// capability are on for the whole file so the lane can be exercised, and each
+// case turns the replay gate on in beforeEach. The production posture, every
+// lane control unset, is asserted through withLaneOff below.
 process.env.REDIS_URL = "";
 delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
 delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
@@ -205,6 +207,22 @@ function dispatch(
   }));
 }
 
+/** Run with every lane control unset, as production is deployed, then restore the suite's posture. */
+async function withLaneOff<T>(run: () => Promise<T>): Promise<T> {
+  const names = ["CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH", "CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1"] as const;
+  const previous = names.map((name) => process.env[name]);
+  for (const name of names) delete process.env[name];
+  try {
+    return await run();
+  } finally {
+    names.forEach((name, index) => {
+      const value = previous[index];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    });
+  }
+}
+
 /** Dispatch and prove the deadline on the application clock that wrote it. */
 async function dispatchWithDeadline(
   ttlMs: number,
@@ -353,6 +371,60 @@ describe("transient command replay on student WebSocket auth-success", () => {
   let pendingPoll: Dispatched;
   let openTab: Dispatched;
   let liveFrame: Frame;
+
+  it("with every lane control unset a timer and a poll write no session_settings row and carry no order, so the teacher's next FAB toggle is accepted", async () => {
+    // Production posture at deploy. Before this lane a phase-0 timer or poll
+    // never touched session_settings. Creating the row during dispatch raises
+    // the class's FAB revision from "no row" (0) to 1 behind the dashboard's
+    // back, and the next hand-raising, messaging or pause toggle is refused.
+    const settingsRows = async () => (await admin.query(
+      "SELECT lifecycle_revision, tools_revision FROM session_settings WHERE school_id = $1 AND session_id = $2",
+      [schoolId, teachingSessionId],
+    )).rows as Array<{ lifecycle_revision: number; tools_revision: number }>;
+    assert.deepEqual(await settingsRows(), [], "a fresh class has no settings row");
+
+    await withLaneOff(async () => {
+      const live = await connect(students[1]!);
+      // Every one-shot deadline stays at 15 s, proven on the clock that wrote it.
+      const timerStart = await dispatchWithDeadline(15_000, "timer", { action: "start", seconds: 60, message: "Warm-up" });
+      const timerStop = await dispatchWithDeadline(15_000, "timer", { action: "stop" });
+      const pollStart = await dispatchWithDeadline(15_000, "poll", { action: "start", question: "Warm-up?", options: ["Yes", "No"] });
+      const pollClose = await dispatchWithDeadline(15_000, "poll", { action: "close", pollId: payloadOf(pollStart).pollId });
+      const dispatched = [timerStart, timerStop, pollStart, pollClose];
+      await settle(live);
+
+      // The dashboard loaded this class before any command and holds FAB
+      // revision 0. Its next toggle must be accepted on the first click.
+      const rowsAfterDispatch = await settingsRows();
+      let toggleRefusal: string | null = null;
+      try {
+        await inSchool(() => storage.upsertSessionSettings(
+          schoolId, teachingSessionId, { chatPaused: true }, { expectedRevision: 0, actorId: teacherId },
+        ));
+      } catch (error) {
+        toggleRefusal = String((error as { code?: unknown }).code ?? error);
+      }
+      assert.deepEqual(
+        { rowsAfterDispatch, toggleRefusal },
+        { rowsAfterDispatch: [], toggleRefusal: null },
+        "dispatch must leave session_settings untouched and the FAB toggle must not be refused as stale",
+      );
+
+      for (const entry of dispatched) {
+        assert.equal(payloadOf(entry).transientOrder, undefined, "no order is stored while the lane is off");
+      }
+      const frames = remoteControl(live);
+      assert.equal(frames.length, dispatched.length, JSON.stringify(frames));
+      for (const frame of frames) {
+        assert.equal("transientOrder" in frame.command.data, false, "no order reaches a device while the lane is off");
+      }
+
+      await closeClients();
+      for (const entry of dispatched) await markReceived(entry.command.id);
+    });
+    // Leave the class as the following cases expect to find it.
+    await admin.query("DELETE FROM session_settings WHERE school_id = $1 AND session_id = $2", [schoolId, teachingSessionId]);
+  });
 
   it("gives timer/poll a 60 s deadline where the replay is enabled, keeps 15 s for open-tab, and replays nothing while the flag is off", async () => {
     // This case owns its posture: the replay is off, except around the one
@@ -717,6 +789,40 @@ describe("transient command replay on student WebSocket auth-success", () => {
     assert.ok(!line.includes(schoolId) && !line.includes(students[0]!.studentId), "no identifiers in the warning");
   });
 
+  it("a newer intent dispatched where the lane was off still fences an older ordered frame, and an older one does not", async () => {
+    // During a pilot rollout some API tasks have the lane on and some do not.
+    // A command from a lane-off task carries no order and runs no supersede.
+    const before = await withLaneOff(() => dispatch("timer", { action: "start", seconds: 30 }));
+    assert.equal(payloadOf(before).transientOrder, undefined);
+    await markReceived(before.command.id);
+
+    const start = await dispatch("timer", { action: "start", seconds: 300 });
+    assert.ok(Number.isSafeInteger(payloadOf(start).transientOrder));
+    assert.equal((await pendingFor(students[0]!))[0]?.command.id, start.command.id,
+      "an earlier unordered intent does not fence a later ordered frame");
+
+    // A replacement timer for one student, issued through a lane-off task. A
+    // stop would not do here: it always addresses the frozen audience of the
+    // latest start, so it could not show that another student is unaffected.
+    const replacement = await withLaneOff(() => dispatch("timer", { action: "start", seconds: 45 }, [students[0]!]));
+    assert.equal(payloadOf(replacement).transientOrder, undefined);
+    assert.equal((await targetRow(start.command.id, students[0]!)).status, "sent", "no supersede ran on the lane-off task");
+
+    assert.deepEqual(await pendingFor(students[0]!), [],
+      "the later unordered replacement fences the start, and is itself never replayed");
+    assert.equal((await pendingFor(students[1]!))[0]?.command.id, start.command.id,
+      "a replacement that does not address this student leaves the start replayable");
+
+    resetCounters();
+    assert.deepEqual(remoteControl(await connect(students[0]!)), [], "the replaced timer does not reach the device");
+    assert.equal(counters().transientCommandReplayedOnAuth, undefined);
+    await closeClients();
+    await markReceived(start.command.id);
+    await markReceived(replacement.command.id);
+  });
+
+  // This case moves creation times and corrupts order metadata on purpose, and
+  // restores the creation times before it ends.
   it("a failed supersede update cannot resurrect an older timer after a newer ACK, and order ignores clocks and subset audiences", async () => {
     const old = await dispatch("timer", { action: "start", seconds: 300 });
     const functionName = `replay_supersede_${randomUUID().replaceAll("-", "")}`;
@@ -751,6 +857,11 @@ describe("transient command replay on student WebSocket auth-success", () => {
     await admin.query("UPDATE classpilot_commands SET command_payload=command_payload||'{\"transientOrder\":\"malformed\"}'::jsonb WHERE id=$1", [old.command.id]);
     assert.deepEqual(await pendingFor(students[1]!), [], "malformed historical metadata cannot abort the query or establish order");
     await markReceived(old.command.id);
+    // Put the real creation times back. Left an hour ahead and without a valid
+    // order, `old` would read as a later intent without an order and fence
+    // every timer replay for this class in any case that follows.
+    await admin.query("UPDATE classpilot_commands SET created_at=$1 WHERE id=$2", [old.command.createdAt, old.command.id]);
+    await admin.query("UPDATE classpilot_commands SET created_at=$1 WHERE id=$2", [replacement.command.createdAt, replacement.command.id]);
   });
 
   it("poll replay requires the successor for starts and closes, and rejects answered or stale canonical resources", async () => {
