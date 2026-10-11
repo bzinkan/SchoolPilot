@@ -830,7 +830,7 @@ Student Data dialog (accessible from dashboard toolbar) shows:
 - Time period filter (Today/Week/Month/Year) using school timezone
 - Class view: all students sorted by last name with browsing time and top domains
 - Click student for per-student domain breakdown
-- Browsing history tab: independent student name/email lookup and school-local date range, available with no active class or online student. Teacher discovery and detailed reads retain frozen historical teaching/supervision authority; administrators see school records. See `docs/CLASSPILOT_BROWSING_HISTORY.md`.
+- Browsing history tab: independent student name/email lookup, grade/class filters and school-local date range, available with no active class or online student. Teachers filter by current official primary/co-teacher assignments; administrators filter school grades/classes. Filters only narrow discovery; unfiltered lookup and detailed reads retain frozen historical teaching/supervision authority. See `docs/CLASSPILOT_BROWSING_HISTORY.md`.
 - Export CSV button for current view
 - Backend: `/student-analytics/:studentId` supports `startDate`/`endDate` query params
 

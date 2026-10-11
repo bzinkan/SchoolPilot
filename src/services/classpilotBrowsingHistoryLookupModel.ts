@@ -2,9 +2,21 @@ import { historyError, historyScopeHash } from "./classpilotBrowsingHistoryModel
 
 type LookupCursor = { v: 1; scope: string; name: string; id: string };
 
+function lookupFilter(value: unknown, maximumLength: number): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== "string") {
+    throw historyError("HISTORY_FILTER_INVALID", "Choose a grade or class from the available filters.");
+  }
+  const filter = value.trim();
+  if (filter.length > maximumLength || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw historyError("HISTORY_FILTER_INVALID", "Choose a grade or class from the available filters.");
+  }
+  return filter || null;
+}
+
 export function resolveHistoryLookup(input: {
   schoolId: string; actorId: string; role: string;
-  search?: unknown; limit?: unknown; cursor?: unknown;
+  search?: unknown; limit?: unknown; cursor?: unknown; classId?: unknown; grade?: unknown;
 }) {
   if (input.search !== undefined && typeof input.search !== "string") {
     throw historyError("HISTORY_SEARCH_INVALID", "Search by a student name or email.");
@@ -21,7 +33,12 @@ export function resolveHistoryLookup(input: {
     throw historyError("HISTORY_LIMIT_INVALID", "History search page size must be a positive integer.");
   }
   const limit = Math.min(100, requested);
-  const scope = historyScopeHash(["history-student-lookup-v1", input.schoolId, input.actorId, input.role, search]);
+  const classId = lookupFilter(input.classId, 256);
+  const grade = lookupFilter(input.grade, 100);
+  // Keep already-open unfiltered pages compatible during rolling deployments.
+  const scope = historyScopeHash(classId || grade
+    ? ["history-student-lookup-v2", input.schoolId, input.actorId, input.role, search, classId, grade]
+    : ["history-student-lookup-v1", input.schoolId, input.actorId, input.role, search]);
   let cursor: LookupCursor | null = null;
   if (input.cursor !== undefined) {
     try {
@@ -35,7 +52,7 @@ export function resolveHistoryLookup(input: {
       throw historyError("HISTORY_CURSOR_INVALID", "This student search cursor is invalid or belongs to another search.");
     }
   }
-  return { search, limit, scope, cursor };
+  return { search, limit, scope, cursor, classId, grade };
 }
 
 export function encodeHistoryLookupCursor(scope: string, name: string, id: string) {
