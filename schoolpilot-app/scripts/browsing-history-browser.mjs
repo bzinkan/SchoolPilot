@@ -12,6 +12,18 @@ const observation = (id, title, url = 'https://classroom.google.com') => ({
   id, timestamp: '2026-09-01T13:00:00.123456Z', activeTabUrl: url, activeTabTitle: title,
   aiCategory: 'educational', contentCategory: null, estimatedSeconds: 0,
 });
+const visit = (id, title, url, start, end, observationCount, estimatedSeconds) => ({
+  ...observation(id, title, url), timestamp: end, startedAt: start, endedAt: end,
+  observationCount, estimatedSeconds,
+});
+const continuousVisit = (id, title) => visit(id, title, 'https://classroom.google.com',
+  '2026-09-01T13:00:00Z', '2026-09-01T13:05:00.004Z', 31, 300.004);
+const separateVisits = [
+  visit('after-gap', 'Signing in', 'https://clever.com', '2026-08-25T13:08:00Z', '2026-08-25T13:08:20Z', 3, 20),
+  visit('returned', 'Signing in', 'https://clever.com', '2026-08-25T13:05:00Z', '2026-08-25T13:05:30Z', 3, 30),
+  { ...visit('different-page', 'Classroom assignment', 'https://classroom.google.com/c/assignment', '2026-08-25T13:04:00Z', '2026-08-25T13:05:00Z', 6, 60), aiCategory: null, hasOffTaskObservation: true },
+  visit('first-visit', 'Signing in', 'https://clever.com', '2026-08-25T13:00:00Z', '2026-08-25T13:04:00Z', 24, 240),
+];
 const blankObservations = [
   observation('blank-first', 'Page details unavailable', null),
   observation('blank-second', 'Page details unavailable', null),
@@ -31,12 +43,13 @@ try {
     const start = url.searchParams.get('startDate') || '2026-09-01';
     const cursor = url.searchParams.get('cursor');
     const view = url.searchParams.get('view');
+    const grouping = url.searchParams.get('grouping');
     const isDomains = url.pathname.endsWith('/domains');
-    requests.push({ start, cursor, view, isDomains });
+    requests.push({ start, cursor, view, grouping, isDomains });
     const meta = { studentId: 'student-a', timeZone: 'America/New_York', startDate: start,
       endDate: url.searchParams.get('endDate') || start, today: '2026-09-01', retentionDays: 30,
       scope: 'supervised_intervals', partiallyExpired: false };
-    // Model the API's distinct views; SQL filtering and authority are exercised by backend tests.
+    // Model complete server-grouped visits; adjacency, gaps and cursor boundaries are covered by backend tests.
     // An omitted view deliberately returns the legacy raw list so the UI must request pages.
     const pagesOnly = view === 'pages';
     const delayed = !isDomains && pagesOnly && ['2026-08-21', '2026-08-20'].includes(start);
@@ -47,6 +60,8 @@ try {
       body = { ...meta, state: pagesOnly ? 'empty' : 'available', entries: pagesOnly ? [] : blankObservations, nextCursor: null };
     } else if (start === '2026-08-26') {
       body = { ...meta, state: 'empty', entries: [], nextCursor: null };
+    } else if (start === '2026-08-25') {
+      body = { ...meta, state: 'available', entries: separateVisits, nextCursor: null };
     } else if (start === '2026-08-01') {
       body = { ...meta, state: 'expired', entries: [], nextCursor: null };
     } else if (start === '2026-08-27') {
@@ -64,9 +79,9 @@ try {
     } else {
       if (delayed) await delay(1000);
       const entries = pagesOnly
-        ? [observation(cursor ? 'older-page' : 'current-page', delayed ? 'Stale page' : cursor ? 'Older page' : 'Current page')]
+        ? [cursor ? observation('older-page', 'Older page') : continuousVisit('current-page', delayed ? 'Stale page' : 'Current page')]
         : cursor ? [observation('older-raw', 'Older raw observation')]
-          : [...blankObservations, observation('current-raw', 'Current raw observation')];
+          : [...blankObservations, continuousVisit('current-raw', 'Current raw observation')];
       body = { ...meta, state: 'available', entries, nextCursor: cursor ? null : pagesOnly ? 'next-pages-cursor' : 'next-all-cursor' };
     }
     try { await route.fulfill({ status, json: body }); }
@@ -78,7 +93,7 @@ try {
   const historyRows = page.getByTestId('history-observation');
   const blankRows = page.getByText('No page URL recorded', { exact: true });
   const startDate = page.getByLabel('History start date');
-  const loadOlder = page.getByRole('button', { name: 'Load older observations' });
+  const loadOlder = page.getByRole('button', { name: 'Load older visits' });
   const historyRequests = () => requests.filter(item => !item.isDomains);
   const domainRequests = () => requests.filter(item => item.isDomains);
 
@@ -88,7 +103,16 @@ try {
   assert.equal(await startDate.inputValue(), '2026-09-01');
   assert.match(await page.getByTestId('student-browsing-history').innerText(), /America\/New_York/);
   assert.match(await page.getByTestId('student-browsing-history').innerText(), /Only your supervised intervals are included/);
-  assert.deepEqual(historyRequests().map(({ view, cursor }) => ({ view, cursor })), [{ view: 'pages', cursor: null }]);
+  assert.deepEqual(historyRequests().map(({ view, cursor, grouping }) => ({ view, cursor, grouping })), [{ view: 'pages', cursor: null, grouping: 'visits' }]);
+  assert.equal(await historyRows.count(), 1, 'Thirty-one same-page observations appear as one complete visit');
+  const currentRange = await historyRows.first().getByTestId('history-visit-range').innerText();
+  assert.match(currentRange, /Sep 1/);
+  assert.match(currentRange, /9:00:00/);
+  assert.match(currentRange, /9:05:00/);
+  assert.match(await historyRows.first().innerText(), /~5m/);
+  assert.match(await historyRows.first().innerText(), /31 observations/);
+  assert.doesNotMatch(await historyRows.first().innerText(), /300\.004|10\.004/);
+  await page.getByText('Showing 1 visit', { exact: true }).waitFor();
   await loadOlder.click();
   await page.getByText('Older page', { exact: true }).waitFor();
   assert.equal(await historyRows.count(), 2);
@@ -117,7 +141,19 @@ try {
   assert.equal(await blankRows.count(), 0);
   assert.equal(await page.getByText('Older raw observation', { exact: true }).count(), 0);
   assert.equal(domainRequests().length, domainsBeforeToggle, 'View changes do not refetch or change domain summaries');
-  assert.ok(domainRequests().every(item => item.view === null && item.cursor === null));
+  assert.ok(domainRequests().every(item => item.view === null && item.cursor === null && item.grouping === null));
+
+  // The UI preserves server visit boundaries even when separated visits share the exact same URL.
+  await startDate.fill('2026-08-25');
+  await page.getByText('Classroom assignment', { exact: true }).waitFor();
+  assert.equal(await historyRows.count(), 4);
+  assert.equal(await page.getByText('Signing in', { exact: true }).count(), 3, 'Returning visits and connection gaps remain separate cards');
+  assert.match(await historyRows.nth(0).innerText(), /~20s/);
+  assert.match(await historyRows.nth(1).innerText(), /~30s/);
+  assert.match(await historyRows.nth(3).innerText(), /~4m/);
+  await page.getByText('Off-task observed', { exact: true }).waitFor();
+  await page.getByText('Showing 4 visits · End of retained results', { exact: true }).waitFor();
+  assert.equal(await loadOlder.count(), 0);
 
   // A date containing only blank observations is empty in pages view, with an explicit way to inspect activity.
   await startDate.fill('2026-08-31');
@@ -194,8 +230,9 @@ try {
   assert.equal(await historyRows.count(), 4);
   assert.equal(await page.getByText('Unknown', { exact: true }).count(), 0);
   assert.equal(await page.getByText('Off-task', { exact: true }).count(), 0, 'Missing-page fallback labels do not change classification');
+  assert.ok(historyRequests().every(item => item.grouping === 'visits'), 'Every history view and cursor explicitly requests server-grouped visits');
   assert.deepEqual(errors, []);
-  console.log('Browsing history browser: page-only default, raw observation access, view-specific pagination/cache, blank-only dates, unchanged domains, timezone/authority/error states, stale date/view request abortion, and descriptive page labels passed.');
+  console.log('Browsing history browser: complete grouped visit ranges/durations/counts, separate return/gap visits, mixed off-task evidence, page-only default, individual blank observation access, view-specific pagination/cache, blank-only dates, unchanged domains, timezone/authority/error states, stale date/view request abortion, and descriptive page labels passed.');
 } finally {
   await browser.close();
 }

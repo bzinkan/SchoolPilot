@@ -7,12 +7,14 @@ import { classpilotSessionUsage, dailyUsage } from "../schema/classpilot.js";
 import { parseClasspilotRetentionDays } from "../util/classpilotRetention.js";
 import { addLocalDays, localDateStartUtc } from "../util/schoolTime.js";
 import { getClasspilotStudentHistoryAuthority, type ClasspilotStudentDataRole } from "./classpilotStudentData.js";
-import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, HISTORY_EMPTY_PAGE_TITLES, historyAggregateCovered, historyError, historyScopeHash, readHistoryCursor, resolveHistoryDates, resolveHistoryView, type HistoryWindow } from "./classpilotBrowsingHistoryModel.js";
+import { clipHistoryWindows, decodeHistoryCursor, encodeHistoryCursor, estimatedHistorySeconds, HISTORY_EMPTY_PAGE_TITLES, historyAggregateCovered, historyError, historyScopeHash, readHistoryCursor, resolveHistoryDates, resolveHistoryGrouping, resolveHistoryView, type HistoryWindow } from "./classpilotBrowsingHistoryModel.js";
 import { normalizeContentCategory } from "./classpilotContentCategories.js";
 
-export type BrowsingHistoryRequest={schoolId:string;studentId:string;actorId:string;role:ClasspilotStudentDataRole;startDate?:unknown;endDate?:unknown;limit?:unknown;cursor?:unknown;view?:unknown;now?:Date};
+export type BrowsingHistoryRequest={schoolId:string;studentId:string;actorId:string;role:ClasspilotStudentDataRole;startDate?:unknown;endDate?:unknown;limit?:unknown;cursor?:unknown;view?:unknown;grouping?:unknown;now?:Date};
+type BrowsingHistoryEntry={id:string;timestamp:string;activeTabUrl:string|null;activeTabTitle:string;aiCategory:string|null;contentCategory:string|null;teacherIntentSource:string|null;screenLocked:boolean;cameraActive:boolean;estimatedSeconds:number;startedAt?:string;endedAt?:string;observationCount?:number;hasOffTaskObservation?:boolean};
 async function historyContext(input:BrowsingHistoryRequest){
   const view=resolveHistoryView(input.view);
+  const grouping=resolveHistoryGrouping(input.grouping);
   const now=input.now||new Date();
   const [student]=await db.select({id:students.id}).from(students).where(and(eq(students.schoolId,input.schoolId),eq(students.id,input.studentId))).limit(1);
   if(!student)throw historyError("HISTORY_DENIED","This student's browsing history is not available to you.",404);
@@ -23,7 +25,7 @@ async function historyContext(input:BrowsingHistoryRequest){
   const dates=resolveHistoryDates({startDate:input.startDate??cursorDates?.startDate,endDate:input.endDate??cursorDates?.endDate,timeZone:school?.timeZone||"America/New_York",now});
   // Preserve existing all-observation cursors while binding filtered cursors to
   // their view. Switching views must restart pagination.
-  const scope=historyScopeHash([input.schoolId,input.studentId,input.actorId,input.role,dates.startDate,dates.endDate,...(view==="pages"?[view]:[])]);
+  const scope=historyScopeHash([input.schoolId,input.studentId,input.actorId,input.role,dates.startDate,dates.endDate,...(view==="pages"?[view]:[]),...(grouping==="visits"?[grouping]:[])]);
   const cursor=decodeHistoryCursor(input.cursor,scope,now);const anchor=cursor?new Date(cursor.anchor):now;
   const authority=input.role==="teacher"?await getClasspilotStudentHistoryAuthority({...input,now,retentionCutoff}):null;
   if(authority&&!authority.windows.length)throw historyError("HISTORY_DENIED","You can view browsing only during classes or supervision you actually taught.",403);
@@ -31,9 +33,77 @@ async function historyContext(input:BrowsingHistoryRequest){
   const start=new Date(Math.max(dates.start.getTime(),retentionCutoff.getTime()));
   const windows=clipHistoryWindows(authority?.windows||[{start,end:requestedEnd}],start,requestedEnd);
   if(authority&&!expired&&!windows.length)throw historyError("HISTORY_DENIED","You did not supervise this student during the selected dates.",403);
-  return {now,dates,scope,cursor,anchor,authority,windows,expired,retentionDays,retentionCutoff,view,meta:{studentId:input.studentId,timeZone:dates.timeZone,startDate:dates.startDate,endDate:dates.endDate,today:dates.today,retentionDays,retainedFrom:retentionCutoff.toISOString(),partiallyExpired:dates.start<retentionCutoff&&!expired,scope:input.role==="teacher"?"supervised_intervals":"school",asOf:anchor.toISOString(),view}};
+  return {now,dates,scope,cursor,anchor,authority,windows,expired,retentionDays,retentionCutoff,view,grouping,meta:{studentId:input.studentId,timeZone:dates.timeZone,startDate:dates.startDate,endDate:dates.endDate,today:dates.today,retentionDays,retainedFrom:retentionCutoff.toISOString(),partiallyExpired:dates.start<retentionCutoff&&!expired,scope:input.role==="teacher"?"supervised_intervals":"school",asOf:anchor.toISOString(),view,grouping}};
 }
 function windowValues(windows:HistoryWindow[]){return sql.join(windows.map(row=>sql`(${row.start.toISOString()}::timestamp,${row.end.toISOString()}::timestamp)`),sql`, `);}
+
+/** Group the authorized raw stream first: a hidden missing-page sample still ends a visit.
+ * The cursor seeks whole visits by their newest sample, never by a raw-row LIMIT.
+ */
+async function groupedHistory(input:BrowsingHistoryRequest,context:Awaited<ReturnType<typeof historyContext>>,limit:number){
+  const cursorPredicate=context.cursor?sql`AND (v.timestamp,v.id)<(${context.cursor.timestamp}::timestamp,${context.cursor.id})`:sql``;
+  const pagePredicate=context.view==="pages"?sql`AND v.page_key IS NOT NULL`:sql``;
+  const rows=await db.execute<{
+    id:string;timestamp:string;started_at:string;ended_at:string;observation_count:number;estimated_seconds:number;
+    active_tab_url:string|null;active_tab_title:string;ai_category:string|null;content_category:string|null;
+    teacher_intent_source:string|null;screen_locked:boolean;camera_active:boolean;has_off_task_observation:boolean;
+  }>(sql`
+    WITH authorized_windows(start_at,end_at) AS (VALUES ${windowValues(context.windows)}), observations AS (
+      SELECT h.id,h.device_id,h.timestamp,h.active_tab_url,h.active_tab_title,h.ai_category,h.content_category,
+        h.teacher_intent_source,h.screen_locked,h.camera_active,w.start_at AS authority_start,w.end_at AS authority_end,
+        ((h.timestamp AT TIME ZONE 'UTC') AT TIME ZONE ${context.dates.timeZone})::date AS local_day,
+        CASE WHEN h.active_tab_url ~ '[^[:space:]]' THEN 'url:'||regexp_replace(h.active_tab_url,'^[[:space:]]+|[[:space:]]+$','','g')
+          WHEN lower(regexp_replace(coalesce(h.active_tab_title,''),'^[[:space:]]+|[[:space:]]+$','','g')) NOT IN (${sql.join(HISTORY_EMPTY_PAGE_TITLES.map(title=>sql`${title}`),sql`,`)})
+          THEN 'title:'||regexp_replace(h.active_tab_title,'^[[:space:]]+|[[:space:]]+$','','g') END AS page_key
+      FROM heartbeats h JOIN authorized_windows w ON h.timestamp>=w.start_at AND h.timestamp<w.end_at
+      WHERE h.school_id=${input.schoolId} AND h.student_id=${input.studentId}
+        AND h.timestamp>=${context.windows[0]!.start.toISOString()}::timestamp AND h.timestamp<${context.windows.at(-1)!.end.toISOString()}::timestamp
+    ), sequenced AS (
+      SELECT *,lag(timestamp) OVER stream AS previous_at,lag(device_id) OVER stream AS previous_device,
+        lag(page_key) OVER stream AS previous_page,lag(authority_start) OVER stream AS previous_authority,
+        lag(local_day) OVER stream AS previous_day,lead(timestamp) OVER stream AS next_at,
+        lead(device_id) OVER stream AS next_device,lead(authority_start) OVER stream AS next_authority,
+        lead(local_day) OVER stream AS next_day
+      FROM observations WINDOW stream AS (ORDER BY timestamp,id)
+    ), measured AS (
+      SELECT *,CASE WHEN page_key IS NULL OR previous_at IS NULL OR previous_page IS DISTINCT FROM page_key
+          OR previous_device IS DISTINCT FROM device_id OR previous_authority IS DISTINCT FROM authority_start
+          OR previous_day IS DISTINCT FROM local_day OR timestamp>previous_at+interval '60 seconds' THEN 1 ELSE 0 END AS starts_visit,
+        CASE WHEN next_at>timestamp AND next_at<=timestamp+interval '60 seconds' AND next_at<authority_end
+          AND next_device=device_id AND next_authority=authority_start AND next_day=local_day
+          THEN extract(epoch FROM next_at-timestamp)::double precision ELSE 0 END AS estimated_seconds
+      FROM sequenced
+    ), numbered AS (
+      SELECT *,sum(starts_visit) OVER (ORDER BY timestamp,id ROWS UNBOUNDED PRECEDING) AS visit_number FROM measured
+    ), totals AS (
+      SELECT visit_number,min(timestamp) AS started_at,max(timestamp+estimated_seconds*interval '1 second') AS ended_at,
+        count(*)::integer AS observation_count,sum(estimated_seconds)::double precision AS estimated_seconds,
+        CASE WHEN count(ai_category)=count(*) AND count(DISTINCT ai_category)=1 THEN min(ai_category) END AS ai_category,
+        CASE WHEN count(content_category)=count(*) AND count(DISTINCT content_category)=1 THEN min(content_category) END AS content_category,
+        CASE WHEN count(teacher_intent_source)=count(*) AND count(DISTINCT teacher_intent_source)=1 THEN min(teacher_intent_source) END AS teacher_intent_source,
+        bool_and(coalesce(screen_locked,false)) AS screen_locked,bool_and(coalesce(camera_active,false)) AS camera_active,
+        bool_or(coalesce(ai_category IN ('non-educational','off_task'),false)) AS has_off_task_observation
+      FROM numbered GROUP BY visit_number
+    ), latest AS (
+      SELECT DISTINCT ON(visit_number) visit_number,id,timestamp,active_tab_url,active_tab_title,page_key
+      FROM numbered ORDER BY visit_number,timestamp DESC,id DESC
+    ), visits AS (
+      SELECT l.*,t.started_at,t.ended_at,t.observation_count,t.estimated_seconds,t.ai_category,t.content_category,
+        t.teacher_intent_source,t.screen_locked,t.camera_active,t.has_off_task_observation FROM latest l JOIN totals t USING(visit_number)
+    )
+    SELECT v.id,to_char(v.timestamp,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS timestamp,
+      to_char(v.started_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS started_at,
+      to_char(v.ended_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ended_at,
+      v.observation_count,v.estimated_seconds,v.active_tab_url,v.active_tab_title,v.ai_category,v.content_category,
+      v.teacher_intent_source,v.screen_locked,v.camera_active,v.has_off_task_observation
+    FROM visits v WHERE true ${cursorPredicate} ${pagePredicate} ORDER BY v.timestamp DESC,v.id DESC LIMIT ${limit+1}
+  `);
+  const page=rows.rows.slice(0,limit),hasMore=rows.rows.length>limit,last=page.at(-1);
+  const entries:BrowsingHistoryEntry[]=page.map(row=>({id:row.id,timestamp:row.timestamp,startedAt:row.started_at,endedAt:row.ended_at,observationCount:row.observation_count,
+    activeTabUrl:row.active_tab_url,activeTabTitle:row.active_tab_title,aiCategory:row.ai_category,contentCategory:normalizeContentCategory(row.content_category),
+    teacherIntentSource:row.teacher_intent_source||null,screenLocked:row.screen_locked,cameraActive:row.camera_active,estimatedSeconds:row.estimated_seconds,hasOffTaskObservation:row.has_off_task_observation}));
+  return {entries,hasMore,nextCursor:hasMore&&last?encodeHistoryCursor({timestamp:last.timestamp,id:last.id,anchor:context.anchor.toISOString(),scope:context.scope,startDate:context.dates.startDate,endDate:context.dates.endDate}):null};
+}
 
 /** Exact student key, stable seek cursor and a bounded next-observation lookup per returned row. */
 export async function getStudentBrowsingHistory(input:BrowsingHistoryRequest){
@@ -41,6 +111,10 @@ export async function getStudentBrowsingHistory(input:BrowsingHistoryRequest){
   if(!Number.isInteger(requested)||requested<1)throw historyError("HISTORY_LIMIT_INVALID","History page size must be a positive integer.");
   const limit=Math.min(500,requested);const empty={...context.meta,state:context.expired?"expired":"empty",entries:[],nextCursor:null,hasMore:false,estimatedDurationNote:"Durations are estimates between consecutive observations up to 60 seconds apart; gaps and the last observation add no time."};
   if(context.expired||!context.windows.length)return empty;
+  if(context.grouping==="visits"){
+    const grouped=await groupedHistory(input,context,limit);
+    return {...empty,...grouped,state:grouped.entries.length?"available":"empty"};
+  }
   const cursorPredicate=context.cursor?sql`AND (h.timestamp,h.id)<(${context.cursor.timestamp}::timestamp,${context.cursor.id})`:sql``;
   // Apply before LIMIT so a long run of presence-only heartbeats cannot hide
   // older page observations behind empty result pages.
@@ -68,7 +142,7 @@ export async function getStudentBrowsingHistory(input:BrowsingHistoryRequest){
     ) next_observation ON true ORDER BY h.timestamp DESC,h.id DESC
   `);
   const page=rows.rows.slice(0,limit),hasMore=rows.rows.length>limit,last=page.at(-1);
-  const entries=page.map(row=>({id:row.id,timestamp:row.timestamp,activeTabUrl:row.active_tab_url,activeTabTitle:row.active_tab_title,aiCategory:row.ai_category,contentCategory:normalizeContentCategory(row.content_category),teacherIntentSource:row.teacher_intent_source||null,screenLocked:row.screen_locked===true,cameraActive:row.camera_active===true,estimatedSeconds:estimatedHistorySeconds(new Date(row.timestamp),row.next_observed_at?new Date(row.next_observed_at):null,new Date(row.authority_end))}));
+  const entries:BrowsingHistoryEntry[]=page.map(row=>({id:row.id,timestamp:row.timestamp,activeTabUrl:row.active_tab_url,activeTabTitle:row.active_tab_title,aiCategory:row.ai_category,contentCategory:normalizeContentCategory(row.content_category),teacherIntentSource:row.teacher_intent_source||null,screenLocked:row.screen_locked===true,cameraActive:row.camera_active===true,estimatedSeconds:estimatedHistorySeconds(new Date(row.timestamp),row.next_observed_at?new Date(row.next_observed_at):null,new Date(row.authority_end))}));
   return {...empty,state:entries.length?"available":"empty",entries,hasMore,nextCursor:hasMore&&last?encodeHistoryCursor({timestamp:last.timestamp,id:last.id,anchor:context.anchor.toISOString(),scope:context.scope,startDate:context.dates.startDate,endDate:context.dates.endDate}):null};
 }
 

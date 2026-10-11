@@ -444,3 +444,122 @@ describe("Student browsing history authorization and pagination",()=>{
     assert.equal(second.asOf,first.asOf);assert.equal(second.startDate,first.startDate);assert(second.entries.every(row=>row.id!==liveId+'new'));assert(second.entries.some(row=>row.id===liveId+'10'));
   });
 });
+
+describe("Consecutive browsing history visits",()=>{
+  type Observation={at:string;url?:string|null;title?:string;device?:string;category?:string|null;contentCategory?:string|null;intent?:string|null;locked?:boolean;camera?:boolean};
+  const start=Date.parse("2026-09-01T13:00:00Z");
+  const at=(seconds:number)=>new Date(start+seconds*1000).toISOString();
+  async function fixture(observations:Observation[]){
+    const {sql}=await import("drizzle-orm"),id=randomUUID();
+    await scoped(async()=>{
+      await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name) VALUES(${id},${schoolId},'Visit','Fixture')`);
+      await database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,active_tab_url,timestamp,ai_category,content_category,teacher_intent_source,screen_locked,camera_active) VALUES ${sql.join(observations.map((row,index)=>sql`(${id+'-'+String(index).padStart(4,'0')},${schoolId},${id},${row.device||'visit-device'},${row.title??'Visit page'},${row.url===undefined?'https://example.edu/page':row.url},${row.at}::timestamp,${row.category??null},${row.contentCategory??null},${row.intent??null},${row.locked??false},${row.camera??false})`),sql`,`)}`);
+    });
+    return {...request,studentId:id,grouping:"visits",view:"pages"};
+  }
+
+  it("returns a long same-page stay as one complete visit across page limits and ignores title updates",async()=>{
+    const input=await fixture([...Array.from({length:130},(_,i)=>({at:at(i*10),title:i===129?'Updated page title':'Original title'})),{at:at(1300),url:"https://example.edu/next"}]);
+    const first=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1}));
+    assert.equal(first.entries.length,1);assert.equal(first.entries[0]!.observationCount,1);assert.equal(first.entries[0]!.estimatedSeconds,0);assert(first.nextCursor);
+    const second=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1,cursor:first.nextCursor}));
+    const visit=second.entries[0]!;
+    assert.equal(visit.observationCount,130);assert.equal(visit.estimatedSeconds,1300);
+    assert.equal(visit.activeTabTitle,"Updated page title");assert.equal(visit.startedAt,"2026-09-01T13:00:00.000000Z");
+    assert.equal(visit.timestamp,"2026-09-01T13:21:30.000000Z");assert.equal(visit.endedAt,"2026-09-01T13:21:40.000000Z");
+    assert.equal(second.nextCursor,null);assert.equal(second.hasMore,false);assert.equal(second.asOf,first.asOf);
+    assert(!("deviceId" in visit));assert(!("device_id" in visit));
+    const raw=await scoped(()=>history.getStudentBrowsingHistory({...input,grouping:undefined,limit:500}));
+    assert.equal(raw.entries.length,131,"Legacy callers retain every observation");
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,grouping:"observations",cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,view:"all",cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,actorId:otherTeacherId,cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(scoped(()=>history.getStudentBrowsingHistory({...input,startDate:"2026-08-31",cursor:first.nextCursor})),{code:"HISTORY_CURSOR_INVALID"});
+    await assert.rejects(tenant({schoolId:otherSchoolId},()=>history.getStudentBrowsingHistory({...input,schoolId:otherSchoolId})),{code:"HISTORY_DENIED"});
+  });
+
+  it("keeps A-B-A visits and exact query/fragment changes separate",async()=>{
+    const a="https://example.edu/page?q=1#one",b="https://example.edu/other";
+    const input=await fixture([{at:at(0),url:a},{at:at(10),url:a},{at:at(20),url:b},{at:at(30),url:a},{at:at(40),url:a},{at:at(50),url:"https://example.edu/page?q=2#one"},{at:at(60),url:"https://example.edu/page?q=2#two"}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));
+    assert.deepEqual(page.entries.map(row=>[row.activeTabUrl,row.observationCount,row.estimatedSeconds]),[
+      ["https://example.edu/page?q=2#two",1,0],["https://example.edu/page?q=2#one",1,10],[a,2,20],[b,1,10],[a,2,20],
+    ]);
+  });
+
+  it("breaks visits at hidden missing-page observations before filtering and keeps blanks individual in all view",async()=>{
+    const input=await fixture([{at:at(0)},{at:at(10)},{at:at(20),url:null,title:"Unknown"},{at:at(30),url:" ",title:" Browser observation "},{at:at(40)},{at:at(50)}]);
+    const pages=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1}));assert(pages.nextCursor);
+    assert.equal(pages.entries[0]!.observationCount,2);assert.equal(pages.entries[0]!.estimatedSeconds,10);
+    const older=await scoped(()=>history.getStudentBrowsingHistory({...input,limit:1,cursor:pages.nextCursor}));
+    assert.equal(older.entries[0]!.observationCount,2);assert.equal(older.entries[0]!.estimatedSeconds,20);assert.equal(older.hasMore,false);
+    const all=await scoped(()=>history.getStudentBrowsingHistory({...input,view:"all"}));
+    assert.deepEqual(all.entries.map(row=>row.observationCount),[2,1,1,2]);
+    assert.equal(all.entries.at(-1)!.endedAt,"2026-09-01T13:00:20.000000Z","Only the interval ending at the first unknown observation is credited");
+  });
+
+  it("groups meaningful title-only pages while retaining missing-page placeholders as boundaries",async()=>{
+    const input=await fixture([{at:at(0),url:null,title:" Signing in "},{at:at(10),url:null,title:"Signing in"},{at:at(20),url:null,title:"Unknown"},{at:at(30),url:null,title:"Signing in"},{at:at(40),url:"chrome://settings",title:"Unknown"}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));
+    assert.deepEqual(page.entries.map(row=>[row.activeTabUrl,row.observationCount,row.estimatedSeconds]),[["chrome://settings",1,0],[null,1,10],[null,2,20]]);
+  });
+
+  it("does not bridge long connection gaps or intervening device observations",async()=>{
+    const gap=await fixture([{at:at(0)},{at:at(10)},{at:at(71)},{at:at(81)}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(gap));
+    assert.deepEqual(page.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[2,10]]);
+    assert.equal(page.entries[1]!.endedAt,"2026-09-01T13:00:10.000000Z");
+    const devices=await fixture([{at:at(0),device:"one"},{at:at(10),device:"two"},{at:at(20),device:"one"},{at:at(30),device:"one"}]);
+    const switched=await scoped(()=>history.getStudentBrowsingHistory(devices));
+    assert.deepEqual(switched.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[1,0],[1,0]]);
+  });
+
+  it("keeps equal-time ordering stable and never invents time for a final observation",async()=>{
+    const input=await fixture([{at:"2026-09-01T13:00:00.123456Z"},{at:"2026-09-01T13:00:00.123456Z"},{at:"2026-09-01T13:00:05.123456Z"}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));
+    assert.equal(page.entries.length,1);assert.equal(page.entries[0]!.observationCount,3);assert.equal(page.entries[0]!.estimatedSeconds,5);
+    assert.equal(page.entries[0]!.endedAt,"2026-09-01T13:00:05.123456Z");assert(page.entries[0]!.id.endsWith("0002"));
+  });
+
+  it("separates school-local days and clips selected dates, retention and the initial cursor horizon",async()=>{
+    const input=await fixture([{at:"2026-09-01T03:59:50Z"},{at:"2026-09-01T04:00:00Z"},{at:"2026-09-01T04:00:10Z"}]);
+    const both=await scoped(()=>history.getStudentBrowsingHistory({...input,startDate:"2026-08-31"}));
+    assert.deepEqual(both.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[1,0]]);
+    const day=await scoped(()=>history.getStudentBrowsingHistory(input));assert.equal(day.entries.length,1);assert.equal(day.entries[0]!.observationCount,2);
+    const {sql}=await import("drizzle-orm");
+    try{
+      await scoped(()=>database.execute(sql`UPDATE settings SET retention_hours='24' WHERE school_id=${schoolId}`));
+      const clipped=await scoped(()=>history.getStudentBrowsingHistory({...input,startDate:"2026-08-31",now:new Date("2026-09-02T04:00:05Z")}));
+      assert.equal(clipped.entries.length,1);assert.equal(clipped.entries[0]!.observationCount,1);assert.equal(clipped.entries[0]!.estimatedSeconds,0);
+    }finally{await scoped(()=>database.execute(sql`UPDATE settings SET retention_hours='720' WHERE school_id=${schoolId}`));}
+    const horizon=await fixture([{at:at(0)},{at:at(10),url:"https://example.edu/b"},{at:at(20),url:"https://example.edu/c"}]);
+    const first=await scoped(()=>history.getStudentBrowsingHistory({...horizon,limit:1}));assert(first.nextCursor);
+    await scoped(()=>database.execute(sql`INSERT INTO heartbeats(id,school_id,student_id,device_id,active_tab_title,active_tab_url,timestamp) VALUES(${horizon.studentId+'future'},${schoolId},${horizon.studentId},'visit-device','Future','https://example.edu/future','2026-09-01 18:00:01')`));
+    const next=await scoped(()=>history.getStudentBrowsingHistory({...horizon,now:new Date("2026-09-01T18:01:00Z"),limit:2,cursor:first.nextCursor}));
+    assert.equal(next.asOf,first.asOf);assert.equal(next.entries.length,2);assert(next.entries.every(row=>!row.id.endsWith('future')));
+  });
+
+  it("reapplies teacher authority before grouping and never joins across a delegated interval",async()=>{
+    const {sql}=await import("drizzle-orm");
+    const input=await fixture([{at:"2026-09-01T13:14:40Z"},{at:"2026-09-01T13:14:50Z"},{at:"2026-09-01T13:15:00Z"},{at:"2026-09-01T13:29:50Z"},{at:"2026-09-01T13:30:00Z"},{at:"2026-09-01T13:30:10Z"}]);
+    await scoped(async()=>{
+      await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${input.studentId},'2026-09-01 13:00:00Z')`);
+      await database.execute(sql`INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,assigned_at,released_at) VALUES(${schoolId},${contextId},${input.studentId},${otherTeacherId},'2026-09-01 13:15:00','2026-09-01 13:30:00')`);
+    });
+    const owner=await scoped(()=>history.getStudentBrowsingHistory({...input,role:"teacher"}));
+    assert.deepEqual(owner.entries.map(row=>[row.observationCount,row.estimatedSeconds]),[[2,10],[2,10]]);
+    assert.equal(owner.entries[1]!.endedAt,"2026-09-01T13:14:50.000000Z");
+    const coverage=await scoped(()=>history.getStudentBrowsingHistory({...input,role:"teacher",actorId:otherTeacherId}));
+    assert.deepEqual(coverage.entries.map(row=>row.observationCount),[1,1]);
+  });
+
+  it("keeps monitoring labels conservative and preserves off-task evidence within a mixed visit",async()=>{
+    const input=await fixture([{at:at(0),category:"educational",contentCategory:"Productivity",intent:"teacher",locked:true,camera:true},{at:at(10),category:"non-educational",contentCategory:"Gaming",intent:null,locked:false,camera:true}]);
+    const page=await scoped(()=>history.getStudentBrowsingHistory(input));const visit=page.entries[0]!;
+    assert.equal(visit.observationCount,2);assert.equal(visit.aiCategory,null);assert.equal(visit.contentCategory,null);assert.equal(visit.teacherIntentSource,null);
+    assert.equal(visit.screenLocked,false);assert.equal(visit.cameraActive,true);assert.equal(visit.hasOffTaskObservation,true);
+    const uniform=await fixture([{at:at(0),category:"educational",contentCategory:"Productivity",intent:"teacher",locked:true},{at:at(10),category:"educational",contentCategory:"Productivity",intent:"teacher",locked:true}]);
+    const retained=(await scoped(()=>history.getStudentBrowsingHistory(uniform))).entries[0]!;
+    assert.equal(retained.aiCategory,"educational");assert.equal(retained.contentCategory,"Productivity");assert.equal(retained.teacherIntentSource,"teacher");assert.equal(retained.screenLocked,true);assert.equal(retained.hasOffTaskObservation,false);
+  });
+});
