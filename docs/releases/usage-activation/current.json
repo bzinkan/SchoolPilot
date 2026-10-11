@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "classpilot_usage_activation_successor",
+  "policyDecisionDate": "2026-10-11",
+  "policy": {
+    "scope": "global",
+    "syntheticGate": "full_existing",
+    "both800VariantsRequired": true,
+    "ledgerProofForEveryEligibleSchool": true,
+    "exactPlanApprovalRequired": true,
+    "offAuthority": "time_limited_governed",
+    "productionFirstWaiver": false,
+    "schoolSizedWaiver": false
+  },
+  "operationalAuthorization": false,
+  "candidate": null,
+  "gates": {
+    "finalSourceBinding": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "pairedSole133": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "pairedNormal34": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "classroomUsageOff": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "threeColdUsageRuns": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "distinct64": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "broaderOrdinary": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "broaderConcentrated": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "guardedOffRehearsal": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "threeDailyShadowDays": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "baselineSchoolDay": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "ledgerObservation": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "walkthrough": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null },
+    "fiveDayFollowup": { "status": "pending", "sourceSha": null, "evidence": [], "independentReview": null }
+  },
+  "productionObservation": {
+    "observedAtUtc": "2026-10-11T04:19:17.7362555Z",
+    "sourceSha": "11ca0d019069e2af1c74fd4757ef0cef45389ed1",
+    "imageDigest": "sha256:7f5fd41b1d3e8d9efb92ca11bbdf8cd816286a5b7b8cd0a2512b19f8bb2c4e84",
+    "rollupMode": "off",
+    "digitalUsageMode": "off",
+    "receipt": {
+      "storage": "private",
+      "path": "observations/runtime-20261011.json",
+      "sha256": "eeeaf448fbaab7ca2c942c069586408be1c9ff345263acd9fb216bec5c0a7896"
+    }
+  }
+}

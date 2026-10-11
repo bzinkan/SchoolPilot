@@ -236,9 +236,9 @@ test('declared reconnect subsets offer exact actual bindings and cannot remap or
 
 test('Usage requires measured paired release closures, while the old single-task journal stays diagnostic',()=>{
   const root=mkdtempSync(join(tmpdir(),'release297-usage-comparisons-'));
-  const usage=declareCampaign({directory:join(root,'usage'),kind:'usage',profile:PROFILES.usage.name,candidateSource:candidate,observedFlagsSha256:digest});
+  const usage=declareCampaign({directory:join(root,'usage'),kind:'usage',profile:PROFILES.usage.name,candidateSource:'ddc5996b3b8645859fa51a9613486db52c481b7f',observedFlagsSha256:digest});
   assert.equal(usage.pairedReleaseComparisonRequired,true);assert.equal(usage.historicalSingleTaskDiagnosticOnly,true);assert.equal(usage.originalComparisonRequired,undefined);
-  const broad=declareCampaign({directory:join(root,'broader'),kind:'mixed',profile:PROFILES.broader.name,candidateSource:candidate,observedFlagsSha256:digest});assert.deepEqual(broad.order,['C','C','C']);assert.equal(broad.capacityAccepted,false);
+  const broad=declareCampaign({directory:join(root,'broader'),kind:'mixed',profile:PROFILES.broader.name,candidateSource:'ddc5996b3b8645859fa51a9613486db52c481b7f',observedFlagsSha256:digest});assert.deepEqual(broad.order,['C','C','C']);assert.equal(broad.capacityAccepted,false);
   assert.throws(()=>verifyUsageComparisons({originalComparisonFile:'old-single-task',originalComparisonSha256:digest},usage));
 });
 

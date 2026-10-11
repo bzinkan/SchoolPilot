@@ -72,6 +72,11 @@ export function usageGrades(students, configured = []) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
+export function usageIsDisabled(error) {
+  return error?.response?.status === 404 && (!error.response.data?.code
+    || error.response.data.code === 'CLASSPILOT_USAGE_UNAVAILABLE');
+}
+
 export function usageError(error) {
   const status = error?.response?.status;
   // CSV uses a Blob response, so its structured error body is unavailable here.
@@ -80,7 +85,7 @@ export function usageError(error) {
     || error?.response?.headers?.['retry-after'] === '1')) {
     return 'Reports are busy. Wait a moment, then try again.';
   }
-  if (status === 404 && !error?.response?.data?.code) return 'Monitored Browser Time is not available for this school yet.';
+  if (usageIsDisabled(error)) return 'Monitored Browser Time is not turned on yet. Nothing is wrong, and no action is needed.';
   if (status === 403) return 'Administrator access is required for this report.';
   return error?.response?.data?.error || error?.message || 'The report could not be loaded.';
 }

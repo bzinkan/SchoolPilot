@@ -10,3 +10,4 @@ import '../scripts/load/usage/release-enabled-profile.test.mjs';
 import '../scripts/load/usage/release-enabled-focus-protocol.test.mjs';
 import '../scripts/load/usage/release-enabled-drain.test.mjs';
 import '../scripts/load/usage/roles/suite.mjs';
+import '../scripts/load/usage/release-gates-v2/usage-source-binding.test.mjs';

@@ -127,6 +127,16 @@ Rows marked Historical retain their dated preparation statuses; the completed de
 
 Ordinary recovery retains **43→53** migrations and **121→125→126→127→128→129** admission. The 54-entry rehearsal stays historical. The completed deployment preserved admission129 and the reviewed classroom capability modes and environment; both new Usage modes were off in its readback. The exact registered, unused F3 pair and compatible C frontend are recorded for recovery. A2/A3 frontend page-view and cursor behavior is incompatible with F3. Any future F3 recovery requires fresh source-specific compatibility evidence, the separately reviewed exact compatible C frontend and reload/reset of newer pages and history cursors. A later manual F3 rollback has the same matched-frontend requirement. Later application changes require review of their temporary_room rollback floor. Public bytes and task health do not prove managed adoption or live classroom acceptance.
 
+
+### Separate global Usage activation
+
+Owner-selected policy dated **2026-10-11**: full existing acceptance, both 800-client variants, and ledger proof for every eligible school.
+The release297 Usage values above are dated historical evidence. The [separate Usage successor](releases/usage-activation/current.json) records later preparation and observations; it grants no operational authorization.
+
+Usage observation **2026-10-11T04:19:17.7362555Z**: rollup **off**, reports **off**, source `11ca0d01`.
+Gate records awaiting completion: finalSourceBinding, pairedSole133, pairedNormal34, classroomUsageOff, threeColdUsageRuns, distinct64, broaderOrdinary, broaderConcentrated, guardedOffRehearsal, threeDailyShadowDays, baselineSchoolDay, ledgerObservation, walkthrough, fiveDayFollowup.
+Status records are metadata. Canonical receipt replay, fresh production preflight and approval of each exact activation plan remain required.
+
 <!-- release297-current-state:end -->
 
 ## Historical preparation checkpoints

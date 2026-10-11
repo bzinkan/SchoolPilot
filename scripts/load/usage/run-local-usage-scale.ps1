@@ -6,7 +6,8 @@ param(
   [ValidateSet('stress','school-day','school-day-ai','cold-open-loop-ai')][string]$Profile = 'stress',
   [ValidateSet('classpilotUsageRollupDaysPostExpand','passpilotAppointmentsPostExpand','classpilotPrivateChatLifecyclePostExpand')][string]$RlsInventory = 'classpilotUsageRollupDaysPostExpand',
   [switch]$PrepareOnly,
-  [switch]$HoldFixtureForDiagnostics
+  [switch]$HoldFixtureForDiagnostics,
+  [string]$UsageSourceBindingConfig
 )
 $ErrorActionPreference = 'Stop'
 if ($PrepareOnly -and -not $HoldFixtureForDiagnostics) { throw 'Preparation-only mode requires the bounded diagnostic hold.' }
@@ -31,12 +32,24 @@ $database = 'schoolpilot_redesign_usage_scale_' + $run
 $fixtureRole = 'scale_fixture_' + $run; $appRole = 'scale_app_' + $run
 $fixturePassword = [guid]::NewGuid().ToString('N'); $appPassword = [guid]::NewGuid().ToString('N')
 $names = @('DATABASE_URL','ADMIN_DATABASE_URL','DATABASE_URL_PRIVILEGED','JWT_SECRET','SESSION_SECRET','STUDENT_TOKEN_SECRET','NODE_ENV','REDIS_URL','RLS_GUC_ENABLED','RLS_ENABLED_TABLES','SCHEDULER_ENABLED','USAGE_LOCAL_SCALE','USAGE_SCALE_OUTPUT','USAGE_SCALE_CAPS','USAGE_SCALE_CONTAINER','USAGE_SOURCE_REVISION','USAGE_SCALE_PREPARE_ONLY','USAGE_SCALE_COLD_PHASE','USAGE_SCALE_COLD_STATE','USAGE_SCALE_COLD_STATE_SHA256','CLASSPILOT_USAGE_ROLLUP_MODE','CLASSPILOT_DIGITAL_USAGE_MODE','DB_POOL_MIN','SESSION_DB_POOL_MIN','USAGE_SCALE_RLS_INVENTORY','RUN_LEGACY_MIGRATIONS_ONLY','RUN_MIGRATIONS_ONLY','CLASSPILOT_DAILY_USAGE_ROLLUP_MODE','CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE','PASSPILOT_RULES_MODE','PASSPILOT_APPOINTMENTS_MODE','PASSPILOT_REPORTS_MODE','CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1','CLASSPILOT_CAP_FOCUS_TAB_V1','CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1','CLASSPILOT_CAPABILITY_ROLLOUTS_JSON')
+$names += @('USAGE_SCALE_SOURCE_BINDING_FILE','APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS')
 $saved = @{}; foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 $created = $false; $exitCode = 1
 Push-Location -LiteralPath $repository
 try {
   if ((git status --porcelain).Length -gt 0) { throw 'Commit source and harness before collecting evidence.' }
   $env:USAGE_SOURCE_REVISION = (git rev-parse HEAD).Trim()
+  if ($UsageSourceBindingConfig) {
+    $bindingOptions = Get-Content -LiteralPath $UsageSourceBindingConfig -Raw | ConvertFrom-Json -DateKind String
+    if (-not [IO.Path]::GetFullPath($bindingOptions.sourceDirectory).Equals($repository,[StringComparison]::OrdinalIgnoreCase)) { throw 'Binding source directory must be the clean fixture source.' }
+    $sourceEnvelopeRaw = node (Join-Path $PSScriptRoot 'release-gates-v2/usage-source-binding.mjs') fixture $UsageSourceBindingConfig
+    if ($LASTEXITCODE -ne 0) { throw 'Reviewed final-source binding validation failed before fixture creation.' }
+    $sourceEnvelope = $sourceEnvelopeRaw | ConvertFrom-Json -DateKind String
+    if ($sourceEnvelope.binding.source -cne $env:USAGE_SOURCE_REVISION -or $sourceEnvelope.binding.rlsInventory -cne $RlsInventory) { throw 'Fixture source or inventory differs from reviewed binding.' }
+    $env:USAGE_SCALE_SOURCE_BINDING_FILE = Join-Path $output 'usage-source-binding.json'
+    [IO.File]::WriteAllText($env:USAGE_SCALE_SOURCE_BINDING_FILE,$sourceEnvelopeRaw + "`n",[Text.UTF8Encoding]::new($false))
+    $env:APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS = if ($sourceEnvelope.binding.migrationStage -ceq 'contract') { 'true' } else { 'false' }
+  } else { $env:USAGE_SCALE_SOURCE_BINDING_FILE = $null }
   npm run build *> (Join-Path $output 'build.log')
   if ($LASTEXITCODE -ne 0) { throw 'Plain backend build failed; see build.log.' }
   $schema = Join-Path $output 'schema-only.sql'
@@ -95,11 +108,17 @@ try {
     # owned empty fixture before traffic, then restores the restricted app role.
     $applicationUrl = $env:DATABASE_URL
     $env:DATABASE_URL = $env:ADMIN_DATABASE_URL; $env:DATABASE_URL_PRIVILEGED = $env:ADMIN_DATABASE_URL
-    $env:RUN_LEGACY_MIGRATIONS_ONLY = 'true'; $env:RUN_MIGRATIONS_ONLY = 'false'
-    node dist/index.js *> (Join-Path $output 'fixture-legacy-convergence.log')
-    if ($LASTEXITCODE -ne 0) { throw 'Complete current local legacy convergence failed.' }
-    $env:RUN_LEGACY_MIGRATIONS_ONLY = 'false'; $env:RUN_MIGRATIONS_ONLY = 'true'
-    node dist/index.js *> (Join-Path $output 'fixture-versioned-migrations.log')
+    if ($UsageSourceBindingConfig) {
+      $env:USAGE_LOCAL_SCALE = '1'; $env:USAGE_SCALE_CONTAINER = $container
+      $env:RUN_LEGACY_MIGRATIONS_ONLY = 'false'; $env:RUN_MIGRATIONS_ONLY = 'false'
+      node (Join-Path $PSScriptRoot 'release-gates-v2/migrate-bound-fixture.mjs') $repository *> (Join-Path $output 'fixture-versioned-migrations.log')
+    } else {
+      $env:RUN_LEGACY_MIGRATIONS_ONLY = 'true'; $env:RUN_MIGRATIONS_ONLY = 'false'
+      node dist/index.js *> (Join-Path $output 'fixture-legacy-convergence.log')
+      if ($LASTEXITCODE -ne 0) { throw 'Complete current local legacy convergence failed.' }
+      $env:RUN_LEGACY_MIGRATIONS_ONLY = 'false'; $env:RUN_MIGRATIONS_ONLY = 'true'
+      node dist/index.js *> (Join-Path $output 'fixture-versioned-migrations.log')
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Complete current local versioned migration/admission failed.' }
     $env:RUN_MIGRATIONS_ONLY = 'false'
     # Versioned expansion may create a new table after the initial restore.

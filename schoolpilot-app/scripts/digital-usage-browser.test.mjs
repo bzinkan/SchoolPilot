@@ -108,14 +108,22 @@ test('scope choices use canonical same-school IDs and no missing selection trigg
 });
 
 test('unavailable and feature-off responses expose no numeric totals/export; computed empty days honestly show zero', async () => {
-  for (const mode of ['unavailable', 'empty', 'off']) {
-    const { page, errors } = await open({ mode, handler: mode === 'off' ? async (route, url) => {
+  for (const mode of ['unavailable', 'empty', 'off', 'off-explicit']) {
+    const off = mode.startsWith('off');
+    const { page, errors } = await open({ mode, handler: off ? async (route, url) => {
       if (!url.pathname.endsWith('/admin/usage')) return false;
-      await route.fulfill({ status: 404, json: { error: 'Not found' } }); return true;
+      await route.fulfill({ status: 404, json: { error: 'Not found', ...(mode === 'off-explicit' ? { code: 'CLASSPILOT_USAGE_UNAVAILABLE' } : {}) } }); return true;
     } : undefined });
     try {
       if (mode === 'empty') { await page.getByText('No browser activity observed in the computed days.').waitFor(); assert.equal(await page.getByTestId('usage-total').textContent(), '0s'); }
-      else { await page.getByText(mode === 'off' ? 'Monitored Browser Time is not available for this school yet.' : 'No report available for this range', { exact: false }).waitFor(); assert.equal(await page.getByTestId('usage-total').count(), 0); assert.equal(await page.getByRole('button', { name: 'Export CSV', exact: true }).isDisabled(), true); }
+      else { await page.getByText(off ? 'Monitored Browser Time is not turned on yet. Nothing is wrong, and no action is needed.' : 'No report available for this range', { exact: false }).waitFor(); assert.equal(await page.getByTestId('usage-total').count(), 0); assert.equal(await page.getByRole('button', { name: 'Export CSV', exact: true }).isDisabled(), true); }
+      if (off) {
+        const notice = page.getByRole('status').filter({ hasText: 'Monitored Browser Time is not turned on yet.' });
+        assert.equal(await notice.count(), 1);
+        assert.equal(await page.getByRole('alert').count(), 0);
+        assert.equal(await page.getByRole('button', { name: 'Try again', exact: true }).count(), 0);
+        assert.equal(await page.getByLabel('Scope', { exact: true }).locator('option[value="school"]').textContent(), 'Entire school');
+      }
       assert.deepEqual(errors, []);
     } finally { await page.close(); }
   }
