@@ -80,6 +80,23 @@ export function classpilotTransientReplayOnAuthEnabled(
     && schoolId === pilotSchoolId;
 }
 
+/**
+ * Whether a new timer or poll intent is given a server-allocated
+ * `transientOrder`. The order exists for the replay lane, so it follows the
+ * lane: on where the replay is enabled for the school, or where the school's
+ * safe-poll capability is active. With every lane control unset a timer or
+ * poll is persisted and sent exactly as before the lane existed: no
+ * session_settings write in the command transaction, and no extra field in the
+ * stored payload or on the wire.
+ */
+export function classpilotTransientOrderingEnabled(
+  schoolId: string,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return classpilotTransientReplayOnAuthEnabled(schoolId, env)
+    || isClasspilotCapabilityActive("pollReplaySafeV1", { schoolId }, env);
+}
+
 const PERSISTENT_CONTROL_COMMAND_TYPES = new Set([
   "lock-screen",
   "unlock-screen",

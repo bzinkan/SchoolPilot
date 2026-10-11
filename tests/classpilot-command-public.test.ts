@@ -7,6 +7,7 @@ import {
   classpilotCommandExpiresAt,
   classpilotTimerPollCommandTtlMs,
   classpilotTransientCommandTtlMs,
+  classpilotTransientOrderingEnabled,
   classpilotTransientReplayOnAuthEnabled,
   summarizeClasspilotCommandTargets,
 } from "../src/services/classpilotCommandDelivery.js";
@@ -102,6 +103,39 @@ test("transient replay requires the explicit flag and one canonical pilot UUID",
     assert.equal(classpilotTransientReplayOnAuthEnabled(pilotSchool, { CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH:"true",CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS:allowlist }), false);
   }
   for (const flag of [undefined,"1","TRUE","false"]) assert.equal(classpilotTransientReplayOnAuthEnabled(pilotSchool,{...timerPilot,CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH:flag}),false);
+});
+
+test("intent ordering follows the replay lane and is off with every lane control unset", () => {
+  // Production at deploy: protocol 3 with other capabilities, no lane control.
+  // Ordering writes session_settings and adds a wire field, so it must be off.
+  assert.equal(classpilotTransientOrderingEnabled(pilotSchool, {}), false);
+  assert.equal(classpilotTransientOrderingEnabled(pilotSchool, {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+  }), false);
+  // A flag without its one canonical pilot school enables nothing.
+  for (const env of [
+    { CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH: "true" },
+    { CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH: "true", CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS: "" },
+    { CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS: pilotSchool },
+    { CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH: "false", CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS: pilotSchool },
+  ]) {
+    assert.equal(classpilotTransientOrderingEnabled(pilotSchool, env), false, JSON.stringify(env));
+  }
+  // The timer pilot orders its own school only.
+  assert.equal(classpilotTransientOrderingEnabled(pilotSchool, timerPilot), true);
+  assert.equal(classpilotTransientOrderingEnabled(otherSchool, timerPilot), false);
+  assert.equal(classpilotTransientOrderingEnabled(pilotSchool, pollPilot), true);
+  // An active safe-poll capability orders intents even without the replay
+  // gate, so a client that negotiated it never receives an unordered intent.
+  const capabilityOnly = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+    CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1: "true",
+  };
+  assert.equal(classpilotTransientOrderingEnabled(otherSchool, capabilityOnly), true);
+  // The capability flag alone, without its protocol prerequisites, is not active.
+  assert.equal(classpilotTransientOrderingEnabled(otherSchool, { CLASSPILOT_CAP_POLL_REPLAY_SAFE_V1: "true" }), false);
 });
 
 test("public command DTO adds policy and reports truthful cumulative and outcome counts", () => {
