@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CP_PROTECTED_BINDING_ID, CP_PROTECTED_SOURCE, CP_PROTECTED_ARTIFACT, CP_PROTECTED_SOURCE_REVIEW, BUILD_SECURITY_BINDING_ID, BUILD_SECURITY_APPLICATION_SOURCE, BUILD_SECURITY_ANCHOR_ARTIFACT, BUILD_SECURITY_ARTIFACT } from './release-source-binding.mjs';
+import { readUsageSuccessor, renderUsageSuccessor } from './usage-activation-current-state.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const INDEX = 'docs/releases/release297/current-release.json';
@@ -808,7 +809,7 @@ function renderBuildSecurityStatus(index, root = ROOT) {
   lines.push('', '### Inclusion and evidence invalidation', '', '| Merge | Change | Affected inputs | Required reruns |','|---|---|---|');for(const row of index.inclusionMatrix)lines.push(`| [${row.repository} #${row.number}](https://github.com/bzinkan/${row.repository}/pull/${row.number}) ${short(row.mergeSha)} | ${cell(row.title)} | ${cell(row.affectedArtifacts.join(', '))} | ${cell(row.requiredReruns)} |`);
   lines.push('', recoveryNarrative, '', END);return lines.join('\n');
 }
-export function renderStatus(index, root = ROOT) {
+function renderHistoricalReleaseStatus(index, root = ROOT) {
   if(index.evidence.buildSecurityCurrentObservation)return renderBuildSecurityStatus(index, root);
   const refreshed = index.evidence.candidateRefresh;
   const lines = [BEGIN, '## Current release status', '', `Observed **${index.observedAtUtc}**. The [machine-readable index](releases/release297/current-release.json) is the current preparation record; dated evidence below remains historical. Regenerate with \`node scripts/release297-current-state.mjs\`; verify with \`--check\`.`, '', refreshed ? '**DeSales: 133 clients; both new Usage modes must be off. The exact application/extension sources are frozen for validation; artifact and runtime acceptance remain separately gated. This record is not a controller authorization receipt.**' : '**DeSales: 133 clients; both new Usage modes must be off. Candidate freeze and refreshed acceptance are pending. This record grants no operational authorization.**', '', '| Source | Current main observed | Historical tested application | Frozen successor |', '|---|---|---|---|'];
@@ -847,6 +848,11 @@ export function renderStatus(index, root = ROOT) {
   for (const entry of index.artifacts) lines.push(`| ${cell(entry.label)} | ${entry.status} | ${short(entry.sourceSha)} | ${cell(entry.rationale)} ${cell(entry.nextAction)} |`);
   lines.push('', 'Ordinary migration/recovery uses **43 → 53** completed entries and admission **121 → 125 → 126 → 127 → 128 → 129**. The earlier 54-entry rehearsal remains historical. Preserve C578, equal capabilities and private-chat compatibility floors; never shrink admission during recovery.', '', END);
   return lines.join('\n');
+}
+export function renderStatus(index, root = ROOT) {
+  const historical = renderHistoricalReleaseStatus(index, root);
+  const successor = readUsageSuccessor(root);
+  return successor ? historical.replace(END, `${renderUsageSuccessor(successor)}\n\n${END}`) : historical;
 }
 export function updateChecklist(checklist, generated) {
   const begin = checklist.indexOf(BEGIN), end = checklist.indexOf(END);

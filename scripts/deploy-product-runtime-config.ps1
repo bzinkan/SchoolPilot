@@ -4,7 +4,7 @@ param(
     [ValidateSet('Plan', 'Apply', 'Rollback')][string]$Action = 'Plan',
     [string]$ConfigPath, [string]$OutDir, [string]$ManifestPath, [string]$ManifestHash,
     [string]$ApiArn, [string]$WorkerArn, [string]$ImageDigest, [string]$AppSha,
-    [string]$DailyUsageEvidencePath, [string]$UsageObservationEvidencePath, [switch]$Execute
+    [string]$DailyUsageEvidencePath, [string]$UsageObservationEvidencePath, [switch]$UsageOffContainment, [switch]$Execute
 )
 
 # The only sanctioned production setter for the wave-1 product flags
@@ -411,12 +411,12 @@ function Assert-UsageObservationPreconditions {
 }
 
 function Get-ProductSnapshot {
-    param([string]$ExpectedApiArn, [string]$ExpectedWorkerArn, [string]$Digest, [string]$ReleaseSha)
+    param([string]$ExpectedApiArn, [string]$ExpectedWorkerArn, [string]$Digest, [string]$ReleaseSha, [switch]$UsageOffContainment)
     Assert-ExpectedReleaseIdentity -AppSha $ReleaseSha -ImageDigest $Digest -ApiTaskDefinitionArn $ExpectedApiArn -WorkerTaskDefinitionArn $ExpectedWorkerArn
     $identity = Invoke-AwsJson -Arguments @('sts', 'get-caller-identity', '--output', 'json')
     if ($identity.Account -cne $script:AccountId) { throw 'Wrong AWS account.' }
     $services = Get-ServiceSnapshot
-    Assert-StableService -Service $services.Api -ExpectedTaskDefinitionArn $ExpectedApiArn -MinimumDesired 1 -MaximumDesired 3 -Label 'API'
+    Assert-StableService -Service $services.Api -ExpectedTaskDefinitionArn $ExpectedApiArn -MinimumDesired 1 -MaximumDesired $(if ($UsageOffContainment) { 6 } else { 3 }) -Label 'API'
     Assert-StableService -Service $services.Worker -ExpectedTaskDefinitionArn $ExpectedWorkerArn -MinimumDesired 1 -MaximumDesired 1 -Label 'worker'
     Assert-NormalServiceDeploymentConfiguration -Service $services.Api
     Assert-NormalServiceDeploymentConfiguration -Service $services.Worker
@@ -455,8 +455,11 @@ function Assert-ProductCandidateState {
 
 function Assert-ProductPlanConsistency {
     param([Parameter(Mandatory)]$Plan)
+    $operationMode = Get-ProductOperationMode $Plan
     $prior = ConvertTo-ProductState $Plan.prior
-    $desired = Resolve-ProductDesiredState $prior (ConvertTo-ProductChanges $Plan.config)
+    $changes = ConvertTo-ProductChanges $Plan.config
+    if ($operationMode -ceq 'usage_off_containment') { Assert-UsageOffContainmentChanges $changes }
+    $desired = Resolve-ProductDesiredState $prior $changes
     $activations = Get-ProductActivations $prior $desired
     $expected = [ordered]@{ desired = $desired; changes = Get-ProductChangeList $prior $desired; activations = $activations }
     $recorded = [ordered]@{ desired = ConvertTo-ProductState $Plan.desired; changes = @($Plan.changes); activations = @($Plan.activations) }
@@ -473,15 +476,44 @@ function Assert-ProductPlanConsistency {
         Assert-ProductExactProperties ([pscustomobject]$usageEvidence) @('path', 'sha256') 'Usage observation plan binding'
         if ($usageEvidence.path -isnot [string] -or $usageEvidence.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'The usage observation plan binding is inconsistent.' }
     }
-    return [pscustomobject]@{ Prior = $prior; Desired = $desired }
+    return [pscustomobject]@{ Prior = $prior; Desired = $desired; OperationMode = $operationMode }
+}
+
+function Assert-UsageOffContainmentChanges {
+    param([Collections.IDictionary]$Changes)
+    $names = @('CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')
+    if ($Changes.Count -ne 2 -or @($Changes.Keys | Where-Object { $_ -cnotin $names }).Count -ne 0 -or
+        $Changes[$names[0]] -cne 'off' -or $Changes[$names[1]] -cne 'off') {
+        throw 'Usage off containment requires exactly both Usage modes explicitly off and no other changes.'
+    }
+}
+
+function Get-ProductOperationMode {
+    param($Plan)
+    if (-not (Test-IsJsonInteger $Plan.schemaVersion)) { throw 'This file is not a product runtime plan.' }
+    if ($Plan.schemaVersion -eq 1) {
+        Assert-ProductExactProperties $Plan $script:ProductPlanFields 'Product runtime plan'
+        $mode = 'ordinary'
+        $maximum = 3
+    } elseif ($Plan.schemaVersion -eq 2) {
+        Assert-ProductExactProperties $Plan @($script:ProductPlanFields + 'operationMode') 'Product runtime plan'
+        if ($Plan.operationMode -isnot [string] -or $Plan.operationMode -cne 'usage_off_containment') { throw 'Unknown product runtime operationMode.' }
+        $mode = 'usage_off_containment'
+        $maximum = 6
+    } else { throw 'This file is not a product runtime plan.' }
+    if (-not (Test-IsJsonInteger $Plan.apiDesired) -or $Plan.apiDesired -lt 1 -or $Plan.apiDesired -gt $maximum) {
+        throw 'Product runtime plan API capacity is outside its operation mode.'
+    }
+    return $mode
 }
 
 function New-ProductPlan {
-    param($Config, [string]$Directory, [string]$ExpectedApiArn, [string]$ExpectedWorkerArn, [string]$Digest, [string]$ReleaseSha, [string]$EvidencePath, [string]$UsageEvidencePath)
+    param($Config, [string]$Directory, [string]$ExpectedApiArn, [string]$ExpectedWorkerArn, [string]$Digest, [string]$ReleaseSha, [string]$EvidencePath, [string]$UsageEvidencePath, [switch]$UsageOffContainment)
     $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $toolSha = Assert-RepositoryIdentity -RepositoryRoot $repo
     $changes = ConvertTo-ProductChanges $Config
-    $snapshot = Get-ProductSnapshot $ExpectedApiArn $ExpectedWorkerArn $Digest $ReleaseSha
+    if ($UsageOffContainment) { Assert-UsageOffContainmentChanges $changes }
+    $snapshot = Get-ProductSnapshot $ExpectedApiArn $ExpectedWorkerArn $Digest $ReleaseSha -UsageOffContainment:$UsageOffContainment
     $prior = Get-ProductManagedState $snapshot.Environments[0]
     $desired = Resolve-ProductDesiredState $prior $changes
     $evidence = Assert-ProductPreconditions $prior $desired $snapshot $EvidencePath $Digest $repo $ReleaseSha
@@ -502,6 +534,7 @@ function New-ProductPlan {
         scaling = $scaling; config = $Config; prior = $prior; desired = $desired
         changes = Get-ProductChangeList $prior $desired; activations = Get-ProductActivations $prior $desired; dailyUsageEvidence = $evidence; usageObservationEvidence = $usageEvidence
     }
+    if ($UsageOffContainment) { $plan.schemaVersion = 2; $plan.operationMode = 'usage_off_containment' }
     $path = Join-Path $directory "$runId-plan.json"
     Write-SanitizedJson -Path $path -Value $plan
     return [pscustomobject]@{ path = $path; sha256 = Get-FileSha256 $path; plan = [pscustomobject]$plan }
@@ -514,8 +547,8 @@ function Read-ProductPlan {
     $snapshot = Read-StrictJsonSnapshot -Path $Path
     if ($Hash -cnotmatch '^[a-f0-9]{64}$' -or $snapshot.Sha256 -cne $Hash) { throw 'Product runtime plan hash mismatch.' }
     $plan = $snapshot.Value
-    Assert-ProductExactProperties $plan $script:ProductPlanFields 'Product runtime plan'
-    if (-not (Test-IsJsonInteger $plan.schemaVersion) -or $plan.schemaVersion -ne 1 -or $plan.tool -cne $script:ProductPlanTool -or
+    [void](Get-ProductOperationMode $plan)
+    if ($plan.tool -cne $script:ProductPlanTool -or
         $plan.runId -cnotmatch '^[a-f0-9]{32}$') { throw 'This file is not a product runtime plan.' }
     [void](Assert-RepositoryIdentity -RepositoryRoot $repo -ExpectedSha $plan.toolSha)
     [void](Assert-ProductPlanConsistency $plan)
@@ -528,9 +561,10 @@ function Invoke-ProductApply {
     if ($age.TotalHours -gt 2 -or $age.TotalSeconds -lt -60) { throw 'Create a fresh product runtime plan before applying.' }
     Assert-RuntimeConfigMutationWindow
     $state = Assert-ProductPlanConsistency $Plan
+    $containment = $state.OperationMode -ceq 'usage_off_containment'
     # Re-read production and re-check every precondition: nothing is trusted
     # from planning time except what the fingerprints below prove unchanged.
-    $snapshot = Get-ProductSnapshot $Plan.apiArn $Plan.workerArn $Plan.imageDigest $Plan.appSha
+    $snapshot = Get-ProductSnapshot $Plan.apiArn $Plan.workerArn $Plan.imageDigest $Plan.appSha -UsageOffContainment:$containment
     if ((Get-CanonicalJsonSha256 (Get-ProductManagedState $snapshot.Environments[0])) -cne (Get-CanonicalJsonSha256 $state.Prior)) {
         throw 'Production state drifted after the product runtime plan.'
     }
@@ -558,12 +592,32 @@ function Invoke-ProductApply {
     $candidate = @{}
     $checkpoint = [ordered]@{ schemaVersion = 1; runId = $Plan.runId; planSha256 = $Hash; status = 'preparing'
         priorApiArn = $Plan.apiArn; priorWorkerArn = $Plan.workerArn; apiArn = $null; workerArn = $null }
+    if ($containment) {
+        $checkpoint.schemaVersion = 2
+        $checkpoint.operationMode = 'usage_off_containment'
+        $checkpoint.priorDeploymentConfigurations = [ordered]@{
+            Api = Copy-EcsDeploymentConfiguration $snapshot.Services.Api.deploymentConfiguration
+            Worker = Copy-EcsDeploymentConfiguration $snapshot.Services.Worker.deploymentConfiguration
+        }
+        $checkpoint.priorScalingState = $Plan.scaling
+    }
     Acquire-OperationLock -RunId $Plan.runId -PlanSha256 $Hash
     # A dot-sourced caller may run Apply and Rollback in the same process.
     # Recovery must describe this operation, never a prior completed rollout.
     $script:ApiServiceMutationStarted = $false
     $script:WorkerServiceMutationStarted = $false
+    $script:DeploymentBoundsChanged = $false
+    $script:PriorDeploymentConfigurations = $null
+    $containmentConfigurations = $null
     try {
+        if ($containment) {
+            # Persist this run's exact lease identity before the non-stealable
+            # transition, so an interrupted process never requires guessing
+            # ownership from whatever lease happens to exist later.
+            $checkpoint.operationLockOwner = $script:OperationLockOwner
+            $checkpoint.operationLockFence = $script:OperationLockFence
+            Write-SanitizedJson $resultPath $checkpoint
+        }
         Start-OperationMutationWindow
         foreach ($role in @('Api', 'Worker')) {
             $source = $snapshot.($role + 'Task'); $task = $source.taskDefinition
@@ -581,6 +635,28 @@ function Invoke-ProductApply {
         $before = Get-ServiceSnapshot
         if ($before.Api.taskDefinition -cne $Plan.apiArn -or $before.Worker.taskDefinition -cne $Plan.workerArn -or $before.Api.desiredCount -ne $Plan.apiDesired) { throw 'Service state changed before mutation.' }
         [void](Assert-ScalingHoldExact)
+        if ($containment) {
+            Assert-StableService $before.Api $Plan.apiArn 1 6 'API'
+            Assert-StableService $before.Worker $Plan.workerArn 1 1 'worker'
+            Assert-NormalServiceDeploymentConfiguration $before.Api
+            Assert-NormalServiceDeploymentConfiguration $before.Worker
+            if ((Get-CanonicalJsonSha256 @($before.Api.deploymentConfiguration, $before.Worker.deploymentConfiguration)) -cne $Plan.deploymentHash) {
+                throw 'Deployment configuration changed before containment mutation.'
+            }
+            [void](Assert-ApiTargetHealth $before.Api $Plan.apiDesired -Mode Exact)
+            Acquire-OffContainmentDeploymentBounds -Snapshot $before
+            $containmentConfigurations = Get-ServiceSnapshot
+            $checkpoint.containmentDeploymentConfigurations = [ordered]@{
+                Api = Copy-EcsDeploymentConfiguration $containmentConfigurations.Api.deploymentConfiguration
+                Worker = Copy-EcsDeploymentConfiguration $containmentConfigurations.Worker.deploymentConfiguration
+            }
+            Write-SanitizedJson $resultPath $checkpoint
+            $ready = Get-ServiceSnapshot
+            Assert-StableService $ready.Api $Plan.apiArn 1 6 'API'
+            Assert-StableService $ready.Worker $Plan.workerArn 1 1 'worker'
+            if ($ready.Api.desiredCount -ne $Plan.apiDesired) { throw 'Service capacity changed before containment mutation.' }
+            [void](Assert-ApiTargetHealth $ready.Api $Plan.apiDesired -Mode Exact)
+        }
         # Converge the API before rolling the worker, bounding overlapping pools.
         $checkpoint.status = 'api_update_pending'; Write-SanitizedJson $resultPath $checkpoint
         Invoke-RuntimeServiceUpdate -Role api -TaskDefinitionArn $candidate.Api
@@ -588,6 +664,7 @@ function Invoke-ProductApply {
         $checkpoint.status = 'worker_update_pending'; Write-SanitizedJson $resultPath $checkpoint
         Invoke-RuntimeServiceUpdate -Role worker -TaskDefinitionArn $candidate.Worker
         [void](Wait-ExactServicePairConvergence $candidate.Api $candidate.Worker $Plan.apiDesired)
+        if ($containment) { Restore-OffContainmentDeploymentBounds }
         [void](Restore-ScalingHold)
         $checkpoint.status = 'applied'; Write-SanitizedJson $resultPath $checkpoint
         Complete-OperationMutationWindow
@@ -598,6 +675,7 @@ function Invoke-ProductApply {
         $failure = $_.Exception.Message
         $checkpoint.status = 'recovery_required'; Write-SanitizedJson $resultPath $checkpoint
         if (-not $script:ApiServiceMutationStarted -and -not $script:WorkerServiceMutationStarted) {
+            if ($containment -and $script:DeploymentBoundsChanged) { Restore-OffContainmentDeploymentBounds }
             if ($script:ScalingHoldAcquired) { [void](Restore-ScalingHold) }
             # Start can fail after AWS accepted its fence update but before the
             # response reached us. Do not guess that a local preparing state is
@@ -609,14 +687,28 @@ function Invoke-ProductApply {
             }
         } else {
             try {
-                # Restore the exact prior values in fresh clones of the frozen
-                # sources, so API and worker again match each other.
+                # Ordinary operations restore the prior values. Containment is
+                # monotonic: after any service mutation, recover forward OFF.
                 $observed = Get-ServiceSnapshot
                 if ($observed.Api.taskDefinition -cnotin @($Plan.apiArn, $candidate.Api) -or
                     $observed.Worker.taskDefinition -cnotin @($Plan.workerArn, $candidate.Worker) -or
                     $observed.Api.desiredCount -ne $Plan.apiDesired -or $observed.Worker.desiredCount -ne 1) { throw 'Recovery source drifted.' }
                 [void](Assert-ScalingHoldExact)
-                $recoveryRuntime = ConvertTo-ProductRuntime $state.Prior
+                $recoveryState = if ($containment) { $state.Desired } else { $state.Prior }
+                if ($containment) {
+                    # Only this operation's original or containment bounds are
+                    # admissible during recovery; do not overwrite outside drift.
+                    foreach ($role in @('Api', 'Worker')) {
+                        $observedHash = Get-CanonicalJsonSha256 (Copy-EcsDeploymentConfiguration $observed.$role.deploymentConfiguration)
+                        $allowedHashes = @(
+                            (Get-CanonicalJsonSha256 $checkpoint.priorDeploymentConfigurations[$role]),
+                            (Get-CanonicalJsonSha256 $checkpoint.containmentDeploymentConfigurations[$role]))
+                        if ($observedHash -cnotin $allowedHashes) { throw 'Recovery deployment configuration drifted.' }
+                    }
+                    $script:DeploymentBoundsChanged = $true
+                    [void](Set-OffContainmentDeploymentConfigurations -PriorConfigurations $script:PriorDeploymentConfigurations -ApiDesiredCount $Plan.apiDesired)
+                }
+                $recoveryRuntime = ConvertTo-ProductRuntime $recoveryState
                 $recovery = @{}
                 foreach ($role in @('Api', 'Worker')) {
                     $source = $snapshot.($role + 'Task'); $task = $source.taskDefinition
@@ -629,13 +721,15 @@ function Invoke-ProductApply {
                     $checkpoint[($role.ToLowerInvariant() + 'Arn')] = $recovery[$role]
                     Write-SanitizedJson $resultPath $checkpoint
                 }
-                Assert-ProductCandidateState $recovery.Api $recovery.Worker $state.Prior
+                Assert-ProductCandidateState $recovery.Api $recovery.Worker $recoveryState
                 Invoke-RuntimeServiceUpdate -Role api -TaskDefinitionArn $recovery.Api
                 [void](Wait-ExactServicePairConvergence $recovery.Api $observed.Worker.taskDefinition $Plan.apiDesired)
                 Invoke-RuntimeServiceUpdate -Role worker -TaskDefinitionArn $recovery.Worker
                 [void](Wait-ExactServicePairConvergence $recovery.Api $recovery.Worker $Plan.apiDesired)
+                if ($containment) { Restore-OffContainmentDeploymentBounds }
                 [void](Restore-ScalingHold)
-                $checkpoint.status = 'rolled_back'; Write-SanitizedJson $resultPath $checkpoint
+                $checkpoint.status = if ($containment) { 'recovered_off' } else { 'rolled_back' }
+                Write-SanitizedJson $resultPath $checkpoint
                 Complete-OperationMutationWindow; Release-OperationLock
             } catch {
                 # Keep the non-stealable mutation fence and source/candidate
@@ -643,7 +737,7 @@ function Invoke-ProductApply {
                 $checkpoint.status = 'recovery_required'; Write-SanitizedJson $resultPath $checkpoint
             }
         }
-        throw "The product runtime configuration did not finish: $failure Inspect the private receipt for failed_no_service_mutation, rolled_back or recovery_required; preserve an uncertain operation fence."
+        throw "The product runtime configuration did not finish: $failure Inspect the private receipt for failed_no_service_mutation, rolled_back, recovered_off or recovery_required; preserve an uncertain operation fence."
     }
 }
 
@@ -657,8 +751,9 @@ function Invoke-ProductMain {
         $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         [void](Assert-PrivateInputPath -Path $script:ConfigPath -RepositoryRoot $repo)
         $config = (Read-StrictJsonSnapshot -Path $script:ConfigPath).Value
-        $created = New-ProductPlan $config $script:OutDir $script:ApiArn $script:WorkerArn $script:ImageDigest $script:AppSha $evidenceArgument $script:UsageObservationEvidencePath
+        $created = New-ProductPlan $config $script:OutDir $script:ApiArn $script:WorkerArn $script:ImageDigest $script:AppSha $evidenceArgument $script:UsageObservationEvidencePath -UsageOffContainment:$script:UsageOffContainment
         Write-Host "Product runtime plan: $($created.path) sha256=$($created.sha256)"
+        if ($script:UsageOffContainment) { Write-Host '  operationMode: usage_off_containment (OFF only; no-growth rollout)' }
         foreach ($change in @($created.plan.changes)) {
             $from = if ($null -eq $change.from) { '(unset)' } else { $change.from }
             $to = if ($null -eq $change.to) { '(unset)' } else { $change.to }
@@ -669,11 +764,13 @@ function Invoke-ProductMain {
     }
     $manifestPath = $script:ManifestPath
     $manifestHash = $script:ManifestHash
+    if ($script:UsageOffContainment) { throw 'UsageOffContainment is Plan-only; Apply uses the operation mode bound into the manifest.' }
     if (-not $script:Execute -or -not $manifestPath -or -not $manifestHash) { throw 'Apply/Rollback requires Execute, ManifestPath and ManifestHash.' }
     if ($evidenceArgument -or $script:UsageObservationEvidencePath) { throw 'Apply and Rollback use evidence bound into the plan; do not pass DailyUsageEvidencePath or UsageObservationEvidencePath.' }
     $plan = Read-ProductPlan $manifestPath $manifestHash
     $directory = Split-Path -Parent $manifestPath
     if ($operation -ceq 'Rollback') {
+        if ((Get-ProductOperationMode $plan) -ceq 'usage_off_containment') { throw 'Rollback cannot activate Usage after off containment; create a reviewed ordinary activation plan.' }
         $receiptPath = Join-Path $directory "$($plan.runId)-result.json"
         $receipt = (Read-StrictJsonSnapshot $receiptPath).Value
         if ($receipt.planSha256 -cne $manifestHash -or $receipt.status -cne 'applied') { throw 'Rollback requires a completed, matching activation receipt.' }

@@ -18,7 +18,7 @@ Overview is your starting point. One menu organizes school administration on des
 
 1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, or Calendar. A loading failure is shown separately from missing dates.
 2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes.
-3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
+3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics, Monitored Browser Time when turned on, and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
 4. **Use the same menu on a phone.** Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel.
 5. **Finish or discard your draft deliberately.** Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically.
 
@@ -266,6 +266,20 @@ Keep operational health, instructional trends, and evidence workflows in their p
 4. **Keep evidence scoped.** Evidence workflows preserve the authorized school, student, class, and time context. Export and share only through approved school processes.
 
 [Open Analytics](/classpilot/admin/analytics)
+
+### Read Monitored Browser Time
+
+**Who can use this:** Administrator or school administrator
+
+When turned on, this report shows observed browser time within the school's tracking policy and retained, computed dates.
+
+1. **Choose a scope and dates.** Open Reports → Monitored Browser Time. Entire school adds observed time across students. Grade uses current student grades; Official class uses recorded teaching-session attribution. Choose a grade, class or student before viewing that scope.
+2. **Read coverage before totals.** Today is Live and normally updates hourly. Final means the school day was successfully computed. Partial means some requested dates are missing, expired or in the future. Unavailable is not zero; successful empty days may show zero. The first available day depends on activation, successful computation and retention.
+3. **Interpret observed time.** This measures browser observations, not total device screen time, engagement or learning. Students observed is not enrollment. An idle browser may still check in. Instructional, Off-task and Unknown add to the observed total; Analytics uses a different calculation.
+4. **Export with school authorization.** Export CSV downloads the selected report and records classpilot.usage.export in Audit logs. Teacher exports do not include this school reporting measure. Store exports according to your school's records policy.
+5. **Protect retained history.** Earlier uncomputed days cannot be assumed available. Changing tracking hours affects recomputation of today and yesterday. Cleanup students permanently deletes Monitored Browser Time history. If the report is not turned on yet, no action is needed.
+
+[Open Monitored Browser Time](/classpilot/admin/usage)
 
 ### Review student safety reports
 

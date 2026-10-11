@@ -9,7 +9,7 @@ export const adminGuideTopics = [
     steps: [
       { title: "Start at Overview", body: "Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, or Calendar. A loading failure is shown separately from missing dates." },
       { title: "Choose an area", body: "People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes." },
-      { title: "Find operations, reports, and settings", body: "School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help." },
+      { title: "Find operations, reports, and settings", body: "School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics, Monitored Browser Time when turned on, and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help." },
       { title: "Use the same menu on a phone", body: "Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel." },
       { title: "Finish or discard your draft deliberately", body: "Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically." },
     ],
@@ -270,6 +270,23 @@ export const adminGuideTopics = [
       { title: "Resolve readiness findings", body: "Use IT Readiness for Google domain mismatches, reconnect requirements, staff identity findings, and extension deployment gaps." },
       { title: "Work safety cases", body: "Use Safety Center to review alerts in context, document a decision, and create evidence only when school procedure requires it." },
       { title: "Keep evidence scoped", body: "Evidence workflows preserve the authorized school, student, class, and time context. Export and share only through approved school processes." },
+    ],
+  },
+  {
+    id: "monitored-browser-time",
+    phase: "Operations",
+    title: "Read Monitored Browser Time",
+    summary: "When turned on, this report shows observed browser time within the school's tracking policy and retained, computed dates.",
+    keywords: ["usage", "monitored browser time", "reports", "retention", "unavailable", "csv", "instructional", "off-task"],
+    role: "Administrator or school administrator",
+    route: "/classpilot/admin/usage",
+    routeLabel: "Open Monitored Browser Time",
+    steps: [
+      { title: "Choose a scope and dates", body: "Open Reports → Monitored Browser Time. Entire school adds observed time across students. Grade uses current student grades; Official class uses recorded teaching-session attribution. Choose a grade, class or student before viewing that scope." },
+      { title: "Read coverage before totals", body: "Today is Live and normally updates hourly. Final means the school day was successfully computed. Partial means some requested dates are missing, expired or in the future. Unavailable is not zero; successful empty days may show zero. The first available day depends on activation, successful computation and retention." },
+      { title: "Interpret observed time", body: "This measures browser observations, not total device screen time, engagement or learning. Students observed is not enrollment. An idle browser may still check in. Instructional, Off-task and Unknown add to the observed total; Analytics uses a different calculation." },
+      { title: "Export with school authorization", body: "Export CSV downloads the selected report and records classpilot.usage.export in Audit logs. Teacher exports do not include this school reporting measure. Store exports according to your school's records policy." },
+      { title: "Protect retained history", body: "Earlier uncomputed days cannot be assumed available. Changing tracking hours affects recomputation of today and yesterday. Cleanup students permanently deletes Monitored Browser Time history. If the report is not turned on yet, no action is needed." },
     ],
   },
   {

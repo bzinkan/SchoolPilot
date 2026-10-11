@@ -74,6 +74,19 @@ nodes are parked (`CLASSPILOT_TURN_PARKING.md`).
 
 ## Manual recovery after `apply_failed_manual_intervention`
 
+**Product Usage off containment has a different recovery target.** If the shared
+lease belongs to a product runtime schema-2
+`operationMode: "usage_off_containment"` receipt, do not restore its prior Usage-on
+task pair using step 1 below. Read its `<runId>-plan.json` and `<runId>-result.json`;
+use the exact recorded `operationLockOwner`, `operationLockFence`, deployment
+configurations and scaling state in incident review. Recovery must converge the
+API first and then the worker to reviewed clones with **both Usage modes off**,
+preserving all unrelated fields and the serving source/digest. Prove the pair and
+restore the captured deployment configuration and time-correct scaling before
+conditionally releasing that same fence. An uncertain result remains
+`recovery_required`; no unlocked edit, ordinary rollback to on or guessed lease
+release is authorized. See [product runtime operations](PRODUCT_RUNTIME_CONFIG_OPERATIONS.md#guarded-usage-off-containment).
+
 Proven on 2026-09-17 (run `20260917T195138259Z-04a7782fa7c7`). Read `plan.json`,
 `checkpoint.json` and `result.json` from the run directory first.
 

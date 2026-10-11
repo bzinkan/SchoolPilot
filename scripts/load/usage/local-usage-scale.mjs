@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getHeapStatistics } from 'node:v8';
 import pg from 'pg';
 import { summarize } from './local-usage-benchmark.mjs';
+import {loadFixtureUsageSourceBinding,assertUsageSourceDatabase} from './release-gates-v2/usage-source-binding.mjs';
 
 export function assertLocalScaleFixture(env) {
   assert.equal(env.USAGE_LOCAL_SCALE, '1'); assert.equal(env.NODE_ENV, 'test');
@@ -159,6 +160,7 @@ export async function runLocalScale() {
   const {fixtureRlsContract,assertFixtureRuntimeModes,assertCompleteFixtureCatalog} = await import('./fixture-rls-contract.mjs');
   const registryPath = resolve(root,'src/config/rlsRegistry.json');
   const rlsContract = fixtureRlsContract(JSON.parse(readFileSync(registryPath,'utf8')),hash(registryPath),process.env);
+  const usageSourceBinding=loadFixtureUsageSourceBinding(process.env);
   const output = process.env.USAGE_SCALE_OUTPUT; assert.ok(output);
   const caps = JSON.parse(readFileSync(process.env.USAGE_SCALE_CAPS, 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(caps.NanoCpus, 4_000_000_000); assert.equal(caps.Memory, 4_294_967_296);
@@ -194,10 +196,11 @@ export async function runLocalScale() {
     assert.equal(role.rolsuper, false); assert.equal(role.rolbypassrls, false);
     metrics.selectedInventoryCatalog = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relnamespace='public'::regnamespace AND relname=ANY($1::text[]) ORDER BY relname",[rlsContract.tables])).rows;
     assertCompleteFixtureCatalog(rlsContract,metrics.selectedInventoryCatalog);
-    if (rlsContract.name === 'passpilotAppointmentsPostExpand') {
+    if (usageSourceBinding || rlsContract.name === 'passpilotAppointmentsPostExpand') {
       metrics.currentContractMigrations = (await admin.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
       assert.ok(metrics.currentContractMigrations.length > 0 && metrics.currentContractMigrations.every(row => row.status === 'complete'));
-      for (const id of ['20260824_staff_identity_integrity_contract','classpilot-usage-rollup-days-20260930','passpilot-appointments-expand-20260930']) assert.ok(metrics.currentContractMigrations.some(row => row.id === id),'Current constraint/ledger/admission migrations required');
+      if(usageSourceBinding)assertUsageSourceDatabase(usageSourceBinding,{migrations:metrics.currentContractMigrations,tables:rlsContract.tables,registrySha256:rlsContract.registrySha256});
+      else for (const id of ['20260824_staff_identity_integrity_contract','classpilot-usage-rollup-days-20260930','passpilot-appointments-expand-20260930']) assert.ok(metrics.currentContractMigrations.some(row => row.id === id),'Current constraint/ledger/admission migrations required');
     }
     metrics.rls = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relname IN ('heartbeats','classpilot_usage_rollups','classpilot_usage_rollup_days') ORDER BY relname")).rows;
     assert.equal(metrics.rls.length, 3); assert.ok(metrics.rls.every(row => row.relrowsecurity && row.relforcerowsecurity && !row.owns_table));
@@ -206,7 +209,7 @@ export async function runLocalScale() {
     const time = await import('../../../dist/util/schoolTime.js');
     const { createApp } = await import('../../../dist/app.js');
     ({ pool: appPool, sessionPool } = await import('../../../dist/db.js'));
-    if (rlsContract.name === 'passpilotAppointmentsPostExpand') assertFixtureRuntimeModes(rlsContract,await import('../../../dist/services/classpilotDailyUsageRollup.js'),await import('../../../dist/services/classpilotProtocol.js'),process.env);
+    if (usageSourceBinding || rlsContract.name === 'passpilotAppointmentsPostExpand') assertFixtureRuntimeModes(rlsContract,await import('../../../dist/services/classpilotDailyUsageRollup.js'),await import('../../../dist/services/classpilotProtocol.js'),process.env);
     const contractSnapshot = JSON.stringify({rlsContract,catalog:metrics.selectedInventoryCatalog,migrations:metrics.currentContractMigrations ?? null,role},null,2)+'\n';
     writeFileSync(resolve(dirname(output),'fixture-contract.json'),contractSnapshot);
     metrics.fixtureContractSnapshotSha256 = createHash('sha256').update(contractSnapshot).digest('hex');

@@ -26,6 +26,7 @@ const validRoutes = new Set([
   "/classpilot/coverage?entry=admin",
   "/classpilot/admin?tab=student-portal",
   "/classpilot/admin/analytics",
+  "/classpilot/admin/usage",
   "/classpilot/admin/safety",
   "/classpilot/admin/classes",
   "/classpilot/admin/classes/schedule-changes",

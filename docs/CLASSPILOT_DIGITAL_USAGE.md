@@ -155,25 +155,30 @@ Nonzero `failedSchools` and `deferredDays` are also published as EMF metrics
 
 ## Rollout
 
-1. Keep both modes off and deploy the compatible backend with the additive migration. After any prerequisite
-   PassPilot rules admission, admit the aggregate table once if it is not already admitted:
-   `deploy.sh production --backend --enable-rls-table classpilot_usage_rollups`.
-   Then admit the completion ledger separately:
-   `deploy.sh production --backend --enable-rls-table classpilot_usage_rollup_days`.
-   Confirm both API and worker serve the same compatible source SHA and carry both admissions.
-2. Product runtime tool Apply: `CLASSPILOT_USAGE_ROLLUP_MODE=on`.
-3. Observe at least one school day of `classpilot_usage_rollup` lines, for example with CloudWatch Logs
-   Insights on `/ecs/schoolpilot-production-api`:
-   `filter @logStream like /^scheduler-worker\// and event = "classpilot_usage_rollup" | stats sum(failedSchools), sum(deferredDays), max(durationMs) by bin(1h)`.
-4. Product runtime tool Apply: `CLASSPILOT_DIGITAL_USAGE_MODE=on` (needed by the PR 11 page).
+Follow [Monitored Browser Time activation](CLASSPILOT_USAGE_ACTIVATION.md). The
+selected policy requires the full existing strict synthetic capacity campaign,
+the separate 64-distinct-report campaign and both 800-client survival variants
+before any production activation. Usage-off release waivers do not apply.
 
-LOAD VERIFIED is not claimed until a full-day recompute is timed on production-sized data (school-days
-larger than about one million heartbeats risk the 60-second statement timeout; the API reads on the main
-pool's 15-second timeout).
+Keep both modes off while reviewing the final source, exact migration stage/ledger,
+schema, artifacts and admissions. Deployment or admission, if needed, is a separate
+authorized operation; neither enables Usage. Switch 1 enables only the rollup,
+with reporting off, and rehearses guarded both-off. Switch 2 separately enables
+reporting after a complete normal school day and actual finalized/live ledger proof
+for every eligible production school. Worker log counts alone cannot prove
+school/day coverage. The offline observation collector emits the runtime setter's
+schema-1 evidence and supports independent replay of the exact inputs.
+
+No activation date or capacity pass is implied by this document. The canonical
+acceptance limits remain reports within 20 seconds and heavy workers within 48
+seconds, with every original concurrency, correctness and cleanup check preserved.
 
 ## Rollback
 
-- Turn both usage flags off with the product runtime tool before deploying an older image.
+- Turn both usage flags explicitly off with the product runtime tool's reviewed
+  `-UsageOffContainment` Plan mode before deploying an older image. Its schema-2
+  manifest accepts stable API capacity 1–6 and recovers forward to off; unproven
+  recovery retains the shared fence. Re-enablement requires a new normal plan.
   Keep the additive tables, policies and invalidation triggers. Retention and cleanup must handle
   completion records too, including successful empty days. Follow the recovery semantics below.
 

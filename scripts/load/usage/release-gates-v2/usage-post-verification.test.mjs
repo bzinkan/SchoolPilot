@@ -71,7 +71,7 @@ test('separate post-verification retains the exact original Usage profile and ha
 test('declared campaign and reservation carry mandatory side-contract and host source without changing legacy declarations',()=>{
  const root=mkdtempSync(join(tmpdir(),'release297-usage-declare-'));
  try{
-  const options={kind:'usage',profile:PROFILES.usage.name,candidateSource:source,observedFlagsSha256:'1'.repeat(64)};
+  const options={kind:'usage',profile:PROFILES.usage.name,candidateSource:'ddc5996b3b8645859fa51a9613486db52c481b7f',observedFlagsSha256:'1'.repeat(64)};
   const old=declareCampaign({...options,directory:join(root,'old')});assert.equal('usagePostVerificationContractSha256' in old,false);
   const fresh=declareCampaign({...options,directory:join(root,'new'),hostHarnessSource:hostSource,usagePostVerificationContractSha256:usagePostVerificationHash()});
   assert.equal(fresh.contractSha256,profileHash(PROFILES.usage));

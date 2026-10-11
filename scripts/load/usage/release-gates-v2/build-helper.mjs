@@ -7,7 +7,16 @@ import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
 import { verifyImageProbe, cleanupImageProbe } from '../roles/image-probe.mjs';
+import { assertReviewedUsageSource, assertUsageSourceIdentity } from './usage-source-binding.mjs';
 const execute = promisify(execFile);
+export function verifyHelperUsageSourceBinding(preparation, context) {
+  const name='scripts/load/usage/release-gates-v2/usage-source-binding.json', file=join(context,'overlay',name);
+  if(!preparation.usageSourceBinding){assert.equal(existsSync(file),false);assert.equal(preparation.executedFiles[name],undefined);return null;}
+  const envelope=assertReviewedUsageSource(JSON.parse(readFileSync(file,'utf8')));
+  assert.deepEqual(envelope,preparation.usageSourceBinding);assert.equal(hash(readFileSync(file)),preparation.executedFiles[name]);
+  assertUsageSourceIdentity(envelope,{source:preparation.applicationSource,applicationImage:preparation.applicationImage});
+  assert.equal(preparation.imageBindingSha256,envelope.binding.imageBindingSha256);return envelope;
+}
 export async function withPinnedBuildBase(applicationImage, invoke, use, save) {
   if (!applicationImage.startsWith('sha256:')) return use(applicationImage);
   const original = JSON.parse((await invoke(['image','inspect',applicationImage])).stdout)[0];
@@ -33,6 +42,7 @@ export async function buildHelper(options) {
   assert.equal(existsSync(output),false); mkdirSync(output);
   const preparationBytes=readFileSync(join(context,'preparation.json')), preparation=JSON.parse(preparationBytes);
   assert.equal(hash(preparationBytes),options.preparationSha256);
+  verifyHelperUsageSourceBinding(preparation,context);
   const save=(name,value)=>writeFileSync(join(output,name),JSON.stringify(value,null,2)+'\n',{flag:'wx'});
   const environment={...process.env}; for(const key of Object.keys(environment)) if(/^(?:DOCKER_|BUILDX_BUILDER$|NODE_OPTIONS$)/.test(key)) delete environment[key];
   const invoke=(args,timeout=60_000)=>execute(options.docker||'docker',['--host',options.endpoint,...args],{env:environment,encoding:'utf8',windowsHide:true,timeout,maxBuffer:16*1024**2});

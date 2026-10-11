@@ -5,12 +5,15 @@ import {pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
 import {loadSnapshot,snapshotHash} from './snapshot-contract.mjs';
+import {assertUsageSourceIdentity,assertUsageSourceDatabase} from '../release-gates-v2/usage-source-binding.mjs';
 
 export async function validateSnapshotDatabase(config) {
   const root=resolve(config.sourceDirectory),source=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
   assert.equal(execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim(),'');
   const today=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-  const bundle=loadSnapshot(config.snapshotDirectory,config.snapshotManifestSha256,{source,today});
+  const usageSourceBinding=config.usageSourceBinding;
+  if(usageSourceBinding)assertUsageSourceIdentity(usageSourceBinding,{source});
+  const bundle=loadSnapshot(config.snapshotDirectory,config.snapshotManifestSha256,{source,today,usageSourceBinding});
   const {assertColdFixtureSnapshot}=await import(pathToFileURL(resolve(root,'scripts/load/usage/cold-open-loop-profile.mjs')));
   const {validateReleaseControlRows}=await import(pathToFileURL(resolve(root,'scripts/load/usage/prepare-release-control-ownership.mjs')));
   const {assertCompleteFixtureCatalog}=await import(pathToFileURL(resolve(root,'scripts/load/usage/fixture-rls-contract.mjs')));
@@ -39,11 +42,12 @@ export async function validateSnapshotDatabase(config) {
     await assertClasspilotHeartbeatScreenshotEvidence(app);
     result.screenshotEvidence={signature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',runtimeExecute:true,publicExecute:false,exactDefinition:true};
     const catalog=(await app.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relnamespace='public'::regnamespace AND relname=ANY($1::text[]) ORDER BY relname",[contract.rlsContract.tables])).rows;
-    assert.equal(contract.rlsContract.tables.length,129);assertCompleteFixtureCatalog(contract.rlsContract,catalog);result.admittedTables=catalog.length;
+    assert.equal(contract.rlsContract.tables.length,usageSourceBinding?.binding.rlsTables.length??129);assertCompleteFixtureCatalog(contract.rlsContract,catalog);result.admittedTables=catalog.length;
     const migrations=(await admin.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
-    assert.deepEqual(migrations,contract.migrations);assert.equal(migrations.length,54);assert.ok(migrations.every(r=>r.status==='complete'));result.migrationsSha256=snapshotHash(JSON.stringify(migrations));result.migrations=54;
+    assert.deepEqual(migrations,contract.migrations);assert.equal(migrations.length,usageSourceBinding?.binding.expectedMigrations.length??54);assert.ok(migrations.every(r=>r.status==='complete'));result.migrationsSha256=snapshotHash(JSON.stringify(migrations));result.migrations=migrations.length;
+    if(usageSourceBinding){assertUsageSourceDatabase(usageSourceBinding,{migrations,tables:contract.rlsContract.tables,registrySha256:snapshotHash(registry)});result.usageSourceBindingSha256=usageSourceBinding.bindingSha256;}
     result.migrationRows=migrations;result.registrySha256=snapshotHash(registry);
-    result.admission={inventory:'classpilotPrivateChatLifecyclePostExpand',tables:129,forced:true,restrictedNonOwnerRole:true};
+    result.admission={inventory:usageSourceBinding?.binding.rlsInventory??'classpilotPrivateChatLifecyclePostExpand',tables:catalog.length,forced:true,restrictedNonOwnerRole:true};
     result.stage='fixture-counts';
     const counts=(await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools ORDER BY id')).rows;
     result.fixtureCounts=counts.map(({school_id,...row})=>({schoolIndex:snapshot.schools.findIndex(s=>s.id===school_id),...row}));

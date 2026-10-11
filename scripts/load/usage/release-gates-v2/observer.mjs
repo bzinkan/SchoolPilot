@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import { requireFromApplication, moduleFromApplication } from './application.mjs';
 import { seedCommonFixture } from './common-fixture.mjs';
 import { profileFor } from './contracts.mjs';
+import {readFileSync,existsSync} from 'node:fs';
+import {assertUsageSourceDatabase} from './usage-source-binding.mjs';
+const usageBindingPath=new URL('./usage-source-binding.json',import.meta.url);
+const usageSourceBinding=existsSync(usageBindingPath)?JSON.parse(readFileSync(usageBindingPath,'utf8')):null;
 const pg = requireFromApplication('pg');
 const pool = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 15_000 });
 let fixture;
@@ -41,6 +45,7 @@ process.on('message', async request => {
       assert.deepEqual(catalog.map(row => row.relname), expectedTables); assert.ok(catalog.every(row => row.relrowsecurity && row.relforcerowsecurity));
       const migrations = (await pool.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
       assert.ok(migrations.every(row => row.status === 'complete'));
+      if(usageSourceBinding)assertUsageSourceDatabase(usageSourceBinding,{migrations,tables:expectedTables});
       const app = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1, statement_timeout: 15_000 });
       try {
         const client = await app.connect();
