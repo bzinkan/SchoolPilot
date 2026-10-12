@@ -1,7 +1,7 @@
 // Pure IAM rendering/validation. This module never acquires credentials or calls AWS.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { AMI, instancePolicy, tags, RUNNER_DOCUMENT_SUFFIXES } from './cloud-plan.mjs';
+import { AMI, CAP, instancePolicy, tags, RUNNER_DOCUMENT_SUFFIXES } from './cloud-plan.mjs';
 import { canonicalJson } from './evidence.mjs';
 
 export const METADATA_READ_ACTIONS = Object.freeze(['ec2:DescribeImages', 'ec2:DescribeInstances', 'ec2:DescribeVolumes', 'ec2:DescribeVpcs', 'ec2:DescribeSubnets', 'ec2:DescribeInternetGateways', 'ec2:DescribeRouteTables', 'ec2:DescribeSecurityGroups']);
@@ -21,7 +21,7 @@ function validateSettings(p) {
   assert.match(p.sourceCallerArn, new RegExp(`^arn:aws:iam::${p.accountId}:user/[A-Za-z0-9+=,.@_/-]+$`));
   const start = Date.parse(p.launchNotBeforeUtc), stop = Date.parse(p.stopDeadlineUtc), retained = Date.parse(p.retentionDeadlineUtc);
   assert.ok(Number.isFinite(start) && Number.isFinite(stop) && Number.isFinite(retained));
-  assert.equal(stop - start, 8 * 3600000); assert.equal(retained - stop, 7 * 86400000);
+  assert.ok(stop > start && stop - start <= CAP.activeHours * 3600000, 'positive window within the eight-hour maximum required'); assert.equal(retained - stop, 7 * 86400000);
   return n;
 }
 export function operatorTrust(p) {
@@ -50,7 +50,7 @@ export function runnerLifecyclePolicy(p) {
     allow('ec2:RunInstances', `arn:aws:ec2:${p.region}::image/${AMI.id}`, region),
     allow('ec2:RunInstances', ec2(['subnet', 'security-group']), { ...own, ...region }),
     { ...allow('ec2:RunInstances', ec2(['instance']), { ...requested, ...region, 'ec2:InstanceType': 'm7i.4xlarge', 'ec2:AvailabilityZone': p.availabilityZone, 'ec2:Tenancy': 'default', 'ec2:MetadataHttpTokens': 'required', 'ec2:MetadataHttpPutResponseHopLimit': '1', 'ec2:InstanceProfile': `${iam}instance-profile/${p.runId}` }),
-      Condition: { ...allow('', '', requested).Condition, StringEquals: { ...requested, ...region, 'ec2:InstanceType': 'm7i.4xlarge', 'ec2:AvailabilityZone': p.availabilityZone, 'ec2:Tenancy': 'default', 'ec2:MetadataHttpTokens': 'required' }, ArnEquals: { 'ec2:InstanceProfile': `${iam}instance-profile/${p.runId}` }, NumericEquals: { 'ec2:MetadataHttpPutResponseHopLimit': '1' }, DateGreaterThanEquals: { 'aws:CurrentTime': p.launchNotBeforeUtc }, DateLessThan: { 'aws:CurrentTime': new Date(Date.parse(p.launchNotBeforeUtc) + 600000).toISOString() } } },
+      Condition: { ...allow('', '', requested).Condition, StringEquals: { ...requested, ...region, 'ec2:InstanceType': 'm7i.4xlarge', 'ec2:AvailabilityZone': p.availabilityZone, 'ec2:Tenancy': 'default', 'ec2:MetadataHttpTokens': 'required' }, ArnEquals: { 'ec2:InstanceProfile': `${iam}instance-profile/${p.runId}` }, NumericEquals: { 'ec2:MetadataHttpPutResponseHopLimit': '1' }, DateGreaterThanEquals: { 'aws:CurrentTime': p.launchNotBeforeUtc }, DateLessThan: { 'aws:CurrentTime': new Date(Math.min(Date.parse(p.launchNotBeforeUtc) + 600000, Date.parse(p.stopDeadlineUtc))).toISOString() } } },
     allow('ec2:RunInstances', ec2(['network-interface']), { ...requested, ...region }),
     { ...allow('ec2:RunInstances', ec2(['volume']), { ...requested, ...region, 'ec2:VolumeType': 'gp3' }), Condition: { ...allow('', '', requested).Condition, StringEquals: { ...requested, ...region, 'ec2:VolumeType': 'gp3' }, Bool: { 'ec2:Encrypted': 'true' }, NumericEquals: { 'ec2:VolumeIops': '3000', 'ec2:VolumeThroughput': '125', 'ec2:VolumeSize': ['30', '200'] } } },
     allow('iam:CreateRole', `${iam}role/${p.runId}`, { ...requested, 'iam:PermissionsBoundary': n.instanceBoundaryArn }),

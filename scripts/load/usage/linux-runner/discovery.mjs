@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
-import { AMI } from './cloud-plan.mjs';
+import { AMI, CAP } from './cloud-plan.mjs';
 
 export const MAX_DISCOVERY_WIRE_BYTES = 20_000;
 export const MAX_DISCOVERY_RAW_BYTES = 512 * 1024;
@@ -24,7 +24,8 @@ function binding(p) {
   assert.match(p.instanceId, /^i-[0-9a-f]{17}$/);
   for (const key of ['rootVolumeId', 'dataVolumeId']) assert.match(p[key], /^vol-[0-9a-f]{17}$/);
   assert.notEqual(p.rootVolumeId, p.dataVolumeId);
-  assert.equal(utc(p.stopDeadlineUtc) - utc(p.launchNotBeforeUtc), 8 * 3600_000);
+  const duration = utc(p.stopDeadlineUtc) - utc(p.launchNotBeforeUtc);
+  assert.ok(duration > 0 && duration <= CAP.activeHours * 3600_000, 'positive window within the eight-hour maximum required');
   assert.equal(utc(p.stopDeadlineUtc) % 1000, 0, 'original stop timer uses whole seconds');
   return p;
 }
@@ -63,7 +64,7 @@ def main():
     now=datetime.datetime.now(datetime.timezone.utc)
     end=datetime.datetime.fromisoformat(E['stopDeadlineUtc'].replace('Z','+00:00'))
     begin=datetime.datetime.fromisoformat(E['launchNotBeforeUtc'].replace('Z','+00:00'))
-    need(begin<=now<end and end-begin==datetime.timedelta(hours=8),'absolute-deadline')
+    need(begin<=now<end and datetime.timedelta(0)<end-begin<=datetime.timedelta(hours=${CAP.activeHours}),'absolute-deadline')
     for key,path in [('deadline','/etc/usage-runner-deadline-utc'),('timer','/etc/systemd/system/usage-absolute-stop.timer'),('service','/etc/systemd/system/usage-absolute-stop.service')]:
         need(owned(path)==C['files'][key].encode(),'stop-file-drift')
     need(run(['systemctl','is-active','usage-absolute-stop.timer']).strip()=='active','stop-timer-inactive')

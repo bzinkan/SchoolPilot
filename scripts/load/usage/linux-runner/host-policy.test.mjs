@@ -71,6 +71,13 @@ test('absolute TTL cannot be renewed by a relative duration or exceed eight hour
   ]) { const c = configuration(); change(c); assert.notEqual(validate(c).status, 0); }
 });
 
+test('bootstrap accepts a later launch under the same absolute stop with no renewed TTL', () => {
+  const c = configuration(); c.instance.launchTimeUtc = '2026-10-12T01:00:00Z';
+  const result = validate(c); assert.equal(result.status, 0, result.stderr);
+  assert.equal(c.instance.deadlineUtc, configuration().instance.deadlineUtc);
+  c.instance.launchTimeUtc = '2026-10-12T08:00:01Z'; assert.notEqual(validate(c).status, 0);
+});
+
 test('unknown secret fields, private keys, substituted identity and unsafe controller paths refuse', () => {
   for (const change of [
     (c) => { c.awsAccessKey = 'must-never-be-accepted'; },

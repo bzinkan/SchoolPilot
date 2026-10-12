@@ -61,6 +61,16 @@ test('malformed identity, shell injection, substituted AMI and renewed deadline 
   ]) { const p = expected(); change(p); assert.throws(() => discoveryDocument(p)); }
 });
 
+test('shorter discovery window preserves original stop bytes and rejects invalid durations', () => {
+  const original = expected(), shorter = { ...original, launchNotBeforeUtc: '2026-10-12T15:00:00Z' };
+  assert.deepEqual(documentInput(shorter).data.files, documentInput(original).data.files);
+  const f = facts(); f.binding = shorter; f.identity.pendingTime = shorter.launchNotBeforeUtc;
+  assert.equal(validateDiscoveryPins(f, shorter, now).binding.stopDeadlineUtc, original.stopDeadlineUtc);
+  assert.throws(() => validateDiscoveryPins(f, shorter, Date.parse(shorter.stopDeadlineUtc)));
+  const stop = Date.parse(original.stopDeadlineUtc);
+  for (const duration of [0, -1, 8 * 3600000 + 1]) assert.throws(() => discoveryDocument({ ...original, launchNotBeforeUtc: new Date(stop - duration).toISOString() }));
+});
+
 test('complete envelope roundtrip returns exact raw facts and installed pins without readiness approval', () => {
   const original = facts(); const decoded = decodeDiscoveryEnvelope(JSON.stringify(envelope(original)) + '\n');
   assert.deepEqual(decoded, original);
@@ -160,7 +170,7 @@ exec(fixture['code'])
   const bundled = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe');
   const python = process.env.USAGE_TEST_PYTHON ?? (process.platform === 'win32' && existsSync(bundled) ? bundled : 'python3');
   const nativeFiles = { '/etc/usage-runner-deadline-utc': data.files.deadline, '/etc/systemd/system/usage-absolute-stop.timer': data.files.timer, '/etc/systemd/system/usage-absolute-stop.service': data.files.service };
-  const execute = (inputFacts, files = nativeFiles) => spawnSync(python, ['-c', shim], { encoding: 'utf8', input: JSON.stringify({ code, facts: inputFacts, files }), timeout: 5000 });
+  const execute = (inputFacts, files = nativeFiles, nativeCode = code) => spawnSync(python, ['-c', shim], { encoding: 'utf8', input: JSON.stringify({ code: nativeCode, facts: inputFacts, files }), timeout: 5000 });
   const result = execute(f);
   if (result.error) throw result.error;
   assert.equal(result.status, 0, result.stderr);
@@ -168,6 +178,11 @@ exec(fixture['code'])
   const decoded = decodeDiscoveryEnvelope(result.stdout);
   const pins = validateDiscoveryPins(decoded, expected(), now);
   assert.equal(pins.packages.length, f.packages.count); assert.deepEqual(pins.ssmAgent, { version: '3.3.100.0', snapRevision: '1000' });
+  const shorter = { ...expected(), launchNotBeforeUtc: '2026-10-12T15:00:00Z' }, shortScript = documentInput(shorter).script;
+  const shortFacts = facts(); shortFacts.binding = shorter; shortFacts.identity.pendingTime = shorter.launchNotBeforeUtc;
+  const shortResult = execute(shortFacts, nativeFiles, shortScript.slice(shortScript.indexOf('\n') + 1, shortScript.lastIndexOf('\nPY')));
+  assert.equal(shortResult.status, 0, shortResult.stderr);
+  validateDiscoveryPins(decodeDiscoveryEnvelope(shortResult.stdout), shorter, now);
   for (const change of [
     (bad) => { bad.identity.instanceId = 'i-abcdef12345678900'; },
     (bad) => { bad.dpkgAudit = 'unconfigured package'; },

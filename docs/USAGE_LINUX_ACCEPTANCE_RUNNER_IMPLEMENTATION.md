@@ -11,7 +11,7 @@ Its original unapproved status, receipts and binding summary remain historical.
 ## Implemented controls
 
 The [runner tools and operating procedure](../scripts/load/usage/linux-runner/README.md)
-provide one-attempt cloud lifecycle control, absolute eight-hour host and owner stop
+provide one-attempt cloud lifecycle control, absolute host and owner stop
 controls, private encrypted input/return custody, guarded staging, Linux admission,
 fresh fixture preparation and durable serial execution of the original eight stages
 and 30 attempts. Cleanup requires fresh independent replay of two private copies;
@@ -24,6 +24,16 @@ contingencies. The ceiling is $15 pre-tax for one VM/attempt. There is no automa
 retry, replacement, extra storage, paid IOPS or retrieval VM. Stop timers bound
 compute; final billed cost still requires reconciliation. A custody failure retains
 the only evidence copy, with the proposal's day-six escalation/seven-day decision.
+
+A separately bound later launch may shorten the planned interval to any positive
+duration of at most eight hours while preserving the approved absolute stop. The
+pricing ceiling still reserves eight active hours. The proposed October 12 successor
+uses 15:45–22:45 Eastern (19:45–02:45 UTC), a seven-hour subset of the owner's
+14:45–22:45 Eastern attended window; it does not extend that window or its stop.
+Its launch grant ends at the earlier of ten minutes after the bound start and the
+absolute stop. Admission still requires at least 240 quiet minutes plus export and
+cleanup margin. The separate service/browser rehearsal remains required. This scheduling exception does not establish
+that every remaining stage will fit; insufficient time leaves the campaign incomplete.
 
 The immutable application identities remain:
 
@@ -57,19 +67,25 @@ Its accounting assertions and harness behavior remain unchanged. Focused checks
 passed normally and with an injected 4.5-second child startup delay. Full CI for the
 implementation remains required.
 
-**No paid resources or production changes have been created by this preparation.**
-Provisioning awaits an MFA-backed temporary session: the current deployment identity
-has no attached MFA device. The owner selected an existing MFA-backed session; its
-managed sign-in method is still needed because neither local profile is temporary.
+**As of October 12 at 19:03 UTC, no paid VM or production change has been made.**
+The owner MFA device and temporary owner session have been verified, Session Manager
+client version 1.2.896 is installed, and the runner-scoped IAM setup is installed.
+The latest direct runner-role session remains unproven: its authentication dialog
+stopped before an STS request after its native access snapshot expired at 18:52 UTC
+and its launch grant expired at 18:55 UTC. Neither expired binding authorizes a launch.
+The independently reviewed failure and resource-absence assessment has SHA-256
+`e45766cf263ce005d658dfc31b129e80933e0bfe32eb4fd87f65823642c4d793`;
+the single paid attempt remains unused. Production Usage remains off/off.
+The initial lack of an MFA device, temporary profile and installed client is historical.
+
+Provisioning still requires a fresh, reviewed scope, verified direct runner-role
+session and exact source/CI bindings for the selected shorter window.
 The fixed read-only discovery operation captures installed AMI facts on the one
 authorized VM under its original stop deadline. Complete native package and SSM-agent
 pins and the exact reviewed implementation packet before bootstrap. Scoped operator
 access is a separate prerequisite; rendering its policy
-does not narrow the existing deployment identity's permissions.
-The signed, pinned Session Manager Windows installer is staged; the client is not
-installed in this non-administrator process. [AWS requires administrator rights](https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-windows.html)
-for that installer. Complete that local prerequisite
-before paid launch. The cloud guard requires installed owner tool hashes.
+does not narrow the existing deployment identity's permissions. The cloud guard
+requires installed owner tool hashes.
 
 After authenticated preparation, require native encrypted-volume, isolation,
 durability, exact image import, full dist inventory, fresh fixture/restricted-restore,

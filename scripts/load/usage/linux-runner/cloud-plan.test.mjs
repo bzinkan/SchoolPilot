@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { AMI, cost, validatePlan, launchRequest, instancePolicy, operatorPolicy, assertOwnedResource, tags, launchDocument } from './cloud-plan.mjs';
+import { AMI, cost, validatePlan, launchRequest, instancePolicy, operatorPolicy, assertOwnedResource, tags, launchDocument, stopUserData } from './cloud-plan.mjs';
 const now = Date.now();
 const hash = 'a'.repeat(64);
 const bytes = Buffer.from('nonsecret reviewed gzip bootstrap');
@@ -11,6 +11,21 @@ test('one bounded attempt reserves custody failure and both contingencies below 
   for (const [key, value] of Object.entries({ activeHours: 9, spendCapUsd: 16, instanceCount: 2, exportGiB: 21, dataGiB: 201, rootGiB: 31, holdDays: 8, measuredTrafficAuthorized: true, productionUsage: 'on/off', acceptanceContract: 'relaxed', instanceType: 'm7i.8xlarge', region: 'us-west-2' })) assert.throws(() => validatePlan({ ...plan(), [key]: value }, now), key);
   assert.throws(() => validatePlan(plan(), now + 11 * 60000));
   assert.throws(() => validatePlan({ ...plan(), pricesCapturedUtc: new Date(now - 25 * 3600000).toISOString() }, now));
+});
+
+test('a later launch can shorten the window without changing the stop or eight-hour price ceiling', () => {
+  const original = plan();
+  original.launchNotBeforeUtc = new Date(Math.floor(Date.parse(original.launchNotBeforeUtc) / 1000) * 1000).toISOString();
+  original.stopDeadlineUtc = new Date(Date.parse(original.launchNotBeforeUtc) + 8 * 3600000).toISOString();
+  const shorter = { ...original, launchNotBeforeUtc: new Date(Date.parse(original.launchNotBeforeUtc) + 3600000).toISOString() };
+  validatePlan(shorter, Date.parse(shorter.launchNotBeforeUtc) + 1000);
+  assert.deepEqual(cost(shorter), cost(original)); assert.equal(shorter.activeHours, 8);
+  assert.deepEqual(stopUserData(shorter), stopUserData(original)); assert.deepEqual(tags(shorter), tags(original));
+  assert.throws(() => validatePlan({ ...shorter, activeHours: 7 }, Date.parse(shorter.launchNotBeforeUtc)));
+  const start = Date.parse(original.launchNotBeforeUtc);
+  for (const duration of [0, -1, 8 * 3600000 + 1]) assert.throws(() => validatePlan({ ...original, stopDeadlineUtc: new Date(start + duration).toISOString() }, start));
+  const brief = { ...original, stopDeadlineUtc: new Date(start + 60000).toISOString(), pricesCapturedUtc: new Date(start).toISOString() };
+  validatePlan(brief, start); assert.throws(() => validatePlan(brief, start + 60000));
 });
 test('launch keeps encrypted state, no public SSH, IMDSv2, stop expiry and exact image', () => {
   const p = plan(); const ids = { subnetId: 'subnet-abc', groupId: 'sg-def', profileArn: 'arn:aws:iam::123456789012:instance-profile/usage-linux-test-20261012' };

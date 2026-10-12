@@ -43,6 +43,19 @@ test('scope fits IAM native limits and leaves billing/count enforcement explicit
   assert.ok(!JSON.stringify(scope).includes('ec2:MaxInstanceCount')); // AWS has no such condition.
 });
 
+test('shorter scoped windows retain the absolute stop and clip launch grants before it', () => {
+  const shorter = renderOperatorScope({ ...settings, launchNotBeforeUtc: '2026-10-12T17:00:00Z' });
+  assert.equal(shorter.settings.stopDeadlineUtc, settings.stopDeadlineUtc);
+  assert.deepEqual(shorter.tags, scope.tags); assert.equal(shorter.settings.retentionDeadlineUtc, settings.retentionDeadlineUtc);
+  const grant = s => s.policy.Statement.find(x => x.Action === 'ec2:RunInstances' && x.Condition?.DateGreaterThanEquals);
+  assert.equal(grant(shorter).Condition.DateGreaterThanEquals['aws:CurrentTime'], '2026-10-12T17:00:00Z');
+  assert.equal(grant(shorter).Condition.DateLessThan['aws:CurrentTime'], '2026-10-12T17:10:00.000Z');
+  const brief = renderOperatorScope({ ...settings, launchNotBeforeUtc: '2026-10-12T23:59:00Z' });
+  assert.equal(grant(brief).Condition.DateLessThan['aws:CurrentTime'], '2026-10-13T00:00:00.000Z');
+  const stop = Date.parse(settings.stopDeadlineUtc);
+  for (const duration of [0, -1, 8 * 3600000 + 1]) assert.throws(() => renderOperatorScope({ ...settings, launchNotBeforeUtc: new Date(stop - duration).toISOString() }));
+});
+
 test('scope hash survives canonical private JSON and sorted-settings round trips', () => {
   // Private evidence files recursively sort object keys. Reloading that exact
   // persisted scope must retain its binding and pass native snapshot validation.

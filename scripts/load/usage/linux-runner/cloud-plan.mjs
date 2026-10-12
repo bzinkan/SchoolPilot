@@ -34,8 +34,8 @@ export function validatePlan(p, now = Date.now()) {
   assert.match(p.ebsKmsKeyArn, new RegExp(`^arn:aws:kms:${p.region}:${p.accountId}:key/[a-f0-9-]{36}$`)); assert.match(p.ebsKeySha256, sha);
   const start = Date.parse(p.launchNotBeforeUtc), end = Date.parse(p.stopDeadlineUtc);
   assert.ok(Number.isFinite(start) && Number.isFinite(end));
-  assert.equal(end - start, CAP.activeHours * 3600000);
-  assert.ok(now >= start && now < start + 10 * 60000, 'launch window expired or not begun');
+  assert.ok(end > start && end - start <= CAP.activeHours * 3600000, 'positive window within the eight-hour maximum required');
+  assert.ok(now >= start && now < Math.min(start + 10 * 60000, end), 'launch window expired or not begun');
   assert.ok(Date.parse(p.pricesCapturedUtc) >= now - 24 * 3600000 && Date.parse(p.pricesCapturedUtc) <= now);
   assert.ok(cost(p).total < CAP.usd); assert.equal(p.measuredTrafficAuthorized, false);
   return p;
