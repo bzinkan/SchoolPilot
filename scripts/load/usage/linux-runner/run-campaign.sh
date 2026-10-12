@@ -3,6 +3,9 @@
 set -Eeuo pipefail
 umask 077
 export PATH=/usr/local/bin:/usr/bin:/bin
+for inherited_git_name in ${!GIT_@}; do unset "$inherited_git_name"; done
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_NO_REPLACE_OBJECTS=1
+export GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0
 [[ $# == 1 && $1 == /srv/usage/control/campaign.json && $(id -u) == 1000 ]] || { printf '%s\n' 'USAGE_LINUX_WRAPPER_ARGUMENTS' >&2; exit 1; }
 
 # The privileged bootstrap checker separately verifies this projection against the
@@ -36,7 +39,7 @@ try:
     assert digest(intent_path)==intent_ref['sha256']==body['campaignIntentSha256']
     intent=read(intent_path); assert intent['kind']=='usage_linux_campaign_intent'
     runner=pathlib.Path('/srv/usage/work/runner/scripts/load/usage/linux-runner')
-    for name in ('relocation','preflight','run-campaign'):
+    for name in ('relocation','preflight','run-campaign','source-checkout'):
         p=private_path(str(runner/(name+'.mjs')),1000,0o600)
         assert digest(p)==intent['toolSha256'][name]
     runtime=read(private_path('/srv/usage/control/node-runtime.json',0,0o640))

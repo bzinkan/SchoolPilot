@@ -8,6 +8,7 @@ import { validatePlan, launchRequest, instancePolicy, tags, assertOwnedResource,
 import { assertPrivatePath, ensurePrivateDirectory, writePrivateJsonExclusive, writePrivateBytesExclusive, hashFile, sealDualCopyCustody, verifyManifest } from './evidence.mjs';
 import { discoveryDocument, decodeDiscoveryEnvelope, validateDiscoveryPins } from './discovery.mjs';
 import { renderOperatorScope, validateNativeScopeSnapshot, validateOperatorSession, METADATA_READ_ACTIONS, OWNER_COMMAND_READ_SEPARATE } from './operator-scope.mjs';
+import { FREEZE_SHA256 } from './relocation.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 async function pinned(ref) {
@@ -106,8 +107,8 @@ export async function verifyPacket(p) {
   assert.deepEqual(access.metadataReadExceptions, METADATA_READ_ACTIONS); assert.equal(access.commandOutputReadRoute, OWNER_COMMAND_READ_SEPARATE);
   validateNativeScopeSnapshot(await read(access.nativeScopeSnapshot), scope);
   assert.equal(implementation.schemaVersion, 1); assert.equal(implementation.kind, 'usage_linux_implementation_manifest'); assert.equal(implementation.runId, p.runId);
-  assert.equal(implementation.freezeSha256, '4647a9c6e800514b47ddb1a4c6161042f9702368c5ed0560d276fa64417fdfbe');
-  const required = ['acquire-session.ps1', 'bootstrap.sh', 'cloud-plan.mjs', 'cloud.mjs', 'discovery.mjs', 'evidence.mjs', 'operator-scope.mjs', 'preflight.mjs', 'relocation.mjs', 'run-campaign.mjs', 'run-campaign.sh', 'stage-input.mjs', 'canary.mjs', 'canary-replay.mjs', 'prepare-fixture.mjs'];
+  assert.equal(implementation.freezeSha256, FREEZE_SHA256);
+  const required = ['acquire-session.ps1', 'bootstrap.sh', 'cloud-plan.mjs', 'cloud.mjs', 'discovery.mjs', 'evidence.mjs', 'operator-scope.mjs', 'preflight.mjs', 'relocation.mjs', 'run-campaign.mjs', 'run-campaign.sh', 'stage-input.mjs', 'canary.mjs', 'canary-replay.mjs', 'prepare-fixture.mjs', 'source-checkout.mjs'];
   assert.deepEqual(implementation.scriptBindings.map(x => x.name).sort(), required.sort());
   for (const ref of implementation.scriptBindings) { assert.equal(path.resolve(ref.path), path.join(path.dirname(fileURLToPath(import.meta.url)), ref.name)); await pinnedExecutable(ref); }
   assert.equal(implementation.scriptBindings.find(x => x.name === 'bootstrap.sh').sha256, p.bootstrapSha256);

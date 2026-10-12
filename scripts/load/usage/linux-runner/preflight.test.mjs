@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { sha256, hashFile } from './relocation.mjs';
-import { assertWindow, assertFreshCapture, verifyCheckout, verifyImageImport, assertFixtureAuthority, assertNativeFixtureFacts, verifyPreflight } from './preflight.mjs';
+import { assertWindow, assertFreshCapture, verifyCheckout, verifyImageImport, assertFixtureAuthority, assertNativeFixtureFacts, verifyPreflight, sourceBindingOptions } from './preflight.mjs';
+import { expectedSourceGitConfig } from './source-checkout.mjs';
 
 function fixture(t) {
   const parent = realpathSync(tmpdir()), root = mkdtempSync(path.join(parent, 'usage-linux-preflight-'));
@@ -12,6 +13,15 @@ function fixture(t) {
 }
 function put(root, name, value) { const bytes = typeof value === 'string' ? value : JSON.stringify(value), file = path.join(root, name); writeFileSync(file, bytes, { mode: 0o600 }); return { path: file, sha256: sha256(bytes), bytes: Buffer.byteLength(bytes) }; }
 const now = Date.parse('2026-10-12T12:00:00Z');
+test('each release source requires its own complete binding and review; baseline cannot inherit candidate authority',()=>{
+  const freeze={usageSourceBindingFile:'/candidate/binding',usageSourceBindingSha256:'a'.repeat(64),usageSourceReviewFile:'/candidate/review',usageSourceReviewSha256:'b'.repeat(64),
+    baselineUsageSourceBindingFile:'/baseline/binding',baselineUsageSourceBindingSha256:'c'.repeat(64),baselineUsageSourceReviewFile:'/baseline/review',baselineUsageSourceReviewSha256:'d'.repeat(64)};
+  assert.equal(sourceBindingOptions(freeze,'baseline').usageSourceBindingFile,'/baseline/binding');
+  assert.equal(sourceBindingOptions(freeze,'candidate').usageSourceReviewSha256,'b'.repeat(64));
+  assert.throws(()=>sourceBindingOptions({...freeze,baselineUsageSourceReviewSha256:undefined},'baseline'),/SOURCE_BINDING_REQUIRED/);
+  assert.throws(()=>sourceBindingOptions({...freeze,baselineUsageSourceBindingSha256:'a'},'baseline'),/INVALID_SHA256/);
+  assert.throws(()=>sourceBindingOptions(freeze,'other'),/SOURCE_BINDING_ROLE/);
+});
 test('quiet admission enforces 240 minutes, current date, serial execution, and actual freshness', () => {
   const window = { startsAt: new Date(now - 1).toISOString(), expiresAt: new Date(now + 240 * 60_000).toISOString(), noOtherLoadOrBuilds: true, serialExecution: true };
   assertWindow(window, now);
@@ -19,16 +29,45 @@ test('quiet admission enforces 240 minutes, current date, serial execution, and 
   assert.throws(() => assertWindow({ ...window, expiresAt: '2026-10-13T05:00:00Z' }, now), /CROSSES_SCHOOL_DATE/);
   for (const at of [now + 1, now - 600_001]) assert.throws(() => assertFreshCapture({ capturedAtUtc: new Date(at).toISOString() }, now), /STALE/);
 });
-test('full checkout proof detects CRLF conversion even with matching Git HEAD/tree and clean status', async t => {
+function checkoutFixture(t) {
   const root = fixture(t); put(root, 'input', 'x\r\n');
-  const record = { source: 'a'.repeat(40), tree: 'b'.repeat(40), files: 1, membersSha256: sha256(JSON.stringify([['input', sha256('x\r\n')]])) };
-  const git = args => ({ 'rev-parse HEAD': record.source, 'rev-parse HEAD^{tree}': record.tree, 'rev-parse --abbrev-ref HEAD': 'HEAD', 'status --porcelain': '', 'ls-files -z': 'input\0' }[args.join(' ')]);
-  await verifyCheckout(root, record, { git }); put(root, 'input', 'x\n');
-  await assert.rejects(verifyCheckout(root, record, { git }), /SOURCE_RAW_WORKING_BYTES/);
+  const gd = path.join(root, '.git'), packName = `pack-${'c'.repeat(40)}`;
+  mkdirSync(path.join(gd, 'objects', 'pack'), { recursive: true, mode: 0o700 });
+  const record = { source: 'a'.repeat(40), tree: 'b'.repeat(40), files: 1, sha256: sha256('archive'), bytes: 7, membersSha256: sha256(JSON.stringify([['input', sha256('x\r\n')]])) };
+  const members = [{ path: 'input', gitMode: '100755', gitBlobOid: 'd'.repeat(40), sha256: sha256('x\r\n') }];
+  const restoration = { empty: path.join(root, 'empty'), plan: { roles: { candidate: { ...record, archive: { sha256: record.sha256, bytes: record.bytes }, members } }, shallowHeads: [record.source], objects: [{ oid: record.source, type: 'commit', bytes: 100 }], pack: { sha256: sha256('pack') } } };
+  put(gd, 'config', expectedSourceGitConfig(restoration.empty)); put(gd, 'shallow', `${record.source}\n`); put(gd, 'HEAD', `${record.source}\n`);
+  put(path.join(gd, 'objects', 'pack'), `${packName}.pack`, 'pack'); put(path.join(gd, 'objects', 'pack'), `${packName}.idx`, 'index');
+  const responses = { 'rev-parse HEAD': record.source, 'rev-parse HEAD^{tree}': record.tree, 'rev-parse --abbrev-ref HEAD': 'HEAD', 'status --porcelain=v1 --untracked-files=all': '', 'ls-files -z': 'input\0', 'ls-files --stage -z': `100755 ${'d'.repeat(40)} 0\tinput\0`, 'cat-file --batch-all-objects --batch-check=%(objectname) %(objecttype) %(objectsize)': `${record.source} commit 100\n`, 'fsck --strict --full --no-reflogs': '' };
+  return { root, gd, record, responses, options: { restoration, role: 'candidate', git: args => { assert.ok(Object.hasOwn(responses, args.join(' '))); return responses[args.join(' ')]; } } };
+}
+test('full checkout proof detects CRLF conversion even with matching Git HEAD/tree and clean status', async t => {
+  const { root, record, options } = checkoutFixture(t);
+  await verifyCheckout(root, record, options); put(root, 'input', 'x\n');
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_RAW_WORKING_BYTES/);
 });
 test('full checkout rejects dirty or attached working trees before imports', async t => {
-  const root = fixture(t), record = { source: 'a', tree: 'b' };
-  await assert.rejects(verifyCheckout(root, record, { git: args => args[1] === 'HEAD' ? 'a' : args[1] === 'HEAD^{tree}' ? 'b' : ' M input' }), /SOURCE_DIRTY/);
+  const { root, record, options, responses } = checkoutFixture(t);
+  responses['status --porcelain=v1 --untracked-files=all'] = ' M input';
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_DIRTY/);
+  responses['status --porcelain=v1 --untracked-files=all'] = ''; responses['rev-parse --abbrev-ref HEAD'] = 'main';
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_NOT_DETACHED/);
+});
+test('private working modes do not replace canonical Git index modes or pack bytes', async t => {
+  const { root, gd, record, options, responses } = checkoutFixture(t);
+  await verifyCheckout(root, record, options);
+  responses['ls-files --stage -z'] = responses['ls-files --stage -z'].replace('100755', '100644');
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_INDEX_MODES_OR_BLOBS/);
+  responses['ls-files --stage -z'] = responses['ls-files --stage -z'].replace('100644', '100755');
+  put(path.join(gd, 'objects', 'pack'), `pack-${'c'.repeat(40)}.pack`, 'changed');
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_GIT_PACK_BYTES/);
+});
+test('supplied Git indirection and altered generated config are refused before imports', async t => {
+  const { root, gd, record, options } = checkoutFixture(t);
+  put(gd, 'config', `${expectedSourceGitConfig(options.restoration.empty)}[include]\npath=/tmp/foreign\n`);
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_GIT_CONFIG/);
+  put(gd, 'config', expectedSourceGitConfig(options.restoration.empty)); put(gd, 'commondir', '/tmp/foreign');
+  await assert.rejects(verifyCheckout(root, record, options), /SOURCE_GIT_INDIRECTION/);
 });
 async function imageFixture(root) {
   const layer = put(root, 'layer', 'compressed-layer'), source = 'a'.repeat(40);

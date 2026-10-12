@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { FREEZE_SHA256, SOURCES, guard, sha256, assertSha, hashFile, safePath, verifyReference, readReference, verifyRelocation, writeNewJson, readCliRequest, isMain, cliFailure } from './relocation.mjs';
+import { loadSourceRestoration, verifyCheckout } from './source-checkout.mjs';
+export { verifyCheckout } from './source-checkout.mjs';
 
 export const STAGES = Object.freeze([
   { name: 'sole', profile: 'sole', kind: 'paired', count: 8 },
@@ -28,24 +29,6 @@ export function assertWindow(window, now, { entry = true } = {}) {
   guard(schoolDate(now) === schoolDate(end - 1), 'QUIET_WINDOW_CROSSES_SCHOOL_DATE'); return { start, end };
 }
 
-export async function verifyCheckout(root, record, { git = (args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 }).trim() } = {}) {
-  safePath(root, { directory: true, privateMode: true });
-  guard(git(['rev-parse', 'HEAD']) === record.source && git(['rev-parse', 'HEAD^{tree}']) === record.tree, 'SOURCE_GIT_IDENTITY');
-  guard(git(['status', '--porcelain']) === '', 'SOURCE_DIRTY');
-  // Detached exact Git objects, not a rewritten checkout with the same working files.
-  guard(git(['rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD', 'SOURCE_NOT_DETACHED');
-  const files = git(['ls-files', '-z']).split('\0').filter(Boolean).sort();
-  guard(files.length === record.files && new Set(files).size === files.length, 'SOURCE_FILE_SET');
-  const entries = [];
-  for (const file of files) {
-    guard(!path.isAbsolute(file) && !file.includes('\\') && !file.split('/').some(x => x === '..' || x === '.'), 'SOURCE_MEMBER_PATH');
-    entries.push([file, await hashFile(safePath(path.resolve(root, file), { root, privateMode: true }))]);
-  }
-  guard(sha256(JSON.stringify(entries)) === record.membersSha256, 'SOURCE_RAW_WORKING_BYTES');
-  guard(git(['status', '--porcelain']) === '' && git(['rev-parse', 'HEAD']) === record.source, 'SOURCE_CHANGED_DURING_CHECK');
-  return Object.fromEntries(entries);
-}
-
 // Every historical hash reference encountered in the freeze must have an explicit mapping.
 export function verifyHistoricalReferences(value, relocation) {
   if (!value || typeof value !== 'object') return;
@@ -58,11 +41,25 @@ export function resolveFreeze(freeze, relocation) {
     schemaFile: p(freeze.schemaFile), baselineSchema: { ...freeze.baselineSchema, file: p(freeze.baselineSchema.file), receipt: ref(freeze.baselineSchema.receipt) },
     usageSourceBindingFile: relocation.resolve(freeze.usageSourceBindingFile, freeze.usageSourceBindingSha256),
     usageSourceReviewFile: relocation.resolve(freeze.usageSourceReviewFile, freeze.usageSourceReviewSha256),
+    baselineUsageSourceBindingFile: relocation.resolve(freeze.baselineUsageSourceBindingFile, freeze.baselineUsageSourceBindingSha256),
+    baselineUsageSourceReviewFile: relocation.resolve(freeze.baselineUsageSourceReviewFile, freeze.baselineUsageSourceReviewSha256),
     observedEnvironment: ref(freeze.observedEnvironment), candidateImage: ref(freeze.candidateImage), baselineImage: ref(freeze.baselineImage),
     helpers: Object.fromEntries(Object.entries(freeze.helpers).map(([k, v]) => [k, ref(v)])),
     preparations: Object.fromEntries(Object.entries(freeze.preparations).map(([k, v]) => [k, ref(v)])),
     references: Object.fromEntries(Object.entries(freeze.references).map(([k, v]) => [k, ref(v)])),
   };
+}
+export function sourceBindingOptions(freeze,role){
+  guard(['candidate','baseline'].includes(role),'SOURCE_BINDING_ROLE');
+  const prefix=role==='baseline'?'baselineUsageSource':'usageSource';
+  const result={};
+  for(const suffix of ['BindingFile','BindingSha256','ReviewFile','ReviewSha256']){
+    const value=freeze[prefix+suffix];
+    guard(typeof value==='string'&&value.length>0,'SOURCE_BINDING_REQUIRED');
+    if(suffix.endsWith('Sha256'))assertSha(value);
+    result['usageSource'+suffix]=value;
+  }
+  return result;
 }
 export async function loadCanonical(freeze) {
   const base = path.join(freeze.harnessDirectory, 'scripts/load/usage');
@@ -184,43 +181,55 @@ export async function verifyFrozenInputs(request, { platform = process.platform,
   verifyHistoricalReferences(original, relocation); const freeze = resolveFreeze(original, relocation);
   const archivesRef = original.references['complete-source-archives.json']; guard(archivesRef, 'COMPLETE_SOURCE_ARCHIVES_REQUIRED');
   const archives = await readReference(relocation.ref(archivesRef), { privateMode: true });
-  const checkouts = {};
+  const checkouts = {}, restoration = await loadSourceRestoration(request.sourceRestoration, { outputRoot: request.sourceRestoration?.outputRoot });
   for (const [key, directory, source] of [['source', freeze.sourceDirectory, SOURCES.candidate], ['baseline-source', freeze.baselineSourceDirectory, SOURCES.baseline], ['harness-source', freeze.harnessDirectory, SOURCES.harness]]) {
     const record = archives.archives[key]; guard(record.source === source, 'SOURCE_ARCHIVE_IDENTITY');
-    relocation.resolve(record.path, record.sha256); checkouts[key] = await verifyCheckout(directory, record);
+    const role = restoration.roleFor(key);
+    guard(directory === restoration.receipt.roles[role].path, 'SOURCE_RESTORATION_DIRECTORY');
+    relocation.resolve(record.path, record.sha256);
+    checkouts[key] = await verifyCheckout(directory, record, { restoration, role, git: args => restoration.git(directory, args) });
   }
   for (const [file, sha] of Object.entries(original.harnessFiles)) guard(checkouts['harness-source'][file] === sha, 'HARNESS_FILE_DRIFT');
   const canonical = await canonicalLoader(freeze);
   for (const [key, record] of Object.entries(original.profiles)) guard(canonical.profileHash(canonical.PROFILES[key]) === record.sha256, 'CANONICAL_PROFILE_DRIFT');
-  const envelope = canonical.loadUsageSourceBinding({ usageSourceBindingFile: freeze.usageSourceBindingFile, usageSourceBindingSha256: freeze.usageSourceBindingSha256,
-    usageSourceReviewFile: freeze.usageSourceReviewFile, usageSourceReviewSha256: freeze.usageSourceReviewSha256 }, { required: true });
+  const envelope = canonical.loadUsageSourceBinding(sourceBindingOptions(freeze,'candidate'), { required: true });
+  const baselineEnvelope = canonical.loadUsageSourceBinding(sourceBindingOptions(freeze,'baseline'), { required: true });
   canonical.assertUsageSourceCheckout(envelope, freeze.sourceDirectory);
-  guard(envelope.binding.migrationStage === 'expand' && envelope.binding.expectedMigrations.length === 53 && envelope.binding.rlsTables.length === 129, 'FROZEN_EXPAND_ADMISSION');
+  canonical.assertUsageSourceCheckout(baselineEnvelope, freeze.baselineSourceDirectory);
+  for(const selected of [envelope,baselineEnvelope])
+    guard(selected.binding.migrationStage === 'expand' && selected.binding.expectedMigrations.length === 53 && selected.binding.rlsTables.length === 129, 'FROZEN_EXPAND_ADMISSION');
   const schemas = [
-    [freeze.schemaFile, freeze.references['schema/lineage/schema-receipt.json'], SOURCES.candidate, envelope.binding.canonicalSourceSchemaSha256],
-    [freeze.baselineSchema.file, freeze.baselineSchema.receipt, SOURCES.baseline, freeze.baselineSchema.canonicalSha256],
+    [freeze.schemaFile, freeze.references['schema/lineage/schema-receipt.json'], SOURCES.candidate, envelope],
+    [freeze.baselineSchema.file, freeze.baselineSchema.receipt, SOURCES.baseline, baselineEnvelope],
   ];
-  for (const [file, receiptRef, source, fingerprint] of schemas) {
+  for (const [file, receiptRef, source, selected] of schemas) {
     const receipt = await readReference(receiptRef, { privateMode: true });
     guard(receipt.source === source && receipt.schemaSha256 === await hashFile(file), 'SCHEMA_RAW_BINDING');
-    guard(canonical.canonicalSchemaFingerprint(readFileSync(file, 'utf8')) === fingerprint, 'SCHEMA_CANONICAL_BINDING');
-    assert.deepEqual(receipt.migrations, envelope.binding.expectedMigrations); assert.deepEqual([...receipt.rlsTables].sort(), envelope.binding.rlsTables);
+    guard(canonical.canonicalSchemaFingerprint(readFileSync(file, 'utf8')) === selected.binding.canonicalSourceSchemaSha256, 'SCHEMA_CANONICAL_BINDING');
+    canonical.assertUsageSourceIdentity(selected,{source,schemaInputSha256:receipt.schemaSha256});
+    assert.deepEqual(receipt.migrations, selected.binding.expectedMigrations); assert.deepEqual([...receipt.rlsTables].sort(), selected.binding.rlsTables);
   }
   const imageExpected = {};
-  for (const key of ['candidate', 'baseline']) { const binding = await readReference(freeze[`${key}Image`], { privateMode: true }); imageExpected[key] = { image: binding.image, source: binding.source, configDigest: binding.configDigest, archiveSha256: binding.archive?.sha256 }; }
+  for (const key of ['candidate', 'baseline']) { const binding = await readReference(freeze[`${key}Image`], { privateMode: true });
+    const selected=key==='baseline'?baselineEnvelope:envelope;
+    canonical.assertUsageSourceIdentity(selected,{source:SOURCES[key],applicationImage:binding.image});
+    guard(binding.verified===true&&binding.source===SOURCES[key]&&selected.binding.imageBindingSha256===freeze[`${key}Image`].sha256,'APPLICATION_SOURCE_BINDING');
+    imageExpected[key] = { image: binding.image, source: binding.source, configDigest: binding.configDigest, archiveSha256: binding.archive?.sha256 }; }
   for (const key of ['candidate', 'baseline', 'distinct']) {
     const helper = await readReference(freeze.helpers[key], { privateMode: true }), prep = await readReference(freeze.preparations[key], { privateMode: true });
     guard(helper.preparationSha256 === freeze.preparations[key].sha256 && helper.applicationSource === (key === 'baseline' ? SOURCES.baseline : SOURCES.candidate), 'HELPER_BINDING');
     guard(prep.harnessSource === SOURCES.harness && prep.applicationSource === helper.applicationSource && prep.applicationImage === helper.applicationImage, 'HELPER_PREPARATION');
+    const applicationKey=key==='baseline'?'baseline':'candidate';
+    guard(helper.applicationImage===imageExpected[applicationKey].image&&prep.imageBindingSha256===freeze[`${applicationKey}Image`].sha256,'HELPER_APPLICATION_BINDING');
     assert.deepEqual(prep.canonicalFiles, original.harnessFiles);
-    assert.deepEqual(prep.usageSourceBinding, key === 'baseline' ? undefined : envelope);
+    assert.deepEqual(prep.usageSourceBinding, key === 'baseline' ? baselineEnvelope : envelope);
     imageExpected[`${key}Helper`] = { image: helper.helperImage, containerImage: helper.helperContainerImage, source: helper.applicationSource };
   }
   imageExpected.postgres = { image: original.postgresImage }; imageExpected.redis = { image: original.redisImage };
   assert.deepEqual(Object.keys(request.imageImports).sort(), Object.keys(imageExpected).sort());
   const images = {};
   for (const [key, expected] of Object.entries(imageExpected)) images[key] = await verifyImageImport(request.imageImports[key], expected, { root: relocation.inputRoot });
-  return { freeze, originalFreeze: original, relocation, canonical, envelope, images, checkouts };
+  return { freeze, originalFreeze: original, relocation, canonical, envelope, baselineEnvelope, images, checkouts };
 }
 export async function verifyPreflight(request, { now = Date.now(), ...options } = {}) {
   guard(request.schemaVersion === 1 && request.kind === 'usage_linux_preflight_request', 'PREFLIGHT_SCHEMA');

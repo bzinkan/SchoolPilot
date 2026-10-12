@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFi
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { guard, SOURCES, FREEZE_SHA256, sha256, hashFile, readReference, verifyReference, safePath, writeNewJson, readCliRequest, isMain, cliFailure } from './relocation.mjs';
+import { guard, SOURCES, FREEZE_SHA256, sha256, hashFile, readReference, verifyReference, safePath, writeNewJson, readCliRequest, isMain, cliFailure, contains } from './relocation.mjs';
 import { verifyFrozenInputs, verifyReview, assertNativeFixtureFacts, schoolDate } from './preflight.mjs';
 
 export const SNAPSHOT_FILES = Object.freeze(['prepared-database.private.dump', 'synthetic-roles.private.sql', 'cold-fixture-state.json', 'release-control-preparation.json', 'preparation-fixture-contract.json', 'preparation-metrics.json', 'schema-fingerprint.json', 'post-convergence-schema.sql', 'measurement-ready.json']);
@@ -111,8 +111,12 @@ export async function prepareFixture(request, { verifyInputs = verifyFrozenInput
   await verifyReview(request.independentPreparationReview, request.intent.sha256, 'usage_linux_fixture_preparation_review');
   guard(intent.kind === 'usage_linux_fixture_preparation_intent' && intent.freezeSha256 === FREEZE_SHA256 && intent.outputRoot === request.outputRoot && intent.run === request.run && intent.inputsSha256 === request.inputs.sha256, 'FIXTURE_INTENT_BINDING');
   guard(intent.compiledApplicationSha256 === request.compiledApplication.sha256 && intent.compiledApplicationReviewSha256 === request.compiledApplicationReview.sha256, 'FIXTURE_COMPILED_INTENT_BINDING');
-  for (const name of ['relocation', 'preflight', 'prepare-fixture']) guard(intent.toolSha256?.[name] === await hashFile(path.join(path.dirname(fileURLToPath(import.meta.url)), `${name}.mjs`)), 'FIXTURE_REVIEWED_TOOL_DRIFT');
-  const input = await readReference(request.inputs, { privateMode: true }), context = await verifyInputs(input);
+  for (const name of ['relocation', 'preflight', 'prepare-fixture', 'source-checkout']) guard(intent.toolSha256?.[name] === await hashFile(path.join(path.dirname(fileURLToPath(import.meta.url)), `${name}.mjs`)), 'FIXTURE_REVIEWED_TOOL_DRIFT');
+  const input = await readReference(request.inputs, { privateMode: true });
+  const sourceLogs=input.sourceRestoration?.outputRoot;
+  guard(typeof sourceLogs==='string'&&path.isAbsolute(sourceLogs)&&typeof request.outputRoot==='string'&&path.isAbsolute(request.outputRoot),'SOURCE_LOG_ROOT_REQUIRED');
+  guard(!contains(sourceLogs,request.outputRoot)&&!contains(request.outputRoot,sourceLogs),'SOURCE_LOG_ROOT_OVERLAP');
+  const context = await verifyInputs(input);
   const { freeze, canonical, envelope } = context;
   guard(/^[a-f0-9]{12}$/.test(request.run), 'FIXTURE_RUN_ID');
   const through = Date.parse(intent.validThroughUtc); guard(Number.isFinite(through) && through > now() && schoolDate(through - 1) === schoolDate(now()), 'FIXTURE_DATE_HORIZON');

@@ -27,15 +27,16 @@ the only evidence copy, with the proposal's day-six escalation/seven-day decisio
 
 A separately bound later launch may shorten the planned interval to any positive
 duration of at most eight hours while preserving the approved absolute stop. The
-pricing ceiling still reserves eight active hours. The proposed October 12 successor
-uses 15:45–22:45 Eastern (19:45–02:45 UTC), a seven-hour subset of the owner's
-14:45–22:45 Eastern attended window; it does not extend that window or its stop.
+pricing ceiling still reserves eight active hours. The unused October 12 a4 proposal
+selected 15:45–22:45 Eastern (19:45–02:45 UTC), a seven-hour subset of the owner's
+14:45–22:45 Eastern attended window. Its launch grant expired unused; these times
+do not authorize a later launch or extend the owner's absolute stop.
 Its launch grant ends at the earlier of ten minutes after the bound start and the
 absolute stop. Admission still requires at least 240 quiet minutes plus export and
 cleanup margin. The separate service/browser rehearsal remains required. This scheduling exception does not establish
 that every remaining stage will fit; insufficient time leaves the campaign incomplete.
 
-The immutable application identities remain:
+The initial implementation packet bound these immutable historical identities:
 
 | Binding | Exact identity |
 | --- | --- |
@@ -53,6 +54,54 @@ All seven local images were exported without rebuilding or publishing them.
 Independent verification checked the frozen roots and complete selected Linux/amd64
 graphs. Omitted foreign-platform blobs and the resulting strict full-graph failure
 are retained; native Linux import must still prove the canonical image assertions.
+
+### Current-production source successor
+
+Production advanced before the attended window. Its actual API190 and worker206
+task definitions declare source `30bd7048c08e4d55eefa6cf4471504baeffcbf0a` and
+image `sha256:4bbc9d48887852db21f6f191f8d9f3dc2071ab5f9e569dc155d56c325802651c`.
+PR #646 was updated against that source; its CPU candidate is
+`42d5e209f6d7ff4845a35b0c81c49e95924f7d2e`, image
+`sha256:c186373bd432771b1c1a0c84decbb0bfe16835f3fbf6d10aa23fdebed7fb6a1e`.
+Both now have independently reviewed native 53-migration/129-table proofs and
+canonical security scans with zero High/Critical findings. The earlier candidate
+layer-hash refusal remains failed; a separately reviewed preparation successor
+proved all runtime contents equal except the expected CPU JavaScript/source-map
+change and enumerated COPY timestamps. This grants no performance acceptance.
+
+Harness `d9c45a6ed21ff508045fd6c137e9535f6f8a46ae` adds the separately reviewed
+baseline ledger to paired declarations, arm-A reservations and receipt reloads.
+The controller now requires both source envelopes and verifies each source's
+checkout, complete ledger, schema, image binding and helper preparation. Historical
+unbound-baseline contracts remain available in their original harness. All 192
+canonical harness tests pass, and all 19 exact-head harness CI checks passed.
+The application/harness freeze is sealed as
+`3b2768c1227bdf6f69a00366b84da60f6776a0c4963e03174de4093e8929de8d`.
+The controller still requires its updated exact-head CI and separately reviewed
+input/launch packet. Workloads, paired ordering,
+concurrent workers and acceptance thresholds are unchanged.
+
+Source restoration now requires an explicit native receipt and independent review.
+Admission uses the pinned root-owned Git binary with isolated configuration,
+verifies exact generated metadata and all transferred objects, and checks canonical
+index modes separately from private 0600 working files. The two Android `gradlew`
+entries retain their original Git 100755 modes; `core.fileMode=false` preserves
+private working permissions. Exactly the three frozen heads form declared shallow
+boundaries, with literal parent identities retained and parent history excluded.
+This is a transport boundary, not a source rewrite or native restoration pass.
+
+The preceding harness CI failed while removing a disposable unit-test Git
+directory with `ENOTEMPTY`; that run remains failed. The successor disables
+optional background Git housekeeping in that fixture and permits only three
+filesystem retries with a 100-millisecond base delay during guarded teardown. All 19
+release-binding tests passed independently with concurrency four. This change
+does not alter release assertions or native acceptance cleanup requirements.
+
+The fresh standard candidate frontend is built from the exact candidate source
+without production configuration. Its 171 files and native build provenance passed
+independent archive replay. This does not identify the currently served frontend
+or complete the required browser recovery rehearsal. Older frontend receipts,
+the unsuccessful public identity request and all prior failures remain retained.
 
 ## Verification and remaining admission
 
@@ -78,6 +127,14 @@ The independently reviewed failure and resource-absence assessment has SHA-256
 `e45766cf263ce005d658dfc31b129e80933e0bfe32eb4fd87f65823642c4d793`;
 the single paid attempt remains unused. Production Usage remains off/off.
 The initial lack of an MFA device, temporary profile and installed client is historical.
+
+The later direct runner-role sign-in succeeded at 19:27 UTC. Its a4 launch grant
+expired unused at 19:55 UTC; that successful authentication does not revive the
+expired grant. The exact expired a1/a2 IAM installations have since been removed
+with independently replayed native absence proof. No paid VM has started. A new
+reviewed launch scope must preserve the owner's 02:45 UTC October 13 absolute stop,
+the single unused attempt and $15 pre-tax ceiling. No further authentication
+should be requested until its concrete source and launch packet are ready.
 
 Provisioning still requires a fresh, reviewed scope, verified direct runner-role
 session and exact source/CI bindings for the selected shorter window.

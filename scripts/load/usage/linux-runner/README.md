@@ -2,7 +2,9 @@
 
 This is the implementation successor to the [reviewed runner plan](../../../../docs/USAGE_LINUX_ACCEPTANCE_RUNNER_PLAN.md). The owner authorized one attempt with a **$15 pre-tax cap** on October 12, 2026. Production Usage remains `off/off`. No command in this directory deploys SchoolPilot, changes a product switch, publishes an extension, or applies Terraform.
 
-The retained Windows comparisons and failed browser rehearsals remain failures/inconclusive evidence. A Linux VM does not establish a CPU improvement or release readiness. The frozen canonical harness remains `b9383a63ebe9065da01e7f0cbebdb40a008ad7c3`; candidate `cc98ab83b81b7a4a3767d5d801daae5ab279381a`, baseline `d54827aefd7b7fdccae63a7d81c888c294a195f7`, source/schema/image contracts and all thresholds are unchanged. Synthetic Usage profiles enable their existing synthetic Usage settings; production stays off.
+The retained Windows comparisons and failed browser rehearsals remain failures/inconclusive evidence. A Linux VM does not establish a CPU improvement or release readiness. The original packet's harness `b9383a63ebe9065da01e7f0cbebdb40a008ad7c3`, candidate `cc98ab83b81b7a4a3767d5d801daae5ab279381a`, baseline `d54827aefd7b7fdccae63a7d81c888c294a195f7` and freeze `4647a9c6e800514b47ddb1a4c6161042f9702368c5ed0560d276fa64417fdfbe` remain historical.
+
+The current-production comparison binds baseline `30bd7048c08e4d55eefa6cf4471504baeffcbf0a` and CPU candidate `42d5e209f6d7ff4845a35b0c81c49e95924f7d2e` to separate reviewed source/image/53-migration/129-table envelopes. Harness `d9c45a6ed21ff508045fd6c137e9535f6f8a46ae` adds the baseline envelope to paired reservations and independent receipt replay; every profile, offering, ordering and threshold remains fixed. The application/harness freeze is sealed as `3b2768c1227bdf6f69a00366b84da60f6776a0c4963e03174de4093e8929de8d`. Updated controller CI and fresh launch admission remain required. Synthetic Usage profiles enable their existing synthetic Usage settings; production stays off.
 
 ## What runs where
 
@@ -16,6 +18,7 @@ The retained Windows comparisons and failed browser rehearsals remain failures/i
 | `evidence.mjs` | Owner/root: streamed, no-clobber bundles, pinned age encryption, strict permissions, complete manifests and fresh independent replay. |
 | `canary.mjs`, `canary-replay.mjs` | Owner: actual two-key age roundtrips and two private custody copies of one harmless retained failure. This proves local tooling, not Linux transport or capacity. |
 | `stage-input.mjs` | Linux root: copy exact SFTP-owned ciphertext without following links, decrypt/verify in root-private staging, then place approved members under UID 1000. No archive execution or image import. |
+| `source-checkout.mjs` | UID 1000: require independently reviewed native source restoration, pinned root-owned Git, exact generated metadata/object/index modes and private raw source bytes. Native Git receipts use a separate private output directory. |
 | `relocation.mjs` | Linux UID 1000: verify append-only path relocation against immutable original bytes. |
 | `prepare-fixture.mjs` | Linux UID 1000: generate a new canonical fixture and collect native restricted-restore facts. Never redate an old snapshot. |
 | `preflight.mjs` | Linux UID 1000: independently reload source, Git objects, image descriptors/imports, native fixture and separately reviewed host/readiness proofs. |
@@ -62,6 +65,16 @@ The bootstrap document is parameter-free and bound to its immutable AWS document
 The custom Session document uses the same Port transport as `AWS-StartPortForwardingSession`, fixing owner loopback port 2222 to runner loopback SSH port 22. This narrows the standard document's arbitrary-port parameters. Public SSH and ToRemoteHost are not allowed. Independently obtain the server's full public host key and input age recipient through the pinned authenticated SSM identity channel. Verify those fingerprints before SFTP. Never use `StrictHostKeyChecking=no` or accept an unauthenticated keyscan as trust.
 
 The SFTP account sees ciphertext only. Upload the exact approved bundle, then invoke reviewed privileged placement using `stage-input.mjs`. All privileged copies and ownership changes stay under root-private staging. A mandatory native syscall probe precedes atomic, no-replace publication into the executor's work directory; no privileged writes follow publication. Its return private identity always stays on the owner machine. Safe archive/Git-object extraction, immutable image import, native descriptor comparison, locked Linux dependency installation and fixture generation all precede measurement. Retain their raw failures and inventories. The pinned Docker containerd image store must preserve the frozen OCI roots and canonical `image.Id`/`container.Image` assertions; an import mismatch is a hold.
+
+Bind `sourceRestoration: {receipt, review, outputRoot}` in the frozen-input request.
+Its native reconstruction review must bind the exact receipt, plan and Git binary.
+Use a separate private `/srv/usage/work/source-checks-<12hex>` log directory outside
+fixture and campaign output trees. The relocation sidecar's private common
+`inputRoot` is `/srv/usage/work`, so staged `input-*` files and reconstructed
+`sources-*` directories are contained by exact individual mappings. No directory
+prefix substitution or source-byte rewrite is permitted. Direct preparation uses
+the same five sanitized Git environment values and fixed PATH as the durable
+wrapper; admission refuses another Git resolution or inherited override.
 
 The static root-owned controller config names `/srv/usage/work/active-request.json` and `/srv/usage/control/launch-admission.json`. The separate root-owned admission record binds the fresh request hash after actual host/fixture/window review. Create a new parameter-free launch document with `launchDocument()` only at that point; it checks the static config, fresh admission record, bootstrap and deadline hashes before starting the unit. Provisioning deliberately does not create a campaign launch document. Place the reviewed wrapper/config and UID1000 controller modules through an exact hash-bound privileged operation, not an arbitrary SFTP shell.
 

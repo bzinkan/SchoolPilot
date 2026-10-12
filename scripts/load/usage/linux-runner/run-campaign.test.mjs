@@ -21,9 +21,9 @@ async function fixture(t, { failedRun, inconclusiveStage, throwsRun } = {}) {
   const schema = put(root, 'schema', { synthetic: true }), receipt = put(root, 'schema-receipt', {});
   const quiet = { startsAt: new Date(now - 1000).toISOString(), expiresAt: new Date(now + 5 * 3600_000).toISOString(), serialExecution: true, noOtherLoadOrBuilds: true };
   const quietRef = put(root, 'quiet', quiet);
-  const preflightRequest = put(root, 'preflight', { schemaVersion: 1, kind: 'usage_linux_preflight_request', endpoint: 'unix:///var/run/docker.sock', quietWindow: quietRef, fixture: { directory: root, manifestSha256: '3'.repeat(64) } });
+  const preflightRequest = put(root, 'preflight', { schemaVersion: 1, kind: 'usage_linux_preflight_request', endpoint: 'unix:///var/run/docker.sock', quietWindow: quietRef, fixture: { directory: root, manifestSha256: '3'.repeat(64) }, sourceRestoration:{outputRoot:path.join(root,'source-checks')} });
   const toolSha256 = {};
-  for (const name of ['relocation', 'preflight', 'run-campaign']) toolSha256[name] = await hashFile(path.join(path.dirname(fileURLToPath(import.meta.url)), `${name}.mjs`));
+  for (const name of ['relocation', 'preflight', 'run-campaign', 'source-checkout']) toolSha256[name] = await hashFile(path.join(path.dirname(fileURLToPath(import.meta.url)), `${name}.mjs`));
   const intent = put(root, 'intent', { kind: 'usage_linux_campaign_intent', stages: STAGES, expectedAttempts: 30, serialExecution: true, automaticRetries: false, preflightRequestSha256: preflightRequest.sha256, outputRoot, toolSha256 });
   const admission = put(root, 'admission', { kind: 'usage_linux_measurement_admission', preflightRequestSha256: preflightRequest.sha256, freezeSha256: FREEZE_SHA256,
     campaignRequestSha256: intent.sha256, endpoint: 'unix:///var/run/docker.sock', quietWindowSha256: quietRef.sha256 });
@@ -36,6 +36,8 @@ async function fixture(t, { failedRun, inconclusiveStage, throwsRun } = {}) {
     PROFILES: Object.fromEntries(STAGES.map(row => [row.profile, { name: row.profile, kind: row.kind === 'paired' ? 'blackbox' : row.kind, usage: ['usage', 'distinct'].includes(row.name) }])),
     declareCampaign(options) {
       const stage = STAGES.find(row => row.name === path.basename(options.directory));
+      if(stage.kind==='paired')assert.equal(options.baselineUsageSourceBindingSha256,'a'.repeat(64));
+      else assert.equal(options.baselineUsageSourceBindingSha256,undefined);
       if (stage.name === 'distinct') { assert.equal(options.originalUsageReceiptManifestSha256s.length, 3); assert.equal(new Set(options.originalUsageReceiptManifestSha256s).size, 3); }
       mkdirSync(options.directory, { mode: 0o700 }); put(options.directory, 'contract.json', { order: stage.kind === 'paired' ? PAIRED_ORDER : Array(stage.count).fill('C') }); put(options.directory, 'journal.json', { attempts: [], closed: false });
     },
@@ -47,7 +49,7 @@ async function fixture(t, { failedRun, inconclusiveStage, throwsRun } = {}) {
     async runV2(options) {
       calls.push(options); const index = calls.length;
       assert.equal(options.endpoint, 'unix:///var/run/docker.sock'); assert.equal(options.acceptanceSuccessor, undefined); assert.equal(options.preparationSmoke, undefined);
-      if (options.arm === 'A') assert.equal(options.usageSourceBindingFile, undefined); else assert.equal(options.usageSourceBindingSha256, '5'.repeat(64));
+      if (options.arm === 'A') assert.equal(options.usageSourceBindingSha256, 'a'.repeat(64)); else assert.equal(options.usageSourceBindingSha256, '5'.repeat(64));
       if (options.profile === 'distinct') assert.equal(options.originalUsageRuns.length, 3);
       if (index === throwsRun) throw new Error('SECRET SQL MUST NOT ENTER STDOUT');
       mkdirSync(options.outputDirectory, { mode: 0o700 }); put(options.outputDirectory, 'receipt-manifest.json', { run: options.run });
@@ -69,6 +71,7 @@ async function fixture(t, { failedRun, inconclusiveStage, throwsRun } = {}) {
     references: { 'schema/lineage/schema-receipt.json': receipt, 'paired-client-2.9.6/advertisement.json': helper },
     observedEnvironment: env, historicalEvidence: { originalClosedJournalSha256: historical.sha256 }, usagePostVerification: { sha256: '6'.repeat(64) },
     usageSourceBindingFile: schema.path, usageSourceBindingSha256: '5'.repeat(64), usageSourceReviewFile: schema.path, usageSourceReviewSha256: '7'.repeat(64),
+    baselineUsageSourceBindingFile: schema.path, baselineUsageSourceBindingSha256: 'a'.repeat(64), baselineUsageSourceReviewFile: schema.path, baselineUsageSourceReviewSha256: 'b'.repeat(64),
     postgresImage: `sha256:${'8'.repeat(64)}`, redisImage: `sha256:${'9'.repeat(64)}` };
   let index = 0;
   const dependencies = { preflight: async () => ({ freeze, canonical, quiet, relocation: { inputRoot: root }, fixture: { snapshot: { manifest: { preparedSchoolLocalDate: schoolDate(now) } } } }),
@@ -81,6 +84,16 @@ test('unchanged eight-stage thirty-run sequence uses canonical paired order and 
   assert.deepEqual(f.calls.slice(0, 8).map(row => row.arm), PAIRED_ORDER); assert.deepEqual(f.calls.slice(8, 16).map(row => row.arm), PAIRED_ORDER);
   assert.deepEqual(f.closures.map(row => row.stage), STAGES.map(row => row.name)); assert.equal(new Set(f.calls.map(row => row.run)).size, 30);
   assert.deepEqual(result.unstartedStages, []);
+});
+
+test('source verification logs cannot occupy or contain the fresh campaign output',async t=>{
+  const f=await fixture(t);
+  for(const outputRoot of [f.request.outputRoot,path.dirname(f.request.outputRoot),path.join(f.request.outputRoot,'logs')]){
+    const original=read(f.request.preflightRequest.path);
+    const changed=put(f.root,'overlapping-preflight',{...original,sourceRestoration:{outputRoot}});
+    await assert.rejects(executeCampaign({...f.request,preflightRequest:changed},f.dependencies),/SOURCE_LOG_ROOT_OVERLAP/);
+  }
+  assert.equal(f.calls.length,0);
 });
 test('one failed receipt stops immediately and keeps every later stage unstarted without retry', async t => {
   const f = await fixture(t, { failedRun: 4 }), result = await executeCampaign(f.request, f.dependencies);

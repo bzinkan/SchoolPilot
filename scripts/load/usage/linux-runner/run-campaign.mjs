@@ -3,8 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STAGES, PAIRED_ORDER, assertWindow, schoolDate, verifyPreflight, verifyReview } from './preflight.mjs';
-import { FREEZE_SHA256, SOURCES, guard, hashFile, readReference, safePath, writeNewJson, readCliRequest, isMain, cliFailure, verifyReference } from './relocation.mjs';
+import { STAGES, PAIRED_ORDER, assertWindow, schoolDate, verifyPreflight, verifyReview, sourceBindingOptions } from './preflight.mjs';
+import { FREEZE_SHA256, SOURCES, guard, hashFile, readReference, safePath, writeNewJson, readCliRequest, isMain, cliFailure, verifyReference, contains } from './relocation.mjs';
 
 const read = file => JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 export function expectedOrder(stage) { return stage.kind === 'paired' ? [...PAIRED_ORDER] : Array(stage.count).fill('C'); }
@@ -26,10 +26,13 @@ export function scopeBinding(capture) {
 }
 
 /** Linux-only path successor to the retained controller. All acceptance, declarations,
- * reservations, receipt reload and closure decisions remain in frozen b938 modules. */
+ * reservations, receipt reload and closure decisions remain in the frozen harness modules. */
 export async function executeCampaign(request, { preflight = verifyPreflight, now = Date.now, runId = () => randomBytes(6).toString('hex'), event = value => process.stdout.write(JSON.stringify(value) + '\n') } = {}) {
   guard(request.schemaVersion === 1 && request.kind === 'usage_linux_campaign_request', 'CAMPAIGN_REQUEST_SCHEMA');
   const preflightRequest = await readReference(request.preflightRequest, { privateMode: true });
+  const sourceLogs=preflightRequest.sourceRestoration?.outputRoot;
+  guard(typeof sourceLogs==='string'&&path.isAbsolute(sourceLogs)&&typeof request.outputRoot==='string'&&path.isAbsolute(request.outputRoot),'SOURCE_LOG_ROOT_REQUIRED');
+  guard(!contains(sourceLogs,request.outputRoot)&&!contains(request.outputRoot,sourceLogs),'SOURCE_LOG_ROOT_OVERLAP');
   await verifyReview(request.independentExecutionReview, request.campaignIntentSha256, 'usage_linux_execution_review');
   // The privileged/paid launcher owns deadlines and admission. This program only admits its exact hashed scope.
   const admission = await readReference(request.measurementAdmission, { privateMode: true });
@@ -39,7 +42,7 @@ export async function executeCampaign(request, { preflight = verifyPreflight, no
   guard(request.campaignIntentSha256 === request.campaignIntent.sha256 && intent.kind === 'usage_linux_campaign_intent', 'CAMPAIGN_INTENT');
   assert.deepEqual(intent.stages, STAGES); guard(intent.expectedAttempts === 30 && intent.serialExecution === true && intent.automaticRetries === false, 'CAMPAIGN_INTENT_CONTRACT');
   guard(intent.preflightRequestSha256 === request.preflightRequest.sha256 && intent.outputRoot === request.outputRoot, 'CAMPAIGN_INTENT_INPUTS');
-  for (const name of ['relocation', 'preflight', 'run-campaign']) {
+  for (const name of ['relocation', 'preflight', 'run-campaign', 'source-checkout']) {
     const file = path.join(path.dirname(fileURLToPath(import.meta.url)), `${name}.mjs`);
     guard(intent.toolSha256?.[name] === await hashFile(file), 'CAMPAIGN_REVIEWED_TOOL_DRIFT');
   }
@@ -53,8 +56,9 @@ export async function executeCampaign(request, { preflight = verifyPreflight, no
   // Readiness/root/quiet records are inputs outside this fresh execution directory.
   for (const directory of ['campaigns', 'receipts', 'private', 'windows', 'options', 'events']) mkdirSync(path.join(root, directory), { mode: 0o700 });
   const save = (relative, value) => writeNewJson(path.join(root, relative), value, root);
-  const bindingFields = { usageSourceBindingFile: freeze.usageSourceBindingFile, usageSourceBindingSha256: freeze.usageSourceBindingSha256,
-    usageSourceReviewFile: freeze.usageSourceReviewFile, usageSourceReviewSha256: freeze.usageSourceReviewSha256 };
+  const bindingFields = sourceBindingOptions(freeze,'candidate');
+  const baselineBindingFields = sourceBindingOptions(freeze,'baseline');
+  const pairedBaselineFields=Object.fromEntries(Object.entries(baselineBindingFields).map(([key,value])=>['baseline'+key[0].toUpperCase()+key.slice(1),value]));
   const scope = scopeBinding(await readReference(freeze.observedEnvironment)); save('scope-binding.json', scope);
   const stageResults = []; let failure = null, broader = null, actualAttempts = 0, activeStage = null;
   const stageDirectory = name => path.join(root, 'campaigns', name);
@@ -95,7 +99,7 @@ export async function executeCampaign(request, { preflight = verifyPreflight, no
       schemaFile, schemaSha256: await hashFile(schemaFile), schemaReceiptFile: schemaReceipt.path, schemaReceiptSha256: schemaReceipt.sha256,
       observedEnvironmentFile: freeze.observedEnvironment.path, observedEnvironmentSha256: freeze.observedEnvironment.sha256, scopeBinding: scope,
       reservationFile: reservation.reservationFile, reservationSha256: reservation.reservationSha256, quietWindowFile: windowFile, quietWindowSha256: await hashFile(windowFile),
-      ...(baseline ? {} : bindingFields),
+      ...(baseline ? baselineBindingFields : bindingFields),
       ...(['blackbox', 'diagnostic'].includes(profile.kind) ? { clientAdvertisementFile: freeze.references['paired-client-2.9.6/advertisement.json'].path,
         clientAdvertisementSha256: freeze.references['paired-client-2.9.6/advertisement.json'].sha256 } : {}),
       ...(profile.usage ? { snapshotDirectory: preflightRequest.fixture.directory, snapshotManifestSha256: preflightRequest.fixture.manifestSha256 } : {}),
@@ -111,6 +115,7 @@ export async function executeCampaign(request, { preflight = verifyPreflight, no
       const directory = stageDirectory(stage.name), profile = canonical.PROFILES[stage.profile];
       canonical.declareCampaign({ directory, kind: stage.kind, profile: profile.name, candidateSource: SOURCES.candidate, baselineSource: SOURCES.baseline,
         observedFlagsSha256: freeze.observedFlagsSha256, ...bindingFields,
+        ...(stage.kind==='paired'?pairedBaselineFields:{}),
         ...(stage.kind === 'usage' ? { usagePostVerificationContractSha256: freeze.usagePostVerification.sha256, hostHarnessSource: SOURCES.harness } : {}),
         ...(stage.kind === 'distinct' ? await distinctPrerequisites(true) : {}) });
       const contract = read(path.join(directory, 'contract.json')); assert.deepEqual(contract.order, expectedOrder(stage));
