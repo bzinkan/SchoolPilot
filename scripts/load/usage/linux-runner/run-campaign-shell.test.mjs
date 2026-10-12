@@ -26,7 +26,7 @@ def put(name,body,uid=0,mode=0o640):
     nodes[name]={'raw':raw,'uid':uid,'mode':mode,'link':False,'nlink':1}
     return hashlib.sha256(raw).hexdigest()
 runner='/srv/usage/work/runner/scripts/load/usage/linux-runner'
-tools={name:put(runner+'/'+name+'.mjs',('tool:'+name).encode(),1000,0o600) for name in ('relocation','preflight','run-campaign')}
+tools={name:put(runner+'/'+name+'.mjs',('tool:'+name).encode(),1000,0o600) for name in ('relocation','preflight','run-campaign','source-checkout')}
 intent_sha=put('/srv/usage/work/intent.json',{'kind':'usage_linux_campaign_intent','toolSha256':tools},1000,0o600)
 request={'schemaVersion':1,'kind':'usage_linux_campaign_request','campaignIntent':{'path':'/srv/usage/work/intent.json','sha256':intent_sha},'campaignIntentSha256':intent_sha}
 request_sha=put('/srv/usage/work/active-request.json',request,1000,0o600)
@@ -43,6 +43,8 @@ if case=='wrong_owner': nodes['/srv/usage/control/launch-admission.json']['uid']
 if case=='bad_mode': nodes['/srv/usage/work/active-request.json']['mode']=0o644
 if case=='request_drift': nodes['/srv/usage/work/active-request.json']['raw']+=b' '
 if case=='tool_drift': nodes[runner+'/run-campaign.mjs']['raw']+=b' '
+if case=='source_tool_drift': nodes[runner+'/source-checkout.mjs']['raw']+=b' '
+if case=='source_tool_missing': del nodes[runner+'/source-checkout.mjs']
 if case=='node_drift': nodes[node]['raw']+=b' '
 if case=='foreign_request': put('/srv/usage/control/launch-admission.json',{**admission,'requestPath':'/srv/usage/work/foreign.json'})
 if case=='symlink': nodes['/srv/usage/work/intent.json']['link']=True
@@ -82,7 +84,7 @@ test('actual shell validator accepts provision-time static config and later root
   assert.match(lines[2], /^[a-f0-9]{64}$/); assert.equal(lines[3], 'v22.23.3');
 });
 test('actual shell validator refuses missing/mutable admission, wrong private ownership, links, and request/Node/tool drift', () => {
-  for (const which of ['missing_admission', 'old_config', 'wrong_owner', 'bad_mode', 'request_drift', 'tool_drift', 'node_drift', 'foreign_request', 'symlink', 'hardlink']) {
+  for (const which of ['missing_admission', 'old_config', 'wrong_owner', 'bad_mode', 'request_drift', 'tool_drift', 'source_tool_drift', 'source_tool_missing', 'node_drift', 'foreign_request', 'symlink', 'hardlink']) {
     const result = validate(which); assert.equal(result.status, 1, which); assert.equal(result.stdout, '', which);
     assert.equal(result.stderr.trim(), 'USAGE_LINUX_WRAPPER_BINDING_REFUSED', which);
   }

@@ -36,6 +36,30 @@ absolute stop. Admission still requires at least 240 quiet minutes plus export a
 cleanup margin. The separate service/browser rehearsal remains required. This scheduling exception does not establish
 that every remaining stage will fit; insufficient time leaves the campaign incomplete.
 
+The owner subsequently requested a fully unattended overnight run and explicitly
+delegated urgent incident handling to Codex. This supersedes the reachable-owner
+condition for this synthetic runner attempt. Notifications remain in this chat;
+an owner reply is not required for bounded incident containment. The single unused
+attempt, $15 pre-tax cap, eight-hour maximum, unchanged thresholds and production
+Usage-off restriction remain binding. Do not create a replacement VM, extend paid
+time, retry a failed campaign, discard failures or activate production Usage.
+
+The selected overnight proposal is October 12 at 21:00 through October 13 at 05:00
+Eastern (October 13, 01:00–09:00 UTC). Complete host and recovery preparation first;
+generate the fresh fixtures after midnight and admit the measured campaign only
+within one school-local date, with at least 240 quiet minutes plus evidence-export
+and cleanup margin. Both MFA sessions must cover the absolute stop plus 15 minutes.
+This proposal starts no VM and does not satisfy CI or native admission. If those
+gates or the remaining window cannot be proven, retain the unused attempt.
+
+For unattended incidents, stop measured work and request compute stop when a gate
+fails, the deadline/cost bound is uncertain, isolation or evidence custody fails,
+or recovery cannot prove convergence. Reconcile uncertain resource outcomes by
+exact run ownership, retain all failures, and prove native stopped state. Keep
+the existing host shutdown timer and independent owner-side deadline monitor.
+Destroy resources only after the existing two-copy independent custody gate;
+otherwise retain the sole evidence copy under the bounded retention policy.
+
 The initial implementation packet bound these immutable historical identities:
 
 | Binding | Exact identity |
