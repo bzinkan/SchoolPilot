@@ -45,6 +45,25 @@ export async function containFailedProvision(controller) {
   try { await controller.stop(); }
   catch { await controller.seal('provision-stop-unproven', { stoppedProven: false, incidentRequired: true }); }
 }
+export async function waitForDeadlineMonitor(ready, expected, { read = fs.readFile, now = Date.now, pause = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const until = now() + 45000; let handshake;
+  while (now() < until) {
+    let bytes;
+    try { bytes = await read(ready); }
+    catch (e) { if (e.code !== 'ENOENT') throw e; }
+    // The private writer creates the file before checking its ACL and writing
+    // the complete, newline-terminated JSON. Existence alone is not readiness.
+    if (bytes?.at(-1) === 10) {
+      assert.ok(now() < until, 'deadline monitor handshake timed out');
+      handshake = JSON.parse(bytes); break;
+    }
+    await pause(Math.min(250, Math.max(0, until - now())));
+  }
+  assert.equal(handshake?.pid, expected.pid);
+  assert.equal(handshake?.requestSha256, expected.requestSha256);
+  assert.equal(handshake?.stopDeadlineUtc, expected.stopDeadlineUtc);
+  return handshake;
+}
 export function discoveryBinding(p, state) {
   return { runId: p.runId, accountId: p.accountId, region: p.region, ami: p.ami,
     instanceId: state.resources.instanceId, rootVolumeId: state.resources.rootVolumeId,
@@ -376,9 +395,7 @@ async function main() {
     // Start the independent owner monitor BEFORE any paid launch. It survives terminal closure.
     const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'watch-deadline', requestPath, '--request-sha256', expected], { detached: true, windowsHide: true, stdio: 'ignore' }); child.unref();
     const ready = path.join(p.outputRoot, `monitor-ready-${expected}.json`);
-    const until = Date.now() + 45000; let handshake;
-    while (Date.now() < until) { try { handshake = JSON.parse(await fs.readFile(ready)); break; } catch (e) { if (e.code !== 'ENOENT') throw e; } await new Promise(resolve => setTimeout(resolve, 250)); }
-    assert.equal(handshake?.pid, child.pid); assert.equal(handshake?.requestSha256, expected); assert.equal(handshake?.stopDeadlineUtc, p.stopDeadlineUtc);
+    await waitForDeadlineMonitor(ready, { pid: child.pid, requestSha256: expected, stopDeadlineUtc: p.stopDeadlineUtc });
     await c.seal('deadline-monitor', { pid: child.pid, stopDeadlineUtc: p.stopDeadlineUtc });
     try { await c.provision(await pinned(p.userData)); }
     catch { await containFailedProvision(c); throw new Error('Provisioning failed; private receipts and exact cleanup inventory retained.'); }

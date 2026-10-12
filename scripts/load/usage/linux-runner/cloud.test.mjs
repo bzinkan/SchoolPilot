@@ -1,12 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { CloudController, validateCleanupReplayReview, containFailedProvision, verifyOwnerTools, validateOwnerCommandCapture } from './cloud.mjs';
+import { CloudController, validateCleanupReplayReview, containFailedProvision, verifyOwnerTools, validateOwnerCommandCapture, waitForDeadlineMonitor } from './cloud.mjs';
 import { AMI, tags, instancePolicy } from './cloud-plan.mjs';
 const p = { runId: 'usage-linux-test-20261012', accountId: '123456789012', region: 'us-east-1', ami: AMI, stopDeadlineUtc: '2026-10-12T20:00:00Z' };
 const owned = properties => ({ Tags: tags(p), ...properties });
 const custody = { kind: 'independently_replayed_dual_private_evidence_custody', passed: true, copies: ['/private/a', '/private/b'].map(root => ({ root, independentReplayPassed: true, replayHookInvoked: true })), receipt: { sha256: 'a'.repeat(64) } };
 function controller(transport) { const c = new CloudController(p, '/not-used', {}); c.events = []; c.seal = async (label, value) => { c.events.push({ label, value }); }; c.aws = transport; return c; }
+
+test('deadline monitor waits through private-file creation and partial publication before admitting launch', async () => {
+  const expected = { pid: 4321, requestSha256: 'a'.repeat(64), stopDeadlineUtc: p.stopDeadlineUtc };
+  const receipt = { ...expected, readyAtUtc: '2026-10-12T12:00:00Z' };
+  const missing = Object.assign(new Error('not published'), { code: 'ENOENT' });
+  const steps = [missing, Buffer.alloc(0), Buffer.from('{"pid":4321'), Buffer.from(JSON.stringify(receipt)), Buffer.from(`${JSON.stringify(receipt)}\n`)];
+  let clock = 0, reads = 0;
+  const result = await waitForDeadlineMonitor('/not-used', expected, {
+    read: async () => { const step = steps[reads++]; if (step instanceof Error) throw step; return step; },
+    now: () => clock, pause: async ms => { clock += ms; },
+  });
+  assert.deepEqual(result, receipt);
+  assert.equal(reads, steps.length, 'only the complete newline-terminated private record admits launch');
+  assert.equal(clock, 1000);
+});
+
+test('deadline monitor never admits a missing or permanently incomplete record beyond 45 seconds', async () => {
+  const expected = { pid: 4321, requestSha256: 'a'.repeat(64), stopDeadlineUtc: p.stopDeadlineUtc };
+  for (const content of [null, '', '{"pid":4321']) {
+    let clock = 0;
+    await assert.rejects(() => waitForDeadlineMonitor('/not-used', expected, {
+      read: async () => { if (content === null) throw Object.assign(new Error('missing'), { code: 'ENOENT' }); return Buffer.from(content); },
+      now: () => clock, pause: async ms => { clock += ms; },
+    }));
+    assert.equal(clock, 45000);
+  }
+});
+
+test('deadline monitor refuses completed malformed records, wrong bindings and nonpublication I/O failures', async () => {
+  const expected = { pid: 4321, requestSha256: 'a'.repeat(64), stopDeadlineUtc: p.stopDeadlineUtc };
+  const values = ['{malformed}\n', ...[
+    { ...expected, pid: 4322 }, { ...expected, requestSha256: 'b'.repeat(64) },
+    { ...expected, stopDeadlineUtc: '2026-10-12T21:00:00Z' },
+  ].map(value => `${JSON.stringify(value)}\n`)];
+  for (const content of values) {
+    await assert.rejects(() => waitForDeadlineMonitor('/not-used', expected, {
+      read: async () => Buffer.from(content), now: () => 0, pause: async () => assert.fail('completed invalid record must refuse immediately'),
+    }));
+  }
+  const denied = Object.assign(new Error('private file denied'), { code: 'EACCES' });
+  await assert.rejects(() => waitForDeadlineMonitor('/not-used', expected, { read: async () => { throw denied; } }), error => error === denied);
+});
 test('paid preparation requires every installed pinned owner transfer/encryption tool', async () => {
   const names = ['aws', 'node', 'age', 'ageKeygen', 'ssh', 'sftp', 'sessionManagerPlugin', 'pwsh'];
   const owner = Object.fromEntries(names.map(name => [name, { path: process.execPath, sha256: 'a'.repeat(64) }]));
