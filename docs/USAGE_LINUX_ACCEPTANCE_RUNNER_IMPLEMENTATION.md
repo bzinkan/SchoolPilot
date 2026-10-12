@@ -69,7 +69,8 @@ implementation remains required.
 
 **As of October 12 at 19:03 UTC, no paid VM or production change has been made.**
 The owner MFA device and temporary owner session have been verified, Session Manager
-client version 1.2.896 is installed, and the runner-scoped IAM setup is installed.
+client version 1.2.896 is installed, and the runner-scoped IAM setup for the prior
+preparation window was installed.
 The latest direct runner-role session remains unproven: its authentication dialog
 stopped before an STS request after its native access snapshot expired at 18:52 UTC
 and its launch grant expired at 18:55 UTC. Neither expired binding authorizes a launch.
