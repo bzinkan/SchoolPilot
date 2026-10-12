@@ -8,6 +8,10 @@ variants. Historical Usage-off current-school amendments below remain dated
 evidence and grant no Usage activation waiver. Its [successor status](releases/usage-activation/current.json)
 does not replace or relabel any historical receipt.
 
+The [Linux acceptance runner proposal](USAGE_LINUX_ACCEPTANCE_RUNNER_PLAN.md)
+prepares costs, private evidence custody and exact artifact bindings for review.
+It preserves every gate below and does not authorize paid provisioning or execution.
+
 ## October 4 merge and operator-tool follow-up
 
 This dated checkpoint is [archived verbatim](RELEASE_2_9_7_PREPARATION_HISTORY.md#archived-readiness-preface--superseded-as-current-state-on-october-7). Its held/open-PR wording is historical; use current status above.
