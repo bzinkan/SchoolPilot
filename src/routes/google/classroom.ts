@@ -38,6 +38,11 @@ import {
 } from "../../services/googleRosterConnector.js";
 import { getPasspilotClassSourceForSchool } from "../../services/passpilotAccess.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  CLASSROOM_COURSES_SCOPE,
+  CLASSROOM_RESOURCE_SCOPES,
+  missingGoogleOAuthScopes,
+} from "../../util/googleOAuthScopes.js";
 
 const router = Router();
 
@@ -53,20 +58,13 @@ const adminAuth = [
   requireActiveSchool,
   requireRole("admin", "school_admin"),
 ] as const;
-const CLASSROOM_COURSES_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly";
-const CLASSROOM_RESOURCE_SCOPES = [
-  CLASSROOM_COURSES_SCOPE,
-  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
-  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
-];
 
 function routeError(message: string, status = 400, code?: string) {
   return Object.assign(new Error(message), { status, code, expose: true });
 }
 
-function ensureScopes(tokenScope: string | null | undefined, requiredScopes: string[], label: string) {
-  const scopes = new Set((tokenScope || "").split(/\s+/).filter(Boolean));
-  const missing = requiredScopes.filter((scope) => !scopes.has(scope));
+function ensureScopes(tokenScope: string | null | undefined, requiredScopes: readonly string[], label: string) {
+  const missing = missingGoogleOAuthScopes(tokenScope, requiredScopes);
   if (missing.length > 0) {
     throw routeError(
       `MISSING_GOOGLE_SCOPE: Reconnect Google Classroom to grant ${label} access (${missing.join(", ")}).`,
@@ -76,7 +74,7 @@ function ensureScopes(tokenScope: string | null | undefined, requiredScopes: str
   }
 }
 
-async function getAuthedClient(userId: string, schoolId: string, requiredScopes: string[], label: string) {
+async function getAuthedClient(userId: string, schoolId: string, requiredScopes: readonly string[], label: string) {
   const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
   if (!token) throw routeError("NO_TOKENS: Google not connected for this school");
   ensureScopes(token.scope, requiredScopes, label);

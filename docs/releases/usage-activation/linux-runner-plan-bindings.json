@@ -1,0 +1,410 @@
+{
+  "schemaVersion": 1,
+  "kind": "usage_linux_runner_plan_public_binding_summary",
+  "status": "proposed_for_review_not_authorized",
+  "planningDateEastern": "2026-10-11",
+  "observedAtUtc": "2026-10-12T01:45:13.358Z",
+  "operationalAuthorization": false,
+  "paidProvisioningAuthorized": false,
+  "capacityAccepted": false,
+  "productionActivationAuthorized": false,
+  "productionUsageModesRequired": {
+    "digitalUsage": "off",
+    "rollup": "off"
+  },
+  "finalMainReleaseBindingPending": true,
+  "repository": "https://github.com/bzinkan/SchoolPilot",
+  "mainAtPlanning": "e179d1554f44d9b2fca17a2745b987f1c813f176",
+  "candidatePullRequest": 646,
+  "harnessPullRequest": 645,
+  "candidateAndHarnessMerged": false,
+  "privateInventorySha256": "03e7941351ef7de4b027a463370e75a7ca1207d3e8f9edb9af78395217c75827",
+  "freezeManifestSha256": "4647a9c6e800514b47ddb1a4c6161042f9702368c5ed0560d276fa64417fdfbe",
+  "applications": [
+    {
+      "role": "baseline",
+      "sourceSha": "d54827aefd7b7fdccae63a7d81c888c294a195f7",
+      "localImageId": "sha256:8d208dd1986a9d57490cc9e98c62c0efb96026b9b5bcea65b71e9701f42b20ee",
+      "actualOciConfigDigest": "sha256:aa6798fd1e339804a07ff2a3927bd2d46d105239ef8ab681ee598de06b603ff0",
+      "platform": "linux/amd64",
+      "registryIndexDigest": "sha256:8d208dd1986a9d57490cc9e98c62c0efb96026b9b5bcea65b71e9701f42b20ee",
+      "registryPlatformManifestDigest": "sha256:70588efc74652d13b42e23acee02183369aba8e141394b04026493c89586f5b6",
+      "registryPublicationProven": true,
+      "archiveSha256": "11b86e33da7d354f7bd80fae9f3676b11171c2f1e84297e72a2161be64a86f6a",
+      "archiveBytes": 154180096,
+      "bindingSha256": "e7693ba2c9bb88e9725a40dcb461972328fbea000c776bcd38b2cd1413d6bd9a",
+      "archiveFreshRehashRequired": true
+    },
+    {
+      "role": "candidate",
+      "sourceSha": "cc98ab83b81b7a4a3767d5d801daae5ab279381a",
+      "localImageId": "sha256:c0a256aea0ccc1fc65c135a98faecd00c4118f30ac65fa971a5584220fd9790f",
+      "actualOciConfigDigest": "sha256:4849647dfeeb6816b95dc08403c07692b31f3bf75295eb1c15d2d333078f0183",
+      "platform": "linux/amd64",
+      "registryIndexDigest": null,
+      "registryPlatformManifestDigest": null,
+      "registryPublicationProven": false,
+      "archiveSha256": "4472c50896201795e7d3eadcf4fa367790ce720352db7f56b7e5d796b5b63fdc",
+      "archiveBytes": 154171392,
+      "bindingSha256": "42c9eb3c7833d8572155fde2e53a48a244d732d941766c8be9f3ca536dca9ee5",
+      "archiveFreshRehashRequired": true
+    }
+  ],
+  "helpers": [
+    {
+      "role": "baseline",
+      "sourceSha": "d54827aefd7b7fdccae63a7d81c888c294a195f7",
+      "applicationImage": "sha256:8d208dd1986a9d57490cc9e98c62c0efb96026b9b5bcea65b71e9701f42b20ee",
+      "localImageId": "sha256:e3ecff8a916c51b38bebcb00c4a459cb9c8474bd4528346adaf5bdf283823f32",
+      "indexDigest": "sha256:e3ecff8a916c51b38bebcb00c4a459cb9c8474bd4528346adaf5bdf283823f32",
+      "legacyHelperConfigDigest": "sha256:e3ecff8a916c51b38bebcb00c4a459cb9c8474bd4528346adaf5bdf283823f32",
+      "legacyDigestMeaning": "container.Image; actual OCI config is unbound",
+      "actualOciConfigDigest": null,
+      "registryPullReference": null,
+      "exportArchiveBound": false,
+      "bindingSha256": "fb7e5a84c31dfca84c41ff589a19e9dabb272ccfcaf46dfc849ea3fc6ff86631",
+      "nodeVersion": "v22.23.3",
+      "runtimeSha256": "20af21e55c23014e1ed6381f070106c259359e8d48a77ac38903d1e94b502e71",
+      "preparationSha256": "7955b48a20ab576d1a92b037b59d7585f485e9126ba1f57fb07b4c1b6a59b063"
+    },
+    {
+      "role": "candidate",
+      "sourceSha": "cc98ab83b81b7a4a3767d5d801daae5ab279381a",
+      "applicationImage": "sha256:c0a256aea0ccc1fc65c135a98faecd00c4118f30ac65fa971a5584220fd9790f",
+      "localImageId": "sha256:726541f2fb77e1908696b2a0231353b3764e81381b2ca6d846d68b0ab2e198f0",
+      "indexDigest": "sha256:726541f2fb77e1908696b2a0231353b3764e81381b2ca6d846d68b0ab2e198f0",
+      "legacyHelperConfigDigest": "sha256:726541f2fb77e1908696b2a0231353b3764e81381b2ca6d846d68b0ab2e198f0",
+      "legacyDigestMeaning": "container.Image; actual OCI config is unbound",
+      "actualOciConfigDigest": null,
+      "registryPullReference": null,
+      "exportArchiveBound": false,
+      "bindingSha256": "84e2b22d7004a19c71851dbb13cfbd4b8bb782880d0338b4304c663a7c3dafcd",
+      "nodeVersion": "v22.23.3",
+      "runtimeSha256": "16d86b3d3e6035c4c9a923c970be4143e36829460baf629b6bcaa6ffbbfe3520",
+      "preparationSha256": "13f739cf56e3bf7f1c80c2b2546009b55acab04220578569fb677f1ce6580cfe"
+    },
+    {
+      "role": "distinct",
+      "sourceSha": "cc98ab83b81b7a4a3767d5d801daae5ab279381a",
+      "applicationImage": "sha256:c0a256aea0ccc1fc65c135a98faecd00c4118f30ac65fa971a5584220fd9790f",
+      "localImageId": "sha256:ae5572496696421784b68ec6f16003b677ef886672a1a6dbd977a5b62f1bc2e3",
+      "indexDigest": "sha256:ae5572496696421784b68ec6f16003b677ef886672a1a6dbd977a5b62f1bc2e3",
+      "legacyHelperConfigDigest": "sha256:ae5572496696421784b68ec6f16003b677ef886672a1a6dbd977a5b62f1bc2e3",
+      "legacyDigestMeaning": "container.Image; actual OCI config is unbound",
+      "actualOciConfigDigest": null,
+      "registryPullReference": null,
+      "exportArchiveBound": false,
+      "bindingSha256": "5f645a9201eda2a8a7c824d4daf4537ebcdcb5989ab816dca8ada4c6f2e23247",
+      "nodeVersion": "v22.23.3",
+      "runtimeSha256": "16d86b3d3e6035c4c9a923c970be4143e36829460baf629b6bcaa6ffbbfe3520",
+      "preparationSha256": "a0e403642f7c3cbc98a425dc781fcbd03ba2740cf389caebc9dd3644c4dff947"
+    }
+  ],
+  "nativeServices": {
+    "postgres": {
+      "localImageId": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6",
+      "registryManifestDigest": null,
+      "actualOciConfigDigest": null,
+      "serverVersion": "16.15"
+    },
+    "redis": {
+      "localImageId": "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2",
+      "registryManifestDigest": null,
+      "actualOciConfigDigest": null
+    },
+    "transportCustodyRequired": true
+  },
+  "sourceArchives": [
+    {
+      "role": "source",
+      "sourceSha": "cc98ab83b81b7a4a3767d5d801daae5ab279381a",
+      "treeSha": "ef2ade1c9f5a9c11d8e5da389b149e2584d85c1b",
+      "archiveSha256": "afb9fa9fc0700dfea3fc1e8e2a9aa48fb3a67ba17b91009ddc2ffb53dcd36b23",
+      "memberInventorySha256": "d14cb3708862165abaf1c3229262befef7d32a786d00cb31e4814062e1ff92c3",
+      "freshPayloadRehashRequired": true
+    },
+    {
+      "role": "baseline-source",
+      "sourceSha": "d54827aefd7b7fdccae63a7d81c888c294a195f7",
+      "treeSha": "ff746b8ee682dc9aa6eae91c792c7edd4f6518ad",
+      "archiveSha256": "78a8555dff1855d64577512a9570ae0d323e34bc2a83a79169769a0636be72b8",
+      "memberInventorySha256": "61b66b3d1139198d31f9f4e460b4540208c455d459d722c0f2b3a2055093c798",
+      "freshPayloadRehashRequired": true
+    },
+    {
+      "role": "harness-source",
+      "sourceSha": "b9383a63ebe9065da01e7f0cbebdb40a008ad7c3",
+      "treeSha": "6e4197ab087da0dc0562e835060b8331b7ed54c6",
+      "archiveSha256": "c1adfd32f3411942c7626cf0a5083fbe42efde439c2d2ffd8e9d6fc6851f1619",
+      "memberInventorySha256": "f0d8180803c99f6eee478baf953122a9973f43553ba591323a847f68fc5ddc96",
+      "freshPayloadRehashRequired": true
+    }
+  ],
+  "sourceBinding": {
+    "sha256": "4c10733551811b03258c2c96c30c6376c5d1f1676d2dda4c3664499ef7b2664d",
+    "reviewSha256": "c6f0f63fead04facf90b2d89e52c456eae7b984002956f29e11bb6fe5b6d484b",
+    "sourceInputsSha256": "65f278c299278ce940cc6d32a76a555e7424f1f57d3cc2a31a3412e32cfde239",
+    "registrySha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+    "migrationManifestSha256": "02fed8ccc8937d5568d3e25ff4054a523f96dd352aaf5ed23e04621e32dcd1bd",
+    "migrationStage": "expand",
+    "exactMigrationRows": 53,
+    "contractLedgerRows": 0,
+    "rlsTableCount": 129,
+    "countAloneIsNotAcceptance": true
+  },
+  "schemas": {
+    "candidate": {
+      "rawSha256": "de0384d3587d13472a8592c28200c4dd22eff2991692b1afae820fa943fb929b",
+      "canonicalSha256": "b8172f270dfe18934524587589e6a95b07162d705a338d637e0f8eaa053af8cd",
+      "receiptSha256": "ebf93e9ddf681a881a42782e945bc64c713d06dbfc233e678a608e473eef2e9f"
+    },
+    "baseline": {
+      "rawSha256": "dcae11150222d78459834b7e5d7e50ff9d6e4eb72a6242ec9731bc0ab66ebbc6",
+      "canonicalSha256": "094d8d5a135d81275b5cc402d237d1212cc17376137ba9da35956993ac6cab81",
+      "receiptSha256": "e3b3b4dfd9367b1c4fa106ec990889a602370c4d5042f937aa5c6f73afcbdded"
+    },
+    "productionCatalogParityProven": false,
+    "linuxNativeRestoreProofRequired": true
+  },
+  "historicalFixture": {
+    "sourceSha": "cc98ab83b81b7a4a3767d5d801daae5ab279381a",
+    "manifestSha256": "378cbcbf92d9bdadbdff568892053b61dfded7ff72796f9cf599819149656b86",
+    "preparedSchoolLocalDate": "2026-10-11",
+    "earliestControlExpiryUtc": "2026-10-12T07:19:17.759Z",
+    "heartbeatRows": 2000002,
+    "allNinePayloadsRehashed": true,
+    "currentAuthorityAndLocalDateRequired": true,
+    "reuseAuthorized": false,
+    "records": [
+      {
+        "file": "prepared-database.private.dump",
+        "sha256": "caaafd44a3aaeb744903d11d4dc8c61d165cf49fbba0aae94e8bcd44e75467ac",
+        "bytes": 72211010
+      },
+      {
+        "file": "synthetic-roles.private.sql",
+        "sha256": "612a354e2d0574f437239db70c395886f0ae435395c6ecfad78d1f1fccad55f1",
+        "bytes": 1004
+      },
+      {
+        "file": "cold-fixture-state.json",
+        "sha256": "073b23c65fca9e1b0f26183a429c2f65feb08ae6f9b8cb704d432a4674414eea",
+        "bytes": 183036
+      },
+      {
+        "file": "release-control-preparation.json",
+        "sha256": "70701e9450f05ac7ac16a12261880cf6ea29eb5832e461965a2607f78a10e833",
+        "bytes": 804
+      },
+      {
+        "file": "preparation-fixture-contract.json",
+        "sha256": "235fd5f5abe8379f99fb155e1dd2b88214889e9f8f856e2007d165b7000b0ae1",
+        "bytes": 35913
+      },
+      {
+        "file": "preparation-metrics.json",
+        "sha256": "efcb8a358bf6ddd2bb1799abc32b44a301005164ccb18241e37ca752e810bac1",
+        "bytes": 45041
+      },
+      {
+        "file": "schema-fingerprint.json",
+        "sha256": "c862ca9b399008ebab2a068696f69224cbd901a538bd090a9f0226168f23a0fd",
+        "bytes": 312
+      },
+      {
+        "file": "post-convergence-schema.sql",
+        "sha256": "8796f4101e44cd0ad771b673ca0b4c24a78f4ffe44cc9c905f74549f78324160",
+        "bytes": 503571
+      },
+      {
+        "file": "measurement-ready.json",
+        "sha256": "e4ec56c261088c7c1a0b230a7a032fe27111ed3e8e381240e3b359af031c40b3",
+        "bytes": 753
+      }
+    ],
+    "schoolLocalTimezone": "America/New_York",
+    "databaseTimezone": "UTC"
+  },
+  "frontend": {
+    "sourceSha": "e179d1554f44d9b2fca17a2745b987f1c813f176",
+    "artifactSha256": "38fa6c123d5c3b8c5906f6a9e75c9590eeb6208f32a0557e33b1ddfdfaedcc64",
+    "archiveSha256": "f2562d6ba46c5f1d261611bd4024a54d1ff061f03a1872429b1996c33247f264",
+    "inventorySha256": "aabccd3f3cfbe6afe4e36a900ed2b0810c80cdb41df3906e341760d27292e0a4",
+    "fileCount": 171,
+    "unchangedCandidateInputsDerivationSha256": "d2c01bc67b06b25da2df5d65d3edd6a617c56b6f6c7859b030b4fef3943ccf63",
+    "productionServedIdentityProven": false
+  },
+  "pairedClient": {
+    "version": "2.9.6",
+    "tag": "v2.9.6",
+    "taggedSource": "55bb531cb5f130cebec9d994daa957e82e87a13b",
+    "advertisementSha256": "b75a06012098bc5e5102496369f4a1edb06fc038b45b1666e567343032c58343",
+    "archiveSha256": "3fbb1a4721d58ba74d6166caeacd2f379b7cca7665b8207ddb46a4c71a374df3",
+    "packagedWorkerRawSha256": "7770302d184fd9995538a6f48e24115cc5200fc7ceb80b9c6ee6a134756e0daa",
+    "taggedWorkerLfSha256": "7de37a5483d76b5bb0a15defade2a1c880895b17c31390b8ee130fc3342da7dc",
+    "storePublicationProven": false,
+    "deviceAdoptionProven": false
+  },
+  "frozenContracts": [
+    {
+      "repositoryPath": "scripts/load/usage/release-gates-v2/contracts.mjs",
+      "sha256": "133bced3ff78f932cfcf576c2f101c4f035e7018373048b50a206d081becb8a1"
+    },
+    {
+      "repositoryPath": "scripts/load/usage/release-gates-v2/run.mjs",
+      "sha256": "3a7ef54017e7149ee82b18509c72a36d0532bea028542c4e28a266292f63654d"
+    },
+    {
+      "repositoryPath": "scripts/load/usage/release-gates-v2/owner.mjs",
+      "sha256": "e12239072f63cb7ee95c4577c42ae4630ad2680c84ea39573e49be9b351f3b55"
+    },
+    {
+      "repositoryPath": "scripts/load/usage/release-gates-v2/common-database.mjs",
+      "sha256": "d6a8b81ba2724ab9972300af9142652fd93dc06db989ad8780548f275b62f8b4"
+    },
+    {
+      "repositoryPath": "scripts/load/usage/release-gates-v2/usage-source-binding.mjs",
+      "sha256": "d855b55866b2b0d591cd58d74c3c84b494d1b8190803b1351a82d1be30e1cada"
+    },
+    {
+      "repositoryPath": "scripts/load/usage/release-gates-v2/validation.mjs",
+      "sha256": "7cf57bd69f332cb15e73fc6957e68fbd47e607b5503ad2606ca52492e483b7eb"
+    }
+  ],
+  "profiles": {
+    "sole": {
+      "name": "release297-blackbox-sole-133-v2",
+      "sha256": "59167a96d825a56ed6f951f5327200257a0cacde0f2bc65a02606603cb9998a1"
+    },
+    "normal": {
+      "name": "release297-blackbox-normal-34-v2",
+      "sha256": "587c7ccad987f15e5bdc6c2f169916d253b93190e781526abcb81c63db1b4f91"
+    },
+    "usage": {
+      "name": "release297-usage-shared-db-three-api-100-v2",
+      "sha256": "a9718adcfae27a856646c670720f13a8c36557009e78169e0905499a3f00d81f"
+    },
+    "usageDistinct": {
+      "name": "release297-usage-shared-db-three-api-distinct64-v1",
+      "sha256": "a88201787b5261ce8b2056e9aa1f4b5cc09ec8cc41d78119bcf2df1e8add8b8f"
+    },
+    "broader": {
+      "name": "release297-usage-800-3-2-ordinary-survivors-v2",
+      "sha256": "6fef04edf5f4911b0ececdd6c704421d03099c826a72f1f6bb0e1d725855f73c"
+    },
+    "broaderConcentrated": {
+      "name": "release297-usage-800-3-2-concentrated-lost-reconnect-v2",
+      "sha256": "2b6b34afb93af0aeae4ec46735dee5412dea9cc482a11208be3fcbeea0ed39c9"
+    },
+    "classroom": {
+      "name": "release297-classroom-normal-34-v2",
+      "sha256": "dc6d059cf5d7fceb4652527f3de9826e1bbc441b4bf0e2a77148724bcbe4caea"
+    },
+    "classroomNative": {
+      "name": "release297-classroom-normal-34-native-v3",
+      "sha256": "85a3e14fb421687ec47ffa8c1c378d16763b407456078bc2c2fcc19c9e1ff0a7"
+    },
+    "mixed": {
+      "name": "release297-classroom-133-1-3-2-v2",
+      "sha256": "88761bee68b47020ebcddfe9ab0310ff7d3a32c5620af22bb7f2cfc3ee4b1d9d"
+    },
+    "mixedNative": {
+      "name": "release297-classroom-133-1-3-2-native-v3",
+      "sha256": "93230128f74469bc58c952f578a5dc0cda394b14ea986b708d7bac2ad15a7cd2"
+    }
+  },
+  "campaign": {
+    "stages": [
+      "sole",
+      "normal",
+      "classroom",
+      "mixed",
+      "usage",
+      "distinct",
+      "ordinary800",
+      "concentrated800"
+    ],
+    "attemptCounts": [
+      8,
+      8,
+      1,
+      3,
+      3,
+      1,
+      3,
+      3
+    ],
+    "totalAttempts": 30,
+    "pairedOrder": [
+      "A",
+      "A",
+      "A",
+      "B",
+      "B",
+      "A",
+      "A",
+      "B"
+    ],
+    "controllerSha256": "8cfe6911e4ea03fdf92e463fd2e89c262ec97519964904dd362933c284696784",
+    "launcherSha256": "dd70ee5bf424ce52418b2daed5b9a966b3d0b30afdb409d7a75e58e161a67af4",
+    "admissionSha256": "38774317661278ad1adcada337534c658e9927bede6290170d1061d8114155a9",
+    "linuxSuccessorToolsReviewed": false,
+    "historicalOutcomesUnchanged": true
+  },
+  "linuxRuntime": {
+    "bound": false,
+    "architecture": "linux/amd64",
+    "amiId": null,
+    "amiOwner": null,
+    "kernel": null,
+    "dockerEndpoint": null,
+    "dockerVersion": null,
+    "containerdVersion": null,
+    "hostNodeBinarySha256": null,
+    "pwshBinarySha256": null,
+    "ssmAgentSha256": null,
+    "ageBinarySha256": null,
+    "relocationSidecarSha256": null,
+    "importCustodySha256": null,
+    "nullMeaning": "Unresolved execution hold; never a wildcard or permission to substitute."
+  },
+  "priceResearch": {
+    "researchSha256": "5dff34b60ced4041ab77cd3270c06475bfcefb1c167319fba1f9fae8e4798627",
+    "decodedSnapshotManifestSha256": "12e5c23fa91f98a70d65bc0636cd57fb706ac9c6275bae11cdd73d447c2c983b",
+    "rates": [
+      {
+        "service": "ipv4",
+        "sourceUrl": "https://aws.amazon.com/vpc/pricing/",
+        "snapshotSha256": "473c8bae5cd7b537612974bafb44c946ce70f4c52f663da2e8809706b3b7a5bf"
+      },
+      {
+        "service": "gp3",
+        "sourceUrl": "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ebs.json",
+        "snapshotSha256": "d686e6e2b0cf99841a9749e4aa0e6a5a99e9fdc89cb18a857fcadce2933b1e47"
+      },
+      {
+        "service": "kms",
+        "sourceUrl": "https://aws.amazon.com/kms/pricing/",
+        "snapshotSha256": "567841f7ffc31cc41a574f3bce9398e7d6c1e9c842b2683741d680ee7fcc3563"
+      },
+      {
+        "service": "internetExport",
+        "sourceUrl": "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/datatransfer/USD/current/datatransfer.json",
+        "snapshotSha256": "7f06d15404afcca64b8046a725fc9238519a40df939853877f5f6a0bd671e0dd"
+      },
+      {
+        "service": "ec2",
+        "sourceUrl": "https://b0.p.awsstatic.com/pricing/2.0/meteredUnitMaps/ec2/USD/current/ec2-ondemand-without-sec-sel/US%20East%20(N.%20Virginia)/Linux/index.json",
+        "snapshotSha256": "f852e17d278c33264b82e0ad0ad8211bbaf0e9cadab7aaf12e2b2afa06525877"
+      },
+      {
+        "service": "systemsManager",
+        "sourceUrl": "https://aws.amazon.com/systems-manager/pricing/",
+        "snapshotSha256": "f5d2e6074e42115272b3801184e5ae41c4afc1007f08cde7d2354f4fec6d2246"
+      }
+    ],
+    "approvalCeilingUsd": 15,
+    "taxIncluded": false,
+    "paidAuthorization": false
+  }
+}
