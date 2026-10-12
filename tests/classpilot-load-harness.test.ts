@@ -2064,8 +2064,9 @@ if (signalMarker) {
     const address = server.address() as AddressInfo;
     const summaryPath = join(tempDir, "unfinished-summary.json");
     const progressPath = join(tempDir, "unfinished-progress.jsonl");
+    let running: ReturnType<typeof startAsync> | undefined;
     try {
-      const result = await runAsync([], cleanEnv({
+      running = startAsync([], cleanEnv({
         LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
         LOAD_DEVICE_MANIFEST: manifestPath,
         LOAD_DURATION_SECONDS: "1",
@@ -2074,7 +2075,15 @@ if (signalMarker) {
         LOAD_SHUTDOWN_GRACE_MS: "100",
         LOAD_EXTERNAL_SUMMARY_PATH: summaryPath,
         LOAD_EXTERNAL_PROGRESS_PATH: progressPath,
-      }), 5_000);
+      }), 5_000, { ready: () => {
+        try {
+          return existsSync(progressPath) && readJsonLines(progressPath).some((record) => record.event === "start");
+        } catch {
+          return false;
+        }
+      }, description: "publish its start progress event" });
+      await running.started;
+      const result = await running.completed;
       assert.notEqual(result.status, 0, result.stderr);
       const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
       assert.ok(summary.counters.unfinishedHttpRequests > 0);
@@ -2084,6 +2093,7 @@ if (signalMarker) {
       assert.equal(summary.thresholds.passed, false);
       assert.ok(summary.fatalGate.reasonCodes.includes("unfinished-http-requests"));
     } finally {
+      await running?.dispose();
       server.closeAllConnections?.();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
