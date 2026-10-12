@@ -26,6 +26,8 @@ async function fixture() {
   const json = (name, value) => { const text = JSON.stringify(value, null, 2) + '\n'; write(name, text); return { path: name, sha256: bindingHash(text) }; };
   const commit = () => { git(['add', '.']); git(['-c', 'core.hooksPath=NUL', 'commit', '-qm', 'Synthetic binding fixture']); return git(['rev-parse', 'HEAD']); };
   git(['init', '-q']); git(['config', 'user.name', 'Synthetic fixture']); git(['config', 'user.email', 'fixture@example.invalid']); git(['config', 'core.autocrlf', 'false']);
+  // Disposable repositories need no background housekeeping during teardown.
+  git(['config', 'gc.auto', '0']); git(['config', 'maintenance.auto', 'false']);
   write('src/app.js', 'export const synthetic = true;\n'); write('package.json', '{}\n'); write('schoolpilot-app/src/app.js', 'export const web = true;\n');
   const applicationSource = commit();
   const profile = structuredClone(pending);
@@ -74,7 +76,7 @@ async function fixture() {
   };
   return { directory, profile, source, git, write, json, commit, reseal,
     options: { root: directory, run, fallback: FALLBACK, sourceDirectory: directory, source },
-    clean() { const resolved = path.resolve(directory); assert.ok(resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(resolved).startsWith('sp-release-binding-')); rmSync(resolved, { recursive: true }); } };
+    clean() { const resolved = path.resolve(directory); assert.ok(resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(resolved).startsWith('sp-release-binding-')); rmSync(resolved, { recursive: true, maxRetries: 3, retryDelay: 100 }); } };
 }
 
 test('shipped binding is pending, source-specific and cannot be activated by caller receipts', async () => {
