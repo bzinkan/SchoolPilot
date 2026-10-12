@@ -4,9 +4,10 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { validatePlan, launchRequest, instancePolicy, tags, assertOwnedResource, launchDocument, sftpDocument, stopUserData } from './cloud-plan.mjs';
+import { validatePlan, launchRequest, instancePolicy, tags, assertOwnedResource, launchDocument, sftpDocument, stopUserData, RUNNER_DOCUMENT_SUFFIXES } from './cloud-plan.mjs';
 import { assertPrivatePath, ensurePrivateDirectory, writePrivateJsonExclusive, writePrivateBytesExclusive, hashFile, sealDualCopyCustody, verifyManifest } from './evidence.mjs';
 import { discoveryDocument, decodeDiscoveryEnvelope, validateDiscoveryPins } from './discovery.mjs';
+import { renderOperatorScope, validateNativeScopeSnapshot, validateOperatorSession, METADATA_READ_ACTIONS, OWNER_COMMAND_READ_SEPARATE } from './operator-scope.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 async function pinned(ref) {
@@ -50,17 +51,44 @@ export function discoveryBinding(p, state) {
     dataVolumeId: state.resources.dataVolumeId, launchNotBeforeUtc: p.launchNotBeforeUtc,
     stopDeadlineUtc: p.stopDeadlineUtc };
 }
+export function validateOwnerCommandCapture(capture, request, caller, invocation, review, p, state, kind, now = Date.now()) {
+  assert.equal(capture.schemaVersion, 1); assert.equal(capture.kind, 'usage_linux_owner_command_capture');
+  assert.equal(capture.runId, p.runId); assert.equal(capture.accountId, p.accountId); assert.equal(capture.region, p.region);
+  assert.equal(capture.readRoute, OWNER_COMMAND_READ_SEPARATE); assert.equal(capture.ownerCallerArn, p.ownerCallerArn);
+  assert.ok(Date.parse(capture.capturedAtUtc) <= now && Date.parse(capture.capturedAtUtc) >= now - 600000);
+  assert.equal(caller.Arn, p.ownerCallerArn); assert.equal(caller.Account, p.accountId);
+  const commandId = state[`${kind}CommandId`], instanceId = state.resources.instanceId;
+  assert.ok(commandId && instanceId); assert.deepEqual(request, { CommandId: commandId, InstanceId: instanceId });
+  assert.equal(invocation.CommandId, commandId); assert.equal(invocation.InstanceId, instanceId);
+  assert.equal(invocation.DocumentName, state.resources[`${kind}Document`]); assert.equal(invocation.DocumentVersion, state.resources[`${kind}DocumentVersion`]);
+  assert.equal(invocation.Status, 'Success'); assert.equal(invocation.ResponseCode, 0); assert.equal(invocation.StandardErrorContent, '');
+  assert.equal(review.kind, 'usage_linux_owner_command_capture_review'); assert.equal(review.runId, p.runId);
+  assert.equal(review.subjectSha256, capture.invocation.sha256); assert.equal(review.nativeRequestSha256, capture.nativeRequest.sha256); assert.equal(review.nativeCallerSha256, capture.nativeCaller.sha256);
+  assert.equal(review.documentSha256, state.resources[`${kind}DocumentHash`]);
+  assert.equal(review.passed, true); assert.equal(review.unresolvedFindings, 0); assert.ok(review.reviewer?.trim());
+  assert.ok(Date.parse(review.reviewedAtUtc) <= now && Date.parse(review.reviewedAtUtc) >= now - 600000);
+}
 export async function verifyPacket(p) {
   const read = async ref => JSON.parse(await pinned(ref));
   const implementation = await read(p.implementation), review = await read(p.independentReview), authority = await read(p.authorization), quote = await read(p.priceEvidence), tools = await read(p.toolBindings), canary = await read(p.custodyCanary);
   const access = await read(p.operatorAccess);
+  assert.equal(p.ebsKey.sha256, p.ebsKeySha256); const ebsKey = (await read(p.ebsKey)).KeyMetadata;
+  assert.equal(ebsKey.Arn, p.ebsKmsKeyArn); assert.equal(ebsKey.KeyManager, 'AWS'); assert.equal(ebsKey.KeyState, 'Enabled'); assert.equal(ebsKey.KeyUsage, 'ENCRYPT_DECRYPT');
+  const ebsAliases = await read(p.ebsAliases); assert.equal(ebsAliases.Aliases.filter(a => a.AliasName === 'alias/aws/ebs' && a.TargetKeyId === ebsKey.KeyId).length, 1);
   assert.equal(access.kind, 'usage_linux_scoped_operator_access'); assert.equal(access.runId, p.runId); assert.equal(access.callerArn, p.sessionCallerArn);
   assert.equal(access.effectiveScope, 'runner_only'); assert.equal(access.passed, true); assert.equal(access.unresolvedFindings, 0); assert.ok(access.reviewer?.trim());
   assert.ok(Date.parse(access.capturedAtUtc) <= Date.now() && Date.parse(access.capturedAtUtc) >= Date.now() - 600000);
   assert.ok(access.nativePolicyInputs.length > 0); for (const ref of access.nativePolicyInputs) await pinned(ref);
+  const scope = await read(access.operatorScope); assert.deepEqual(scope, renderOperatorScope(scope.settings));
+  for (const key of ['runId', 'accountId', 'region', 'availabilityZone', 'instanceType', 'launchNotBeforeUtc', 'stopDeadlineUtc']) assert.equal(scope.settings[key], p[key]);
+  assert.equal(scope.settings.sourceCallerArn, p.ownerCallerArn);
+  assert.deepEqual(scope.settings.ami, p.ami); assert.equal(scope.names.instanceBoundaryArn, p.instanceBoundaryArn);
+  assert.equal(scope.settings.ebsKmsKeyArn, p.ebsKmsKeyArn);
+  assert.deepEqual(access.metadataReadExceptions, METADATA_READ_ACTIONS); assert.equal(access.commandOutputReadRoute, OWNER_COMMAND_READ_SEPARATE);
+  validateNativeScopeSnapshot(await read(access.nativeScopeSnapshot), scope);
   assert.equal(implementation.schemaVersion, 1); assert.equal(implementation.kind, 'usage_linux_implementation_manifest'); assert.equal(implementation.runId, p.runId);
   assert.equal(implementation.freezeSha256, '4647a9c6e800514b47ddb1a4c6161042f9702368c5ed0560d276fa64417fdfbe');
-  const required = ['acquire-session.ps1', 'bootstrap.sh', 'cloud-plan.mjs', 'cloud.mjs', 'discovery.mjs', 'evidence.mjs', 'preflight.mjs', 'relocation.mjs', 'run-campaign.mjs', 'run-campaign.sh', 'stage-input.mjs', 'canary.mjs', 'canary-replay.mjs', 'prepare-fixture.mjs'];
+  const required = ['acquire-session.ps1', 'bootstrap.sh', 'cloud-plan.mjs', 'cloud.mjs', 'discovery.mjs', 'evidence.mjs', 'operator-scope.mjs', 'preflight.mjs', 'relocation.mjs', 'run-campaign.mjs', 'run-campaign.sh', 'stage-input.mjs', 'canary.mjs', 'canary-replay.mjs', 'prepare-fixture.mjs'];
   assert.deepEqual(implementation.scriptBindings.map(x => x.name).sort(), required.sort());
   for (const ref of implementation.scriptBindings) { assert.equal(path.resolve(ref.path), path.join(path.dirname(fileURLToPath(import.meta.url)), ref.name)); await pinnedExecutable(ref); }
   assert.equal(implementation.scriptBindings.find(x => x.name === 'bootstrap.sh').sha256, p.bootstrapSha256);
@@ -167,10 +195,11 @@ export class CloudController {
     r.groupId = (await this.aws('ec2', 'create-security-group', { VpcId: r.vpcId, GroupName: p.runId, Description: 'No inbound access; isolated Usage acceptance runner', TagSpecifications: t('security-group') })).GroupId; await this.save();
     // No ingress rule is added. Bootstrap has outbound access; host policy closes it before load.
     const trust = { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'ec2.amazonaws.com' }, Action: 'sts:AssumeRole' }] };
-    await this.aws('iam', 'create-role', { RoleName: p.runId, AssumeRolePolicyDocument: JSON.stringify(trust), Tags: tags(p), MaxSessionDuration: 3600 }); r.roleName = p.runId; await this.save();
+    await this.aws('iam', 'create-role', { RoleName: p.runId, AssumeRolePolicyDocument: JSON.stringify(trust), Tags: tags(p), MaxSessionDuration: 3600, PermissionsBoundary: p.instanceBoundaryArn }); r.roleName = p.runId; await this.save();
     await this.aws('iam', 'put-role-policy', { RoleName: p.runId, PolicyName: 'ssm-channels-only', PolicyDocument: JSON.stringify(instancePolicy()) });
     r.profileArn = (await this.aws('iam', 'create-instance-profile', { InstanceProfileName: p.runId, Tags: tags(p) })).InstanceProfile.Arn; await this.save();
     await this.aws('iam', 'add-role-to-instance-profile', { InstanceProfileName: p.runId, RoleName: p.runId });
+    await this.verifyInstanceRole(trust);
     // No automatic second instance attempt. ClientToken also fences an uncertain result.
     assert.ok(Date.now() < Date.parse(p.launchNotBeforeUtc) + 10 * 60000);
     this.state.phase = 'launch_requested'; await this.save();
@@ -181,7 +210,7 @@ export class CloudController {
     const instance = await this.instance();
     const volumes = (await this.aws('ec2', 'describe-volumes', { VolumeIds: instance.BlockDeviceMappings.map(x => x.Ebs.VolumeId) })).Volumes;
     assert.equal(volumes.length, 2);
-    for (const volume of volumes) { assertOwnedResource(volume, p); assert.equal(volume.Encrypted, true); assert.equal(volume.VolumeType, 'gp3'); assert.equal(volume.Iops, 3000); assert.equal(volume.Throughput, 125); }
+    for (const volume of volumes) { assertOwnedResource(volume, p); assert.equal(volume.Encrypted, true); assert.equal(volume.KmsKeyId, p.ebsKmsKeyArn); assert.equal(volume.VolumeType, 'gp3'); assert.equal(volume.Iops, 3000); assert.equal(volume.Throughput, 125); }
     const root = instance.BlockDeviceMappings.find(x => x.DeviceName === instance.RootDeviceName); const data = instance.BlockDeviceMappings.find(x => x.DeviceName === '/dev/sdf');
     assert.ok(root && data); r.rootVolumeId = root.Ebs.VolumeId; r.dataVolumeId = data.Ebs.VolumeId;
     assert.equal(volumes.find(x => x.VolumeId === r.rootVolumeId).Size, 30); assert.equal(volumes.find(x => x.VolumeId === r.dataVolumeId).Size, 200);
@@ -191,6 +220,17 @@ export class CloudController {
     const bound = (await this.aws('ssm', 'create-document', { Name: r.discoveryDocument, DocumentType: 'Command', DocumentFormat: 'JSON', Content: JSON.stringify(doc), Tags: tags(p) })).DocumentDescription;
     r.discoveryDocumentHash = bound.Hash; r.discoveryDocumentVersion = bound.DocumentVersion; assert.equal(bound.HashType, 'Sha256');
     this.state.phase = 'awaiting_ami_discovery'; await this.save(); return this.state;
+  }
+  async verifyInstanceRole(trust) {
+    const p = this.p, role = (await this.aws('iam', 'get-role', { RoleName: p.runId })).Role;
+    assert.equal(role.Arn, `arn:aws:iam::${p.accountId}:role/${p.runId}`); assertOwnedResource(role, p);
+    assert.equal(role.PermissionsBoundary?.PermissionsBoundaryArn, p.instanceBoundaryArn); assert.deepEqual(role.AssumeRolePolicyDocument, trust);
+    const inline = await this.aws('iam', 'get-role-policy', { RoleName: p.runId, PolicyName: 'ssm-channels-only' });
+    assert.deepEqual(inline.PolicyDocument, instancePolicy());
+    assert.deepEqual((await this.aws('iam', 'list-attached-role-policies', { RoleName: p.runId })).AttachedPolicies, []);
+    assert.deepEqual((await this.aws('iam', 'list-role-policies', { RoleName: p.runId })).PolicyNames, ['ssm-channels-only']);
+    const profile = (await this.aws('iam', 'get-instance-profile', { InstanceProfileName: p.runId })).InstanceProfile;
+    assertOwnedResource(profile, p); assert.equal(profile.Roles.length, 1); assert.equal(profile.Roles[0].Arn, role.Arn);
   }
   async prepareBootstrap(bootstrap, bootstrapTemplate) {
     const p = this.p, r = this.state.resources;
@@ -279,7 +319,7 @@ export class CloudController {
     for (const table of inventory.RouteTables) { for (const association of table.Associations ?? []) if (!association.Main) await this.aws('ec2', 'disassociate-route-table', { AssociationId: association.RouteTableAssociationId }, ['InvalidAssociationID.NotFound']); await deleted('ec2', 'delete-route-table', { RouteTableId: table.RouteTableId }); }
     for (const gateway of inventory.InternetGateways) { for (const attachment of gateway.Attachments) { assert.ok(inventory.Vpcs.some(x => x.VpcId === attachment.VpcId)); await this.aws('ec2', 'detach-internet-gateway', { InternetGatewayId: gateway.InternetGatewayId, VpcId: attachment.VpcId }); } await deleted('ec2', 'delete-internet-gateway', { InternetGatewayId: gateway.InternetGatewayId }); }
     for (const vpc of inventory.Vpcs) await deleted('ec2', 'delete-vpc', { VpcId: vpc.VpcId });
-    const documents = ['discovery', 'bootstrap', 'launch', 'sftp'].map(suffix => `${this.p.runId}-${suffix}`);
+    const documents = RUNNER_DOCUMENT_SUFFIXES.map(suffix => `${this.p.runId}-${suffix}`);
     for (const name of documents) {
       const found = await this.aws('ssm', 'describe-document', { Name: name }, ['InvalidDocument']);
       if (!found.absent) { const list = await this.aws('ssm', 'list-tags-for-resource', { ResourceType: 'Document', ResourceId: name }); assertOwnedResource({ Tags: list.TagList }, this.p); await deleted('ssm', 'delete-document', { Name: name }); }
@@ -297,7 +337,9 @@ export class CloudController {
     for (const name of documents) assert.equal((await this.aws('ssm', 'describe-document', { Name: name }, ['InvalidDocument'])).absent, true);
     assert.equal((await this.aws('iam', 'get-role', { RoleName: this.p.runId }, ['NoSuchEntity'])).absent, true);
     assert.equal((await this.aws('iam', 'get-instance-profile', { InstanceProfileName: this.p.runId }, ['NoSuchEntity'])).absent, true);
-    this.state.phase = 'resources_deleted_cost_reconciliation_pending'; await this.save();
+    // The scoped principal cannot delete or edit its own IAM grants. The attended
+    // owner must close out those exact bootstrap-created policies/role separately.
+    this.state.phase = 'runner_resources_deleted_operator_scope_closeout_and_cost_pending'; await this.save();
   }
 }
 
@@ -309,9 +351,17 @@ async function main() {
   try { await ensurePrivateDirectory(p.outputRoot); } catch (e) { if (e.code !== 'ENOENT') throw e; await ensurePrivateDirectory(p.outputRoot, { create: true }); }
   await pinnedExecutable(p.aws);
   const session = JSON.parse(await pinned(p.session)); assert.equal(p.session.sha256, p.sessionReceiptSha256);
-  assert.equal(session.kind, 'usage_linux_mfa_session'); assert.equal(session.accountId, p.accountId); assert.equal(session.callerArn, p.sessionCallerArn);
-  assert.match(session.mfaSerial, new RegExp(`^arn:aws:iam::${p.accountId}:mfa/`));
+  validateOperatorSession(session, p);
+  const parent = JSON.parse(await pinned(session.parentMfaSession)); assert.equal(parent.kind, 'usage_linux_mfa_session'); assert.equal(parent.accountId, p.accountId); assert.equal(parent.mfaSerial, session.mfaSerial); assert.equal(parent.callerArn, p.ownerCallerArn);
+  const scope = JSON.parse(await pinned(session.operatorScope)); assert.deepEqual(scope, renderOperatorScope(scope.settings)); assert.equal(scope.settings.sourceCallerArn, parent.callerArn);
+  const nativeCaller = JSON.parse(await pinned(session.nativeCaller)); assert.equal(nativeCaller.Arn, p.sessionCallerArn); assert.equal(nativeCaller.Account, p.accountId);
+  assert.ok(Date.parse(session.acquiredAtUtc) <= Date.now() && Number.isFinite(Date.parse(session.acquiredAtUtc)));
+  validateNativeScopeSnapshot(JSON.parse(await pinned(session.nativeScopeSnapshot)), scope, Date.parse(session.acquiredAtUtc));
+  const assumed = JSON.parse(await pinned(session.nativeAssumeRole)); assert.equal(assumed.AssumedRoleUser.Arn, p.sessionCallerArn);
+  assert.equal(nativeCaller.UserId, assumed.AssumedRoleUser.AssumedRoleId);
+  assert.deepEqual(session.credentials, session.nativeAssumeRole);
   const credentials = JSON.parse(await pinned(session.credentials)).Credentials;
+  assert.equal(Date.parse(session.expiresUtc), Date.parse(credentials.Expiration));
   if (['validate', 'provision', 'discover-ami', 'prepare-bootstrap', 'bootstrap'].includes(action)) {
     await pinned(p.userData); await pinnedExecutable(p.bootstrap);
     assert.equal(p.bootstrap.sha256, p.bootstrapSha256); assert.equal(p.userData.sha256, p.userDataSha256);
@@ -337,7 +387,14 @@ async function main() {
   else if (action === 'discover-ami') { assert.equal(p.preparationStage, 'ami_discovery'); await c.sendBoundCommand('discovery', 120); }
   else if (action === 'collect-discovery') {
     await c.authenticate(); await c.instance(); assert.ok(c.state.discoveryCommandId);
-    const invocation = await c.aws('ssm', 'get-command-invocation', { CommandId: c.state.discoveryCommandId, InstanceId: c.state.resources.instanceId });
+    // AWS cannot resource-scope GetCommandInvocation. The runner role never gets it.
+    // A separate attended owner read binds the exact native request/caller/output.
+    const capture = JSON.parse(await pinned(p.ownerCommandCapture));
+    const request = JSON.parse(await pinned(capture.nativeRequest)), caller = JSON.parse(await pinned(capture.nativeCaller));
+    const invocation = JSON.parse(await pinned(capture.invocation)), review = JSON.parse(await pinned(capture.independentReview));
+    const doc = await c.aws('ssm', 'get-document', { Name: c.state.resources.discoveryDocument, DocumentVersion: c.state.resources.discoveryDocumentVersion, DocumentFormat: 'JSON' });
+    assert.equal(doc.DocumentVersion, c.state.resources.discoveryDocumentVersion); assert.equal(digest(Buffer.from(doc.Content)), c.state.resources.discoveryDocumentHash);
+    validateOwnerCommandCapture(capture, request, caller, invocation, review, p, c.state, 'discovery');
     const rawPath = await c.seal('ami-discovery-invocation', invocation);
     assert.equal(invocation.Status, 'Success'); assert.equal(invocation.StandardErrorContent, '');
     const facts = decodeDiscoveryEnvelope(invocation.StandardOutputContent); validateDiscoveryPins(facts, discoveryBinding(p, c.state));

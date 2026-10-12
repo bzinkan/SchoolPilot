@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 export const CAP = Object.freeze({ usd: 15, activeHours: 8, exportGiB: 20, holdDays: 7 });
 export const AMI = Object.freeze({ id: 'ami-0fa5967347d08d2df', owner: '099720109477', name: 'ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20261004' });
+export const RUNNER_DOCUMENT_SUFFIXES = Object.freeze(['discovery', 'bootstrap', 'sftp', 'launch', 'placement', 'finalize', 'verify', 'export', 'recovery']);
 const sha = /^[a-f0-9]{64}$/;
 export function cost(p) {
   const base = p.activeHours * (0.8064 + 230 * 0.08 / 720 + 0.005);
@@ -28,6 +29,9 @@ export function validatePlan(p, now = Date.now()) {
   assert.match(p.sessionReceiptSha256, sha); assert.match(p.custodyCanarySha256, sha);
   assert.match(p.toolBindingsSha256, sha);
   assert.match(p.operatorAccessSha256, sha);
+  assert.equal(p.instanceBoundaryArn, `arn:aws:iam::${p.accountId}:policy/${p.runId}-instance-boundary`);
+  assert.match(p.ownerCallerArn, new RegExp(`^arn:aws:iam::${p.accountId}:user/[A-Za-z0-9+=,.@_/-]+$`));
+  assert.match(p.ebsKmsKeyArn, new RegExp(`^arn:aws:kms:${p.region}:${p.accountId}:key/[a-f0-9-]{36}$`)); assert.match(p.ebsKeySha256, sha);
   const start = Date.parse(p.launchNotBeforeUtc), end = Date.parse(p.stopDeadlineUtc);
   assert.ok(Number.isFinite(start) && Number.isFinite(end));
   assert.equal(end - start, CAP.activeHours * 3600000);
@@ -45,9 +49,11 @@ export function stopUserData(p) {
   return Buffer.from(`#!/bin/bash\nset -eu\numask 077\nprintf '%s\\n' '${deadline}' > /etc/usage-runner-deadline-utc\ncat > /etc/systemd/system/usage-absolute-stop.service <<'UNIT'\n[Unit]\nDescription=Absolute Usage runner compute stop\n[Service]\nType=oneshot\nExecStart=/usr/sbin/shutdown -h now\nUNIT\ncat > /etc/systemd/system/usage-absolute-stop.timer <<'UNIT'\n[Unit]\nDescription=Absolute Usage runner eight-hour deadline\n[Timer]\nOnCalendar=${calendar}\nPersistent=true\nAccuracySec=1s\nUnit=usage-absolute-stop.service\n[Install]\nWantedBy=timers.target\nUNIT\nsystemctl daemon-reload\nsystemctl enable --now usage-absolute-stop.timer\n`);
 }
 export function instancePolicy() {
+  const channels = ['ssmmessages:CreateControlChannel', 'ssmmessages:CreateDataChannel', 'ssmmessages:OpenControlChannel', 'ssmmessages:OpenDataChannel'];
   return { Version: '2012-10-17', Statement: [
     { Effect: 'Allow', Action: ['ssm:UpdateInstanceInformation'], Resource: '*' },
-    { Effect: 'Allow', Action: ['ssmmessages:CreateControlChannel', 'ssmmessages:CreateDataChannel', 'ssmmessages:OpenControlChannel', 'ssmmessages:OpenDataChannel'], Resource: '*' },
+    { Effect: 'Allow', Action: channels, Resource: '*' },
+    { Effect: 'Deny', NotAction: ['ssm:UpdateInstanceInformation', ...channels, 'sts:GetCallerIdentity'], Resource: '*' },
   ] };
 }
 export function tags(p) { return [{ Key: 'Purpose', Value: 'usage-linux-acceptance' }, { Key: 'RunId', Value: p.runId }, { Key: 'StopDeadlineUtc', Value: p.stopDeadlineUtc }, { Key: 'SpendCapUsd', Value: '15' }]; }
@@ -63,8 +69,8 @@ export function launchRequest(p, ids, userData) {
     MetadataOptions: { HttpEndpoint: 'enabled', HttpTokens: 'required', HttpPutResponseHopLimit: 1, HttpProtocolIpv6: 'disabled', InstanceMetadataTags: 'disabled' },
     InstanceInitiatedShutdownBehavior: 'stop', EbsOptimized: true, Monitoring: { Enabled: false },
     BlockDeviceMappings: [
-      { DeviceName: '/dev/sda1', Ebs: { VolumeSize: 30, VolumeType: 'gp3', Iops: 3000, Throughput: 125, Encrypted: true, DeleteOnTermination: false } },
-      { DeviceName: '/dev/sdf', Ebs: { VolumeSize: 200, VolumeType: 'gp3', Iops: 3000, Throughput: 125, Encrypted: true, DeleteOnTermination: false } },
+      { DeviceName: '/dev/sda1', Ebs: { VolumeSize: 30, VolumeType: 'gp3', Iops: 3000, Throughput: 125, Encrypted: true, KmsKeyId: p.ebsKmsKeyArn, DeleteOnTermination: false } },
+      { DeviceName: '/dev/sdf', Ebs: { VolumeSize: 200, VolumeType: 'gp3', Iops: 3000, Throughput: 125, Encrypted: true, KmsKeyId: p.ebsKmsKeyArn, DeleteOnTermination: false } },
     ],
     TagSpecifications: ['instance', 'volume', 'network-interface'].map(ResourceType => ({ ResourceType, Tags: tags(p) })),
     UserData: userData,

@@ -35,7 +35,14 @@ function Invoke-PrivateAws([string[]]$Arguments, [string]$Label) {
     [void]$info.ArgumentList.Add('--endpoint-url')
     [void]$info.ArgumentList.Add($(if ($Arguments[0] -eq 'iam') { 'https://iam.amazonaws.com' } else { 'https://sts.us-east-1.amazonaws.com' }))
     $info.Environment['AWS_PAGER'] = ''
-    foreach ($key in @($info.Environment.Keys)) { if ($key -like 'AWS_ENDPOINT_URL*') { [void]$info.Environment.Remove($key) } }
+    # Remove inherited keys explicitly. PowerShell 7.5 can preserve empty env keys;
+    # AWS rejects an empty AWS_CONFIG_FILE before resolving the selected profile.
+    foreach ($key in @($info.Environment.Keys)) {
+        if ($key -like 'AWS_ENDPOINT_URL*' -or $key -in @(
+            'AWS_CONFIG_FILE','AWS_SHARED_CREDENTIALS_FILE','AWS_ACCESS_KEY_ID',
+            'AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_SECURITY_TOKEN'
+        )) { [void]$info.Environment.Remove($key) }
+    }
     $process = [Diagnostics.Process]::Start($info)
     $stdoutTask = $process.StandardOutput.ReadToEndAsync(); $stderrTask = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit(90000)) { $process.Kill($true); throw 'AWS acquisition timed out.' }

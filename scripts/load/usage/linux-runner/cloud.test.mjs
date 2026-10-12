@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { CloudController, validateCleanupReplayReview, containFailedProvision, verifyOwnerTools } from './cloud.mjs';
-import { AMI, tags } from './cloud-plan.mjs';
+import { CloudController, validateCleanupReplayReview, containFailedProvision, verifyOwnerTools, validateOwnerCommandCapture } from './cloud.mjs';
+import { AMI, tags, instancePolicy } from './cloud-plan.mjs';
 const p = { runId: 'usage-linux-test-20261012', accountId: '123456789012', region: 'us-east-1', ami: AMI, stopDeadlineUtc: '2026-10-12T20:00:00Z' };
 const owned = properties => ({ Tags: tags(p), ...properties });
 const custody = { kind: 'independently_replayed_dual_private_evidence_custody', passed: true, copies: ['/private/a', '/private/b'].map(root => ({ root, independentReplayPassed: true, replayHookInvoked: true })), receipt: { sha256: 'a'.repeat(64) } };
@@ -75,6 +75,37 @@ test('bootstrap preparation cannot provision a new instance or extend an expired
   c.authenticate = async () => {}; c.instance = async () => ({});
   await assert.rejects(() => c.prepareBootstrap(Buffer.from('not executed'), {}));
 });
+
+test('native instance role proof refuses widened permissions or a missing fixed boundary before launch', async () => {
+  const plan = { ...p, instanceBoundaryArn: `arn:aws:iam::${p.accountId}:policy/${p.runId}-instance-boundary` };
+  const trust = { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'ec2.amazonaws.com' }, Action: 'sts:AssumeRole' }] };
+  const role = { ...owned({}), Arn: `arn:aws:iam::${p.accountId}:role/${p.runId}`, AssumeRolePolicyDocument: trust, PermissionsBoundary: { PermissionsBoundaryArn: plan.instanceBoundaryArn } };
+  let altered = false;
+  const c = controller(async (_service, op) => {
+    if (op === 'get-role') return { Role: role };
+    if (op === 'get-role-policy') return { PolicyDocument: altered ? { Statement: [{ Effect: 'Allow', Action: '*', Resource: '*' }] } : instancePolicy() };
+    if (op === 'list-attached-role-policies') return { AttachedPolicies: [] };
+    if (op === 'list-role-policies') return { PolicyNames: ['ssm-channels-only'] };
+    if (op === 'get-instance-profile') return { InstanceProfile: owned({ Roles: [role] }) };
+    assert.fail(`unexpected mutation ${op}`);
+  }); c.p = plan;
+  await c.verifyInstanceRole(trust); altered = true; await assert.rejects(() => c.verifyInstanceRole(trust));
+  altered = false; delete role.PermissionsBoundary; await assert.rejects(() => c.verifyInstanceRole(trust));
+});
+
+test('owner command read binds exact request, caller, immutable document and fresh independent review', () => {
+  const now = Date.parse('2026-10-12T16:00:00Z'), sha = 'a'.repeat(64), ownerCallerArn = `arn:aws:iam::${p.accountId}:user/owner`;
+  const plan = { ...p, ownerCallerArn }, state = { discoveryCommandId: 'exact-command', resources: { instanceId: 'i-abc', discoveryDocument: `${p.runId}-discovery`, discoveryDocumentVersion: '1', discoveryDocumentHash: sha } };
+  const capture = { schemaVersion: 1, kind: 'usage_linux_owner_command_capture', runId: p.runId, accountId: p.accountId, region: p.region, readRoute: 'exact_runner_command_owner_read', ownerCallerArn, capturedAtUtc: new Date(now).toISOString(), nativeRequest: { sha256: sha }, nativeCaller: { sha256: sha }, invocation: { sha256: sha } };
+  const request = { CommandId: 'exact-command', InstanceId: 'i-abc' }, caller = { Account: p.accountId, Arn: ownerCallerArn };
+  const invocation = { ...request, DocumentName: state.resources.discoveryDocument, DocumentVersion: '1', Status: 'Success', ResponseCode: 0, StandardErrorContent: '' };
+  const review = { kind: 'usage_linux_owner_command_capture_review', runId: p.runId, subjectSha256: sha, nativeRequestSha256: sha, nativeCallerSha256: sha, documentSha256: sha, passed: true, unresolvedFindings: 0, reviewer: 'independent', reviewedAtUtc: new Date(now).toISOString() };
+  validateOwnerCommandCapture(capture, request, caller, invocation, review, plan, state, 'discovery', now);
+  for (const change of [{ CommandId: 'other-command' }, { InstanceId: 'i-production' }, { DocumentName: 'AWS-RunShellScript' }, { DocumentVersion: '2' }, { ResponseCode: 1 }, { StandardErrorContent: 'retained failure' }]) assert.throws(() => validateOwnerCommandCapture(capture, request, caller, { ...invocation, ...change }, review, plan, state, 'discovery', now));
+  assert.throws(() => validateOwnerCommandCapture(capture, request, { ...caller, Arn: `${ownerCallerArn}-other` }, invocation, review, plan, state, 'discovery', now));
+  assert.throws(() => validateOwnerCommandCapture(capture, request, caller, invocation, { ...review, passed: false }, plan, state, 'discovery', now));
+  assert.throws(() => validateOwnerCommandCapture(capture, request, caller, invocation, review, plan, state, 'discovery', now + 600001));
+});
 test('partial deletion is recovered by a fresh exact-tag inventory and all resource absence is proven', async () => {
   let volumeFailure = true;
   const volume = id => owned({ VolumeId: id, Size: id === 'vol-root' ? 30 : 200, Encrypted: true, State: 'available', Attachments: [] });
@@ -90,7 +121,7 @@ test('partial deletion is recovered by a fresh exact-tag inventory and all resou
   });
   await assert.rejects(() => c.cleanup(custody)); assert.deepEqual(deleted, ['vol-root']);
   await c.cleanup(custody); assert.deepEqual(deleted, ['vol-root', 'vol-data']);
-  assert.equal(c.state.phase, 'resources_deleted_cost_reconciliation_pending');
+  assert.equal(c.state.phase, 'runner_resources_deleted_operator_scope_closeout_and_cost_pending');
   assert.ok(absence.filter(x => x === 'describe-document').length >= 6); assert.ok(absence.includes('get-role') && absence.includes('get-instance-profile'));
 });
 test('cleanup refuses sole-copy custody, running instances and foreign volumes before deletion', async () => {
