@@ -24,6 +24,12 @@ export async function pinnedExecutable(ref) {
   const info = await fs.lstat(ref.path); assert.ok(info.isFile() && !info.isSymbolicLink() && info.nlink === 1);
   assert.equal(digest(await fs.readFile(ref.path)), ref.sha256, 'reviewed executable changed');
 }
+export async function verifyOwnerTools(owner, { platform = process.platform, verify = pinnedExecutable } = {}) {
+  const required = ['aws', 'node', 'age', 'ageKeygen', 'ssh', 'sftp', 'sessionManagerPlugin'];
+  if (platform === 'win32') required.push('pwsh');
+  for (const name of required) { assert.ok(owner?.[name], `owner tool ${name} is not ready`); await verify(owner[name]); }
+  assert.equal(path.resolve(owner.node.path), process.execPath);
+}
 export function validateCleanupReplayReview(review, replay, copies, now = Date.now()) {
   assert.equal(review.schemaVersion, 1); assert.equal(review.kind, 'usage_linux_cleanup_replay_review');
   assert.equal(review.subjectSha256, replay.sha256); assert.equal(review.passed, true);
@@ -69,7 +75,7 @@ export async function verifyPacket(p) {
   assert.ok(Math.abs(quote.costs.worst8hWithReserves - 13.198977777777777) < 1e-8);
   for (const ref of quote.publicSnapshots) await pinned({ path: ref.file, sha256: ref.sha256 });
   assert.equal(tools.kind, 'usage_linux_tool_bindings'); assert.equal(tools.runId, p.runId);
-  assert.deepEqual(tools.owner.aws, p.aws); await pinnedExecutable(tools.owner.node); assert.equal(path.resolve(tools.owner.node.path), process.execPath);
+  assert.deepEqual(tools.owner.aws, p.aws); await verifyOwnerTools(tools.owner);
   await pinned(implementation.controllerConfig);
   if (p.preparationStage === 'ami_discovery') {
     assert.equal(tools.linux.phase, 'pending_native_ami_discovery'); assert.equal(tools.linux.ssmAgent, null);

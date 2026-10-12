@@ -1,12 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { CloudController, validateCleanupReplayReview, containFailedProvision } from './cloud.mjs';
+import { CloudController, validateCleanupReplayReview, containFailedProvision, verifyOwnerTools } from './cloud.mjs';
 import { AMI, tags } from './cloud-plan.mjs';
 const p = { runId: 'usage-linux-test-20261012', accountId: '123456789012', region: 'us-east-1', ami: AMI, stopDeadlineUtc: '2026-10-12T20:00:00Z' };
 const owned = properties => ({ Tags: tags(p), ...properties });
 const custody = { kind: 'independently_replayed_dual_private_evidence_custody', passed: true, copies: ['/private/a', '/private/b'].map(root => ({ root, independentReplayPassed: true, replayHookInvoked: true })), receipt: { sha256: 'a'.repeat(64) } };
 function controller(transport) { const c = new CloudController(p, '/not-used', {}); c.events = []; c.seal = async (label, value) => { c.events.push({ label, value }); }; c.aws = transport; return c; }
+test('paid preparation requires every installed pinned owner transfer/encryption tool', async () => {
+  const names = ['aws', 'node', 'age', 'ageKeygen', 'ssh', 'sftp', 'sessionManagerPlugin', 'pwsh'];
+  const owner = Object.fromEntries(names.map(name => [name, { path: process.execPath, sha256: 'a'.repeat(64) }]));
+  const verified = []; await verifyOwnerTools(owner, { platform: 'win32', verify: async ref => verified.push(ref) }); assert.equal(verified.length, names.length);
+  for (const name of names) {
+    const incomplete = { ...owner }; delete incomplete[name];
+    await assert.rejects(() => verifyOwnerTools(incomplete, { platform: 'win32', verify: async () => {} }));
+  }
+  await assert.rejects(() => verifyOwnerTools(owner, { platform: 'win32', verify: async () => { throw new Error('actual executable pin changed'); } }), /pin changed/);
+});
 test('cleanup replay review binds the actual tool and both manifests and refuses stale or failed review', () => {
   const replay = { sha256: 'a'.repeat(64) }, copies = [{ manifestCanonicalSha256: 'b'.repeat(64) }, { manifestCanonicalSha256: 'c'.repeat(64) }];
   const now = Date.parse('2026-10-12T12:00:00Z');

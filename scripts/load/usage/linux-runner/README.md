@@ -40,6 +40,7 @@ The private packet additionally pins:
 - Implementation manifest, a matching independent review with no unresolved findings, and the owner's one-attempt authorization bound to that run and implementation. A hash of a failed or unrelated review cannot admit provisioning.
 - `operatorAccess`: a private `usage_linux_scoped_operator_access` review, bound to the exact run/caller and hash-bound native policy inputs, with `effectiveScope:runner_only`, no findings, named reviewer and capture within ten minutes. An MFA session alone does not narrow broad deployment privileges.
 - Refreshed raw price snapshots and calculations, complete tool/package bindings, the nonsecret bootstrap template and its reviewed fixed controller config.
+- Installed hash-bound owner tools: `aws`, `node`, `age`, `ageKeygen`, `ssh`, `sftp`, `sessionManagerPlugin`, plus `pwsh` on Windows. A downloaded installer is not an installed client; resolve local prerequisites before starting paid time.
 - Actual local age input/return roundtrip chains, both independent custody replays and both still-valid private copies.
 
 `verifyPacket` defines the exact private record fields. Installed executables are regular non-reparse hash-bound files; secret receipts separately require owner-only permissions. Hash all source bytes after checkout/line-ending conversion. Linux shell files are committed with LF. Do not substitute example hashes, guessed AMI Snap revisions, package counts or `passed:true` summaries for raw evidence.

@@ -66,6 +66,10 @@ authorized VM under its original stop deadline. Complete native package and SSM-
 pins and the exact reviewed implementation packet before bootstrap. Scoped operator
 access is a separate prerequisite; rendering its policy
 does not narrow the existing deployment identity's permissions.
+The signed, pinned Session Manager Windows installer is staged; the client is not
+installed in this non-administrator process. [AWS requires administrator rights](https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-windows.html)
+for that installer. Complete that local prerequisite
+before paid launch. The cloud guard requires installed owner tool hashes.
 
 After authenticated preparation, require native encrypted-volume, isolation,
 durability, exact image import, full dist inventory, fresh fixture/restricted-restore,
