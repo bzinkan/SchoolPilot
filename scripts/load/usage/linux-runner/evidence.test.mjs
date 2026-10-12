@@ -174,12 +174,20 @@ test('duplicate JSON keys cannot change the meaning of a pinned manifest', async
 
 test('key separation and return-private-key runner refusal happen before tool/key access', async () => {
   const f = await fixture();
-  const config = { ...f, expectedBundle: f.bundle, outputPath: path.join(f.parent, 'encrypted.age'), receiptPath: path.join(f.parent, 'encrypted.json'), age: { path: process.execPath, sha256: '0'.repeat(64) }, recipients, direction: 'return', location: 'owner' };
+  const toolPath = path.join(f.parent, 'fixture-age-tool');
+  const toolBytes = Buffer.from('Harmless pinned-tool fixture; never executed.\n');
+  await privateBytes(toolPath, toolBytes);
+  await chmod(toolPath, 0o700);
+  const config = { ...f, expectedBundle: f.bundle, outputPath: path.join(f.parent, 'encrypted.age'), receiptPath: path.join(f.parent, 'encrypted.json'), age: { path: toolPath, sha256: '0'.repeat(64) }, recipients, direction: 'return', location: 'owner' };
   await assert.rejects(encryptBundle({ ...config, recipients: { input: recipients.input, return: recipients.input } }), /KEY_SEPARATION_REQUIRED/);
   await assert.rejects(encryptBundle({ ...config, direction: 'input', location: 'runner' }), /INPUT_ENCRYPTION_OWNER_ONLY/);
   await assert.rejects(decryptBundle({ recipients, direction: 'return', location: 'runner' }), /RETURN_PRIVATE_KEY_FORBIDDEN_ON_RUNNER/);
   await assert.rejects(encryptBundle(config), /TOOL_HASH_MISMATCH/);
   await assert.rejects(encryptBundle({ ...config, expectedBundle: { ...f.bundle, sha256: '0'.repeat(64) } }), /BUNDLE_HASH_MISMATCH/);
+  if (process.platform !== 'win32') {
+    await chmod(toolPath, 0o722);
+    await assert.rejects(encryptBundle({ ...config, age: { path: toolPath, sha256: sha(toolBytes) } }), /PINNED_TOOL_REQUIRED/);
+  }
 });
 
 test('return verification binds a real private replay receipt and rehashes after the replay hook', async () => {
