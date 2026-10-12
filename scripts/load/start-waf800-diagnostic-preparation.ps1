@@ -975,6 +975,27 @@ function Get-ProcessIdentity {
     catch { throw "A bound process identity could not be captured." }
 }
 
+function Test-ObservedBoundProcessPresent {
+    param($Process, $Identity)
+    $expectedStarted = [string](Get-RequiredValue $Identity "startedAtUtc")
+    $expectedPath = [IO.Path]::GetFullPath([string](Get-RequiredValue $Identity "path"))
+    try {
+        $actualStarted = ConvertTo-UtcString $Process.StartTime
+        $actualPath = [IO.Path]::GetFullPath($Process.Path)
+        return $actualStarted -ceq $expectedStarted -and
+            [string]::Equals($actualPath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)
+    }
+    catch {
+        # The same process object can exit between lookup and StartTime/Path.
+        # Only a positively observed exit is absence; inspection failures for
+        # a live or uninspectable process must still fail closed.
+        $observedExit = $false
+        try { $observedExit = $Process.HasExited } catch { }
+        if ($observedExit -eq $true) { return $false }
+        throw "The bound process identity could not be inspected safely."
+    }
+}
+
 function Test-BoundProcessPresent {
     param($Identity)
     if ($null -eq $Identity) { return $false }
@@ -983,15 +1004,7 @@ function Test-BoundProcessPresent {
     try { $process = [Diagnostics.Process]::GetProcessById($pidValue) }
     catch [ArgumentException] { return $false }
     catch { throw "The bound process could not be inspected safely." }
-    try {
-        $actualStarted = ConvertTo-UtcString $process.StartTime
-        $actualPath = [IO.Path]::GetFullPath($process.Path)
-        $expectedStarted = [string](Get-RequiredValue $Identity "startedAtUtc")
-        $expectedPath = [IO.Path]::GetFullPath([string](Get-RequiredValue $Identity "path"))
-        return $actualStarted -ceq $expectedStarted -and
-            [string]::Equals($actualPath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)
-    }
-    catch { throw "The bound process identity could not be inspected safely." }
+    try { return Test-ObservedBoundProcessPresent $process $Identity }
     finally { $process.Dispose() }
 }
 

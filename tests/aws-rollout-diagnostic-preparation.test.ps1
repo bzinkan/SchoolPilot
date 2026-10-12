@@ -1212,6 +1212,57 @@ Assert-Condition (
 
 $workerText = Get-Content -LiteralPath $workerPath -Raw
 $supervisorText = Get-Content -LiteralPath $supervisorPath -Raw
+& {
+    # Load only the pure process-observation functions, never the supervisor's
+    # command entry point. Script properties make the exit race deterministic.
+    $processTokens = $null
+    $processErrors = $null
+    $processAst = [Management.Automation.Language.Parser]::ParseInput(
+        $supervisorText, [ref]$processTokens, [ref]$processErrors
+    )
+    foreach ($functionName in @(
+        'Get-Value','Get-RequiredValue','ConvertTo-UtcString','Test-ObservedBoundProcessPresent'
+    )) {
+        $definition = $processAst.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq $functionName
+        }, $true)
+        Assert-Condition ($null -ne $definition) "Missing process observation function: $functionName"
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $started = [datetime]::UtcNow
+    $identity = @{startedAtUtc=(ConvertTo-UtcString $started);path=$supervisorPath}
+    $live = [pscustomobject]@{StartTime=$started;Path=$supervisorPath;HasExited=$false}
+    Assert-Condition (Test-ObservedBoundProcessPresent $live $identity) `
+        'An exact live process identity must remain present.'
+    Assert-Condition (-not (Test-ObservedBoundProcessPresent $live @{
+        startedAtUtc=(ConvertTo-UtcString $started.AddSeconds(-1));path=$supervisorPath
+    })) 'A reused PID with another creation time must remain absent.'
+    foreach ($failedProperty in @('StartTime','Path')) {
+        $exited = [pscustomobject]@{StartTime=$started;Path=$supervisorPath;HasExited=$true}
+        $exited.PSObject.Properties.Remove($failedProperty)
+        $exited | Add-Member -MemberType ScriptProperty -Name $failedProperty -Value {
+            throw 'The process exited during identity inspection.'
+        }
+        Assert-Condition (-not (Test-ObservedBoundProcessPresent $exited $identity)) `
+            "A positively observed process exit during $failedProperty inspection must be absent."
+        $exited.HasExited = $false
+        Assert-Throws { Test-ObservedBoundProcessPresent $exited $identity } `
+            'bound process identity could not be inspected safely' `
+            "A live process with unreadable $failedProperty must still be refused."
+        $exited.PSObject.Properties.Remove('HasExited')
+        $exited | Add-Member -MemberType ScriptProperty -Name HasExited -Value {
+            throw 'Process exit could not be established.'
+        }
+        Assert-Throws { Test-ObservedBoundProcessPresent $exited $identity } `
+            'bound process identity could not be inspected safely' `
+            'An unproven process exit must still be refused.'
+    }
+    Assert-Throws { Test-ObservedBoundProcessPresent $exited @{path=$supervisorPath} } `
+        'required preparation value is missing' `
+        'A missing expected identity field must not be reclassified as process exit.'
+}
 $binderText = Get-Content -LiteralPath $binderPath -Raw
 $diagnosticText = Get-Content -LiteralPath $diagnosticPath -Raw
 $certificationText = Get-Content -LiteralPath $certificationPath -Raw
