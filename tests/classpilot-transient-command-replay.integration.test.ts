@@ -10,6 +10,7 @@ import pg from "pg";
 import { WebSocket, type WebSocketServer } from "ws";
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "../src/db/classpilotScheduledClassroomMigration.js";
 import { CLASSPILOT_TOOLS_SQL } from "../src/db/classpilotToolsMigration.js";
+import { observeRuntimeCounterWindow } from "./helpers/runtime-counter-window.js";
 
 // No Redis in this lane and Class Tools at phase 0 (legacy timer payloads carry
 // no timerId and no deadline), as in production. The protocol and the safe-poll
@@ -40,6 +41,7 @@ let dispatcher: typeof import("../src/services/classpilotCommandDispatcher.js");
 let replay: typeof import("../src/services/classpilotTransientCommandReplay.js");
 let websocket: typeof import("../src/realtime/websocket.js");
 let runtime: typeof import("../src/services/runtimePerformanceMetrics.js");
+let counterWindow: ReturnType<typeof observeRuntimeCounterWindow> | undefined;
 let lifecycle: typeof import("../src/services/classpilotSessionLifecycle.js");
 let pushes: typeof import("../src/services/classpilotLifecyclePushes.js");
 let createStudentToken: typeof import("../src/services/deviceJwt.js").createStudentToken;
@@ -95,6 +97,7 @@ before(async () => {
   replay = await import("../src/services/classpilotTransientCommandReplay.js");
   websocket = await import("../src/realtime/websocket.js");
   runtime = await import("../src/services/runtimePerformanceMetrics.js");
+  counterWindow = observeRuntimeCounterWindow(runtime.snapshotRuntimePerformanceMetrics);
   lifecycle = await import("../src/services/classpilotSessionLifecycle.js");
   pushes = await import("../src/services/classpilotLifecyclePushes.js");
   ({ createStudentToken } = await import("../src/services/deviceJwt.js"));
@@ -153,6 +156,7 @@ before(async () => {
 });
 
 after(async () => {
+  counterWindow?.restore();
   delete process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH;
   delete process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS;
   delete process.env.CLASSPILOT_TIMER_POLL_COMMAND_TTL_MS;
@@ -312,8 +316,8 @@ async function closeClients(): Promise<void> {
 const remoteControl = (connection: Connection) => connection.frames.filter((frame) => frame.type === "remote-control");
 const withoutMessageId = ({ _msgId: _ignored, ...frame }: Frame) => frame;
 const payloadOf = (dispatched: Dispatched) => dispatched.command.commandPayload as Record<string, any>;
-const counters = () => runtime.snapshotRuntimePerformanceMetrics().counters as Record<string, number | undefined>;
-const resetCounters = () => { runtime.snapshotRuntimePerformanceMetrics({ reset: true }); };
+const counters = () => counterWindow!.counters();
+const resetCounters = () => { counterWindow!.reset(); };
 
 async function targetRows(commandId: string): Promise<TargetRow[]> {
   const result = await admin.query(
