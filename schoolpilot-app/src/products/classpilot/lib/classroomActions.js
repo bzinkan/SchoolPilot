@@ -2,6 +2,27 @@ import { restrictionResourceUrl } from './restrictionResourceMatcher.js';
 
 const terminal = new Set(['completed', 'failed', 'unavailable', 'expired']);
 
+export function classroomLoadFailure(error, subject) {
+  const data = error?.response?.data;
+  // Some older API responses carry the connection code only as a prefix.
+  const code = data?.code || (typeof data?.error === 'string' ? data.error.split(':', 1)[0] : '');
+  switch (code) {
+    case 'MISSING_GOOGLE_SCOPE':
+      return { reconnect: true, message: 'Your Google connection is missing Classroom permissions. Reconnect Google and allow access to courses, assignments, and materials.' };
+    case 'NO_TOKENS':
+    case 'GOOGLE_RECONNECT_REQUIRED':
+      return { reconnect: true, message: 'Reconnect your school Google account to load Google Classroom content.' };
+    case 'INSUFFICIENT_PERMISSIONS':
+      return { reconnect: true, message: 'Google denied access to this Classroom content. Reconnect Google to review permissions. If access is still denied, ask your school administrator to check your Classroom access.' };
+    case 'GOOGLE_DOMAIN_MISMATCH':
+      return { reconnect: true, message: 'The connected Google account does not match your school. Reconnect using your school Google account.' };
+    case 'SCHOOL_DOMAIN_REQUIRED':
+      return { reconnect: false, message: 'Your school’s Google domain must be configured before Classroom content can load. Ask your school administrator to finish setup.' };
+    default:
+      return { reconnect: false, message: `${subject} could not be loaded. Try again.` };
+  }
+}
+
 export function classroomCanFocus(students) {
   return students.some(student => {
     const accepted = student.acceptedCapabilities ?? student.capabilities;

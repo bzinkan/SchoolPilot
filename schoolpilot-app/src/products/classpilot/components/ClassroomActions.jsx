@@ -8,6 +8,7 @@ import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview'
 import { classroomLinks, classroomCanFocus, classroomLessonStarts, reviewedFlightPathMatches, runClassroomAction } from '../lib/classroomActions';
 import RestrictionScopeReview from './RestrictionScopeReview';
 import CommandRecipients from './CommandRecipients';
+import ClassroomLoadError from './ClassroomLoadError';
 import { planRecipientSend, recipientsRestoredMessage, snapshotRecipientNames } from '../lib/dashboardCommandContext';
 
 const outcomeLabel = value => ({ completed: 'Confirmed', requesting: 'Request sent; awaiting confirmation', received: 'Received; awaiting confirmation',
@@ -141,9 +142,9 @@ export default function ClassroomActions({ schoolId, viewerId, scopeKey, student
       <DialogContent className="max-h-[90dvh] max-w-3xl overflow-y-auto" data-testid="dialog-classroom-actions">
         <DialogHeader><DialogTitle>Google Classroom assignments</DialogTitle><DialogDescription>Choose a link from your own courses. Actions target exactly the frozen list below. Changes to ticks, groups or reporting never add recipients.</DialogDescription></DialogHeader>
         <CommandRecipients open={open} snapshot={recipients?.snapshot} unavailableIds={recipients?.unavailableIds} confirmIds={recipients?.confirmIds} notice={recipients?.notice} />
-        {courses.isError ? <div role="alert"><p>Your Google Classroom courses could not be loaded.</p><Button variant="outline" onClick={() => void connect()}>Connect my Google account</Button><Button variant="ghost" onClick={() => courses.refetch()}>Retry courses</Button></div>
+        {courses.isError ? <ClassroomLoadError error={courses.error} subject="Courses" onConnect={() => void connect()} onRetry={() => courses.refetch()} retrying={courses.isFetching} />
           : courses.isPending ? <p role="status">Loading courses…</p> : <div><Label htmlFor="classroom-actions-course">Course</Label><select id="classroom-actions-course" className="w-full rounded border bg-background p-2" value={courseId} disabled={busy} onChange={event => { setCourseId(event.target.value); setResourceId(''); setSelectedLinks([]); setOpenUrl(''); setLessonUrl(''); setOutcomes([]); }}><option value="">Choose a course</option>{(courses.data?.courses || []).map(course => <option key={course.id} value={course.id}>{course.name || course.courseName}</option>)}</select></div>}
-        {courseId && (resources.isError ? <p role="alert">Assignments could not be loaded. <Button variant="link" onClick={() => resources.refetch()}>Retry assignments</Button></p>
+        {courseId && (resources.isError ? <ClassroomLoadError error={resources.error} subject="Assignments" onConnect={() => void connect()} onRetry={() => resources.refetch()} retrying={resources.isFetching} />
           : resources.isPending ? <p role="status">Loading assignments and materials…</p> : <div><Label htmlFor="classroom-actions-resource">Assignment or material</Label><select id="classroom-actions-resource" className="w-full rounded border bg-background p-2" disabled={busy} value={resourceId} onChange={event => chooseResource(event.target.value)}><option value="">Choose an assignment or material</option>{(resources.data?.resources || []).map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></div>)}
         {resource && <>
           <p className="text-sm text-muted-foreground">{resource.dueDate ? `Due ${resource.dueDate.year}-${String(resource.dueDate.month).padStart(2, '0')}-${String(resource.dueDate.day).padStart(2, '0')}` : 'No due date'}</p>
