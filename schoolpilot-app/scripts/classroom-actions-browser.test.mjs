@@ -33,10 +33,13 @@ async function fixture(options = {}) {
   page.on('pageerror', error => state.errors.push(error.message));
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), body = req.method() === 'GET' ? undefined : req.postDataJSON();
-    state.requests.push({ path: url.pathname, body }); const json = data => route.fulfill({ json: data });
+    state.requests.push({ path: url.pathname, query: url.search, schoolId: req.headers()['x-school-id'], body }); const json = data => route.fulfill({ json: data });
     if (url.pathname.endsWith('/csrf')) return json({ csrfToken: 'synthetic' });
     if (url.pathname.endsWith('/classroom/courses')) return json({ courses: [{ id: 'course-a', name: 'Synthetic science course' }] });
-    if (url.pathname.endsWith('/resources')) return json({ resources: [assignment] });
+    if (url.pathname.endsWith('/resources')) return state.resourceError
+      ? route.fulfill({ status: state.resourceError.status, json: state.resourceError.data })
+      : json({ resources: [assignment] });
+    if (url.pathname.endsWith('/google/auth-url')) return json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-client' });
     if (url.pathname.endsWith('/preview-resources')) {
       if (state.holdPreview) await new Promise(resolve => { state.releasePreview = resolve; });
       const selected = body.resources.flatMap(item => item.links), website = body.boundary === 'website';
@@ -72,9 +75,47 @@ async function fixture(options = {}) {
   await page.goto(`${base}/__classroom_actions${options.preciseOff ? '?precise=off' : ''}`);
   await page.getByTestId('button-classroom-assignments').click();
   await page.getByLabel('Course', { exact: true }).selectOption('course-a');
-  await page.getByLabel('Assignment or material').selectOption('assignment-a');
+  if (!options.resourceError) await page.getByLabel('Assignment or material').selectOption('assignment-a');
   return { page, state, close: async () => { state.releasePreview?.(); state.releaseStatus?.(); state.releaseAuthoring?.(); await page.unrouteAll({ behavior: 'wait' }); await page.close(); } };
 }
+
+test('assignment permission failures offer reconnect even when the course list loaded successfully', async () => {
+  const { page, state, close } = await fixture({ resourceError: { status: 400,
+    data: { code: 'MISSING_GOOGLE_SCOPE', error: 'MISSING_GOOGLE_SCOPE: Reconnect Google Classroom to grant resource access.' } } });
+  try {
+    await page.getByRole('alert').getByText(/allow access to courses, assignments, and materials/).waitFor({ timeout: 5000 });
+    assert.equal(await page.getByRole('button', { name: 'Reconnect Google', exact: true }).isVisible(), true);
+    assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Alex Example', 'Blair Example']);
+    assert.equal(state.commands.size, 0);
+    if (process.env.CLASSROOM_UI_QA_DIR) { await mkdir(process.env.CLASSROOM_UI_QA_DIR, { recursive: true }); await page.screenshot({ path: path.join(process.env.CLASSROOM_UI_QA_DIR, 'classroom-reconnect.png'), fullPage: true }); }
+    await page.route('https://accounts.google.com/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Synthetic Google permission review</h1>' }));
+    await page.getByRole('button', { name: 'Reconnect Google', exact: true }).click();
+    await page.getByRole('heading', { name: 'Synthetic Google permission review' }).waitFor();
+    const request = state.requests.find(row => row.path.endsWith('/google/auth-url'));
+    const query = new URLSearchParams(request.query);
+    assert.equal(query.get('purpose'), 'classroom_resources');
+    assert.equal(query.get('returnTo'), `${base}/classpilot`);
+    assert.equal(request.schoolId, 'school-a');
+    assert.equal(state.commands.size, 0);
+    assert.deepEqual(state.errors, []);
+  } finally { await close(); }
+});
+
+test('temporary assignment failures retry without requesting a new Google grant', async () => {
+  const { page, state, close } = await fixture({ resourceError: { status: 503, data: { error: 'Temporary provider failure' } } });
+  try {
+    await page.getByText('Assignments could not be loaded. Try again.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Reconnect Google', exact: true }).count(), 0);
+    state.resourceError = null;
+    await page.getByRole('button', { name: 'Retry assignments', exact: true }).click();
+    await page.getByLabel('Assignment or material').selectOption('assignment-a');
+    assert.equal(await page.getByRole('button', { name: 'Open', exact: true }).isEnabled(), true);
+    assert.equal(state.requests.filter(row => row.path.endsWith('/resources')).length, 2);
+    assert.equal(state.requests.some(row => row.path.endsWith('/google/auth-url')), false);
+    assert.equal(state.commands.size, 0);
+    assert.deepEqual(state.errors, []);
+  } finally { await close(); }
+});
 
 test('Open uses explicit students and Open + Focus reports a refused continuation truthfully', async () => {
   const { page, state, close } = await fixture();
