@@ -51,10 +51,13 @@ describe("ClassPilot command and ACK hot path", () => {
       batchStart,
       redis.indexOf("\nregisterCacheInvalidationPublisher", batchStart)
     );
-    assert.match(batchSection, /const pipeline = redisPublisher\.multi\(\)/);
-    assert.match(batchSection, /for \(const payload of serialized\)[\s\S]*?pipeline\.publish\(redisChannel, payload\)/);
+    assert.match(batchSection, /publicationRuntime\.publish/);
+    assert.match(batchSection, /const pipeline = client\.multi\(\)/);
+    assert.match(batchSection, /for \(const \{ target, message, includeSource \} of cohort\)[\s\S]*?pipeline\.publish/);
     assert.match(batchSection, /await pipeline\.exec\(\)/);
-    assert.match(batchSection, /catch \(error\)[\s\S]*?batch publish failed:[\s\S]*?items\.map\(\(\) => false\)/);
+    assert.match(batchSection, /result\.status === "accepted" && result\.value > 0/);
+    assert.match(dispatchSection, /withClasspilotStudentControlDeliveryBatch\(/);
+    assert.doesNotMatch(dispatchSection, /const authorizedDeliveries = await Promise\.all/);
   });
 
   it("coalesces ACK summaries before a revisioned snapshot without holding the DB lock during publication", () => {
@@ -73,7 +76,7 @@ describe("ClassPilot command and ACK hot path", () => {
     const summaryIndex = commandUpdateSection.indexOf("updateClasspilotCommandSummary(state.commandId)");
     const snapshotIndex = commandUpdateSection.indexOf("withClasspilotCommandBroadcastLock");
     assert.ok(summaryIndex >= 0 && snapshotIndex > summaryIndex);
-    assert.match(websocket, /setTimeout\(\(\) => \{[\s\S]*?\}, 50\)/);
+    assert.match(websocket, /state\.retryCount \? Math\.min\(1_000, 250 \* 2 \*\* \(state\.retryCount - 1\)\) : 50/);
     assert.match(websocket, /rawAckState === "expired"[\s\S]*?\? "expired"/);
     assert.match(commandUpdateSection, /deliveryPolicy: classpilotCommandDeliveryPolicy\(command\.commandType\)/);
     assert.match(commandUpdateSection, /summary: summarizeClasspilotCommandTargets\(command\)/);
@@ -112,6 +115,8 @@ describe("ClassPilot command and ACK hot path", () => {
       commandUpdateSection.slice(globalPublish, localSessionPublish),
       /outcome\.status === "accepted"/
     );
+    assert.match(commandUpdateSection, /const snapshot = await runWithTenantContext/);
+    assert.match(commandUpdateSection, /return value;[\s\S]*?\}\);[\s\S]*?if \(!snapshot\) return;[\s\S]*?await publishOrderedWS/);
     assert.match(commandUpdateSection, /kind: "staff-session"/);
     assert.match(commandUpdateSection, /kind: "staff-user"/);
     assert.doesNotMatch(commandUpdateSection, /broadcastToTeachersLocal/);

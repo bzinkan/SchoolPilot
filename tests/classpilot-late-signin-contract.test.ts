@@ -632,7 +632,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
 
   const commandDelivery = section(
     dispatcher,
-    "const authorizedDeliveries = await Promise.all",
+    "const authorizedDeliveries = await withClasspilotStudentControlDeliveryBatch",
     "const redisPublishStartedAt",
   );
   assert.match(

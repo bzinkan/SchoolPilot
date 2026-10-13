@@ -13,7 +13,7 @@ const { runWithTenantContext } = await import("../dist/middleware/tenantContext.
 const storage = await import("../dist/services/storage.js");
 const policy = await import("../dist/services/classpilotSchoolWebsitePolicy.js");
 const { CLASSPILOT_SCHOOL_WEBSITE_POLICY_SQL } = await import("../dist/db/classpilotSchoolWebsitePolicyMigration.js");
-const { devices, studentSessions, students, schools, users } = await import("../dist/schema/index.js");
+const { devices, studentSessions, students } = await import("../dist/schema/index.js");
 const { eq, sql } = await import("drizzle-orm");
 const { schedulerPool, schedulerLockPool } = await import("../dist/services/schedulerDb.js");
 const tag = `website-policy-${randomUUID()}`;
@@ -40,8 +40,8 @@ before(async () => {
 });
 after(async () => {
   try { await runWithTenantContext({ isSuper: true }, async () => {
-    if (schoolId) await db.delete(schools).where(eq(schools.id, schoolId));
-    if (actorId) await db.delete(users).where(eq(users.id, actorId));
+    if (schoolId) await storage.softDeleteSchool(schoolId);
+    // Staff identity and school history remain retained in this disposable local fixture DB.
   }); } finally { await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]); }
 });
 

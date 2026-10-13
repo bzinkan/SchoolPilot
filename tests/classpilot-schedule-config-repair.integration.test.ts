@@ -37,7 +37,7 @@ before(async () => {
 after(async () => {
   await pool.query("DELETE FROM classpilot_school_schedules WHERE school_id=ANY($1::text[])", [schoolIds]);
   await pool.query("DELETE FROM settings WHERE school_id=ANY($1::text[])", [schoolIds]);
-  await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+  // Current lifecycle guards retain these synthetic roots in the disposable local fixture DB.
   await Promise.all([pool.end(), sessionPool.end()]);
 });
 

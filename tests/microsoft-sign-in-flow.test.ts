@@ -221,10 +221,10 @@ after(async () => {
       const ids = sql.join([microsoftSchool, googleSchool].filter(Boolean).map((school) => sql`${school.id}`), sql`, `);
       await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${ids})`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${ids})`);
-      await db.execute(sql`DELETE FROM schools WHERE id IN (${ids})`);
       await db.execute(sql`DELETE FROM audit_logs WHERE user_email LIKE ${`%@${DOMAIN}`}`);
       await db.execute(sql`DELETE FROM audit_logs WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${`%@${DOMAIN}`})`);
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${DOMAIN}`}`);
+      // Retain uniquely tagged synthetic school/staff roots under the current
+      // lifecycle guards; all owned session and membership cleanup remains.
       if (sessionIds.length > 0) {
         await db.execute(sql`DELETE FROM "session" WHERE sid IN (${sql.join(sessionIds.map((id) => sql`${id}`), sql`, `)})`);
       }

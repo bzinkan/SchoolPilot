@@ -49,8 +49,8 @@ async function cleanup(): Promise<void> {
         AND (user_email LIKE ${`%@${DOMAIN}`} OR (user_email IS NULL AND created_at >= ${startedAt}))
     `);
     await db.execute(sql`DELETE FROM school_memberships WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${`%@${DOMAIN}`})`);
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${DOMAIN}`}`);
-    await db.execute(sql`DELETE FROM schools WHERE domain = ${DOMAIN}`);
+    // Retain uniquely tagged synthetic school/staff roots under the current
+    // lifecycle guards after removing owned memberships and audit records.
   });
 }
 

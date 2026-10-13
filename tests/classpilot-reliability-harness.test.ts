@@ -1,0 +1,228 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
+import WebSocket, { WebSocketServer } from "ws";
+
+const runner = fileURLToPath(new URL("../scripts/load/run-classpilot-reliability.mjs", import.meta.url));
+const baseUrl = "http://127.0.0.1:9"; // No server: a dry run must never attempt traffic.
+
+for (const primary of [40, 500, 800]) test(`reliability ${primary}-device dry run validates the complete new workload without traffic or credential output`, () => {
+  const root = mkdtempSync(join(tmpdir(), "classpilot-reliability-fixture-"));
+  try {
+    const classrooms = primary === 40 ? 1 : 20;
+    const studentsPerClass = primary / classrooms;
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60_000).toISOString();
+    const jwt = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 48 * 3600 })).toString("base64url")}.fixture-signature`;
+    const manifest: { deviceId: string; studentId: string; schoolId: string; classId: string | null; studentToken: string }[] =
+      Array.from({ length: 10 }, (_, i) => ({ deviceId: `canary-device-${i}`, studentId: `canary-student-${i}`, schoolId: "foreign", classId: null, studentToken: jwt }));
+    const teacherAuth = [];
+    const commands = [];
+    for (let classroom = 0; classroom < classrooms; classroom++) {
+      const studentIds = Array.from({ length: studentsPerClass }, (_, i) => `student-${classroom}-${i}`);
+      const teachingSessionId = `session-${classroom}`;
+      teacherAuth.push({ teacherId: `teacher-${classroom}`, schoolId: "primary", role: "teacher", teachingSessionId,
+        teacherCookie: `schoolpilot.sid=private-fixture-cookie-${classroom}`, csrfToken: `private-fixture-csrf-${classroom}`,
+        teacherToken: jwt, expiresAt, studentIds });
+      commands.push({ teachingSessionId, targetScope: "class", commandType: "open-tab", commandPayload: { url: "https://example.edu" } });
+      for (const studentId of studentIds) manifest.push({ deviceId: `device-${studentId}`, studentId, schoolId: "primary", classId: `class-${classroom}`, studentToken: jwt });
+    }
+    const manifestPath = join(root, "devices.private.json"), authPath = join(root, "teachers.private.json"), commandsPath = join(root, "commands.private.json");
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    writeFileSync(commandsPath, JSON.stringify(commands));
+    writeFileSync(authPath, JSON.stringify({ schemaVersion: 2, baseUrl, schoolId: "primary", expiresAt, deviceManifestExpiresAt: expiresAt, teacherAuth }));
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.startsWith("LOAD_")) delete env[key];
+    const result = spawnSync(process.execPath, [runner, "--devices", String(primary), "--dry-run"], {
+      encoding: "utf8", timeout: 15_000,
+      env: { ...env, NODE_ENV: "test", LOAD_BASE_URL: baseUrl, LOAD_TEST_ARTIFACT_ROOT: root,
+        LOAD_DEVICE_MANIFEST: manifestPath, LOAD_TEACHER_AUTH_FILE: authPath, LOAD_COMMAND_BODIES_FILE: commandsPath,
+        LOAD_RUN_ID: `reliability-private-${primary}`, LOAD_EXTERNAL_PROGRESS_PATH: join(root, "progress.jsonl"), LOAD_EXTERNAL_SUMMARY_PATH: join(root, "summary.json") },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(result.stdout);
+    assert.equal(config.reliabilityWorkload.primaryDevices, primary);
+    assert.equal(config.reliabilityWorkload.productionAccepted, false);
+    assert.equal(config.reliabilityWorkload.managedDevicesValidated, false);
+    assert.equal(config.gateProfile, "partial");
+    assert.equal(config.certificationEligible, false);
+    assert.equal(config.workloadSchemaVersion, "classpilot-reliability-v1");
+    assert.equal(config.launchContract.teacherTileAssignments, primary);
+    assert.equal(config.launchContract.teacherTileCohorts, classrooms);
+    assert.doesNotMatch(result.stdout, /private-fixture-cookie|private-fixture-csrf|fixture-signature/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliability HTTP/WS workload enforces exact authority and cleanup: ${defect}`, async () => {
+  const root = mkdtempSync(join(tmpdir(), "classpilot-reliability-wire-"));
+  const studentIds = Array.from({ length: 40 }, (_, i) => `student-${i}`);
+  const devices = new Map<string, WebSocket>();
+  const teachers = new Set<WebSocket>();
+  const commands = new Map<string, Map<string, string>>();
+  const captureTimes = new Map<string, string>();
+  const policy = { captureAllowed: true, captureCadence: { intervalSeconds: 5 },
+    authority: { kind: "teaching_session", teachingSessionId: "session", revision: 1 } };
+  let leases = 0, releases = 0, probes = 0, screenshots = 0, histories = 0, sequence = 0;
+  const negativeTileProbes = new Set<string>();
+  let fixtureError: unknown;
+  const server = createServer(async (request, response) => {
+    const send = (status: number, value: unknown) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify(value));
+    };
+    try {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const parsed = body ? JSON.parse(body) : {};
+    const path = request.url || "";
+    if (path.includes("canary-device")) return send(404, { error: "Not found" });
+    if (path.endsWith("/observation-lease")) {
+      assert.equal(request.headers["x-school-id"], "primary");
+      assert.ok(parsed.viewerInstanceId);
+      if (request.method === "PUT") { leases++; assert.deepEqual(parsed.scope, { kind: "class" }); }
+      else { assert.equal(request.method, "DELETE"); releases++; }
+      return send(200, { ok: true });
+    }
+    if (path === "/api/classpilot/device/heartbeat") return send(200, { screenshotPolicy: policy });
+    if (path === "/api/classpilot/device/screenshot") {
+      assert.ok(leases > 0);
+      assert.deepEqual(parsed.screenshotAuthority, policy.authority);
+      assert.ok(Number.isFinite(Date.parse(parsed.capturedAt)));
+      // Ingest identity comes from device authentication, not a body deviceId.
+      captureTimes.set(String(parsed.tabTitle).replace(/^Load /, ""), parsed.capturedAt);
+      return send(200, { ok: true });
+    }
+    if (path.startsWith("/api/students-aggregated")) {
+      assert.equal(new URL(path, "http://localhost").searchParams.get("teachingSessionId"), "session");
+      return send(200, studentIds.map(studentId => ({ studentId })));
+    }
+    if (path.startsWith("/api/classpilot/tiles/")) {
+      assert.equal(parsed.teachingSessionId, "session");
+      assert.equal(parsed.deviceId, undefined);
+      assert.equal(request.headers["x-csrf-token"], "private-csrf");
+      if (parsed.studentIds.some((id: string) => id.startsWith("canary-student-"))) {
+        assert.equal(parsed.studentIds.length, 1);
+        negativeTileProbes.add(`${path}:${parsed.studentIds[0]}`);
+        return send(defect === "foreign-tile" ? 200 : 404, { tiles: [] });
+      }
+      assert.deepEqual([...parsed.studentIds].sort(), [...studentIds].sort());
+      if (path.endsWith("/history")) {
+        histories++;
+        return send(200, { tiles: studentIds.map(studentId => ({ studentId, heartbeats: [{ timestamp: Date.now() }] })) });
+      }
+      screenshots++;
+      return send(200, { tiles: studentIds.map(studentId => ({ studentId, bindingVersion: "v2:current", screenshot: {
+        bindingVersion: defect === "binding" ? "v2:retired" : "v2:current",
+        screenshot: "data:image/jpeg;base64,/9j/2Q==", capturedAt: captureTimes.get(`device-${studentId}`),
+      } })) });
+    }
+    if (path === "/api/classpilot/commands") {
+      assert.equal(parsed.teachingSessionId, "session");
+      assert.equal(parsed.targetScope, "class");
+      const id = `command-${++sequence}`;
+      commands.set(id, new Map(studentIds.map(studentId => [`device-${studentId}`, "sent"])));
+      send(200, { command: { id }, summary: { sent: 40 } });
+      setImmediate(() => { for (const studentId of studentIds) {
+        devices.get(`device-${studentId}`)?.send(JSON.stringify({ type: "remote-control", commandId: id }));
+      } });
+      return;
+    }
+    send(404, { error: "Unexpected workload endpoint" });
+    } catch (error) { fixtureError = error; send(500, { error: "Fixture contract failed" }); }
+  });
+  const sockets = new WebSocketServer({ server, path: "/ws" });
+  sockets.on("connection", socket => {
+    let deviceId = "";
+    socket.on("message", raw => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === "auth") {
+        if (message.role === "student") {
+          deviceId = message.deviceId;
+          devices.set(deviceId, socket);
+          assert.equal(message.clientProtocolVersion, 3);
+        } else teachers.add(socket);
+        socket.send(JSON.stringify({ type: "auth-success", role: message.role, transportProbeV1: true, screenshotPolicy: policy }));
+      } else if (message.type === "transport-probe") {
+        probes++;
+        socket.send(JSON.stringify({ type: "transport-probe-reply", nonce: message.nonce }));
+      } else if (message.type === "command-ack") {
+        const statuses = commands.get(message.commandId);
+        assert.ok(statuses);
+        assert.ok(statuses.has(deviceId));
+        statuses.set(deviceId, message.status);
+        const update = { type: "classpilot-command-update", commandId: message.commandId,
+          command: { id: message.commandId, teacherId: "teacher", teachingSessionId: "session",
+            targets: [...statuses].map(([id, status]) => ({ id, status })) } };
+        for (const teacher of teachers) if (teacher.readyState === WebSocket.OPEN) teacher.send(JSON.stringify(update));
+      }
+    });
+    socket.on("close", () => { if (devices.get(deviceId) === socket) devices.delete(deviceId); teachers.delete(socket); });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const expiresAt = new Date(Date.now() + 48 * 3600_000).toISOString();
+  const jwt = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 48 * 3600 })).toString("base64url")}.private-signature`;
+  const manifest = [...Array.from({ length: 10 }, (_, i) => ({ deviceId: `canary-device-${i}`, studentId: `canary-student-${i}`, schoolId: "foreign", classId: null, studentToken: jwt })),
+    ...studentIds.map(studentId => ({ deviceId: `device-${studentId}`, studentId, schoolId: "primary", classId: "class", studentToken: jwt }))];
+  const manifestPath = join(root, "devices.private.json"), authPath = join(root, "teachers.private.json"), commandsPath = join(root, "commands.private.json");
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  writeFileSync(authPath, JSON.stringify({ schemaVersion: 2, baseUrl: origin, schoolId: "primary", expiresAt, deviceManifestExpiresAt: expiresAt,
+    teacherAuth: [{ teacherId: "teacher", role: "teacher", schoolId: "primary", teachingSessionId: "session", studentIds,
+      teacherCookie: "schoolpilot.sid=private-cookie", csrfToken: "private-csrf", teacherToken: jwt, expiresAt }] }));
+  writeFileSync(commandsPath, JSON.stringify([{ teachingSessionId: "session", targetScope: "class", commandType: "open-tab", commandPayload: { url: "https://example.edu" } }]));
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("LOAD_")) delete env[key];
+  const child = spawn(process.execPath, [runner, "--devices", "40", "--smoke"], { env: {
+    ...env, NODE_ENV: "test", LOAD_BASE_URL: origin, LOAD_TEST_ARTIFACT_ROOT: root, LOAD_DEVICE_MANIFEST: manifestPath,
+    LOAD_TEACHER_AUTH_FILE: authPath, LOAD_COMMAND_BODIES_FILE: commandsPath, LOAD_RUN_ID: "reliability-wire",
+    LOAD_EXTERNAL_PROGRESS_PATH: join(root, "progress.jsonl"), LOAD_EXTERNAL_SUMMARY_PATH: join(root, "summary.json"),
+    LOAD_TEST_ACCELERATED_RUNTIME_MS: "16000", LOAD_REQUEST_TIMEOUT_MS: "2000", LOAD_COMMAND_SETTLE_MS: "0",
+  } });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; });
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  const watchdog = setTimeout(() => child.kill("SIGKILL"), 30_000);
+  try {
+    const status = await new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+    assert.equal(fixtureError, undefined);
+    const summary = JSON.parse(readFileSync(join(root, "summary.json"), "utf8"));
+    assert.equal(leases, releases, "All exact observation viewers are released even on a fatal gate");
+    assert.doesNotMatch(stdout, /private-cookie|private-csrf|private-signature/);
+    if (defect !== "none") {
+      assert.equal(status, 1, `${stderr}\n${stdout}`);
+      assert.equal(summary.thresholds.passed, false);
+      if (defect === "binding") {
+        assert.ok(summary.counters.teacherResponseValidationErrors > 0);
+        assert.ok(summary.counters.reliabilityScreenshotAgeUnavailable > 0);
+      } else assert.ok(summary.counters.crossSchoolHttpResponses > 0);
+      return;
+    }
+    assert.equal(status, 0, `${stderr}\n${stdout}`);
+    assert.equal(summary.thresholds.passed, true, JSON.stringify(summary.thresholds.failures));
+    assert.equal(summary.tileBatch.pollAccountingVersion, "reliability-separated-cadences-v1");
+    assert.equal(summary.tileBatch.requestsPerCohortPerPoll, null);
+    assert.ok(screenshots > histories);
+    assert.ok(captureTimes.size >= 40);
+    assert.ok(probes > 0);
+    assert.equal(negativeTileProbes.size, 20, "Every foreign student is denied by both actual tile POST routes");
+    assert.equal(summary.counters.tenantIsolationProbePassed, 20);
+    assert.equal(summary.commands.deliveryWithin2sPercent, 100);
+    assert.equal(summary.counters.forcedReconnectCompleted, 50);
+    assert.equal(summary.browserPaintValidated, false);
+    assert.equal(summary.certificationEligible, false);
+    assert.doesNotMatch(stdout, /private-cookie|private-csrf|private-signature/);
+  } finally {
+    clearTimeout(watchdog);
+    for (const client of sockets.clients) client.terminate();
+    await new Promise<void>(resolve => sockets.close(() => resolve()));
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});

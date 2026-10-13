@@ -17,8 +17,7 @@ before(async()=>{await pool.query(SAFETY_CENTER_SQL);});
 after(async()=>{
   try {
     for(const table of ["audit_logs","student_safety_cases","settings","school_memberships","product_licenses","students"]) await pool.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`,[schoolIds]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])",[schoolIds]);
-    await pool.query("DELETE FROM users WHERE id=ANY($1::text[])",[userIds]);
+    // Current lifecycle guards retain uniquely owned synthetic school/staff roots in this disposable fixture DB.
   } finally {await Promise.all([pool.end(),sessionPool.end(),schedulerPool.end(),schedulerLockPool.end()]);}
 });
 

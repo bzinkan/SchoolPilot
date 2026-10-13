@@ -1,10 +1,10 @@
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import db, { pool } from "../src/db.js";
 import { requireActiveSchool } from "../src/middleware/requireActiveSchool.js";
 import { requireSchoolContextWithoutTenantBinding } from "../src/middleware/requireSchoolContext.js";
-import { schoolMemberships, schools, users } from "../src/schema/core.js";
+import { schoolMemberships } from "../src/schema/core.js";
 import {
   createMembership,
   createSchool,
@@ -124,10 +124,8 @@ describe("authentication membership lifecycle", () => {
       await db
         .delete(schoolMemberships)
         .where(eq(schoolMemberships.userId, user.id));
-      await db
-        .delete(schools)
-        .where(inArray(schools.id, [activeSchool.id, deletedSchool.id]));
-      await db.delete(users).where(eq(users.id, user.id));
+      // Current lifecycle guards retain school/user roots. These uniquely
+      // tagged synthetic records belong to the disposable local fixture DB.
     }
   });
 });

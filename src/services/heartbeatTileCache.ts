@@ -1,5 +1,5 @@
 import type { Heartbeat } from "../schema/classpilot.js";
-import { redisCommand } from "../middleware/rateLimiter.js";
+import { realtimeRedisCommand as redisCommand } from "../realtime/ws-redis.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 import { classpilotTimestampDateOrNull } from "./classpilotTimestamp.js";
 

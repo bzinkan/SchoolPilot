@@ -316,6 +316,11 @@ No base fees. Pure per-student pricing.
 - **WebSocket** (`src/realtime/websocket.ts`) — ClassPilot device monitoring at `/ws`
 - **Redis pub/sub** — Cross-instance message broadcasting for distributed deployments
 
+ClassPilot's bounded publication, transport-only probe, dashboard recovery and
+content-free client-health contracts are in `docs/CLASSPILOT_RELIABILITY.md`.
+The separate reliability workload does not reopen paused production capacity
+campaigns or establish packed managed-Chromebook acceptance.
+
 ### ClassPilot Data Pipeline
 1. **Heartbeats** — While the MV3 worker is awake, the extension coalesces roughly 10-second heartbeats with a 30-second `chrome.alarms` fallback and immediate navigation/recovery sends. It calls compatibility path `/api/device/heartbeat`, which resolves to canonical `POST /api/classpilot/device/heartbeat`. The route performs uncached canonical entitlement before the cached hot-path projections and writes heartbeat/realtime status under the exact student/session/device binding. Pending inbox rows are checked on first heartbeat, after a 60-second monitoring gap, every 5 minutes as fallback, and every heartbeat while command-linked messages remain unacknowledged. `requestFabState: true` asks for a throttled authoritative FAB recovery snapshot.
 2. **Daily usage rollup** — `scheduler.ts` runs `rollupDailyUsage()` hourly (hour-gated). For each school with ClassPilot license, aggregates yesterday's heartbeats into the `daily_usage` table (totalSeconds, heartbeatCount, topDomains JSONB, firstSeen/lastSeen). Uses upsert on `(studentId, date)` for idempotency. The writer is `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` (default `shadow`: legacy writes plus a read-only set-based comparison; `on` = `set_based`); promote it only as described in `docs/SCALE_READINESS.md` ("Daily usage rollup mode and promotion").

@@ -6,6 +6,7 @@ import {
   SCREENSHOT_STALE_MS,
   SCREENSHOT_SUCCESSFUL_NULL_RETAIN_UNTIL_FIELD,
 } from './studentMonitoringDisplay.js';
+import { withClasspilotReadDeadline } from './classpilotRecovery.js';
 
 export const TILE_BATCH_MAX_STUDENTS = 50;
 export const TILE_BATCH_HISTORY_LIMIT = 10;
@@ -618,10 +619,10 @@ export function assertTileScreenshotStoreAvailable(response) {
 }
 
 export async function fetchTileBatch(request, requestApi, signal) {
-  const response = await requestApi('POST', request.endpoint, request.body, {
-    signal,
+  const response = await withClasspilotReadDeadline(boundedSignal => requestApi('POST', request.endpoint, request.body, {
+    signal: boundedSignal,
     ...(request.contextAuthorityRevision != null ? { contextAuthorityRevision: request.contextAuthorityRevision } : {}),
-  });
+  }), signal);
   return request.kind === 'screenshots'
     ? normalizeTileScreenshotBindings(assertTileScreenshotStoreAvailable(response))
     : response;

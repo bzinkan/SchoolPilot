@@ -21,7 +21,7 @@ const draftReview = await import("../src/services/classpilotScheduleDraftReview.
 const scheduledSupervision = await import("../src/services/classpilotScheduledSupervision.js");
 const { getEffectiveClasspilotScheduleWindow } = await import("../src/services/classpilotScheduleChanges.js");
 const { getClasspilotGroupsReadyAtEffectiveWindow, processScheduledClassAutoStart } = await import("../src/services/classpilotScheduledStart.js");
-const schoolIds: string[] = [], userIds: string[] = [];
+const schoolIds: string[] = [];
 const scoped = <T>(schoolId: string, fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
 let date = datePlusDays(localDateInTimeZone(new Date(), "America/New_York"), 14);
 while ([0, 6].includes(dateWeekday(date))) date = datePlusDays(date, 1);
@@ -39,8 +39,8 @@ after(async () => {
       await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
-      await client.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
-      await client.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+      // Lifecycle guards retain uniquely owned school/staff roots in this
+      // disposable fixture database. Dependent rows are removed above.
     });
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
@@ -60,10 +60,24 @@ async function fixtureTransaction(operation: (client: PoolClient) => Promise<voi
     client.release();
   }
 }
+async function createFixtureGroups(statement: string, values: unknown[], owners: [string, string][]) {
+  await fixtureTransaction(async client => {
+    await client.query(statement, values);
+    for (const [groupId, teacherId] of owners) {
+      await client.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')", [groupId, teacherId]);
+    }
+  });
+}
+async function reassignFixtureGroup(statement: string, values: [string, string]) {
+  await fixtureTransaction(async client => {
+    await client.query(statement, values);
+    await client.query("UPDATE group_teachers SET teacher_id=$2 WHERE group_id=$1 AND role='primary'", values);
+  });
+}
 async function fixture(role = "admin") {
   const schoolId = randomUUID(), adminId = randomUUID(), teacherId = randomUUID(), specialistId = randomUUID();
   const classId = randomUUID(), nextClassId = randomUUID(), studentId = randomUUID(), scopeId = randomUUID();
-  schoolIds.push(schoolId); userIds.push(adminId, teacherId, specialistId);
+  schoolIds.push(schoolId);
   await pool.query("INSERT INTO schools(id,name,status,is_active,plan_status,school_timezone) VALUES($1,'Profile fixture','active',true,'active','America/New_York')", [schoolId]);
   await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [schoolId]);
   await pool.query("INSERT INTO settings(school_id,school_name,ws_shared_key,instructional_calendar) VALUES($1,'Profile fixture','fixture-only','{}'::jsonb)", [schoolId]);
@@ -73,7 +87,7 @@ async function fixture(role = "admin") {
   }
   await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level) VALUES($1,$2,'Profile','Student','active','5')", [studentId, schoolId]);
   for (const [id, name, start, end] of [[classId, "Grade 5 Math", "09:00", "09:50"], [nextClassId, "Grade 5 Reading", "10:00", "10:50"]]) {
-    await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,$3,$4,'5','admin_class','active',true,$5,$6,$7::jsonb)", [id, schoolId, teacherId, name, start, end, JSON.stringify(defaultClassScheduleRule())]);
+    await createFixtureGroups("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,$3,$4,'5','admin_class','active',true,$5,$6,$7::jsonb)", [id, schoolId, teacherId, name, start, end, JSON.stringify(defaultClassScheduleRule())], [[id!, teacherId]]);
     await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [id, studentId]);
   }
   await pool.query("INSERT INTO classpilot_coverage_scope_groups(id,school_id,name,created_by) VALUES($1,$2,'MAP Intervention',$3)", [scopeId, schoolId, adminId]);
@@ -91,7 +105,7 @@ function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<Retur
 
 test("class-only profiles block new shared-student intervals outside their selection and keep student IDs out of summaries", async () => {
   const data = await fixture();
-  await pool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await reassignFixtureGroup("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
   const saved = await save(data, { ...data.definition, grades: [], classIds: [data.classId], classRules: [{ classId: data.classId, action: "time", startTime: "10:20", endTime: "11:10" }] });
   const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
   assert.equal(preview.studentReviewComplete, true);
@@ -103,7 +117,7 @@ test("class-only profiles block new shared-student intervals outside their selec
 
 test("inactive picker references never enter the active class catalog or default profile selection", async () => {
   const data = await fixture(), archivedId = randomUUID();
-  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time) VALUES($1,$2,$3,'Archived class','admin_class','inactive',true,'08:00','08:30')", [archivedId, data.schoolId, data.teacherId]);
+  await createFixtureGroups("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time) VALUES($1,$2,$3,'Archived class','admin_class','inactive',true,'08:00','08:30')", [archivedId, data.schoolId, data.teacherId], [[archivedId, data.teacherId]]);
   const catalog = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
   assert.deepEqual(catalog.classes.map(c => c.id).sort(), [data.classId, data.nextClassId].sort());
   assert.equal(catalog.inactiveClasses[0]?.id, archivedId);
@@ -115,7 +129,7 @@ test("inactive picker references never enter the active class catalog or default
 
 test("application review permits reduced inherited student overlap but detects the same duration moved elsewhere", async () => {
   const data = await fixture();
-  await pool.query("UPDATE groups SET teacher_id=$2,block_start_time='09:30',block_end_time='10:30' WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await reassignFixtureGroup("UPDATE groups SET teacher_id=$2,block_start_time='09:30',block_end_time='10:30' WHERE id=$1", [data.nextClassId, data.specialistId]);
   const saved = await save(data, { ...data.definition, classRules: [{ classId: data.classId, action: "time", startTime: "09:00", endTime: "09:40" }] });
   const reduced = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
   assert.deepEqual(reduced.blockers, []);
@@ -133,12 +147,12 @@ test("21-student testing handoff uses adjacent class windows and independent eli
   let secondDate = datePlusDays(date, 1);
   while ([0, 6].includes(dateWeekday(secondDate))) secondDate = datePlusDays(secondDate, 1);
   await pool.query("UPDATE groups SET name='Grade 8 Math',grade_level='8',schedule_rule=$2::jsonb WHERE id=$1", [data.classId, JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [dateWeekday(date)] })]);
-  await pool.query("UPDATE groups SET name='Grade 8 ELA',grade_level='8',teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await reassignFixtureGroup("UPDATE groups SET name='Grade 8 ELA',grade_level='8',teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
   await pool.query("UPDATE users SET first_name='Kenzie',last_name='Vatter' WHERE id=$1", [data.teacherId]);
   await pool.query("UPDATE users SET first_name='Suzanne',last_name='Wendell' WHERE id=$1", [data.specialistId]);
   await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level) VALUES($1,$2,'Grade7','Fixture','active','7')", [grade7Student, data.schoolId]);
-  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$3,$5,'Grade 7 ELA','7','admin_class','active',true,'09:00','09:50',$6::jsonb),($2,$3,$4,'Grade 7 Math','7','admin_class','active',true,'10:00','10:50',$6::jsonb)",
-    [grade7Class, grade7Skipped, data.schoolId, data.teacherId, data.specialistId, JSON.stringify(defaultClassScheduleRule())]);
+  await createFixtureGroups("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$3,$5,'Grade 7 ELA','7','admin_class','active',true,'09:00','09:50',$6::jsonb),($2,$3,$4,'Grade 7 Math','7','admin_class','active',true,'10:00','10:50',$6::jsonb)",
+    [grade7Class, grade7Skipped, data.schoolId, data.teacherId, data.specialistId, JSON.stringify(defaultClassScheduleRule())], [[grade7Class, data.specialistId], [grade7Skipped, data.teacherId]]);
   await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$3),($2,$3)", [grade7Class, grade7Skipped, grade7Student]);
   await pool.query("INSERT INTO classpilot_coverage_scope_groups(id,school_id,name,created_by) VALUES($1,$2,'Grade 7 MAP',$3)", [grade7Group, data.schoolId, data.adminId]);
   await pool.query("INSERT INTO classpilot_coverage_scope_group_members(school_id,coverage_group_id,student_id) VALUES($1,$2,$3)", [data.schoolId, grade7Group, grade7Student]);
@@ -175,7 +189,7 @@ test("21-student testing handoff uses adjacent class windows and independent eli
 
 test("student review uses frozen session rosters and fingerprints their changes", async () => {
   const data = await fixture(), sessionId = randomUUID();
-  await pool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await reassignFixtureGroup("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
   await pool.query("DELETE FROM group_students WHERE group_id=$1", [data.classId]);
   await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,scheduled_date,scheduled_timezone,scheduled_start_at,scheduled_end_at,scheduled_state,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,$5::timestamptz,$6,'America/New_York',$5::timestamptz,$7,'active',now())",
     [sessionId, data.schoolId, data.classId, data.teacherId, localDateTimeUtc(date, "09:00", "America/New_York"), date, localDateTimeUtc(date, "09:50", "America/New_York")]);
@@ -196,7 +210,7 @@ test("student review uses frozen session rosters and fingerprints their changes"
 
 test("a previous testing application cannot mask new class conflicts after its group roster changes", async () => {
   const data = await fixture();
-  await pool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await reassignFixtureGroup("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
   const testing = await save(data, { name: "Earlier testing", grades: [], classIds: [], classRules: [], testingBlocks: [
     { id: "existing-testing", name: "Existing MAP", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "10:00", endTime: "10:30" },
   ] });
@@ -309,6 +323,9 @@ test("scheduled supervision reflects active, ended and cancelled testing without
 
 test("scheduled coverage split between supervisors keeps every context and scopes teachers to their own assignment", async () => {
   const data = await fixture(), conflictId = randomUUID(), firstContext = randomUUID(), secondContext = randomUUID();
+  // Both supervisors must be assignment-only viewers of this class. A primary
+  // teacher's canonical mirror deliberately grants the whole class view.
+  await reassignFixtureGroup("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.classId, data.adminId]);
   await pool.query("INSERT INTO classpilot_scheduled_conflicts(id,school_id,group_id,teacher_id,scheduled_date,block_start_time,block_end_time,status) VALUES($1,$2,$3,$4,'2000-01-03','09:00','09:45','claimed')",
     [conflictId, data.schoolId, data.classId, data.adminId]);
   for (const [contextId, staffId, end] of [[firstContext, data.teacherId, '2000-01-03T14:45:00Z'], [secondContext, data.specialistId, '2000-01-03T15:00:00Z']]) {
@@ -560,6 +577,8 @@ test("deleting an obsolete profile removes only its catalog entry and records it
   // Deletion does not depend on the referenced setup still being usable.
   await pool.query("UPDATE groups SET status='archived',schedule_enabled=false WHERE id=$1", [data.classId]);
   await pool.query("UPDATE classpilot_coverage_scope_groups SET active=false WHERE id=$1", [data.scopeId]);
+  // Retain the obsolete grant row while ending its live staff dependency.
+  await pool.query("UPDATE classpilot_coverage_assignments SET active=false WHERE school_id=$1 AND staff_id=$2", [data.schoolId, data.specialistId]);
   await pool.query("UPDATE school_memberships SET status='disabled' WHERE school_id=$1 AND user_id=$2", [data.schoolId, data.specialistId]);
   const before = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
   const result = await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...request(data, saved), revision: other.revision }));

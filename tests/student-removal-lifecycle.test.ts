@@ -210,8 +210,10 @@ after(async () => {
       await db.execute(sql`DELETE FROM classpilot_coverage_scope_groups WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM passes WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
-      await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
-      await db.execute(sql`DELETE FROM groups WHERE school_id IN (${schoolAId}, ${schoolBId})`);
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
+        await tx.execute(sql`DELETE FROM groups WHERE school_id IN (${schoolAId}, ${schoolBId})`);
+      });
       await db.execute(sql`DELETE FROM family_group_students WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM family_groups WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM activity_log WHERE school_id IN (${schoolAId}, ${schoolBId})`);
@@ -221,8 +223,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (${schoolAId}, ${schoolBId})`);
-      await db.execute(sql`DELETE FROM schools WHERE id IN (${schoolAId}, ${schoolBId})`);
-      await db.execute(sql`DELETE FROM users WHERE id IN (${admin.id}, ${schoolAdmin.id}, ${teacher.id}, ${office.id})`);
+      // Staff lifecycle guards retain protected fixture school/user roots.
     });
   } finally {
     await pool.end();

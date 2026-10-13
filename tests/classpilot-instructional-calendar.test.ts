@@ -73,13 +73,15 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)}))`);
+    // Retire only fixture-owned active classes before deleting primary mirrors.
+    await db.execute(sql`UPDATE groups SET status='archived' WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)}))`);
     await db.execute(sql`DELETE FROM groups WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM settings WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
     await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-    await db.execute(sql`DELETE FROM schools WHERE id IN (${sql.join(schoolIds.map((id) => sql`${id}`), sql`, `)})`);
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
+    // Current lifecycle guards retain the uniquely tagged synthetic school
+    // and staff roots in this disposable local fixture database.
   });
 }
 

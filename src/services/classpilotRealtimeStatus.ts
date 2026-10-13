@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { redisCommand } from "../middleware/rateLimiter.js";
+import { realtimeRedisCommand as redisCommand } from "../realtime/ws-redis.js";
 import type { ClasspilotClassroomStateSnapshot } from "./classpilotClassroomState.js";
 import { focusStatusSchema, type ClasspilotFocusStatus } from "./classpilotFocus.js";
 import { classpilotTimestampMsOrNull } from "./classpilotTimestamp.js";

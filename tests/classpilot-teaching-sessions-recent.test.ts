@@ -173,6 +173,7 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM heartbeats WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
+    await db.execute(sql`UPDATE groups SET status='archived' WHERE school_id=${school.id}`);
     await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
     await db.execute(sql`DELETE FROM groups WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
@@ -180,8 +181,7 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
-    await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
+    // Current lifecycle guards retain these tag-owned synthetic school/staff roots in this disposable fixture DB.
   });
 }
 

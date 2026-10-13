@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { redisCommand } from "../middleware/rateLimiter.js";
+import { realtimeRedisCommand as redisCommand } from "../realtime/ws-redis.js";
 
 export const CLASSPILOT_OBSERVATION_RENEW_SECONDS = 30;
 export const CLASSPILOT_OBSERVATION_LEASE_SECONDS = 90;

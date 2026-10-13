@@ -15,7 +15,7 @@ import { passpilotKioskSessions } from "../src/schema/passpilot.js";
 import { emptySchoolSchedulingConfig, defaultClassScheduleRule } from "../src/services/classpilotSchedulingRules.js";
 import { emptyKioskSchedule, type KioskMode } from "../src/services/passpilotKioskSchedule.js";
 import * as service from "../src/services/passpilotKioskAssignments.js";
-import { createSelfClaimedKioskSession, createResumedKioskSession, retargetKioskSessionsForTeacher, getPassHistoryPage } from "../src/services/storage.js";
+import { createGroup, createSelfClaimedKioskSession, createResumedKioskSession, retargetKioskSessionsForTeacher, getPassHistoryPage } from "../src/services/storage.js";
 import { hashPassword } from "../src/util/password.js";
 import { signUserToken } from "../src/services/jwt.js";
 import kioskRouter from "../src/routes/passpilot/kiosk.js";
@@ -43,8 +43,7 @@ after(async () => {
     for (const table of ["group_students", "group_teachers"]) await client.query(`DELETE FROM ${table} WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))`, [schoolIds]);
     await client.query("DELETE FROM teacher_grades WHERE teacher_id=ANY($1::text[])", [userIds]);
     for (const table of ["passpilot_grade_students", "groups", "students", "grades", "settings", "school_memberships", "product_licenses"]) await client.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schoolIds]);
-    await client.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
-    await client.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+    // Retain the uniquely owned synthetic school/staff lifecycle roots.
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally {
@@ -65,13 +64,16 @@ async function fixture(source: "legacy_grades" | "classpilot_groups" = "legacy_g
     await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,$3,'active')", [schoolId, id, role]);
   }
   for (const [id, name] of [[studentId, "First"], [nextStudentId, "Second"]]) await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,student_id_number) VALUES($1,$2,$3,'Student','active',$4)", [id, schoolId, name, id]);
-  for (const [id, student, name] of [[classId, studentId, "Math"], [nextClassId, nextStudentId, "Reading"]]) {
+  const classFixtures: [string, string, string][] = [[classId, studentId, "Math"], [nextClassId, nextStudentId, "Reading"]];
+  for (const [id, student, name] of classFixtures) {
     if (source === "legacy_grades") {
       await pool.query("INSERT INTO grades(id,school_id,name) VALUES($1,$2,$3)", [id, schoolId, name]);
       await pool.query("INSERT INTO teacher_grades(teacher_id,grade_id) VALUES($1,$2)", [teacherId, id]);
       await pool.query("INSERT INTO passpilot_grade_students(school_id,grade_id,student_id) VALUES($1,$2,$3)", [schoolId, id, student]);
     } else {
-      await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,$3,$4,'admin_class','active',true,$5,$6,$7::jsonb)", [id, schoolId, teacherId, name, id === classId ? "13:00" : "14:00", id === classId ? "14:00" : "15:00", JSON.stringify(defaultClassScheduleRule())]);
+      await scoped(schoolId, () => createGroup({ id, schoolId, teacherId, name, groupType: "admin_class", status: "active",
+        scheduleEnabled: true, blockStartTime: id === classId ? "13:00" : "14:00",
+        blockEndTime: id === classId ? "14:00" : "15:00", scheduleRule: defaultClassScheduleRule() }));
       await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [id, student]);
     }
   }
@@ -93,12 +95,16 @@ async function teacherTimetable(actual = false) {
   const classIds: string[] = [];
   for (const [index, name] of names.entries()) {
     const id = randomUUID(); classIds.push(id);
-    await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,$3,$4,'admin_class','active',$5,$6,$7,$8::jsonb)",
-      [id, f.schoolId, f.teacherId, name, !actual || index === 0, actual ? "00:00" : `${13 + index}:00`, actual ? "23:59" : `${14 + index}:00`, JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [0, 1, 2, 3, 4, 5, 6] })]);
+    await scoped(f.schoolId, () => createGroup({ id, schoolId: f.schoolId, teacherId: f.teacherId, name,
+      groupType: "admin_class", status: "active", scheduleEnabled: !actual || index === 0,
+      blockStartTime: actual ? "00:00" : `${13 + index}:00`, blockEndTime: actual ? "23:59" : `${14 + index}:00`,
+      scheduleRule: { ...defaultClassScheduleRule(), weekdays: [0, 1, 2, 3, 4, 5, 6] } }));
     await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [id, index === 0 || index === 3 ? f.studentId : f.nextStudentId]);
   }
   // Another teacher teaches the same children in the same period. That class is not this kiosk's assignment.
-  await pool.query("INSERT INTO groups(school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,'Other teacher ELA','admin_class','active',true,'13:00','14:00',$3::jsonb)", [f.schoolId, f.otherTeacherId, JSON.stringify(defaultClassScheduleRule())]);
+  await scoped(f.schoolId, () => createGroup({ schoolId: f.schoolId, teacherId: f.otherTeacherId, name: "Other teacher ELA",
+    groupType: "admin_class", status: "active", scheduleEnabled: true, blockStartTime: "13:00", blockEndTime: "14:00",
+    scheduleRule: defaultClassScheduleRule() }));
   return { ...f, classIds, names };
 }
 
@@ -167,7 +173,7 @@ test("teacher ClassPilot kiosk passes coexist with legacy overrides, report accu
   assert.equal(historyClasses.classes.find(c => c.id === f.classIds[0])?.source, "classpilot_groups");
   const [other] = await db.select().from(users).where(eq(users.id, f.otherTeacherId));
   assert.equal(await scoped(f.schoolId, () => canAccessPass(other!, f.schoolId, issued, "teacher")), false);
-  await pool.query("INSERT INTO group_teachers(group_id,teacher_id) VALUES($1,$2)", [f.classIds[0], f.otherTeacherId]);
+  await pool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')", [f.classIds[0], f.otherTeacherId]);
   assert.equal(await scoped(f.schoolId, () => canAccessPass(other!, f.schoolId, issued, "teacher")), true);
   const scope = await scoped(f.schoolId, () => getPassHistoryQueryAccessScope(other!, f.schoolId, "teacher"));
   assert.deepEqual(scope?.studentIds, [], "ClassPilot membership does not grant legacy student history");
@@ -261,7 +267,7 @@ test("ClassPilot classes resolve without sessions or devices, follow co-teachers
   assert.equal((await resolve(f)).current?.classId, f.classId);
   assert.deepEqual((await resolve(f)).roster.map(s => s.id), [f.studentId]);
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM teaching_sessions WHERE school_id=$1", [f.schoolId])).rows[0].count, 0);
-  await pool.query("INSERT INTO group_teachers(group_id,teacher_id) VALUES($1,$2)", [f.classId, f.otherTeacherId]);
+  await pool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')", [f.classId, f.otherTeacherId]);
   await scoped(f.schoolId, () => service.saveKioskPreferences({ schoolId: f.schoolId, teacherId: f.otherTeacherId, actorId: f.adminId, mode: "classpilot", schedule: emptyKioskSchedule(), expectedRevision: 0 }));
   assert.equal((await resolve({ ...f, session: { ...f.session, teacherId: f.otherTeacherId } })).current?.classId, f.classId);
   await pool.query("UPDATE groups SET schedule_skipped_date='2026-09-24' WHERE id=$1", [f.classId]);
@@ -368,8 +374,11 @@ test("a teacher with an additional office role can edit their schedule; office-o
   const headers = { "x-school-id": f.schoolId, "content-type": "application/json", authorization: `Bearer ${signUserToken({ userId: f.teacherId, email: `${f.teacherId}@example.test`, isSuperAdmin: false })}` };
   assert.equal((await fetch(baseUrl + "/preferences", { headers })).status, 200);
   assert.equal((await fetch(baseUrl + "/preferences", { method: "PUT", headers, body: JSON.stringify({ mode: "passpilot", schedule: allDay(f), expectedRevision: 0 }) })).status, 200);
-  await pool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2 AND role='teacher'", [f.schoolId, f.teacherId]);
-  assert.equal((await fetch(baseUrl + "/preferences", { headers })).status, 403);
+  // Use the unassigned actor for office-only authority; the original teacher
+  // still owns grades and active kiosks and cannot lose that role implicitly.
+  await pool.query("UPDATE school_memberships SET role='office_staff' WHERE school_id=$1 AND user_id=$2", [f.schoolId, f.otherTeacherId]);
+  const officeHeaders = { ...headers, authorization: `Bearer ${signUserToken({ userId: f.otherTeacherId, email: `${f.otherTeacherId}@example.test`, isSuperAdmin: false })}` };
+  assert.equal((await fetch(baseUrl + "/preferences", { headers: officeHeaders })).status, 403);
 });
 
 test("a checkout waiting for a supervision release or roster edit cannot issue from its displayed revision", async (context) => {
@@ -399,7 +408,7 @@ test("frozen occurrences retain their captured roster and staff even after the o
   await pool.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'primary')", [f.schoolId, sessionId, f.teacherId]);
   await pool.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES($1,$2,$3,$4)", [f.schoolId, sessionId, f.classId, f.nextStudentId]);
   const frozen = await resolve(f); assert.equal(frozen.current?.name, "Frozen Math"); assert.deepEqual(frozen.roster.map(s => s.id), [f.nextStudentId]);
-  await pool.query("INSERT INTO group_teachers(group_id,teacher_id) VALUES($1,$2)", [f.classId, f.otherTeacherId]);
+  await pool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')", [f.classId, f.otherTeacherId]);
   await scoped(f.schoolId, () => service.saveKioskPreferences({ schoolId: f.schoolId, teacherId: f.otherTeacherId, actorId: f.adminId, mode: "classpilot", schedule: emptyKioskSchedule(), expectedRevision: 0 }));
   assert.equal((await resolve({ ...f, session: { ...f.session, teacherId: f.otherTeacherId } })).status, "idle", "newly assigned teachers must not acquire a frozen occurrence");
   await pool.query("UPDATE teaching_sessions SET scheduled_state='skipped' WHERE id=$1", [sessionId]);

@@ -99,8 +99,8 @@ after(async () => {
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
-  await pool.query("DELETE FROM schools WHERE id=$1", [ids.school]);
-  await pool.query("DELETE FROM users WHERE id IN($1,$2)", [ids.teacher, ids.otherTeacher]);
+  // Current lifecycle guards retain these synthetic school/staff roots in
+  // the disposable local fixture database.
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
   (await import("../src/services/classpilotRealtimeStatus.js")).setClasspilotRealtimeStatusCommandForTests(undefined);
   const scheduler = await import("../src/services/schedulerDb.js");

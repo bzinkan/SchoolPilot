@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { Client } from "pg";
+import { Client, type PoolClient } from "pg";
 import { getTableColumns } from "drizzle-orm";
 import type { KioskSession } from "../src/schema/passpilot.js";
 
@@ -104,6 +104,30 @@ async function createStudent(schoolId: string, name: string, gradeId: string | n
     await pool.query("INSERT INTO passpilot_grade_students(school_id, grade_id, student_id) VALUES ($1, $2, $3)", [schoolId, gradeId, id]);
   }
   return id;
+}
+
+async function fixtureTransaction(operation: (client: PoolClient) => Promise<void>) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await operation(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function createFixtureGroup(groupId: string, schoolId: string, teacherId: string, name: string) {
+  await fixtureTransaction(async (client) => {
+    await client.query(
+      "INSERT INTO groups(id, school_id, teacher_id, name, group_type, status) VALUES ($1, $2, $3, $4, 'admin_class', 'active')",
+      [groupId, schoolId, teacherId, name],
+    );
+    await client.query("INSERT INTO group_teachers(group_id, teacher_id, role) VALUES ($1, $2, 'primary')", [groupId, teacherId]);
+  });
 }
 
 async function seedPass(options: {
@@ -290,10 +314,7 @@ before(async () => {
   C.admin = await createUser(C.schoolId, "school_admin", "c-admin");
   C.teacher = await createUser(C.schoolId, "teacher", "c-teacher");
   C.groupId = randomUUID();
-  await pool.query(
-    "INSERT INTO groups(id, school_id, teacher_id, name, group_type, status) VALUES ($1, $2, $3, 'Biology', 'admin_class', 'active')",
-    [C.groupId, C.schoolId, C.teacher.id],
-  );
+  await createFixtureGroup(C.groupId, C.schoolId, C.teacher.id, "Biology");
   for (let index = 0; index < 2; index += 1) {
     const studentId = await createStudent(C.schoolId, `Canonical${index}`, null);
     await pool.query("INSERT INTO group_students(group_id, student_id) VALUES ($1, $2)", [C.groupId, studentId]);
@@ -333,12 +354,16 @@ after(async () => {
         await bestEffort(`DELETE FROM ${table} WHERE school_id = ANY($1::text[])`, [schoolIds]);
       }
       await bestEffort("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ANY($1::text[]))", [schoolIds]);
+      await fixtureTransaction(async (client) => {
+        await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ANY($1::text[]))", [schoolIds]);
+        await client.query("DELETE FROM groups WHERE school_id = ANY($1::text[])", [schoolIds]);
+      });
       await bestEffort("DELETE FROM teacher_grades WHERE teacher_id = ANY($1::text[])", [userIds]);
-      for (const table of ["passpilot_grade_students", "groups", "students", "grades", "settings", "school_memberships", "product_licenses"]) {
+      for (const table of ["passpilot_grade_students", "students", "grades", "settings", "school_memberships", "product_licenses"]) {
         await bestEffort(`DELETE FROM ${table} WHERE school_id = ANY($1::text[])`, [schoolIds]);
       }
-      await bestEffort("DELETE FROM users WHERE id = ANY($1::text[])", [userIds]);
-      await bestEffort("DELETE FROM schools WHERE id = ANY($1::text[])", [schoolIds]);
+      // Staff lifecycle guards retain the uniquely owned school/user roots in
+      // this disposable fixture database. Their dependents are removed above.
     }
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
@@ -719,7 +744,7 @@ describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
       // Give the PassPilot teacher a current ClassPilot assignment too, so the
       // cross-product timeline exercises its real teacher authorization path.
       const groupId = randomUUID();
-      await pool.query("INSERT INTO groups(id, school_id, teacher_id, name, group_type, status) VALUES ($1, $2, $3, 'Privacy class', 'admin_class', 'active')", [groupId, L.schoolId, L.teacher.id]);
+      await createFixtureGroup(groupId, L.schoolId, L.teacher.id, "Privacy class");
       await pool.query("INSERT INTO group_students(group_id, student_id) VALUES ($1, $2)", [groupId, target]);
       await pool.query(`INSERT INTO student_timeline_events(school_id, student_id, event_type, source_type, source_id, title, metadata)
         VALUES ($1, $2, 'pass', 'passpilot', $3, 'Retained pass metadata', $4::jsonb)`,
@@ -817,8 +842,11 @@ describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
         assert.equal(audit.rows[0].metadata.ruleCode, encounterCode);
         assert.equal((await denials(L.schoolId, target)).filter((row) => row.overridden && row.rule_code === encounterCode).length, 1);
       } finally {
-        await pool.query("DELETE FROM group_students WHERE group_id = $1", [groupId]);
-        await pool.query("DELETE FROM groups WHERE id = $1", [groupId]);
+        await fixtureTransaction(async (client) => {
+          await client.query("DELETE FROM group_students WHERE group_id = $1", [groupId]);
+          await client.query("DELETE FROM group_teachers WHERE group_id = $1", [groupId]);
+          await client.query("DELETE FROM groups WHERE id = $1", [groupId]);
+        });
       }
     });
   }

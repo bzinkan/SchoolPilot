@@ -31,6 +31,7 @@ before(async () => {
   await pool.query("INSERT INTO users (id, email, first_name, last_name) VALUES ($1, $2, 'Schedule', 'Teacher')", [teacherId, `${teacherId}@test.example.edu`]);
   await pool.query("INSERT INTO users (id, email, first_name, last_name) VALUES ($1, $2, 'Schedule', 'CoTeacher')", [coTeacherId, `${coTeacherId}@test.example.edu`]);
   await pool.query("INSERT INTO school_memberships (user_id, school_id, role, status) VALUES ($1, $2, 'teacher', 'active')", [teacherId, schoolId]);
+  await pool.query("INSERT INTO school_memberships (user_id, school_id, role, status) VALUES ($1, $2, 'teacher', 'active')", [coTeacherId, schoolId]);
   await withTenant({ isSuper: true }, async () => {
     const { sql } = await import("drizzle-orm");
     await database.execute(sql`INSERT INTO settings (school_id, school_name, ws_shared_key, instructional_calendar) VALUES (${schoolId}, 'Scheduling test', 'test-only-key', '{}'::jsonb), (${otherSchoolId}, 'Other scheduling test', 'test-only-key', '{}'::jsonb)`);
@@ -42,17 +43,20 @@ after(async () => {
   if (!pool) return;
   await withTenant({ isSuper: true }, async () => {
     const { sql } = await import("drizzle-orm");
-    await database.execute(sql`DELETE FROM classpilot_school_schedules WHERE school_id IN (${schoolId}, ${otherSchoolId})`);
-    await database.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${schoolId}`);
-    await database.execute(sql`DELETE FROM group_teachers WHERE group_id = ${groupId}`);
-    await database.execute(sql`DELETE FROM groups WHERE id IN (${groupId}, ${secondGroupId}, ${makeupGroupId})`);
-    await database.execute(sql`DELETE FROM settings WHERE school_id IN (${schoolId}, ${otherSchoolId})`);
+    // Primary mirrors and their groups disappear in one deferred-constraint
+    // transaction, just as canonical class creation commits them together.
+    await database.transaction(async tx => {
+      await tx.execute(sql`DELETE FROM classpilot_school_schedules WHERE school_id IN (${schoolId}, ${otherSchoolId})`);
+      await tx.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${schoolId}`);
+      await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (${groupId}, ${secondGroupId}, ${makeupGroupId})`);
+      await tx.execute(sql`DELETE FROM groups WHERE id IN (${groupId}, ${secondGroupId}, ${makeupGroupId})`);
+      await tx.execute(sql`DELETE FROM settings WHERE school_id IN (${schoolId}, ${otherSchoolId})`);
+    });
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id = $1", [schoolId]);
-  await pool.query("DELETE FROM school_memberships WHERE user_id = $1", [teacherId]);
-  await pool.query("DELETE FROM users WHERE id = $1", [teacherId]);
-  await pool.query("DELETE FROM users WHERE id = $1", [coTeacherId]);
-  await pool.query("DELETE FROM schools WHERE id IN ($1, $2)", [schoolId, otherSchoolId]);
+  await pool.query("DELETE FROM school_memberships WHERE school_id IN ($1,$2)", [schoolId, otherSchoolId]);
+  // Lifecycle guards retain uniquely owned school/staff roots in this
+  // disposable fixture database. Dependent rows are removed above.
   const { sessionPool } = await import("../src/db.js");
   await Promise.all([pool.end(), sessionPool.end()]);
 });
@@ -72,7 +76,10 @@ describe("School scheduling persistence", () => {
   });
   it("uses actual meeting days for primary and co-teacher overlap checks", async () => {
     const { sql } = await import("drizzle-orm");
-    await scoped(() => database.execute(sql`INSERT INTO groups (id, school_id, teacher_id, name, group_type, status, schedule_enabled, block_start_time, block_end_time, schedule_rule) VALUES (${groupId}, ${schoolId}, ${teacherId}, 'Monday Wednesday Friday', 'admin_class', 'active', true, '09:00', '09:50', ${JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [1, 3, 5] })}::jsonb)`));
+    await scoped(() => database.transaction(async tx => {
+      await tx.execute(sql`INSERT INTO groups (id, school_id, teacher_id, name, group_type, status, schedule_enabled, block_start_time, block_end_time, schedule_rule) VALUES (${groupId}, ${schoolId}, ${teacherId}, 'Monday Wednesday Friday', 'admin_class', 'active', true, '09:00', '09:50', ${JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [1, 3, 5] })}::jsonb)`);
+      await tx.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${groupId},${teacherId},'primary')`);
+    }));
     const group = { scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50", scheduleRule: { ...defaultClassScheduleRule(), weekdays: [2, 4] } };
     await scoped(() => scheduling.assertSchoolSchedulingClassOverlap({ schoolId, group, teacherIds: [teacherId], dbInstance: database }));
     await assert.rejects(scoped(() => scheduling.assertSchoolSchedulingClassOverlap({ schoolId, group: { ...group, scheduleRule: defaultClassScheduleRule() }, teacherIds: [teacherId], dbInstance: database })), (error: Error & { code?: string }) => error.code === "CLASS_SCHEDULE_CONFLICT");
@@ -109,7 +116,10 @@ describe("School scheduling persistence", () => {
     await scoped(() => database.execute(sql`UPDATE groups SET schedule_rule = ${JSON.stringify(rule)}::jsonb WHERE id = ${groupId}`));
     const initialPreview = await scoped(() => scheduling.previewSchoolScheduling({ schoolId, config: twoPeriods }));
     await scoped(() => scheduling.saveSchoolScheduling({ schoolId, config: twoPeriods, expectedRevision: initialPreview.revision, previewToken: initialPreview.previewToken, actorId: teacherId }));
-    await scoped(() => database.execute(sql`INSERT INTO groups (id, school_id, teacher_id, name, group_type, status, schedule_enabled, block_start_time, block_end_time, schedule_rule) VALUES (${secondGroupId}, ${schoolId}, ${teacherId}, 'Later class', 'admin_class', 'active', true, '10:00', '10:50', ${JSON.stringify({ ...rule, periodId: "p2" })}::jsonb)`));
+    await scoped(() => database.transaction(async tx => {
+      await tx.execute(sql`INSERT INTO groups (id, school_id, teacher_id, name, group_type, status, schedule_enabled, block_start_time, block_end_time, schedule_rule) VALUES (${secondGroupId}, ${schoolId}, ${teacherId}, 'Later class', 'admin_class', 'active', true, '10:00', '10:50', ${JSON.stringify({ ...rule, periodId: "p2" })}::jsonb)`);
+      await tx.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${secondGroupId},${teacherId},'primary')`);
+    }));
     await scoped(() => database.execute(sql`INSERT INTO teaching_sessions (group_id, school_id, teacher_id, scheduled_date, scheduled_timezone, scheduled_start_at, scheduled_end_at, scheduled_state, class_name_snapshot) VALUES (${groupId}, ${schoolId}, ${teacherId}, ${date}, 'America/New_York', ${localDateTimeUtc(date, "09:00", "America/New_York").toISOString()}::timestamptz, ${localDateTimeUtc(date, "09:50", "America/New_York").toISOString()}::timestamptz, 'active', 'Frozen class')`));
     const changed = { ...twoPeriods, profiles: [{ ...twoPeriods.profiles[0]!, periods: {
       p1: { startTime: "11:00", endTime: "11:50" }, p2: { startTime: "09:20", endTime: "10:00" },
@@ -128,7 +138,10 @@ describe("School scheduling persistence", () => {
     while (dateWeekday(date) !== 6) date = datePlusDays(date, 1);
     const current = await scoped(() => scheduling.getSchoolSchedulingContext(schoolId));
     const rule = { ...defaultClassScheduleRule(), weekdays: [1], startsOn: date, endsOn: date, periodId: "p1" };
-    await scoped(() => database.execute(sql`INSERT INTO groups (id, school_id, teacher_id, name, group_type, status, schedule_enabled, block_start_time, block_end_time, schedule_rule) VALUES (${makeupGroupId}, ${schoolId}, ${teacherId}, 'Weekend makeup class', 'admin_class', 'active', true, '09:00', '09:50', ${JSON.stringify(rule)}::jsonb)`));
+    await scoped(() => database.transaction(async tx => {
+      await tx.execute(sql`INSERT INTO groups (id, school_id, teacher_id, name, group_type, status, schedule_enabled, block_start_time, block_end_time, schedule_rule) VALUES (${makeupGroupId}, ${schoolId}, ${teacherId}, 'Weekend makeup class', 'admin_class', 'active', true, '09:00', '09:50', ${JSON.stringify(rule)}::jsonb)`);
+      await tx.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${makeupGroupId},${teacherId},'primary')`);
+    }));
     const changed = { ...current.config, dateOverrides: { ...current.config.dateOverrides, [date]: { instructional: true, meetingWeekday: 1 } } };
     const preview = await scoped(() => scheduling.previewSchoolScheduling({ schoolId, config: changed }));
     assert.deepEqual(preview.blockers, []);

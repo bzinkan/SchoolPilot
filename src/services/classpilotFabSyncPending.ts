@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { redisCommand } from "../middleware/rateLimiter.js";
+import { realtimeRedisCommand as redisCommand } from "../realtime/ws-redis.js";
 import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
 
 /**

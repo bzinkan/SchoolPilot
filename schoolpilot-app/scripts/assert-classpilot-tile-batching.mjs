@@ -253,7 +253,8 @@ const healthy = await fetchTileBatch(
     assert.equal(method, 'POST');
     assert.equal(endpoint, requests[0].endpoint);
     assert.deepEqual(body, requests[0].body);
-    assert.equal(config.signal, requestSignal);
+    assert(config.signal instanceof AbortSignal);
+    assert.equal(config.signal.aborted, requestSignal.aborted);
     return { tiles: [] };
   },
   requestSignal,
@@ -1128,7 +1129,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /runBoundedTileScreenshotJobs\([\s\S]{0,160}SCREENSHOT_EVENT_MAX_CONCURRENCY,/,
+  /screenshotQueueRef.current.read/,
   'event-driven screenshot batches must use bounded concurrency',
 );
 assert.match(

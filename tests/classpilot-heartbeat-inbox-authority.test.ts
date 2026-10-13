@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import ts from 'typescript';
 const source = readFileSync(new URL('../src/services/storage.ts', import.meta.url), 'utf8');
 const start = source.indexOf('async function runClasspilotControlDeliveryTransaction<');
@@ -18,6 +19,7 @@ function fixture(fault?: string) {
     return { rows: query.includes('AS entitled') ? [{ entitled: true, bound: fault !== 'binding', denialReason: 'license_inactive' }] : [{ allowed: true }] };
   } };
   const fn: (binding: object, prepare: () => void, deliver: (claimed: unknown, prepared: unknown, inbox: unknown) => boolean, recovery: undefined, foreground: undefined, request: object | undefined) => Promise<{ authorized: boolean }> = runInNewContext(executable, {
+    AsyncLocalStorage,
     trackHeartbeatPreparedReadTask: (_tx: object, work: () => Promise<unknown>) => work(),
     sealHeartbeatPreparedReads: async () => {},
     assertHeartbeatPreparedReadsSettled: () => {},

@@ -50,12 +50,8 @@ after(async () => {
   if (createdUserIds.size > 0) {
     await db.delete(schoolMemberships).where(inArray(schoolMemberships.userId, [...createdUserIds]));
   }
-  if (createdSchoolIds.size > 0) {
-    await db.delete(schools).where(inArray(schools.id, [...createdSchoolIds]));
-  }
-  if (createdUserIds.size > 0) {
-    await db.delete(users).where(inArray(users.id, [...createdUserIds]));
-  }
+  // Current lifecycle guards retain uniquely tagged synthetic school/staff
+  // roots in this disposable fixture database after their children are removed.
   await pool.end();
 });
 
