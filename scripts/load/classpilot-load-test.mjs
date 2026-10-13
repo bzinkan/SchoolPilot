@@ -13,6 +13,8 @@ import {
   teacherSessionOwnerKey,
 } from "./command-status-observer.mjs";
 import { createMonotonicDeadline } from "./monotonic-deadline.mjs";
+import { hasLoadSessionCookie, loadSessionCookieName } from "./session-cookie.mjs";
+import { stampReliabilityFrame, initialReliabilityCommandBurst } from "./reliability-rendered-frame.mjs";
 import {
   validateReliabilityEnvironment, RELIABILITY_ENDPOINT_SHA256, RELIABILITY_CAPABILITIES,
   minimumReliabilitySamples, reliabilityScreenshotBindingMatches,
@@ -735,8 +737,8 @@ function normalizeTeacherAuth(raw, index, defaultExpiry = null) {
     throw new Error(`Teacher auth entry ${index + 1} contains a line break`);
   }
   if (/[\r\n]/.test(schoolId)) throw new Error(`Teacher auth entry ${index + 1} has an invalid schoolId`);
-  if (cookie && !/(?:^|;\s*)schoolpilot\.sid=[^;]+/.test(cookie)) {
-    throw new Error(`Teacher auth entry ${index + 1} must include the schoolpilot.sid session cookie`);
+  if (cookie && !hasLoadSessionCookie(cookie)) {
+    throw new Error(`Teacher auth entry ${index + 1} must include the ${loadSessionCookieName()} session cookie without another environment's session cookie`);
   }
   if (!["teacher", "school_admin", "super_admin"].includes(role)) {
     throw new Error(`Teacher auth entry ${index + 1} has an unsupported role`);
@@ -2106,10 +2108,12 @@ function heartbeatBody(device) {
   };
 }
 
+let reliabilityFrameOrdinal = 0;
 function screenshotBody(device) {
+  const capturedAt = Date.now();
   return {
-    ...(reliabilityWorkload ? { capturedAt: new Date().toISOString(), screenshotAuthority: device.reliabilityPolicy.authority } : {}),
-    screenshot: screenshotFixture,
+    ...(reliabilityWorkload ? { capturedAt: new Date(capturedAt).toISOString(), screenshotAuthority: device.reliabilityPolicy.authority } : {}),
+    screenshot: reliabilityWorkload ? stampReliabilityFrame(screenshotFixture, capturedAt, ++reliabilityFrameOrdinal) : screenshotFixture,
     tabTitle: `Load ${device.deviceId}`,
     tabUrl: `https://example.edu/load/${encodeURIComponent(device.deviceId)}`,
   };
@@ -2736,9 +2740,13 @@ function startCommandTraffic() {
     commandRequestInFlight = true;
     try {
       if (!initialSweepComplete) {
-        for (let index = 0; index < commandBodies.length; index += 1) {
-          if (stoppingTraffic) break;
-          await sendOne(commandBodies[index], index);
+        if (reliabilityWorkload) {
+          await initialReliabilityCommandBurst(commandBodies, sendOne);
+        } else {
+          for (let index = 0; index < commandBodies.length; index += 1) {
+            if (stoppingTraffic) break;
+            await sendOne(commandBodies[index], index);
+          }
         }
         initialSweepComplete = !stoppingTraffic;
         nextBodyIndex = 0;

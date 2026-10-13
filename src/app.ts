@@ -21,7 +21,7 @@ import routes from "./routes/index.js";
 import monitoringRoutes from "./routes/monitoring.js";
 import { buildMonitoringHealthSnapshot } from "./services/monitoringDashboard.js";
 import {
-  SESSION_COOKIE_NAME,
+  sessionCookieName,
   sessionCookieOptions,
 } from "./config/sessionCookie.js";
 import { isSensitiveNoStorePath } from "./util/noStorePath.js";
@@ -231,7 +231,7 @@ export function createApp() {
       // rolling expiry with at most one minute of skew.
       disableTouch: true,
     }),
-    name: SESSION_COOKIE_NAME,
+    name: sessionCookieName(),
     secret: sessionSecret,
     rolling: true,
     resave: false,

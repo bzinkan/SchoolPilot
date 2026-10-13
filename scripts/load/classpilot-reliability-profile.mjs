@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export const RELIABILITY_WORKLOAD_VERSION = 'classpilot-reliability-v1';
-export const RELIABILITY_ENDPOINT_SHAPE = `${RELIABILITY_WORKLOAD_VERSION}|GET /api/students-aggregated?teachingSessionId=:id|POST /api/classpilot/tiles/screenshots studentIds[1..50] teachingSessionId|POST /api/classpilot/tiles/history studentIds[1..50] teachingSessionId limit[1..10]|PUT /api/classpilot/teaching-sessions/:id/observation-lease|transport-probe-v1`;
+export const RELIABILITY_ENDPOINT_SHAPE = `${RELIABILITY_WORKLOAD_VERSION}|GET /api/students-aggregated?teachingSessionId=:id|POST /api/classpilot/tiles/screenshots studentIds[1..50] teachingSessionId|POST /api/classpilot/tiles/history studentIds[1..50] teachingSessionId limit[1..10]|PUT /api/classpilot/teaching-sessions/:id/observation-lease|transport-probe-v1|initial-concurrent-class-command-burst|unique-capture-frame-v1`;
 export const RELIABILITY_ENDPOINT_SHA256 = createHash('sha256').update(RELIABILITY_ENDPOINT_SHAPE).digest('hex');
 export const RELIABILITY_CAPABILITIES = Object.freeze([
   'scopedAuthorityChecksV1', 'screenshotObservationLeaseV1',

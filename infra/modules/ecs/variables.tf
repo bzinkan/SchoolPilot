@@ -10,6 +10,22 @@ variable "assign_task_public_ip" {
 }
 variable "alb_target_group_arn" { type = string }
 variable "ecr_repository_url" { type = string }
+variable "api_image_digest" {
+  type    = string
+  default = ""
+}
+variable "provider_secrets_enabled" {
+  type    = bool
+  default = true
+}
+variable "staging_classpilot_reliability_enabled" {
+  type    = bool
+  default = false
+}
+variable "api_autoscaling_suspended" {
+  type    = bool
+  default = false
+}
 variable "container_port" { type = number }
 variable "ecs_security_group_id" { type = string }
 
@@ -67,6 +83,10 @@ variable "cors_allowlist" {
 variable "cookie_domain" {
   type    = string
   default = ""
+}
+variable "cookie_name" {
+  type    = string
+  default = "schoolpilot.sid"
 }
 variable "google_client_id" {
   type    = string

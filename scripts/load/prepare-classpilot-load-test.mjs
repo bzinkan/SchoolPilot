@@ -25,6 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { hasLoadSessionCookie, loadSessionCookieFromHeaders } from "./session-cookie.mjs";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const FILES = Object.freeze({
@@ -59,8 +60,11 @@ const STUDENT_IMPORT_BATCH_SIZE = 10;
 const SYNTHETIC_SCHOOL_MARKER = "[SYNTHETIC LOAD TEST - NON-BILLABLE]";
 const OWNERSHIP_ACK = "TOOL_OWNED_MARKED_NON_BILLABLE_SYNTHETIC_TENANTS_ONLY";
 const EMAIL_DELIVERY_ACK = "ALL_SYNTHETIC_EMAILS_ROUTE_PLUS_ALIASES_TO_OPERATOR_MAILBOX";
+const STAGING_EMAIL_ACK = "ISOLATED_STAGING_INVALID_ADDRESSES_NO_EMAIL_TRANSPORT";
+const STAGING_ORIGIN = "https://staging.school-pilot.net";
 const HOLD_DAYS = 30;
 const SECRET_FIELD = /(password|secret|token|enrollment.?key|cookie|csrf)/i;
+const fixtureClassSize = config => config.reliabilityDeviceCount === 500 ? 25 : COUNTS.classSize;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function isFixtureTestMode() {
@@ -359,8 +363,18 @@ export function validateConfig(raw) {
   const primary = normalizeSchool(raw.schools?.primary, "schools.primary", fixtureId);
   const canary = normalizeSchool(raw.schools?.canary, "schools.canary", fixtureId);
   if (primary.name === canary.name) throw new SafeError("Primary and canary schools must use different names");
-  if (raw.emailDeliveryAcknowledgement !== EMAIL_DELIVERY_ACK) {
-    throw new SafeError(`emailDeliveryAcknowledgement must equal ${EMAIL_DELIVERY_ACK}`);
+  const syntheticStaging = raw.syntheticStaging === true;
+  if (syntheticStaging && (baseUrl.origin !== STAGING_ORIGIN || !["", "/"].includes(baseUrl.pathname)
+      || !primary.domain.endsWith(".invalid") || !canary.domain.endsWith(".invalid"))) {
+    throw new SafeError("Synthetic no-mail fixtures require the exact isolated staging origin and reserved .invalid domains");
+  }
+  const reliabilityDeviceCount = raw.reliabilityDeviceCount ?? null;
+  if (reliabilityDeviceCount !== null && (!syntheticStaging || ![40, 500, 800].includes(reliabilityDeviceCount))) {
+    throw new SafeError("Reliability fixture profiles require strict synthetic staging and exactly 40, 500 or 800 primary devices");
+  }
+  const emailDeliveryAcknowledgement = syntheticStaging ? STAGING_EMAIL_ACK : EMAIL_DELIVERY_ACK;
+  if (raw.emailDeliveryAcknowledgement !== emailDeliveryAcknowledgement) {
+    throw new SafeError(`emailDeliveryAcknowledgement must equal ${emailDeliveryAcknowledgement}`);
   }
   const operatorMailboxEmail = normalizeEmail(raw.operatorMailboxEmail, "operatorMailboxEmail");
   const [operatorMailboxLocalPart, operatorMailboxDomain] = operatorMailboxEmail.split("@");
@@ -404,7 +418,9 @@ export function validateConfig(raw) {
     fixtureId,
     baseUrl: baseUrl.toString().replace(/\/$/, ""),
     ownershipAcknowledgement: OWNERSHIP_ACK,
-    emailDeliveryAcknowledgement: EMAIL_DELIVERY_ACK,
+    syntheticStaging,
+    reliabilityDeviceCount,
+    emailDeliveryAcknowledgement,
     operatorMailboxEmail,
     operatorOwnedAdminEmail,
     allowSchoolCreation: raw.allowSchoolCreation === true,
@@ -453,7 +469,7 @@ export function buildFixtureBlueprint(config) {
   const classes = Array.from({ length: COUNTS.classes }, (_, index) => {
     const first = primaryStudents.slice(index * 25, index * 25 + 25);
     const secondStart = 500 + index * 15;
-    const second = primaryStudents.slice(secondStart, secondStart + 15);
+    const second = config.reliabilityDeviceCount === 500 ? [] : primaryStudents.slice(secondStart, secondStart + 15);
     return {
       ordinal: index + 1,
       name: `${config.fixtureId} Load Class ${String(index + 1).padStart(2, "0")}`,
@@ -466,8 +482,8 @@ export function buildFixtureBlueprint(config) {
     };
   });
   const primaryDevices = primaryStudents.map((student, index) => {
-    const tranche = index < 500 ? "class-first-25" : index < 800 ? "class-remaining-15" : "burst-200";
-    const classOrdinal = index < 500 ? Math.floor(index / 25) + 1 : index < 800 ? Math.floor((index - 500) / 15) + 1 : null;
+    const tranche = index < 500 ? "class-first-25" : index < 800 ? (config.reliabilityDeviceCount === 500 ? "idle-300" : "class-remaining-15") : "burst-200";
+    const classOrdinal = index < 500 ? Math.floor(index / 25) + 1 : index < 800 && config.reliabilityDeviceCount !== 500 ? Math.floor((index - 500) / 15) + 1 : null;
     return {
       deviceId: `${config.fixtureId}-primary-${String(index + 1).padStart(4, "0")}`,
       schoolKey: "primary",
@@ -506,9 +522,9 @@ export function buildDryRunSummary(config) {
       schools: 2,
       loadActors: { teachers: 20, officeStaff: 1, commandAdmin: 1 },
       students: { primary: 1000, canary: 10, total: 1010, autoEnroll: false },
-      classes: { count: 20, studentsEach: 40, disjoint: true, schedulesEnabled: false },
+      classes: { count: 20, studentsEach: fixtureClassSize(config), disjoint: true, schedulesEnabled: false },
       authorizationPlanCohorts: {
-        coTeacherStudents: COUNTS.planCohortSize,
+        coTeacherStudents: fixtureClassSize(config),
         officeSupervisionStudents: COUNTS.planCohortSize,
         officeStudentsOutsideTeacherRosters: true,
       },
@@ -518,13 +534,14 @@ export function buildDryRunSummary(config) {
     manifestOrder: [
       { cohort: "second-school-canary-10", start: 1, end: 10, count: 10 },
       { cohort: "class-first-25", start: 11, end: 510, count: 500 },
-      { cohort: "class-remaining-15", start: 511, end: 810, count: 300 },
+      { cohort: config.reliabilityDeviceCount === 500 ? "idle-300" : "class-remaining-15", start: 511, end: 810, count: 300 },
       { cohort: "burst-200", start: 811, end: 1010, count: 200 },
     ],
     requiredEnvironment: [
       "CLP_SUPER_ADMIN_BEARER OR (CLP_SUPER_ADMIN_EMAIL + CLP_SUPER_ADMIN_PASSWORD)", "CLP_FIXTURE_ADMIN_PASSWORD",
-      "CLP_FIXTURE_TEACHER_PASSWORD", `CLP_OPERATOR_ALIAS_CONFIRMED=${config.fixtureId}`,
-      `CLP_CANARY_ALIAS_CONFIRMED=${config.fixtureId}`,
+      "CLP_FIXTURE_TEACHER_PASSWORD", ...(config.syntheticStaging
+        ? [`CLP_STAGING_NO_EMAIL_CONFIRMED=${config.fixtureId}`]
+        : [`CLP_OPERATOR_ALIAS_CONFIRMED=${config.fixtureId}`, `CLP_CANARY_ALIAS_CONFIRMED=${config.fixtureId}`]),
     ],
   };
 }
@@ -753,11 +770,7 @@ export async function superAuthFromEnvironment(client, config, env = process.env
 }
 
 function cookieFromHeaders(headers) {
-  const values = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : [headers.get("set-cookie")].filter(Boolean);
-  for (const value of values) {
-    const match = /(?:^|,\s*)(schoolpilot\.sid=[^;\s,]+)/i.exec(value);
-    if (match) return match[1];
-  }
+  try { return loadSessionCookieFromHeaders(headers); } catch { /* Never print response cookie values. */ }
   throw new SafeError("Login response did not issue the expected SchoolPilot session cookie");
 }
 
@@ -838,7 +851,7 @@ function requireArtifactCredential(value, label, options = {}) {
   if (!credential || /[\r\n]/.test(credential)) {
     throw new SafeError(`${label} is missing or malformed`);
   }
-  if (options.cookie === true && !/(?:^|;\s*)schoolpilot\.sid=[^;\s]+/.test(credential)) {
+  if (options.cookie === true && !hasLoadSessionCookie(credential)) {
     throw new SafeError(`${label} does not contain the SchoolPilot session cookie`);
   }
   return credential;
@@ -951,9 +964,9 @@ export function validateAuthArtifactContract(artifact, config, state, nowMs = Da
     );
     const actualStudentIds = new Set(Array.isArray(entry.studentIds) ? entry.studentIds.map(String) : []);
     if (
-      expectedStudentIds.size !== COUNTS.classSize
-      || actualStudentIds.size !== COUNTS.classSize
-      || entry.studentIds.length !== COUNTS.classSize
+      expectedStudentIds.size !== fixtureClassSize(config)
+      || actualStudentIds.size !== fixtureClassSize(config)
+      || entry.studentIds.length !== fixtureClassSize(config)
       || !exactStringSet(actualStudentIds, expectedStudentIds)
     ) {
       throw new SafeError(`${label} does not contain the exact 40-student class mapping`);
@@ -981,9 +994,9 @@ export function validateAuthArtifactContract(artifact, config, state, nowMs = Da
   if (
     seenTeacherIds.size !== COUNTS.teachers
     || seenSessionIds.size !== COUNTS.teachers
-    || allMappedStudentIds.size !== COUNTS.teachers * COUNTS.classSize
+    || allMappedStudentIds.size !== COUNTS.teachers * fixtureClassSize(config)
   ) {
-    throw new SafeError("Teacher auth artifact does not cover 20 unique teachers, sessions, and 800 disjoint students");
+    throw new SafeError("Teacher auth artifact does not cover the exact 20 unique teachers, sessions, and configured disjoint students");
   }
   return { commandAdmin, teachers: validatedTeachers };
 }
@@ -1960,7 +1973,7 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
     const rosterResponse = await client.request(`/api/classpilot/admin/classes/${encodeURIComponent(existing.id)}/students`, { bearer: adminAuth.bearer });
     const roster = Array.isArray(rosterResponse.data?.students) ? rosterResponse.data.students : [];
     const expectedIds = planned.studentEmails.map((email) => studentByEmail.get(email)?.id).filter(Boolean);
-    if (expectedIds.length !== COUNTS.classSize) throw new SafeError("Synthetic class blueprint did not resolve to 40 students");
+    if (expectedIds.length !== planned.studentEmails.length || ![25, 40].includes(expectedIds.length)) throw new SafeError("Synthetic class blueprint did not resolve to its exact configured roster");
     const expectedSet = new Set(expectedIds);
     for (const extra of roster.filter((student) => !expectedSet.has(student.id))) {
       await client.request(`/api/classpilot/admin/classes/${encodeURIComponent(existing.id)}/students/${encodeURIComponent(extra.id)}`, {
@@ -1972,7 +1985,7 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
     });
     const verified = await client.request(`/api/classpilot/admin/classes/${encodeURIComponent(existing.id)}/students`, { bearer: adminAuth.bearer });
     const verifiedIds = new Set((verified.data?.students || []).map((student) => student.id));
-    if (verifiedIds.size !== COUNTS.classSize || expectedIds.some((id) => !verifiedIds.has(id))) {
+    if (verifiedIds.size !== expectedIds.length || expectedIds.some((id) => !verifiedIds.has(id))) {
       throw new SafeError("Synthetic class roster did not converge to the required 40 students");
     }
     result.push({
@@ -1984,7 +1997,7 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
     });
   }
   const allStudentIds = result.flatMap((entry) => entry.studentIds);
-  if (new Set(allStudentIds).size !== COUNTS.classes * COUNTS.classSize) throw new SafeError("Synthetic class rosters are not disjoint");
+  if (new Set(allStudentIds).size !== blueprint.classes.reduce((sum, entry) => sum + entry.studentEmails.length, 0)) throw new SafeError("Synthetic class rosters are not disjoint");
   return result;
 }
 
@@ -2155,8 +2168,8 @@ export function validateStateContract(state, config) {
       coTeacher?.staffUserId !== expectedCoTeacher.userId
       || coTeacher.classId !== expectedCoTeacherClass.classId
       || !Array.isArray(coTeacher.studentIds)
-      || coTeacher.studentIds.length !== COUNTS.planCohortSize
-      || new Set(coTeacher.studentIds).size !== COUNTS.planCohortSize
+      || coTeacher.studentIds.length !== fixtureClassSize(config)
+      || new Set(coTeacher.studentIds).size !== fixtureClassSize(config)
       || expectedCoTeacherStudentIds.some((id) => !coTeacher.studentIds.includes(id))
       || office?.staffUserId !== state.officeStaff.userId
       || !Array.isArray(office.studentIds)
@@ -2390,8 +2403,8 @@ async function refreshArtifacts(client, config, outputDirectory, state, adminPas
     const studentIds = state.devices
       .filter((device) => device.schoolKey === "primary" && device.classId === teacher.classId)
       .map((device) => device.studentId);
-    if (studentIds.length !== COUNTS.classSize || new Set(studentIds).size !== COUNTS.classSize) {
-      throw new SafeError("Teacher auth mapping did not resolve exactly 40 fixture students");
+    if (studentIds.length !== fixtureClassSize(config) || new Set(studentIds).size !== fixtureClassSize(config)) {
+      throw new SafeError("Teacher auth mapping did not resolve the exact configured fixture roster");
     }
     sessions.push({
       ordinal: teacher.ordinal,
@@ -2527,7 +2540,10 @@ async function runProvision(client, config, outputDirectory) {
       ...missing.map((name) => `${name} is absent from the current process`),
     ]);
   }
-  if (process.env.CLP_OPERATOR_ALIAS_CONFIRMED !== config.fixtureId) {
+  if (config.syntheticStaging && process.env.CLP_STAGING_NO_EMAIL_CONFIRMED !== config.fixtureId) {
+    failPrerequisite(outputDirectory, config, ["Explicit staging no-email transport acknowledgement is required for this exact fixtureId"]);
+  }
+  if (!config.syntheticStaging && process.env.CLP_OPERATOR_ALIAS_CONFIRMED !== config.fixtureId) {
     failPrerequisite(outputDirectory, config, [
       `Before provisioning, send an external test message to ${config.schools.primary.adminEmail}, verify receipt in ${config.operatorMailboxEmail}, then set CLP_OPERATOR_ALIAS_CONFIRMED=${config.fixtureId}`,
     ]);
@@ -2560,7 +2576,7 @@ async function runProvision(client, config, outputDirectory) {
     throw error;
   }
   const primarySchoolHours = await verifyBillingAndEnsureClassPilot(client, superAuth, primarySchool);
-  if (process.env.CLP_CANARY_ALIAS_CONFIRMED !== config.fixtureId) {
+  if (!config.syntheticStaging && process.env.CLP_CANARY_ALIAS_CONFIRMED !== config.fixtureId) {
     failPrerequisite(outputDirectory, config, [
       `Before creating the canary tenant, send an external test message to ${config.schools.canary.adminEmail}, verify receipt in ${config.operatorMailboxEmail}, then set CLP_CANARY_ALIAS_CONFIRMED=${config.fixtureId}`,
     ]);
@@ -2854,8 +2870,8 @@ async function runVerify(client, config, outputDirectory) {
       .map((device) => device.studentId);
     const actualSet = new Set(ids);
     if (
-      ids.length !== 40
-      || expectedIds.length !== 40
+      ids.length !== fixtureClassSize(config)
+      || expectedIds.length !== fixtureClassSize(config)
       || expectedIds.some((id) => !actualSet.has(id))
       || ids.some((id) => seenRosterIds.has(id))
     ) throw new SafeError("Synthetic class roster does not match its exact disjoint fixture students");
@@ -2899,7 +2915,7 @@ async function runVerify(client, config, outputDirectory) {
       activeSessions: exactInventory.activeTeachingSessions,
       commandBodies: 20,
       authorizationPlanCohorts: {
-        coTeacherStudents: COUNTS.planCohortSize,
+        coTeacherStudents: fixtureClassSize(config),
         officeSupervisionStudents: planSupervision.officeSupervisionStudents,
       },
       liveAuth,

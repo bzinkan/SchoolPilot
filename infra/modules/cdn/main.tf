@@ -440,8 +440,11 @@ resource "aws_cloudfront_distribution" "main" {
 
     forwarded_values {
       query_string = true
-      headers      = ["Authorization", "Origin", "X-School-Id", "X-Kiosk-Pin", "X-Kiosk-Token", "Content-Type"]
-      cookies { forward = "all" }
+      headers      = var.environment == "staging" ? ["*"] : ["Authorization", "Origin", "X-School-Id", "X-Kiosk-Pin", "X-Kiosk-Token", "Content-Type"]
+      cookies {
+        forward           = length(var.forwarded_cookie_names) > 0 ? "whitelist" : "all"
+        whitelisted_names = length(var.forwarded_cookie_names) > 0 ? var.forwarded_cookie_names : null
+      }
     }
 
     min_ttl     = 0
@@ -480,7 +483,10 @@ resource "aws_cloudfront_distribution" "main" {
     forwarded_values {
       query_string = true
       headers      = ["*"]
-      cookies { forward = "all" }
+      cookies {
+        forward           = length(var.forwarded_cookie_names) > 0 ? "whitelist" : "all"
+        whitelisted_names = length(var.forwarded_cookie_names) > 0 ? var.forwarded_cookie_names : null
+      }
     }
 
     min_ttl     = 0
@@ -500,7 +506,10 @@ resource "aws_cloudfront_distribution" "main" {
     forwarded_values {
       query_string = true
       headers      = ["*"]
-      cookies { forward = "all" }
+      cookies {
+        forward           = length(var.forwarded_cookie_names) > 0 ? "whitelist" : "all"
+        whitelisted_names = length(var.forwarded_cookie_names) > 0 ? var.forwarded_cookie_names : null
+      }
     }
 
     min_ttl     = 0

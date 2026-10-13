@@ -82,11 +82,12 @@ run "non_production_environments_keep_their_own_sizes" {
     source = "./modules/ecs"
   }
   variables {
-    environment   = "staging"
-    cpu           = 256
-    memory        = 512
-    worker_cpu    = 256
-    worker_memory = 512
+    environment      = "staging"
+    api_image_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    cpu              = 256
+    memory           = 512
+    worker_cpu       = 256
+    worker_memory    = 512
   }
   assert {
     condition     = aws_ecs_task_definition.api.cpu == "256" && aws_ecs_task_definition.worker.memory == "512"

@@ -485,6 +485,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `DATABASE_URL` — PostgreSQL connection (default: `postgresql://schoolpilot:schoolpilot_dev@localhost:5435/schoolpilot`)
 - `REDIS_URL` — Redis connection (default: `redis://localhost:6380`; production ElastiCache with required transit encryption uses `rediss://...`)
 - `APP_ENV` — Runtime environment dimension for CloudWatch embedded metrics (`production`, `staging`, `development`)
+- `COOKIE_NAME` — Web session cookie name, default `schoolpilot.sid`. Isolated staging must set `schoolpilot.staging.sid` and leave `COOKIE_DOMAIN` empty for a host-only cookie; `APP_ENV=staging` rejects the production name or a parent domain. Production keeps its existing name/domain. Same-origin staging routes `/api` and `/ws` through the staging frontend host. Load/preparation clients set `LOAD_SESSION_COOKIE_NAME=schoolpilot.staging.sid` (fallback: `COOKIE_NAME`, then the production default); never mix production and staging cookies in a load auth artifact.
 - `PUBLIC_BASE_URL` — Canonical API origin. Managed-device continuity preflights and device proofs are signed for this normalized deployment audience and fail closed with a scoped 503 in production if it is absent or invalid; never derive this audience from request forwarding headers.
 - `RUN_MIGRATIONS_ON_STARTUP` — Defaults to `false` everywhere and is rejected when enabled in production; use the explicit one-off migration task instead
 - `RUN_MIGRATIONS_ONLY` — One-off migration task mode used by `npm run migrate:startup` / `scripts/deploy.sh`
