@@ -267,17 +267,16 @@ managed-device acceptance, serving artifact identity, and the five-school-day
 pilot. Local tests and dry-runs must never be reported as completion of these
 gates.
 
-## Recommended staging and managed pilot (proposal, not provisioned)
+## Staging and managed pilot status
 
-Use `https://staging.school-pilot.net` with its own Terraform state, VPC,
+The isolated stack was provisioned on 2026-10-13 at
+`https://staging.school-pilot.net` with its own Terraform state, VPC,
 database, Redis, S3/CloudFront distribution, session storage and secrets. Seed
 only synthetic schools, twenty teacher accounts and twenty disjoint 40-student
 classes. Do not copy production records, credentials or device bindings.
 
-The checked-in staging profile is an older small environment and must not be
-used as the capacity comparison. It also inherits NAT, Multi-AZ and Redis
-replica defaults that differ from the observed production topology. The
-proposed temporary capacity environment should explicitly use:
+The isolated profile and its state custody are documented in
+[staging operations](./CLASSPILOT_STAGING_OPERATIONS.md). It explicitly uses:
 
 - Three API tasks at 1 vCPU / 2 GiB each, matching the existing weekday floor.
   One task is sufficient for smoke checks. The existing six-task maximum is
@@ -289,14 +288,23 @@ proposed temporary capacity environment should explicitly use:
   on 2026-10-13. Preserve runtime environment and effective role-specific pool
   caps; `DB_POOL_MAX=20` is clamped to 16 for API main and 2 for worker main.
 
-Before provisioning, a separate reviewed staging change must fix cookie
-isolation. Terraform currently forces `COOKIE_DOMAIN=.school-pilot.net`, and
-the server/harness hard-code `schoolpilot.sid`. Staging requires host-only
-cookies and a distinct name such as `schoolpilot.staging.sid`, applied
-consistently to authentication, logout and harness validation. Keep the
-production cookie unchanged. Rendered task overrides alone cannot supply the
-currently unsupported cookie name. Also review staging certificates, OAuth
-callbacks, external integration isolation and immutable candidate identities.
+Staging now uses the host-only `schoolpilot.staging.sid` cookie consistently
+through authentication, logout, CloudFront forwarding and the harness.
+Native Chrome verified that an invalid production parent-domain cookie is
+ignored and survives staging logout. The production cookie configuration is
+unchanged. External providers remain unconfigured; serving source/image and
+generator identities are bound in private receipts.
+
+The first full ten-minute 40-device paired run completed on 2026-10-14 UTC
+(2026-10-13 local time) and **failed acceptance**. Its 4,280 rendered screen
+samples met the ten/fifteen-second freshness bounds, with no wrong binding or
+class. However, fourteen of twenty command HTTP requests failed. The pooled
+screenshot-read p95 was at most 592 ms, while the browser segment alone reached
+872 ms; retain both measurements. Command/ACK locking failures require repair
+and a new full 40-device run before starting the 500/800 profiles. Private raw
+histograms, resource metrics and exact artifacts remain outside the repository.
+These synthetic JPEGs measure transport and authorization; managed-device
+capture/encoding and actual thumbnail rendering cost remain separate gates.
 
 Read-only AWS Price List queries on 2026-10-13 give an estimated **base** of
 $0.213/hour for one API task and $0.322/hour for three API tasks (about $5.12
@@ -331,3 +339,29 @@ inherited production extension from those test profiles so two extensions do
 not enforce simultaneously. After these devices pass capture, commands,
 sleep/wake, Wi-Fi recovery and isolation, run one full 40-student period, then
 the five-school-day pilot required above.
+
+Before a managed pilot starts, the operator must identify the loaner devices,
+test user/device OUs and the administrator applying their policies. Bind the
+reviewed extension ZIP hash, installed version and package ID to the exact
+passing backend/web capacity candidate. Check the live Store listing and any
+pending submission again before a separately authorized successor upload.
+Store publication alone does not establish the installed artifact.
+
+Record these outcomes for each pilot stage:
+
+- On 5-10 devices, verify the staging `serverUrl` policy and synthetic school
+  binding, one active enforcement extension, live screens, navigation and
+  received/completed command times. Include an exact student transfer and a
+  second-school denial probe.
+- Exercise sleep/wake, Wi-Fi loss/restoration and a silent connection failure.
+  Check accurate stale/reconnecting displays, recovery within thirty seconds
+  and no expired one-shot side effect after recovery.
+- Run a complete forty-student classroom period, measuring actual capture age,
+  navigation and command percentiles alongside the unchanged service limits.
+- Keep the successful cohort under observation for five school days before
+  broader rollout. A privacy defect stops the pilot; repeated freshness,
+  command or recovery failures require repair and fresh evidence.
+
+The test OUs, devices, installed candidate and five-day outcomes have not yet
+been supplied or verified. The isolated stack and local gates do not establish
+Chromebook pilot readiness while the capacity campaign is failing.
