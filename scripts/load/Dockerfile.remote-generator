@@ -5,6 +5,10 @@ ARG CANDIDATE_API_IMAGE
 USER root
 COPY --chown=node:node scripts/load/classpilot-load-test.mjs scripts/load/classpilot-reliability-profile.mjs scripts/load/command-status-observer.mjs scripts/load/monotonic-deadline.mjs scripts/load/reliability-rendered-frame.mjs scripts/load/remote-generator-manifest.mjs scripts/load/run-classpilot-reliability.mjs scripts/load/run-classpilot-remote-generator.mjs scripts/load/session-cookie.mjs scripts/load/tile-poll-accounting.mjs /app/scripts/load/
 RUN node /app/scripts/load/remote-generator-manifest.mjs "${CANDIDATE_API_IMAGE}" /app/load-generator-manifest.json
+# Fargate copies declared VOLUME permissions into its ephemeral bind mount.
+# A plain empty /tmp mount is root:0755 and the node user cannot write inputs.
+RUN chmod 1777 /tmp
+VOLUME ["/tmp"]
 USER node
 WORKDIR /app
 HEALTHCHECK NONE
