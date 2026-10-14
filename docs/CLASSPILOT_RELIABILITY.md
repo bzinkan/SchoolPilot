@@ -340,12 +340,21 @@ not enforce simultaneously. After these devices pass capture, commands,
 sleep/wake, Wi-Fi recovery and isolation, run one full 40-student period, then
 the five-school-day pilot required above.
 
-Before a managed pilot starts, the operator must identify the loaner devices,
-test user/device OUs and the administrator applying their policies. Bind the
-reviewed extension ZIP hash, installed version and package ID to the exact
-passing backend/web capacity candidate. Check the live Store listing and any
-pending submission again before a separately authorized successor upload.
-Store publication alone does not establish the installed artifact.
+A managed pilot may use a designated classroom at the operator's existing
+pilot school when separate loaner devices and test OUs are unavailable. The
+operator has selected their own classroom; the classroom period and exact
+session remain pending. Keep synthetic capacity traffic in isolated staging.
+Use ordinary authorized classroom traffic for live acceptance, starting with
+5-10 awake devices before a complete classroom period. Never copy live school
+records or device bindings into staging.
+
+Before that pilot starts, identify the exact classroom/session and period,
+verify the teacher's server-enforced command authority, and bind the reviewed
+extension ZIP hash, installed version and package ID to the passing backend/web
+capacity candidate. Check the live Store listing and any pending submission
+again before a separately reviewed successor upload. Store publication alone
+does not establish the installed artifact. A separate test extension ID still
+requires an administrator to apply the appropriate managed policies.
 
 Record these outcomes for each pilot stage:
 
@@ -362,6 +371,6 @@ Record these outcomes for each pilot stage:
   broader rollout. A privacy defect stops the pilot; repeated freshness,
   command or recovery failures require repair and fresh evidence.
 
-The test OUs, devices, installed candidate and five-day outcomes have not yet
-been supplied or verified. The isolated stack and local gates do not establish
-Chromebook pilot readiness while the capacity campaign is failing.
+The exact live session/period, installed candidate and five-day outcomes have
+not yet been supplied or verified. The isolated stack and local gates do not
+establish Chromebook pilot readiness while the capacity campaign is failing.
