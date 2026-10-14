@@ -703,15 +703,10 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
   assert.deepEqual(coverageMutationRequests, [], "Observe must not issue coverage mutations");
 }
 
-// One test drives every load state because the Vite server and the browser are
-// expensive to start; each scenario opens its own page inside that shared
-// setup, so the budget tracks the scenario COUNT. Measured locally: ~52s before
-// the first-paint/hysteresis scenario was added, ~71s after. CI hardware is
-// slower and hit the previous 120s ceiling, so the ceiling is raised rather
-// than the coverage dropped. If it times out again, budget for the scenario
-// being added or split the file — and measure before concluding the dashboard
-// itself got slower.
-test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 240_000 }, async () => {
+// Share the Vite server and browser across these independent load states.
+// Close each completed scenario's context so its reconciliation and recovery
+// timers do not keep running while later scenarios make their assertions.
+test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 240_000 }, async (t) => {
   const dashboardSource = readFileSync(
     path.join(APP_ROOT, "src/products/classpilot/pages/Dashboard.jsx"),
     "utf8",
@@ -740,11 +735,20 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
 
   let browser;
   const pages = [];
+  const openScenarioPage = async (name) => {
+    // Completed scenarios have independent browser contexts. Release their
+    // timers, recovery reads and retained screen state before starting another.
+    // Keep the shared browser/Vite startup and every existing UI assertion.
+    await pages.at(-1)?.close();
+    t.diagnostic(`Dashboard load-state scenario: ${name}`);
+    const page = await browser.newPage();
+    pages.push(page);
+    return page;
+  };
   try {
     browser = await chromium.launch({ headless: true });
 
-    const emptyPage = await browser.newPage();
-    pages.push(emptyPage);
+    const emptyPage = await openScenarioPage('emptyPage');
     const emptyAggregate = aggregateController({ school: success({ students: [] }) });
     const emptyHarness = await configureDashboard(emptyPage, { aggregate: emptyAggregate });
     await emptyPage.goto(`${baseURL}/classpilot`);
@@ -759,8 +763,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(await emptyPage.getByTestId("students-refresh-error").count(), 0);
     assert.deepEqual(emptyHarness.pageErrors, []);
 
-    const initialFailurePage = await browser.newPage();
-    pages.push(initialFailurePage);
+    const initialFailurePage = await openScenarioPage('initialFailurePage');
     const ownSession = teachingSession();
     const initialFailureAggregate = aggregateController({
       school: success([]),
@@ -807,8 +810,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.deepEqual(initialFailureHarness.commandPosts, []);
     assert.deepEqual(initialFailureHarness.pageErrors, []);
 
-    const cachedEmptyPage = await browser.newPage();
-    pages.push(cachedEmptyPage);
+    const cachedEmptyPage = await openScenarioPage('cachedEmptyPage');
     const cachedEmptyAggregate = aggregateController({ school: success([]), scoped: success([]) });
     const cachedEmptyHarness = await configureDashboard(cachedEmptyPage, {
       aggregate: cachedEmptyAggregate,
@@ -875,8 +877,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.deepEqual(cachedEmptyHarness.commandPosts, []);
     assert.deepEqual(cachedEmptyHarness.pageErrors, []);
 
-    const cachedStudentPage = await browser.newPage();
-    pages.push(cachedStudentPage);
+    const cachedStudentPage = await openScenarioPage('cachedStudentPage');
     const cachedStudentAggregate = aggregateController({ school: success([]), scoped: success([student()]) });
     const cachedStudentHarness = await configureDashboard(cachedStudentPage, {
       aggregate: cachedStudentAggregate,
@@ -897,8 +898,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.deepEqual(cachedStudentHarness.commandPosts, []);
     assert.deepEqual(cachedStudentHarness.pageErrors, []);
 
-    const staleSignOutPage = await browser.newPage();
-    pages.push(staleSignOutPage);
+    const staleSignOutPage = await openScenarioPage('staleSignOutPage');
     const staleObservedAt = new Date(Date.now() - 2 * 60_000).toISOString();
     const staleSignOutAggregate = aggregateController({
       school: success([]),
@@ -1022,8 +1022,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     assert.equal(staleSignOutHarness.commandPosts.length, 1, "a replacement binding must not receive a delayed sign-out");
     assert.deepEqual(staleSignOutHarness.pageErrors, []);
 
-    const persistencePage = await browser.newPage();
-    pages.push(persistencePage);
+    const persistencePage = await openScenarioPage('persistencePage');
     // This scenario tests same-authority cache reuse, not wall-clock expiry.
     // Its many UI interactions can outlast the 75-second successful-null
     // retention window on CI. Keep Date controlled while ordinary browser
@@ -1338,8 +1337,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await persistenceScreenshot.waitFor({ state: "hidden" });
     assert.deepEqual(persistenceHarness.pageErrors, []);
 
-    const detailsRevocationPage = await browser.newPage();
-    pages.push(detailsRevocationPage);
+    const detailsRevocationPage = await openScenarioPage('detailsRevocationPage');
     const detailsObservedAt = new Date(Date.now() - 500).toISOString();
     const detailsClassmate = student({
       studentId: SIGNAL_LOST_STUDENT_ID,
@@ -1539,8 +1537,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
     assert.deepEqual(detailsRevocationHarness.pageErrors, []);
 
-    const noAccessDetailsPage = await browser.newPage();
-    pages.push(noAccessDetailsPage);
+    const noAccessDetailsPage = await openScenarioPage('noAccessDetailsPage');
     const noAccessObservedAt = new Date(Date.now() - 500).toISOString();
     const noAccessClassmate = student({
       studentId: SIGNAL_LOST_STUDENT_ID,
@@ -1646,8 +1643,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       groupId: OBSERVED_GROUP_ID,
       teacherId: OTHER_TEACHER_ID,
     });
-    const observeTransitionPage = await browser.newPage();
-    pages.push(observeTransitionPage);
+    const observeTransitionPage = await openScenarioPage('observeTransitionPage');
     const transitionObservedAt = new Date(Date.now() - 1_000).toISOString();
     const observeTransitionAggregate = aggregateController({
       school: success([]),
@@ -1688,8 +1684,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
     assert.deepEqual(observeTransitionHarness.pageErrors, []);
 
-    const observePreviewPage = await browser.newPage();
-    pages.push(observePreviewPage);
+    const observePreviewPage = await openScenarioPage('observePreviewPage');
     const freshObservedAt = new Date(Date.now() - 1_000).toISOString();
     const observedStudent = student({
       lastSeenAt: freshObservedAt,
@@ -2101,8 +2096,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
     assert.deepEqual(observePreviewHarness.pageErrors, []);
 
-    const observePage = await browser.newPage();
-    pages.push(observePage);
+    const observePage = await openScenarioPage('observePage');
     const observeAggregate = aggregateController({
       school: success([]),
       scoped: failure({
@@ -2132,8 +2126,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await assertCommandEntryPointsUnavailable(observePage, observeHarness.commandPosts);
     assert.deepEqual(observeHarness.pageErrors, []);
 
-    const malformedPage = await browser.newPage();
-    pages.push(malformedPage);
+    const malformedPage = await openScenarioPage('malformedPage');
     const malformedAggregate = aggregateController({
       school: success([]),
       scoped: success({ students: null }),
@@ -2158,8 +2151,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await assertCommandEntryPointsUnavailable(malformedPage, malformedHarness.commandPosts);
     assert.deepEqual(malformedHarness.pageErrors, []);
 
-    const firstPaintPage = await browser.newPage();
-    pages.push(firstPaintPage);
+    const firstPaintPage = await openScenarioPage('firstPaintPage');
     // A stubbed IntersectionObserver reports nothing until the test drives it,
     // which is exactly the window in which the wall used to paint featureless
     // gray boxes and gate every viewport-scoped read on an empty near set.
