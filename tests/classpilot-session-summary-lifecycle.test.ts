@@ -494,6 +494,49 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     );
   });
 
+  it("starts a co-teacher's own manual class without replacing another teacher's shared class", async () => {
+    await setCentralRecipient(null);
+    const sharedGroup = await createClass({ name: "shared_class_before_co_teacher_start", roster: [studentOne] });
+    await inSchool(school.id, () => storage.addGroupTeacher(sharedGroup.id, secondTeacher.id));
+    const ownGroup = await createClass({ name: "co_teacher_independent_class", teacherId: secondTeacher.id, roster: [studentTwo] });
+    const replacementGroup = await createClass({ name: "co_teacher_owned_replacement", teacherId: secondTeacher.id, roster: [studentTwo] });
+    const sharedStart = await requestJson("POST", "/classpilot/teaching-sessions/start", { groupId: sharedGroup.id }, authFor(teacher));
+    assert.equal(sharedStart.status, 201);
+    const sharedSessionId = sharedStart.body.session.id;
+    const visibleBefore = await inSchool(school.id, () => storage.getActiveTeachingSessionForSchool(secondTeacher.id, school.id));
+    assert.equal(visibleBefore.id, sharedSessionId, "the co-teacher must really see the other owner's shared class before starting");
+
+    const ownStart = await inSchool(school.id, () => lifecycle.startManualClasspilotSession({
+      schoolId: school.id, teacherId: secondTeacher.id, groupId: ownGroup.id,
+    }));
+    assert.equal(ownStart.replacedSessionId, undefined, "shared visibility must not identify another owner's class as replaced");
+    assert.equal(ownStart.replacementFinalization, undefined);
+    const sharedAfterStart = await inSchool(school.id, () => storage.getTeachingSessionById(sharedSessionId));
+    assert.equal(sharedAfterStart.endTime, null);
+    assert.equal(sharedAfterStart.scheduledFinalizationReason, null);
+    assert.equal((await deliveryRows(sharedSessionId)).length, 0, "an unaffected class must not queue a finalization email");
+    assert.equal(await inSchool(school.id, () => storage.getClasspilotSessionReportBySession(school.id, sharedSessionId)), undefined);
+
+    const ownReplacement = await inSchool(school.id, () => lifecycle.startManualClasspilotSession({
+      schoolId: school.id, teacherId: secondTeacher.id, groupId: replacementGroup.id,
+    }));
+    assert.equal(ownReplacement.replacedSessionId, ownStart.session.id);
+    assert.equal(ownReplacement.replacementFinalization.session.id, ownStart.session.id);
+    const ownAfterReplacement = await inSchool(school.id, () => storage.getTeachingSessionById(ownStart.session.id));
+    assert.ok(ownAfterReplacement.endTime);
+    assert.equal(ownAfterReplacement.scheduledFinalizationReason, "replacement_start");
+    assert.equal((await inSchool(school.id, () => storage.getTeachingSessionById(sharedSessionId))).endTime, null);
+
+    const sharedRead = await requestJson("GET", `/classpilot/teaching-sessions/${sharedSessionId}`, undefined, authFor(secondTeacher));
+    assert.equal(sharedRead.status, 200, "explicit co-teacher read permission is preserved");
+    const sharedSettings = await requestJson("PUT", `/classpilot/teaching-sessions/${sharedSessionId}/settings`, { raiseHandEnabled: false }, authFor(secondTeacher));
+    assert.equal(sharedSettings.status, 200, "explicit co-teacher settings permission is preserved");
+    const explicitEnd = await requestJson("POST", `/classpilot/teaching-sessions/${sharedSessionId}/end`, {}, authFor(secondTeacher));
+    assert.equal(explicitEnd.status, 200, "an explicit authorized co-teacher End remains allowed");
+    assert.equal((await inSchool(school.id, () => storage.getTeachingSessionById(ownReplacement.session.id))).endTime, null);
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({ schoolId: school.id, sessionId: ownReplacement.session.id, reason: "manual_end" }));
+  });
+
   it("blocks automatic occurrences, coverage, and email on a closed weekday even with teacher presence and a home heartbeat", async () => {
     await setCentralRecipient(centralRecipient.id);
     const scheduledDate = "2031-07-01";

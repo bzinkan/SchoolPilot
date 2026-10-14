@@ -275,11 +275,16 @@ export async function startManualClasspilotSession(options: {
     options.schoolId,
     options.teacherId,
     async (lockedDb) => {
-      const existing = await getActiveTeachingSessionForSchool(
+      const visibleSession = await getActiveTeachingSessionForSchool(
         options.teacherId,
         options.schoolId,
         lockedDb
       );
+      // Shared-session visibility permits explicit co-teacher actions; starting
+      // a different class automatically replaces only the initiating owner's class.
+      const existing = visibleSession?.teacherId === options.teacherId
+        ? visibleSession
+        : undefined;
       const finalized = existing
         ? await finalizeClasspilotSession({
             schoolId: options.schoolId,
