@@ -121,27 +121,50 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
     if (attempts !== 1 || region !== 'us-east-1') throw Error('Measurement SDK must use one attempt in the exact region');
     return client.send(command, { abortSignal: signal });
   };
+  let startupWaitingFatal = null;
+  const startupWaitingRead = name => role === 'producer' && Boolean(startAt)
+    && !startupAccepted && name === 'measurement-control.json';
+  const bodyDeadline = () => Object.assign(Error('Measurement body deadline fenced'), { measurementReadCode: 'deadline' });
   const reader = new BoundedControlReader(async ({ name }, { signal }) => {
     counters.readAttempts += 1;
-    const side = role === 'controller' ? 'results' : 'inputs';
-    const response = await checkedSend(new GetObjectCommand({ Bucket: context.bucket, ExpectedBucketOwner: context.account,
-      Key: prefix + '/' + side + '/' + name }), signal);
-    const body = response.Body, chunks = []; let length = 0;
-    if (!body || typeof body[Symbol.asyncIterator] !== 'function') throw Error('Complete streaming measurement body required');
-    const abortBody = () => { try { body.destroy?.(); } catch { /* The caller deadline remains authoritative. */ } };
-    signal.addEventListener('abort', abortBody, { once: true });
-    if (signal.aborted) abortBody();
+    const startupRead = startupWaitingRead(name);
     try {
-      for await (const chunk of body) {
-        if (signal.aborted) throw Error('Measurement body deadline fenced');
-        length += chunk.length;
-        if (length > fileLimit(name)) { abortBody(); throw Error('Oversized measurement body'); }
-        chunks.push(chunk);
-      }
-      if (signal.aborted) throw Error('Measurement body deadline fenced');
-      counters.bytesRead += length;
-      return Buffer.concat(chunks);
-    } finally { signal.removeEventListener('abort', abortBody); }
+      const side = role === 'controller' ? 'results' : 'inputs';
+      const response = await checkedSend(new GetObjectCommand({ Bucket: context.bucket, ExpectedBucketOwner: context.account,
+        Key: prefix + '/' + side + '/' + name }), signal);
+      const body = response.Body, chunks = []; let length = 0;
+      if (!body || typeof body[Symbol.asyncIterator] !== 'function') throw Error('Complete streaming measurement body required');
+      const abortBody = () => { try { body.destroy?.(); } catch { /* Raw settlement still owns its guard. */ } };
+      signal.addEventListener('abort', abortBody, { once: true });
+      if (signal.aborted) abortBody();
+      try {
+        for await (const chunk of body) {
+          if (signal.aborted && !startupRead) throw bodyDeadline();
+          length += chunk.length;
+          if (length > fileLimit(name)) { abortBody(); throw Error('Oversized measurement body'); }
+          chunks.push(chunk);
+        }
+        if (signal.aborted && !startupRead) throw bodyDeadline();
+        const bytes = Buffer.concat(chunks);
+        // Startup validation happens before releasing the raw GET guard. A
+        // late authoritative denial or known invalid body cannot be hidden by
+        // an earlier caller timeout and followed by a successful retry.
+        if (startupRead) {
+          const value = validateMeasurementWaiting(JSON.parse(bytes.toString('utf8')), context, { startAt, mode });
+          if (waiting && JSON.stringify(waiting) !== JSON.stringify(value)) throw Error('Startup waiting replay refused');
+          waiting = waiting || Object.freeze({ ...value });
+        }
+        if (signal.aborted) throw bodyDeadline();
+        counters.bytesRead += length;
+        return bytes;
+      } finally { signal.removeEventListener('abort', abortBody); }
+    } catch (error) {
+      const denied = [403, 404].includes(error?.$metadata?.httpStatusCode) || ['NoSuchKey', 'AccessDenied'].includes(error?.name);
+      const failure = startupRead && signal.aborted && !denied && error?.code === 'ERR_STREAM_PREMATURE_CLOSE'
+        ? bodyDeadline() : error;
+      if (startupRead && !measurementOperationRetryable(failure)) startupWaitingFatal = failure;
+      throw failure;
+    }
   }, { timeoutMs: MEASUREMENT_LIMITS.readMs, maximumBytes: MEASUREMENT_LIMITS.bootstrapBytes });
   const writer = new BoundedControlReader(async ({ name, bytes, initial }, { signal }) => {
     counters.publishAttempts += 1;
@@ -156,6 +179,9 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
   return Object.freeze({
     async read(name, options) {
       admit('read', name);
+      if (startupWaitingRead(name) && (startupWaitingFatal || startupFailed)) {
+        throw startupWaitingFatal || Error('Unknown or failed startup is permanently fenced');
+      }
       // Signal expectation is checked before sending; malformed expected
       // nonces cannot cause a lookup or falsely accept an old result.
       if (name === 'measurement-started.json' || name === 'measurement-drained.json') {
@@ -191,6 +217,7 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
         if (value?.kind === 'classpilot-measurement-pending-v1' || name === 'measurement-ready.json') startupFailed = true;
         throw error;
       }
+      if (startAt && role === 'producer' && startupFailed) throw Error('Late startup publication remains fenced');
       if (value?.kind === 'classpilot-measurement-pending-v1') acceptedPending.add(name);
       if (name === 'measurement-ready.json') startupAccepted = true;
       return result;
@@ -198,6 +225,9 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
     summary: () => ({ role, mode, ...counters, startupAccepted, startupFailed, acceptedPending: acceptedPending.size,
       reader: { ...reader.counters }, publisher: { ...writer.counters },
       readInFlight: Boolean(reader.active), publicationInFlight: Boolean(writer.active) }),
+    // This logical fence never aborts or replays an uncertain mutation. The
+    // underlying publisher retains ownership until true transport settlement.
+    fenceStartup() { startupFailed = true; startupAccepted = false; acceptedPending.clear(); },
     close() { closed = true; client.destroy(); },
   });
 }
@@ -224,20 +254,71 @@ async function atMeasurementStage(stage, operation) {
 }
 
 export async function establishMeasurementStartup({ channel, expected, startAt, mode = 'workload',
-  now = Date.now, notify = () => {} }) {
-  const gate = new MeasurementStartupGate(expected, { startAt, mode, now });
-  const waiting = gate.acceptWaiting(await atMeasurementStage('waiting-read', () => channel.read('measurement-control.json')));
-  for (const name of ['started', 'drained']) {
-    await atMeasurementStage('pending-publish', () => channel.publish('measurement-' + name + '.json',
-      measurementPendingSignal(expected, waiting, name)));
+  now = Date.now, notify = () => {}, monotonicNow = () => performance.now(),
+  pause = milliseconds => new Promise(resolve_ => setTimeout(resolve_, milliseconds)) }) {
+  try {
+    const gate = new MeasurementStartupGate(expected, { startAt, mode, now });
+    const began = monotonicNow();
+    if (!Number.isFinite(began)) throw Error('Invalid startup monotonic clock');
+    const deadline = began + 8_000;
+    let previousMonotonic = began, fenced = false;
+    const refused = () => Object.assign(Error('Startup waiting read budget or start fence exceeded'), { measurementReadCode: 'deadline' });
+    const beforeStart = () => {
+      if (!(Number.isFinite(Date.parse(startAt)) && now() < Date.parse(startAt) - 1_000)) throw refused();
+    };
+    const remaining = () => {
+      const current = monotonicNow();
+      if (!Number.isFinite(current) || current < previousMonotonic) throw Error('Invalid startup monotonic clock');
+      previousMonotonic = current;
+      beforeStart();
+      if (fenced || current >= deadline) throw refused();
+      return deadline - current;
+    };
+    const recoverWaiting = async () => {
+      while (true) {
+        remaining();
+        try {
+          const value = await channel.read('measurement-control.json');
+          remaining();
+          return gate.acceptWaiting(value);
+        } catch (error) {
+          if (!measurementOperationRetryable(error)) throw error;
+          const budget = remaining();
+          // Busy polls cannot start another SDK operation while its retained
+          // raw header/body work is unsettled. Only this idempotent GET retries.
+          await pause(Math.min(MEASUREMENT_LIMITS.pollMs, budget));
+        }
+      }
+    };
+    const startupStage = (stage, operation) => atMeasurementStage(stage, async () => {
+      const budget = Math.min(remaining(), Date.parse(startAt) - 1_000 - now());
+      let timer;
+      try {
+        return await Promise.race([Promise.resolve().then(() => { remaining(); return operation(); }).then(value => { remaining(); return value; }),
+          new Promise((_, reject) => { timer = setTimeout(() => { fenced = true; reject(refused()); }, budget); })]);
+      } catch (error) {
+        fenced = true;
+        channel.fenceStartup?.();
+        throw error;
+      } finally { clearTimeout(timer); }
+    });
+    const waiting = await startupStage('waiting-read', recoverWaiting);
+    // The original eight-second startup budget also fences all single mutation
+    // attempts. A late accepted write is unknown to this caller, never replayed,
+    // and cannot lead to another write or a positive readiness notification.
+    for (const name of ['started', 'drained']) {
+      await startupStage('pending-publish', () => channel.publish('measurement-' + name + '.json',
+        measurementPendingSignal(expected, waiting, name)));
+    }
+    const ready = measurementReadySignal(expected, waiting, new Date(now()).toISOString());
+    await startupStage('ready-publish', () => channel.publish('measurement-ready.json', ready));
+    gate.markReady();
+    notify(ready);
+    return gate;
+  } catch (error) {
+    channel?.fenceStartup?.();
+    throw error;
   }
-  const ready = measurementReadySignal(expected, waiting, new Date(now()).toISOString());
-  await atMeasurementStage('ready-publish', () => channel.publish('measurement-ready.json', ready));
-  gate.markReady();
-  // Only accepted writes of both pending outputs and Ready permit this log.
-  // The launcher observes it before the controller reads any result key.
-  notify(ready);
-  return gate;
 }
 
 

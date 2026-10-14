@@ -202,3 +202,234 @@ for (const [label, denied] of [['HTTP403', { $metadata: { httpStatusCode: 403 } 
       assert.equal(measurementOperationRetryable({ ...soft, ...denied }), false);
     });
 }
+
+for (const mode of ['workload', 'channel-preflight']) test('startup-only cold headers recover with retained singleflight: ' + mode, async () => {
+  const notices = [], w = waiting(mode); let gets = 0, raw = 0, maximum = 0;
+  const { channel, sdk } = producer(async command => {
+    if (command.constructor.name !== 'GetObjectCommand') return {};
+    gets += 1; raw += 1; maximum = Math.max(maximum, raw);
+    try { if (gets === 1) await delay(320); return objectBody(w); }
+    finally { raw -= 1; }
+  }, mode);
+  try {
+    const gate = await establishMeasurementStartup({ channel, expected, startAt, mode, notify: value => notices.push(value) });
+    assert.equal(gate.ready, true); assert.equal(notices.length, 1); assert.equal(gets, 2); assert.equal(maximum, 1);
+    assert.equal(sdk.calls.filter(call => call.method === 'PUT').length, 3);
+    assert.equal(channel.summary().reader.timeouts, 1); assert.equal(channel.summary().reader.attempts, 2);
+    assert.equal(channel.summary().reader.lateSettlements, 1);
+  } finally { channel.close(); }
+});
+test('startup ignored body cancellation holds raw guard through true EOF, late valid body earns no readiness', async () => {
+  const bodyDone = deferred(), entered = deferred(), w = waiting('workload'), bytes = Buffer.from(JSON.stringify(w));
+  let gets = 0; const notices = [];
+  const { channel, sdk } = producer(command => {
+    if (command.constructor.name !== 'GetObjectCommand') return {};
+    gets += 1;
+    return gets === 1 ? { Body: { destroy() {}, async *[Symbol.asyncIterator]() {
+      entered.resolve(); yield bytes.subarray(0, 17); await bodyDone.promise; yield bytes.subarray(17);
+    } } } : objectBody(w);
+  });
+  const run = establishMeasurementStartup({ channel, expected, startAt, notify: value => notices.push(value) });
+  try {
+    await entered.promise; await delay(300);
+    assert.equal(gets, 1); assert.equal(channel.summary().readInFlight, true); assert.equal(notices.length, 0);
+    assert.equal(sdk.calls.filter(call => call.method === 'PUT').length, 0);
+    bodyDone.resolve(); const gate = await run;
+    assert.equal(gate.ready, true); assert.equal(gets, 2); assert.equal(notices.length, 1);
+    assert.equal(channel.summary().reader.lateSettlements, 1); assert.equal(channel.summary().readInFlight, false);
+  } finally { bodyDone.resolve(); channel.close(); await run.catch(() => {}); }
+});
+for (const denied of [
+  { $metadata: { httpStatusCode: 403 }, name: 'AbortError' },
+  { $metadata: { httpStatusCode: 404 }, measurementReadCode: 'deadline' },
+  { name: 'AccessDenied' }, { name: 'NoSuchKey' },
+]) test('late authoritative denial defeats startup retry: ' + JSON.stringify(denied), async () => {
+  const notices = []; let gets = 0;
+  const { channel, sdk } = producer(async command => {
+    assert.equal(command.constructor.name, 'GetObjectCommand'); gets += 1; await delay(320);
+    throw Object.assign(Error('private values must not enter diagnostics'), denied);
+  });
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, notify: value => notices.push(value) }),
+      error => error.measurementStage === 'waiting-read' && !measurementOperationRetryable(error));
+    assert.equal(gets, 1); assert.equal(notices.length, 0); assert.equal(sdk.calls.length, 1);
+    assert.equal(channel.summary().readInFlight, false);
+  } finally { channel.close(); }
+});
+for (const invalid of ['malformed', 'foreign', 'expired']) test('known late ' + invalid + ' waiting body permanently defeats retry', async () => {
+  const done = deferred(), bytes = Buffer.from(invalid === 'malformed' ? '{bad-json' : JSON.stringify({ ...waiting('workload'),
+    ...(invalid === 'foreign' ? { sourceArtifactSha256: 'f'.repeat(64) } : { expiresAt: new Date(base - 1).toISOString() }) }));
+  const notices = []; let gets = 0;
+  const { channel, sdk } = producer(command => {
+    assert.equal(command.constructor.name, 'GetObjectCommand'); gets += 1;
+    return { Body: { destroy() {}, async *[Symbol.asyncIterator]() { await done.promise; yield bytes; } } };
+  });
+  const run = establishMeasurementStartup({ channel, expected, startAt, notify: value => notices.push(value) });
+  try {
+    await delay(300); assert.equal(channel.summary().readInFlight, true); assert.equal(gets, 1);
+    done.resolve(); await assert.rejects(run, error => error.measurementStage === 'waiting-read' && !measurementOperationRetryable(error));
+    assert.equal(gets, 1); assert.equal(notices.length, 0); assert.equal(sdk.calls.length, 1);
+    assert.equal(channel.summary().readInFlight, false);
+  } finally { done.resolve(); channel.close(); await run.catch(() => {}); }
+});
+test('ignored headers consume only the original eight-second monotonic startup budget', async () => {
+  const late = deferred(), notices = []; let clock = 0;
+  const { channel, sdk } = producer(() => late.promise);
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, monotonicNow: () => clock,
+      pause: async milliseconds => { assert(milliseconds <= 100); clock += 1000; }, notify: value => notices.push(value) }),
+      error => error.measurementStage === 'waiting-read' && error.measurementReadCode === 'deadline');
+    assert.equal(clock, 8000); assert.equal(sdk.calls.length, 1); assert.equal(channel.summary().readInFlight, true);
+    assert.equal(channel.summary().reader.timeouts, 1); assert.equal(notices.length, 0);
+    late.resolve(objectBody(waiting('workload'))); await delay(0);
+    assert.equal(channel.summary().readInFlight, false); assert.equal(channel.summary().reader.lateSettlements, 1);
+    assert.equal(sdk.calls.length, 1); assert.equal(notices.length, 0);
+  } finally { late.resolve(objectBody(waiting('workload'))); channel.close(); }
+});
+test('eight-second monotonic budget includes successful waiting and all publications', async () => {
+  const notices = []; let clock = 0, gets = 0, puts = 0;
+  const { channel, sdk } = producer(command => {
+    if (command.constructor.name === 'GetObjectCommand') { gets += 1; clock = 7900; return objectBody(waiting('workload')); }
+    puts += 1; clock = 8100; return {};
+  });
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, monotonicNow: () => clock,
+      notify: value => notices.push(value) }), error => error.measurementStage === 'pending-publish');
+    assert.equal(gets, 1); assert.equal(puts, 1); assert.equal(sdk.calls.length, 2); assert.equal(notices.length, 0);
+  } finally { channel.close(); }
+});
+test('prestart fence denies before first GET and denies changed expiry after read', async () => {
+  const { channel, sdk } = producer(command => command.constructor.name === 'GetObjectCommand' ? objectBody(waiting('workload')) : {});
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, now: () => Date.parse(startAt) - 500 }));
+    assert.equal(sdk.calls.length, 0);
+    let wall = base;
+    const wrapped = { read: async (...args) => { const value = await channel.read(...args); wall = Date.parse(startAt); return value; },
+      publish: (...args) => channel.publish(...args) };
+    await assert.rejects(establishMeasurementStartup({ channel: wrapped, expected, startAt, now: () => wall }));
+    assert.equal(sdk.calls.filter(call => call.method === 'PUT').length, 0);
+  } finally { channel.close(); }
+});
+test('startup mutation failure is never retried even when its error is read-retryable', async () => {
+  const notices = [];
+  const { channel, sdk } = producer(command => command.constructor.name === 'GetObjectCommand' ? objectBody(waiting('workload'))
+    : Promise.reject(Object.assign(Error('unknown PUT'), { name: 'AbortError' })));
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, notify: value => notices.push(value) }));
+    assert.equal(sdk.calls.length, 2); assert.equal(channel.summary().startupFailed, true); assert.equal(notices.length, 0);
+  } finally { channel.close(); }
+});
+test('startup refuses invalid or backward monotonic clocks without SDK work', async () => {
+  const { channel, sdk } = producer(() => objectBody(waiting('workload')));
+  try {
+    for (const value of [NaN, Infinity, -Infinity]) await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, monotonicNow: () => value }));
+    let first = true;
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, monotonicNow: () => first ? (first = false, 10) : 9 }));
+    assert.equal(sdk.calls.length, 0);
+  } finally { channel.close(); }
+});
+
+test('initial NaN followed by finite monotonic time refuses before any SDK operation', async () => {
+  const notices = []; let samples = 0;
+  const { channel, sdk } = producer(() => objectBody(waiting('workload')));
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt,
+      monotonicNow: () => ++samples === 1 ? NaN : 0, notify: value => notices.push(value) }), /monotonic/);
+    assert.equal(samples, 1); assert.equal(sdk.calls.length, 0); assert.equal(notices.length, 0);
+  } finally { channel.close(); }
+});
+
+for (const fence of ['monotonic', 'prestart']) test('queued startup publication rechecks ' + fence + ' before dispatch', async () => {
+  const notices = []; let clock = 0, wall = base, gets = 0, puts = 0, samples = 0, fenced = false;
+  const channel = {
+    read: async () => { gets += 1; return waiting('workload'); },
+    publish: async () => { puts += 1; return {}; },
+    fenceStartup: () => { fenced = true; },
+  };
+  // The seventh sample reserves the first publication's budget. Advance the
+  // virtual clock in the next microtask, ahead of its deferred dispatch. This
+  // models suspension between admission and actual mutation invocation.
+  await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, now: () => wall,
+    monotonicNow: () => {
+      samples += 1;
+      if (samples === 7) queueMicrotask(() => {
+        if (fence === 'monotonic') clock = 8000;
+        else wall = Date.parse(startAt);
+      });
+      return clock;
+    }, notify: value => notices.push(value) }), error => error.measurementStage === 'pending-publish');
+  assert.equal(gets, 1); assert.equal(puts, 0); assert.equal(notices.length, 0); assert.equal(fenced, true);
+});
+
+for (const target of ['started', 'ready']) test('total-budget unknown ' + target + ' PUT permanently fences late acceptance and every startup retry', async () => {
+  const late = deferred(), entered = deferred(), notices = []; let clock = 0;
+  const w = waiting('workload');
+  const { channel, sdk } = producer(command => {
+    if (command.constructor.name === 'GetObjectCommand') { clock = target === 'started' ? 7900 : 0; return objectBody(w); }
+    if (!command.input.Key.endsWith('/measurement-' + target + '.json')) {
+      if (target === 'ready' && command.input.Key.endsWith('/measurement-drained.json')) clock = 7900;
+      return {};
+    }
+    entered.resolve(); return late.promise;
+  });
+  const run = establishMeasurementStartup({ channel, expected, startAt, monotonicNow: () => clock,
+    notify: value => notices.push(value) });
+  try {
+    await entered.promise;
+    await assert.rejects(run, error => error.measurementStage === (target === 'ready' ? 'ready-publish' : 'pending-publish'));
+    assert.equal(channel.summary().startupFailed, true); assert.equal(channel.summary().startupAccepted, false);
+    assert.equal(channel.summary().publicationInFlight, true); assert.equal(channel.summary().acceptedPending, 0);
+    const calls = sdk.calls.length;
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt }));
+    await assert.rejects(channel.publish('measurement-drained.json', measurementPendingSignal(expected, w, 'drained')));
+    await assert.rejects(channel.publish('measurement-ready.json', measurementReadySignal(expected, w)));
+    assert.equal(sdk.calls.length, calls);
+    late.resolve({}); await delay(10);
+    assert.equal(channel.summary().publicationInFlight, false);
+    assert.equal(channel.summary().startupAccepted, false); assert.equal(channel.summary().acceptedPending, 0);
+    assert.equal(channel.summary().startupFailed, true); assert.equal(notices.length, 0);
+    await assert.rejects(channel.publish('measurement-drained.json', measurementPendingSignal(expected, w, 'drained')));
+    assert.equal(sdk.calls.length, calls);
+  } finally { late.resolve({}); channel.close(); await run.catch(() => {}); }
+});
+
+test('expiry between accepted pending writes and Ready fences every later startup operation', async () => {
+  const w = waiting('workload'), notices = []; let afterDrained = false, samplesAfterDrained = 0;
+  const { channel, sdk } = producer(command => command.constructor.name === 'GetObjectCommand' ? objectBody(w) : {});
+  const wrapped = {
+    read: (...args) => channel.read(...args), fenceStartup: () => channel.fenceStartup(),
+    publish: async (name, ...args) => {
+      const value = await channel.publish(name, ...args);
+      if (name === 'measurement-drained.json') afterDrained = true;
+      return value;
+    },
+  };
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel: wrapped, expected, startAt,
+      monotonicNow: () => afterDrained && ++samplesAfterDrained >= 2 ? 8000 : 0,
+      notify: value => notices.push(value) }));
+    assert.equal(sdk.calls.length, 3); assert.equal(notices.length, 0);
+    assert.equal(channel.summary().startupFailed, true); assert.equal(channel.summary().startupAccepted, false);
+    assert.equal(channel.summary().acceptedPending, 0);
+    await assert.rejects(channel.publish('measurement-ready.json', measurementReadySignal(expected, w)));
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt }));
+    assert.equal(sdk.calls.length, 3);
+  } finally { channel.close(); }
+});
+
+test('late valid waiting identity stays immutable when a later GET changes its nonce', async () => {
+  const w = waiting('workload'), notices = []; let gets = 0;
+  const { channel, sdk } = producer(async command => {
+    assert.equal(command.constructor.name, 'GetObjectCommand'); gets += 1;
+    if (gets === 1) return { Body: { destroy() {}, async *[Symbol.asyncIterator]() {
+      await delay(320); yield Buffer.from(JSON.stringify(w));
+    } } };
+    return objectBody({ ...w, nonce: 'c'.repeat(48) });
+  });
+  try {
+    await assert.rejects(establishMeasurementStartup({ channel, expected, startAt, notify: value => notices.push(value) }),
+      error => error.measurementStage === 'waiting-read' && !measurementOperationRetryable(error));
+    assert.equal(gets, 2); assert.equal(sdk.calls.length, 2); assert.equal(notices.length, 0);
+    assert.equal(channel.summary().startupFailed, true); assert.equal(channel.summary().reader.lateSettlements, 1);
+  } finally { channel.close(); }
+});

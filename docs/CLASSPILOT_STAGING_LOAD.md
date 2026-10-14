@@ -243,6 +243,15 @@ The browser verifies the existing ready body against its local waiting file
 before the start barrier. Pass that file with `--measurement-waiting`; preserve
 the separate fleet `ready.json` and browser `rendered-ready.json` checks.
 
+Both producer modes allow startup-only retries of the idempotent waiting GET
+within one eight-second monotonic budget, ending at least one second before the
+shared start. Each read still has a 250ms header/body caller deadline and retains
+its singleflight guard until the underlying operation actually settles. A late
+valid read earns no readiness; a late denial or invalid body permanently refuses
+startup. The same total budget covers the single 500ms publication attempts.
+No unknown pending or Ready write is retried, and late write completion cannot
+restore readiness after the startup fence.
+
 Waiting and pending states grant no capture freshness, start/drain success or
 command authority. The controller creates the first unpredictable timed pulse
 after the shared start; its nonce differs from the startup nonce. Malformed,

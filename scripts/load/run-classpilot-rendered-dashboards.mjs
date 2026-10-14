@@ -22,7 +22,7 @@ export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
   "remote-generator-manifest.mjs": "b0a02f6b8c8d81aac654fbea90f9fb7d7a6231302a589e2703df8a1ef097c2be",
   "rendered-http-metrics.mjs": "0d8870681081ab48675bc20ef9b2a51d4101ffe92dbbf38ba5dfbb9314f642dc",
   "run-classpilot-reliability.mjs": "db9981c531314e772fc2875030aaed52fd16c67254813d1008d942b2bafb1f95",
-  "run-classpilot-remote-generator.mjs": "a70cd4eb618064ebb8946f63610ec9332a36542c21dfe2296241e243310a663c",
+  "run-classpilot-remote-generator.mjs": "b5d4a7e526e127208aed670dfcae87e70aa12100fa3568b7053b44b930f649d7",
   "session-cookie.mjs": "8c5d40d5217a05a08777cb53d3f27b43851b7189a9af631d0badb9c03f4bc8be",
   "staging-start-barrier.mjs": "6c117f54ea8dbf4305e068ec52090f7729748041382ad632dc0cfa380e8814a2",
   "tile-poll-accounting.mjs": "9845f899f5cac81737a165a955afc7fb154985255c63b225c582c5ccd8d6e808"
