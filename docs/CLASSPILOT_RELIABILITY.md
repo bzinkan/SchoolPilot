@@ -43,6 +43,14 @@ capability rollout is changed by this release.
   End Class takes the canonical school/staff lifecycle lock before its session
   and student locks, preventing the preexisting promotion/coverage deadlock.
   Closing retained or disabled-school sessions remains permitted.
+- A URL-only `open-tab` for up to 40 students shares entitlement, binding and
+  current-owner reads under sorted authority locks. Plain commands preserve
+  their existing optional revision semantics; an explicitly frozen revision
+  must match. A fresh database-clock projection and a monotonic deadline fence
+  every synchronous send, including school/license expiry and an approaching
+  supervision handoff. Rich commands retain their existing delivery path.
+  Transport envelopes are copied and frozen before post-commit publication;
+  no command replay, deadline extension or database pool increase is added.
 - Publication uses a dedicated connection with no offline backlog: 100 ms
   readiness, 250 ms ordinary / 500 ms ordered caller budgets, 32 raw operations
   and a two-second watchdog. The circuit opens after three caller timeouts in
@@ -316,6 +324,21 @@ histograms, resource metrics and exact artifacts remain outside the repository.
 These synthetic JPEGs measure transport and authorization; managed-device
 capture/encoding and actual thumbnail rendering cost remain separate gates.
 
+The second full ten-minute 40-device diagnostic also **failed acceptance**.
+It had no HTTP failures, all 760 device command receipts/completions met their
+two/five-second limits, and 4,320 decoded screenshots had no wrong binding or
+class. Teacher command HTTP p95 still reached 1,618 ms, and the rendered
+dashboard command response took 2,275 ms. The URL-only delivery repair reduces
+the measured native 40-target transaction from 525 SQL statements to 13;
+fresh staging performance evidence is still required.
+
+Both diagnostics used v1 screenshot fixtures whose repeated bytes compressed
+unrealistically. The v2 workload uses independent per-device 40 KiB fixtures
+and requires gzip/Brotli cohort payloads to retain at least 95% of their decoded
+size. The previous runs do not establish v2 capacity. A newly built exact
+candidate must pass the complete paired 40-device profile before 500 devices,
+then 500 before 800; no profile has passed acceptance yet.
+
 Read-only AWS Price List queries on 2026-10-13 give an estimated **base** of
 $0.213/hour for one API task and $0.322/hour for three API tasks (about $5.12
 and $7.73 per full day). These include the worker, database, Redis, prorated
@@ -352,8 +375,8 @@ the five-school-day pilot required above.
 
 A managed pilot may use a designated classroom at the operator's existing
 pilot school when separate loaner devices and test OUs are unavailable. The
-operator has selected their own classroom; the classroom period and exact
-session remain pending. Keep synthetic capacity traffic in isolated staging.
+operator has selected two periods in their own classroom; exact session
+bindings and times remain pending. Keep synthetic capacity traffic in isolated staging.
 Use ordinary authorized classroom traffic for live acceptance, starting with
 5-10 awake devices before a complete classroom period. Never copy live school
 records or device bindings into staging.
@@ -368,8 +391,8 @@ requires an administrator to apply the appropriate managed policies.
 
 Record these outcomes for each pilot stage:
 
-- On 5-10 devices, verify the staging `serverUrl` policy and synthetic school
-  binding, one active enforcement extension, live screens, navigation and
+- On 5-10 devices, verify that the `serverUrl` policy and school binding match
+  the selected pilot environment, one active enforcement extension, live screens, navigation and
   received/completed command times. Include an exact student transfer and a
   second-school denial probe.
 - Exercise sleep/wake, Wi-Fi loss/restoration and a silent connection failure.
