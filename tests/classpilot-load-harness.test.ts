@@ -34,6 +34,30 @@ let commandBodiesPath = "";
 let teacherAuthPath = "";
 let controlPreloadPath = "";
 
+// Production staff sockets receive classroom frames only after this explicit,
+// correlated subscription. Authentication alone must not make the mock a relay.
+const subscribedTeacherSessions = new WeakMap<WebSocket, string>();
+function createMockWebSocketServer(options: ConstructorParameters<typeof WebSocketServer>[0]) {
+  const server = new WebSocketServer(options);
+  server.on("connection", socket => {
+    let role = "";
+    socket.on("message", raw => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === "auth") role = message.role;
+      if (message.type !== "subscribe-session") return;
+      assert.equal(role, "teacher");
+      assert.equal(typeof message.teachingSessionId, "string");
+      assert.ok(message.teachingSessionId.length > 0);
+      assert.match(message.requestId, /^[A-Za-z0-9._-]{1,128}$/);
+      subscribedTeacherSessions.set(socket, message.teachingSessionId);
+      socket.send(JSON.stringify({ type: "session-subscription-success",
+        teachingSessionId: message.teachingSessionId, sessionId: message.teachingSessionId,
+        requestId: message.requestId }));
+    });
+  });
+  return server;
+}
+
 describe("staggered tile poll accounting", () => {
   it("models the observed deadline-truncated final wave without identifiers", () => {
     const counts = Array.from({ length: 20 }, (_value, index) => index < 10 ? 59 : 58);
@@ -712,7 +736,7 @@ if (signalMarker) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
       socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -790,7 +814,7 @@ if (signalMarker) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
       socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -1376,7 +1400,7 @@ if (signalMarker) {
       }
       sendJson(200, {});
     });
-    const webSockets = new WebSocketServer({
+    const webSockets = createMockWebSocketServer({
       server,
       path: "/ws",
       verifyClient: ({ req }) => {
@@ -1402,7 +1426,7 @@ if (signalMarker) {
         },
       });
       for (const teacher of teacherSockets) {
-        if (teacher.readyState === WebSocket.OPEN) teacher.send(payload);
+        if (teacher.readyState === WebSocket.OPEN && subscribedTeacherSessions.get(teacher) === state.teachingSessionId) teacher.send(payload);
       }
     };
     webSockets.on("connection", (socket) => {
@@ -1489,7 +1513,9 @@ if (signalMarker) {
         LOAD_TEST_ACCELERATED_RUNTIME_MS: "15000",
         LOAD_TEST_LATENCY_THRESHOLD_MULTIPLIER: "4",
         LOAD_TEST_PROGRESS_INTERVAL_MS: "500",
-        LOAD_TEST_REQUEST_STAGGER_MS: "6000",
+        // Model the production ordering: the final teacher subscribes before
+        // command warmup ends (5s after acceleration in this fixture).
+        LOAD_TEST_REQUEST_STAGGER_MS: "4500",
       }), 35_000);
       assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
       const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
@@ -1518,6 +1544,8 @@ if (signalMarker) {
       assert.equal(summary.counters.forcedReconnectCompleted, 510);
       assert.equal(summary.websocket.finalPreShutdown.deviceAuthenticated, 510);
       assert.equal(summary.websocket.finalPreShutdown.teacherAuthenticated, 20);
+      assert.equal(summary.websocket.finalPreShutdown.teacherSubscribed, 20);
+      assert.equal(summary.websocket.finalPreShutdown.teacherReady, 20);
       assert.equal(summary.websocket.finalPreShutdown.outstandingReconnects, 0);
       assert.equal(summary.counters.tenantIsolationProbePassed, 20);
       assert.ok(summary.teacherEndpoints["GET /api/students-aggregated"].p95 <= 1000);
@@ -1671,7 +1699,7 @@ if (signalMarker) {
         LOAD_TEST_ACCELERATED_RUNTIME_MS: "8000",
         LOAD_TEST_LATENCY_THRESHOLD_MULTIPLIER: "4",
         LOAD_TEST_PROGRESS_INTERVAL_MS: "500",
-        LOAD_TEST_REQUEST_STAGGER_MS: "3000",
+        LOAD_TEST_REQUEST_STAGGER_MS: "2000",
       }), 20_000);
       assert.notEqual(missingPongs.status, 0, missingPongs.stdout);
       const keepaliveSummary = JSON.parse(readFileSync(keepaliveSummaryPath, "utf8"));
@@ -1717,7 +1745,7 @@ if (signalMarker) {
         LOAD_TEST_ACCELERATED_RUNTIME_MS: "15000",
         LOAD_TEST_LATENCY_THRESHOLD_MULTIPLIER: "4",
         LOAD_TEST_PROGRESS_INTERVAL_MS: "500",
-        LOAD_TEST_REQUEST_STAGGER_MS: "6000",
+        LOAD_TEST_REQUEST_STAGGER_MS: "4500",
       }), 15_000);
       assert.notEqual(dashboardScopeViolation.status, 0, dashboardScopeViolation.stdout);
       const dashboardSummary = JSON.parse(readFileSync(dashboardSummaryPath, "utf8"));
@@ -1759,7 +1787,7 @@ if (signalMarker) {
         LOAD_TEST_ACCELERATED_RUNTIME_MS: "15000",
         LOAD_TEST_LATENCY_THRESHOLD_MULTIPLIER: "4",
         LOAD_TEST_PROGRESS_INTERVAL_MS: "500",
-        LOAD_TEST_REQUEST_STAGGER_MS: "6000",
+        LOAD_TEST_REQUEST_STAGGER_MS: "4500",
       }), 25_000);
       assert.notEqual(scopeViolation.status, 0, scopeViolation.stdout);
       const scopeSummary = JSON.parse(readFileSync(scopeSummaryPath, "utf8"));
@@ -1828,7 +1856,7 @@ if (signalMarker) {
         ? [{ studentId: "primary-student-1" }]
         : {}));
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => {
       socket.once("message", (raw) => {
         const auth = JSON.parse(raw.toString());
@@ -1940,7 +1968,7 @@ if (signalMarker) {
       }
       sendJson(200, {});
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.on("message", (raw) => {
       const message = JSON.parse(raw.toString());
       if (message.type === "auth") {
@@ -2023,7 +2051,7 @@ if (signalMarker) {
         response.end(JSON.stringify({ ok: true }));
       });
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket, request) => {
       remoteAddresses.push(String(request.socket.remoteAddress || ""));
       socket.once("message", () => {
@@ -2095,7 +2123,7 @@ if (signalMarker) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(screenshotGet ? JSON.stringify({ ok: true }) : "{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", () => {
       socket.send(JSON.stringify({ type: "auth-success", role: "student" }));
     }));
@@ -2333,7 +2361,7 @@ if (signalMarker) {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(isTarget ? scenario.invalidBody : {}));
       });
-      const webSockets = new WebSocketServer({ server, path: "/ws" });
+      const webSockets = createMockWebSocketServer({ server, path: "/ws" });
       webSockets.on("connection", (socket) => socket.once("message", (raw) => {
         const auth = JSON.parse(raw.toString());
         socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -2403,7 +2431,7 @@ if (signalMarker) {
       }
       else send();
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
       socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -2482,7 +2510,7 @@ if (signalMarker) {
         ? { command: { id: `overflow-command-${++commandSequence}` }, summary: { sent: 0 } }
         : {}));
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
       socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -2557,7 +2585,7 @@ if (signalMarker) {
         ? [{ studentId: "canary-student-isolation" }]
         : {}));
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
       socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -2624,7 +2652,7 @@ if (signalMarker) {
       response.writeHead(isCanaryProbe ? 404 : 200, { "content-type": "application/json" });
       response.end(isCanaryProbe ? JSON.stringify({ error: "Not found" }) : "{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
       socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -2697,7 +2725,7 @@ if (signalMarker) {
           ? { error: "probe result", deviceId: "probe-failure-canary-device" }
           : {}));
       });
-      const webSockets = new WebSocketServer({ server, path: "/ws" });
+      const webSockets = createMockWebSocketServer({ server, path: "/ws" });
       webSockets.on("connection", (socket) => socket.once("message", (raw) => {
         const auth = JSON.parse(raw.toString());
         socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
@@ -2835,7 +2863,7 @@ if (signalMarker) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     let studentConnections = 0;
     webSockets.on("connection", (socket) => socket.once("message", (raw) => {
       const auth = JSON.parse(raw.toString());
@@ -2882,7 +2910,7 @@ if (signalMarker) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => socket.once("message", () => {
       socket.send(JSON.stringify({ type: "auth-success", role: "student" }));
     }));
@@ -2984,7 +3012,7 @@ if (signalMarker) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end("{}");
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = createMockWebSocketServer({ server, path: "/ws" });
     webSockets.on("connection", (socket) => {
       socket.once("message", (raw) => {
         const auth = JSON.parse(raw.toString());

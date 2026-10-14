@@ -57,7 +57,9 @@ for (const primary of [40, 500, 800]) test(`reliability ${primary}-device dry ru
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliability HTTP/WS workload enforces exact authority and cleanup: ${defect}`, async () => {
+for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected", "subscription-silent", "subscription-late",
+  "subscription-stale", "subscription-foreign-session", "subscription-foreign-school",
+  "subscription-foreign-context", "subscription-closed", "auth-role", "auth-rejected", "auth-silent"] as const) test(`reliability HTTP/WS workload enforces exact authority and cleanup: ${defect}`, async () => {
   const root = mkdtempSync(join(tmpdir(), "classpilot-reliability-wire-"));
   const studentIds = Array.from({ length: 40 }, (_, i) => `student-${i}`);
   const devices = new Map<string, WebSocket>();
@@ -68,6 +70,12 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
     authority: { kind: "teaching_session", teachingSessionId: "session", revision: 1 } };
   let leases = 0, releases = 0, probes = 0, screenshots = 0, histories = 0, sequence = 0;
   const negativeTileProbes = new Set<string>();
+  const fixtureTimers = new Set<ReturnType<typeof setTimeout>>();
+  let lateAckSent = false;
+  const fixtureLater = (callback: () => void, delay: number) => {
+    const timer = setTimeout(() => { fixtureTimers.delete(timer); callback(); }, delay);
+    fixtureTimers.add(timer);
+  };
   let fixtureError: unknown;
   const server = createServer(async (request, response) => {
     const send = (status: number, value: unknown) => {
@@ -85,6 +93,11 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
       assert.ok(parsed.viewerInstanceId);
       if (request.method === "PUT") { leases++; assert.deepEqual(parsed.scope, { kind: "class" }); }
       else { assert.equal(request.method, "DELETE"); releases++; }
+      if (request.method === "DELETE" && defect === "subscription-late") {
+        // Preserve the socket during compensating cleanup so a real matching
+        // ACK can arrive after its deadline and must remain fenced out.
+        fixtureLater(() => send(200, { ok: true }), 1000); return;
+      }
       return send(200, { ok: true });
     }
     if (path === "/api/classpilot/device/heartbeat") return send(200, { screenshotPolicy: policy });
@@ -137,6 +150,7 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
   const sockets = new WebSocketServer({ server, path: "/ws" });
   sockets.on("connection", socket => {
     let deviceId = "";
+    let teacherAuthenticated = false;
     socket.on("message", raw => {
       const message = JSON.parse(raw.toString());
       if (message.type === "auth") {
@@ -144,8 +158,52 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
           deviceId = message.deviceId;
           devices.set(deviceId, socket);
           assert.equal(message.clientProtocolVersion, 3);
-        } else teachers.add(socket);
-        socket.send(JSON.stringify({ type: "auth-success", role: message.role, transportProbeV1: true, screenshotPolicy: policy }));
+        } else {
+          teacherAuthenticated = true;
+          if (defect === "auth-silent") return;
+          if (defect === "auth-rejected") { socket.send(JSON.stringify({ type: "auth-error" })); return; }
+        }
+        socket.send(JSON.stringify({ type: "auth-success", role: defect === "auth-role" && message.role === "teacher" ? "student" : message.role,
+          transportProbeV1: true, screenshotPolicy: policy }));
+      } else if (message.type === "subscribe-session") {
+        assert.equal(teacherAuthenticated, true);
+        assert.equal(message.teachingSessionId, "session");
+        assert.match(message.requestId, /^[A-Za-z0-9._-]{1,128}$/);
+        const success = { type: "session-subscription-success", teachingSessionId: "session", requestId: message.requestId };
+        if (defect === "subscription-silent") return;
+        if (defect === "subscription-late") {
+          fixtureLater(() => {
+            assert.equal(socket.readyState, WebSocket.OPEN, "The late ACK must actually reach the live transport");
+            socket.send(JSON.stringify(success));
+            lateAckSent = true;
+          }, 5500);
+          return;
+        }
+        if (defect === "subscription-closed") { socket.close(1012); return; }
+        if (defect === "subscription-rejected") {
+          socket.send(JSON.stringify({ type: "session-subscription-error", requestId: message.requestId })); return;
+        }
+        if (defect === "subscription-stale") {
+          socket.send(JSON.stringify({ ...success, requestId: "previous-connection-request" })); return;
+        }
+        if (defect === "subscription-foreign-session") {
+          socket.send(JSON.stringify({ ...success, teachingSessionId: "foreign-session" })); return;
+        }
+        if (defect === "subscription-foreign-school") {
+          socket.send(JSON.stringify({ ...success, schoolId: "foreign" })); return;
+        }
+        if (defect === "subscription-foreign-context") {
+          socket.send(JSON.stringify({ ...success, supervisionContextId: "foreign-context" })); return;
+        }
+        // Missing/stale correlation and an early command frame cannot establish
+        // authority or count as a server ACK. Only the exact ACK below is live.
+        socket.send(JSON.stringify({ ...success, requestId: "previous-connection-request" }));
+        socket.send(JSON.stringify({ type: success.type, teachingSessionId: "session" }));
+        socket.send(JSON.stringify({ type: "classpilot-command-update", commandId: "unsubscribed-command",
+          command: { id: "unsubscribed-command", teacherId: "teacher", teachingSessionId: "session", targets: [] } }));
+        socket.send(JSON.stringify({ ...success, sessionId: "session" }));
+        socket.send(JSON.stringify(success)); // Duplicate ACK must not create a second subscription.
+        teachers.add(socket);
       } else if (message.type === "transport-probe") {
         probes++;
         socket.send(JSON.stringify({ type: "transport-probe-reply", nonce: message.nonce }));
@@ -182,7 +240,9 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
     ...env, NODE_ENV: "test", LOAD_BASE_URL: origin, LOAD_TEST_ARTIFACT_ROOT: root, LOAD_DEVICE_MANIFEST: manifestPath,
     LOAD_TEACHER_AUTH_FILE: authPath, LOAD_COMMAND_BODIES_FILE: commandsPath, LOAD_RUN_ID: "reliability-wire",
     LOAD_EXTERNAL_PROGRESS_PATH: join(root, "progress.jsonl"), LOAD_EXTERNAL_SUMMARY_PATH: join(root, "summary.json"),
-    LOAD_TEST_ACCELERATED_RUNTIME_MS: "16000", LOAD_REQUEST_TIMEOUT_MS: "2000", LOAD_COMMAND_SETTLE_MS: "0",
+    // A cycle may be admitted at the exact accelerated duration boundary. Keep
+    // the existing bounded drain so it must meet the unchanged real 2s/5s SLOs.
+    LOAD_TEST_ACCELERATED_RUNTIME_MS: "16000", LOAD_REQUEST_TIMEOUT_MS: "2000", LOAD_COMMAND_SETTLE_MS: "1000",
   } });
   let stdout = "", stderr = "";
   child.stdout.on("data", chunk => { stdout += chunk; });
@@ -200,7 +260,34 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
       if (defect === "binding") {
         assert.ok(summary.counters.teacherResponseValidationErrors > 0);
         assert.ok(summary.counters.reliabilityScreenshotAgeUnavailable > 0);
-      } else assert.ok(summary.counters.crossSchoolHttpResponses > 0);
+      } else if (defect === "foreign-tile") assert.ok(summary.counters.crossSchoolHttpResponses > 0);
+      else {
+        assert.equal(summary.websocket.finalPreShutdown.teacherReady, 0);
+        assert.equal(summary.counters.teacherWsSubscribed, 0);
+        assert.equal(sequence, 0, "No commands may be submitted before an exact acknowledged subscription");
+        if (defect === "auth-role" || defect === "auth-rejected" || defect === "auth-silent") {
+          assert.equal(summary.counters.teacherWsSubscriptionRequests, 0);
+          assert.equal(summary.counters.teacherWsAuthErrors, 1);
+          assert.equal(summary.fatalGate.kind, defect === "auth-role" ? "teacher-auth-role-mismatch"
+            : defect === "auth-rejected" ? "teacher-auth-rejected" : "teacher-auth-timeout");
+        } else if (defect === "subscription-closed") {
+          assert.equal(summary.counters.teacherWsUnexpectedClosed, 1);
+          assert.equal(summary.fatalGate.kind, "teacher-connection-closed");
+        } else {
+          assert.equal(summary.counters.teacherWsSubscriptionRequests, 1);
+          assert.equal(summary.counters.teacherWsSubscriptionErrors, 1);
+          if (defect === "subscription-silent" || defect === "subscription-stale" || defect === "subscription-late") {
+            assert.equal(summary.counters.teacherWsSubscriptionTimeouts, 1);
+            assert.equal(summary.fatalGate.kind, "teacher-subscription-timeout");
+            assert.ok(summary.run.actualTrafficMilliseconds < 8000, "The five-second ACK deadline must fail before command warmup");
+            if (defect === "subscription-late") {
+              assert.equal(lateAckSent, true);
+              assert.equal(summary.counters.teacherWsSubscriptionIgnored, 1);
+            }
+          } else if (defect === "subscription-rejected") assert.equal(summary.fatalGate.kind, "teacher-subscription-rejected");
+          else assert.equal(summary.fatalGate.kind, "teacher-subscription-authority-mismatch");
+        }
+      }
       return;
     }
     assert.equal(status, 0, `${stderr}\n${stdout}`);
@@ -214,6 +301,14 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
     assert.equal(summary.counters.tenantIsolationProbePassed, 20);
     assert.equal(summary.commands.deliveryWithin2sPercent, 100);
     assert.equal(summary.counters.forcedReconnectCompleted, 50);
+    assert.equal(summary.counters.teacherWsSubscriptionRequests, 1);
+    assert.equal(summary.counters.teacherWsSubscribed, 1);
+    assert.equal(summary.counters.teacherWsSubscriptionIgnored, 3);
+    assert.equal(summary.counters.teacherWsSubscriptionErrors, 0);
+    assert.equal(summary.counters.commandUpdatesBeforeSubscription, 1);
+    assert.ok(summary.counters.commandOwnedUpdatesObserved > 0);
+    assert.equal(summary.websocket.finalPreShutdown.teacherSubscribed, 1);
+    assert.equal(summary.websocket.finalPreShutdown.teacherReady, 1);
     assert.equal(summary.browserPaintValidated, false);
     assert.equal(summary.certificationEligible, false);
     assert.equal(summary.fineEndpointLatency.version, "classpilot-endpoint-latency-1ms-v1");
@@ -234,6 +329,7 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
     assert.doesNotMatch(stdout, /private-cookie|private-csrf|private-signature/);
   } finally {
     clearTimeout(watchdog);
+    for (const timer of fixtureTimers) clearTimeout(timer);
     for (const client of sockets.clients) client.terminate();
     await new Promise<void>(resolve => sockets.close(() => resolve()));
     server.closeAllConnections();

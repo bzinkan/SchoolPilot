@@ -1409,6 +1409,12 @@ const counters = {
   forcedReconnectSkippedUnauthenticated: 0,
   teacherWsAuthenticated: 0,
   teacherWsAuthErrors: 0,
+  teacherWsSubscriptionRequests: 0,
+  teacherWsSubscribed: 0,
+  teacherWsSubscriptionErrors: 0,
+  teacherWsSubscriptionTimeouts: 0,
+  teacherWsSubscriptionIgnored: 0,
+  commandUpdatesBeforeSubscription: 0,
   teacherWsUnexpectedClosed: 0,
   teacherWsKeepalivePingsSent: 0,
   teacherWsKeepalivePongsReceived: 0,
@@ -1486,6 +1492,8 @@ function progressRecord(event, nowMonoNs = monotonicNowNs()) {
       crossSchoolCommandDeliveries: counters.crossSchoolCommandDeliveries,
       teacherAuthenticated: counters.teacherWsAuthenticated,
       teacherCurrentlyAuthenticated: teacherSocketStates.filter((state) => state.authenticated).length,
+      teacherCurrentlySubscribed: teacherSocketStates.filter((state) => state.subscribed).length,
+      teacherCurrentlyReady: teacherSocketStates.filter(teacherSocketReady).length,
       teacherUnexpectedCloses: counters.teacherWsUnexpectedClosed,
       keepalive: {
         devicePingsSent: counters.wsKeepalivePingsSent,
@@ -2328,7 +2336,17 @@ const teacherSocketStates = teacherAuthInputs.map((auth) => ({
   auth,
   socket: null,
   authenticated: false,
+  subscribed: false,
+  generation: 0,
+  authTimer: null,
+  subscriptionTimer: null,
+  subscriptionRequestId: null,
 }));
+
+function teacherSocketReady(state) {
+  return state.authenticated && state.socket?.readyState === WebSocket.OPEN
+    && (!state.auth.teachingSessionId || state.subscribed);
+}
 
 function startDeviceTraffic(state, index) {
   const heartbeatJitter = Math.floor((index / devices.length) * heartbeatIntervalMs);
@@ -2748,6 +2766,10 @@ function startCommandTraffic() {
 
   const sendCycle = async () => {
     if (stoppingTraffic || commandRequestInFlight) return;
+    if (teacherSocketStates.some(state => state.auth.teachingSessionId && !teacherSocketReady(state))) {
+      triggerFatalGate("teacher-websocket-subscription", { kind: "teacher-not-ready-for-command" });
+      return;
+    }
     commandRequestInFlight = true;
     try {
       if (!initialSweepComplete) {
@@ -2778,8 +2800,15 @@ function startCommandTraffic() {
 }
 
 function connectTeacherWebSocket(state) {
+  if (stoppingTraffic) return;
   const { auth } = state;
   if (!auth?.token || !auth.schoolId) return;
+  cancelLater(state.authTimer);
+  cancelLater(state.subscriptionTimer);
+  state.authenticated = false;
+  state.subscribed = false;
+  state.subscriptionRequestId = null;
+  const generation = ++state.generation;
   const socket = new WebSocket(wsUrl, {
     perMessageDeflate: false,
     handshakeTimeout: requestTimeoutMs,
@@ -2789,7 +2818,24 @@ function connectTeacherWebSocket(state) {
   state.socket = socket;
   sockets.add(socket);
   let keepaliveTimer = null;
+  const current = () => state.socket === socket && state.generation === generation;
+  const failSubscription = (kind, timeout = false) => {
+    if (!current() || stoppingTraffic) return;
+    state.subscribed = false;
+    state.subscriptionRequestId = null;
+    cancelLater(state.subscriptionTimer);
+    state.subscriptionTimer = null;
+    counters.teacherWsSubscriptionErrors += 1;
+    if (timeout) counters.teacherWsSubscriptionTimeouts += 1;
+    triggerFatalGate("teacher-websocket-subscription", { kind });
+  };
+  state.authTimer = later(() => {
+    if (!current() || stoppingTraffic || state.authenticated) return;
+    counters.teacherWsAuthErrors += 1;
+    triggerFatalGate("teacher-websocket-auth", { kind: "teacher-auth-timeout" });
+  }, wsAuthTimeoutMs, { scale: false });
   socket.on("open", () => {
+    if (!current() || stoppingTraffic) return;
     socket.send(JSON.stringify({
       type: "auth",
       role: auth.role,
@@ -2798,6 +2844,7 @@ function connectTeacherWebSocket(state) {
     }));
   });
   socket.on("message", (raw) => {
+    if (!current()) return;
     let message;
     try {
       message = JSON.parse(raw.toString());
@@ -2806,6 +2853,14 @@ function connectTeacherWebSocket(state) {
       return;
     }
     if (message.type === "auth-success") {
+      if (stoppingTraffic || state.authenticated) return;
+      if (message.role !== auth.role) {
+        counters.teacherWsAuthErrors += 1;
+        triggerFatalGate("teacher-websocket-auth", { kind: "teacher-auth-role-mismatch" });
+        return;
+      }
+      cancelLater(state.authTimer);
+      state.authTimer = null;
       state.authenticated = true;
       state.transportProbe = message.transportProbeV1 === true;
       counters.teacherWsAuthenticated += 1;
@@ -2815,10 +2870,42 @@ function connectTeacherWebSocket(state) {
         "teacherWsKeepalivePingsSent",
         () => state.transportProbe,
       );
+      if (auth.teachingSessionId) {
+        const requestId = `load-sub-${generation}-${randomUUID()}`;
+        state.subscriptionRequestId = requestId;
+        counters.teacherWsSubscriptionRequests += 1;
+        state.subscriptionTimer = later(() => failSubscription("teacher-subscription-timeout", true), wsAuthTimeoutMs, { scale: false });
+        socket.send(JSON.stringify({ type: "subscribe-session", teachingSessionId: auth.teachingSessionId, requestId }));
+      }
       return;
     }
     if (message.type === "auth-error") {
       counters.teacherWsAuthErrors += 1;
+      state.authenticated = false;
+      state.subscribed = false;
+      triggerFatalGate("teacher-websocket-auth", { kind: "teacher-auth-rejected" });
+      return;
+    }
+    if (message.type === "session-subscription-success" || message.type === "session-subscription-error") {
+      if (stoppingTraffic || !state.authenticated || !state.subscriptionRequestId || message.requestId !== state.subscriptionRequestId) {
+        counters.teacherWsSubscriptionIgnored += 1;
+        return;
+      }
+      if (message.type === "session-subscription-error") {
+        failSubscription("teacher-subscription-rejected");
+        return;
+      }
+      if (message.teachingSessionId !== auth.teachingSessionId || message.supervisionContextId !== undefined
+        || (message.sessionId !== undefined && message.sessionId !== auth.teachingSessionId)
+        || (message.schoolId !== undefined && message.schoolId !== auth.schoolId)) {
+        failSubscription("teacher-subscription-authority-mismatch");
+        return;
+      }
+      cancelLater(state.subscriptionTimer);
+      state.subscriptionTimer = null;
+      state.subscriptionRequestId = null;
+      state.subscribed = true;
+      counters.teacherWsSubscribed += 1;
       return;
     }
     if (message.type === "pong") {
@@ -2833,15 +2920,15 @@ function connectTeacherWebSocket(state) {
       return;
     }
     if (message.type !== "classpilot-command-update") return;
+    if (!teacherSocketReady(state)) { counters.commandUpdatesBeforeSubscription += 1; return; }
     counters.commandUpdatesObserved += 1;
     const ownership = classifyCommandSnapshotOwnership(message.command, auth, teacherCommandOwnerKeys);
     if (ownership === "invalid") {
       counters.commandUpdateOwnershipErrors += 1;
       return;
     }
-    // Staff updates are school-wide. Measure status timing and monotonicity on
-    // the issuing teacher's ordered TCP stream instead of merging all 20
-    // independently ordered teacher connections.
+    // Observe status only after this exact session's correlated subscription,
+    // on the issuing teacher's ordered stream instead of merging connections.
     if (ownership !== "owned") return;
     const commandId = String(message.commandId || message.command?.id || "").trim();
     const entry = commandId ? getCommandEntry(commandId) : null;
@@ -2850,13 +2937,23 @@ function connectTeacherWebSocket(state) {
     observeServerCommandTargets(entry, targets);
     counters.commandOwnedUpdatesObserved += 1;
   });
-  socket.on("error", () => { counters.wsErrors += 1; });
+  socket.on("error", () => { if (current()) counters.wsErrors += 1; });
   socket.on("close", () => {
     stopSocketKeepalive(keepaliveTimer);
     keepaliveTimer = null;
     sockets.delete(socket);
-    if (!stoppingTraffic && state.authenticated) counters.teacherWsUnexpectedClosed += 1;
+    if (!current()) return;
+    cancelLater(state.authTimer);
+    cancelLater(state.subscriptionTimer);
+    state.authTimer = null;
+    state.subscriptionTimer = null;
+    state.subscriptionRequestId = null;
+    if (!stoppingTraffic) {
+      if (state.authenticated) counters.teacherWsUnexpectedClosed += 1;
+      triggerFatalGate("teacher-websocket-closed", { kind: "teacher-connection-closed" });
+    }
     state.authenticated = false;
+    state.subscribed = false;
     state.socket = null;
   });
 }
@@ -2896,7 +2993,6 @@ function ratio(numerator, denominator) {
 
 function captureFinalSocketGate() {
   const deviceReady = (state) => state.authenticated && state.socket?.readyState === WebSocket.OPEN;
-  const teacherReady = (state) => state.authenticated && state.socket?.readyState === WebSocket.OPEN;
   const stateOutstanding = deviceStates.filter((state) =>
     Boolean(
       state.reconnectStartedAt ||
@@ -2914,7 +3010,9 @@ function captureFinalSocketGate() {
     deviceAuthenticated: deviceStates.filter(deviceReady).length,
     selectedDevices: devices.length,
     outstandingReconnects: Math.max(stateOutstanding, counterOutstanding),
-    teacherAuthenticated: teacherSocketStates.filter(teacherReady).length,
+    teacherAuthenticated: teacherSocketStates.filter(state => state.authenticated && state.socket?.readyState === WebSocket.OPEN).length,
+    teacherSubscribed: teacherSocketStates.filter(state => state.subscribed && state.socket?.readyState === WebSocket.OPEN).length,
+    teacherReady: teacherSocketStates.filter(teacherSocketReady).length,
     selectedTeachers: teacherSocketStates.length,
   };
 }
@@ -3074,6 +3172,9 @@ function summarize(shutdownReason) {
       if (finalSocketGate.selectedTeachers > 0 && finalSocketGate.teacherAuthenticated !== finalSocketGate.selectedTeachers) {
         failures.push(`only ${finalSocketGate.teacherAuthenticated}/${finalSocketGate.selectedTeachers} teacher sockets were authenticated at final pre-shutdown`);
       }
+      if (finalSocketGate.teacherReady !== finalSocketGate.selectedTeachers) {
+        failures.push(`only ${finalSocketGate.teacherReady}/${finalSocketGate.selectedTeachers} teacher sockets had acknowledged their exact classroom subscription at final pre-shutdown`);
+      }
     }
     if (counters.wsAuthErrors > 0) failures.push(`${counters.wsAuthErrors} device WebSocket authentications failed`);
     if (unexpectedCloseRate >= 0.001) failures.push("unexpected WebSocket close rate is not below 0.1%");
@@ -3157,6 +3258,9 @@ function summarize(shutdownReason) {
           failures.push(`only ${counters.teacherWsAuthenticated}/${teacherAuthInputs.length} teacher WebSockets authenticated`);
         }
         if (counters.teacherWsUnexpectedClosed > 0) failures.push("one or more teacher WebSockets closed unexpectedly");
+        if (counters.teacherWsSubscriptionErrors > 0 || finalSocketGate?.teacherReady !== teacherAuthInputs.length) {
+          failures.push("one or more teacher WebSockets lacked an exact acknowledged classroom subscription");
+        }
         if (ratio(commandTotals.serverReceivedWithin2s, commandTotals.expected) < 0.99) failures.push("server did not report received status within 2 seconds for 99% of command targets");
         if (ratio(commandTotals.serverCompletedWithin5s, commandTotals.expected) < 0.99) failures.push("server did not report completed status within 5 seconds for 99% of command targets");
       }
