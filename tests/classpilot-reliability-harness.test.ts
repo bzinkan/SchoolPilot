@@ -9,6 +9,10 @@ import { createServer } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { createHash } from "node:crypto";
 import { readReliabilityFrame } from "../scripts/load/reliability-rendered-frame.mjs";
+import { CAPTURE_COLOR_BASES } from "../scripts/load/classpilot-reliability-profile.mjs";
+const captureBases=CAPTURE_COLOR_BASES.map(value=>Buffer.from(value.base64,"base64"));
+const captureBaseBytes=captureBases[0]!.length;
+assert.ok(captureBases.every(base=>base.length===captureBaseBytes));
 
 const runner = fileURLToPath(new URL("../scripts/load/run-classpilot-reliability.mjs", import.meta.url));
 const baseUrl = "http://127.0.0.1:9"; // No server: a dry run must never attempt traffic.
@@ -52,10 +56,10 @@ for (const primary of [40, 500, 800]) test(`reliability ${primary}-device dry ru
     assert.equal(config.reliabilityWorkload.managedDevicesValidated, false);
     assert.equal(config.gateProfile, "partial");
     assert.equal(config.certificationEligible, false);
-    assert.equal(config.workloadSchemaVersion, "classpilot-reliability-v2");
+    assert.equal(config.workloadSchemaVersion, "classpilot-reliability-v3");
     assert.equal(config.screenshotFixture.reliabilityPayload.fixtureCount, primary + 10);
     assert.equal(config.screenshotFixture.reliabilityPayload.distinctFixtures, primary + 10);
-    assert.equal(config.screenshotFixture.reliabilityPayload.decodedCacheBytes, (primary + 10) * 40960);
+    assert.equal(config.screenshotFixture.reliabilityPayload.decodedCacheBytes, (primary + 10) * 3 * 40960);
     assert.equal(config.screenshotFixture.reliabilityPayload.captureEncoding.captures, 0);
     assert.ok(config.screenshotFixture.reliabilityPayload.cohort.gzipBytes >= 40 * 40960 * 0.95);
     assert.ok(config.screenshotFixture.reliabilityPayload.cohort.brotliBytes >= 40 * 40960 * 0.95);
@@ -118,7 +122,9 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
       const device = String(parsed.tabTitle).replace(/^Load /, ""), bytes = Buffer.from(parsed.screenshot.slice('data:image/jpeg;base64,'.length), 'base64');
       assert.equal(bytes.length, 40960);
       assert.equal(readReliabilityFrame(parsed.screenshot)?.capturedAt, Date.parse(parsed.capturedAt));
-      const payloadHash = createHash('sha256').update(bytes.subarray(0, -98)).digest('hex');
+      assert.ok(captureBases.some(base=>bytes.subarray(0,captureBaseBytes-2).equals(base.subarray(0,-2))), 'Every changing color keeps one exact legal codec base');
+      assert.deepEqual([...bytes.subarray(captureBaseBytes-2,captureBaseBytes)],[255,254],'Entropy remains inside the same legal COM segment');
+      const payloadHash = createHash('sha256').update(bytes.subarray(captureBaseBytes+2, -98)).digest('hex');
       if (capturePayloads.has(device)) assert.equal(capturePayloads.get(device), payloadHash, 'A device reuses its immutable entropy cache');
       capturePayloads.set(device, payloadHash);
       captureTimes.set(device, parsed.capturedAt);

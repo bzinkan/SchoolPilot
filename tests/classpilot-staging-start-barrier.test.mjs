@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateStagingInputFreshness, validateStagingRunManifest, validateStagingStartAt,
   waitForStagingStart } from '../scripts/load/staging-start-barrier.mjs';
-import { reliabilityProfile } from '../scripts/load/classpilot-reliability-profile.mjs';
+import { reliabilityProfile,measurementPlan,measurementPlanDigest } from '../scripts/load/classpilot-reliability-profile.mjs';
 
 const origin = 'https://staging.school-pilot.net';
 const epoch = Date.parse('2026-10-13T20:00:00.000Z');
 const utc = offset => new Date(epoch + offset).toISOString();
-const manifest = () => ({ version: 1, campaign: 'classpilot-staging-20261013-0d1060d261d5', runId: '40-0123456789abcdef',
+const manifest = () => ({ version: 2, campaign: 'classpilot-staging-20261013-0d1060d261d5', runId: '40-0123456789abcdef',
   primaryDevices: 40, candidateApiImage: `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-staging-api@sha256:${'a'.repeat(64)}`,
-  scriptBundleSha256: 'b'.repeat(64), createdAt: utc(-1000), startAt: utc(240_000),
+  scriptBundleSha256: 'b'.repeat(64), renderedControllerSha256:'d'.repeat(64), measurementPlan:measurementPlan(40),measurementPlanSha256:measurementPlanDigest(40), createdAt: utc(-1000), startAt: utc(240_000),
   files: Object.fromEntries(['devices', 'auth', 'commands'].map(key => [key, { bytes: 2, sha256: 'c'.repeat(64) }])) });
 
 test('start selection requires strict canonical UTC, bounded future staging and no production or missing-stage bypass', () => {

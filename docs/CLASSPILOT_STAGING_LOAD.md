@@ -113,11 +113,11 @@ staging operations. It must download exact private input keys, record source
 hashes and preserve these same fixed profile values. Never use loopback smoke
 or test-time acceleration for staging capacity. The initial burst submits every
 selected class command concurrently; later traffic retains the documented
-cadence. The `classpilot-reliability-v2` identity requires independent high
+cadence. The `classpilot-reliability-v3` identity requires independent high
 entropy legal JPEG comment payloads for every device. Each decoded JPEG is
 exactly40KiB; only the96-byte capture-stamp tail is predictable. The generator
-caches decoded buffers once per device (33,177,600bytes for810devices), then
-reuses those buffers with the existing unique capture stamp. No target IDs or
+caches three legal decoded-color buffers per device (99,532,800bytes for810devices), then
+reuses their immutable entropy with a bounded causal capture stamp. No target IDs or
 actual screen contents enter the payload or aggregate fixture evidence.
 
 Preflight and final summaries retain bounded creation/capture CPU and memory
@@ -126,7 +126,28 @@ Both compressed cohorts must retain at least95% of decoded JPEG bytes; base64
 overhead may compress. Shared payloads or old repeated-character padding fail
 this check. The native browser gate verifies distinct decoded/stamped frames
 and actual encoded response sizes for both codecs. Earlier low entropy v1
-passes remain diagnostic and cannot establish v2 screenshot wire capacity.
+passes remain diagnostic and cannot establish V3 screenshot wire capacity.
+
+Schema2 input manifests bind the exact rendered controller bytes and measurement
+plan separately from the12-file generator and candidate API image. The controller
+publishes an unpredictable start pulse before any timed fleet traffic and verifies
+the producer's distinct actual-start receipt within one second on its own monotonic
+clock. Raw cross-host UTC skew and Date.now capture ages remain diagnostic.
+Strict role-scoped S3 controls retain caller guards through late settlement;
+full reads are bounded at250ms and publication at500ms, with one SDK attempt.
+All actual control attempts and byte counts enter the campaign evidence.
+
+Navigation and screen age require the actual controller's rendered/compositor
+proof: navigationLatencyPassed and causalCaptureFreshnessPassed must both be
+true before a profile can authorize the next profile. Full JPEG hashes bind
+authorized responses to current and contributing previous DOM sources. The
+controller decodes unscaled native PNGs once with bounded Sharp work and a
+two-job pool; it does not send full PNGs back through every renderer. Every
+visible contributor must be authorized and pulse-bound, with the oldest causal
+age used through the normal150ms frame transition. Unknown contributors and
+opaque overlays cannot gain fresh credit from metadata. A separate native
+channel-only preflight uses no app credentials or traffic, distinct signal kinds
+and trafficStarted=false; it cannot satisfy an ordinary capacity receipt.
 
 The synthetic JPEG decodes to one pixel. These campaigns measure transport,
 authority, recovery and dashboard source updates; they do not measure Chromebook

@@ -15,6 +15,7 @@ function authFixture(count: number) {
       teacherToken: `synthetic-token-${index}`, csrfToken: `synthetic-csrf-${index}`, expiresAt,
       studentIds: Array.from({ length: size }, (_, student) => `student-${index}-${student}`) })) };
 }
+const {measurementPlan,measurementPlanDigest}=await import(new URL("../scripts/load/classpilot-reliability-profile.mjs",import.meta.url).href);
 const env = { LOAD_RELIABILITY_STAGING_ORIGIN: "https://staging.school-pilot.net", LOAD_SESSION_COOKIE_NAME: "schoolpilot.staging.sid" };
 
 test("rendered campaign enforces exact1/20 independent teacher cohorts, staging cookie and full-duration credential validity", () => {
@@ -38,9 +39,9 @@ test("rendered credentials must outlive the shared start plus the entire profile
 
 test("rendered actors bind exact private auth bytes and the same fresh staged fleet run/start identity", () => {
   const now = Date.now(), auth = Buffer.from(JSON.stringify(authFixture(40)));
-  const manifest = { version: 1, campaign: "classpilot-staging-20261013-abcdef123456", runId: "40-abcdef123456",
+  const manifest = { version: 2, campaign: "classpilot-staging-20261013-abcdef123456", runId: "40-abcdef123456",
     primaryDevices: 40, candidateApiImage: "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-staging-api@sha256:" + "a".repeat(64),
-    scriptBundleSha256: "b".repeat(64), createdAt: new Date(now).toISOString(), startAt: new Date(now + 120_000).toISOString(),
+    scriptBundleSha256: "b".repeat(64),renderedControllerSha256:"e".repeat(64),measurementPlan:measurementPlan(40),measurementPlanSha256:measurementPlanDigest(40), createdAt: new Date(now).toISOString(), startAt: new Date(now + 120_000).toISOString(),
     files: { auth: { bytes: auth.length, sha256: createHash("sha256").update(auth).digest("hex") },
       commands: { bytes: 1, sha256: "c".repeat(64) }, devices: { bytes: 1, sha256: "d".repeat(64) } } };
   assert.equal(validateRenderedManifest(auth, manifest, 40, manifest.startAt, now), manifest);

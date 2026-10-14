@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { tmpdir, cpus, totalmem } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { REMOTE_GENERATOR_SCRIPTS, scriptManifest } from './remote-generator-manifest.mjs';
-import { reliabilityProfile } from './classpilot-reliability-profile.mjs';
+import { reliabilityProfile, measurementExpected, validateCapturePulse, validateRevisionBootstrap, BoundedControlReader, MEASUREMENT_LIMITS, validateMeasurementSignal, CapturePulseProducer, SerialHeartbeatWriter } from './classpilot-reliability-profile.mjs';
 import { validateStagingStartAt, validateStagingRunManifest } from './staging-start-barrier.mjs';
 
 const ORIGIN = 'https://staging.school-pilot.net';
@@ -15,6 +16,146 @@ const MAX_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_RESULT_BYTES = 16 * 1024 * 1024;
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const isSha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+
+
+
+const MEASUREMENT_ROLE_KEYS = Object.freeze({
+  controller: Object.freeze({ read: Object.freeze(['measurement-started.json', 'measurement-drained.json']),
+    publish: Object.freeze(['measurement-control.json', 'measurement-bootstrap.json']) }),
+  producer: Object.freeze({ read: Object.freeze(['measurement-control.json', 'measurement-bootstrap.json']),
+    publish: Object.freeze(['measurement-started.json', 'measurement-drained.json']) }),
+});
+export function measurementChannelPreflightSignal(expected, kind, nonce) {
+  if (!['measurement-channel-started-v1', 'measurement-channel-drained-v1'].includes(kind)
+    || !/^[a-f0-9]{48}$/.test(nonce || '')) throw Error('Exact channel-only signal required');
+  return { schemaVersion: 1, kind, runId: expected.runId, sourceArtifactSha256: expected.sourceArtifactSha256,
+    candidateApiImage: expected.candidateApiImage, scriptBundleSha256: expected.scriptBundleSha256,
+    planSha256: expected.planSha256, cohortSha256: expected.cohortSha256,
+    nonceSha256: sha256(nonce), trafficStarted: false, applicationRequests: 0, preflightOnly: true };
+}
+
+function measurementChannelContext(value) {
+  const profile = reliabilityProfile(value?.primaryDevices);
+  if (Object.keys(value || {}).sort().join(',') !== 'account,bucket,campaign,candidateApiImage,cohortSha256,maximumNavigationRounds,maximumPulses,origin,planSha256,primaryDevices,runId,scriptBundleSha256,sourceArtifactSha256'
+    || value.account !== '135775632425' || value.bucket !== 'schoolpilot-staging-load-135775632425'
+    || value.origin !== ORIGIN || !/^classpilot-staging-\d{8}-[a-f0-9]{12}$/.test(value.campaign || '')
+    || !new RegExp('^' + profile.primaryDevices + '-[a-f0-9]{16}$').test(value.runId || '')
+    || !/^135775632425\.dkr\.ecr\.us-east-1\.amazonaws\.com\/schoolpilot-staging-api@sha256:[a-f0-9]{64}$/.test(value.candidateApiImage || '')
+    || ['sourceArtifactSha256', 'scriptBundleSha256', 'cohortSha256', 'planSha256'].some(key => !isSha(value[key]))
+    || value.maximumPulses !== profile.measurementPlan.maximumPulses
+    || value.maximumNavigationRounds !== profile.measurementPlan.navigationRounds
+    || value.planSha256 !== sha256(JSON.stringify(profile.measurementPlan))) throw Error('Exact immutable staging channel context required');
+  return Object.freeze({ ...value });
+}
+
+// These exact adapters serve both actual measurement peers and the separate
+// native channel-only probe. They never create an application HTTP client.
+// One caller budget spans SDK headers AND body consumption. Abort-insensitive
+// operations retain their guard until real settlement, preventing SDK backlog.
+export function createMeasurementArtifactChannel({ role, expected, devices, mode = 'workload',
+  s3 = new S3Client({ region: 'us-east-1', maxAttempts: 1 }) } = {}) {
+  if (!Object.hasOwn(MEASUREMENT_ROLE_KEYS, role) || !['workload', 'channel-preflight'].includes(mode)) throw Error('Exact measurement peer role and mode required');
+  const context = measurementChannelContext(expected), prefix = 'runs/' + context.campaign + '/' + context.runId;
+  const counters = { readAttempts: 0, publishAttempts: 0, actualNetworkAttempts: 0, bytesRead: 0, bytesWritten: 0, invalidRequests: 0 };
+  let closed = false;
+  const client = s3, keys = MEASUREMENT_ROLE_KEYS[role];
+  if (typeof client?.send !== 'function' || typeof client?.destroy !== 'function'
+    || typeof client?.middlewareStack?.add !== 'function') throw Error('Prepared single-attempt measurement SDK required');
+  client.middlewareStack.add(next => async args => {
+    const request = args.request;
+    if (!request || request.protocol !== 'https:' || ![context.bucket + '.s3.us-east-1.amazonaws.com', context.bucket + '.s3.amazonaws.com'].includes(request.hostname)
+      || request.headers?.['x-amz-expected-bucket-owner'] !== context.account
+      || request.port !== undefined && request.port !== 443
+      || !['GET', 'PUT'].includes(request.method)
+      || !(request.method === 'GET' ? keys.read.map(name => '/' + prefix + '/' + (role === 'controller' ? 'results' : 'inputs') + '/' + name)
+        : keys.publish.map(name => '/' + prefix + '/' + (role === 'controller' ? 'inputs' : 'results') + '/' + name)).includes(request.path)) throw Error('Unexpected measurement SDK destination');
+    counters.actualNetworkAttempts += 1;
+    return next(args);
+  }, { step: 'finalizeRequest', name: 'classpilotMeasurementChannel', priority: 'low' });
+  const fileLimit = name => name === 'measurement-bootstrap.json' ? MEASUREMENT_LIMITS.bootstrapBytes : MEASUREMENT_LIMITS.controlBytes;
+  const admit = (operation, name) => {
+    if (closed || !keys[operation].includes(name)) { counters.invalidRequests += 1; throw Error('Measurement role/key refused'); }
+    if (mode === 'channel-preflight' && name === 'measurement-bootstrap.json') { counters.invalidRequests += 1; throw Error('Channel-only mode has no authenticated revision bootstrap'); }
+    if (name === 'measurement-bootstrap.json' && !Array.isArray(devices)) { counters.invalidRequests += 1; throw Error('Exact private cohort needed for bootstrap validation'); }
+  };
+  const signalKind = name => mode === 'channel-preflight'
+    ? (name === 'measurement-started.json' ? 'measurement-channel-started-v1' : 'measurement-channel-drained-v1')
+    : (name === 'measurement-started.json' ? 'measurement-started-v3' : 'measurement-drained-v3');
+  const validate = (name, value, options = {}) => {
+    if (name === 'measurement-control.json') return validateCapturePulse(value, context);
+    if (name === 'measurement-bootstrap.json') return validateRevisionBootstrap(value, context, devices);
+    const kind = signalKind(name);
+    if (options.kind !== undefined && options.kind !== kind) throw Error('Unexpected measurement signal kind');
+    if (!/^[a-f0-9]{48}$/.test(options.nonce || '')) throw Error('Expected signal nonce required');
+    if (mode === 'channel-preflight') {
+      if (JSON.stringify(value) !== JSON.stringify(measurementChannelPreflightSignal(context, kind, options.nonce))) throw Error('Exact channel-only signal required');
+      return value;
+    }
+    return validateMeasurementSignal(value, context, kind, options.nonce);
+  };
+  const checkedSend = async (command, signal) => {
+    const attempts = typeof client.config?.maxAttempts === 'function' ? await client.config.maxAttempts() : client.config?.maxAttempts;
+    const region = typeof client.config?.region === 'function' ? await client.config.region() : client.config?.region;
+    if (attempts !== 1 || region !== 'us-east-1') throw Error('Measurement SDK must use one attempt in the exact region');
+    return client.send(command, { abortSignal: signal });
+  };
+  const reader = new BoundedControlReader(async ({ name }, { signal }) => {
+    counters.readAttempts += 1;
+    const side = role === 'controller' ? 'results' : 'inputs';
+    const response = await checkedSend(new GetObjectCommand({ Bucket: context.bucket, ExpectedBucketOwner: context.account,
+      Key: prefix + '/' + side + '/' + name }), signal);
+    const body = response.Body, chunks = []; let length = 0;
+    if (!body || typeof body[Symbol.asyncIterator] !== 'function') throw Error('Complete streaming measurement body required');
+    const abortBody = () => { try { body.destroy?.(); } catch { /* The caller deadline remains authoritative. */ } };
+    signal.addEventListener('abort', abortBody, { once: true });
+    if (signal.aborted) abortBody();
+    try {
+      for await (const chunk of body) {
+        if (signal.aborted) throw Error('Measurement body deadline fenced');
+        length += chunk.length;
+        if (length > fileLimit(name)) { abortBody(); throw Error('Oversized measurement body'); }
+        chunks.push(chunk);
+      }
+      if (signal.aborted) throw Error('Measurement body deadline fenced');
+      counters.bytesRead += length;
+      return Buffer.concat(chunks);
+    } finally { signal.removeEventListener('abort', abortBody); }
+  }, { timeoutMs: MEASUREMENT_LIMITS.readMs, maximumBytes: MEASUREMENT_LIMITS.bootstrapBytes });
+  const writer = new BoundedControlReader(async ({ name, bytes }, { signal }) => {
+    counters.publishAttempts += 1;
+    const side = role === 'controller' ? 'inputs' : 'results';
+    await checkedSend(new PutObjectCommand({ Bucket: context.bucket, ExpectedBucketOwner: context.account,
+      Key: prefix + '/' + side + '/' + name, Body: bytes, ContentType: 'application/json', ServerSideEncryption: 'AES256' }), signal);
+    if (signal.aborted) throw Error('Measurement publication deadline fenced');
+    counters.bytesWritten += bytes.length;
+    return Buffer.from('{"accepted":true}');
+  }, { timeoutMs: 500 });
+  return Object.freeze({
+    async read(name, options) {
+      admit('read', name);
+      // Signal expectation is checked before sending; malformed expected
+      // nonces cannot cause a lookup or falsely accept an old result.
+      if (name === 'measurement-started.json' || name === 'measurement-drained.json') {
+        const kind = signalKind(name);
+        if (!/^[a-f0-9]{48}$/.test(options?.nonce || '') || options?.kind !== undefined && options.kind !== kind) {
+          counters.invalidRequests += 1; throw Error('Expected exact signal required');
+        }
+      }
+      return validate(name, await reader.read({ name }), options);
+    },
+    async publish(name, value, options) {
+      admit('publish', name);
+      validate(name, value, options);
+      const bytes = Buffer.from(JSON.stringify(value));
+      if (bytes.length > fileLimit(name)) { counters.invalidRequests += 1; throw Error('Oversized measurement publication'); }
+      return writer.read({ name, bytes });
+    },
+    summary: () => ({ role, mode, ...counters, reader: { ...reader.counters }, publisher: { ...writer.counters },
+      readInFlight: Boolean(reader.active), publicationInFlight: Boolean(writer.active) }),
+    close() { closed = true; client.destroy(); },
+  });
+}
+
 
 export function remoteGeneratorConfig(env, manifest) {
   const account = env.CLP_GENERATOR_ACCOUNT_ID || '';
@@ -92,7 +233,7 @@ export function validateInputManifest(value, config, now = Date.now()) {
   validateStagingRunManifest(value, { startAt: config.startAt, primaryDevices: config.profile.primaryDevices,
     authSha256: value.files?.auth?.sha256 }, now);
   const created = Date.parse(value.createdAt);
-  if (value.version !== 1 || value.campaign !== config.campaign || value.runId !== config.runId
+  if (value.version !== 2 || value.campaign !== config.campaign || value.runId !== config.runId
       || value.startAt !== config.startAt
       || value.primaryDevices !== config.profile.primaryDevices || value.candidateApiImage !== config.candidateApiImage
       || value.scriptBundleSha256 !== config.scriptBundleSha256 || !Number.isFinite(created)
@@ -238,8 +379,97 @@ export async function preflightGeneratorMetadata({ env = process.env, manifestPa
     productionAccepted: false, browserPaintValidated: false, managedDevicesValidated: false };
 }
 
+
+export async function runMeasurementChannelPreflight({ env = process.env,
+  manifestPath = '/app/load-generator-manifest.json', metadata = readTaskMetadata, measurementS3,
+  notify = value => console.log(JSON.stringify(value)) } = {}) {
+  // This branch executes before any input download, application client or
+  // harness spawn. The CLI supplies no alternate oracle/injected callbacks.
+  if (process.platform !== 'linux' || process.getuid?.() !== 1000 || tmpdir() !== '/tmp') throw Error('Native Linux UID1000 scratch required');
+  const meta = await preflightGeneratorMetadata({ env, manifestPath, metadata });
+  const raw = env.CLP_MEASUREMENT_CHANNEL_CONTEXT || '';
+  if (!raw || Buffer.byteLength(raw) > 4096 || sha256(Buffer.from(raw)) !== env.CLP_GENERATOR_INPUT_SHA256) throw Error('Exact bounded channel-only context required');
+  const expected = measurementChannelContext(JSON.parse(raw));
+  if (expected.campaign !== meta.campaign || expected.runId !== meta.runId
+    || expected.candidateApiImage !== meta.candidateApiImage || expected.scriptBundleSha256 !== meta.scriptBundleSha256) throw Error('Native channel context identity mismatch');
+  const expiresAt = env.CLP_MEASUREMENT_CHANNEL_EXPIRES_AT || '', expiry = Date.parse(expiresAt);
+  const now = Date.now();
+  if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== expiresAt || expiry <= now
+    || expiry - now > 300000 || expiry <= Date.parse(env.CLP_GENERATOR_START_AT) + 10000) throw Error('Finite native channel expiry required');
+  process.umask(0o077);
+  const directory = mkdtempSync(join(tmpdir(), 'classpilot-channel-'));
+  if (dirname(directory) !== '/tmp' || !/^classpilot-channel-[A-Za-z0-9]+$/.test(directory.slice('/tmp/'.length))) throw Error('Owned native scratch path required');
+  const owner = statSync(directory);
+  if (owner.uid !== 1000 || (owner.mode & 0o077) !== 0) throw Error('Owned private UID1000 scratch required');
+  const probe = join(directory, 'native-scratch-probe');
+  writeFileSync(probe, 'classpilot-native-channel', { mode: 0o600, flag: 'wx' });
+  if (readFileSync(probe, 'utf8') !== 'classpilot-native-channel' || statSync(probe).uid !== 1000) throw Error('Native scratch write/read failed');
+  rmSync(probe);
+  const channel = createMeasurementArtifactChannel({ role: 'producer', expected, mode: 'channel-preflight', s3: measurementS3 });
+  const producer = new CapturePulseProducer(expected, () => performance.now());
+  const localWriter = new SerialHeartbeatWriter({ now: () => performance.now(),
+    schedule: (callback, ms) => setTimeout(callback, ms), clear: clearTimeout,
+    snapshot: () => Object.freeze({ syntheticChannelOnly: true }),
+    send: async () => { await new Promise(resolve_ => setTimeout(resolve_, 20)); return { ok: true }; } });
+  const stopAt = performance.now() + expiry - now;
+  let ready = false, firstNonce = null, drained = false, channelStarted = false;
+  const receipt = { schemaVersion: 1, kind: 'native-measurement-channel-preflight-v1',
+    campaign: expected.campaign, runId: expected.runId, sourceArtifactSha256: expected.sourceArtifactSha256,
+    candidateApiImage: expected.candidateApiImage, scriptBundleSha256: expected.scriptBundleSha256,
+    planSha256: expected.planSha256, cohortSha256: expected.cohortSha256,
+    task: meta.task, limits: meta.limits, stats: meta.stats, platform: process.platform, uid: process.getuid(),
+    scratchOwnerUid: owner.uid, scratchPrivate: true, scratchReadWriteDeletePassed: true,
+    applicationRequests: 0, inputsDownloaded: false, trafficStarted: false, channelStarted: false,
+    simulatedLocalWriterOnly: true, capacityAcceptance: false, productionAccepted: false };
+  try {
+    while (performance.now() < stopAt && Date.now() < expiry) {
+      let pulse;
+      try { pulse = await channel.read('measurement-control.json'); }
+      catch (error) {
+        if (!(error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404
+          || error?.name === 'AbortError' || error?.message?.includes('deadline') || channel.summary().readInFlight)) throw error;
+        if (!ready && (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404)) {
+          notify({ ...receipt, phase: 'channel-ready', adapter: channel.summary() }); ready = true;
+        }
+        await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs)); continue;
+      }
+      if (Date.now() >= expiry || performance.now() >= stopAt) throw Error('Channel challenge expired');
+      if (!ready) throw Error('First pulse arrived before native channel readiness');
+      if (!producer.latest || pulse.pulseSequence > producer.latest.pulseSequence) producer.adopt(pulse);
+      if (!firstNonce) {
+        if (pulse.pulseSequence !== 1) throw Error('Native channel must start from the first unpredictable challenge');
+        firstNonce = pulse.nonce;
+        await channel.publish('measurement-started.json',
+          measurementChannelPreflightSignal(expected, 'measurement-channel-started-v1', firstNonce), { nonce: firstNonce });
+        channelStarted = true;
+      }
+      if (pulse.revisionDrainNonce) {
+        localWriter.regular(); localWriter.hold();
+        const drainDeadline = Math.min(stopAt, performance.now() + 500);
+        while (localWriter.active && performance.now() < drainDeadline) await new Promise(resolve_ => setTimeout(resolve_, 5));
+        if (localWriter.active) throw Error('Synthetic writer failed to drain');
+        await channel.publish('measurement-drained.json',
+          measurementChannelPreflightSignal(expected, 'measurement-channel-drained-v1', pulse.revisionDrainNonce), { nonce: pulse.revisionDrainNonce });
+        drained = true; break;
+      }
+      await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs));
+    }
+    if (!channelStarted || !drained) throw Error('Native channel start/drain incomplete');
+    const result = { ...receipt, phase: 'completed', channelStarted, channelDrained: drained,
+      adapter: channel.summary(), simulatedWriter: { ...localWriter.counters }, passed: true };
+    notify(result); return result;
+  } finally {
+    channel.close();
+    if (localWriter.timer !== null) clearTimeout(localWriter.timer);
+    // Exact new owned directory, never a caller-selected or input path.
+    if (dirname(directory) !== '/tmp' || statSync(directory).uid !== 1000) throw Error('Native scratch cleanup fence failed');
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+
 export async function runRemoteGenerator({ env = process.env, manifestPath = '/app/load-generator-manifest.json',
-  s3 = new S3Client({ region: 'us-east-1', maxAttempts: 2 }), execute = executeHarness, metadata = readTaskMetadata } = {}) {
+  s3 = new S3Client({ region: 'us-east-1', maxAttempts: 2 }), measurementS3, execute = executeHarness, metadata = readTaskMetadata } = {}) {
   const config = installedGeneratorConfig(env, manifestPath);
   const task = validateGeneratorTask(await metadata(env), config);
   process.umask(0o077);
@@ -256,6 +486,9 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     task,
     productionAccepted: false, browserPaintValidated: false, managedDevicesValidated: false };
   let uploadFailure = false; let syncing = false; let interval; let finished = false; let previousStats;
+  let controlLoop = null, controlStopped = false;
+  const controlCounters = { networkAttempts: 0, absent: 0, accepted: 0, invalid: 0, bootstrapReads: 0, bytes: 0 };
+  receipt.measurementControl = controlCounters;
   const controller = new AbortController();
   const get = async name => {
     const result = await s3.send(new GetObjectCommand({ Bucket: config.bucket, Key: `${config.prefix}/inputs/${name}` }), { abortSignal: AbortSignal.timeout(30_000) });
@@ -297,6 +530,12 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     if (sha256(rawManifest) !== config.inputSha256) throw new Error('Input manifest checksum does not match');
     const inputManifest = validateInputManifest(JSON.parse(rawManifest), config);
     childEnv.LOAD_INPUT_MANIFEST_CREATED_AT = inputManifest.createdAt;
+    childEnv.LOAD_MEASUREMENT_MANIFEST = join(directory, 'measurement-manifest.json');
+    childEnv.LOAD_MEASUREMENT_CONTROL = join(directory, 'measurement-control.json');
+    childEnv.LOAD_MEASUREMENT_BOOTSTRAP = join(directory, 'measurement-bootstrap.json');
+    childEnv.LOAD_MEASUREMENT_STARTED = join(directory, 'measurement-started.json');
+    childEnv.LOAD_MEASUREMENT_DRAINED = join(directory, 'measurement-drained.json');
+    writeFileSync(childEnv.LOAD_MEASUREMENT_MANIFEST, rawManifest, { flag: 'wx', mode: 0o600 });
     for (const [key, name] of Object.entries(INPUTS)) {
       const bytes = await get(name);
       if (bytes.length !== inputManifest.files[key].bytes || sha256(bytes) !== inputManifest.files[key].sha256) throw new Error('Private input checksum does not match');
@@ -305,11 +544,69 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     }
     receipt.phase = 'preflight'; await sync();
     if (uploadFailure || await execute(childEnv, config.profile.primaryDevices, true, controller.signal) !== 0) throw new Error('Remote harness preflight refused');
+    // The same role-scoped adapters serve the native channel proof and the
+    // actual producer. No alternate S3 transport oracle is used.
+    const expected = measurementExpected(inputManifest, config.inputSha256);
+    const measurementChannel = createMeasurementArtifactChannel({ role: 'producer', expected, s3: measurementS3,
+      devices: JSON.parse(readFileSync(join(artifactRoot, INPUTS.devices))) });
+    let latestSequence = 0, bootstrapSha = null, firstNonce = null, drainNonce = null, startUploaded = false, drainUploaded = false;
+    const atomic = (filename, bytes) => { const temporary = filename + '.next'; writeFileSync(temporary, bytes, { mode: 0o600 }); renameSync(temporary, filename); };
+    const syncChannelCounters = () => {
+      const value = measurementChannel.summary();
+      controlCounters.networkAttempts = value.readAttempts;
+      controlCounters.actualNetworkAttempts = value.actualNetworkAttempts;
+      controlCounters.bytes = value.bytesRead;
+      controlCounters.reader = value.reader;
+      controlCounters.publisher = value.publisher;
+      controlCounters.channel = value;
+    };
+    controlLoop = (async () => {
+      while (!controlStopped && !controller.signal.aborted) {
+        try {
+          const value = await measurementChannel.read('measurement-control.json');
+          const pulse = validateCapturePulse(value, expected);
+          if (pulse.pulseSequence === 1) firstNonce = pulse.nonce;
+          if (pulse.revisionDrainNonce) drainNonce = pulse.revisionDrainNonce;
+          if (pulse.pulseSequence > latestSequence) {
+            if (pulse.revisionBaselinesSha256 && bootstrapSha !== pulse.revisionBaselinesSha256) {
+              controlCounters.bootstrapReads += 1;
+              const bootstrap = await measurementChannel.read('measurement-bootstrap.json');
+              validateRevisionBootstrap(bootstrap, expected, JSON.parse(readFileSync(join(artifactRoot, INPUTS.devices))));
+              const bytes = Buffer.from(JSON.stringify(bootstrap));
+              if (sha256(bytes) !== pulse.revisionBaselinesSha256) throw Error('Revision bootstrap digest mismatch');
+              atomic(childEnv.LOAD_MEASUREMENT_BOOTSTRAP, bytes); bootstrapSha = pulse.revisionBaselinesSha256;
+            }
+            if (pulse.navigationRound && bootstrapSha !== pulse.revisionBaselinesSha256) throw Error('Navigation bootstrap missing');
+            atomic(childEnv.LOAD_MEASUREMENT_CONTROL, Buffer.from(JSON.stringify(pulse)));
+            latestSequence = pulse.pulseSequence; controlCounters.accepted += 1;
+          }
+        } catch (error) {
+          if (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404) controlCounters.absent += 1;
+          else if (error?.name === 'AbortError' || error?.message?.includes('deadline') || measurementChannel.summary().readInFlight) { /* Honest bounded misses remain counted by the reader. */ }
+          else { controlCounters.invalid += 1; controller.abort(); }
+        }
+        for (const [kind, filename, nonce, uploaded] of [
+          ['measurement-started-v3', childEnv.LOAD_MEASUREMENT_STARTED, firstNonce, startUploaded],
+          ['measurement-drained-v3', childEnv.LOAD_MEASUREMENT_DRAINED, drainNonce, drainUploaded]]) {
+          if (nonce && !uploaded && existsSync(filename)) {
+            try {
+              const value = validateMeasurementSignal(JSON.parse(readFileSync(filename)), expected, kind, nonce);
+              await measurementChannel.publish(kind === 'measurement-started-v3' ? 'measurement-started.json' : 'measurement-drained.json', value, { kind, nonce });
+              if (kind === 'measurement-started-v3') startUploaded = true; else drainUploaded = true;
+            } catch { controller.abort(); }
+          }
+        }
+        syncChannelCounters();
+        await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs));
+      }
+      measurementChannel.close(); syncChannelCounters();
+    })();
+    receipt.measurementReaderReady = true;
     receipt.phase = 'waiting-for-start'; await sync();
     if (uploadFailure) throw new Error('Remote evidence sink is unavailable');
     interval = setInterval(() => void sync(), 30_000);
     const code = await execute(childEnv, config.profile.primaryDevices, false, controller.signal);
-    clearInterval(interval);
+    clearInterval(interval); controlStopped = true; await controlLoop;
     while (syncing) await new Promise(resolve_ => setTimeout(resolve_, 25));
     if (code === 0) validateSuccessfulFleetSummary(JSON.parse(readFileSync(childEnv.LOAD_EXTERNAL_SUMMARY_PATH, 'utf8')), config);
     receipt.phase = code === 0 ? 'completed' : 'failed'; receipt.exitCode = code; receipt.endedAt = new Date().toISOString();
@@ -317,6 +614,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     if (uploadFailure || !existsSync(childEnv.LOAD_EXTERNAL_SUMMARY_PATH)) throw new Error('Final aggregate evidence was not durably uploaded');
     return code;
   } finally {
+    controlStopped = true; if (controlLoop) await controlLoop;
     clearInterval(interval);
     if (!finished) { receipt.phase = 'failed'; receipt.endedAt = new Date().toISOString(); await sync(); }
     rmSync(directory, { recursive: true, force: true });
@@ -326,6 +624,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (process.argv.length === 3 && process.argv[2] === '--help') console.log('Remote isolated staging reliability generator. Task-role S3 inputs/results only. Requires CLP_GENERATOR_ACCOUNT_ID, BUCKET, CAMPAIGN, RUN_ID, DEVICES, ORIGIN, INPUT_SHA256, SCRIPT_SHA256, IMAGE_DIGEST, CANDIDATE_IMAGE and START_AT; AWS_REGION=us-east-1. START_AT is canonical UTC within five minutes and must match the input manifest. --preflight-metadata validates image/task/resource identity without S3 or application traffic. No fixture credentials in image, arguments or logs.');
   else if (process.argv.length === 3 && process.argv[2] === '--preflight-metadata') preflightGeneratorMetadata().then(value => console.log(JSON.stringify(value)), () => { console.error('[remote-generator] Metadata preflight refused'); process.exitCode = 1; });
+  else if (process.argv.length === 3 && process.argv[2] === '--preflight-measurement-channel') runMeasurementChannelPreflight().catch(() => { console.error('[remote-generator] Native measurement channel preflight refused'); process.exitCode = 1; });
   else if (process.argv.length !== 2) { console.error('[remote-generator] Unexpected arguments'); process.exitCode = 1; }
   else runRemoteGenerator().then(code => { process.exitCode = code; }, () => { console.error('[remote-generator] Failed closed; inspect aggregate generator evidence'); process.exitCode = 1; });
 }

@@ -14,6 +14,7 @@ import { prepareRemoteInputs } from '../scripts/load/prepare-classpilot-remote-i
 import { FILES } from '../scripts/load/prepare-classpilot-load-test.mjs';
 import { observeStaging, stagingMetricQueries, stagingObservationConfig, summarizeMetric } from '../scripts/load/observe-classpilot-staging.mjs';
 
+import {measurementPlan,measurementPlanDigest} from '../scripts/load/classpilot-reliability-profile.mjs';
 const account = '135775632425';
 const digest = `sha256:${'a'.repeat(64)}`;
 const apiImage = `${account}.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-staging-api@${digest}`;
@@ -84,8 +85,8 @@ test('child environment discards test acceleration, arbitrary load knobs and app
 
 test('input manifest requires exact fresh campaign, cardinality and bounded byte identities', () => {
   const now = Date.now();
-  const value = { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: 40,
-    startAt: config.startAt,
+  const value = { version: 2, campaign: config.campaign, runId: config.runId, primaryDevices: 40,
+    startAt: config.startAt,renderedControllerSha256:'d'.repeat(64),measurementPlan:measurementPlan(40),measurementPlanSha256:measurementPlanDigest(40),
     candidateApiImage: apiImage, scriptBundleSha256: manifest.scriptBundleSha256, createdAt: new Date(now).toISOString(),
     files: Object.fromEntries(['devices', 'auth', 'commands'].map(key => [key, { bytes: 2, sha256: 'b'.repeat(64) }])) };
   assert.equal(validateInputManifest(value, config, now), value);
@@ -165,8 +166,8 @@ for (const defect of ['none', 'input-bytes', 'preflight', 'evidence-sink', 'miss
     const priorMask = process.umask();
     const files = { devices: Buffer.from('[{"studentId":"private-student-identity"}]'),
       auth: Buffer.from('{"teacherCookie":"schoolpilot.staging.sid=private-cookie"}'), commands: Buffer.from('[]') };
-    const input = { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: 40, candidateApiImage: apiImage,
-      startAt: config.startAt,
+    const input = { version: 2, campaign: config.campaign, runId: config.runId, primaryDevices: 40, candidateApiImage: apiImage,
+      startAt: config.startAt,renderedControllerSha256:'d'.repeat(64),measurementPlan:measurementPlan(40),measurementPlanSha256:measurementPlanDigest(40),
       scriptBundleSha256: manifest.scriptBundleSha256, createdAt: new Date().toISOString(),
       files: Object.fromEntries(Object.entries(files).map(([key, bytes]) => [key, { bytes: bytes.length, sha256: sha256(bytes) }])) };
     const inputBytes = Buffer.from(JSON.stringify(input));
@@ -199,6 +200,7 @@ for (const defect of ['none', 'input-bytes', 'preflight', 'evidence-sink', 'miss
     try {
       const operation = runRemoteGenerator({ env: { ...baseEnv, CLP_GENERATOR_INPUT_SHA256: sha256(inputBytes) },
         manifestPath: join(root, 'manifest.json'), s3, execute,
+        measurementS3:{config:{maxAttempts:1,region:'us-east-1'},middlewareStack:{add(){}},destroy(){},async send(){const error=new Error('Not published');error.name='NoSuchKey';throw error;}},
         metadata: async (_env, suffix) => suffix ? statistics : task });
       if (defect === 'none') {
         assert.equal(await operation, 0); assert.deepEqual(executions, [true, false]);

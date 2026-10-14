@@ -43,7 +43,7 @@ test("reliability workloads retain exact 40/500/800 shapes, five-second capture 
   assert.equal(reliabilityProfile(800).deviceIngestPerFiveMinutes, 72_000);
   assert.equal(reliabilityProfile(800).deviceIngestPerFiveMinutes * 1.3, 93_600);
   assert.match(RELIABILITY_ENDPOINT_SHA256, /^[a-f0-9]{64}$/);
-  assert.equal(RELIABILITY_WORKLOAD_VERSION, 'classpilot-reliability-v2');
+  assert.equal(RELIABILITY_WORKLOAD_VERSION, 'classpilot-reliability-v3');
   assert.throws(() => validateReliabilityEnvironment({ ...environment(40), LOAD_RELIABILITY_WORKLOAD: 'classpilot-reliability-v1' }, 'http://localhost:4000'), /Unknown reliability workload/);
 });
 

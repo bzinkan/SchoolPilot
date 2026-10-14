@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { FILES, assertExternalPaths, preparePrivateOutputDirectory, writePrivateJson } from './prepare-classpilot-load-test.mjs';
+import { measurementPlan, measurementPlanDigest } from './classpilot-reliability-profile.mjs';
 import { remoteGeneratorConfig, validateInputManifest } from './run-classpilot-remote-generator.mjs';
 
 export function prepareRemoteInputs(options, env = process.env) {
@@ -31,7 +32,9 @@ export function prepareRemoteInputs(options, env = process.env) {
     const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
     prepared[key] = { value, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
   }
-  const manifest = validateInputManifest({ version: 1, campaign: config.campaign, runId: config.runId,
+  const manifest = validateInputManifest({ version: 2, measurementPlan: measurementPlan(config.profile.primaryDevices),
+    measurementPlanSha256: measurementPlanDigest(config.profile.primaryDevices), campaign: config.campaign, runId: config.runId,
+    renderedControllerSha256: createHash('sha256').update(readFileSync(fileURLToPath(new URL('./run-classpilot-rendered-dashboards.mjs', import.meta.url)))).digest('hex'),
     startAt: config.startAt,
     primaryDevices: config.profile.primaryDevices, candidateApiImage: config.candidateApiImage,
     scriptBundleSha256: config.scriptBundleSha256, createdAt: new Date().toISOString(),

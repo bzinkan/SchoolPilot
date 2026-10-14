@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { validateMeasurementPlan } from './classpilot-reliability-profile.mjs';
 
 export const STAGING_START_MAX_FUTURE_MS = 300_000;
 export const STAGING_START_MAX_SKEW_MS = 1_000;
@@ -27,19 +28,21 @@ export function validateStagingStartAt(startAt, origin, now = Date.now()) {
 }
 
 export function validateStagingRunManifest(value, { startAt, primaryDevices, authSha256 } = {}, now = Date.now()) {
-  if (value?.version !== 1 || ![40, 500, 800].includes(value.primaryDevices)
-      || Object.keys(value).sort().join(',') !== 'campaign,candidateApiImage,createdAt,files,primaryDevices,runId,scriptBundleSha256,startAt,version'
+  if (value?.version !== 2 || ![40, 500, 800].includes(value.primaryDevices)
+      || Object.keys(value).sort().join(',') !== 'campaign,candidateApiImage,createdAt,files,measurementPlan,measurementPlanSha256,primaryDevices,renderedControllerSha256,runId,scriptBundleSha256,startAt,version'
       || value.primaryDevices !== primaryDevices || (startAt !== undefined && value.startAt !== startAt)
       || !/^classpilot-staging-\d{8}-[a-f0-9]{12}$/.test(value.campaign || '')
       || !new RegExp(`^${primaryDevices}-[a-f0-9]{12,32}$`).test(value.runId || '')
       || !/^135775632425\.dkr\.ecr\.us-east-1\.amazonaws\.com\/schoolpilot-staging-api@sha256:[a-f0-9]{64}$/.test(value.candidateApiImage || '')
       || !/^[a-f0-9]{64}$/.test(value.scriptBundleSha256 || '')
+      || !/^[a-f0-9]{64}$/.test(value.renderedControllerSha256 || '')
       || !/^[a-f0-9]{64}$/.test(authSha256 || '') || value.files?.auth?.sha256 !== authSha256) {
     throw new Error('Rendered and fleet actors must bind the same exact staging run manifest');
   }
   if (Object.keys(value.files || {}).sort().join(',') !== 'auth,commands,devices'
       || Object.values(value.files).some(file => !/^[a-f0-9]{64}$/.test(file?.sha256 || '')
         || !Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > 32 * 1024 * 1024)) throw new Error('Exact bounded staging input files required');
+  validateMeasurementPlan(value.measurementPlan, value.primaryDevices, value.measurementPlanSha256);
   validateStagingStartAt(value.startAt, STAGING_ORIGIN, now);
   validateStagingInputFreshness(value.createdAt, now);
   return value;

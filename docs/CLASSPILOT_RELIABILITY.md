@@ -178,12 +178,12 @@ separate acceptance evidence.
 
 ## Fresh workload and gates
 
-The separate `classpilot-reliability-v2` workload binds new endpoint-shape
+The separate `classpilot-reliability-v3` workload binds new endpoint-shape
 identity and cannot masquerade as historical `classpilot-tile-batch-v1` launch
 evidence. Its runner deliberately blocks production origins. For HTTPS staging,
 `LOAD_RELIABILITY_STAGING_ORIGIN` must exactly match `LOAD_BASE_URL`.
 
-Version2 replaces the original repeated-character JPEG comment with independent
+Version2 replaced the original repeated-character JPEG comment with independent
 random payloads cached per device. Decoded captures remain exactly40KiB and
 keep the existing96-byte capture-stamp tail. Bounded, content-free summaries
 record cache counts/bytes, creation and capture costs, and40-device gzip/Brotli
@@ -191,7 +191,10 @@ cohort sizes, each at least95% of decoded JPEG bytes. Native Chrome checks
 actual response wire sizes and distinct decoded capture identities. Version1
 wire results cannot be credited as version2 capacity evidence. The image still
 decodes to one pixel: Chromebook capture encoding, real JPEG decode and GPU
-costs require the managed-device pilot.
+costs require the managed-device pilot. Version3 retains that entropy/wire gate,
+cycles three exact legal decoded colors per device, and adds controller-monotonic
+causal capture/navigation proof. Raw cross-host Date.now age samples remain
+diagnostic and cannot satisfy screen-freshness acceptance.
 
 Use fresh private device/teacher/command artifacts under the existing protected
 external load-gates root, with a unique `LOAD_RUN_ID`, progress path and summary
@@ -213,7 +216,9 @@ node scripts/load/run-classpilot-reliability.mjs --devices 800
 
 Profiles run 10, 30 and 90 minutes respectively. `--smoke` is a separate
 60-second loopback-only functional check, never capacity acceptance. Dry-run
-validates configuration without HTTP or socket traffic. Screenshots poll at
+validates configuration without HTTP or socket traffic. Isolated staging uses
+the paired V3 producer/controller, exact schema2 private manifest and measurement
+IPC paths; the direct commands cannot create an unpaired acceptance run. Screenshots poll at
 five seconds while history stays at 30; application probes run at ten seconds.
 The harness records capture-age percentiles, exact command results, isolation,
 reconnects, endpoint latency, WAF buckets and durable output. HTTP capture-age
@@ -314,8 +319,10 @@ unchanged. External providers remain unconfigured; serving source/image and
 generator identities are bound in private receipts.
 
 The first full ten-minute 40-device paired run completed on 2026-10-14 UTC
-(2026-10-13 local time) and **failed acceptance**. Its 4,280 rendered screen
-samples met the ten/fifteen-second freshness bounds, with no wrong binding or
+(2026-10-13 local time) and **failed acceptance**. Its 4,280 raw rendered-screen
+capture-age samples were within ten/fifteen seconds, but generator/browser
+clock offset was unverified. These raw Date.now diagnostics do not establish
+actual capture-freshness acceptance. It reported no wrong binding or wrong
 class. However, fourteen of twenty command HTTP requests failed. The pooled
 screenshot-read p95 was at most 592 ms, while the browser segment alone reached
 872 ms; retain both measurements. Command/ACK locking failures require repair
@@ -407,3 +414,53 @@ Record these outcomes for each pilot stage:
 The exact live session/period, installed candidate and five-day outcomes have
 not yet been supplied or verified. The isolated stack and local gates do not
 establish Chromebook pilot readiness while the capacity campaign is failing.
+
+
+## V3 measurement contract
+
+The V3 harness requires independent navigation and capture evidence before any
+40/500/800 profile may pass. It binds the actual rendered controller bytes,
+12-file generator bundle, candidate API image, exact synthetic cohort and new
+shared input manifest. Backend/frontend runtime identities remain separate.
+
+One controller monotonic clock records a trigger before each unpredictable
+nonce and its receipt after the real Chrome compositor witness. Neither
+generator nor renderer clock origins are subtracted from the controller.
+The fleet starts only after the first exact pulse; a strict immediate start
+receipt must return within the existing one-second paired-start bound. Raw
+UTC skew remains diagnostic. Both actors must complete their full durations.
+
+Five-second capture cadence remains unchanged. One-second S3 pulses establish
+a conservative age upper bound in each existing JPEG comment reservation.
+Unknown, expired or wrong-binding pulse markers are unbounded samples. Three
+legal decoded-color variants retain per-device high-entropy40KiB payloads.
+A new decoded source cannot claim fresh paint from an unchanged old color:
+the older verified causal bound is retained, or the sample is unknown.
+The sampler accounts for object-contain geometry, retained outgoing frames
+and the existing150ms crossfade without disabling production animation.
+
+Navigation probes preserve ten-second regular heartbeats and two-second event
+coalescing through one writer per exact binding. A counted two-second bootstrap
+fence drains prior complete HTTP attempts while absolute regular timers keep
+queuing their latest work. The real teacher page reads the exact-session roster;
+every safe surviving public revision is frozen before monotone probe increments.
+Missing authority or revision evidence fails closed. First-round icon absence
+is verified before the unpredictable trigger. Real decoded sources, exact
+student updates and native compositor pixels must agree; title attributes alone
+cannot pass. Ordinary and pointer-events:none overlays are negative cases.
+This measures painted tab metadata/icons; it does not claim native hover-title
+text paint or replace packed Chromebook navigation validation.
+
+Raw pooled histograms must prove navigation p95<=3s/p99<=5s and causal capture
+p95<=10s/p99<=15s. Summary booleans navigationLatencyPassed and
+causalCaptureFreshnessPassed are required alongside existing fleet, privacy,
+command, wire, request, resource and duration gates. Old V2/rawDate receipts
+cannot authorize subsequent profiles. Every extra heartbeat, roster GET, favicon
+transfer and S3 attempt is counted. The one-second pulse budget is at most300
+PUTs and3000 GET polls per five minutes before explicitly recorded retries or
+control/start/bootstrap receipt operations. The800 device-ingest baseline
+remains72000/5min plus at most4000 event heartbeats and existing canaries/controls.
+
+Offline pure or local Windows codec/compositor regressions are not capacity
+evidence. Actual artifact-bound Linux/S3, candidate UI and20-context resource
+preflights are required before a fresh full40 profile, then500 and800.

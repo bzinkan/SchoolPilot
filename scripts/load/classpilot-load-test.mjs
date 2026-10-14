@@ -20,6 +20,8 @@ import { validateStagingInputFreshness, validateStagingStartAt, waitForStagingSt
 import {
   validateReliabilityEnvironment, RELIABILITY_ENDPOINT_SHA256, RELIABILITY_CAPABILITIES,
   minimumReliabilitySamples, reliabilityScreenshotBindingMatches, makeReliabilityJpegFixture, reliabilityFixtureEvidence,
+  makeReliabilityColorFixtures, reliabilityColorFixtureEvidence, CapturePulseProducer, stampCausalCapture, validateCapturePulse, measurementExpected,
+  publicBindingFromDevice, validateRevisionBootstrap, navigationSnapshot, SerialHeartbeatWriter, MEASUREMENT_LIMITS, measurementSignal,
 } from "./classpilot-reliability-profile.mjs";
 import {
   buildStaggeredPollAccounting,
@@ -728,17 +730,32 @@ const screenshotBytes = intEnv(
 );
 const screenshotFixture = makeJpegFixture(screenshotBytes);
 const reliabilityScreenshotFixtures = new WeakMap();
+const measurementPaths = reliabilityWorkload && targetUrl.origin === 'https://staging.school-pilot.net' ? {
+  manifest: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_MANIFEST, 'LOAD_MEASUREMENT_MANIFEST'),
+  control: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_CONTROL, 'LOAD_MEASUREMENT_CONTROL'),
+  bootstrap: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_BOOTSTRAP, 'LOAD_MEASUREMENT_BOOTSTRAP'),
+  started: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_STARTED, 'LOAD_MEASUREMENT_STARTED'),
+  drained: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_DRAINED, 'LOAD_MEASUREMENT_DRAINED'),
+} : null;
+if (measurementPaths && Object.values(measurementPaths).some(value => !value)) throw Error('V3 staging requires bound measurement IPC paths');
+const measurementManifestBytes = measurementPaths && fs.readFileSync(measurementPaths.manifest);
+const measurementContext = measurementPaths && measurementExpected(JSON.parse(measurementManifestBytes), createHash('sha256').update(measurementManifestBytes).digest('hex'));
+if (measurementContext && (measurementContext.runId !== process.env.LOAD_RUN_ID || measurementContext.primaryDevices !== reliabilityWorkload.primaryDevices)) throw Error('Wrong measurement campaign');
+const capturePulseProducer = measurementContext && new CapturePulseProducer(measurementContext, monotonicNowMs);
+const revisionBaselines = new Map();
+const measurementDeviceCounters = { pulseAdopted: 0, pulseMissingCapture: 0, navigationGenerations: 0, revisionBootstrapAccepted: false, invalidControls: 0 };
+let measurementSequence = 0, measurementNavigationRound = 0, measurementBootstrapSha = null, measurementDrainNonce = null, measurementDrainStartedAt = null, measurementDrainWritten = false, measurementFirstPulse = null;
 let reliabilityFixtureMetrics = null;
 const reliabilityCaptureEncoding = { captures: 0, elapsedMs: 0, maximumElapsedMs: 0, cpuUserMs: 0, cpuSystemMs: 0 };
 if (reliabilityWorkload) {
   const started = process.hrtime.bigint(), cpu = process.cpuUsage(), memory = process.memoryUsage();
   const baseJpeg = Buffer.from(JPEG_1X1, 'base64');
   const fixtures = devices.map(device => {
-    const fixture = makeReliabilityJpegFixture(baseJpeg);
+    const fixture = makeReliabilityColorFixtures();
     reliabilityScreenshotFixtures.set(device, fixture);
     return fixture;
   });
-  const evidence = reliabilityFixtureEvidence(fixtures), used = process.cpuUsage(cpu), after = process.memoryUsage();
+  const evidence = reliabilityColorFixtureEvidence(fixtures), used = process.cpuUsage(cpu), after = process.memoryUsage();
   reliabilityFixtureMetrics = { ...evidence, creation: {
     elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000,
     cpuUserMs: used.user / 1000, cpuSystemMs: used.system / 1000,
@@ -2138,6 +2155,8 @@ function heartbeatBody(device) {
     status: "active",
     extensionVersion: "load-test",
     chromeVersion: "load-test",
+    ...(device.measurementSnapshot || {}),
+    ...(revisionBaselines.has(device) && !device.measurementSnapshot ? { tabSnapshotRevision: revisionBaselines.get(device) } : {}),
     screenshotHealth: {
       lastSuccessAt: new Date().toISOString(),
       attempts: 1,
@@ -2152,10 +2171,14 @@ function screenshotBody(device) {
   const capturedAt = Date.now();
   let screenshot = screenshotFixture;
   if (reliabilityWorkload) {
-    const fixture = reliabilityScreenshotFixtures.get(device);
+    const variants = reliabilityScreenshotFixtures.get(device), captureOrdinal = (device.reliabilityCaptureOrdinal || 0) + 1;
+    device.reliabilityCaptureOrdinal = captureOrdinal;
+    const fixture = variants?.[(captureOrdinal-1)%3];
     if (!fixture) throw new Error('Missing per-device reliability fixture');
     const started = process.hrtime.bigint(), cpu = process.cpuUsage();
-    screenshot = stampReliabilityFrame(`data:image/jpeg;base64,${fixture.toString('base64')}`, capturedAt, ++reliabilityFrameOrdinal);
+    screenshot = capturePulseProducer && device.schoolId === teacherSchoolId
+      ? stampCausalCapture(fixture, capturedAt, captureOrdinal, capturePulseProducer.markerForCapture(publicBindingFromDevice(device)))
+      : stampReliabilityFrame(`data:image/jpeg;base64,${fixture.toString('base64')}`, capturedAt, ++reliabilityFrameOrdinal);
     const used = process.cpuUsage(cpu), elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
     reliabilityCaptureEncoding.captures += 1;
     reliabilityCaptureEncoding.elapsedMs += elapsedMs;
@@ -2381,7 +2404,57 @@ function teacherSocketReady(state) {
     && (!state.auth.teachingSessionId || state.subscribed);
 }
 
+function pollMeasurementControl() {
+  if (!measurementPaths || stoppingTraffic || !fs.existsSync(measurementPaths.control)) return;
+  try {
+    const bytes = fs.readFileSync(measurementPaths.control);
+    if (bytes.length > MEASUREMENT_LIMITS.controlBytes) throw Error('Oversized measurement control');
+    const pulse = validateCapturePulse(JSON.parse(bytes), measurementContext);
+    if (pulse.revisionDrainNonce && !measurementDrainNonce) {
+      measurementDrainNonce = pulse.revisionDrainNonce; measurementDrainStartedAt = monotonicNowMs();
+      for (const state of deviceStates) if (state.device.schoolId === teacherSchoolId) state.heartbeatWriter?.hold();
+    }
+    if (measurementDrainNonce && !measurementBootstrapSha) {
+      if (monotonicNowMs() - measurementDrainStartedAt > 2000) throw Error('Revision drain exceeded its caller budget');
+      if (!measurementDrainWritten && deviceStates.filter(state => state.device.schoolId === teacherSchoolId).every(state => !state.heartbeatWriter?.active)) {
+        writeAtomicJson(measurementPaths.drained, measurementSignal(measurementContext, 'measurement-drained-v3', measurementDrainNonce)); measurementDrainWritten = true;
+      }
+    }
+    if (pulse.pulseSequence <= measurementSequence) return;
+    if (pulse.revisionBaselinesSha256 && measurementBootstrapSha !== pulse.revisionBaselinesSha256) {
+      const bootstrapBytes = fs.readFileSync(measurementPaths.bootstrap);
+      if (bootstrapBytes.length > MEASUREMENT_LIMITS.bootstrapBytes || createHash('sha256').update(bootstrapBytes).digest('hex') !== pulse.revisionBaselinesSha256) throw Error('Bootstrap bytes mismatch');
+      const bootstrap = validateRevisionBootstrap(JSON.parse(bootstrapBytes), measurementContext, devices);
+      const bases = new Map(bootstrap.revisionBaselines.map(row => [row.publicBinding, row.revisionBase]));
+      for (const device of devices.slice(10)) revisionBaselines.set(device, bases.get(publicBindingFromDevice(device)));
+      measurementBootstrapSha = pulse.revisionBaselinesSha256; measurementDeviceCounters.revisionBootstrapAccepted = true;
+      for (const state of deviceStates) if (state.device.schoolId === teacherSchoolId) state.heartbeatWriter?.release();
+    }
+    capturePulseProducer.adopt(pulse); measurementSequence = pulse.pulseSequence; measurementDeviceCounters.pulseAdopted += 1;
+    if (pulse.navigationRound > measurementNavigationRound) {
+      if (pulse.navigationRound !== measurementNavigationRound + 1 || !measurementBootstrapSha) throw Error('Navigation continuity gap');
+      for (const state of deviceStates) {
+        if (!revisionBaselines.has(state.device)) continue;
+        const snapshot = navigationSnapshot({ runId: pulse.runId, round: pulse.navigationRound, nonce: pulse.navigationNonce }, publicBindingFromDevice(state.device), revisionBaselines.get(state.device));
+        const { marker, hostname, favicon, ...body } = snapshot;
+        state.device.measurementSnapshot = body; state.heartbeatWriter.navigation();
+      }
+      measurementNavigationRound = pulse.navigationRound; measurementDeviceCounters.navigationGenerations += 1;
+    }
+  } catch { measurementDeviceCounters.invalidControls += 1; triggerFatalGate('invalid-measurement-control', { source: 'measurement' }); }
+}
+
 function startDeviceTraffic(state, index) {
+  state.heartbeatWriter = new SerialHeartbeatWriter({ now: monotonicNowMs, schedule: (callback, ms) => later(callback, ms, { scale: false }), clear: cancelLater,
+    snapshot: () => heartbeatBody(state.device), send: async body => {
+      if (stoppingTraffic) return { ok: false, denied: true };
+      counters.heartbeat += 1;
+      const result = await issue('/api/classpilot/device/heartbeat', { method: 'POST', token: state.device.studentToken,
+        body, kind: 'heartbeat', parseJson: Boolean(reliabilityWorkload) });
+      if (reliabilityWorkload && result.ok) state.reliabilityHeartbeats += 1;
+      if (reliabilityWorkload && result.ok && result.json?.screenshotPolicy) state.device.reliabilityPolicy = result.json.screenshotPolicy;
+      return { ok: result.ok, denied: result.status === 401 || result.status === 403 };
+    } });
   const heartbeatJitter = Math.floor((index / devices.length) * heartbeatIntervalMs);
   const screenshotJitter = Math.floor((index / devices.length) * screenshotIntervalMs);
   const acceleratedJitter = acceleratedRequestStaggerMs
@@ -2389,22 +2462,7 @@ function startDeviceTraffic(state, index) {
     : null;
   later(() => {
     if (stoppingTraffic) return;
-    const send = () => {
-      if (stoppingTraffic) return;
-      counters.heartbeat += 1;
-      void issue("/api/classpilot/device/heartbeat", {
-        method: "POST",
-        token: state.device.studentToken,
-        body: heartbeatBody(state.device),
-        kind: "heartbeat",
-        parseJson: Boolean(reliabilityWorkload),
-      }).then(result => {
-        if (reliabilityWorkload && result.ok) state.reliabilityHeartbeats += 1;
-        if (reliabilityWorkload && result.ok && result.json?.screenshotPolicy) {
-          state.device.reliabilityPolicy = result.json.screenshotPolicy;
-        }
-      });
-    };
+    const send = () => { if (!stoppingTraffic) state.heartbeatWriter.regular(); };
     send();
     workloadEvery(send, heartbeatIntervalMs);
   }, acceleratedJitter ?? heartbeatJitter, { scale: acceleratedJitter === null });
@@ -2419,6 +2477,10 @@ function startDeviceTraffic(state, index) {
         // Canary devices intentionally have no observed classroom.
         if (state.device.schoolId === teacherSchoolId && monotonicNowMs() - Number(runStartedAtMonoNs / NANOSECONDS_PER_MILLISECOND) > 30_000) counters.reliabilityPolicyUnavailable += 1;
         return;
+      }
+      if (capturePulseProducer && state.device.schoolId === teacherSchoolId) {
+        try { capturePulseProducer.markerForCapture(publicBindingFromDevice(state.device)); }
+        catch { measurementDeviceCounters.pulseMissingCapture += 1; return; }
       }
       counters.screenshotPost += 1;
       void issue("/api/classpilot/device/screenshot", {
@@ -3408,6 +3470,11 @@ function summarize(shutdownReason) {
         ? Number((ratio(commandTotals.serverCompleted, commandTotals.expected) * 100).toFixed(2))
         : null,
     },
+    measurementV3: { ...measurementDeviceCounters, navigationRounds: measurementNavigationRound,
+      primaryBindingCount: revisionBaselines.size, captureTimingAccepted: false,
+      rawDateCaptureAgeDiagnosticOnly: true, browserCausalCaptureRequired: Boolean(measurementPaths),
+      heartbeatWriters: { regularRequests: deviceStates.reduce((n, state) => n + (state.heartbeatWriter?.counters.regularRequests || 0), 0),
+        eventRequests: deviceStates.reduce((n, state) => n + (state.heartbeatWriter?.counters.eventRequests || 0), 0) } },
     screenshotRetrieval: {
       attempts: counters.screenshotGet,
       successes: counters.screenshotGetSuccess,
@@ -3640,18 +3707,29 @@ if (validateConfigOnly) {
       inputCreatedAt: process.env.LOAD_INPUT_MANIFEST_CREATED_AT,
       onReady: ready => writeAtomicJson(stagingReadyPath, { version: 1, runId, targetOrigin: baseUrl, ...ready, trafficStarted: false }) });
   }
+  if (measurementPaths) {
+    const until = monotonicNowMs() + 10000;
+    while (!fs.existsSync(measurementPaths.control)) { if (monotonicNowMs() > until) throw Error('First causal start pulse unavailable'); await new Promise(resolve => setTimeout(resolve, 25)); }
+    const first = validateCapturePulse(JSON.parse(fs.readFileSync(measurementPaths.control)), measurementContext);
+    if (first.pulseSequence !== 1 || first.navigationRound !== 0 || first.revisionDrainNonce !== null) throw Error('Exact first causal start pulse required');
+    capturePulseProducer.adopt(first); measurementSequence = 1; measurementDeviceCounters.pulseAdopted += 1;
+    measurementFirstPulse = first;
+  }
   revalidateArtifactLifetimeAtTrafficStart();
   progressDescriptor = externalProgressPath
     ? fs.openSync(externalProgressPath, "a", 0o600)
     : null;
   console.log(`Starting ClassPilot load test: ${devices.length} devices, ${screenshotBytes}B screenshots, ${Math.round(durationMs / 1000)}s`);
   runStartedAtMonoNs = monotonicNowNs();
+  if (measurementFirstPulse) writeAtomicJson(measurementPaths.started,
+    measurementSignal(measurementContext, 'measurement-started-v3', measurementFirstPulse.nonce));
   appendProgressOrFail("start");
   if (!stoppingTraffic) {
     every(() => appendProgressOrFail("minute"), progressIntervalMs);
     await renewReliabilityObservationLeases();
     if (reliabilityWorkload) every(() => void renewReliabilityObservationLeases(), 30_000);
     deviceStates.forEach(startDeviceTraffic);
+    if (measurementPaths) every(pollMeasurementControl, MEASUREMENT_LIMITS.pollMs);
     startTeacherTraffic();
     startScreenshotPolling();
     startTileBatchPolling();
