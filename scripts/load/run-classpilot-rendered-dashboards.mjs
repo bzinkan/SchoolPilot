@@ -700,7 +700,9 @@ export function attachActualRenderedSocketObserver(runtime, socket, { invalidate
     invalidatePrior();
   };
   invalidate();
-  const exactScope = message => message.teachingSessionId === runtime.actor.teachingSessionId
+  const exactScope = message => (message.teachingSessionId === runtime.actor.teachingSessionId
+      || message.sessionId === runtime.actor.teachingSessionId)
+    && (message.teachingSessionId === undefined || message.teachingSessionId === runtime.actor.teachingSessionId)
     && (message.sessionId === undefined || message.sessionId === runtime.actor.teachingSessionId)
     && message.supervisionContextId === undefined
     && (message.schoolId === undefined || message.schoolId === runtime.actor.schoolId);
