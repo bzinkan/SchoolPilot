@@ -20462,6 +20462,217 @@ async function runClasspilotControlDeliveryTransaction<T>(
 }
 
 export const CLASSPILOT_DELIVERY_BATCH_SIZE = 40;
+
+/** The rich command path retains its existing per-target transactions. Only a
+ * validated URL-only open action can use the read-only cohort delivery fence. */
+export function isClasspilotPlainOpenTab(commandType: string, payload: unknown): boolean {
+  return commandType === "open-tab" && !!payload && typeof payload === "object"
+    && !Array.isArray(payload) && Object.keys(payload).length === 1
+    && typeof (payload as Record<string, unknown>).url === "string"
+    && /^https?:\/\//i.test(String((payload as Record<string, unknown>).url));
+}
+
+export function isClasspilotPlainOpenTabTargetMetadata(result: unknown): boolean {
+  if (result === null || result === undefined) return true;
+  if (typeof result !== "object" || Array.isArray(result)) return false;
+  const record = result as Record<string, unknown>;
+  return (record.frozenControlRevision === undefined || Number.isSafeInteger(record.frozenControlRevision))
+    && record.scheduledAuthorityRevision === undefined && record.durableAuthorityRevision === undefined;
+}
+
+/** Preserve the canonical writer's JS normalization/order rather than relying
+ * on database collation. PostgreSQL evaluates this volatile output expression
+ * after ORDER BY ordinal; keeping the function out of the sort is essential. */
+export async function lockClasspilotStudentControlAuthorityCohort(
+  schoolId: string, studentIds: readonly string[], database: Pick<typeof db, "execute">,
+): Promise<string[]> {
+  const normalized = [...new Set(studentIds.map(String).map(id => id.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  if (normalized.length > CLASSPILOT_DELIVERY_BATCH_SIZE) throw new RangeError("ClassPilot delivery cohort exceeds 40 students");
+  if (normalized.length) await database.execute(sql`
+    /* classpilot_plain_open_tab_locks */
+    SELECT pg_advisory_xact_lock(hashtextextended(ordered.lock_key, 0::bigint))
+    FROM unnest(${sql.param(normalized.map(id => `classpilot:student-control:${schoolId}:${id}`))}::text[])
+      WITH ORDINALITY AS ordered(lock_key, ordinal)
+    ORDER BY ordered.ordinal
+  `);
+  return normalized;
+}
+
+/** URL-only transient delivery: all mutable authority is locked before a fresh
+ * database-clock projection, then every local send is synchronous. There is no
+ * per-target SQL mutation to roll back, and no fallback/replay after a send. */
+export async function withClasspilotPlainOpenTabDeliveryBatch<
+  Target extends Pick<ClasspilotTeacherChatBinding, "schoolId" | "studentId" | "studentSessionId" | "deviceId">,
+  Result extends ClasspilotSynchronousAuthorityResult,
+>(options: { schoolId: string; commandId: string; targets: readonly Target[] },
+  onAuthorized: (target: Target, authority: {
+    command: ClasspilotCommand; expiresAt: number; isCurrent: () => boolean;
+  }) => Result,
+): Promise<Array<{ authorized: true; value: Result } | { authorized: false; reason: "binding" | "authority" | "elapsed" | "terminal" }>> {
+  if (options.targets.length > CLASSPILOT_DELIVERY_BATCH_SIZE) throw new RangeError("ClassPilot delivery cohort exceeds 40 students");
+  const denied = (reason: "binding" | "authority" = "authority") => options.targets.map(() => ({ authorized: false as const, reason }));
+  if (!options.targets.length) return [];
+  if (new Set(options.targets.map(target => target.studentId)).size !== options.targets.length) return denied("binding");
+  return db.transaction(async tx => {
+    const database = tx as unknown as typeof db;
+    await assertClasspilotEntitled(options.schoolId, database, { lock: true });
+    const studentIds = await lockClasspilotStudentControlAuthorityCohort(options.schoolId,
+      options.targets.filter(target => target.schoolId === options.schoolId).map(target => target.studentId), database);
+    const [commandRow] = await database.select({ command: classpilotCommands,
+      live: sql<boolean>`${classpilotCommands.expiresAt}>clock_timestamp()`,
+    }).from(classpilotCommands).where(and(
+      eq(classpilotCommands.schoolId, options.schoolId), eq(classpilotCommands.id, options.commandId),
+    )).limit(1);
+    const command = commandRow?.command;
+    if (!command || !isClasspilotPlainOpenTab(command.commandType, command.commandPayload)
+      || !command.expiresAt || (!!command.teachingSessionId === !!command.supervisionContextId)) return denied();
+    // Headers are immutable authority. Only target rows are retained against
+    // ACK/supersession; locking headers recreates the ACK/relay/sent cycle.
+    const targets = await database.select().from(classpilotCommandTargets).where(and(
+      eq(classpilotCommandTargets.schoolId, options.schoolId), eq(classpilotCommandTargets.commandId, command.id),
+      inArray(classpilotCommandTargets.studentId, studentIds),
+    )).orderBy(classpilotCommandTargets.studentId).for("share");
+    const targetByStudent = new Map(targets.map(target => [target.studentId, target]));
+    const [membership] = await database.select({ role: schoolMemberships.role }).from(schoolMemberships).where(and(
+      eq(schoolMemberships.schoolId, options.schoolId), eq(schoolMemberships.userId, command.teacherId),
+      eq(schoolMemberships.status, "active"), inArray(schoolMemberships.role, ["teacher", "admin", "school_admin", "office_staff"]),
+    )).limit(1).for("share");
+    let sharedAuthorityCurrent = commandRow?.live === true;
+    let contextExpiresAt: Date | undefined;
+    if (command.teachingSessionId) {
+      const [session] = await database.select({ id: teachingSessions.id }).from(teachingSessions).where(and(
+        eq(teachingSessions.schoolId, options.schoolId), eq(teachingSessions.id, command.teachingSessionId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE), isNull(teachingSessions.endTime),
+      )).limit(1).for("share");
+      const [staff] = await database.select({ id: classpilotSessionStaff.id }).from(classpilotSessionStaff).where(and(
+        eq(classpilotSessionStaff.schoolId, options.schoolId), eq(classpilotSessionStaff.teachingSessionId, command.teachingSessionId),
+        eq(classpilotSessionStaff.staffId, command.teacherId),
+      )).limit(1).for("share");
+      sharedAuthorityCurrent = sharedAuthorityCurrent && !!membership && !!session && !!staff;
+    } else {
+      const [actor] = !["admin", "school_admin"].includes(membership?.role ?? "")
+        ? await database.select({ isSuperAdmin: users.isSuperAdmin }).from(users)
+          .where(eq(users.id, command.teacherId)).limit(1).for("share") : [];
+      const [context] = await database.select().from(classpilotSupervisionContexts).where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.id, command.supervisionContextId!),
+        eq(classpilotSupervisionContexts.status, "active"), gt(classpilotSupervisionContexts.endsAt, sql`clock_timestamp()`),
+      )).limit(1).for("share");
+      sharedAuthorityCurrent = sharedAuthorityCurrent && !!context && classpilotSupervisionRelayActorAllowed({ actorId: command.teacherId,
+        assignedStaffId: context?.assignedStaffId ?? "", commandType: command.commandType,
+        activeMembershipRole: membership?.role ?? null, isSuperAdmin: actor?.isSuperAdmin === true });
+      contextExpiresAt = context?.endsAt;
+    }
+    const controls = await database.select().from(classpilotStudentControlStates).where(and(
+      eq(classpilotStudentControlStates.schoolId, options.schoolId), inArray(classpilotStudentControlStates.studentId, studentIds),
+    )).orderBy(classpilotStudentControlStates.studentId).for("share");
+    const controlByStudent = new Map(controls.map(control => [control.studentId, control]));
+    // Row locks are acquired in their own statement. The final projection must
+    // not retain a snapshot from before waiting for a native binding transfer.
+    const initial = await database.execute<{ studentId: string; studentSessionId: string; deviceId: string }>(sql`
+      /* classpilot_plain_open_tab_bindings */
+      SELECT ${studentSessions.studentId} AS "studentId", ${studentSessions.id} AS "studentSessionId", ${studentSessions.deviceId} AS "deviceId"
+      FROM ${studentSessions}
+      INNER JOIN ${students} ON ${students.id}=${studentSessions.studentId} AND ${students.schoolId}=${options.schoolId} AND ${students.status}='active'
+      INNER JOIN ${devices} ON ${devices.deviceId}=${studentSessions.deviceId} AND ${devices.schoolId}=${options.schoolId}
+      WHERE ${inArray(studentSessions.studentId, studentIds)} AND ${currentStudentSessionAuthorityPredicate()}
+      ORDER BY ${studentSessions.studentId}, ${studentSessions.id} FOR SHARE
+    `);
+    const bound = new Set(initial.rows.map(row => JSON.stringify([row.studentId, row.studentSessionId, row.deviceId])));
+    const supervision = command.supervisionContextId
+      ? await getActiveSupervisionForStudentsAtClock(options.schoolId, studentIds, database, "current") : [];
+    const assigned = new Set(supervision.filter(row => row.context.id === command.supervisionContextId).map(row => row.studentId));
+    const authorityCurrent = new Set(options.targets.filter(target => {
+      const stored = targetByStudent.get(target.studentId), control = controlByStudent.get(target.studentId);
+      const frozen = stored?.result && typeof stored.result === "object" && !Array.isArray(stored.result)
+        ? stored.result as Record<string, unknown> : {};
+      return sharedAuthorityCurrent && target.schoolId === options.schoolId && !!stored && !!control
+        && stored.studentSessionId === target.studentSessionId && stored.deviceId === target.deviceId
+        && ["requested", "sent", "received"].includes(stored.status)
+        && isClasspilotPlainOpenTabTargetMetadata(stored.result)
+        && (!Number.isSafeInteger(frozen.frozenControlRevision) || frozen.frozenControlRevision === control.revision)
+        && frozen.scheduledAuthorityRevision === undefined && frozen.durableAuthorityRevision === undefined
+        && control.teachingSessionId === command.teachingSessionId && control.supervisionContextId === command.supervisionContextId
+        && bound.has(JSON.stringify([target.studentId, target.studentSessionId, target.deviceId]))
+        && (!command.supervisionContextId || assigned.has(target.studentId));
+    }).map(target => target.studentId));
+    const candidates = options.targets.filter(target => target.schoolId === options.schoolId
+      && bound.has(JSON.stringify([target.studentId, target.studentSessionId, target.deviceId])));
+    if (!candidates.length) return denied("binding");
+    type FinalRow = HeartbeatScreenshotOwnerRow & { studentId: string; clockMs: number; expiresMs: number; entitled: boolean };
+    const finalReadStarted = performance.now();
+    const final = await database.execute<FinalRow>(sql`
+      /* classpilot_plain_open_tab_final */
+      SELECT expected.student_id AS "studentId", owner.*,
+        ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)} AS entitled,
+        extract(epoch FROM clock_timestamp())*1000 AS "clockMs",
+        extract(epoch FROM least(${command.expiresAt.toISOString()}::timestamptz,
+          ${contextExpiresAt?.toISOString() ?? null}::timestamptz, ${classpilotStudentControlStates.hardExpiresAt},
+          ${classpilotStudentControlStates.scheduledEndAt},
+          ${schools.activeUntil}, entitlement.expires_at, next_supervision.starts_at,
+          CASE WHEN ${studentSessions.authKind}='manual_shared' THEN ${studentSessions.manualLeaseExpiresAt} END))*1000 AS "expiresMs"
+      FROM unnest(${sql.param(candidates.map(target => target.studentId))}::text[], ${sql.param(candidates.map(target => target.studentSessionId))}::text[],
+        ${sql.param(candidates.map(target => target.deviceId))}::text[],
+        ${sql.param(candidates.map(target => controlByStudent.get(target.studentId)?.revision ?? null))}::int[])
+        AS expected(student_id, session_id, device_id, revision)
+      INNER JOIN ${schools} ON ${schools.id}=${options.schoolId}
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN bool_or(${productLicenses.expiresAt} IS NULL) THEN NULL ELSE max(${productLicenses.expiresAt}) END AS expires_at
+        FROM ${productLicenses} WHERE ${productLicenses.schoolId}=${options.schoolId}
+          AND ${productLicenses.product}='CLASSPILOT' AND ${productLicenses.status}='active'
+      ) entitlement
+      INNER JOIN ${studentSessions} ON ${studentSessions.id}=expected.session_id
+        AND ${studentSessions.studentId}=expected.student_id AND ${studentSessions.deviceId}=expected.device_id
+      INNER JOIN ${students} ON ${students.id}=expected.student_id AND ${students.schoolId}=${options.schoolId} AND ${students.status}='active'
+      INNER JOIN ${devices} ON ${devices.deviceId}=expected.device_id AND ${devices.schoolId}=${options.schoolId}
+      LEFT JOIN ${classpilotStudentControlStates} ON ${classpilotStudentControlStates.schoolId}=${options.schoolId}
+        AND ${classpilotStudentControlStates.studentId}=expected.student_id
+        AND ${classpilotStudentControlStates.revision}=expected.revision
+      LEFT JOIN ${classpilotCommandTargets} ON ${classpilotCommandTargets.schoolId}=${options.schoolId}
+        AND ${classpilotCommandTargets.commandId}=${command.id} AND ${classpilotCommandTargets.studentId}=expected.student_id
+        AND ${classpilotCommandTargets.studentSessionId}=expected.session_id AND ${classpilotCommandTargets.deviceId}=expected.device_id
+        AND ${inArray(classpilotCommandTargets.status, ["requested", "sent", "received"])}
+      CROSS JOIN LATERAL (
+        SELECT min(${classpilotSupervisionContexts.startsAt}) AS starts_at
+        FROM ${classpilotSupervisionStudents}
+        INNER JOIN ${classpilotSupervisionContexts} ON ${classpilotSupervisionContexts.id}=${classpilotSupervisionStudents.contextId}
+        WHERE ${!!command.teachingSessionId} AND ${classpilotSupervisionStudents.schoolId}=${options.schoolId}
+          AND ${classpilotSupervisionStudents.studentId}=expected.student_id AND ${classpilotSupervisionStudents.releasedAt} IS NULL
+          AND ${classpilotSupervisionContexts.schoolId}=${options.schoolId} AND ${classpilotSupervisionContexts.status}='active'
+          AND ${classpilotSupervisionContexts.endsAt}>clock_timestamp()
+          AND ${classpilotSupervisionContexts.endsAt}>${classpilotSupervisionContexts.startsAt}
+      ) next_supervision
+      CROSS JOIN LATERAL (${heartbeatTelemetryOwnerQuery(options.schoolId, sql`expected.student_id`, "current")}) owner
+      WHERE ${currentStudentSessionAuthorityPredicate()}
+    `);
+    if (final.rows.some(row => row.entitled !== true)) throw Object.assign(new Error("School is not entitled to ClassPilot"), {
+      status: 403, code: "CLASSPILOT_NOT_ENTITLED",
+    });
+    const rowsByStudent = new Map<string, FinalRow[]>();
+    for (const row of final.rows) {
+      const rows = rowsByStudent.get(row.studentId) ?? []; rows.push(row); rowsByStudent.set(row.studentId, rows);
+    }
+    return options.targets.map(target => {
+      const rows = rowsByStudent.get(target.studentId), first = rows?.[0];
+      if (!first || target.schoolId !== options.schoolId) return { authorized: false as const, reason: "binding" as const };
+      const stored = targetByStudent.get(target.studentId);
+      if (stored && ["completed", "failed", "expired", "unavailable"].includes(stored.status)) return { authorized: false as const, reason: "terminal" as const };
+      if (!authorityCurrent.has(target.studentId)) return { authorized: false as const, reason: "authority" as const };
+      const owner = classpilotTelemetryOwnerFromRows(rows);
+      if (command.teachingSessionId && (owner.hasActiveSupervision || owner.teachingSessionId !== command.teachingSessionId)) return { authorized: false as const, reason: "authority" as const };
+      const expiresAt = Number(first.expiresMs), checkedAt = Number(first.clockMs);
+      // Starting elapsed time before the query conservatively includes its
+      // round trip; a slow final read can never extend the database deadline.
+      const isCurrent = () => Number.isFinite(expiresAt) && Number.isFinite(checkedAt)
+        && expiresAt > checkedAt + (performance.now() - finalReadStarted);
+      if (!isCurrent()) return { authorized: false as const, reason: "elapsed" as const };
+      const value = onAuthorized(target, { command, expiresAt, isCurrent });
+      assertClasspilotSynchronousAuthorityResult(value);
+      return { authorized: true as const, value };
+    });
+  });
+}
+
 const classpilotDeliveryBatch = new AsyncLocalStorage<{
   schoolId: string;
   studentIds: ReadonlySet<string>;

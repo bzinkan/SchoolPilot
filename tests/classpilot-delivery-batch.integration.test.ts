@@ -418,3 +418,502 @@ test("actual receiver fences persistent source revisions and the existing narrow
   await admin.query("UPDATE classpilot_commands SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [expired]);
   assert.equal(await relay(expired), null);
 });
+
+async function plainOpenFixture(chosen = bindings.slice(1, 41), supervision = false) {
+  const actorId = randomUUID(), authorityId = randomUUID(), groupId = randomUUID(), commandId = randomUUID();
+  await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','Plain open')", [actorId, `${actorId}@${schoolId}.example.edu`]);
+  await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [schoolId, actorId]);
+  await admin.query("DELETE FROM classpilot_supervision_students WHERE school_id=$1 AND student_id=ANY($2::text[])", [schoolId, chosen.map(binding => binding.studentId)]);
+  await admin.query("DELETE FROM classpilot_student_control_states WHERE school_id=$1 AND student_id=ANY($2::text[])", [schoolId, chosen.map(binding => binding.studentId)]);
+  if (supervision) {
+    await admin.query("INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,assigned_staff_id,created_by,starts_at,ends_at) VALUES($1,$2,'other','Synthetic plain open',$3,$3,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 hour')", [authorityId, schoolId, actorId]);
+    await admin.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by) SELECT $1,$2,student,$4 FROM unnest($3::text[]) student", [schoolId, authorityId, chosen.map(binding => binding.studentId), actorId]);
+    await inSchool(() => storage.initializeClasspilotSupervisionControlStates({ schoolId, supervisionContextId: authorityId, studentIds: chosen.map(binding => binding.studentId) }));
+  } else {
+    const writer = await admin.connect();
+    try {
+      await writer.query("BEGIN");
+      await writer.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) VALUES($1,$2,$3,'Synthetic plain open','admin_class')", [groupId, schoolId, actorId]);
+      await writer.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')", [groupId, actorId]);
+      await writer.query("COMMIT");
+    } finally { writer.release(); }
+    await admin.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,'live',clock_timestamp()-interval '1 minute',clock_timestamp())", [authorityId, schoolId, groupId, actorId]);
+    await admin.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'primary')", [schoolId, authorityId, actorId]);
+    await admin.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) SELECT $1,$2,$3,student FROM unnest($4::text[]) student", [schoolId, authorityId, groupId, chosen.map(binding => binding.studentId)]);
+    await inSchool(() => storage.replaceClasspilotStudentControlSnapshots({ schoolId, teachingSessionId: authorityId,
+      studentIds: chosen.map(binding => binding.studentId), desiredState: { restrictions: {} },
+      hardExpiresAt: new Date(Date.now() + 3600_000), authorityMode: "filter" }));
+  }
+  const authority = supervision ? { teachingSessionId: null, supervisionContextId: authorityId }
+    : { teachingSessionId: authorityId, supervisionContextId: null };
+  await admin.query("INSERT INTO classpilot_commands(id,school_id,teaching_session_id,supervision_context_id,teacher_id,target_scope,command_type,command_payload,requested_count,expires_at) VALUES($1,$2,$3,$4,$5,$6,'open-tab','{\"url\":\"https://example.invalid/lesson\"}'::jsonb,$7,clock_timestamp()+interval '15 seconds')", [commandId, schoolId, authority.teachingSessionId, authority.supervisionContextId, actorId, supervision ? "context" : "class", chosen.length]);
+  await admin.query(`INSERT INTO classpilot_command_targets(command_id,school_id,teaching_session_id,supervision_context_id,student_id,student_session_id,device_id,result)
+    SELECT $1,$2,$3,$4,b.student_id,b.session_id,b.device_id,jsonb_build_object('frozenControlRevision',control.revision)
+    FROM unnest($5::text[],$6::text[],$7::text[]) b(student_id,session_id,device_id)
+    JOIN classpilot_student_control_states control ON control.school_id=$2 AND control.student_id=b.student_id`,
+  [commandId, schoolId, authority.teachingSessionId, authority.supervisionContextId, chosen.map(binding => binding.studentId), chosen.map(binding => binding.studentSessionId), chosen.map(binding => binding.deviceId)]);
+  return { actorId, authorityId, groupId, commandId, chosen, authority,
+    async dispose() {
+      await admin.query("DELETE FROM classpilot_command_targets WHERE command_id=$1", [commandId]);
+      await admin.query("DELETE FROM classpilot_commands WHERE id=$1", [commandId]);
+      await admin.query("DELETE FROM classpilot_student_control_states WHERE school_id=$1 AND student_id=ANY($2::text[])", [schoolId, chosen.map(binding => binding.studentId)]);
+      if (supervision) {
+        await admin.query("DELETE FROM classpilot_supervision_students WHERE context_id=$1", [authorityId]);
+        await admin.query("DELETE FROM classpilot_supervision_contexts WHERE id=$1", [authorityId]);
+      } else {
+        await admin.query("DELETE FROM classpilot_session_staff WHERE teaching_session_id=$1", [authorityId]);
+        await admin.query("DELETE FROM classpilot_session_students WHERE teaching_session_id=$1", [authorityId]);
+        await admin.query("DELETE FROM teaching_sessions WHERE id=$1", [authorityId]);
+        const writer = await admin.connect();
+        try {
+          await writer.query("BEGIN");
+          await writer.query("DELETE FROM group_teachers WHERE group_id=$1", [groupId]);
+          await writer.query("DELETE FROM groups WHERE id=$1", [groupId]);
+          await writer.query("COMMIT");
+        } finally { writer.release(); }
+      }
+      await admin.query("DELETE FROM school_memberships WHERE school_id=$1 AND user_id=$2", [schoolId, actorId]);
+    } };
+}
+
+test("plain class open-tab retains reference authority with a constant SQL cohort and no savepoints", { timeout: 20_000 }, async () => {
+  const fixture = await plainOpenFixture();
+  try {
+    const counts: number[] = [];
+    const measure = (work: () => Promise<unknown>) => inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store);
+      const original = store.client.query; let statements = 0, savepoints = 0;
+      store.client.query = function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
+        statements++; if (/^savepoint /i.test(text)) savepoints++;
+        return Reflect.apply(original, this, args);
+      } as typeof original;
+      try { const result = await work(); counts.push(statements); return { result, savepoints }; }
+      finally { store.client.query = original; }
+    });
+    const reference = await measure(() => storage.withClasspilotStudentControlDeliveryBatch(schoolId, fixture.chosen,
+      binding => binding.studentId, binding => storage.withClasspilotStudentControlDeliveryAuthority(binding,
+        database => storage.classpilotStudentRelayMessageAllowed(binding, { commandId: fixture.commandId, authority: fixture.authority }, database),
+        (_claimed, allowed) => allowed ? binding.studentId : null)));
+    const sent: string[] = [];
+    const fast = await measure(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen },
+      (binding, authority) => { assert.ok(authority.isCurrent()); sent.push(binding.studentId); return binding.studentId; }));
+    assert.ok((reference.result as Array<{ authorized: boolean; value: unknown }>).every(outcome => outcome.authorized && outcome.value));
+    assert.ok((fast.result as Array<{ authorized: boolean; value: unknown }>).every(outcome => outcome.authorized && outcome.value));
+    assert.deepEqual(sent, fixture.chosen.map(binding => binding.studentId));
+    assert.equal(reference.savepoints, 40);
+    assert.equal(fast.savepoints, 0);
+    assert.ok(counts[0]! > 400, "retain measured reference N+1 evidence");
+    assert.ok(counts[1]! <= 16, "all forty targets share a bounded constant number of SQL statements");
+    console.log(`Plain open-tab SQL statements: reference=${counts[0]} cohort=${counts[1]}`);
+  } finally { await fixture.dispose(); }
+});
+
+test("plain cohort lock query preserves canonical sort/dedup and overlapping reverse input", { timeout: 15_000 }, async () => {
+  const chosen = bindings.slice(2, 8).sort((left, right) => left.studentId.localeCompare(right.studentId));
+  const blocker = await admin.connect(); await blocker.query("BEGIN");
+  await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0::bigint))", [lockKey(chosen[0]!.studentId)]);
+  const blockerPid = (await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+  const pids: number[] = [], held: Promise<unknown>[] = [];
+  let release!: () => void; const continueBatch = new Promise<void>(resolve => { release = resolve; });
+  const start = (ids: string[]) => inSchool(() => import("../src/db.js").then(({ db }) => db.transaction(async tx => {
+    const store = tenant.getOwnedTenantStore(); assert.ok(store);
+    pids.push((await store.client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid);
+    const normalized = await storage.lockClasspilotStudentControlAuthorityCohort(schoolId, ids, tx);
+    assert.deepEqual(normalized, chosen.map(binding => binding.studentId));
+    await continueBatch;
+  })));
+  const waitBlocked = async (pidIndex: number) => {
+    const deadline = performance.now() + 3_000;
+    while (performance.now() < deadline) {
+      if (pids[pidIndex] && (await admin.query<{ blockers: number[] }>("SELECT pg_blocking_pids($1) AS blockers", [pids[pidIndex]])).rows[0]!.blockers.includes(blockerPid)) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.fail("cohort did not block on the first canonical key");
+  };
+  try {
+    const reverseInput: string[] = [...chosen].reverse().map(binding => binding.studentId);
+    reverseInput.push(` ${chosen[0]!.studentId} `, " ", chosen[1]!.studentId);
+    held.push(start(reverseInput)); held[0]!.catch(() => {});
+    await waitBlocked(0);
+    held.push(start(chosen.map(binding => binding.studentId))); held[1]!.catch(() => {});
+    await waitBlocked(1);
+    for (const binding of chosen.slice(1)) assert.equal((await admin.query<{ acquired: boolean }>("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0::bigint)) AS acquired", [lockKey(binding.studentId)])).rows[0]!.acquired, true);
+    await blocker.query("ROLLBACK");
+    const deadline = performance.now() + 3_000;
+    let firstHoldsAll = false;
+    while (!firstHoldsAll && performance.now() < deadline) {
+      firstHoldsAll = !(await admin.query<{ acquired: boolean }>("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0::bigint)) AS acquired", [lockKey(chosen.at(-1)!.studentId)])).rows[0]!.acquired;
+      if (!firstHoldsAll) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(firstHoldsAll, true);
+    for (const binding of chosen) assert.equal((await admin.query<{ acquired: boolean }>("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0::bigint)) AS acquired", [lockKey(binding.studentId)])).rows[0]!.acquired, false);
+    release(); await Promise.all(held);
+    for (const binding of chosen) assert.equal((await admin.query<{ acquired: boolean }>("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0::bigint)) AS acquired", [lockKey(binding.studentId)])).rows[0]!.acquired, true);
+  } finally { release(); await blocker.query("ROLLBACK"); blocker.release(); await Promise.allSettled(held); }
+});
+
+test("plain delivery denies changed bindings, revisions, terminal targets and foreign tuples individually", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 8));
+  try {
+    const selected = [...fixture.chosen];
+    selected[0] = { ...selected[0]!, studentSessionId: randomUUID() };
+    selected[1] = { ...selected[1]!, schoolId: randomUUID() };
+    await admin.query("UPDATE classpilot_command_targets SET result=jsonb_set(result,'{frozenControlRevision}',to_jsonb((result->>'frozenControlRevision')::int+1)) WHERE command_id=$1 AND student_id=$2", [fixture.commandId, selected[2]!.studentId]);
+    await admin.query("UPDATE classpilot_command_targets SET status='completed' WHERE command_id=$1 AND student_id=$2", [fixture.commandId, selected[3]!.studentId]);
+    await admin.query("DELETE FROM classpilot_student_control_states WHERE school_id=$1 AND student_id=$2", [schoolId, selected[4]!.studentId]);
+    const sent: string[] = [];
+    const outcomes = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: selected },
+      binding => { sent.push(binding.studentId); return binding.studentId; }));
+    assert.deepEqual(outcomes.map(outcome => outcome.authorized), [false, false, false, false, false, true]);
+    assert.deepEqual(sent, [selected[5]!.studentId]);
+  } finally { await fixture.dispose(); }
+});
+
+test("plain fast entry preserves legacy reference targets and excludes every rich open-tab variant", async () => {
+  const dispatcher = await import("../src/services/classpilotCommandDispatcher.js");
+  const fixture = await plainOpenFixture(bindings.slice(2, 4));
+  try {
+    const resolved = fixture.chosen.map(binding => ({ ...binding, studentName: "Synthetic", available: true, controlRevision: 1 }));
+    assert.equal(dispatcher.classpilotPlainOpenTabTargetsEligible(resolved), true);
+    assert.equal(dispatcher.classpilotPlainOpenTabTargetsEligible(resolved.map(target => ({ ...target, controlRevision: undefined }))), true);
+    assert.equal(storage.isClasspilotPlainOpenTabTargetMetadata({ frozenControlRevision: "malformed" }), false);
+    assert.equal(storage.isClasspilotPlainOpenTabTargetMetadata({ frozenControlRevision: 1 }), true);
+    assert.equal(dispatcher.classpilotPlainOpenTabTargetsEligible([...resolved, resolved[0]!]), false);
+    for (const key of ["scheduledAuthorityRevision", "durableAuthorityRevision"] as const)
+      assert.equal(dispatcher.classpilotPlainOpenTabTargetsEligible(resolved.map(target => ({ ...target, [key]: 1 }))), false);
+    assert.equal(dispatcher.classpilotPlainOpenTabTargetsEligible(Array.from({ length: 41 }, (_, index) => ({ ...resolved[0]!, studentId: String(index) }))), false);
+    assert.equal(storage.isClasspilotPlainOpenTab("open-tab", { url: "https://example.invalid" }), true);
+    for (const payload of [{ url: "https://example.invalid", focusAfterOpen: true }, { url: "https://example.invalid", afterRestrictionCommandId: "other" },
+      { url: "https://example.invalid", currentPage: true }, { url: "https://example.invalid", classroomState: {} }, { url: "javascript:alert(1)" }])
+      assert.equal(storage.isClasspilotPlainOpenTab("open-tab", payload), false);
+    assert.equal(storage.isClasspilotPlainOpenTab("close-tabs", { url: "https://example.invalid" }), false);
+    await admin.query("UPDATE classpilot_command_targets SET result='{}'::jsonb WHERE command_id=$1", [fixture.commandId]);
+    const reference = await inSchool(() => storage.withClasspilotStudentControlDeliveryBatch(schoolId, fixture.chosen, binding => binding.studentId,
+      binding => storage.withClasspilotStudentControlDeliveryAuthority(binding,
+        database => storage.classpilotStudentRelayMessageAllowed(binding, { commandId: fixture.commandId, authority: fixture.authority }, database),
+        (_claimed, allowed) => allowed)));
+    assert.ok(reference.every(outcome => outcome.authorized && outcome.value), "authorized legacy targets lacking frozen revisions retain the reference path");
+    const compatible = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, binding => binding.studentId));
+    assert.ok(compatible.every(outcome => outcome.authorized), "the bulk path retains the same current authority when no frozen revision exists");
+    await admin.query("UPDATE classpilot_commands SET command_payload=$2::jsonb WHERE id=$1", [fixture.commandId, JSON.stringify({ url: "https://example.invalid", focusAfterOpen: true })]);
+    const sent: string[] = [];
+    const rejected = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen },
+      binding => { sent.push(binding.studentId); return binding.studentId; }));
+    assert.ok(rejected.every(outcome => !outcome.authorized)); assert.deepEqual(sent, []);
+  } finally { await fixture.dispose(); }
+});
+
+test("plain final database clock rejects a lease or command that expires during final read", async () => {
+  const fixture = await plainOpenFixture([bindings[0]!, bindings[2]!]);
+  try {
+    await admin.query("UPDATE student_sessions SET manual_lease_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1", [bindings[0]!.studentSessionId]);
+    const sent: string[] = [];
+    const outcomes = await inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store); const original = store.client.query;
+      store.client.query = async function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
+        if (text.includes("classpilot_plain_open_tab_final")) await Reflect.apply(original, this, ["SELECT pg_sleep(1.1)"]);
+        return Reflect.apply(original, this, args);
+      } as typeof original;
+      try { return await storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen },
+        binding => { sent.push(binding.studentId); return binding.studentId; }); }
+      finally { store.client.query = original; }
+    });
+    assert.deepEqual(outcomes.map(outcome => outcome.authorized), [false, true]);
+    assert.deepEqual(sent, [bindings[2]!.studentId]);
+    await admin.query("UPDATE classpilot_commands SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [fixture.commandId]);
+    const expired = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, () => assert.fail("expired command sent")));
+    assert.ok(expired.every(outcome => !outcome.authorized));
+  } finally {
+    await admin.query("UPDATE student_sessions SET manual_lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1", [bindings[0]!.studentSessionId]);
+    await fixture.dispose();
+  }
+});
+
+test("plain synchronous frame loop rechecks the minimum control deadline without replaying earlier sends", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4));
+  try {
+    await admin.query("UPDATE classpilot_student_control_states SET hard_expires_at=clock_timestamp()+interval '1 second',scheduled_end_at=NULL WHERE school_id=$1 AND student_id=$2", [schoolId, fixture.chosen[1]!.studentId]);
+    const sent: string[] = [];
+    const outcomes = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, (binding, authority) => {
+      assert.ok(authority.isCurrent()); sent.push(binding.studentId);
+      if (binding === fixture.chosen[0]) { const until = performance.now() + 1100; while (performance.now() < until) { /* synchronous side effect window */ } }
+      return binding.studentId;
+    }));
+    assert.deepEqual(outcomes.map(outcome => outcome.authorized), [true, false]);
+    assert.deepEqual(sent, [fixture.chosen[0]!.studentId]);
+  } finally { await fixture.dispose(); }
+});
+
+for (const cutoff of ["school", "license", "context", "command"] as const) test(`plain delayed final reply cannot outlive its ${cutoff} authority cutoff`, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4), cutoff === "context");
+  try {
+    if (cutoff === "school") await admin.query("UPDATE schools SET active_until=clock_timestamp()+interval '1 second' WHERE id=$1", [schoolId]);
+    if (cutoff === "license") await admin.query("UPDATE product_licenses SET expires_at=clock_timestamp()+interval '1 second' WHERE school_id=$1 AND product='CLASSPILOT'", [schoolId]);
+    if (cutoff === "context") await admin.query("UPDATE classpilot_supervision_contexts SET ends_at=clock_timestamp()+interval '1 second' WHERE id=$1", [fixture.authorityId]);
+    if (cutoff === "command") await admin.query("UPDATE classpilot_commands SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1", [fixture.commandId]);
+    let finalRowsBeforeReplyDelay = 0;
+    const sent: string[] = [];
+    const outcomes = await inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store); const original = store.client.query;
+      store.client.query = async function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
+        const result = await Reflect.apply(original, this, args);
+        if (text.includes("classpilot_plain_open_tab_final")) {
+          finalRowsBeforeReplyDelay = (result as pg.QueryResult).rows.length;
+          await Reflect.apply(original, this, ["SELECT pg_sleep(1.1)"]);
+        }
+        return result;
+      } as typeof original;
+      try { return await storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen },
+        binding => { sent.push(binding.studentId); return binding.studentId; }); }
+      finally { store.client.query = original; }
+    });
+    assert.ok(finalRowsBeforeReplyDelay >= fixture.chosen.length, "authority was valid in the DB projection before its response was delayed");
+    assert.ok(outcomes.every(outcome => !outcome.authorized));
+    assert.deepEqual(sent, []);
+  } finally {
+    if (cutoff === "school") await admin.query("UPDATE schools SET active_until=NULL WHERE id=$1", [schoolId]);
+    if (cutoff === "license") await admin.query("UPDATE product_licenses SET expires_at=NULL WHERE school_id=$1 AND product='CLASSPILOT'", [schoolId]);
+    await fixture.dispose();
+  }
+});
+
+for (const mutation of ["binding", "membership", "session-staff", "context", "school", "license"] as const) test(`plain native ${mutation} retirement waits through the cohort's final synchronous send`, { timeout: 10_000 }, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4), mutation === "context");
+  const competitor = await admin.connect(); await competitor.query("BEGIN");
+  const pid = (await competitor.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+  let change: Promise<pg.QueryResult> | undefined;
+  try {
+    const sent: string[] = [];
+    const outcomes = await inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store); const original = store.client.query;
+      store.client.query = async function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
+        if (text.includes("classpilot_plain_open_tab_final")) {
+          change = mutation === "binding" ? competitor.query("UPDATE student_sessions SET is_active=false WHERE id=$1", [fixture.chosen[1]!.studentSessionId])
+            : mutation === "membership" ? competitor.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, fixture.actorId])
+            : mutation === "session-staff" ? competitor.query("DELETE FROM classpilot_session_staff WHERE teaching_session_id=$1 AND staff_id=$2", [fixture.authorityId, fixture.actorId])
+            : mutation === "context" ? competitor.query("UPDATE classpilot_supervision_contexts SET status='ended' WHERE id=$1", [fixture.authorityId])
+            : mutation === "school" ? competitor.query("UPDATE schools SET is_active=false WHERE id=$1", [schoolId])
+            : competitor.query("UPDATE product_licenses SET status='inactive' WHERE school_id=$1 AND product='CLASSPILOT'", [schoolId]);
+          change.catch(() => {});
+          const deadline = performance.now() + 2000; let blocked = false;
+          while (!blocked && performance.now() < deadline) {
+            blocked = (await admin.query<{ blocked: boolean }>("SELECT cardinality(pg_blocking_pids($1))>0 AS blocked", [pid])).rows[0]!.blocked;
+            if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          assert.equal(blocked, true, "mutable authority is locked before the final projection starts");
+        }
+        return Reflect.apply(original, this, args);
+      } as typeof original;
+      try { return await storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen },
+        binding => { sent.push(binding.studentId); return binding.studentId; }); }
+      finally { store.client.query = original; }
+    });
+    assert.ok(outcomes.every(outcome => outcome.authorized));
+    assert.deepEqual(sent, fixture.chosen.map(binding => binding.studentId));
+    assert.ok(change); await change;
+  } finally { await competitor.query("ROLLBACK"); competitor.release(); await fixture.dispose(); }
+});
+
+test("plain session co-teacher membership and retirement retain the exact staff contract", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)); const coTeacher = randomUUID();
+  try {
+    await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','Co-teacher')", [coTeacher, `${coTeacher}@${schoolId}.example.edu`]);
+    await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [schoolId, coTeacher]);
+    await admin.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'co_teacher')", [schoolId, fixture.authorityId, coTeacher]);
+    await admin.query("UPDATE classpilot_commands SET teacher_id=$2 WHERE id=$1", [fixture.commandId, coTeacher]);
+    const deliver = () => inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, binding => binding.studentId));
+    assert.ok((await deliver()).every(outcome => outcome.authorized));
+    await admin.query("DELETE FROM classpilot_session_staff WHERE teaching_session_id=$1 AND staff_id=$2", [fixture.authorityId, coTeacher]);
+    assert.ok((await deliver()).every(outcome => !outcome.authorized), "retired staff cannot retain a class command grant");
+    await admin.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, coTeacher]);
+    assert.ok((await deliver()).every(outcome => !outcome.authorized), "a teacher identity without active membership cannot use the live class");
+    await admin.query("UPDATE school_memberships SET status='active' WHERE school_id=$1 AND user_id=$2", [schoolId, coTeacher]);
+    assert.ok((await deliver()).every(outcome => !outcome.authorized));
+    assert.equal((await admin.query("SELECT 1 FROM teaching_sessions WHERE id=$1 AND end_time IS NULL", [fixture.authorityId])).rowCount, 1);
+    assert.equal((await admin.query("SELECT 1 FROM classpilot_session_staff WHERE teaching_session_id=$1 AND staff_id=$2", [fixture.authorityId, fixture.actorId])).rowCount, 1);
+  } finally {
+    await admin.query("DELETE FROM classpilot_session_staff WHERE teaching_session_id=$1 AND staff_id=$2", [fixture.authorityId, coTeacher]);
+    await admin.query("DELETE FROM school_memberships WHERE school_id=$1 AND user_id=$2", [schoolId, coTeacher]);
+    await fixture.dispose();
+  }
+});
+
+test("plain supervision preserves assigned office staff and the narrow administrator exception", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4), true); const extraActors: string[] = [];
+  try {
+    await admin.query("UPDATE school_memberships SET role='office_staff' WHERE school_id=$1 AND user_id=$2", [schoolId, fixture.actorId]);
+    const deliver = () => inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, binding => binding.studentId));
+    assert.ok((await deliver()).every(outcome => outcome.authorized));
+    for (const role of ["teacher", "admin", "school_admin", "superadmin"] as const) {
+      const actorId = randomUUID(); extraActors.push(actorId);
+      await admin.query("INSERT INTO users(id,email,first_name,last_name,is_super_admin) VALUES($1,$2,'Synthetic','Authority',$3)", [actorId, `${actorId}@${schoolId}.example.edu`, role === "superadmin"]);
+      if (role !== "superadmin") await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,$3,'active')", [schoolId, actorId, role]);
+      await admin.query("UPDATE classpilot_commands SET teacher_id=$2 WHERE id=$1", [fixture.commandId, actorId]);
+      assert.ok((await deliver()).every(outcome => outcome.authorized === (role !== "teacher")), "an unrelated teacher cannot borrow the assigned staff or admin exception");
+    }
+  } finally {
+    for (const actorId of extraActors) await admin.query("DELETE FROM school_memberships WHERE school_id=$1 AND user_id=$2", [schoolId, actorId]);
+    await fixture.dispose();
+  }
+});
+
+for (const legacy of [false, true]) test(`plain owner projection retains ${legacy ? "legacy roster" : "frozen roster"} override ranking`, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)); const newer = randomUUID();
+  try {
+    await admin.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,control_updated_at,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,'live',clock_timestamp(),clock_timestamp()+interval '1 minute',$5)", [newer, schoolId, fixture.groupId, fixture.actorId, legacy ? null : new Date()]);
+    if (legacy) await admin.query("INSERT INTO group_students(group_id,student_id) SELECT $1,student FROM unnest($2::text[]) student", [fixture.groupId, fixture.chosen.map(binding => binding.studentId)]);
+    else await admin.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) SELECT $1,$2,$3,student FROM unnest($4::text[]) student", [schoolId, newer, fixture.groupId, fixture.chosen.map(binding => binding.studentId)]);
+    const expectedOwner = await inSchool(() => storage.getActiveClassOwnersForStudents(schoolId, fixture.chosen.map(binding => binding.studentId)));
+    assert.ok(expectedOwner.every(owner => owner.session.id === newer));
+    const outcomes = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, () => assert.fail("overridden owner sent")));
+    assert.ok(outcomes.every(outcome => !outcome.authorized));
+  } finally {
+    await admin.query("DELETE FROM classpilot_session_students WHERE teaching_session_id=$1", [newer]);
+    await admin.query("DELETE FROM group_students WHERE group_id=$1", [fixture.groupId]);
+    await admin.query("DELETE FROM teaching_sessions WHERE id=$1", [newer]);
+    await fixture.dispose();
+  }
+});
+
+test("plain delayed final reply stops class delivery when pre-existing future supervision begins", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)); const future = randomUUID();
+  try {
+    await admin.query("INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,assigned_staff_id,created_by,starts_at,ends_at) VALUES($1,$2,'other','Synthetic future coverage',$3,$3,clock_timestamp()+interval '1 second',clock_timestamp()+interval '1 hour')", [future, schoolId, fixture.actorId]);
+    await admin.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by) VALUES($1,$2,$3,$4)", [schoolId, future, fixture.chosen[1]!.studentId, fixture.actorId]);
+    const sent: string[] = []; let projectedBeforeStart = false;
+    const outcomes = await inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store); const original = store.client.query;
+      store.client.query = async function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
+        const result = await Reflect.apply(original, this, args);
+        if (text.includes("classpilot_plain_open_tab_final")) {
+          projectedBeforeStart = (result as pg.QueryResult).rows.every(row => row.hasActiveSupervision === false);
+          await Reflect.apply(original, this, ["SELECT pg_sleep(1.1)"]);
+        }
+        return result;
+      } as typeof original;
+      try { return await storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen },
+        binding => { sent.push(binding.studentId); return binding.studentId; }); }
+      finally { store.client.query = original; }
+    });
+    assert.equal(projectedBeforeStart, true);
+    assert.deepEqual(outcomes.map(outcome => outcome.authorized), [true, false]);
+    assert.deepEqual(sent, [fixture.chosen[0]!.studentId]);
+  } finally {
+    await admin.query("DELETE FROM classpilot_supervision_students WHERE context_id=$1", [future]);
+    await admin.query("DELETE FROM classpilot_supervision_contexts WHERE id=$1", [future]);
+    await fixture.dispose();
+  }
+});
+
+test("plain partial synchronous side effects never fall back or replay after a delivery exception", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)); const attempted: string[] = [];
+  try {
+    await assert.rejects(inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: fixture.chosen }, binding => {
+      attempted.push(binding.studentId); throw new Error("Synthetic one-shot transport uncertainty");
+    })), /Synthetic one-shot transport uncertainty/);
+    assert.deepEqual(attempted, [fixture.chosen[0]!.studentId]);
+    const command = await inSchool(() => storage.getClasspilotCommandByIdAndSchool(fixture.commandId, schoolId));
+    assert.ok(command?.targets.every(target => target.status === "requested"));
+  } finally { await fixture.dispose(); }
+});
+
+test("plain execute-command keeps authority-unavailable and binding-retirement outcomes in a mixed forty-student teacher response", { timeout: 20_000 }, async () => {
+  const fixture = await plainOpenFixture(); const dispatcher = await import("../src/services/classpilotCommandDispatcher.js");
+  let issuedCommandId: string | undefined, injected = false, transactionStatements = 0, deliveryStatements = 0, measuringDelivery = false;
+  try {
+    const result = await inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store); const original = store.client.query;
+      store.client.query = async function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
+        if (/^begin\b/i.test(text.trim())) transactionStatements = 0;
+        transactionStatements++;
+        if (!injected && text.includes("classpilot_plain_open_tab_locks")) {
+          injected = true; measuringDelivery = true;
+          const writer = await admin.connect();
+          try {
+            await writer.query("BEGIN");
+            for (const binding of fixture.chosen.slice(0, 2).sort((left, right) => left.studentId.localeCompare(right.studentId)))
+              await writer.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0::bigint))", [lockKey(binding.studentId)]);
+            await writer.query("UPDATE classpilot_student_control_states SET teaching_session_id=NULL,supervision_context_id=NULL,hard_expires_at=NULL,scheduled_end_at=NULL,revision=revision+1 WHERE school_id=$1 AND student_id=$2", [schoolId, fixture.chosen[0]!.studentId]);
+            await writer.query("UPDATE student_sessions SET is_active=false WHERE id=$1", [fixture.chosen[1]!.studentSessionId]);
+            await writer.query("COMMIT");
+          } finally { writer.release(); }
+        }
+        const result = await Reflect.apply(original, this, args);
+        if (measuringDelivery && /^commit\b/i.test(text.trim())) { deliveryStatements = transactionStatements; measuringDelivery = false; }
+        return result;
+      } as typeof original;
+      try { return await dispatcher.executeClasspilotCommand({ schoolId, actorId: fixture.actorId, teachingSessionId: fixture.authorityId,
+        targetScope: "class", commandType: "open-tab", rawCommandPayload: { url: "https://example.invalid/mixed" },
+        targets: fixture.chosen.map(binding => ({ ...binding, studentName: "Synthetic", available: true, stateAuthorized: true })) }); }
+      finally { store.client.query = original; }
+    });
+    issuedCommandId = result.command.id;
+    assert.equal(injected, true, "race occurs after immutable command creation and before delivery authority acquisition");
+    assert.equal(deliveryStatements, 13, "real revisionless execute-command uses the bounded cohort transaction");
+    console.log(`Plain natural execute cohort SQL statements: ${deliveryStatements}`);
+    assert.ok(result.command.targets.every(target => !(target.result && typeof target.result === "object" && "frozenControlRevision" in target.result)), "ordinary persisted open-tab intentionally remains revisionless");
+    const first = result.command.targets.find(target => target.studentId === fixture.chosen[0]!.studentId)!;
+    const second = result.command.targets.find(target => target.studentId === fixture.chosen[1]!.studentId)!;
+    assert.equal(first.status, "unavailable");
+    assert.equal(first.errorMessage, "Classroom command authority changed before delivery");
+    assert.equal(second.status, "requested", "a retired exact binding stays unsent rather than being mislabeled an authority denial");
+    assert.equal(second.sentAt, null);
+    assert.ok(result.command.targets.filter(target => target !== first && target !== second).every(target => target.status === "sent"));
+    assert.equal(result.summary.requested, 40); assert.equal(result.summary.unavailable, 1); assert.equal(result.summary.attempted, 38);
+    const { publicClasspilotCommand } = await import("../src/services/classpilotCommandPublic.js");
+    const publicCommand = publicClasspilotCommand(result.command);
+    assert.doesNotMatch(JSON.stringify(publicCommand), /deviceId|studentSessionId|frozenControlRevision/);
+    assert.match(result.message, /38 students.*1 student unavailable/);
+  } finally {
+    await admin.query("UPDATE student_sessions SET is_active=true WHERE id=$1", [fixture.chosen[1]!.studentSessionId]);
+    if (issuedCommandId) {
+      await admin.query("DELETE FROM classpilot_command_targets WHERE command_id=$1", [issuedCommandId]);
+      await admin.query("DELETE FROM classpilot_commands WHERE id=$1", [issuedCommandId]);
+    }
+    await fixture.dispose();
+  }
+});
+
+test("plain delivery cannot borrow a genuine foreign school's command or exact student binding", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4));
+  const foreignSchool = randomUUID(), foreignActor = randomUUID(), foreignStudent = randomUUID(), foreignDevice = randomUUID(), foreignSession = randomUUID(), foreignContext = randomUUID(), foreignCommand = randomUUID();
+  const foreignBinding = { schoolId: foreignSchool, studentId: foreignStudent, studentSessionId: foreignSession, deviceId: foreignDevice };
+  try {
+    await admin.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Synthetic foreign cohort',$2,'active','active')", [foreignSchool, `${foreignSchool}.example.edu`]);
+    await admin.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [foreignSchool]);
+    await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','Foreign')", [foreignActor, `${foreignActor}@${foreignSchool}.example.edu`]);
+    await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [foreignSchool, foreignActor]);
+    await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Synthetic','Foreign','active')", [foreignStudent, foreignSchool]);
+    await admin.query("INSERT INTO devices(device_id,school_id,class_id) VALUES($1,$2,'synthetic')", [foreignDevice, foreignSchool]);
+    await admin.query("INSERT INTO student_sessions(id,student_id,device_id,auth_kind) VALUES($1,$2,$3,'managed_profile')", [foreignSession, foreignStudent, foreignDevice]);
+    await admin.query("INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,assigned_staff_id,created_by,starts_at,ends_at) VALUES($1,$2,'other','Synthetic foreign cohort',$3,$3,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 hour')", [foreignContext, foreignSchool, foreignActor]);
+    await admin.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by) VALUES($1,$2,$3,$4)", [foreignSchool, foreignContext, foreignStudent, foreignActor]);
+    await tenant.runWithTenantContext({ schoolId: foreignSchool }, () => storage.initializeClasspilotSupervisionControlStates({ schoolId: foreignSchool, supervisionContextId: foreignContext, studentIds: [foreignStudent] }));
+    await admin.query("INSERT INTO classpilot_commands(id,school_id,supervision_context_id,teacher_id,target_scope,command_type,command_payload,expires_at) VALUES($1,$2,$3,$4,'context','open-tab','{\"url\":\"https://example.invalid/foreign\"}'::jsonb,clock_timestamp()+interval '15 seconds')", [foreignCommand, foreignSchool, foreignContext, foreignActor]);
+    await admin.query("INSERT INTO classpilot_command_targets(command_id,school_id,supervision_context_id,student_id,student_session_id,device_id) VALUES($1,$2,$3,$4,$5,$6)", [foreignCommand, foreignSchool, foreignContext, foreignStudent, foreignSession, foreignDevice]);
+    const authorized = await tenant.runWithTenantContext({ schoolId: foreignSchool }, () => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId: foreignSchool, commandId: foreignCommand, targets: [foreignBinding] }, () => true));
+    assert.equal(authorized[0]!.authorized, true, "foreign authority and binding are independently valid in their own tenant");
+    const borrowedCommand = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: foreignCommand, targets: fixture.chosen }, () => assert.fail("foreign command delivered")));
+    assert.ok(borrowedCommand.every(outcome => !outcome.authorized));
+    const borrowedBinding = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: fixture.commandId, targets: [{ ...foreignBinding, schoolId }] }, () => assert.fail("foreign binding delivered")));
+    assert.ok(borrowedBinding.every(outcome => !outcome.authorized));
+  } finally {
+    await admin.query("DELETE FROM classpilot_command_targets WHERE command_id=$1", [foreignCommand]);
+    await admin.query("DELETE FROM classpilot_commands WHERE id=$1", [foreignCommand]);
+    await admin.query("DELETE FROM classpilot_student_control_states WHERE school_id=$1", [foreignSchool]);
+    await admin.query("DELETE FROM classpilot_supervision_students WHERE context_id=$1", [foreignContext]);
+    await admin.query("DELETE FROM classpilot_supervision_contexts WHERE id=$1", [foreignContext]);
+    await admin.query("DELETE FROM student_sessions WHERE id=$1", [foreignSession]);
+    await admin.query("DELETE FROM devices WHERE school_id=$1", [foreignSchool]);
+    await admin.query("DELETE FROM students WHERE school_id=$1", [foreignSchool]);
+    await admin.query("DELETE FROM product_licenses WHERE school_id=$1", [foreignSchool]);
+    await admin.query("DELETE FROM school_memberships WHERE school_id=$1", [foreignSchool]);
+    await fixture.dispose();
+  }
+});

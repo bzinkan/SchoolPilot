@@ -26,6 +26,10 @@ import {
   revalidateClasspilotExactCommandTargetsForDispatch,
   withClasspilotStudentControlDeliveryAuthority,
   withClasspilotStudentControlDeliveryBatch,
+  withClasspilotPlainOpenTabDeliveryBatch,
+  isClasspilotPlainOpenTab,
+  isClasspilotPlainOpenTabTargetMetadata,
+  CLASSPILOT_DELIVERY_BATCH_SIZE,
   classpilotStudentRelayMessageAllowed,
   hasCurrentClasspilotStudentControlAuthority,
   supersedeClasspilotTransientCommandTargets,
@@ -119,6 +123,13 @@ export type ResolvedClasspilotCommandTarget = {
   /** Structurally commandable signed-out target admitted by the exact-school gate. */
   lateSignInEligible?: boolean;
 };
+
+export function classpilotPlainOpenTabTargetsEligible(targets: readonly ResolvedClasspilotCommandTarget[]): boolean {
+  return targets.length <= CLASSPILOT_DELIVERY_BATCH_SIZE
+    && new Set(targets.map(target => target.studentId)).size === targets.length
+    && targets.every(target => (target.controlRevision === undefined || Number.isSafeInteger(target.controlRevision))
+      && target.scheduledAuthorityRevision === undefined && target.durableAuthorityRevision === undefined);
+}
 
 /**
  * Authority revisions frozen on a persisted target row, in the shape the frame
@@ -683,6 +694,17 @@ function restrictionsAreEmpty(value: unknown): boolean {
     && restrictions.tabLimit === null
     && restrictions.temporaryAllows.length === 0
     && restrictions.focus?.active !== true;
+}
+
+/** A post-commit publication must not retain mutable dashboard/target objects. */
+function copyPlainOpenTabPublication(value: PublishWSBatchItem): PublishWSBatchItem {
+  const copy = structuredClone(value);
+  const freeze = (record: object) => {
+    for (const item of Object.values(record)) if (item && typeof item === "object") freeze(item);
+    Object.freeze(record);
+  };
+  freeze(copy);
+  return copy;
 }
 
 /**
@@ -1858,7 +1880,40 @@ export async function executeClasspilotCommand(options: {
   const localDeliveryStartedAt = performance.now();
   let localDeliverySucceeded = false;
   try {
-    const authorizedDeliveries = await withClasspilotStudentControlDeliveryBatch(
+    const availableTargets = committedTargets.filter(target => target.available && target.studentSessionId && target.deviceId);
+    const plainOpenTab = isClasspilotPlainOpenTab(created.commandType, created.commandPayload)
+      && classpilotPlainOpenTabTargetsEligible(availableTargets) && !options.replayCommand
+      && availableTargets.every(target => isClasspilotPlainOpenTabTargetMetadata(committedTargetByStudent.get(target.studentId)?.result))
+      && !!created.expiresAt && Number.isFinite(created.expiresAt.getTime())
+      && !shouldPersistBeforeDelivery && !focusNewAction && !lessonOpen && !currentPageRequested
+      && !requiredToolsCapability && controlStateIds.size === 0 && classroomStateByStudent.size === 0;
+    const authorizedDeliveries = plainOpenTab
+      ? (await withClasspilotPlainOpenTabDeliveryBatch({ schoolId: options.schoolId, commandId: created.id,
+          targets: availableTargets.map(target => ({ schoolId: options.schoolId, studentId: target.studentId,
+            studentSessionId: target.studentSessionId!, deviceId: target.deviceId!, originalTarget: target })),
+        }, (binding, authority) => {
+          const target = binding.originalTarget;
+          const message = classpilotCommandFrameForTarget(options.schoolId, "open-tab", normalized.extensionType,
+            { ...(authority.command.commandPayload as Record<string, unknown>), commandId: authority.command.id }, target,
+            { policy: deliveryPolicy, expiresAt: new Date(authority.expiresAt) }, undefined,
+            classpilotCommandAuthorityEnvelope(authority.command));
+          if (!message) return null;
+          const exactTarget = { kind: "student-binding" as const, schoolId: options.schoolId,
+            studentId: binding.studentId, studentSessionId: binding.studentSessionId, deviceId: binding.deviceId };
+          const publication = copyPlainOpenTabPublication({ target: exactTarget, message });
+          if (!authority.isCurrent()) return null;
+          sendToStudentBindingLocal(exactTarget, publication.message);
+          return { target: Object.freeze({ ...target }), publication };
+        })).map((outcome, index) => {
+          if (outcome.authorized) return outcome.value;
+          if (outcome.reason === "authority") {
+            const target = availableTargets[index]!;
+            authUnavailableReasons.set(target.studentId, "Classroom command authority changed before delivery");
+            lateAuthUnavailableStudentIds.add(target.studentId);
+          }
+          return null;
+        })
+      : await withClasspilotStudentControlDeliveryBatch(
       options.schoolId,
       committedTargets
         .filter((target) =>
