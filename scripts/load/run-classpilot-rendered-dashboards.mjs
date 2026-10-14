@@ -16,7 +16,7 @@ import { hasLoadSessionCookie, loadSessionCookieName } from './session-cookie.mj
 import { reliabilityProfile, reliabilityScreenshotBindingMatches, RELIABILITY_ENDPOINT_SHA256,
   CapturePulseController, measurementExpected, publicBindingFromDevice, validateRevisionBootstrap,
   observeRenderedStudentState, navigationSnapshot, navigationMessageMatches, navigationGate,
-  collectNavigationPixelWitness, validateMeasurementSignal, MEASUREMENT_LIMITS, createBoundedObserverPool } from './classpilot-reliability-profile.mjs';
+  validateMeasurementSignal, MEASUREMENT_LIMITS, createBoundedObserverPool } from './classpilot-reliability-profile.mjs';
 import { readReliabilityFrame } from './reliability-rendered-frame.mjs';
 import { validateStagingRunManifest, waitForStagingStart } from './staging-start-barrier.mjs';
 import { RenderedHttpMetrics, attachRenderedHttpMetrics } from './rendered-http-metrics.mjs';
@@ -33,31 +33,74 @@ export async function renderedDeadline(operation, milliseconds = 8000) {
   finally { controller.abort(); }
 }
 
+// Lossless full-resolution native capture. Timeout poisons this controller
+// and retires only its own CDP session; the underlying permit remains held
+// until actual settlement. A late PNG can never become measurement evidence.
+export function createNativeScreenshotCapture({timeoutMs=8000,maximumActive=2,maximumPages=20,sessionFactory=page=>page.context().newCDPSession(page)}={}){
+  const sessions=new WeakMap();let pages=0,active=0,poisoned=false;
+  const counters={started:0,completed:0,timeouts:0,lateSettlements:0,peakActive:0,peakPngBytes:0};
+  const capture=async(page,viewport=RENDERED_VIEWPORT)=>{
+    assert.ok(!poisoned&&active<maximumActive,'Native capture unavailable or concurrency exceeded');
+    assert.ok(Number.isSafeInteger(viewport.width)&&Number.isSafeInteger(viewport.height)&&viewport.width>0&&viewport.height>0&&viewport.width*viewport.height<=RENDERED_VIEWPORT.width*RENDERED_VIEWPORT.height);
+    if(!sessions.has(page)){assert.ok(pages<maximumPages,'Native capture page bound exceeded');pages+=1;sessions.set(page,Promise.resolve().then(()=>sessionFactory(page)));}
+    active+=1;counters.started+=1;counters.peakActive=Math.max(counters.peakActive,active);
+    let fenced=false,session,timer;
+    const raw=(async()=>{
+      session=await sessions.get(page);
+      if(fenced){Promise.resolve().then(()=>session.detach()).catch(()=>{});throw Error('Native capture session arrived after deadline');}
+      const result=await session.send('Page.captureScreenshot',{format:'png',fromSurface:true,captureBeyondViewport:false,optimizeForSpeed:true,clip:{x:0,y:0,width:viewport.width,height:viewport.height,scale:1}});
+      assert.ok(typeof result.data==='string'&&result.data.length<=Math.ceil(32*1024*1024/3)*4,'Bounded native PNG response required');
+      const png=Buffer.from(result.data,'base64');
+      if(fenced){png.fill(0);return null;}
+      assert.ok(png.length>=24&&png.length<=32*1024*1024);assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');assert.equal(png.subarray(12,16).toString('ascii'),'IHDR');
+      assert.equal(png.readUInt32BE(16),viewport.width);assert.equal(png.readUInt32BE(20),viewport.height);counters.peakPngBytes=Math.max(counters.peakPngBytes,png.length);return png;
+    })();
+    const underlying=raw.finally(()=>{active-=1;counters.completed+=1;if(fenced)counters.lateSettlements+=1;});underlying.catch(()=>{});
+    const deadline=new Promise((_,reject)=>{timer=setTimeout(()=>{fenced=true;poisoned=true;counters.timeouts+=1;
+      if(session)Promise.resolve().then(()=>session.detach()).catch(()=>{});reject(Error('Native CDP capture deadline exceeded'));
+    },timeoutMs);});
+    try{return await Promise.race([underlying,deadline]);}finally{clearTimeout(timer);}
+  };
+  return{capture,summary:()=>({...counters,active,poisoned,pages,maximumActive,maximumPages})};
+}
+
 // This function runs in the actual candidate page, after the compositor has
 // had two animation frames. Mounted or decoded offscreen images do not count.
 export async function collectRenderedDashboardSample({ skipAnimationFrames = false } = {}) {
   if (!skipAnimationFrames) await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  const parse = source => { if (!source?.startsWith('data:image/jpeg;base64,')) return null;
-    try { const bytes=atob(source.slice('data:image/jpeg;base64,'.length));
-      const m=bytes.slice(-98,-2).match(/^CLP_REL_FRAME_V2:(\d{13}):(\d{1,16}):(\d{1,7}):([a-f0-9]{24}):END/);
-      return m && { capturedAt:Number(m[1]),ordinal:Number(m[2]),pulseSequence:Number(m[3]),pulseMarker:m[4] }; } catch { return null; } };
-  const color = image => { if (!image?.complete || !image.naturalWidth) return null;
-    const c=document.createElement('canvas'); c.width=1;c.height=1;const ctx=c.getContext('2d');ctx.drawImage(image,0,0,1,1);return [...ctx.getImageData(0,0,1,1).data]; };
-  const digest = async source => { if (!source?.startsWith('data:image/jpeg;base64,')) return null;
-    const binary=atob(source.slice('data:image/jpeg;base64,'.length));if(binary.length!==40960)return null;
-    if(!crypto.subtle)throw Error('Secure WebCrypto source hash required');
-    const bytes=Uint8Array.from(binary,value=>value.charCodeAt(0)),hash=await crypto.subtle.digest('SHA-256',bytes);
-    return [...new Uint8Array(hash)].map(value=>value.toString(16).padStart(2,'0')).join(''); };
+  const cacheKey=Symbol.for('classpilot.measurement.exact-image-source-cache.v1');
+  if(!globalThis[cacheKey])globalThis[cacheKey]=new WeakMap();
+  const cache=globalThis[cacheKey];
+  const readImage=image=>{
+    if(!image)return{frame:null,rgba:null,digest:Promise.resolve(null)};
+    const source=image.currentSrc||'',prior=cache.get(image);
+    if(prior?.source===source&&(prior.rgba||!image.complete||!image.naturalWidth))return prior;
+    let frame=null,rgba=null,digest=Promise.resolve(null);
+    if(source.startsWith('data:image/jpeg;base64,')){
+      const binary=atob(source.slice('data:image/jpeg;base64,'.length));
+      const m=binary.slice(-98,-2).match(/^CLP_REL_FRAME_V2:(\d{13}):(\d{1,16}):(\d{1,7}):([a-f0-9]{24}):END/);
+      if(m&&binary.length===40960){
+        frame={capturedAt:Number(m[1]),ordinal:Number(m[2]),pulseSequence:Number(m[3]),pulseMarker:m[4]};
+        if(!crypto.subtle)throw Error('Secure WebCrypto source hash required');
+        const bytes=Uint8Array.from(binary,value=>value.charCodeAt(0));
+        digest=crypto.subtle.digest('SHA-256',bytes).then(value=>[...new Uint8Array(value)].map(byte=>byte.toString(16).padStart(2,'0')).join(''));
+      }
+    }
+    if(image.complete&&image.naturalWidth){const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const context=canvas.getContext('2d');context.drawImage(image,0,0,1,1);rgba=[...context.getImageData(0,0,1,1).data];canvas.width=canvas.height=1;}
+    // One entry per actual current/previous IMG. Replaced/retired DOM elements
+    // are weak keys, and changing currentSrc replaces rather than extends it.
+    const value={source,frame,rgba,digest};cache.set(image,value);return value;
+  };
+  const styles=new WeakMap();const styleOf=node=>{if(!styles.has(node))styles.set(node,getComputedStyle(node));return styles.get(node);};
   return { visible:document.visibilityState==='visible', cards:await Promise.all([...document.querySelectorAll('[data-testid^="card-student-"]')].map(async card=>{
     const studentId=card.getAttribute('data-testid').slice('card-student-'.length), image=card.querySelector(`[data-testid="screenshot-${CSS.escape(studentId)}"]`), previous=card.querySelector(`[data-testid="screenshot-previous-${CSS.escape(studentId)}"]`);
-    const source=image?.currentSrc||'', previousSource=previous?.currentSrc||'', frame=parse(source), previousFrame=parse(previousSource), box=image?.getBoundingClientRect();
-    if(frame)frame.jpegSha256=await digest(source);if(previousFrame)previousFrame.jpegSha256=await digest(previousSource);
+    const currentValue=readImage(image),previousValue=readImage(previous),frame=currentValue.frame?{...currentValue.frame}:null,previousFrame=previousValue.frame?{...previousValue.frame}:null,box=image?.getBoundingClientRect();
     let displayed=!!box&&box.width>0&&box.height>0&&box.left>=0&&box.top>=0&&box.right<=innerWidth&&box.bottom<=innerHeight;
-    for(let node=image;displayed&&node;node=node.parentElement){const s=getComputedStyle(node),b=node.getBoundingClientRect();
+    for(let node=image;displayed&&node;node=node.parentElement){const s=styleOf(node),b=node.getBoundingClientRect();
       if(s.display==='none'||s.visibility!=='visible'||Number(s.opacity)!==1 && node!==image
         ||/hidden|clip|scroll|auto/.test(s.overflowX)&&(box.left<b.left||box.right>b.right)
         ||/hidden|clip|scroll|auto/.test(s.overflowY)&&(box.top<b.top||box.bottom>b.bottom))displayed=false;}
-    const decoded=!!image?.complete&&image.naturalWidth>0, rgba=color(image), previousRgba=color(previous), opacity=image?Number(getComputedStyle(image).opacity):0, points=[];
+    const decoded=!!image?.complete&&image.naturalWidth>0, rgba=currentValue.rgba, previousRgba=previousValue.rgba, opacity=image?Number(styleOf(image).opacity):0, points=[];
     if(displayed&&decoded&&rgba){
       // object-contain paints a centered square for these1x1 fixtures. Sample
       // the upper interior, outside the actual screenshot caption gradient.
@@ -65,10 +108,72 @@ export async function collectRenderedDashboardSample({ skipAnimationFrames = fal
       for(const[x,y]of[[.35,.2],[.5,.3],[.65,.4]]){const px=Math.floor(left+width*x),py=Math.floor(top+height*y),hit=document.elementFromPoint(px,py);
         if(!hit||!(hit===image||hit===previous||image.contains(hit)||hit.contains(image)&&image.closest('button')?.contains(hit)))displayed=false;points.push({x:px,y:py});}
     }
-    return{studentId,frame,previousFrame,displayed,decoded,points,rgba,previousRgba,opacity,
-      geometry:box?{left:box.left,top:box.top,width:box.width,height:box.height,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,objectFit:getComputedStyle(image).objectFit}:null,
-      contributors:opacity<1&&previous?[previousFrame,frame]:[frame]};
+    const geometry=box?{left:box.left,top:box.top,width:box.width,height:box.height,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,objectFit:styleOf(image).objectFit}:null;
+    const opacityAnimated=!!image?.getAnimations().some(animation=>animation.playState==='running');
+    // Geometry/source references above form one synchronous DOM snapshot.
+    // Digest completion cannot silently switch to a later DOM/source binding.
+    if(frame)frame.jpegSha256=await currentValue.digest;if(previousFrame)previousFrame.jpegSha256=await previousValue.digest;
+    return{studentId,frame,previousFrame,displayed,decoded,points,rgba,previousRgba,opacity,geometry,opacityAnimated,
+      contributors:previous?[previousFrame,frame]:[frame]};
   }))};
+}
+
+export async function collectRenderedNavigationPixelWitness(input) {
+  const expectedRows=Array.isArray(input)?input:input.expectedRows;
+  if(Array.isArray(input)||!input.skipAnimationFrames)await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return expectedRows.map(expected => {
+    const card = document.querySelector(`[data-testid="card-student-${CSS.escape(expected.studentId)}"]`);
+    const tab = card?.querySelector(`[data-testid="tab-favicon-${CSS.escape(expected.studentId)}-0"]`);
+    const image = tab?.querySelector('img'), paint = image || tab?.querySelector('div'), box = paint?.getBoundingClientRect();
+    let visible = document.visibilityState === 'visible' && !!box && box.width > 0 && box.height > 0
+      && box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
+    for (let node = paint; visible && node; node = node.parentElement) {
+      const style = getComputedStyle(node), b = node.getBoundingClientRect();
+      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) !== 1
+        || /hidden|clip|scroll|auto/.test(style.overflowX) && (box.left < b.left || box.right > b.right)
+        || /hidden|clip|scroll|auto/.test(style.overflowY) && (box.top < b.top || box.bottom > b.bottom)) visible = false;
+    }
+    const titleMatches = tab?.getAttribute('title') === `${expected.activeTabTitle} · ${expected.hostname}`;
+    const active = tab?.classList.contains('ring-1') && tab?.classList.contains('border-primary/70');
+    const sourceMatches = expected.favicon ? image?.currentSrc === expected.favicon && image.complete && image.naturalWidth > 0 : !image && !!paint;
+    const points = [], canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 32;
+    let glyph=null;
+    const context = canvas.getContext('2d');
+    if (visible && sourceMatches && titleMatches && active) {
+      if (image) {
+        // Match native destination pixels, including fractional layout offset;
+        // a32px surrogate introduces SVG rasterization/antialiasing error.
+        canvas.width=Math.ceil(box.width)+2;canvas.height=Math.ceil(box.height)+2;
+        context.drawImage(image,box.left-Math.floor(box.left),box.top-Math.floor(box.top),box.width,box.height);
+      }
+      else {
+        const stack = []; for (let node = paint; node; node = node.parentElement) stack.push(node);
+        for (const node of stack.reverse()) { context.fillStyle = getComputedStyle(node).backgroundColor; context.fillRect(0, 0, 32, 32); }
+      }
+      const anchors = image ? [[.2,.2],[.5,.2],[.8,.2],[.4,.75]]
+        : [[.4,.4],[.5,.4],[.6,.4],[.4,.5],[.5,.5],[.6,.5],[.5,.6]];
+      for (const [x, y] of anchors) {
+        const screenX = Math.floor(box.left + box.width * x), screenY = Math.floor(box.top + box.height * y);
+        const hit = document.elementFromPoint(screenX, screenY);
+        if (!hit || !(tab === hit || tab.contains(hit))) visible = false;
+        const rgba = [...context.getImageData(image?screenX-Math.floor(box.left):Math.floor(32*x), image?screenY-Math.floor(box.top):Math.floor(32*y), 1, 1).data];
+        if (rgba[3] === 255) points.push({ x: screenX, y: screenY, rgba });
+      }
+      if(image&&Math.abs(box.width-14)<.001&&Math.abs(box.height-14)<.001&&image.naturalWidth===64&&image.naturalHeight===64){
+        // The tiny arrow's diagonal edges rasterize differently in canvas
+        // and the actual IMG compositor. Require its independently bounded
+        // ordered white/two-yellow motif, with opaque colors from the exact
+        // decoded source. Four stable blue interiors alone would allow a
+        // solid-blue overlay to masquerade as the icon.
+        canvas.width=canvas.height=64;context.drawImage(image,0,0,64,64);
+        const white=[...context.getImageData(32,29,1,1).data],yellow=[...context.getImageData(28,34,1,1).data];
+        if(white[3]===255&&yellow[3]===255&&white.some((value,index)=>index<3&&Math.abs(value-yellow[index])>24))
+          glyph={left:Math.floor(box.left)+5,top:Math.floor(box.top)+6,width:3,height:3,white,yellow};
+      }
+    }
+    return { studentId: expected.studentId, marker: expected.marker, points,glyph,
+      matched: !!visible && !!sourceMatches && !!titleMatches && !!active && (image?points.length===4&&!!glyph:points.length>=5) };
+  });
 }
 
 export function renderedCaptureFrameAuthorized(frame, knownFrames) {
@@ -145,6 +250,12 @@ export function renderedCaptureContributors(card, after) {
   const all=[...(card?.contributors||[]),...(after?.contributors||[])],seen=new Set();
   return all.filter(frame=>{if(!frame)return true;const key=frame.jpegSha256;if(seen.has(key))return false;seen.add(key);return true;});
 }
+export function scoreRenderedCaptureAge({frame,composed,previous,publicBinding,observedAt,pulseController}){
+  const changed=previous?.absent||!previous?.rgba||JSON.stringify(previous.rgba)!==JSON.stringify(composed?.rgba);
+  if(sameFrame(previous?.frame,frame)||changed)return Math.max(...composed.contributors.map(value=>pulseController.ageUpper(value,publicBinding,observedAt)));
+  if(previous?.frame)return pulseController.ageUpper(previous.frame,publicBinding,observedAt);
+  return Infinity;
+}
 // One common alpha must explain ALL channels and points. Independent channel
 // bounds over three colors would accept pixels that no legal fade can paint.
 export function renderedPixelsMatchBlend(pixels,current,previous,minimum=0,maximum=1,tolerance=12){
@@ -161,12 +272,12 @@ export function renderedPixelsMatchBlend(pixels,current,previous,minimum=0,maxim
 export async function compareRenderedCapturePaint({ png, cards, afterCards, viewport = RENDERED_VIEWPORT }, decoder = createNativeScreenshotDecoder()) {
   return decoder.run(png, viewport, pixel => cards.map(card => {
     const after = afterCards.find(row => row.studentId === card.studentId), actual = card.points.map(pixel);
-    const low = Math.min(card.opacity, after?.opacity ?? 0), high = Math.max(card.opacity, after?.opacity ?? 0), old = card.previousRgba;
+    const low = Math.min(card.opacity, after?.opacity ?? 0), old = card.previousRgba;
     const contributors=renderedCaptureContributors(card,after),swapped=!sameFrame(card.frame,after?.frame);
     const legalPaint=swapped
-      ? renderedPixelsMatchBlend(actual,card.rgba,old||card.rgba,card.opacity,1)
-        ||renderedPixelsMatchBlend(actual,after?.rgba,after?.previousRgba||card.rgba,0,after?.opacity??0)
-      : renderedPixelsMatchBlend(actual,card.rgba,old||card.rgba,low,high);
+      ? renderedPixelsMatchBlend(actual,card.rgba,old||card.rgba,0,1)
+        ||renderedPixelsMatchBlend(actual,after?.rgba,after?.previousRgba||card.rgba,0,1)
+      : renderedPixelsMatchBlend(actual,card.rgba,old||card.rgba,card.opacityAnimated||after?.opacityAnimated?0:low,card.opacityAnimated||after?.opacityAnimated?1:Math.max(card.opacity,after?.opacity??0));
     const matched = renderedCaptureFenceMatches(card, after) && card.rgba && card.points.length === 3
       && contributors.length>0&&contributors.every(frame=>frame&&/^[a-f0-9]{64}$/.test(frame.jpegSha256||''))
       && (low >= 1 || old && card.previousFrame || swapped)&&legalPaint;
@@ -176,9 +287,14 @@ export async function compareRenderedCapturePaint({ png, cards, afterCards, view
 export async function compareRenderedNavigationPaint({ png, rows, afterRows, viewport = RENDERED_VIEWPORT }, decoder = createNativeScreenshotDecoder()) {
   return decoder.run(png, viewport, pixel => rows.map(row => {
     const after = afterRows.find(value => value.studentId === row.studentId), actual = row.points.map(pixel);
-    const same = row.matched && after?.matched && row.marker === after.marker && JSON.stringify(row.points) === JSON.stringify(after.points);
-    return { studentId: row.studentId, marker: row.marker, matched: Boolean(same && row.points.length >= 5
-      && row.points.every((point,index) => point.rgba.every((value,channel) => Math.abs(value-actual[index][channel]) <= 12))), pixels: actual.flat() };
+    const same = row.matched && after?.matched && row.marker === after.marker && JSON.stringify(row.points) === JSON.stringify(after.points)
+      &&JSON.stringify(row.glyph)===JSON.stringify(after.glyph);
+    const glyphPixels=row.glyph?Array.from({length:9},(_,index)=>pixel({x:row.glyph.left+index%3,y:row.glyph.top+Math.floor(index/3)})):[];
+    const near=(actual,expected)=>actual.every((value,channel)=>Math.abs(value-expected[channel])<=12);
+    const motif=!row.glyph||[0,1,3,4].some(index=>near(glyphPixels[index],row.glyph.white)
+      &&near(glyphPixels[index+3],row.glyph.yellow)&&near(glyphPixels[index+4],row.glyph.yellow));
+    return { studentId: row.studentId, marker: row.marker, matched: Boolean(same&&motif&&(row.glyph?row.points.length===4:row.points.length>=5)
+      && row.points.every((point,index) => near(actual[index],point.rgba))), pixels: actual.concat(glyphPixels).flat() };
   }));
 }
 
@@ -316,7 +432,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     causalStartUpperMs = null, causalStartPassed = false, bootstrapComplete = false;
   const navigationSamples = [], navigationDevices = new Set(), navigationTasks = [], navigationPixels = new Map();
   const observerPool=createBoundedObserverPool({limit:2,maximumQueue:40});const observeLimited=observerPool.run;
-  const nativeDecoder=createNativeScreenshotDecoder();
+  const nativeDecoder=createNativeScreenshotDecoder(),nativeCapture=createNativeScreenshotCapture();
   const syncMeasurementCounters=()=>{const value=measurementChannel.summary();counters.controlPutAttempts=value.publishAttempts;counters.controlGetAttempts=value.readAttempts;counters.controlBytes=value.bytesWritten+value.bytesRead;counters.controlActualNetworkAttempts=value.actualNetworkAttempts;return value;};
   const putControl=async(name,value)=>{try{return await measurementChannel.publish(name,value);}finally{syncMeasurementCounters();}};
   const getSignal = async (name, kind, nonce, deadline) => {
@@ -442,7 +558,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     // Establish prior real compositor state before the shared start. The
     // first causal pulse is then emitted directly at the controller start.
     await Promise.all(actors.map(runtime=>observeLimited(async()=>{
-      const sample=await renderedDeadline(runtime.page.evaluate(collectRenderedDashboardSample)), png=await renderedDeadline(runtime.page.screenshot({timeout:8000}));
+      const sample=await renderedDeadline(runtime.page.evaluate(collectRenderedDashboardSample)), png=await nativeCapture.capture(runtime.page);
       for(const card of sample.cards) runtime.lastPaints.set(card.studentId,{frame:null,rgba:card.rgba,absent:!card.decoded});
       runtime.priorCompositorSha256=hash(png);
     })));
@@ -503,10 +619,10 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
             return { ...snapshot, studentId, publicBinding: publicBindings.get(studentId) };
           });
           if (!expectedRows.every(row => navigationMessageMatches(runtime.realtime.get(row.studentId), row, runtime))) return;
-          const witness = await renderedDeadline(runtime.page.evaluate(collectNavigationPixelWitness, expectedRows), 2000);
+          const witness = await renderedDeadline(runtime.page.evaluate(collectRenderedNavigationPixelWitness, expectedRows), 2000);
           if (!witness.every(row => row.matched)) return;
-          const png = await renderedDeadline(runtime.page.screenshot({ timeout: 2000 }), 2000);
-          const afterRows = await renderedDeadline(runtime.page.evaluate(collectNavigationPixelWitness,expectedRows),2000);
+          const png = await nativeCapture.capture(runtime.page);
+          const afterRows = await renderedDeadline(runtime.page.evaluate(collectRenderedNavigationPixelWitness,{expectedRows,skipAnimationFrames:true}),2000);
           const composed = await compareRenderedNavigationPaint({png,rows:witness,afterRows},nativeDecoder);
           const receivedAt = performance.now();
           for (const row of composed) {
@@ -538,7 +654,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           await Promise.all(actors.map(runtime=>observeLimited(async()=>{
             const absent=await renderedDeadline(runtime.page.evaluate(ids=>ids.every(id=>!document.querySelector('[data-testid="tab-favicon-'+CSS.escape(id)+'-0"]')),runtime.actor.studentIds),2000);
             assert.equal(absent,true,'Round1 requires actual prior strip absence');
-            runtime.priorNavigationCompositorSha256=hash(await renderedDeadline(runtime.page.screenshot({timeout:2000}),2000));
+            runtime.priorNavigationCompositorSha256=hash(await nativeCapture.capture(runtime.page));
             assert.equal(await renderedDeadline(runtime.page.evaluate(ids=>ids.every(id=>!document.querySelector('[data-testid="tab-favicon-'+CSS.escape(id)+'-0"]')),runtime.actor.studentIds),2000),true);
             runtime.priorStripAbsent=true;
           })));
@@ -598,7 +714,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       await Promise.all(actors.map(runtime => observeLimited(async () => {
         const generation=runtime.socketGeneration,bindingsBefore=new Map(runtime.bindings);
         const sample = await renderedDeadline(runtime.page.evaluate(collectRenderedDashboardSample));
-        const png = await renderedDeadline(runtime.page.screenshot({ timeout: 8000 }));
+        const png = await nativeCapture.capture(runtime.page);
         const after = await renderedDeadline(runtime.page.evaluate(collectRenderedDashboardSample,{skipAnimationFrames:true}));
         const pixels = await compareRenderedCapturePaint({png,cards:sample.cards,afterCards:after.cards},nativeDecoder);
         const observedAt = performance.now();
@@ -615,11 +731,10 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           let age = Infinity;
           if (sample.visible && card.displayed && card.decoded && frame && authorized && pixels.find(row => row.studentId === card.studentId)?.matched) {
             try {
-              const previous=runtime.lastPaints.get(card.studentId), colorChanged=previous?.absent||!previous?.rgba||JSON.stringify(previous.rgba)!==JSON.stringify(composed.rgba);
-              if(composed.transitioned||previous?.frame?.ordinal===frame.ordinal||colorChanged){
-                age=Math.max(...contributors.map(value=>pulseController.ageUpper(value,publicBindings.get(card.studentId),observedAt)));
-                if(!composed.transitioned&&card.opacity>=1&&after.cards.find(row=>row.studentId===card.studentId)?.opacity>=1)runtime.lastPaints.set(card.studentId,{frame,rgba:composed.rgba,absent:false});
-              } else if(previous?.frame) age=pulseController.ageUpper(previous.frame,publicBindings.get(card.studentId),observedAt);
+              const previous=runtime.lastPaints.get(card.studentId);
+              age=scoreRenderedCaptureAge({frame,composed,previous,publicBinding:publicBindings.get(card.studentId),observedAt,pulseController});
+              if(Number.isFinite(age)&&!composed.transitioned&&card.opacity>=1&&after.cards.find(row=>row.studentId===card.studentId)?.opacity>=1
+                &&(sameFrame(previous?.frame,frame)||previous?.absent||!previous?.rgba||JSON.stringify(previous.rgba)!==JSON.stringify(composed.rgba)))runtime.lastPaints.set(card.studentId,{frame,rgba:composed.rgba,absent:false});
               if(Number.isFinite(age))knownCaptureBindings.add(publicBindings.get(card.studentId));
             } catch { /* Unknown/aliased paint cannot gain freshness from rawDate or a new decoded source. */ }
           }
@@ -699,7 +814,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
         controlPutAttempts: counters.controlPutAttempts, controlGetAttempts: counters.controlGetAttempts,
         actualS3NetworkAttempts: counters.controlActualNetworkAttempts, controlRead: measurementChannel.summary().reader, controlPublication:measurementChannel.summary().publisher, controlBytes: counters.controlBytes,
         bootstrapApiReads: counters.bootstrapApiReads, pulseSkipped: counters.pulseSkipped, observer: observerPool.summary() },
-      nativePixelDecoder:nativeDecoder.summary(),finalConnectionHealthPassed:!counters.finalUnsubscribed&&!counters.finalNotLive&&!counters.connectionDenials,
+      nativePixelDecoder:nativeDecoder.summary(),nativeCompositorCapture:nativeCapture.summary(),finalConnectionHealthPassed:!counters.finalUnsubscribed&&!counters.finalNotLive&&!counters.connectionDenials,
       counters, captureAge: { timingBasis: 'controller-monotonic-causal-pulse-upper-bound', knownPulseBindings: knownCaptureBindings.size,
         expectedAttempts: counters.samples, allExpectedAttemptsAccounted: ages.summary().count === counters.samples, unknownAttempts: counters.unavailable,
         ...ages.summary(), p95Ms: ages.percentile(95), p99Ms: ages.percentile(99) },
