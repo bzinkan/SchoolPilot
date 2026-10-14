@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
+import { gzipSync } from 'node:zlib';
 import { stampReliabilityFrame, readReliabilityFrame } from './load/reliability-rendered-frame.mjs';
 import { collectRenderedDashboardSample } from './load/run-classpilot-rendered-dashboards.mjs';
 import { bootstrapCookieIsolationProbe } from './check-classpilot-staging-cookie-isolation.mjs';
@@ -104,12 +105,17 @@ test('native browser census measures full bodies and retains an8s stalled-body d
   const executablePath = [process.env.CLASSPILOT_CHROME_PATH,
     'C:/Program Files/Google/Chrome/Application/chrome.exe', chromium.executablePath()].find(path => path && existsSync(path));
   assert.ok(executablePath);
+  const privateBody = JSON.stringify({ privateCanaryContentMustNeverEnterEvidence: 'x'.repeat(100_000) });
+  const gzipBody = gzipSync(privateBody);
   const server = createServer((request, response) => {
     if (request.url === '/api/teacher/raised-hands') {
       response.writeHead(200, { 'content-type': 'application/json' }); response.write('{"raisedHands":');
       setTimeout(() => response.end('[]}'), 100);
     } else if (request.url === '/api/classpilot/tiles/screenshots') {
       response.writeHead(200, { 'content-type': 'application/json' }); response.write('{"tiles":');
+    } else if (request.url === '/api/commands') {
+      response.writeHead(201, { 'content-type': 'application/json', 'content-encoding': 'gzip', 'content-length': gzipBody.length });
+      response.end(gzipBody);
     } else response.end('<html><body>Local synthetic instrumentation</body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -126,15 +132,30 @@ test('native browser census measures full bodies and retains an8s stalled-body d
     while (metrics.counters.measurementsSettled === 0 && performance.now() < finished) await delay(10);
     const hands = metrics.summary().fineEndpointLatency.endpoints['GET /api/classpilot/teacher/raised-hands'];
     assert.equal(hands.count, 1); assert.ok(hands.p95Bounds.lowerMs >= 90, 'headers cannot stand in for body completion');
+    await page.evaluate(async () => { await (await fetch('/api/commands', { method: 'POST' })).text(); });
+    const metadataDeadline = performance.now() + 2000;
+    while (metrics.diagnosticCounters.bodySizeCaptured < 2 && performance.now() < metadataDeadline) await delay(10);
+    const diagnostics = metrics.summary().diagnostics, endpoint = 'POST /api/classpilot/commands';
+    assert.equal(diagnostics.counters.bodySizeCaptured, 2);
+    assert.equal(diagnostics.counters.networkTimingSamples, 2);
+    assert.equal(diagnostics.endpoints[endpoint].statusCounts['201'], 1);
+    assert.equal(diagnostics.endpoints[endpoint].contentEncoding.gzip, 1);
+    assert.equal(diagnostics.endpoints[endpoint].encodedBodyBytes.totalBytes, gzipBody.length, 'Chromium reports encoded wire bytes, not decoded body size');
+    assert.ok(gzipBody.length < privateBody.length);
+    const handsHeaders = diagnostics.responseHeaderLatency.endpoints['GET /api/classpilot/teacher/raised-hands'];
+    assert.ok(handsHeaders.p95Bounds.upperMs < hands.p95Bounds.upperMs, 'Header arrival and full body are measured independently');
+    const transfer = diagnostics.browserNetworkTiming.responseHeadersToBodyEnd.endpoints['GET /api/classpilot/teacher/raised-hands'];
+    assert.ok(transfer.p95Bounds.lowerMs >= 90, 'Chromium network timing preserves the delayed body phase');
+    assert.doesNotMatch(JSON.stringify(diagnostics), /privateCanaryContentMustNeverEnterEvidence/);
     const headers = page.waitForResponse(response => response.url() === origin + '/api/classpilot/tiles/screenshots');
     await page.evaluate(() => { void fetch('/api/classpilot/tiles/screenshots', { method: 'POST' }).then(response => response.text()).catch(() => {}); });
     assert.equal((await headers).status(), 200);
-    assert.equal(metrics.summary().counters.measurementsSettled, 1, 'stalled successful headers are not completion');
+    assert.equal(metrics.summary().counters.measurementsSettled, 2, 'stalled successful headers are not completion');
     const deadline = performance.now() + 11000;
     while (metrics.counters.deadlines === 0 && performance.now() < deadline) await delay(25);
     const summary = metrics.summary();
-    assert.equal(summary.counters.requestsStarted, 2); assert.equal(summary.counters.deadlines, 1);
-    assert.equal(summary.counters.measurementsSettled, 2); assert.equal(summary.rawInFlightAfterDrain, 1);
+    assert.equal(summary.counters.requestsStarted, 3); assert.equal(summary.counters.deadlines, 1);
+    assert.equal(summary.counters.measurementsSettled, 3); assert.equal(summary.rawInFlightAfterDrain, 1);
     assert.equal(summary.fineEndpointLatency.endpoints['POST /api/classpilot/tiles/screenshots'].overflowCount, 1);
     assert.equal(summary.wafAttributionEstablished, false);
   } finally {
