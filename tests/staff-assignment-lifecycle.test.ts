@@ -502,7 +502,7 @@ describe("staff assignment lifecycle", () => {
   it("reports stale active ownership and primary-mirror mismatches as ID-only integrity findings", async () => {
     const school = await createSchool({
       name: `${TAG}_DormantMirrorIntegrity`,
-      domain: `${TAG}-dormant-mirror.example.edu`,
+      domain: `${TAG}.example.edu`,
       slug: `${TAG}-dormant-mirror`,
     });
     await createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" });
@@ -1127,7 +1127,7 @@ describe("staff assignment lifecycle", () => {
   it("enforces teacher-created class ownership and inventories every live assignment type", async () => {
     const school = await createSchool({
       name: `${TAG}_DormantAssignmentIntegrity`,
-      domain: `${TAG}-dormant-assignments.example.edu`,
+      domain: `${TAG}.example.edu`,
       slug: `${TAG}-dormant-assignments`,
     });
     await createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" });
