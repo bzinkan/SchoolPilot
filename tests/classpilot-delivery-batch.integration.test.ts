@@ -3,6 +3,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import { before, after, test } from "node:test";
 import { sql } from "drizzle-orm";
 import pg from "pg";
+import { getDatabaseErrorDetails } from "../src/util/databaseError.js";
 
 process.env.RLS_GUC_ENABLED = "true";
 process.env.SCHEDULER_ENABLED = "false";
@@ -176,6 +177,143 @@ test("concurrent command delivery cohorts retain separate request transactions a
     if (!released) await blocker.query("ROLLBACK");
     blocker.release();
     await Promise.allSettled([first, second].filter((request): request is Promise<void> => request !== undefined));
+  }
+});
+
+for (const acknowledgement of ["command", "control-state"] as const) test(`forty-target sent bookkeeping and an exact relay do not deadlock a concurrent ${acknowledgement} ACK`, { timeout: 15_000 }, async () => {
+  const chosen = bindings.slice(1, 41), first = chosen[0]!, acknowledged = chosen[1]!;
+  const actorId = randomUUID(), contextId = randomUUID(), commandId = randomUUID();
+  await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','ACK race')", [actorId, `${actorId}@${schoolId}.example.edu`]);
+  await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [schoolId, actorId]);
+  await admin.query("INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,assigned_staff_id,created_by,starts_at,ends_at) VALUES($1,$2,'other','Synthetic ACK race',$3,$3,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 hour')", [contextId, schoolId, actorId]);
+  for (const binding of chosen) await admin.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by) VALUES($1,$2,$3,$4)", [schoolId, contextId, binding.studentId, actorId]);
+  await inSchool(() => storage.initializeClasspilotSupervisionControlStates({ schoolId, supervisionContextId: contextId, studentIds: chosen.map(binding => binding.studentId) }));
+  await admin.query("INSERT INTO classpilot_commands(id,school_id,supervision_context_id,teacher_id,target_scope,command_type,requested_count,expires_at) VALUES($1,$2,$3,$4,'context',$5,40,clock_timestamp()+interval '5 minutes')", [commandId, schoolId, contextId, actorId, acknowledgement === "command" ? "open-tab" : "lock-screen"]);
+  for (const binding of chosen) await admin.query("INSERT INTO classpilot_command_targets(command_id,school_id,supervision_context_id,student_id,student_session_id,device_id) VALUES($1,$2,$3,$4,$5,$6)", [commandId, schoolId, contextId, binding.studentId, binding.studentSessionId, binding.deviceId]);
+  const controlStates = acknowledgement === "control-state"
+    ? await inSchool(() => storage.replaceClasspilotSupervisionControlSnapshots({ schoolId, supervisionContextId: contextId,
+      studentIds: chosen.map(binding => binding.studentId), sourceCommandId: commandId, desiredState: { restrictions: {} }, forceRevision: true }))
+    : [];
+  const controlRevision = controlStates.find(state => state.studentId === acknowledged.studentId)?.revision;
+
+  let releaseSent!: () => void, sentLocked!: () => void;
+  const continueSent = new Promise<void>(resolve => { releaseSent = resolve; });
+  const firstTargetLocked = new Promise<void>(resolve => { sentLocked = resolve; });
+  const pids = new Map<string, number>();
+  const errors: string[] = [];
+  const observe = <T>(work: Promise<T>) => work.catch(error => {
+    errors.push(getDatabaseErrorDetails(error).code || "UNKNOWN");
+    return undefined;
+  });
+  const identify = async (name: string) => {
+    const store = tenant.getOwnedTenantStore(); assert.ok(store);
+    const result = await store.client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+    pids.set(name, result.rows[0]!.pid);
+    return store;
+  };
+  const waitFor = async (predicate: () => Promise<boolean>, message: string) => {
+    const deadline = performance.now() + 3_000;
+    while (performance.now() < deadline) {
+      if (await predicate()) return;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.fail(message);
+  };
+  const blockedBy = async (name: string, blocker: string) => {
+    const pid = pids.get(name), blockerPid = pids.get(blocker);
+    if (pid === undefined || blockerPid === undefined) return false;
+    const row = (await admin.query<{ blockers: number[] }>("SELECT pg_blocking_pids($1) AS blockers", [pid])).rows[0]!;
+    return row.blockers.includes(blockerPid);
+  };
+  let sent: Promise<unknown> | undefined, relay: Promise<unknown> | undefined, ack: Promise<unknown> | undefined;
+  let ackSettled = false;
+  try {
+    sent = observe(inSchool(async () => {
+      const store = await identify("sent"), originalQuery = store.client.query;
+      // Pause a native bulk update after its first target lock. Commit that
+      // statement's locks before the native summary query, exactly as its
+      // ordinary autocommit path does; retaining them would invent a cycle.
+      await store.client.query("BEGIN");
+      await store.client.query("SELECT id FROM classpilot_command_targets WHERE command_id=$1 AND student_id=$2 FOR UPDATE", [commandId, first.studentId]);
+      store.client.query = function (this: pg.PoolClient, ...args: unknown[]) {
+        const query = args[0] as string | { text?: string };
+        const text = typeof query === "string" ? query : query.text || "";
+        const result = Reflect.apply(originalQuery, this, args);
+        if (!text.startsWith('update "classpilot_command_targets"')) return result;
+        return Promise.resolve(result).then(async value => {
+          await Reflect.apply(originalQuery, this, ["COMMIT"]);
+          return value;
+        });
+      } as typeof store.client.query;
+      sentLocked();
+      try {
+        await continueSent;
+        return await storage.markClasspilotCommandTargetsSent(commandId, chosen.map(binding => binding.deviceId));
+      } finally {
+        store.client.query = originalQuery;
+        await store.client.query("ROLLBACK");
+      }
+    }));
+    await Promise.race([
+      firstTargetLocked,
+      sent.then(() => { throw new Error("Sent writer ended before its first target barrier"); }),
+    ]);
+    relay = observe(inSchool(async () => {
+      await identify("relay");
+      return storage.withClasspilotStudentControlDeliveryAuthority(first,
+        database => storage.classpilotStudentRelayMessageAllowed(first, {
+          commandId, authority: { teachingSessionId: null, supervisionContextId: contextId },
+        }, database), (_claimed, allowed) => allowed);
+    }));
+    await waitFor(() => blockedBy("relay", "sent"), "exact relay must reach the first target's native row-lock barrier");
+    ack = observe(inSchool(async () => {
+      await identify("ack");
+      if (acknowledgement === "command") {
+        return storage.persistClasspilotCommandTargetAck({ ...acknowledged, commandId, ackState: "completed", result: { ok: true } });
+      }
+      assert.ok(controlRevision !== undefined);
+      return storage.acknowledgeClasspilotStudentControlState({ ...acknowledged, appliedRevision: controlRevision, outcome: "applied" });
+    }).finally(() => { ackSettled = true; }));
+    // Original code holds this target while waiting for the relay's shared
+    // header lock. Correct target-only locking lets this ACK settle directly.
+    await waitFor(async () => ackSettled || await blockedBy("ack", "relay"), "ACK must either settle or reach the shared-header barrier");
+    releaseSent();
+    const [, relayOutcome, ackOutcome] = await Promise.all([sent, relay, ack]);
+    assert.deepEqual(errors, [], "native ACK, relay and bulk sent update must settle without SQLSTATE failures");
+    assert.ok(relayOutcome && typeof relayOutcome === "object" && "authorized" in relayOutcome && "value" in relayOutcome);
+    assert.equal(relayOutcome.authorized, true);
+    assert.ok(relayOutcome.value && typeof relayOutcome.value === "object" && "expiresAt" in relayOutcome.value);
+    assert.ok(typeof relayOutcome.value.expiresAt === "number" && Number.isFinite(relayOutcome.value.expiresAt));
+    assert.ok(ackOutcome && typeof ackOutcome === "object");
+    if (acknowledgement === "command") {
+      assert.ok("disposition" in ackOutcome);
+      assert.equal(ackOutcome.disposition, "applied");
+    } else {
+      assert.ok("appliedRevision" in ackOutcome && "enforcementHealth" in ackOutcome && "sourceCommandId" in ackOutcome);
+      assert.equal(ackOutcome.appliedRevision, controlRevision);
+      assert.equal(ackOutcome.enforcementHealth, "synced");
+      assert.equal(ackOutcome.sourceCommandId, commandId);
+    }
+    const command = await inSchool(() => storage.getClasspilotCommandByIdAndSchool(commandId, schoolId));
+    assert.equal(command?.requestedCount, 40);
+    assert.equal(command?.sentCount, 40);
+    assert.equal(command?.completedCount, 1);
+    const completed = command?.targets.find(target => target.studentId === acknowledged.studentId);
+    assert.equal(completed?.status, "completed", "late sent bookkeeping cannot regress a terminal ACK");
+    assert.equal(completed?.ackState, "completed");
+    assert.ok(completed?.receivedAt && completed.completedAt && completed.sentAt);
+  } finally {
+    releaseSent();
+    await Promise.allSettled([sent, relay, ack].filter((work): work is Promise<unknown> => work !== undefined));
+    await admin.query("DELETE FROM classpilot_command_targets WHERE command_id=$1", [commandId]);
+    await admin.query("DELETE FROM classpilot_commands WHERE id=$1", [commandId]);
+    await admin.query("DELETE FROM classpilot_student_control_states WHERE supervision_context_id=$1", [contextId]);
+    await admin.query("DELETE FROM classpilot_supervision_students WHERE context_id=$1", [contextId]);
+    await admin.query("DELETE FROM classpilot_supervision_contexts WHERE id=$1", [contextId]);
+    await admin.query("DELETE FROM school_memberships WHERE school_id=$1 AND user_id=$2", [schoolId, actorId]);
+    // The unconditional staff_identity_history_hard_delete guard retains
+    // synthetic identity roots; all new memberships and activity rows above
+    // are removed without bypassing that production retention contract.
   }
 });
 

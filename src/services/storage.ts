@@ -20186,6 +20186,9 @@ export async function classpilotStudentRelayMessageAllowed(
   const commandId = frame.commandId ?? remote?.commandId;
   const privateFrame = frame.messageKind === "private" || "chatMessageId" in frame || "privateChatLifecycle" in frame;
   if (typeof commandId === "string" && commandId && !privateFrame) {
+    // Command headers are immutable authority. Keep only the mutable target
+    // stable through the synchronous send; a shared header lock can close a
+    // cycle with target-first ACKs and class-wide sent bookkeeping.
     const [row] = await database.select({ command: classpilotCommands, target: classpilotCommandTargets })
       .from(classpilotCommands).innerJoin(classpilotCommandTargets, and(
         eq(classpilotCommandTargets.commandId, classpilotCommands.id),
@@ -20196,7 +20199,7 @@ export async function classpilotStudentRelayMessageAllowed(
         eq(classpilotCommandTargets.deviceId, binding.deviceId),
         inArray(classpilotCommandTargets.status, ["requested", "sent", "received"]),
         or(isNull(classpilotCommands.expiresAt), gt(classpilotCommands.expiresAt, sql`clock_timestamp()`)),
-      )).limit(1).for("share");
+      )).limit(1).for("share", { of: classpilotCommandTargets });
     if (!row || (frame.commandId !== undefined && frame.commandId !== row.command.id)
       || (remote?.commandId !== undefined && remote.commandId !== row.command.id)) return null;
     const rawAuthority = remote?.authority ?? frame.authority;
@@ -22613,7 +22616,10 @@ export async function persistClasspilotCommandTargetAck(
         eq(classpilotCommands.schoolId, options.schoolId)
       ))
       .limit(1)
-      .for("update");
+      // Command authority and deadlines are immutable. Lock only the exact
+      // mutable target: locking the shared header here can deadlock a bulk
+      // sent update against a relay's header-then-target SHARE locks.
+      .for("update", { of: classpilotCommandTargets });
     // ACKs never create or replace authority. Durable offline messages acquire
     // their first exact binding when a heartbeat claims them below; this path
     // may only advance the command target already frozen to the authenticated
