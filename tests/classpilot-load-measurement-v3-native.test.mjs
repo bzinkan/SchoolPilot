@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import{createRequire}from'node:module';import{readFileSync,readdirSync}from'node:fs';import{resolve,join}from'node:path';
-import{makeReliabilityColorFixtures,CAPTURE_COLOR_BASES,stampCausalCapture,CapturePulseController,capturePulseMarker,measurementPlanDigest,measurementPlan}from'../scripts/load/classpilot-reliability-profile.mjs';
-import{collectRenderedNavigationPixelWitness,createNativeScreenshotCapture,collectRenderedDashboardSample,compareRenderedCapturePaint,compareRenderedNavigationPaint,createNativeScreenshotDecoder,renderedCaptureFrameAuthorized,scoreRenderedCaptureAge,renderedDeadline}from'../scripts/load/run-classpilot-rendered-dashboards.mjs';
+import{makeReliabilityColorFixtures,CAPTURE_COLOR_BASES,stampCausalCapture,CapturePulseController,capturePulseMarker,measurementPlanDigest,measurementPlan,observeRenderedStudentState}from'../scripts/load/classpilot-reliability-profile.mjs';
+import{collectRenderedNavigationPixelWitness,createNativeScreenshotCapture,collectRenderedDashboardSample,compareRenderedCapturePaint,compareRenderedNavigationPaint,createNativeScreenshotDecoder,renderedCaptureFrameAuthorized,scoreRenderedCaptureAge,retainActualRenderedCaptureEvidence,createNativePriorPaintStore,nativeNavigationPaintEvidence,actualRenderedNavigationPaintDecision,renderedRuntimeAuthoritySnapshot,RENDERED_VIEWPORT,renderedDeadline}from'../scripts/load/run-classpilot-rendered-dashboards.mjs';
 let chromium,favicon;
 const chrome=process.env.CLASSPILOT_CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const nativeTest=(name,run)=>test(name,{skip:process.env.CLP_RUN_NATIVE_MEASUREMENT!=='1'},async()=>{
@@ -165,4 +165,121 @@ nativeTest('fully authorized repeating-palette swap covered by old pixels retain
     assert.equal(scoreRenderedCaptureAge({...input,previous:{rgba:prior.rgba}}),Infinity,'Unknown older paint cannot gain causal freshness');
     assert.equal(proof().actualOutbound,0);
   }finally{await browser.close();}
+});
+
+nativeTest('first decoded DOM source and an unchanged older native JPEG cannot establish new capture freshness', async () => {
+  let clock = 0, nonce = 0;
+  const expected = { account: '135775632425', bucket: 'schoolpilot-staging-load-135775632425', origin: 'https://staging.school-pilot.net',
+    campaign: 'classpilot-staging-20261014-012345abcdef', runId: '40-0123456789abcdef', primaryDevices: 40,
+    candidateApiImage: '135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-staging-api@sha256:' + 'a'.repeat(64),
+    sourceArtifactSha256: 'b'.repeat(64), scriptBundleSha256: 'c'.repeat(64), cohortSha256: 'd'.repeat(64),
+    planSha256: measurementPlanDigest(40), maximumPulses: measurementPlan(40).maximumPulses, maximumNavigationRounds: measurementPlan(40).navigationRounds };
+  const binding = 'e'.repeat(43), controller = new CapturePulseController(expected, { now: () => clock, nonce: () => String(++nonce).padStart(48, '0') });
+  const fixtures = makeReliabilityColorFixtures();
+  const source = (color, ordinal) => { const pulse = controller.issue(); return stampCausalCapture(fixtures[color], 1700000000000, ordinal,
+    { pulseSequence: pulse.pulseSequence, pulseMarker: capturePulseMarker(pulse, binding) }); };
+  const oldGreen = source(1, 1), red = source(0, 2);
+  clock = 5000; const green = source(1, 3);
+  clock = 10000; const greenAlias = source(1, 4);
+  clock = 15000; const blue = source(2, 5);
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }), decoder = createNativeScreenshotDecoder(), capture = createNativeScreenshotCapture();
+  const runtime = { lastPaints: new Map([['local', { frame: null, rgba: null, absent: false }]]) };
+  const retained = [];
+  try {
+    const { page, proof } = await localPage(browser);
+    await page.setContent('<style>body{margin:0;background:white}.box{position:relative;width:320px;height:180px;margin:30px}.box img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}</style><div data-testid="card-student-local"><div class="box"><img data-testid="screenshot-local" src="' + red + '"><img id="old-native" style="z-index:999;pointer-events:none" src="' + oldGreen + '"></div></div>');
+    await page.locator('img').evaluateAll(images => Promise.all(images.map(image => image.decode())));
+    const compare = async () => {
+      const before = await renderedDeadline(page.evaluate(collectRenderedDashboardSample)), png = await capture.capture(page, { width: 480, height: 480 });
+      retained.push(png);
+      const after = await renderedDeadline(page.evaluate(collectRenderedDashboardSample, { skipAnimationFrames: true }));
+      const composed = (await compareRenderedCapturePaint({ png, cards: before.cards, afterCards: after.cards, viewport: { width: 480, height: 480 } }, decoder))[0];
+      const card = before.cards[0], known = before.cards.concat(after.cards).flatMap(row => row.contributors);
+      const authorized = composed.contributors.every(value => renderedCaptureFrameAuthorized(value, known));
+      const age = scoreRenderedCaptureAge({ frame: card.frame, composed, previous: runtime.lastPaints.get('local'), publicBinding: binding, observedAt: clock, pulseController: controller });
+      return { studentId: 'local', card, after: after.cards[0], composed, authorized, age };
+    };
+    const initial = await compare(); assert.equal(initial.card.decoded, true); assert.equal(initial.composed.matched, false);
+    retainActualRenderedCaptureEvidence(runtime, initial, true); assert.equal(runtime.lastPaints.get('local').rgba, null);
+    await page.getByTestId('screenshot-local').evaluate((image, value) => { image.src = value; return image.decode(); }, green);
+    const first = await compare(); assert.equal(first.composed.matched, true); assert.equal(first.authorized, true); assert.equal(first.age, Infinity);
+    retainActualRenderedCaptureEvidence(runtime, first, true); assert.equal(runtime.lastPaints.get('local').frame, null); assert.deepEqual(runtime.lastPaints.get('local').rgba, first.composed.rgba);
+    await page.getByTestId('screenshot-local').evaluate((image, value) => { image.src = value; return image.decode(); }, greenAlias);
+    const alias = await compare(); assert.notEqual(alias.card.frame.jpegSha256, first.card.frame.jpegSha256);
+    assert.equal(alias.composed.matched, true); assert.deepEqual(alias.composed.rgba, first.composed.rgba); assert.equal(alias.age, Infinity, 'New stamped DOM bytes over unchanged old native JPEG remain UNKNOWN');
+    retainActualRenderedCaptureEvidence(runtime, alias, true); assert.equal(runtime.lastPaints.get('local').frame, null);
+    for (let jitter = 0; jitter <= 12; jitter++) {
+      await page.evaluate(color => {
+        const overlay = document.createElement('div'); overlay.id = 'native-jitter';
+        overlay.style.cssText = 'position:absolute;inset:0;z-index:1000;pointer-events:none;background:rgb(' + color.join(',') + ')';
+        document.querySelector('.box').append(overlay);
+      }, first.composed.rgba.slice(0, 3).map(value => value + jitter));
+      for (let sample = 0; sample < 2; sample++) {
+        const observed = await compare(); assert.equal(observed.composed.matched, true);
+        assert.ok(observed.composed.rgba.slice(0, 3).every((value, channel) => value - first.composed.rgba[channel] === jitter), 'Actual native RGB carries the requested fixture jitter');
+        assert.equal(observed.age, Infinity, 'Two same-color samples within twelve native channel bytes remain UNKNOWN');
+        retainActualRenderedCaptureEvidence(runtime, observed, true);
+        assert.deepEqual(runtime.lastPaints.get('local').rgba, first.composed.rgba); assert.equal(runtime.lastPaints.get('local').frame, null);
+      }
+      await page.locator('#native-jitter').evaluate(node => node.remove());
+    }
+    await page.locator('#old-native').evaluate(node => node.remove());
+    await page.getByTestId('screenshot-local').evaluate((image, value) => { image.src = value; return image.decode(); }, blue);
+    clock = 16000; const changed = await compare(); assert.equal(changed.composed.matched, true); assert.equal(changed.age, 1000);
+    retainActualRenderedCaptureEvidence(runtime, changed, true); assert.equal(runtime.lastPaints.get('local').frame.jpegSha256, changed.card.frame.jpegSha256);
+    assert.equal(proof().actualOutbound, 0);
+  } finally { for (const png of retained) png.fill(0); await browser.close(); }
+});
+
+nativeTest('actual later navigation decisions prove SVG-to-placeholder and placeholder-to-SVG at common native coordinates', async () => {
+  const browser = await chromium.launch({ executablePath: chrome, headless: true }), decoder = createNativeScreenshotDecoder(), capture = createNativeScreenshotCapture();
+  const runtime = { actor: { teacherId: 'local-teacher', schoolId: 'local-school', role: 'teacher', teachingSessionId: 'local-session', studentIds: ['local'], expiresAt: '2030-01-01T00:00:00.000Z' },
+    allowed: new Set(['local']), bindings: new Map([['local', 'v1:local']]), publicBindings: new Map([['local', 'e'.repeat(43)]]), realtime: new Map(), subscribed: true, socketGeneration: 1, scopeEpoch: 0, priorStripAbsent: true };
+  const auth = { schoolId: 'local-school', expiresAt: '2030-01-01T00:00:00.000Z', deviceManifestExpiresAt: '2030-01-01T00:00:00.000Z' };
+  const fence = renderedRuntimeAuthoritySnapshot(runtime, auth, 'local-native-navigation'), prior = createNativePriorPaintStore({ viewport: RENDERED_VIEWPORT });
+  const retained = []; let revision = 0;
+  try {
+    const { page, proof } = await localPage(browser, RENDERED_VIEWPORT);
+    await page.setContent(html()); await page.locator('span img').evaluate(image => image.remove());
+    await prior.capture(runtime.actor.teacherId, { png: await capture.capture(page), decoder, provenance: fence });
+    await new Promise(resolve => setTimeout(resolve, 2)); const triggerAt = performance.now(); prior.setTrigger(triggerAt);
+    const expected = (marker, icon) => ({ ...expectedRow(), marker, activeTabTitle: marker, favicon: icon, publicBinding: 'e'.repeat(43),
+      activeTabRef: marker, activeTabUrl: 'https://docs.google.com/' + marker, tabSnapshotRevision: ++revision });
+    const install = async value => {
+      await page.locator('span').evaluate((tab, value) => {
+        tab.replaceChildren(); tab.title = value.activeTabTitle + ' · ' + value.hostname;
+        const paint = document.createElement(value.favicon ? 'img' : 'div'); if (value.favicon) paint.src = value.favicon; tab.append(paint);
+      }, value);
+      if (value.favicon) await page.locator('span img').evaluate(image => image.decode());
+    };
+    const observe = async (value, previous, round) => {
+      const deadline = performance.now() + 8000;
+      assert.equal(observeRenderedStudentState(runtime, { type: 'student-update', studentId: 'local', schoolId: runtime.actor.schoolId,
+        teachingSessionId: runtime.actor.teachingSessionId, realtimeBinding: value.publicBinding, realtimeRevision: revision, status: 'active',
+        ...value, allOpenTabs: [{ tabRef: value.activeTabRef, title: value.activeTabTitle, url: value.activeTabUrl }] }, performance.now()), false);
+      const before = (await renderedDeadline(page.evaluate(collectRenderedNavigationPixelWitness, [value])))[0];
+      const png = await capture.capture(page); retained.push(png);
+      const after = (await renderedDeadline(page.evaluate(collectRenderedNavigationPixelWitness, { expectedRows: [value], skipAnimationFrames: true })))[0];
+      const composed = (await compareRenderedNavigationPaint({ png, rows: [before], afterRows: [after] }, decoder))[0];
+      assert.equal(before.matched, true); assert.equal(composed.matched, true);
+      const accepted = actualRenderedNavigationPaintDecision({ runtime, auth, fence, scopeEpoch: 0, isCurrent: () => true,
+        receivedAt: performance.now(), deadline, expected: value, witness: before, composed, previous, round, priorPaint: prior, triggerAt });
+      return { accepted, witness: before, composed, evidence: accepted ? nativeNavigationPaintEvidence(before, composed, fence, 0) : null };
+    };
+    let value = expected('first-svg', favicon); await install(value); const svg = await observe(value, null, 1);
+    assert.equal(svg.accepted, true); assert.equal(svg.evidence.points.length, 13);
+    value = expected('second-placeholder', undefined); await install(value); const placeholder = await observe(value, svg.evidence, 2);
+    assert.equal(placeholder.accepted, true); assert.equal(placeholder.evidence.points.length, 7);
+    value = expected('third-svg', favicon); await install(value); const nextSvg = await observe(value, placeholder.evidence, 3);
+    assert.equal(nextSvg.accepted, true); assert.equal(nextSvg.evidence.points.length, 13);
+    for (let jitter = 0; jitter <= 12; jitter++) {
+      value = expected('same-svg-' + jitter, favicon); await install(value);
+      await page.locator('span img').evaluate((image, jitter) => { image.style.filter = 'brightness(' + (1 + jitter / 255) + ')'; }, jitter);
+      const alias = await observe(value, nextSvg.evidence, 4); assert.equal(alias.accepted, false, 'New DOM marker and <=12 native channel jitter cannot prove another navigation paint');
+      assert.ok(alias.composed.pixels.every((channel, index) => Math.abs(channel - nextSvg.composed.pixels[index]) <= 12));
+    }
+    value = expected('shifted-svg', favicon); await install(value); await page.locator('span img').evaluate(image => { image.style.transform = 'translateX(100px)'; });
+    assert.equal((await observe(value, nextSvg.evidence, 4)).accepted, false, 'Disjoint original native coordinates cannot establish a previous-to-current paint change');
+    assert.equal(proof().actualOutbound, 0); assert.equal(capture.summary().active, 0); assert.equal(decoder.summary().active, 0);
+  } finally { prior.dispose(); for (const png of retained) png.fill(0); await browser.close(); }
 });

@@ -309,7 +309,7 @@ jobs:
         run: |
           npm run build --prefix schoolpilot-app
           CLASSPILOT_CHROME_PATH="$(node -e 'const { createRequire } = require("node:module"); const requireFrontend = createRequire(process.cwd() + "/schoolpilot-app/package.json"); process.stdout.write(requireFrontend("playwright").chromium.executablePath());')" \
-            node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-load-measurement-v3-native.test.mjs
+            node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-load-measurement-v3-native.test.mjs tests/classpilot-native-roi-paint.test.mjs tests/classpilot-native-prior-paint.test.mjs tests/classpilot-native-roi-clips.test.mjs tests/classpilot-native-teacher-registry.test.mjs tests/classpilot-rendered-runtime-integration.test.mjs tests/classpilot-rendered-controller-closure.test.mjs
 
       - name: Real extension capture to observed and claimed tiles (serial)
         timeout-minutes: 5
