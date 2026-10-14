@@ -170,10 +170,20 @@ separate acceptance evidence.
 
 ## Fresh workload and gates
 
-The separate `classpilot-reliability-v1` workload binds new endpoint-shape
+The separate `classpilot-reliability-v2` workload binds new endpoint-shape
 identity and cannot masquerade as historical `classpilot-tile-batch-v1` launch
 evidence. Its runner deliberately blocks production origins. For HTTPS staging,
 `LOAD_RELIABILITY_STAGING_ORIGIN` must exactly match `LOAD_BASE_URL`.
+
+Version2 replaces the original repeated-character JPEG comment with independent
+random payloads cached per device. Decoded captures remain exactly40KiB and
+keep the existing96-byte capture-stamp tail. Bounded, content-free summaries
+record cache counts/bytes, creation and capture costs, and40-device gzip/Brotli
+cohort sizes, each at least95% of decoded JPEG bytes. Native Chrome checks
+actual response wire sizes and distinct decoded capture identities. Version1
+wire results cannot be credited as version2 capacity evidence. The image still
+decodes to one pixel: Chromebook capture encoding, real JPEG decode and GPU
+costs require the managed-device pilot.
 
 Use fresh private device/teacher/command artifacts under the existing protected
 external load-gates root, with a unique `LOAD_RUN_ID`, progress path and summary

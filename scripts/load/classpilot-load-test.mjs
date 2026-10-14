@@ -19,7 +19,7 @@ import { FineEndpointLatencies, fineLatencyEndpoint } from "./fine-endpoint-late
 import { validateStagingInputFreshness, validateStagingStartAt, waitForStagingStart } from "./staging-start-barrier.mjs";
 import {
   validateReliabilityEnvironment, RELIABILITY_ENDPOINT_SHA256, RELIABILITY_CAPABILITIES,
-  minimumReliabilitySamples, reliabilityScreenshotBindingMatches,
+  minimumReliabilitySamples, reliabilityScreenshotBindingMatches, makeReliabilityJpegFixture, reliabilityFixtureEvidence,
 } from "./classpilot-reliability-profile.mjs";
 import {
   buildStaggeredPollAccounting,
@@ -727,6 +727,26 @@ const screenshotBytes = intEnv(
   64 * 1024
 );
 const screenshotFixture = makeJpegFixture(screenshotBytes);
+const reliabilityScreenshotFixtures = new WeakMap();
+let reliabilityFixtureMetrics = null;
+const reliabilityCaptureEncoding = { captures: 0, elapsedMs: 0, maximumElapsedMs: 0, cpuUserMs: 0, cpuSystemMs: 0 };
+if (reliabilityWorkload) {
+  const started = process.hrtime.bigint(), cpu = process.cpuUsage(), memory = process.memoryUsage();
+  const baseJpeg = Buffer.from(JPEG_1X1, 'base64');
+  const fixtures = devices.map(device => {
+    const fixture = makeReliabilityJpegFixture(baseJpeg);
+    reliabilityScreenshotFixtures.set(device, fixture);
+    return fixture;
+  });
+  const evidence = reliabilityFixtureEvidence(fixtures), used = process.cpuUsage(cpu), after = process.memoryUsage();
+  reliabilityFixtureMetrics = { ...evidence, creation: {
+    elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+    cpuUserMs: used.user / 1000, cpuSystemMs: used.system / 1000,
+    rssIncreaseBytes: Math.max(0, after.rss - memory.rss), externalIncreaseBytes: Math.max(0, after.external - memory.external),
+    cacheStorage: 'per-device-decoded-buffers', generationCount: fixtures.length,
+  }, captureEncoding: reliabilityCaptureEncoding,
+  codecCostValidated: false, managedDeviceCaptureValidated: false };
+}
 const teacherAuthFileValue = process.env.LOAD_TEACHER_AUTH_FILE?.trim() || "";
 const envTeacherSchoolId = process.env.LOAD_TEACHER_SCHOOL_ID?.trim() || "";
 const envTeacherRole = process.env.LOAD_TEACHER_ROLE?.trim() || "teacher";
@@ -2130,9 +2150,22 @@ function heartbeatBody(device) {
 let reliabilityFrameOrdinal = 0;
 function screenshotBody(device) {
   const capturedAt = Date.now();
+  let screenshot = screenshotFixture;
+  if (reliabilityWorkload) {
+    const fixture = reliabilityScreenshotFixtures.get(device);
+    if (!fixture) throw new Error('Missing per-device reliability fixture');
+    const started = process.hrtime.bigint(), cpu = process.cpuUsage();
+    screenshot = stampReliabilityFrame(`data:image/jpeg;base64,${fixture.toString('base64')}`, capturedAt, ++reliabilityFrameOrdinal);
+    const used = process.cpuUsage(cpu), elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    reliabilityCaptureEncoding.captures += 1;
+    reliabilityCaptureEncoding.elapsedMs += elapsedMs;
+    reliabilityCaptureEncoding.maximumElapsedMs = Math.max(reliabilityCaptureEncoding.maximumElapsedMs, elapsedMs);
+    reliabilityCaptureEncoding.cpuUserMs += used.user / 1000;
+    reliabilityCaptureEncoding.cpuSystemMs += used.system / 1000;
+  }
   return {
     ...(reliabilityWorkload ? { capturedAt: new Date(capturedAt).toISOString(), screenshotAuthority: device.reliabilityPolicy.authority } : {}),
-    screenshot: reliabilityWorkload ? stampReliabilityFrame(screenshotFixture, capturedAt, ++reliabilityFrameOrdinal) : screenshotFixture,
+    screenshot,
     tabTitle: `Load ${device.deviceId}`,
     tabUrl: `https://example.edu/load/${encodeURIComponent(device.deviceId)}`,
   };
@@ -3334,7 +3367,8 @@ function summarize(shutdownReason) {
       testOnlyLatencyThresholdMultiplier: testLatencyThresholdMultiplier,
       completedConfiguredDuration,
     },
-    screenshotFixture: { profile: screenshotProfile, decodedBytes: screenshotBytes },
+    screenshotFixture: { profile: screenshotProfile, decodedBytes: screenshotBytes,
+      ...(reliabilityWorkload ? { reliabilityPayload: reliabilityFixtureMetrics } : {}) },
     counters,
     statusCodes,
     rates: {
@@ -3556,6 +3590,7 @@ if (validateConfigOnly) {
     workloadSchemaVersion: workloadSchemaVersion || null,
     workloadEndpointShapeSha256: tileBatchConfigured ? (reliabilityWorkload ? RELIABILITY_ENDPOINT_SHA256 : TILE_BATCH_ENDPOINT_SHAPE_SHA256) : null,
     ...(reliabilityWorkload ? { reliabilityWorkload } : {}),
+    ...(reliabilityWorkload ? { screenshotFixture: { decodedBytes: screenshotBytes, reliabilityPayload: reliabilityFixtureMetrics } } : {}),
     gateProfile,
     thresholdsEnforced: enforceThresholds,
     networkFamily: "IPv4",

@@ -7,6 +7,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
+import { createHash } from "node:crypto";
+import { readReliabilityFrame } from "../scripts/load/reliability-rendered-frame.mjs";
 
 const runner = fileURLToPath(new URL("../scripts/load/run-classpilot-reliability.mjs", import.meta.url));
 const baseUrl = "http://127.0.0.1:9"; // No server: a dry run must never attempt traffic.
@@ -50,7 +52,13 @@ for (const primary of [40, 500, 800]) test(`reliability ${primary}-device dry ru
     assert.equal(config.reliabilityWorkload.managedDevicesValidated, false);
     assert.equal(config.gateProfile, "partial");
     assert.equal(config.certificationEligible, false);
-    assert.equal(config.workloadSchemaVersion, "classpilot-reliability-v1");
+    assert.equal(config.workloadSchemaVersion, "classpilot-reliability-v2");
+    assert.equal(config.screenshotFixture.reliabilityPayload.fixtureCount, primary + 10);
+    assert.equal(config.screenshotFixture.reliabilityPayload.distinctFixtures, primary + 10);
+    assert.equal(config.screenshotFixture.reliabilityPayload.decodedCacheBytes, (primary + 10) * 40960);
+    assert.equal(config.screenshotFixture.reliabilityPayload.captureEncoding.captures, 0);
+    assert.ok(config.screenshotFixture.reliabilityPayload.cohort.gzipBytes >= 40 * 40960 * 0.95);
+    assert.ok(config.screenshotFixture.reliabilityPayload.cohort.brotliBytes >= 40 * 40960 * 0.95);
     assert.equal(config.launchContract.teacherTileAssignments, primary);
     assert.equal(config.launchContract.teacherTileCohorts, classrooms);
     assert.doesNotMatch(result.stdout, /private-fixture-cookie|private-fixture-csrf|fixture-signature/);
@@ -66,6 +74,7 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
   const teachers = new Set<WebSocket>();
   const commands = new Map<string, Map<string, string>>();
   const captureTimes = new Map<string, string>();
+  const capturePayloads = new Map<string, string>();
   const policy = { captureAllowed: true, captureCadence: { intervalSeconds: 5 },
     authority: { kind: "teaching_session", teachingSessionId: "session", revision: 1 } };
   let leases = 0, releases = 0, probes = 0, screenshots = 0, histories = 0, sequence = 0;
@@ -106,7 +115,13 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
       assert.deepEqual(parsed.screenshotAuthority, policy.authority);
       assert.ok(Number.isFinite(Date.parse(parsed.capturedAt)));
       // Ingest identity comes from device authentication, not a body deviceId.
-      captureTimes.set(String(parsed.tabTitle).replace(/^Load /, ""), parsed.capturedAt);
+      const device = String(parsed.tabTitle).replace(/^Load /, ""), bytes = Buffer.from(parsed.screenshot.slice('data:image/jpeg;base64,'.length), 'base64');
+      assert.equal(bytes.length, 40960);
+      assert.equal(readReliabilityFrame(parsed.screenshot)?.capturedAt, Date.parse(parsed.capturedAt));
+      const payloadHash = createHash('sha256').update(bytes.subarray(0, -98)).digest('hex');
+      if (capturePayloads.has(device)) assert.equal(capturePayloads.get(device), payloadHash, 'A device reuses its immutable entropy cache');
+      capturePayloads.set(device, payloadHash);
+      captureTimes.set(device, parsed.capturedAt);
       return send(200, { ok: true });
     }
     if (path.startsWith("/api/students-aggregated")) {
@@ -296,6 +311,10 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
     assert.equal(summary.tileBatch.requestsPerCohortPerPoll, null);
     assert.ok(screenshots > histories);
     assert.ok(captureTimes.size >= 40);
+    assert.equal(capturePayloads.size, captureTimes.size);
+    assert.equal(new Set(capturePayloads.values()).size, capturePayloads.size, 'Distinct device entropy must reach the actual screenshot POSTs');
+    assert.equal(summary.screenshotFixture.reliabilityPayload.fixtureCount, 50);
+    assert.equal(summary.screenshotFixture.reliabilityPayload.captureEncoding.captures, summary.counters.screenshotPost);
     assert.ok(probes > 0);
     assert.equal(negativeTileProbes.size, 20, "Every foreign student is denied by both actual tile POST routes");
     assert.equal(summary.counters.tenantIsolationProbePassed, 20);

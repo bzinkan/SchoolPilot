@@ -1,7 +1,21 @@
-export const RELIABILITY_WORKLOAD_VERSION: 'classpilot-reliability-v1';
+export const RELIABILITY_WORKLOAD_VERSION: 'classpilot-reliability-v2';
+export const RELIABILITY_FIXTURE_VERSION: 'per-device-high-entropy-jpeg-40k-v2';
 export const RELIABILITY_ENDPOINT_SHAPE: string;
 export const RELIABILITY_ENDPOINT_SHA256: string;
 export const RELIABILITY_CAPABILITIES: readonly string[];
+export function makeReliabilityJpegFixture(baseJpeg: Buffer): Buffer;
+export interface ReliabilityFixtureEvidence {
+  version: typeof RELIABILITY_FIXTURE_VERSION;
+  fixtureCount: number;
+  distinctFixtures: number;
+  bytesPerFixture: number;
+  decodedCacheBytes: number;
+  stampReservedBytes: number;
+  cohort: { devices: number; decodedJpegBytes: number; jsonBytes: number; gzipBytes: number; brotliBytes: number;
+    brotliQuality: number; minimumEncodedBytes: number; minimumEncodedToDecodedRatio: number;
+    gzipEncodedToDecodedRatio: number; brotliEncodedToDecodedRatio: number };
+}
+export function reliabilityFixtureEvidence(fixtures: readonly Buffer[]): ReliabilityFixtureEvidence;
 export function reliabilityScreenshotBindingMatches(tile: unknown): boolean;
 export function minimumReliabilitySamples(options: { durationMs: number; intervalMs: number; warmupMs?: number; spreadMs?: number; timeoutMs: number; scale?: number }): number;
 export interface ReliabilityProfile {

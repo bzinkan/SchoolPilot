@@ -5,8 +5,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 import { stampReliabilityFrame, readReliabilityFrame } from './load/reliability-rendered-frame.mjs';
+import { makeReliabilityJpegFixture, reliabilityFixtureEvidence, RELIABILITY_WORKLOAD_VERSION } from './load/classpilot-reliability-profile.mjs';
 import { collectRenderedDashboardSample } from './load/run-classpilot-rendered-dashboards.mjs';
 import { bootstrapCookieIsolationProbe } from './check-classpilot-staging-cookie-isolation.mjs';
 
@@ -51,13 +52,12 @@ test('twenty actual Chrome contexts remain visible and decode distinct40KiB capt
   const harness = readFileSync(new URL('./load/classpilot-load-test.mjs', import.meta.url), 'utf8');
   const encoded = harness.match(/const JPEG_1X1\s*=\s*"([^"]+)";/)?.[1];
   assert.ok(encoded, 'Use the harness actual valid JPEG source');
-  const original = Buffer.from(encoded, 'base64'), padding = Buffer.alloc(40960 - original.length, 0x4c);
-  padding[0] = 255; padding[1] = 254; padding.writeUInt16BE(padding.length - 2, 2);
-  const fixture = 'data:image/jpeg;base64,' + Buffer.concat([original.subarray(0, -2), padding, original.subarray(-2)]).toString('base64');
+  const original = Buffer.from(encoded, 'base64');
   const browser = await chromium.launch({ executablePath, headless: true,
     args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
   try {
     await Promise.all(Array.from({ length: 20 }, async (_, index) => {
+      const fixture = 'data:image/jpeg;base64,' + makeReliabilityJpegFixture(original).toString('base64');
       const context = await browser.newContext();
       await context.route('**/*', route => route.abort());
       const page = await context.newPage();
@@ -98,6 +98,81 @@ test('twenty actual Chrome contexts remain visible and decode distinct40KiB capt
     console.log(JSON.stringify({ gate: 'rendered-frame-instrumentation', browser: browser.version(), contexts: 20,
       applicationDashboardsValidated: false, stagingCapacityValidated: false, managedDevicesValidated: false }));
   } finally { await browser.close(); }
+});
+
+test('native Chrome decodes forty distinctv2 frames and measures realistic gzip/Brotli cohort wire bytes', { timeout: 30000 }, async () => {
+  const { chromium } = createRequire(new URL('../schoolpilot-app/package.json', import.meta.url))('playwright');
+  const executablePath = [process.env.CLASSPILOT_CHROME_PATH,
+    'C:/Program Files/Google/Chrome/Application/chrome.exe', chromium.executablePath()].find(path => path && existsSync(path));
+  assert.ok(executablePath);
+  const harness = readFileSync(new URL('./load/classpilot-load-test.mjs', import.meta.url), 'utf8');
+  const source = harness.match(/const JPEG_1X1\s*=\s*"([^"]+)";/)?.[1]; assert.ok(source);
+  const creationStarted = performance.now(), creationCpu = process.cpuUsage(), beforeMemory = process.memoryUsage();
+  const fixtures = Array.from({ length: 40 }, () => makeReliabilityJpegFixture(Buffer.from(source, 'base64')));
+  const evidence = reliabilityFixtureEvidence(fixtures), usedCpu = process.cpuUsage(creationCpu);
+  const creation = { elapsedMs: performance.now() - creationStarted, cpuUserMs: usedCpu.user / 1000,
+    cpuSystemMs: usedCpu.system / 1000, decodedCacheBytes: fixtures.length * 40960,
+    rssIncreaseBytes: Math.max(0, process.memoryUsage().rss - beforeMemory.rss) };
+  const capturedAt = Date.now(), body = Buffer.from(JSON.stringify({ tiles: fixtures.map((fixture, index) => ({
+    // Synthetic fixture labels are local only; none enter metrics or logs.
+    studentId: `synthetic-${index}`, screenshot: stampReliabilityFrame('data:image/jpeg;base64,' + fixture.toString('base64'), capturedAt, index + 1),
+  })) }));
+  const compressed = { gzip: gzipSync(body), br: brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } }) };
+  for (const value of Object.values(compressed)) assert.ok(value.length >= 40 * 40960 * 0.95);
+  let actualRequests = 0;
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, 'http://localhost');
+    if (url.pathname !== '/api/classpilot/tiles/screenshots') {
+      response.writeHead(200, { 'content-type': 'text/html' }); response.end('<!doctype html><main id="cards" style="display:grid;grid-template-columns:repeat(8,100px)"></main>'); return;
+    }
+    actualRequests += 1;
+    const codec = url.searchParams.get('encoding'); assert.ok(codec === 'gzip' || codec === 'br');
+    response.writeHead(200, { 'content-type': 'application/json', 'content-encoding': codec, 'content-length': compressed[codec].length });
+    response.end(compressed[codec]);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ executablePath, headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+    const page = await context.newPage(), metrics = new RenderedHttpMetrics({ origin });
+    attachRenderedHttpMetrics(page, metrics);
+    await page.goto(origin); metrics.startWindow(performance.now(), 10000);
+    for (const codec of ['gzip', 'br']) {
+      await page.evaluate(async encoding => {
+        const response = await fetch(`/api/classpilot/tiles/screenshots?encoding=${encoding}`, { method: 'POST' });
+        const body = await response.json(), cards = document.querySelector('#cards');
+        cards.replaceChildren();
+        for (const tile of body.tiles) {
+          const article = document.createElement('article'); article.dataset.testid = 'card-student-' + tile.studentId;
+          const image = new Image(); image.dataset.testid = 'screenshot-' + tile.studentId;
+          image.width = 80; image.height = 80; image.src = tile.screenshot; article.append(image); cards.append(article);
+        }
+        await Promise.all([...cards.querySelectorAll('img')].map(image => image.decode()));
+      }, codec);
+      const sample = await page.evaluate(collectRenderedDashboardSample);
+      assert.equal(sample.cards.length, 40);
+      assert.equal(new Set(sample.cards.map(card => card.frame?.ordinal)).size, 40);
+      for (const card of sample.cards) {
+        assert.equal(card.decoded, true); assert.equal(card.displayed, true);
+        assert.equal(card.frame.capturedAt, capturedAt);
+      }
+    }
+    await metrics.drain();
+    const measured = metrics.summary(), endpoint = measured.diagnostics.endpoints['POST /api/classpilot/tiles/screenshots'];
+    assert.equal(actualRequests, 2); assert.equal(measured.counters.requestsStarted, 2);
+    assert.equal(measured.allStartedRequestsMeasured, true); assert.equal(measured.counters.failedMeasurements, 0);
+    assert.equal(endpoint.contentEncoding.gzip, 1); assert.equal(endpoint.contentEncoding.br, 1);
+    assert.equal(endpoint.encodedBodyBytes.count, 2);
+    assert.equal(endpoint.encodedBodyBytes.totalBytes, compressed.gzip.length + compressed.br.length);
+    assert.equal(measured.diagnostics.counters.bodySizeCaptured, 2);
+    console.log(JSON.stringify({ gate: 'reliability-wire-v2-native', browser: browser.version(), workload: RELIABILITY_WORKLOAD_VERSION,
+      decodedFixtures: 40, distinctCaptureIdentities: 40, syntheticWire: evidence.cohort, creation,
+      actualGzipBytes: compressed.gzip.length, actualBrotliBytes: compressed.br.length,
+      measuredEncodedBytes: endpoint.encodedBodyBytes.totalBytes, codecCostValidated: false, managedDevicesValidated: false }));
+  } finally {
+    await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
 });
 
 test('native browser census measures full bodies and retains an8s stalled-body deadline without changing requests', { timeout: 25000 }, async () => {

@@ -113,8 +113,20 @@ staging operations. It must download exact private input keys, record source
 hashes and preserve these same fixed profile values. Never use loopback smoke
 or test-time acceleration for staging capacity. The initial burst submits every
 selected class command concurrently; later traffic retains the documented
-cadence. Captures have unique identities in existing legal JPEG padding without
-changing their40KiB wire size.
+cadence. The `classpilot-reliability-v2` identity requires independent high
+entropy legal JPEG comment payloads for every device. Each decoded JPEG is
+exactly40KiB; only the96-byte capture-stamp tail is predictable. The generator
+caches decoded buffers once per device (33,177,600bytes for810devices), then
+reuses those buffers with the existing unique capture stamp. No target IDs or
+actual screen contents enter the payload or aggregate fixture evidence.
+
+Preflight and final summaries retain bounded creation/capture CPU and memory
+observations, cache cardinality, and40-device JSON/gzip/Brotli byte totals.
+Both compressed cohorts must retain at least95% of decoded JPEG bytes; base64
+overhead may compress. Shared payloads or old repeated-character padding fail
+this check. The native browser gate verifies distinct decoded/stamped frames
+and actual encoded response sizes for both codecs. Earlier low entropy v1
+passes remain diagnostic and cannot establish v2 screenshot wire capacity.
 
 The synthetic JPEG decodes to one pixel. These campaigns measure transport,
 authority, recovery and dashboard source updates; they do not measure Chromebook
