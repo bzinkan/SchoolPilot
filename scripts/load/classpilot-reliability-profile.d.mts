@@ -1,8 +1,13 @@
-export const RELIABILITY_WORKLOAD_VERSION: 'classpilot-reliability-v2';
-export const RELIABILITY_FIXTURE_VERSION: 'per-device-high-entropy-jpeg-40k-v2';
+export const RELIABILITY_WORKLOAD_VERSION: 'classpilot-reliability-v3';
+export const RELIABILITY_FIXTURE_VERSION: 'per-device-high-entropy-three-color-jpeg-40k-v3';
 export const RELIABILITY_ENDPOINT_SHAPE: string;
 export const RELIABILITY_ENDPOINT_SHA256: string;
 export const RELIABILITY_CAPABILITIES: readonly string[];
+export const CAPTURE_COLOR_BASES: readonly {
+  name: string;
+  decodedRgba: readonly [number, number, number, number];
+  base64: string;
+}[];
 export function makeReliabilityJpegFixture(baseJpeg: Buffer): Buffer;
 export interface ReliabilityFixtureEvidence {
   version: typeof RELIABILITY_FIXTURE_VERSION;
