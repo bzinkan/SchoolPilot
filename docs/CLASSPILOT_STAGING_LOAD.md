@@ -211,7 +211,8 @@ uploads have deadlines. Result upload failure terminates the fleet process
 group. Completed evidence requires the exact full profile duration, enforced
 passing thresholds and finalized progress; a zero subprocess exit alone cannot
 establish success. Only bounded aggregate `ready.json`, `progress.jsonl`, `summary.json` and
-`generator.json` leave the task through the campaign's `results/` prefix.
+`generator.json`, plus content-free measurement ready/start/drain receipts, leave
+the task through the campaign's `results/` prefix.
 
 Choose one common `startAt` within five minutes, in the exact form
 `YYYY-MM-DDTHH:mm:ss.sssZ`, before preparing the remote input manifest. Launch
@@ -226,6 +227,28 @@ start deadlines fail; no process starts a shortened catch-up run. Receipts save
 actual start skew, and monotonic clocks prevent wall-clock changes from silently
 altering durations. Manifest freshness and credential lifetime include the
 pre-start wait and are rechecked at timed start.
+
+Seed the exact prepared `measurement-waiting.json` as the fresh subrun's
+`inputs/measurement-control.json` before starting its task. Keep the approved
+campaign prefix; a new subrun does not broaden the task's IAM permissions.
+The schema2 manifest stays unchanged. This separate protected waiting body binds
+its raw manifest digest, API image, twelve-script bundle, cohort, measurement
+plan, shared UTC start, finite expiry, mode and fresh startup nonce.
+
+The producer positively reads that waiting body and conditionally publishes its
+own pending start/drain outputs, then its `measurement-ready.json`. Unknown
+startup writes are permanently fenced rather than resent. The launcher requires
+the exact owned task's correlated accepted-write log before any result lookup.
+The browser verifies the existing ready body against its local waiting file
+before the start barrier. Pass that file with `--measurement-waiting`; preserve
+the separate fleet `ready.json` and browser `rendered-ready.json` checks.
+
+Waiting and pending states grant no capture freshness, start/drain success or
+command authority. The controller creates the first unpredictable timed pulse
+after the shared start; its nonce differs from the startup nonce. Malformed,
+foreign, expired, or 403/404 results fail the campaign. An initial missing S3 key
+is never proof of readiness. Both workload and no-application channel preflight
+use this discipline, with producer-only result publication and unchanged IAM.
 
 ## Independent backend observation
 
@@ -303,9 +326,11 @@ include a browser. Record generator and browser host/network separately.
 ```powershell
 $browserRoot = Join-Path $campaignRoot 'rendered'
 $inputManifestPath = Join-Path $remoteInputRoot 'manifest.json'
+$waitingPath = Join-Path $remoteInputRoot 'measurement-waiting.json'
+$deviceManifestPath = Join-Path $remoteInputRoot 'devices.json'
 $env:LOAD_TEACHER_AUTH_FILE = Join-Path $remoteInputRoot 'auth.json'
-node scripts/load/run-classpilot-rendered-dashboards.mjs --config $configPath --auth $env:LOAD_TEACHER_AUTH_FILE --input-manifest $inputManifestPath --output $browserRoot --devices $primaryDevices --frontend-dist schoolpilot-app/dist --dry-run
-node scripts/load/run-classpilot-rendered-dashboards.mjs --config $configPath --auth $env:LOAD_TEACHER_AUTH_FILE --input-manifest $inputManifestPath --output $browserRoot --devices $primaryDevices --frontend-dist schoolpilot-app/dist
+node scripts/load/run-classpilot-rendered-dashboards.mjs --config $configPath --auth $env:LOAD_TEACHER_AUTH_FILE --input-manifest $inputManifestPath --measurement-waiting $waitingPath --device-manifest $deviceManifestPath --output $browserRoot --devices $primaryDevices --frontend-dist schoolpilot-app/dist --dry-run
+node scripts/load/run-classpilot-rendered-dashboards.mjs --config $configPath --auth $env:LOAD_TEACHER_AUTH_FILE --input-manifest $inputManifestPath --measurement-waiting $waitingPath --device-manifest $deviceManifestPath --output $browserRoot --devices $primaryDevices --frontend-dist schoolpilot-app/dist
 ```
 
 The helper launches1/20/20 real browser contexts with verified visible

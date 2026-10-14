@@ -13,7 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
   "classpilot-load-test.mjs": "484d03f4c2c597d823b25b1bbb443a63c9370680196db9ceb3e4e55113f11dd8",
-  "classpilot-reliability-profile.mjs": "8e6abbe2af031399b3a6cfc087c8c9e348d465ae99dc672f3fb9793ef9abde9b",
+  "classpilot-reliability-profile.mjs": "e667d334eb8ef9f785d4ff07115ac2eb32b1268a403ecd9f497ba405149dfe32",
   "command-status-observer.mjs": "8d3dacb4fae02d0bf8b0a3ef1be312b1f0c6732b3b9e0760b129a49725ae87af",
   "fine-endpoint-latency.mjs": "0a12667e463c10e4abd235f4899909db7da37a92857a7fe9b3f6065a1f9cd546",
   "monotonic-deadline.mjs": "4b63a0de37a931d37112603101d20d2419fc1b7ed4f83029aea534f27a35bc49",
@@ -22,7 +22,7 @@ export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
   "remote-generator-manifest.mjs": "b0a02f6b8c8d81aac654fbea90f9fb7d7a6231302a589e2703df8a1ef097c2be",
   "rendered-http-metrics.mjs": "0d8870681081ab48675bc20ef9b2a51d4101ffe92dbbf38ba5dfbb9314f642dc",
   "run-classpilot-reliability.mjs": "db9981c531314e772fc2875030aaed52fd16c67254813d1008d942b2bafb1f95",
-  "run-classpilot-remote-generator.mjs": "9903c95071f3897586ef80f80e939f59a34017f6c7ceb78f14399fd50cf3f8ce",
+  "run-classpilot-remote-generator.mjs": "a70cd4eb618064ebb8946f63610ec9332a36542c21dfe2296241e243310a663c",
   "session-cookie.mjs": "8c5d40d5217a05a08777cb53d3f27b43851b7189a9af631d0badb9c03f4bc8be",
   "staging-start-barrier.mjs": "6c117f54ea8dbf4305e068ec52090f7729748041382ad632dc0cfa380e8814a2",
   "tile-poll-accounting.mjs": "9845f899f5cac81737a165a955afc7fb154985255c63b225c582c5ccd8d6e808"
@@ -57,13 +57,14 @@ export async function importRenderedControllerDependency(name) {
   return import(new URL('./' + name, import.meta.url).href);
 }
 const sharp = (await import('sharp')).default;
-const { createMeasurementArtifactChannel } = await importRenderedControllerDependency("run-classpilot-remote-generator.mjs");
+const { createMeasurementArtifactChannel, measurementOperationRetryable } = await importRenderedControllerDependency("run-classpilot-remote-generator.mjs");
 const { assertExternalPaths, loadExternalConfig, preparePrivateOutputDirectory } = await importRenderedControllerDependency("prepare-classpilot-load-test.mjs");
 const { hasLoadSessionCookie, loadSessionCookieName } = await importRenderedControllerDependency("session-cookie.mjs");
 const { reliabilityProfile, reliabilityScreenshotBindingMatches, RELIABILITY_ENDPOINT_SHA256,
   CapturePulseController, measurementExpected, publicBindingFromDevice, validateRevisionBootstrap,
   observeRenderedStudentState, navigationSnapshot, navigationMessageMatches, navigationGate,
-  validateMeasurementSignal, MEASUREMENT_LIMITS, createBoundedObserverPool } = await importRenderedControllerDependency("classpilot-reliability-profile.mjs");
+  validateMeasurementSignal, validateMeasurementWaiting, validateMeasurementReadySignal,
+  validateMeasurementPendingSignal, MeasurementStartupGate, MEASUREMENT_LIMITS, createBoundedObserverPool } = await importRenderedControllerDependency("classpilot-reliability-profile.mjs");
 const { readReliabilityFrame } = await importRenderedControllerDependency("reliability-rendered-frame.mjs");
 const { validateStagingRunManifest, waitForStagingStart } = await importRenderedControllerDependency("staging-start-barrier.mjs");
 const { RenderedHttpMetrics, attachRenderedHttpMetrics } = await importRenderedControllerDependency("rendered-http-metrics.mjs");
@@ -973,13 +974,37 @@ function assetHashes(directory, relative = '') {
   });
 }
 
+export async function acceptActualRenderedMeasurementReady({channel,waiting,expected,startAt,nowWall=Date.now}) {
+  validateMeasurementWaiting(waiting,expected,{startAt,mode:'workload',now:nowWall()});
+  // Exactly one lookup of the previously accepted producer publication. A
+  // missing/denied object is an invalid preparation, never positive readiness.
+  const value=await channel.read('measurement-ready.json');
+  validateMeasurementReadySignal(value,expected,waiting,nowWall());return value;
+}
+export async function awaitActualRenderedCausalSignal({channel,waiting,expected,name,kind,nonce,deadline,
+  now=()=>performance.now(),nowWall=Date.now,sleep=milliseconds=>delay(milliseconds),stopped=()=>false,onRead=()=>{}}) {
+  assert.ok(['measurement-started.json','measurement-drained.json'].includes(name));
+  while(now()<deadline&&!stopped()) {
+    try{
+      const value=await channel.read(name,{kind,nonce});onRead();
+      if(value?.kind==='classpilot-measurement-pending-v1')validateMeasurementPendingSignal(value,expected,waiting,name==='measurement-started.json'?'started':'drained',nowWall());
+      else{validateMeasurementSignal(value,expected,kind,nonce);const observedAt=now();assert.ok(observedAt<deadline&&!stopped(),'Causal signal arrived after its deadline');return observedAt;}
+    }catch(error){
+      const status=error?.$metadata?.httpStatusCode;
+      if(status===403||status===404||error?.name==='NoSuchKey'||error?.name==='AccessDenied')throw error;
+      if(!measurementOperationRetryable(error))throw error;
+    }
+    await sleep(50);
+  }
+  throw Error('Causal signal deadline exceeded');
+}
 export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) {
   const { values } = parseArgs({ args: arguments_, options: { config: { type: 'string' }, auth: { type: 'string' },
     output: { type: 'string' }, devices: { type: 'string' }, 'frontend-dist': { type: 'string' },
-    'input-manifest': { type: 'string' }, 'device-manifest': { type: 'string' }, 'start-at': { type: 'string' },
+    'input-manifest': { type: 'string' }, 'device-manifest': { type: 'string' }, 'start-at': { type: 'string' },'measurement-waiting':{type:'string'},
     'chrome-path': { type: 'string' }, 'dry-run': { type: 'boolean' }, help: { type: 'boolean' } } });
-  if (values.help) return console.log('Usage: node scripts/load/run-classpilot-rendered-dashboards.mjs --config <external-staging-config> --auth <selected-private-auth> --input-manifest <exact-remote-input-manifest> --output <fresh-private-dir> --devices40|500|800 --frontend-dist <exact-candidate-dist> [--start-at <matching-manifest-UTC>] [--chrome-path <Chrome>] [--dry-run]. Loads real authenticated dashboards before the shared UTC start barrier. No mock API or shortened staging duration.');
-  assert.ok(values.config && values.auth && values.output && values.devices && values['frontend-dist'] && values['input-manifest'] && values['device-manifest']);
+  if (values.help) return console.log('Usage: node scripts/load/run-classpilot-rendered-dashboards.mjs --config <external-staging-config> --auth <selected-private-auth> --input-manifest <exact-remote-input-manifest> --measurement-waiting <exact-protected-startup-body> --output <fresh-private-dir> --devices40|500|800 --frontend-dist <exact-candidate-dist> [--start-at <matching-manifest-UTC>] [--chrome-path <Chrome>] [--dry-run]. Loads real authenticated dashboards before the shared UTC start barrier. No mock API or shortened staging duration.');
+  assert.ok(values.config && values.auth && values.output && values.devices && values['frontend-dist'] && values['input-manifest'] && values['device-manifest']&&values['measurement-waiting']);
   const paths = assertExternalPaths(values.config, values.output);
   const authPath = assertExternalPaths(values.auth, paths.outputPath).configPath;
   const manifestPath = assertExternalPaths(values['input-manifest'], paths.outputPath).configPath;
@@ -1000,6 +1025,9 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
   assert.equal(publicBindings.size, profile.primaryDevices);
   assert.ok(primaryDevices.every(device => device.schoolId === auth.schoolId));
   const measurementContext = measurementExpected(manifest, hash(inputManifestBytes));
+  const waitingPath=assertExternalPaths(values['measurement-waiting'],paths.outputPath).configPath;
+  const waiting=validateMeasurementWaiting(JSON.parse(readFileSync(waitingPath,'utf8')),measurementContext,{startAt:manifest.startAt,mode:'workload'});
+  const startupGate=new MeasurementStartupGate(measurementContext,{startAt:manifest.startAt,mode:'workload'});startupGate.acceptWaiting(waiting);
   const dist = resolve(values['frontend-dist']);
   assert.ok(existsSync(join(dist, 'index.html')));
   const assets = assetHashes(dist).sort((first, second) => first.path.localeCompare(second.path));
@@ -1022,7 +1050,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     finalUnsubscribed: 0, finalNotLive: 0, connectionDenials: 0 };
   const ages = renderedAgeHistogram(), actors = [], loadedAssets = new Set(), knownCaptureBindings = new Set();
   const pulseController = new CapturePulseController(measurementContext, { now: () => performance.now() });
-  const measurementChannel=createMeasurementArtifactChannel({role:'controller',expected:measurementContext,devices:privateDevices});
+  const measurementChannel=createMeasurementArtifactChannel({role:'controller',expected:measurementContext,devices:privateDevices,startAt:manifest.startAt,startup:waiting});
   let controlStopped = false, publicationLoop = null, bootstrapSha = null, drainNonce = null,
     causalStartUpperMs = null, causalStartPassed = false, bootstrapComplete = false;
   const navigationSamples = [], navigationDevices = new Set(), navigationTasks = [], navigationPixels = new Map(), navigationRoundsAttempted = new Set();
@@ -1037,16 +1065,8 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     && ids.every(id => document.querySelector('[data-testid="card-student-' + CSS.escape(id) + '"]')
       && !document.querySelector('[data-testid="tab-favicon-' + CSS.escape(id) + '-0"]')), runtime.actor.studentIds), 2000);
   const syncMeasurementCounters=()=>{const value=measurementChannel.summary();counters.controlPutAttempts=value.publishAttempts;counters.controlGetAttempts=value.readAttempts;counters.controlBytes=value.bytesWritten+value.bytesRead;counters.controlActualNetworkAttempts=value.actualNetworkAttempts;return value;};
-  const putControl=async(name,value)=>{try{return await measurementChannel.publish(name,value);}finally{syncMeasurementCounters();}};
-  const getSignal = async (name, kind, nonce, deadline) => {
-    while (performance.now() < deadline && !interrupted) {
-      try {
-        const value = await measurementChannel.read(name,{kind,nonce});syncMeasurementCounters(); validateMeasurementSignal(value, measurementContext, kind, nonce); return performance.now();
-      } catch (error) { if (!(error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404 || error?.name === 'AbortError' || error?.message?.includes('deadline') || measurementChannel.summary().readInFlight)) throw error; }
-      await delay(50);
-    }
-    throw Error('Causal signal deadline exceeded');
-  };
+  const putControl=async(name,value)=>{try{if(name==='measurement-control.json')assert.ok(startupGate.control(value));return await measurementChannel.publish(name,value);}finally{syncMeasurementCounters();}};
+  const getSignal=(name,kind,nonce,deadline)=>awaitActualRenderedCausalSignal({channel:measurementChannel,waiting,expected:measurementContext,name,kind,nonce,deadline,stopped:()=>interrupted,onRead:syncMeasurementCounters});
   const httpMetrics = new RenderedHttpMetrics({ origin: auth.baseUrl });
   const staticTraffic = { requests: 0, completed: 0, failed: 0, encodedBytes: 0, inFlight: 0 };
 
@@ -1155,6 +1175,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       } finally { png.fill(0); }
     })));
     phase = 'start-barrier';
+    await acceptActualRenderedMeasurementReady({channel:measurementChannel,waiting,expected:measurementContext,startAt:manifest.startAt});syncMeasurementCounters();startupGate.markReady();
     barrier = await waitForStagingStart({ startAt: manifest.startAt, origin: auth.baseUrl,
       inputCreatedAt: manifest.createdAt, signal: barrierAbort.signal,
       onReady: ready => writeFileSync(join(paths.outputPath, 'rendered-ready.json'), JSON.stringify({ schemaVersion: 1,

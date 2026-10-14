@@ -7,7 +7,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { REMOTE_GENERATOR_SCRIPTS, scriptManifest } from './remote-generator-manifest.mjs';
-import { reliabilityProfile, measurementExpected, validateCapturePulse, validateRevisionBootstrap, BoundedControlReader, MEASUREMENT_LIMITS, validateMeasurementSignal, CapturePulseProducer, SerialHeartbeatWriter } from './classpilot-reliability-profile.mjs';
+import { reliabilityProfile, measurementExpected, validateCapturePulse, validateRevisionBootstrap, BoundedControlReader, MEASUREMENT_LIMITS, validateMeasurementSignal, CapturePulseProducer, SerialHeartbeatWriter,
+  MeasurementStartupGate, validateMeasurementWaiting, measurementPendingSignal, validateMeasurementPendingSignal,
+  measurementReadySignal, validateMeasurementReadySignal } from './classpilot-reliability-profile.mjs';
 import { validateStagingStartAt, validateStagingRunManifest } from './staging-start-barrier.mjs';
 
 const ORIGIN = 'https://staging.school-pilot.net';
@@ -20,10 +22,10 @@ const isSha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 
 
 const MEASUREMENT_ROLE_KEYS = Object.freeze({
-  controller: Object.freeze({ read: Object.freeze(['measurement-started.json', 'measurement-drained.json']),
+  controller: Object.freeze({ read: Object.freeze(['measurement-ready.json', 'measurement-started.json', 'measurement-drained.json']),
     publish: Object.freeze(['measurement-control.json', 'measurement-bootstrap.json']) }),
   producer: Object.freeze({ read: Object.freeze(['measurement-control.json', 'measurement-bootstrap.json']),
-    publish: Object.freeze(['measurement-started.json', 'measurement-drained.json']) }),
+    publish: Object.freeze(['measurement-ready.json', 'measurement-started.json', 'measurement-drained.json']) }),
 });
 export function measurementChannelPreflightSignal(expected, kind, nonce) {
   if (!['measurement-channel-started-v1', 'measurement-channel-drained-v1'].includes(kind)
@@ -52,12 +54,16 @@ function measurementChannelContext(value) {
 // native channel-only probe. They never create an application HTTP client.
 // One caller budget spans SDK headers AND body consumption. Abort-insensitive
 // operations retain their guard until real settlement, preventing SDK backlog.
-export function createMeasurementArtifactChannel({ role, expected, devices, mode = 'workload',
+export function createMeasurementArtifactChannel({ role, expected, devices, mode = 'workload', startAt, startup,
   s3 = new S3Client({ region: 'us-east-1', maxAttempts: 1 }) } = {}) {
   if (!Object.hasOwn(MEASUREMENT_ROLE_KEYS, role) || !['workload', 'channel-preflight'].includes(mode)) throw Error('Exact measurement peer role and mode required');
   const context = measurementChannelContext(expected), prefix = 'runs/' + context.campaign + '/' + context.runId;
+  let waiting = startup ? Object.freeze({ ...validateMeasurementWaiting(startup, context, { startAt, mode }) }) : null;
   const counters = { readAttempts: 0, publishAttempts: 0, actualNetworkAttempts: 0, bytesRead: 0, bytesWritten: 0, invalidRequests: 0 };
   let closed = false;
+  const startupPublications = new Set();
+  const acceptedPending = new Set();
+  let startupAccepted = false, startupFailed = false, waitingPublicationAttempted = false;
   const client = s3, keys = MEASUREMENT_ROLE_KEYS[role];
   if (typeof client?.send !== 'function' || typeof client?.destroy !== 'function'
     || typeof client?.middlewareStack?.add !== 'function') throw Error('Prepared single-attempt measurement SDK required');
@@ -82,8 +88,24 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
     ? (name === 'measurement-started.json' ? 'measurement-channel-started-v1' : 'measurement-channel-drained-v1')
     : (name === 'measurement-started.json' ? 'measurement-started-v3' : 'measurement-drained-v3');
   const validate = (name, value, options = {}) => {
-    if (name === 'measurement-control.json') return validateCapturePulse(value, context);
+    if (name === 'measurement-control.json') {
+      if (value?.kind === 'classpilot-measurement-waiting-v1') {
+        validateMeasurementWaiting(value, context, { startAt, mode });
+        if (waiting && JSON.stringify(waiting) !== JSON.stringify(value)) throw Error('Startup waiting replay refused');
+        waiting = waiting || Object.freeze({ ...value });
+        return value;
+      }
+      return validateCapturePulse(value, context);
+    }
     if (name === 'measurement-bootstrap.json') return validateRevisionBootstrap(value, context, devices);
+    if (name === 'measurement-ready.json') {
+      if (!waiting) throw Error('Exact waiting control required before positive readiness');
+      return validateMeasurementReadySignal(value, context, waiting);
+    }
+    if (value?.kind === 'classpilot-measurement-pending-v1') {
+      if (!waiting) throw Error('Exact waiting control required before pending signal');
+      return validateMeasurementPendingSignal(value, context, waiting, name === 'measurement-started.json' ? 'started' : 'drained');
+    }
     const kind = signalKind(name);
     if (options.kind !== undefined && options.kind !== kind) throw Error('Unexpected measurement signal kind');
     if (!/^[a-f0-9]{48}$/.test(options.nonce || '')) throw Error('Expected signal nonce required');
@@ -121,11 +143,12 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
       return Buffer.concat(chunks);
     } finally { signal.removeEventListener('abort', abortBody); }
   }, { timeoutMs: MEASUREMENT_LIMITS.readMs, maximumBytes: MEASUREMENT_LIMITS.bootstrapBytes });
-  const writer = new BoundedControlReader(async ({ name, bytes }, { signal }) => {
+  const writer = new BoundedControlReader(async ({ name, bytes, initial }, { signal }) => {
     counters.publishAttempts += 1;
     const side = role === 'controller' ? 'inputs' : 'results';
     await checkedSend(new PutObjectCommand({ Bucket: context.bucket, ExpectedBucketOwner: context.account,
-      Key: prefix + '/' + side + '/' + name, Body: bytes, ContentType: 'application/json', ServerSideEncryption: 'AES256' }), signal);
+      Key: prefix + '/' + side + '/' + name, Body: bytes, ContentType: 'application/json', ServerSideEncryption: 'AES256',
+      ...(initial ? { IfNoneMatch: '*' } : {}) }), signal);
     if (signal.aborted) throw Error('Measurement publication deadline fenced');
     counters.bytesWritten += bytes.length;
     return Buffer.from('{"accepted":true}');
@@ -146,14 +169,75 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
     async publish(name, value, options) {
       admit('publish', name);
       validate(name, value, options);
+      const initial = ['classpilot-measurement-waiting-v1', 'classpilot-measurement-pending-v1', 'classpilot-measurement-ready-v1'].includes(value?.kind);
+      if (value?.kind === 'classpilot-measurement-waiting-v1') {
+        if (waitingPublicationAttempted) throw Error('Unknown waiting seed is never resent');
+        waitingPublicationAttempted = true;
+      }
+      if (startAt && role === 'producer') {
+        const pending = value?.kind === 'classpilot-measurement-pending-v1';
+        if (startupFailed) throw Error('Unknown or failed startup is permanently fenced');
+        if (pending || name === 'measurement-ready.json') {
+          if (name === 'measurement-ready.json' && acceptedPending.size !== 2) throw Error('Both producer pending outputs must be accepted before Ready');
+          if (startupPublications.has(name) || pending && startupPublications.has('measurement-ready.json')) throw Error('Startup publication replay refused');
+          startupPublications.add(name); // Unknown writes are never resent.
+        } else if (!startupAccepted) throw Error('Startup must be accepted before producer causal publications');
+      }
       const bytes = Buffer.from(JSON.stringify(value));
       if (bytes.length > fileLimit(name)) { counters.invalidRequests += 1; throw Error('Oversized measurement publication'); }
-      return writer.read({ name, bytes });
+      let result;
+      try { result = await writer.read({ name, bytes, initial }); }
+      catch (error) {
+        if (value?.kind === 'classpilot-measurement-pending-v1' || name === 'measurement-ready.json') startupFailed = true;
+        throw error;
+      }
+      if (value?.kind === 'classpilot-measurement-pending-v1') acceptedPending.add(name);
+      if (name === 'measurement-ready.json') startupAccepted = true;
+      return result;
     },
-    summary: () => ({ role, mode, ...counters, reader: { ...reader.counters }, publisher: { ...writer.counters },
+    summary: () => ({ role, mode, ...counters, startupAccepted, startupFailed, acceptedPending: acceptedPending.size,
+      reader: { ...reader.counters }, publisher: { ...writer.counters },
       readInFlight: Boolean(reader.active), publicationInFlight: Boolean(writer.active) }),
     close() { closed = true; client.destroy(); },
   });
+}
+
+const measurementStages = new Set(['configuration', 'metadata', 'waiting-read', 'pending-publish', 'ready-publish',
+  'control-read', 'bootstrap-read', 'start-publish', 'drain-publish', 'cleanup', 'harness', 'unknown']);
+export function measurementOperationRetryable(error) {
+  if ([403, 404].includes(error?.$metadata?.httpStatusCode) || ['NoSuchKey', 'AccessDenied'].includes(error?.name)) return false;
+  return error?.name === 'AbortError' || ['deadline', 'busy'].includes(error?.measurementReadCode);
+}
+export function measurementFailureDiagnostic(error, fallbackStage = 'unknown') {
+  const stage = measurementStages.has(error?.measurementStage) ? error.measurementStage
+    : measurementStages.has(fallbackStage) ? fallbackStage : 'unknown';
+  const status = error?.$metadata?.httpStatusCode;
+  const code = status === 403 ? 'access-denied' : status === 404 ? 'missing-required-object'
+    : status === 429 ? 'rate-limited' : status >= 500 && status <= 599 ? 'storage-unavailable'
+    : error?.name === 'AbortError' || error?.name === 'TimeoutError' || /deadline|settling/.test(error?.message || '')
+      ? 'deadline-or-unsettled' : 'refused';
+  return { schemaVersion: 1, kind: 'measurement-stage-failure-v1', stage, code };
+}
+async function atMeasurementStage(stage, operation) {
+  try { return await operation(); }
+  catch (error) { const wrapped = error instanceof Error ? error : Error('Refused'); wrapped.measurementStage = stage; throw wrapped; }
+}
+
+export async function establishMeasurementStartup({ channel, expected, startAt, mode = 'workload',
+  now = Date.now, notify = () => {} }) {
+  const gate = new MeasurementStartupGate(expected, { startAt, mode, now });
+  const waiting = gate.acceptWaiting(await atMeasurementStage('waiting-read', () => channel.read('measurement-control.json')));
+  for (const name of ['started', 'drained']) {
+    await atMeasurementStage('pending-publish', () => channel.publish('measurement-' + name + '.json',
+      measurementPendingSignal(expected, waiting, name)));
+  }
+  const ready = measurementReadySignal(expected, waiting, new Date(now()).toISOString());
+  await atMeasurementStage('ready-publish', () => channel.publish('measurement-ready.json', ready));
+  gate.markReady();
+  // Only accepted writes of both pending outputs and Ready permit this log.
+  // The launcher observes it before the controller reads any result key.
+  notify(ready);
+  return gate;
 }
 
 
@@ -386,7 +470,7 @@ export async function runMeasurementChannelPreflight({ env = process.env,
   // This branch executes before any input download, application client or
   // harness spawn. The CLI supplies no alternate oracle/injected callbacks.
   if (process.platform !== 'linux' || process.getuid?.() !== 1000 || tmpdir() !== '/tmp') throw Error('Native Linux UID1000 scratch required');
-  const meta = await preflightGeneratorMetadata({ env, manifestPath, metadata });
+  const meta = await atMeasurementStage('metadata', () => preflightGeneratorMetadata({ env, manifestPath, metadata }));
   const raw = env.CLP_MEASUREMENT_CHANNEL_CONTEXT || '';
   if (!raw || Buffer.byteLength(raw) > 4096 || sha256(Buffer.from(raw)) !== env.CLP_GENERATOR_INPUT_SHA256) throw Error('Exact bounded channel-only context required');
   const expected = measurementChannelContext(JSON.parse(raw));
@@ -395,7 +479,7 @@ export async function runMeasurementChannelPreflight({ env = process.env,
   const expiresAt = env.CLP_MEASUREMENT_CHANNEL_EXPIRES_AT || '', expiry = Date.parse(expiresAt);
   const now = Date.now();
   if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== expiresAt || expiry <= now
-    || expiry - now > 300000 || expiry <= Date.parse(env.CLP_GENERATOR_START_AT) + 10000) throw Error('Finite native channel expiry required');
+    || expiry - now > 300000 || expiry !== Date.parse(env.CLP_GENERATOR_START_AT) + 60000) throw Error('Finite native channel expiry required');
   process.umask(0o077);
   const directory = mkdtempSync(join(tmpdir(), 'classpilot-channel-'));
   if (dirname(directory) !== '/tmp' || !/^classpilot-channel-[A-Za-z0-9]+$/.test(directory.slice('/tmp/'.length))) throw Error('Owned native scratch path required');
@@ -405,7 +489,8 @@ export async function runMeasurementChannelPreflight({ env = process.env,
   writeFileSync(probe, 'classpilot-native-channel', { mode: 0o600, flag: 'wx' });
   if (readFileSync(probe, 'utf8') !== 'classpilot-native-channel' || statSync(probe).uid !== 1000) throw Error('Native scratch write/read failed');
   rmSync(probe);
-  const channel = createMeasurementArtifactChannel({ role: 'producer', expected, mode: 'channel-preflight', s3: measurementS3 });
+  const channel = createMeasurementArtifactChannel({ role: 'producer', expected, mode: 'channel-preflight',
+    startAt: env.CLP_GENERATOR_START_AT, s3: measurementS3 });
   const producer = new CapturePulseProducer(expected, () => performance.now());
   const localWriter = new SerialHeartbeatWriter({ now: () => performance.now(),
     schedule: (callback, ms) => setTimeout(callback, ms), clear: clearTimeout,
@@ -422,15 +507,18 @@ export async function runMeasurementChannelPreflight({ env = process.env,
     applicationRequests: 0, inputsDownloaded: false, trafficStarted: false, channelStarted: false,
     simulatedLocalWriterOnly: true, capacityAcceptance: false, productionAccepted: false };
   try {
+    const startupGate = await establishMeasurementStartup({ channel, expected, startAt: env.CLP_GENERATOR_START_AT,
+      mode: 'channel-preflight', notify: startupReady => notify({ ...receipt, phase: 'channel-ready',
+        startupReady, adapter: channel.summary() }) });
+    ready = true;
     while (performance.now() < stopAt && Date.now() < expiry) {
       let pulse;
-      try { pulse = await channel.read('measurement-control.json'); }
+      try {
+        pulse = startupGate.control(await atMeasurementStage('control-read', () => channel.read('measurement-control.json')));
+        if (!pulse) { await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs)); continue; }
+      }
       catch (error) {
-        if (!(error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404
-          || error?.name === 'AbortError' || error?.message?.includes('deadline') || channel.summary().readInFlight)) throw error;
-        if (!ready && (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404)) {
-          notify({ ...receipt, phase: 'channel-ready', adapter: channel.summary() }); ready = true;
-        }
+        if (!measurementOperationRetryable(error)) throw error;
         await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs)); continue;
       }
       if (Date.now() >= expiry || performance.now() >= stopAt) throw Error('Channel challenge expired');
@@ -439,8 +527,8 @@ export async function runMeasurementChannelPreflight({ env = process.env,
       if (!firstNonce) {
         if (pulse.pulseSequence !== 1) throw Error('Native channel must start from the first unpredictable challenge');
         firstNonce = pulse.nonce;
-        await channel.publish('measurement-started.json',
-          measurementChannelPreflightSignal(expected, 'measurement-channel-started-v1', firstNonce), { nonce: firstNonce });
+        await atMeasurementStage('start-publish', () => channel.publish('measurement-started.json',
+          measurementChannelPreflightSignal(expected, 'measurement-channel-started-v1', firstNonce), { nonce: firstNonce }));
         channelStarted = true;
       }
       if (pulse.revisionDrainNonce) {
@@ -448,8 +536,8 @@ export async function runMeasurementChannelPreflight({ env = process.env,
         const drainDeadline = Math.min(stopAt, performance.now() + 500);
         while (localWriter.active && performance.now() < drainDeadline) await new Promise(resolve_ => setTimeout(resolve_, 5));
         if (localWriter.active) throw Error('Synthetic writer failed to drain');
-        await channel.publish('measurement-drained.json',
-          measurementChannelPreflightSignal(expected, 'measurement-channel-drained-v1', pulse.revisionDrainNonce), { nonce: pulse.revisionDrainNonce });
+        await atMeasurementStage('drain-publish', () => channel.publish('measurement-drained.json',
+          measurementChannelPreflightSignal(expected, 'measurement-channel-drained-v1', pulse.revisionDrainNonce), { nonce: pulse.revisionDrainNonce }));
         drained = true; break;
       }
       await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs));
@@ -486,7 +574,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     task,
     productionAccepted: false, browserPaintValidated: false, managedDevicesValidated: false };
   let uploadFailure = false; let syncing = false; let interval; let finished = false; let previousStats;
-  let controlLoop = null, controlStopped = false;
+  let controlLoop = null, controlStopped = false, ownedMeasurementChannel = null;
   const controlCounters = { networkAttempts: 0, absent: 0, accepted: 0, invalid: 0, bootstrapReads: 0, bytes: 0 };
   receipt.measurementControl = controlCounters;
   const controller = new AbortController();
@@ -547,8 +635,12 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     // The same role-scoped adapters serve the native channel proof and the
     // actual producer. No alternate S3 transport oracle is used.
     const expected = measurementExpected(inputManifest, config.inputSha256);
-    const measurementChannel = createMeasurementArtifactChannel({ role: 'producer', expected, s3: measurementS3,
+    const measurementChannel = createMeasurementArtifactChannel({ role: 'producer', expected, startAt: config.startAt, s3: measurementS3,
       devices: JSON.parse(readFileSync(join(artifactRoot, INPUTS.devices))) });
+    ownedMeasurementChannel = measurementChannel;
+    const startupGate = await establishMeasurementStartup({ channel: measurementChannel, expected, startAt: config.startAt,
+      notify: startupReady => console.log(JSON.stringify({ schemaVersion: 1, kind: 'measurement-producer-ready-v1',
+        phase: 'measurement-ready', task, startupReady, applicationRequests: 0, trafficStarted: false })) });
     let latestSequence = 0, bootstrapSha = null, firstNonce = null, drainNonce = null, startUploaded = false, drainUploaded = false;
     const atomic = (filename, bytes) => { const temporary = filename + '.next'; writeFileSync(temporary, bytes, { mode: 0o600 }); renameSync(temporary, filename); };
     const syncChannelCounters = () => {
@@ -563,8 +655,9 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     controlLoop = (async () => {
       while (!controlStopped && !controller.signal.aborted) {
         try {
-          const value = await measurementChannel.read('measurement-control.json');
-          const pulse = validateCapturePulse(value, expected);
+          const value = await atMeasurementStage('control-read', () => measurementChannel.read('measurement-control.json'));
+          const pulse = startupGate.control(value);
+          if (!pulse) { syncChannelCounters(); await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs)); continue; }
           if (pulse.pulseSequence === 1) firstNonce = pulse.nonce;
           if (pulse.revisionDrainNonce) drainNonce = pulse.revisionDrainNonce;
           if (pulse.pulseSequence > latestSequence) {
@@ -581,9 +674,8 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
             latestSequence = pulse.pulseSequence; controlCounters.accepted += 1;
           }
         } catch (error) {
-          if (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404) controlCounters.absent += 1;
-          else if (error?.name === 'AbortError' || error?.message?.includes('deadline') || measurementChannel.summary().readInFlight) { /* Honest bounded misses remain counted by the reader. */ }
-          else { controlCounters.invalid += 1; controller.abort(); }
+          if (measurementOperationRetryable(error)) { /* Honest bounded misses remain counted by the reader. */ }
+          else { controlCounters.invalid += 1; console.error(JSON.stringify(measurementFailureDiagnostic(error))); controller.abort(); }
         }
         for (const [kind, filename, nonce, uploaded] of [
           ['measurement-started-v3', childEnv.LOAD_MEASUREMENT_STARTED, firstNonce, startUploaded],
@@ -615,6 +707,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     return code;
   } finally {
     controlStopped = true; if (controlLoop) await controlLoop;
+    ownedMeasurementChannel?.close();
     clearInterval(interval);
     if (!finished) { receipt.phase = 'failed'; receipt.endedAt = new Date().toISOString(); await sync(); }
     rmSync(directory, { recursive: true, force: true });
@@ -624,7 +717,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (process.argv.length === 3 && process.argv[2] === '--help') console.log('Remote isolated staging reliability generator. Task-role S3 inputs/results only. Requires CLP_GENERATOR_ACCOUNT_ID, BUCKET, CAMPAIGN, RUN_ID, DEVICES, ORIGIN, INPUT_SHA256, SCRIPT_SHA256, IMAGE_DIGEST, CANDIDATE_IMAGE and START_AT; AWS_REGION=us-east-1. START_AT is canonical UTC within five minutes and must match the input manifest. --preflight-metadata validates image/task/resource identity without S3 or application traffic. No fixture credentials in image, arguments or logs.');
   else if (process.argv.length === 3 && process.argv[2] === '--preflight-metadata') preflightGeneratorMetadata().then(value => console.log(JSON.stringify(value)), () => { console.error('[remote-generator] Metadata preflight refused'); process.exitCode = 1; });
-  else if (process.argv.length === 3 && process.argv[2] === '--preflight-measurement-channel') runMeasurementChannelPreflight().catch(() => { console.error('[remote-generator] Native measurement channel preflight refused'); process.exitCode = 1; });
+  else if (process.argv.length === 3 && process.argv[2] === '--preflight-measurement-channel') runMeasurementChannelPreflight().catch(error => { console.error(JSON.stringify(measurementFailureDiagnostic(error))); process.exitCode = 1; });
   else if (process.argv.length !== 2) { console.error('[remote-generator] Unexpected arguments'); process.exitCode = 1; }
-  else runRemoteGenerator().then(code => { process.exitCode = code; }, () => { console.error('[remote-generator] Failed closed; inspect aggregate generator evidence'); process.exitCode = 1; });
+  else runRemoteGenerator().then(code => { process.exitCode = code; }, error => { console.error(JSON.stringify(measurementFailureDiagnostic(error))); process.exitCode = 1; });
 }

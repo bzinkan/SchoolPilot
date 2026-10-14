@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { FILES, assertExternalPaths, preparePrivateOutputDirectory, writePrivateJson } from './prepare-classpilot-load-test.mjs';
-import { measurementPlan, measurementPlanDigest } from './classpilot-reliability-profile.mjs';
+import { measurementPlan, measurementPlanDigest, measurementExpected, measurementWaiting } from './classpilot-reliability-profile.mjs';
 import { remoteGeneratorConfig, validateInputManifest } from './run-classpilot-remote-generator.mjs';
 
 export function prepareRemoteInputs(options, env = process.env) {
@@ -42,8 +42,12 @@ export function prepareRemoteInputs(options, env = process.env) {
   preparePrivateOutputDirectory(external.outputPath, external.loadGatesRoot);
   for (const [key, file] of Object.entries(prepared)) writePrivateJson(external.outputPath, `${key}.json`, file.value);
   writePrivateJson(external.outputPath, 'manifest.json', manifest);
+  const inputManifestSha256 = createHash('sha256').update(readFileSync(join(external.outputPath, 'manifest.json'))).digest('hex');
+  const waiting = measurementWaiting(measurementExpected(manifest, inputManifestSha256), { startAt: config.startAt });
+  writePrivateJson(external.outputPath, 'measurement-waiting.json', waiting);
   return { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: config.profile.primaryDevices,
-    inputManifestSha256: createHash('sha256').update(readFileSync(join(external.outputPath, 'manifest.json'))).digest('hex'),
+    inputManifestSha256,
+    measurementWaitingSha256: createHash('sha256').update(readFileSync(join(external.outputPath, 'measurement-waiting.json'))).digest('hex'),
     startAt: config.startAt,
     inputPrefix: `${config.prefix}/inputs/`, outputPrefix: `${config.prefix}/results/`,
     scriptBundleSha256: config.scriptBundleSha256, candidateApiImage: config.candidateApiImage,

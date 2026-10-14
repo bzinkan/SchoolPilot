@@ -14,7 +14,7 @@ import { prepareRemoteInputs } from '../scripts/load/prepare-classpilot-remote-i
 import { FILES } from '../scripts/load/prepare-classpilot-load-test.mjs';
 import { observeStaging, stagingMetricQueries, stagingObservationConfig, summarizeMetric } from '../scripts/load/observe-classpilot-staging.mjs';
 
-import {measurementPlan,measurementPlanDigest} from '../scripts/load/classpilot-reliability-profile.mjs';
+import {measurementPlan,measurementPlanDigest,measurementExpected,measurementWaiting} from '../scripts/load/classpilot-reliability-profile.mjs';
 const account = '135775632425';
 const digest = `sha256:${'a'.repeat(64)}`;
 const apiImage = `${account}.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-staging-api@${digest}`;
@@ -171,6 +171,7 @@ for (const defect of ['none', 'input-bytes', 'preflight', 'evidence-sink', 'miss
       scriptBundleSha256: manifest.scriptBundleSha256, createdAt: new Date().toISOString(),
       files: Object.fromEntries(Object.entries(files).map(([key, bytes]) => [key, { bytes: bytes.length, sha256: sha256(bytes) }])) };
     const inputBytes = Buffer.from(JSON.stringify(input));
+    const startup = measurementWaiting(measurementExpected(input, sha256(inputBytes)), { startAt: config.startAt });
     const objects = new Map([['manifest.json', inputBytes], ...Object.entries(files).map(([key, bytes]) => [`${key}.json`, bytes])]);
     const reads = [], puts = [], executions = [];
     writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest));
@@ -200,7 +201,15 @@ for (const defect of ['none', 'input-bytes', 'preflight', 'evidence-sink', 'miss
     try {
       const operation = runRemoteGenerator({ env: { ...baseEnv, CLP_GENERATOR_INPUT_SHA256: sha256(inputBytes) },
         manifestPath: join(root, 'manifest.json'), s3, execute,
-        measurementS3:{config:{maxAttempts:1,region:'us-east-1'},middlewareStack:{add(){}},destroy(){},async send(){const error=new Error('Not published');error.name='NoSuchKey';throw error;}},
+        measurementS3:{config:{maxAttempts:1,region:'us-east-1'},middlewareStack:{add(){}},destroy(){},async send(command){
+          assert.ok(command.input.Key.startsWith(config.prefix+'/'));
+          if(command.constructor.name==='GetObjectCommand') {
+            assert.equal(command.input.Key,config.prefix+'/inputs/measurement-control.json');
+            return {Body:Readable.from([Buffer.from(JSON.stringify(startup))])};
+          }
+          assert.ok(command.input.Key.includes('/results/')); assert.equal(command.input.IfNoneMatch,'*');
+          return {};
+        }},
         metadata: async (_env, suffix) => suffix ? statistics : task });
       if (defect === 'none') {
         assert.equal(await operation, 0); assert.deepEqual(executions, [true, false]);

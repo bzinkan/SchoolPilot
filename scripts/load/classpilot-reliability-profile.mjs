@@ -173,7 +173,8 @@ export class BoundedControlReader {
     this.counters = { attempts: 0, timeouts: 0, busy: 0, lateSettlements: 0 };
   }
   async read(key) {
-    if (this.active) { this.counters.busy += 1; throw Error('Navigation control read still settling'); }
+    if (this.active) { this.counters.busy += 1;
+      throw Object.assign(Error('Navigation control read still settling'), { measurementReadCode: 'busy' }); }
     const controller = new AbortController(); let timer, fenced = false;
     this.counters.attempts += 1;
     const underlying = Promise.resolve().then(() => this.readComplete(key, { signal: controller.signal }));
@@ -184,7 +185,7 @@ export class BoundedControlReader {
     try {
       const bytes = await Promise.race([underlying, new Promise((_, reject) => {
         timer = setTimeout(() => { fenced = true; this.counters.timeouts += 1; controller.abort();
-          reject(Error('Navigation control full-body deadline')); }, this.timeoutMs);
+          reject(Object.assign(Error('Navigation control full-body deadline'), { measurementReadCode: 'deadline' })); }, this.timeoutMs);
       })]);
       requireCondition(!fenced && Buffer.isBuffer(bytes) && bytes.length <= this.maximumBytes,
         'Exact bounded control bytes required');
@@ -407,6 +408,106 @@ export function measurementExpected(manifest, sourceArtifactSha256) {
     candidateApiImage: manifest.candidateApiImage, scriptBundleSha256: manifest.scriptBundleSha256,
     sourceArtifactSha256, cohortSha256: manifest.files.devices.sha256, planSha256: manifest.measurementPlanSha256,
     maximumPulses: manifest.measurementPlan.maximumPulses, maximumNavigationRounds: manifest.measurementPlan.navigationRounds };
+}
+
+const startupUtc = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)
+  && Number.isFinite(Date.parse(value)) && new Date(Date.parse(value)).toISOString() === value;
+const startupIdentityKeys = ['campaign', 'runId', 'primaryDevices', 'candidateApiImage', 'scriptBundleSha256',
+  'sourceArtifactSha256', 'cohortSha256', 'planSha256'];
+const startupIdentity = expected => Object.fromEntries(startupIdentityKeys.map(key => [key, expected[key]]));
+const startupExpires = (expected, startAt, mode) => new Date(Date.parse(startAt)
+  + (mode === 'channel-preflight' ? 60 : reliabilityProfile(expected.primaryDevices).durationSeconds + 60) * 1000).toISOString();
+
+export function measurementWaiting(expected, { startAt, mode = 'workload', nonce = randomBytes(24).toString('hex'),
+  createdAt = new Date().toISOString() } = {}) {
+  return validateMeasurementWaiting({ schemaVersion: 1, kind: 'classpilot-measurement-waiting-v1',
+    ...startupIdentity(expected), startAt, expiresAt: startupExpires(expected, startAt, mode), createdAt, mode, nonce,
+    startupOnly: true, trafficStarted: false, capacityAcceptance: false }, expected, { startAt, mode });
+}
+
+export function validateMeasurementWaiting(value, expected, { startAt, mode = 'workload', now = Date.now() } = {}) {
+  const keys = ['schemaVersion', 'kind', ...startupIdentityKeys, 'startAt', 'expiresAt', 'createdAt', 'mode', 'nonce',
+    'startupOnly', 'trafficStarted', 'capacityAcceptance'].sort().join(',');
+  requireCondition(Object.keys(value ?? {}).sort().join(',') === keys && value.schemaVersion === 1
+    && value.kind === 'classpilot-measurement-waiting-v1' && ['workload', 'channel-preflight'].includes(mode)
+    && value.mode === mode && startupUtc(startAt) && value.startAt === startAt && startupUtc(value.createdAt)
+    && value.expiresAt === startupExpires(expected, startAt, mode) && typeof value.nonce === 'string'
+    && /^[a-f0-9]{48}$/.test(value.nonce) && value.startupOnly === true && value.trafficStarted === false
+    && value.capacityAcceptance === false && Number.isFinite(now) && Date.parse(value.createdAt) <= now + 1000
+    && Date.parse(value.createdAt) < Date.parse(startAt) && Date.parse(startAt) - Date.parse(value.createdAt) <= 300_000
+    && now < Date.parse(value.expiresAt), 'Exact finite waiting control required');
+  for (const key of startupIdentityKeys) requireCondition(value[key] === expected[key], 'Waiting control artifact identity changed');
+  return value;
+}
+
+export function measurementPendingSignal(expected, waiting, name) {
+  requireCondition(['started', 'drained'].includes(name), 'Fixed pending signal required');
+  return { schemaVersion: 1, kind: 'classpilot-measurement-pending-v1', ...startupIdentity(expected),
+    signal: name, pending: true, waitingSha256: createHash('sha256').update(JSON.stringify(waiting)).digest('hex'),
+    waitingNonceSha256: measurementNonceDigest(waiting.nonce), startAt: waiting.startAt,
+    expiresAt: waiting.expiresAt, mode: waiting.mode, startupOnly: true, trafficStarted: false, capacityAcceptance: false };
+}
+
+export function validateMeasurementPendingSignal(value, expected, waiting, name, now = Date.now()) {
+  validateMeasurementWaiting(waiting, expected, { startAt: waiting.startAt, mode: waiting.mode, now });
+  requireCondition(JSON.stringify(value) === JSON.stringify(measurementPendingSignal(expected, waiting, name)),
+    'Exact pending signal required; pending is not completion');
+  return value;
+}
+
+export function measurementReadySignal(expected, waiting, publishedAt = new Date().toISOString()) {
+  return { schemaVersion: 1, kind: 'classpilot-measurement-ready-v1', ...startupIdentity(expected),
+    waitingSha256: createHash('sha256').update(JSON.stringify(waiting)).digest('hex'),
+    waitingNonceSha256: measurementNonceDigest(waiting.nonce), startAt: waiting.startAt, expiresAt: waiting.expiresAt,
+    mode: waiting.mode, publishedAt, startupOnly: true, trafficStarted: false, applicationRequests: 0, capacityAcceptance: false };
+}
+
+export function validateMeasurementReadySignal(value, expected, waiting, now = Date.now()) {
+  validateMeasurementWaiting(waiting, expected, { startAt: waiting.startAt, mode: waiting.mode, now });
+  requireCondition(startupUtc(value?.publishedAt) && Date.parse(value.publishedAt) <= now + 1000
+    && Date.parse(value.publishedAt) >= Date.parse(waiting.createdAt) && Date.parse(value.publishedAt) < Date.parse(waiting.startAt)
+    && JSON.stringify(value) === JSON.stringify(measurementReadySignal(expected, waiting, value.publishedAt)),
+    'Exact positive startup receipt required; ready is not traffic or authority');
+  return value;
+}
+
+// Both native and workload producers use this gate. A waiting value may never
+// become a device control, a pulse nonce or a successful causal receipt.
+export class MeasurementStartupGate {
+  constructor(expected, { startAt, mode = 'workload', now = Date.now } = {}) {
+    this.expected = Object.freeze({ ...expected }); this.startAt = startAt; this.mode = mode; this.now = now;
+    this.waiting = null; this.ready = false; this.firstPulse = false; this.latest = null;
+  }
+  acceptWaiting(value) {
+    validateMeasurementWaiting(value, this.expected, { startAt: this.startAt, mode: this.mode, now: this.now() });
+    if (this.waiting) requireCondition(JSON.stringify(value) === JSON.stringify(this.waiting), 'Startup nonce or waiting control replayed');
+    else this.waiting = Object.freeze({ ...value });
+    return this.waiting;
+  }
+  markReady() {
+    requireCondition(this.waiting && this.now() < Date.parse(this.startAt) - 1000, 'Startup must finish before the shared start');
+    this.ready = true;
+  }
+  control(value) {
+    if (value?.kind === 'classpilot-measurement-waiting-v1') {
+      requireCondition(!this.firstPulse, 'Waiting cannot overwrite a timed control');
+      this.acceptWaiting(value); return null;
+    }
+    requireCondition(this.ready && this.now() >= Date.parse(this.startAt), 'Timed pulse requires ready and actual start');
+    validateMeasurementWaiting(this.waiting, this.expected, { startAt: this.startAt, mode: this.mode, now: this.now() });
+    const pulse = validateCapturePulse(value, this.expected);
+    requireCondition([pulse.nonce, pulse.navigationNonce, pulse.revisionDrainNonce].every(nonce => nonce !== this.waiting.nonce),
+      'Startup nonce cannot establish timed capture, navigation or drain');
+    if (!this.firstPulse) requireCondition(pulse.pulseSequence === 1, 'First timed pulse must be the actual first challenge');
+    if (this.latest) {
+      requireCondition(pulse.pulseSequence >= this.latest.pulseSequence, 'Timed control cannot regress');
+      if (pulse.pulseSequence === this.latest.pulseSequence) requireCondition(JSON.stringify(pulse) === JSON.stringify(this.latest),
+        'An accepted sequence cannot change its challenge or payload');
+    }
+    this.latest = pulse;
+    this.firstPulse = true;
+    return pulse;
+  }
 }
 export function publicBindingFromDevice(device) {
   let claims; try { claims = JSON.parse(Buffer.from(device.studentToken.split('.')[1], 'base64url')); } catch { throw Error('Malformed private device binding'); }
