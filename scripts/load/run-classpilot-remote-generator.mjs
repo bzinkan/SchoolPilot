@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { REMOTE_GENERATOR_SCRIPTS, scriptManifest } from './remote-generator-manifest.mjs';
 import { reliabilityProfile } from './classpilot-reliability-profile.mjs';
+import { validateStagingStartAt, validateStagingRunManifest } from './staging-start-barrier.mjs';
 
 const ORIGIN = 'https://staging.school-pilot.net';
 const INPUTS = Object.freeze({ devices: 'devices.json', auth: 'auth.json', commands: 'commands.json' });
@@ -20,6 +21,7 @@ export function remoteGeneratorConfig(env, manifest) {
   const campaign = env.CLP_GENERATOR_CAMPAIGN || '';
   const runId = env.CLP_GENERATOR_RUN_ID || '';
   const profile = reliabilityProfile(Number(env.CLP_GENERATOR_DEVICES));
+  validateStagingStartAt(env.CLP_GENERATOR_START_AT, ORIGIN);
   if (!/^\d{12}$/.test(account) || env.CLP_GENERATOR_BUCKET !== `schoolpilot-staging-load-${account}`
       || !/^classpilot-staging-\d{8}-[a-f0-9]{12}$/.test(campaign)
       || !new RegExp(`^${profile.primaryDevices}-[a-f0-9]{12,32}$`).test(runId)
@@ -39,7 +41,7 @@ export function remoteGeneratorConfig(env, manifest) {
   return { account, campaign, runId, profile, bucket: env.CLP_GENERATOR_BUCKET,
     prefix: `runs/${campaign}/${runId}`, inputSha256: env.CLP_GENERATOR_INPUT_SHA256,
     scriptBundleSha256: manifest.scriptBundleSha256, candidateApiImage: manifest.candidateApiImage,
-    generatorImageDigest: env.CLP_GENERATOR_IMAGE_DIGEST };
+    generatorImageDigest: env.CLP_GENERATOR_IMAGE_DIGEST, startAt: env.CLP_GENERATOR_START_AT };
 }
 
 export function validateGeneratorTask(value, config) {
@@ -87,8 +89,11 @@ export function generatorStats(value) {
 }
 
 export function validateInputManifest(value, config, now = Date.now()) {
+  validateStagingRunManifest(value, { startAt: config.startAt, primaryDevices: config.profile.primaryDevices,
+    authSha256: value.files?.auth?.sha256 }, now);
   const created = Date.parse(value.createdAt);
   if (value.version !== 1 || value.campaign !== config.campaign || value.runId !== config.runId
+      || value.startAt !== config.startAt
       || value.primaryDevices !== config.profile.primaryDevices || value.candidateApiImage !== config.candidateApiImage
       || value.scriptBundleSha256 !== config.scriptBundleSha256 || !Number.isFinite(created)
       || now - created < 0 || now - created > 15 * 60_000
@@ -113,6 +118,7 @@ export function generatorChildEnvironment(parent, config, directory) {
   return { ...env, NODE_ENV: 'production', APP_ENV: 'staging', LOCALAPPDATA: directory,
     LOAD_BASE_URL: ORIGIN, LOAD_RELIABILITY_STAGING_ORIGIN: ORIGIN,
     LOAD_SESSION_COOKIE_NAME: 'schoolpilot.staging.sid', LOAD_RUN_ID: config.runId,
+    LOAD_TRAFFIC_START_AT: config.startAt, LOAD_TRAFFIC_READY_PATH: join(directory, 'ready.json'),
     LOAD_STAGE: `isolated-staging-${config.profile.primaryDevices}`, LOAD_SHARED_IP_LABEL: 'one-fargate-task-egress',
     LOAD_DEVICE_MANIFEST: join(directory, 'SchoolPilot', 'load-gates', INPUTS.devices),
     LOAD_TEACHER_AUTH_FILE: join(directory, 'SchoolPilot', 'load-gates', INPUTS.auth),
@@ -169,6 +175,7 @@ export async function boundedArtifactBody(body, limit, timeoutMs = 30_000) {
 }
 
 async function executeHarness(env, devices, dryRun = false, signal) {
+  const boundedStartWaitMs = Math.max(0, validateStagingStartAt(env.LOAD_TRAFFIC_START_AT, ORIGIN) - Date.now());
   const grouped = process.platform !== 'win32';
   const child = spawn(process.execPath, [fileURLToPath(new URL('./run-classpilot-reliability.mjs', import.meta.url)),
     '--devices', String(devices), ...(dryRun ? ['--dry-run'] : [])], { env, detached: grouped, stdio: ['ignore', 'ignore', 'ignore'] });
@@ -180,8 +187,8 @@ async function executeHarness(env, devices, dryRun = false, signal) {
   signal?.addEventListener('abort', term, { once: true });
   if (signal?.aborted) term();
   process.on('SIGTERM', term); process.on('SIGINT', interrupt);
-  const deadline = setTimeout(() => forward('SIGTERM'), (reliabilityProfile(devices).durationSeconds + 180) * 1_000);
-  const hardDeadline = setTimeout(() => forward('SIGKILL'), (reliabilityProfile(devices).durationSeconds + 210) * 1_000);
+  const deadline = setTimeout(() => forward('SIGTERM'), boundedStartWaitMs + (reliabilityProfile(devices).durationSeconds + 180) * 1_000);
+  const hardDeadline = setTimeout(() => forward('SIGKILL'), boundedStartWaitMs + (reliabilityProfile(devices).durationSeconds + 210) * 1_000);
   deadline.unref();
   hardDeadline.unref();
   try {
@@ -195,6 +202,10 @@ async function executeHarness(env, devices, dryRun = false, signal) {
 export function validateSuccessfulFleetSummary(value, config) {
   const profile = config.profile;
   if (value.runId !== config.runId || value.targetOrigin !== ORIGIN || value.devices !== profile.primaryDevices + 10
+      || value.stagingStart?.plannedStartAt !== config.startAt || !Number.isFinite(value.stagingStart?.startSkewMs)
+      || Math.abs(value.stagingStart.startSkewMs) > 1000
+      || Date.parse(value.stagingStart.actualStartedAt) - Date.parse(config.startAt) !== value.stagingStart.startSkewMs
+      || !Number.isFinite(Date.parse(value.stagingStart.readyAt)) || Date.parse(value.stagingStart.readyAt) >= Date.parse(config.startAt)
       || value.workloadSchemaVersion !== profile.version || value.reliabilityWorkload?.primaryDevices !== profile.primaryDevices
       || value.reliabilityWorkload?.durationSeconds !== profile.durationSeconds
       || value.reliabilityWorkload?.productionAccepted !== false || value.reliabilityWorkload?.managedDevicesValidated !== false
@@ -241,6 +252,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
   const receipt = { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: config.profile.primaryDevices,
     candidateApiImage: config.candidateApiImage, scriptBundleSha256: config.scriptBundleSha256,
     inputManifestSha256: config.inputSha256, startedAt, limits: systemLimits(), phase: 'fetching', samples: [],
+    plannedTrafficStartAt: config.startAt,
     task,
     productionAccepted: false, browserPaintValidated: false, managedDevicesValidated: false };
   let uploadFailure = false; let syncing = false; let interval; let finished = false; let previousStats;
@@ -266,13 +278,15 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
       receipt.samples.push({ timestamp: new Date().toISOString(), ...stats,
         cpuPercentOfTaskAllocation: cpuPercent, memoryPercentOfTaskAllocation: stats.memoryUsageBytes / (task.taskMemoryMiB * 1024 * 1024) * 100,
         supervisorRssBytes: process.memoryUsage().rss, supervisorCpuUsage: process.cpuUsage() });
-      for (const name of ['progress.jsonl', 'summary.json']) {
+      for (const name of ['ready.json', 'progress.jsonl', 'summary.json']) {
         const path = join(directory, name);
         if (!existsSync(path)) continue;
         const text = readFileSync(path, 'utf8');
         const values = name.endsWith('.jsonl') ? text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [JSON.parse(text)];
         if (values.some(value => value.runId !== config.runId)) throw new Error('Evidence belongs to another run');
         if (name === 'summary.json' && values[0].targetOrigin !== ORIGIN) throw new Error('Summary origin must be isolated staging');
+        if (name === 'ready.json' && (values[0].plannedStartAt !== config.startAt || values[0].trafficStarted !== false)) throw new Error('Ready receipt does not match shared staging start');
+        if (name === 'progress.jsonl' && receipt.phase === 'waiting-for-start' && values.some(value => value.event === 'start')) receipt.phase = 'running';
         await put(name, text);
       }
       await put('generator.json', JSON.stringify(receipt));
@@ -282,6 +296,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     const rawManifest = await get('manifest.json');
     if (sha256(rawManifest) !== config.inputSha256) throw new Error('Input manifest checksum does not match');
     const inputManifest = validateInputManifest(JSON.parse(rawManifest), config);
+    childEnv.LOAD_INPUT_MANIFEST_CREATED_AT = inputManifest.createdAt;
     for (const [key, name] of Object.entries(INPUTS)) {
       const bytes = await get(name);
       if (bytes.length !== inputManifest.files[key].bytes || sha256(bytes) !== inputManifest.files[key].sha256) throw new Error('Private input checksum does not match');
@@ -290,7 +305,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     }
     receipt.phase = 'preflight'; await sync();
     if (uploadFailure || await execute(childEnv, config.profile.primaryDevices, true, controller.signal) !== 0) throw new Error('Remote harness preflight refused');
-    receipt.phase = 'running'; await sync();
+    receipt.phase = 'waiting-for-start'; await sync();
     if (uploadFailure) throw new Error('Remote evidence sink is unavailable');
     interval = setInterval(() => void sync(), 30_000);
     const code = await execute(childEnv, config.profile.primaryDevices, false, controller.signal);
@@ -309,7 +324,7 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  if (process.argv.length === 3 && process.argv[2] === '--help') console.log('Remote isolated staging reliability generator. Task-role S3 inputs/results only. Requires CLP_GENERATOR_ACCOUNT_ID, BUCKET, CAMPAIGN, RUN_ID, DEVICES, ORIGIN, INPUT_SHA256, SCRIPT_SHA256, IMAGE_DIGEST and CANDIDATE_IMAGE; AWS_REGION=us-east-1. --preflight-metadata validates image/task/resource identity without S3 or application traffic. No fixture credentials in image, arguments or logs.');
+  if (process.argv.length === 3 && process.argv[2] === '--help') console.log('Remote isolated staging reliability generator. Task-role S3 inputs/results only. Requires CLP_GENERATOR_ACCOUNT_ID, BUCKET, CAMPAIGN, RUN_ID, DEVICES, ORIGIN, INPUT_SHA256, SCRIPT_SHA256, IMAGE_DIGEST, CANDIDATE_IMAGE and START_AT; AWS_REGION=us-east-1. START_AT is canonical UTC within five minutes and must match the input manifest. --preflight-metadata validates image/task/resource identity without S3 or application traffic. No fixture credentials in image, arguments or logs.');
   else if (process.argv.length === 3 && process.argv[2] === '--preflight-metadata') preflightGeneratorMetadata().then(value => console.log(JSON.stringify(value)), () => { console.error('[remote-generator] Metadata preflight refused'); process.exitCode = 1; });
   else if (process.argv.length !== 2) { console.error('[remote-generator] Unexpected arguments'); process.exitCode = 1; }
   else runRemoteGenerator().then(code => { process.exitCode = code; }, () => { console.error('[remote-generator] Failed closed; inspect aggregate generator evidence'); process.exitCode = 1; });

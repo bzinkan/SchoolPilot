@@ -24,6 +24,7 @@ const baseEnv = { AWS_REGION: 'us-east-1', CLP_GENERATOR_ACCOUNT_ID: account,
   CLP_GENERATOR_BUCKET: `schoolpilot-staging-load-${account}`, CLP_GENERATOR_CAMPAIGN: 'classpilot-staging-20261013-0d1060d261d5',
   CLP_GENERATOR_RUN_ID: '40-0123456789abcdef', CLP_GENERATOR_DEVICES: '40',
   CLP_GENERATOR_ORIGIN: 'https://staging.school-pilot.net', CLP_GENERATOR_INPUT_SHA256: 'b'.repeat(64),
+  CLP_GENERATOR_START_AT: new Date(Date.now() + 240_000).toISOString(),
   CLP_GENERATOR_SCRIPT_SHA256: manifest.scriptBundleSha256, CLP_GENERATOR_CANDIDATE_IMAGE: apiImage,
   CLP_GENERATOR_IMAGE_DIGEST: digest };
 const config = remoteGeneratorConfig(baseEnv, manifest);
@@ -36,6 +37,8 @@ const statistics = { container: { cpu_stats: { cpu_usage: { total_usage: 10_000_
   throttling_data: { throttled_periods: 0, throttled_time: 0 } }, memory_stats: { usage: 10_000_000, limit: 4096 * 1024 * 1024 },
   networks: { eth0: { rx_bytes: 100, tx_bytes: 200 } } } };
 const goodSummary = () => ({ runId: config.runId, targetOrigin: baseEnv.CLP_GENERATOR_ORIGIN, devices: 50,
+  stagingStart: { plannedStartAt: config.startAt, actualStartedAt: config.startAt,
+    readyAt: new Date(Date.parse(config.startAt) - 5000).toISOString(), startSkewMs: 0 },
   workloadSchemaVersion: config.profile.version, reliabilityWorkload: { ...config.profile, productionAccepted: false, managedDevicesValidated: false },
   browserPaintValidated: false, certificationEligible: false, thresholds: { enforced: true, passed: true, failures: [] },
   run: { completedConfiguredDuration: true, shutdownReason: 'duration', acceleratedLoopbackTest: false,
@@ -82,6 +85,7 @@ test('child environment discards test acceleration, arbitrary load knobs and app
 test('input manifest requires exact fresh campaign, cardinality and bounded byte identities', () => {
   const now = Date.now();
   const value = { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: 40,
+    startAt: config.startAt,
     candidateApiImage: apiImage, scriptBundleSha256: manifest.scriptBundleSha256, createdAt: new Date(now).toISOString(),
     files: Object.fromEntries(['devices', 'auth', 'commands'].map(key => [key, { bytes: 2, sha256: 'b'.repeat(64) }])) };
   assert.equal(validateInputManifest(value, config, now), value);
@@ -141,7 +145,7 @@ test('remote input copies retain exact bytes and refuse overwrite or source outs
     for (const name of [FILES.devices, FILES.auth, FILES.commands]) writeFileSync(join(source, name), JSON.stringify({ count: 40 }));
     const output = join(root, 'remote');
     const options = { source, output, account, campaign: config.campaign, runId: config.runId, devices: '40',
-      candidateImage: apiImage, scriptSha: manifest.scriptBundleSha256, generatorDigest: digest };
+      candidateImage: apiImage, scriptSha: manifest.scriptBundleSha256, generatorDigest: digest, startAt: config.startAt };
     const receipt = prepareRemoteInputs(options);
     assert.equal(receipt.inputManifestSha256, sha256(readFileSync(join(output, 'manifest.json'))));
     assert.equal(JSON.parse(readFileSync(join(output, 'devices.json'), 'utf8')).count, 40);
@@ -162,6 +166,7 @@ for (const defect of ['none', 'input-bytes', 'preflight', 'evidence-sink', 'miss
     const files = { devices: Buffer.from('[{"studentId":"private-student-identity"}]'),
       auth: Buffer.from('{"teacherCookie":"schoolpilot.staging.sid=private-cookie"}'), commands: Buffer.from('[]') };
     const input = { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: 40, candidateApiImage: apiImage,
+      startAt: config.startAt,
       scriptBundleSha256: manifest.scriptBundleSha256, createdAt: new Date().toISOString(),
       files: Object.fromEntries(Object.entries(files).map(([key, bytes]) => [key, { bytes: bytes.length, sha256: sha256(bytes) }])) };
     const inputBytes = Buffer.from(JSON.stringify(input));

@@ -216,6 +216,21 @@ for (const defect of ["none", "binding", "foreign-tile"] as const) test(`reliabi
     assert.equal(summary.counters.forcedReconnectCompleted, 50);
     assert.equal(summary.browserPaintValidated, false);
     assert.equal(summary.certificationEligible, false);
+    assert.equal(summary.fineEndpointLatency.version, "classpilot-endpoint-latency-1ms-v1");
+    assert.equal(summary.fineEndpointLatency.unclassifiedCount, 0);
+    for (const [endpoint, expected] of [
+      ["POST /api/classpilot/device/heartbeat", summary.counters.heartbeat],
+      ["POST /api/classpilot/device/screenshot", summary.counters.screenshotPost],
+      ["POST /api/classpilot/tiles/screenshots", summary.counters.tileBatchScreenshotRequests],
+      ["POST /api/classpilot/tiles/history", summary.counters.tileBatchHistoryRequests],
+    ] as const) {
+      const histogram = summary.fineEndpointLatency.endpoints[endpoint];
+      assert.equal(histogram.count, expected, `All ${endpoint} samples must be pooled once`);
+      assert.equal(histogram.counts.reduce((sum: number, count: number) => sum + count, 0), expected);
+      assert.equal(histogram.invalidCount, 0);
+      assert.equal(histogram.p95Bounds.quantizationBoundMs, 1);
+    }
+    assert.ok(Buffer.byteLength(JSON.stringify(summary)) < 16 * 1024 * 1024);
     assert.doesNotMatch(stdout, /private-cookie|private-csrf|private-signature/);
   } finally {
     clearTimeout(watchdog);

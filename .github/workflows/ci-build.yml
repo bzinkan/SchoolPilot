@@ -661,6 +661,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npx playwright install --with-deps chromium
 
+      - name: Validate ClassPilot rendered-fleet browser instrumentation
+        timeout-minutes: 2
+        run: node --test scripts/classpilot-rendered-frame-chrome.test.mjs
+
       - name: Test ClassPilot one-day schedule-change workflows
         working-directory: schoolpilot-app
         run: npm run test:classpilot-schedule-changes

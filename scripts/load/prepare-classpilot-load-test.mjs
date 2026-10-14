@@ -381,7 +381,10 @@ export function validateConfig(raw) {
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(operatorMailboxLocalPart)) {
     throw new SafeError("operatorMailboxEmail must name the base mailbox, not a plus alias");
   }
-  if (operatorMailboxDomain !== primary.domain) {
+  if (syntheticStaging && operatorMailboxEmail !== "operator@classpilot-staging.invalid") {
+    throw new SafeError("Synthetic staging requires the exact isolated staging operator identity");
+  }
+  if (!syntheticStaging && operatorMailboxDomain !== primary.domain) {
     throw new SafeError("operatorMailboxEmail must use schools.primary.domain");
   }
   const operatorOwnedAdminEmail = normalizeEmail(raw.operatorOwnedAdminEmail, "operatorOwnedAdminEmail");
@@ -1514,6 +1517,25 @@ async function repairCheckpointedSchool(client, superAuth, spec, role, adminPass
   return detail.data;
 }
 
+export function acknowledgeOwnedStagingPrimaryDomain(config, role, schools, ownership) {
+  const spec = config.schools[role];
+  const conflicts = schools.filter((school) => !school.deletedAt
+    && String(school.domain || "").toLowerCase() === spec.domain);
+  if (!config.syntheticStaging || conflicts.length === 0) return false;
+  const primary = conflicts[0];
+  const owned = ownership.schools.primary;
+  if (config.baseUrl !== STAGING_ORIGIN || role !== "canary" || !spec.domain.endsWith(".invalid")
+      || conflicts.length !== 1 || primary.status !== "active" || ownership.fixtureId !== config.fixtureId || ownership.baseUrl !== config.baseUrl
+      || owned?.createdByTool !== true || owned.billingProtectionVerified !== true
+      || owned.id !== primary.id || owned.name !== config.schools.primary.name
+      || owned.domain !== config.schools.primary.domain || primary.name !== owned.name
+      || String(primary.domain || "").toLowerCase() !== owned.domain || spec.domain !== owned.domain) {
+    throw new SafeError("Shared staging domain must belong only to this fixture's exact owned primary school");
+  }
+  assertSchoolIsNonBillable(primary, "Shared-domain primary");
+  return true;
+}
+
 async function discoverOrCreateSchool(client, superAuth, config, role, adminPassword, outputDirectory, ownership) {
   const spec = config.schools[role];
   const list = await client.request("/api/super-admin/schools?status=all", { bearer: superAuth.bearer });
@@ -1552,6 +1574,7 @@ async function discoverOrCreateSchool(client, superAuth, config, role, adminPass
       body: {
         name: spec.name,
         domain: spec.domain,
+        ...(acknowledgeOwnedStagingPrimaryDomain(config, role, all, ownership) ? { acknowledgeExistingDomain: true } : {}),
         status: "active",
         billingEmail: null,
         maxStudents: role === "primary" ? 1200 : 50,

@@ -15,6 +15,8 @@ import {
 import { createMonotonicDeadline } from "./monotonic-deadline.mjs";
 import { hasLoadSessionCookie, loadSessionCookieName } from "./session-cookie.mjs";
 import { stampReliabilityFrame, initialReliabilityCommandBurst } from "./reliability-rendered-frame.mjs";
+import { FineEndpointLatencies, fineLatencyEndpoint } from "./fine-endpoint-latency.mjs";
+import { validateStagingInputFreshness, validateStagingStartAt, waitForStagingStart } from "./staging-start-barrier.mjs";
 import {
   validateReliabilityEnvironment, RELIABILITY_ENDPOINT_SHA256, RELIABILITY_CAPABILITIES,
   minimumReliabilitySamples, reliabilityScreenshotBindingMatches,
@@ -557,6 +559,7 @@ const externalProgressPath = validateExternalOutputPath(
   process.env.LOAD_EXTERNAL_PROGRESS_PATH,
   "LOAD_EXTERNAL_PROGRESS_PATH"
 );
+const stagingReadyPath = validateExternalOutputPath(process.env.LOAD_TRAFFIC_READY_PATH, "LOAD_TRAFFIC_READY_PATH");
 const supervisorReadyPath = validateExternalOutputPath(
   process.env.LOAD_SUPERVISOR_READY_PATH,
   "LOAD_SUPERVISOR_READY_PATH"
@@ -576,6 +579,7 @@ const externalOutputPaths = [
   externalProgressPath,
   supervisorReadyPath,
   supervisorStartGatePath,
+  stagingReadyPath,
 ].filter(Boolean);
 if (new Set(externalOutputPaths.map((value) => value.toLowerCase())).size !== externalOutputPaths.length) {
   throw new Error("Load output, supervisor-ready, and supervisor-start-gate paths must be distinct files");
@@ -663,6 +667,9 @@ const acceleratedRequestStaggerMs = requestStaggerValue
   : 0;
 const heartbeatIntervalMs = intEnv("LOAD_HEARTBEAT_INTERVAL_MS", 10_000, 100, 60 * 60 * 1000);
 const reliabilityWorkload = validateReliabilityEnvironment(process.env, baseUrl);
+const stagingStartAt = reliabilityWorkload ? process.env.LOAD_TRAFFIC_START_AT : undefined;
+const stagingStartMs = reliabilityWorkload ? validateStagingStartAt(stagingStartAt, baseUrl) : null;
+if (stagingStartMs !== null) validateStagingInputFreshness(process.env.LOAD_INPUT_MANIFEST_CREATED_AT);
 const screenshotIntervalMs = intEnv("LOAD_SCREENSHOT_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
 const teacherIntervalMs = intEnv("LOAD_TEACHER_INTERVAL_MS", 5_000, 100, 60 * 60 * 1000);
 const teacherTemplateIntervalMs = intEnv("LOAD_TEACHER_TEMPLATE_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
@@ -699,7 +706,7 @@ const expectedCanaryDevices = intEnv("LOAD_EXPECTED_CANARY_DEVICES", 10, 0, 10_0
 const wafDeviceLimit = intEnv("LOAD_WAF_DEVICE_LIMIT", 100_000, 1, 2_000_000_000);
 const wafGeneralLimit = intEnv("LOAD_WAF_GENERAL_LIMIT", 50_000, 1, 2_000_000_000);
 const shutdownGraceMs = intEnv("LOAD_SHUTDOWN_GRACE_MS", 15_000, 100, 120_000);
-const requiredArtifactValidityUntil = Date.now() + durationMs + commandSettleMs + shutdownGraceMs;
+const requiredArtifactValidityUntil = Math.max(Date.now(), stagingStartMs ?? 0) + durationMs + commandSettleMs + shutdownGraceMs;
 for (const [index, device] of devices.entries()) {
   const expiresAt = decodeJwtExpiry(device.studentToken);
   if (expiresAt !== null && expiresAt <= requiredArtifactValidityUntil) {
@@ -1284,6 +1291,7 @@ const inFlight = new Set();
 const pendingRequests = new Map();
 const histograms = new Map();
 const teacherEndpointHistograms = new Map();
+const fineEndpointLatencies = reliabilityWorkload ? new FineEndpointLatencies() : null;
 const exactCommandLatency = new BoundedExactLatencySamples(maxTrackedCommands);
 const fiveMinuteRequests = new RollingWindowCounter(300);
 const fiveMinuteDeviceIngestRequests = new RollingWindowCounter(300);
@@ -1310,6 +1318,7 @@ let lastProgressAtMonoNs = null;
 let lastProgressCounters = null;
 let progressFinalized = !externalProgressPath;
 let durationDeadline = null;
+let stagingStart = null;
 
 async function waitForSupervisorStartGate() {
   if (!supervisorStartGatePath) return;
@@ -1724,6 +1733,7 @@ function observeHttp(record, status, error, responseBytes = 0) {
   const latencyMs = monotonicNowMs() - record.startedAt;
   const failed = Boolean(error) || status >= 400 || status === 0;
   histogram(record.kind).observe(latencyMs, failed);
+  fineEndpointLatencies?.observe(record.fineEndpointClass, latencyMs, failed);
   if (record.kind === "command") exactCommandLatency.observe(latencyMs, failed);
   if (record.endpointClass) teacherEndpointHistogram(record.endpointClass).observe(latencyMs, failed);
   counters.responseBytes += responseBytes;
@@ -1894,6 +1904,7 @@ async function request(path, {
     probeObserved: false,
     probeUnexpectedSuccess: false,
     endpointClass,
+    fineEndpointClass: fineLatencyEndpoint(method, path),
     expectedDeviceId,
     expectedStudentIds,
   };
@@ -3188,6 +3199,8 @@ function summarize(shutdownReason) {
     certificationEligible,
     ...(reliabilityWorkload ? {
       reliabilityWorkload,
+      stagingStart,
+      fineEndpointLatency: fineEndpointLatencies.summary(),
       screenshotCaptureAge: reliabilityScreenshotFreshness.summary(),
       // HTTP samples cannot establish actual browser paint or managed adoption.
       browserPaintValidated: false,
@@ -3482,6 +3495,12 @@ if (validateConfigOnly) {
   // request until the bound AWS monitor has completed one healthy sample. The
   // supervisor releases this gate only after validating both process identities.
   await waitForSupervisorStartGate();
+  if (stagingStartMs !== null) {
+    if (!stagingReadyPath || fs.existsSync(stagingReadyPath)) throw new Error("Staging requires fresh external ready evidence before its shared start");
+    stagingStart = await waitForStagingStart({ startAt: stagingStartAt, origin: baseUrl,
+      inputCreatedAt: process.env.LOAD_INPUT_MANIFEST_CREATED_AT,
+      onReady: ready => writeAtomicJson(stagingReadyPath, { version: 1, runId, targetOrigin: baseUrl, ...ready, trafficStarted: false }) });
+  }
   revalidateArtifactLifetimeAtTrafficStart();
   progressDescriptor = externalProgressPath
     ? fs.openSync(externalProgressPath, "a", 0o600)
@@ -3502,7 +3521,7 @@ if (validateConfigOnly) {
     startCommandTraffic();
     scheduleForcedReconnect();
     durationDeadline = createMonotonicDeadline({
-      deadlineNs: monotonicNowNs() + BigInt(runtimeDurationMs) * NANOSECONDS_PER_MILLISECOND,
+      deadlineNs: (stagingStart ? runStartedAtMonoNs : monotonicNowNs()) + BigInt(runtimeDurationMs) * NANOSECONDS_PER_MILLISECOND,
       nowNs: monotonicNowNs,
       schedule: (callback, delayMs) => later(callback, delayMs, { scale: false }),
       cancel: cancelLater,

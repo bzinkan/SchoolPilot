@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
-const { renderedAgeHistogram, renderedCommandMatches, validateRenderedDashboardInputs, observeRenderedCommandUpdate, renderedDeadline } = await import(
+const { renderedAgeHistogram, renderedCommandMatches, validateRenderedDashboardInputs, observeRenderedCommandUpdate, renderedDeadline, validateRenderedManifest, renderedCommandRequestPath } = await import(
   new URL("../scripts/load/run-classpilot-rendered-dashboards.mjs", import.meta.url).href,
 );
 
@@ -26,7 +27,35 @@ test("rendered campaign enforces exact1/20 independent teacher cohorts, staging 
   assert.throws(() => validateRenderedDashboardInputs(retired, 800, env));
 });
 
+test("rendered credentials must outlive the shared start plus the entire profile, not merely process launch", () => {
+  const auth = authFixture(800), planned = Date.now() + 120_000;
+  const expiry = new Date(Date.now() + 5400_000 + 90_000).toISOString();
+  auth.expiresAt = expiry; auth.deviceManifestExpiresAt = expiry;
+  auth.teacherAuth.forEach(actor => { actor.expiresAt = expiry; });
+  assert.equal(validateRenderedDashboardInputs(auth, 800, env).primaryDevices, 800);
+  assert.throws(() => validateRenderedDashboardInputs(auth, 800, env, planned));
+});
+
+test("rendered actors bind exact private auth bytes and the same fresh staged fleet run/start identity", () => {
+  const now = Date.now(), auth = Buffer.from(JSON.stringify(authFixture(40)));
+  const manifest = { version: 1, campaign: "classpilot-staging-20261013-abcdef123456", runId: "40-abcdef123456",
+    primaryDevices: 40, candidateApiImage: "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-staging-api@sha256:" + "a".repeat(64),
+    scriptBundleSha256: "b".repeat(64), createdAt: new Date(now).toISOString(), startAt: new Date(now + 120_000).toISOString(),
+    files: { auth: { bytes: auth.length, sha256: createHash("sha256").update(auth).digest("hex") },
+      commands: { bytes: 1, sha256: "c".repeat(64) }, devices: { bytes: 1, sha256: "d".repeat(64) } } };
+  assert.equal(validateRenderedManifest(auth, manifest, 40, manifest.startAt, now), manifest);
+  assert.throws(() => validateRenderedManifest(Buffer.concat([auth, Buffer.from(" ")]), manifest, 40, manifest.startAt, now));
+  assert.throws(() => validateRenderedManifest(Buffer.from(auth.toString().replace("teacher-0", "teacher-9")), manifest, 40, manifest.startAt, now));
+  assert.throws(() => validateRenderedManifest(auth, manifest, 40, new Date(now + 121_000).toISOString(), now));
+  assert.throws(() => validateRenderedManifest(auth, manifest, 40, "", now));
+  assert.throws(() => validateRenderedManifest(auth, manifest, 500, manifest.startAt, now));
+  assert.throws(() => validateRenderedManifest(auth, { ...manifest, createdAt: new Date(now - 900_001).toISOString() }, 40, manifest.startAt, now));
+});
+
 test("actual UI may freeze all exact students while Node class burst retains canonical class scope", () => {
+  assert.equal(renderedCommandRequestPath('/api/commands'), true);
+  assert.equal(renderedCommandRequestPath('/api/classpilot/commands'), true);
+  assert.equal(renderedCommandRequestPath('/api/commands/private/status'), false);
   const actor = authFixture(40).teacherAuth[0]!;
   const body = { teachingSessionId: actor.teachingSessionId, targetScope: "class", commandType: "open-tab", commandPayload: { url: "https://example.edu/fixture" } };
   assert.equal(renderedCommandMatches(body, actor, body.commandPayload.url), true);

@@ -5,8 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REMOTE_GENERATOR_SCRIPTS = Object.freeze([
   'classpilot-load-test.mjs', 'classpilot-reliability-profile.mjs', 'command-status-observer.mjs',
-  'monotonic-deadline.mjs', 'reliability-rendered-frame.mjs', 'remote-generator-manifest.mjs',
-  'run-classpilot-reliability.mjs', 'run-classpilot-remote-generator.mjs', 'session-cookie.mjs', 'tile-poll-accounting.mjs',
+  'fine-endpoint-latency.mjs', 'monotonic-deadline.mjs', 'reliability-rendered-frame.mjs', 'remote-generator-manifest.mjs',
+  'run-classpilot-reliability.mjs', 'run-classpilot-remote-generator.mjs', 'session-cookie.mjs', 'staging-start-barrier.mjs', 'tile-poll-accounting.mjs',
 ]);
 
 export function scriptManifest(directory, candidateApiImage, includedFiles = null) {

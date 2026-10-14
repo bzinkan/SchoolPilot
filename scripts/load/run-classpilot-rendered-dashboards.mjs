@@ -5,11 +5,14 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertExternalPaths, loadExternalConfig, preparePrivateOutputDirectory } from './prepare-classpilot-load-test.mjs';
 import { hasLoadSessionCookie, loadSessionCookieName } from './session-cookie.mjs';
 import { reliabilityProfile, reliabilityScreenshotBindingMatches, RELIABILITY_ENDPOINT_SHA256 } from './classpilot-reliability-profile.mjs';
 import { readReliabilityFrame } from './reliability-rendered-frame.mjs';
+import { validateStagingRunManifest, waitForStagingStart } from './staging-start-barrier.mjs';
+import { RenderedHttpMetrics, attachRenderedHttpMetrics } from './rendered-http-metrics.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -84,7 +87,7 @@ export function renderedAgeHistogram() {
       return maximum; }, summary() { return { count: total, boundsMs: bounds.map(bound => Number.isFinite(bound) ? bound : null), counts: [...counts], maxMs: maximum }; } };
 }
 
-export function validateRenderedDashboardInputs(auth, count, env = process.env) {
+export function validateRenderedDashboardInputs(auth, count, env = process.env, startAtMs = Date.now()) {
   const profile = reliabilityProfile(count);
   assert.equal(auth.schemaVersion, 2);
   assert.equal(auth.baseUrl, 'https://staging.school-pilot.net');
@@ -96,7 +99,7 @@ export function validateRenderedDashboardInputs(auth, count, env = process.env) 
   assert.equal(new Set(ids).size, count);
   assert.equal(new Set(auth.teacherAuth.map(actor => actor.teacherId)).size, profile.classrooms);
   assert.equal(new Set(auth.teacherAuth.map(actor => actor.teachingSessionId)).size, profile.classrooms);
-  const until = Date.now() + profile.durationSeconds * 1000 + 60_000;
+  const until = startAtMs + profile.durationSeconds * 1000 + 60_000;
   assert.ok(Date.parse(auth.deviceManifestExpiresAt) > until && Date.parse(auth.expiresAt) > until);
   for (const actor of auth.teacherAuth) {
     assert.ok(actor.role === 'teacher' && actor.schoolId === auth.schoolId && actor.teacherId && actor.teachingSessionId);
@@ -105,6 +108,16 @@ export function validateRenderedDashboardInputs(auth, count, env = process.env) 
     assert.ok(Date.parse(actor.expiresAt) > until);
   }
   return profile;
+}
+
+export function validateRenderedManifest(authBytes, manifest, primaryDevices, startAt, now = Date.now()) {
+  assert.equal(manifest.files?.auth?.bytes, authBytes.length, 'Rendered auth byte count must match the fleet manifest');
+  return validateStagingRunManifest(manifest, { startAt: startAt === undefined ? manifest.startAt : startAt,
+    primaryDevices, authSha256: hash(authBytes) }, now);
+}
+
+export function renderedCommandRequestPath(pathname) {
+  return pathname === '/api/commands' || pathname === '/api/classpilot/commands';
 }
 
 export function renderedCommandMatches(request, actor, commandUrl) {
@@ -127,38 +140,46 @@ function assetHashes(directory, relative = '') {
 export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) {
   const { values } = parseArgs({ args: arguments_, options: { config: { type: 'string' }, auth: { type: 'string' },
     output: { type: 'string' }, devices: { type: 'string' }, 'frontend-dist': { type: 'string' },
+    'input-manifest': { type: 'string' }, 'start-at': { type: 'string' },
     'chrome-path': { type: 'string' }, 'dry-run': { type: 'boolean' }, help: { type: 'boolean' } } });
-  if (values.help) return console.log('Usage: node scripts/load/run-classpilot-rendered-dashboards.mjs --config <external-staging-config> --auth <selected-private-auth> --output <fresh-private-dir> --devices 40|500|800 --frontend-dist <exact-candidate-dist> [--chrome-path <Chrome>] [--dry-run]. Run concurrently with the matching full-duration synthetic fleet. No mock API or shortened staging duration.');
-  assert.ok(values.config && values.auth && values.output && values.devices && values['frontend-dist']);
+  if (values.help) return console.log('Usage: node scripts/load/run-classpilot-rendered-dashboards.mjs --config <external-staging-config> --auth <selected-private-auth> --input-manifest <exact-remote-input-manifest> --output <fresh-private-dir> --devices40|500|800 --frontend-dist <exact-candidate-dist> [--start-at <matching-manifest-UTC>] [--chrome-path <Chrome>] [--dry-run]. Loads real authenticated dashboards before the shared UTC start barrier. No mock API or shortened staging duration.');
+  assert.ok(values.config && values.auth && values.output && values.devices && values['frontend-dist'] && values['input-manifest']);
   const paths = assertExternalPaths(values.config, values.output);
-  assertExternalPaths(values.config, dirname(resolve(values.auth)));
+  const authPath = assertExternalPaths(values.auth, paths.outputPath).configPath;
+  const manifestPath = assertExternalPaths(values['input-manifest'], paths.outputPath).configPath;
   const config = loadExternalConfig(paths.configPath);
   assert.equal(config.syntheticStaging, true);
   assert.equal(config.reliabilityDeviceCount, Number(values.devices));
-  const auth = JSON.parse(readFileSync(values.auth, 'utf8'));
-  const profile = validateRenderedDashboardInputs(auth, Number(values.devices));
+  const authBytes = readFileSync(authPath), auth = JSON.parse(authBytes.toString('utf8'));
+  const inputManifestBytes = readFileSync(manifestPath);
+  const manifest = validateRenderedManifest(authBytes, JSON.parse(inputManifestBytes.toString('utf8')),
+    Number(values.devices), values['start-at']);
+  const profile = validateRenderedDashboardInputs(auth, Number(values.devices), process.env, Date.parse(manifest.startAt));
   const dist = resolve(values['frontend-dist']);
   assert.ok(existsSync(join(dist, 'index.html')));
   const assets = assetHashes(dist).sort((first, second) => first.path.localeCompare(second.path));
   const expectedAssets = new Map(assets.filter(asset => /\.(?:js|css)$/.test(asset.path)).map(asset => [asset.path, asset.sha256]));
   assert.ok(expectedAssets.size > 0);
   if (values['dry-run']) return console.log(JSON.stringify({ operation: 'rendered-browser-preflight', profile,
-    candidateAssetCount: expectedAssets.size, browserPaintValidated: false, managedDevicesValidated: false, productionAccepted: false }));
+    runId: manifest.runId, plannedStartAt: manifest.startAt, candidateAssetCount: expectedAssets.size,
+    browserPaintValidated: false, managedDevicesValidated: false, productionAccepted: false }));
   preparePrivateOutputDirectory(paths.outputPath);
   assert.equal(existsSync(join(paths.outputPath, 'rendered-summary.json')), false, 'Fresh browser evidence required');
   const { chromium } = createRequire(join(root, 'schoolpilot-app/package.json'))('playwright');
   const chrome = values['chrome-path'] || process.env.CLASSPILOT_CHROME_PATH || chromium.executablePath();
   assert.ok(existsSync(chrome), 'Real Chrome/Chromium executable required');
-  const startedAt = Date.now(), endAt = startedAt + profile.durationSeconds * 1000;
+  let startedAt = null, startedMonotonic = null, endMonotonic = null, barrier = null;
   const counters = { samples: 0, unavailable: 0, wrongClass: 0, wrongBinding: 0, hidden: 0,
     httpErrors: 0, pageErrors: 0, assetMismatch: 0, commandRequested: 0, commandCompletedWithin5s: 0,
     commandReceivedWithin2s: 0, commandTargets: 0, commandScopeMismatch: 0, crossOriginSockets: 0,
     sampleRounds: 0, slowSampleRounds: 0 };
   const ages = renderedAgeHistogram(), actors = [], loadedAssets = new Set();
+  const httpMetrics = new RenderedHttpMetrics({ origin: auth.baseUrl });
   const browser = await chromium.launch({ executablePath: chrome, headless: true,
     args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
-  let thrown = false, interrupted = false;
-  const stop = () => { interrupted = true; };
+  let thrown = false, interrupted = false, phase = 'preparing';
+  const barrierAbort = new AbortController();
+  const stop = () => { interrupted = true; barrierAbort.abort(); };
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, stop);
   try {
     await Promise.all(auth.teacherAuth.map(async (actor, index) => {
@@ -173,13 +194,14 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       const runtime = { actor, context, page, frames, allowed, index, initialPaint: false, lastOrdinals: new Map(), freshUpdates: 0,
         bindings: new Map(), commands: new Map(), samples: 0, unavailable: 0, compositorSha256: null };
       actors.push(runtime);
+      attachRenderedHttpMetrics(page, httpMetrics, index);
       page.on('pageerror', () => { counters.pageErrors += 1; });
       page.on('websocket', socket => {
         const url = new URL(socket.url());
         if (url.protocol !== 'wss:' || url.hostname !== new URL(auth.baseUrl).hostname) counters.crossOriginSockets += 1;
         socket.on('framereceived', event => {
           try {
-            if (observeRenderedCommandUpdate(runtime, JSON.parse(String(event.payload)), Date.now())) counters.commandScopeMismatch += 1;
+            if (observeRenderedCommandUpdate(runtime, JSON.parse(String(event.payload)), performance.now())) counters.commandScopeMismatch += 1;
           } catch { /* Other transport frames cannot establish command completion. */ }
         });
       });
@@ -214,26 +236,45 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       await page.goto(auth.baseUrl + '/classpilot', { waitUntil: 'domcontentloaded', timeout: 45_000 });
       await page.waitForFunction(expected => document.querySelectorAll('[data-testid^="card-student-"]').length === expected,
         profile.studentsPerClass, { timeout: 60_000 });
+      await page.waitForFunction(expected => {
+        const ids = [...document.querySelectorAll('[data-testid^="card-student-"]')].map(card => card.getAttribute('data-testid').slice('card-student-'.length));
+        return document.visibilityState === 'visible' && ids.length === expected.length && new Set(ids).size === expected.length
+          && ids.every(id => expected.includes(id))
+          && document.querySelector('[data-testid="badge-connection-status"]')?.textContent.trim() === 'Live updates';
+      }, actor.studentIds, { timeout: 30_000 });
     }));
     assert.equal(actors.length, profile.classrooms);
-    while (!interrupted && Date.now() < startedAt + 60_000) await delay(1000);
+    phase = 'start-barrier';
+    barrier = await waitForStagingStart({ startAt: manifest.startAt, origin: auth.baseUrl,
+      inputCreatedAt: manifest.createdAt, signal: barrierAbort.signal,
+      onReady: ready => writeFileSync(join(paths.outputPath, 'rendered-ready.json'), JSON.stringify({ schemaVersion: 1,
+        runId: manifest.runId, startAt: manifest.startAt, ...ready,
+        classrooms: actors.length, primaryDevices: profile.primaryDevices, candidateFrontendSha256: hash(JSON.stringify(assets)),
+        authFileSha256: hash(authBytes), browserPaintValidated: false, managedDevicesValidated: false, productionAccepted: false })) });
+    startedAt = Date.parse(barrier.actualStartedAt);
+    startedMonotonic = barrier.monotonicStartedAt;
+    endMonotonic = startedMonotonic + profile.durationSeconds * 1000;
+    httpMetrics.startWindow(startedMonotonic, profile.durationSeconds * 1000);
+    phase = 'warming';
+    while (!interrupted && performance.now() < startedMonotonic + 60_000) await delay(1000);
     assert.equal(interrupted, false, 'Full campaign required');
+    phase = 'classroom-command-burst';
     // All actors use the real candidate UI and submit once, concurrently.
     await Promise.all(actors.map(async ({ page }) => {
       await page.getByTestId('button-open-tab').click();
       await page.getByTestId('input-open-tab-url').fill(config.commandUrl);
     }));
-    const burstStartedAt = Date.now(), commandSubmissionTimes = [];
+    const burstStartedAt = performance.now(), commandSubmissionTimes = [];
     await Promise.all(actors.map(async runtime => {
       const { page, actor } = runtime;
-      const requestPromise = page.waitForRequest(request => new URL(request.url()).pathname === '/api/classpilot/commands'
-        && request.method() === 'POST', { timeout: 10_000 }).then(request => { commandSubmissionTimes.push(Date.now()); return request; });
-      const responsePromise = page.waitForResponse(response => new URL(response.url()).pathname === '/api/classpilot/commands'
+      const requestPromise = page.waitForRequest(request => renderedCommandRequestPath(new URL(request.url()).pathname)
+        && request.method() === 'POST', { timeout: 10_000 }).then(request => { commandSubmissionTimes.push(performance.now()); return request; });
+      const responsePromise = page.waitForResponse(response => renderedCommandRequestPath(new URL(response.url()).pathname)
         && response.request().method() === 'POST', { timeout: 10_000 });
-      const requestAt = Date.now();
-      await page.getByTestId('button-confirm-open-tab').click();
+      const requestAt = performance.now();
+      const [requestEvent, response] = await Promise.all([requestPromise, responsePromise,
+        page.getByTestId('button-confirm-open-tab').click()]);
       counters.commandRequested += 1;
-      const [requestEvent, response] = await Promise.all([requestPromise, responsePromise]);
       const request = requestEvent.postDataJSON(), body = await renderedDeadline(response.json());
       if (response.status() !== 201 || !renderedCommandMatches(request, actor, config.commandUrl)
         || Number(body.summary?.sent) !== profile.studentsPerClass || !body.command?.id) {
@@ -242,7 +283,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       counters.commandTargets += profile.studentsPerClass;
       // Timestamp the issuing teacher's observed socket frames. Poll response
       // arrival and server clocks must not substitute for UI receipt latency.
-      while (Date.now() - requestAt < 7000) {
+      while (performance.now() - requestAt < 7000) {
         const observed = runtime.commands.get(body.command.id);
         if (observed?.size === profile.studentsPerClass && [...observed.values()].every(target => target.completedAt !== undefined)) break;
         await delay(100);
@@ -252,10 +293,11 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
         if (timing.completedAt >= requestAt && timing.completedAt - requestAt <= 5000) counters.commandCompletedWithin5s += 1;
       }
     }));
-    const concurrentBurstElapsedMs = Date.now() - burstStartedAt;
-    let nextSampleAt = Date.now();
-    while (!interrupted && Date.now() < endAt) {
-      const roundStartedAt = Date.now();
+    const concurrentBurstElapsedMs = performance.now() - burstStartedAt;
+    phase = 'sampling';
+    let nextSampleAt = performance.now();
+    while (!interrupted && performance.now() < endMonotonic) {
+      const roundStartedAt = performance.now();
       counters.sampleRounds += 1;
       await Promise.all(actors.map(async runtime => {
         const sample = await renderedDeadline(runtime.page.evaluate(collectRenderedDashboardSample));
@@ -280,15 +322,21 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           runtime.initialPaint = true;
         }
       }));
-      writeFileSync(join(paths.outputPath, 'rendered-progress.json'), JSON.stringify({ elapsedSeconds: (Date.now() - startedAt) / 1000,
-        classrooms: actors.length, counters, p95CaptureAgeMs: ages.percentile(95), p99CaptureAgeMs: ages.percentile(99) }));
-      if (Date.now() - roundStartedAt > 5000) counters.slowSampleRounds += 1;
+      writeFileSync(join(paths.outputPath, 'rendered-progress.json'), JSON.stringify({ runId: manifest.runId,
+        plannedStartAt: manifest.startAt, elapsedSeconds: (performance.now() - startedMonotonic) / 1000,
+        classrooms: actors.length, counters, http: httpMetrics.progress(), p95CaptureAgeMs: ages.percentile(95), p99CaptureAgeMs: ages.percentile(99) }));
+      if (performance.now() - roundStartedAt > 5000) counters.slowSampleRounds += 1;
       nextSampleAt += 5000;
-      if (nextSampleAt < Date.now()) nextSampleAt = Date.now();
-      await delay(Math.min(Math.max(0, nextSampleAt - Date.now()), Math.max(0, endAt - Date.now())));
+      if (nextSampleAt < performance.now()) nextSampleAt = performance.now();
+      await delay(Math.min(Math.max(0, nextSampleAt - performance.now()), Math.max(0, endMonotonic - performance.now())));
     }
+    httpMetrics.closeWindow();
+    const measuredDurationMs = performance.now() - startedMonotonic;
+    phase = 'draining-http-evidence';
+    await httpMetrics.drain();
+    const http = httpMetrics.summary();
     const failures = [];
-    if (interrupted || Date.now() < endAt) failures.push('full-duration campaign interrupted');
+    if (interrupted || performance.now() < endMonotonic) failures.push('full-duration campaign interrupted');
     if (actors.some(runtime => runtime.samples < profile.studentsPerClass * Math.floor((profile.durationSeconds - 90) / 5))) failures.push('rendered sample underrun');
     if (!counters.samples || counters.unavailable / counters.samples > 0.01) failures.push('more than1% rendered frames unavailable');
     if ((ages.percentile(95) ?? Infinity) > 10_000 || (ages.percentile(99) ?? Infinity) > 15_000) failures.push('rendered capture age exceeds p95=10s or p99=15s');
@@ -298,7 +346,19 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       || counters.commandReceivedWithin2s / profile.primaryDevices < 0.99 || counters.commandCompletedWithin5s / profile.primaryDevices < 0.99) failures.push('concurrent UI command receipt/completion gate');
     const commandDispatchSpreadMs = Math.max(...commandSubmissionTimes) - Math.min(...commandSubmissionTimes);
     if (commandSubmissionTimes.length !== profile.classrooms || commandDispatchSpreadMs > 1000) failures.push('UI command dispatches did not form a one-second concurrent classroom burst');
+    if (!http.allStartedRequestsMeasured || http.rawInFlightAfterDrain || http.counters.http403 || http.counters.http429
+      || http.counters.otherHttpErrors) failures.push('incomplete or blocked browser API request evidence');
+    if (!http.counters.requestsStarted || http.counters.failedMeasurements / http.counters.requestsStarted > 0.01) failures.push('browser API measurement failure rate exceeds one percent');
+    for (const endpoint of ['GET /api/classpilot/commands/active-state', 'GET /api/classpilot/teacher/raised-hands']) {
+      const latency = http.fineEndpointLatency.endpoints[endpoint];
+      if (!latency?.p95Bounds.complete || !latency.p95Bounds.finite || latency.p95Bounds.upperMs > 1000) failures.push('classroom state or raised-hands p95 exceeds one second or is unmeasured');
+      if (!latency?.count || latency.failedCount / latency.count > 0.01) failures.push('classroom state or raised-hands failure rate exceeds one percent');
+      const counts = http.endpointRequestsPerActor[endpoint];
+      if (!counts || actors.some(runtime => counts[runtime.index] < Math.max(1, Math.floor((profile.durationSeconds - 90) / 35)))) failures.push('classroom state or raised-hands read sample underrun');
+    }
     const summary = { schemaVersion: 1, workload: profile.version, endpointShapeSha256: RELIABILITY_ENDPOINT_SHA256,
+      runId: manifest.runId, startAt: manifest.startAt, candidateApiImage: manifest.candidateApiImage,
+      inputManifestSha256: hash(inputManifestBytes), startBarrier: barrier, measuredDurationMs, http,
       browser: browser.version(), startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
       durationSeconds: profile.durationSeconds, primaryDevices: profile.primaryDevices, classrooms: profile.classrooms,
       candidateFrontendSha256: hash(JSON.stringify(assets)), verifiedLoadedAssets: loadedAssets.size,
@@ -318,7 +378,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     for (const signal of ['SIGINT', 'SIGTERM']) process.off(signal, stop);
     await browser.close();
     if (thrown) writeFileSync(join(paths.outputPath, 'rendered-summary.json'), JSON.stringify({ browserPaintValidated: false,
-      productionAccepted: false, managedDevicesValidated: false, counters, failures: ['incomplete rendered dashboard campaign'] }, null, 2));
+      productionAccepted: false, managedDevicesValidated: false, failurePhase: phase, counters, http: httpMetrics.summary(), failures: ['incomplete rendered dashboard campaign'] }, null, 2));
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

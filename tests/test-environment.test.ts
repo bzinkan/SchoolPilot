@@ -11,18 +11,20 @@ test("fault fixtures cannot rehydrate external alert providers through dotenv an
   const fixturePath = join(directory, "fake-provider.env");
   writeFileSync(fixturePath, "SENDGRID_API_KEY=SG.fake-fixture-only\nTELEGRAM_BOT_TOKEN=fake-fixture-bot\nTELEGRAM_CHAT_ID=fake-fixture-chat\n");
   try {
+    // Exercise the same compiled application entry used by the serving image.
+    // CI builds first; this guard does not depend on a second TS loader startup.
     const result = spawnSync(process.execPath, [
-      "--import", "./tests/test-environment.mjs", "--import", "tsx", "--input-type=module", "-e", `
+      "--import", "./tests/test-environment.mjs", "--input-type=module", "-e", `
         const { default: dotenv } = await import('dotenv');
         dotenv.config({ path: process.env.TEST_ALERT_PROVIDER_ENV, quiet: true });
-        await import('./src/app.ts');
-        const { emailProviderConfigured } = await import('./src/services/email.ts');
+        await import('./dist/app.js');
+        const { emailProviderConfigured } = await import('./dist/services/email.js');
         if (emailProviderConfigured() || process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_CHAT_ID)
           throw new Error('External alert provider escaped test isolation');
-        const { default: monitor } = await import('./src/services/errorMonitor.ts');
+        const { default: monitor } = await import('./dist/services/errorMonitor.js');
         await monitor.disposeAndWait();
-        const { pool, sessionPool } = await import('./src/db.ts');
-        const { schedulerPool, schedulerLockPool } = await import('./src/services/schedulerDb.ts');
+        const { pool, sessionPool } = await import('./dist/db.js');
+        const { schedulerPool, schedulerLockPool } = await import('./dist/services/schedulerDb.js');
         await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
       `,
     ], {

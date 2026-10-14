@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import pg from "pg";
 import { stagingOperatorConnection, stagingOperatorEnvironment } from "../src/cli/bootstrapClasspilotStagingOperator.js";
-const { buildFixtureBlueprint, buildDryRunSummary, validateConfig } = await import(new URL("../scripts/load/prepare-classpilot-load-test.mjs", import.meta.url).href);
+const { buildFixtureBlueprint, buildDryRunSummary, validateConfig, acknowledgeOwnedStagingPrimaryDomain } = await import(new URL("../scripts/load/prepare-classpilot-load-test.mjs", import.meta.url).href);
 const { validateReliabilityCommandBodies, selectReliabilityCohort } = await import(new URL("../scripts/load/select-classpilot-reliability-cohort.mjs", import.meta.url).href);
 const { freshStagingFixtureConfig } = await import(new URL("../scripts/load/create-classpilot-staging-fixture-config.mjs", import.meta.url).href);
 const { loadSessionCookieName } = await import(new URL("../scripts/load/session-cookie.mjs", import.meta.url).href);
@@ -71,6 +71,28 @@ test("staging no-mail profile cannot bypass mailbox confirmation for production,
   ordinary.schools.primary.domain = "example.org";
   ordinary.schools.primary.adminEmail = "operator+primary@example.org";
   assert.throws(() => validateConfig(ordinary));
+  assert.throws(() => validateConfig({ ...config(), operatorMailboxEmail: "other@classpilot-staging.invalid" }));
+});
+
+test("staging shared-domain creation acknowledges only its exact checkpoint-owned primary school", () => {
+  const normalized = validateConfig(freshStagingFixtureConfig(40, "abcdef1234"));
+  const primary = { id: "owned-primary", name: normalized.schools.primary.name, domain: normalized.schools.primary.domain,
+    status: "active", deletedAt: null, billingEmail: null, stripeCustomerId: null, stripeSubscriptionId: null };
+  const ownership = { fixtureId: normalized.fixtureId, baseUrl: normalized.baseUrl, schools: { primary: {
+    id: primary.id, name: primary.name, domain: primary.domain, createdByTool: true, billingProtectionVerified: true,
+  } } };
+  assert.equal(acknowledgeOwnedStagingPrimaryDomain(normalized, "primary", [], ownership), false);
+  assert.equal(acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [primary], ownership), true);
+  assert.equal(acknowledgeOwnedStagingPrimaryDomain({ ...normalized, syntheticStaging: false }, "canary", [primary], ownership), false);
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain({ ...normalized, baseUrl: "https://school-pilot.net" }, "canary", [primary], ownership));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "primary", [primary], ownership));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [primary, { ...primary, id: "unowned-sibling" }], ownership));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [primary, { ...primary, id: "unowned-suspended", status: "suspended" }], ownership));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [{ ...primary, id: "unowned-replacement" }], ownership));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [{ ...primary, billingEmail: "billing@example.org" }], ownership));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [primary], { ...ownership, fixtureId: "another-fixture" }));
+  assert.throws(() => acknowledgeOwnedStagingPrimaryDomain(normalized, "canary", [primary], { ...ownership, schools: {} }));
+  assert.notEqual(normalized.schools.primary.domain, freshStagingFixtureConfig(500, "abcdef1234").schools.primary.domain);
 });
 
 test("fresh 500 roster is exactly twenty disjoint groups of25; 40/800 retain full40-student rosters and ten foreign canaries", () => {

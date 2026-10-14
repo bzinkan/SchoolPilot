@@ -20,6 +20,7 @@ export function prepareRemoteInputs(options, env = process.env) {
   const config = remoteGeneratorConfig({ AWS_REGION: 'us-east-1', CLP_GENERATOR_ACCOUNT_ID: options.account,
     CLP_GENERATOR_BUCKET: `schoolpilot-staging-load-${options.account}`, CLP_GENERATOR_CAMPAIGN: options.campaign,
     CLP_GENERATOR_RUN_ID: options.runId, CLP_GENERATOR_DEVICES: options.devices, CLP_GENERATOR_ORIGIN: 'https://staging.school-pilot.net',
+    CLP_GENERATOR_START_AT: options.startAt,
     CLP_GENERATOR_INPUT_SHA256: '0'.repeat(64), CLP_GENERATOR_SCRIPT_SHA256: options.scriptSha,
     CLP_GENERATOR_CANDIDATE_IMAGE: options.candidateImage, CLP_GENERATOR_IMAGE_DIGEST: options.generatorDigest }, manifestBinding);
   const prepared = {};
@@ -31,6 +32,7 @@ export function prepareRemoteInputs(options, env = process.env) {
     prepared[key] = { value, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
   }
   const manifest = validateInputManifest({ version: 1, campaign: config.campaign, runId: config.runId,
+    startAt: config.startAt,
     primaryDevices: config.profile.primaryDevices, candidateApiImage: config.candidateApiImage,
     scriptBundleSha256: config.scriptBundleSha256, createdAt: new Date().toISOString(),
     files: Object.fromEntries(Object.entries(prepared).map(([key, file]) => [key, { bytes: file.bytes, sha256: file.sha256 }])) }, config);
@@ -39,6 +41,7 @@ export function prepareRemoteInputs(options, env = process.env) {
   writePrivateJson(external.outputPath, 'manifest.json', manifest);
   return { version: 1, campaign: config.campaign, runId: config.runId, primaryDevices: config.profile.primaryDevices,
     inputManifestSha256: createHash('sha256').update(readFileSync(join(external.outputPath, 'manifest.json'))).digest('hex'),
+    startAt: config.startAt,
     inputPrefix: `${config.prefix}/inputs/`, outputPrefix: `${config.prefix}/results/`,
     scriptBundleSha256: config.scriptBundleSha256, candidateApiImage: config.candidateApiImage,
     generatorImageDigest: config.generatorImageDigest };
@@ -46,10 +49,10 @@ export function prepareRemoteInputs(options, env = process.env) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    const { values } = parseArgs({ options: Object.fromEntries(['source', 'output', 'account', 'campaign', 'run-id', 'devices', 'candidate-image', 'script-sha', 'generator-digest']
+    const { values } = parseArgs({ options: Object.fromEntries(['source', 'output', 'account', 'campaign', 'run-id', 'devices', 'candidate-image', 'script-sha', 'generator-digest', 'start-at']
       .map(key => [key, { type: 'string' }]).concat([['help', { type: 'boolean' }]])) });
-    if (values.help) console.log('Prepare fresh private S3 input files for an exact isolated staging generator. --source <selected-private-cohort> --output <fresh-private-inputs> --account <12digits> --campaign <campaign> --run-id <40|500|800>-<freshhex> --devices40|500|800 --candidate-image <stageAPI@digest> --script-sha <64hex> --generator-digest sha256:<64hex>. No network calls.');
+    if (values.help) console.log('Prepare fresh private S3 input files for an exact isolated staging generator. --source <selected-private-cohort> --output <fresh-private-inputs> --account <12digits> --campaign <campaign> --run-id <40|500|800>-<freshhex> --devices40|500|800 --candidate-image <stageAPI@digest> --script-sha <64hex> --generator-digest sha256:<64hex> --start-at <canonicalUTC within five minutes>. No network calls.');
     else console.log(JSON.stringify(prepareRemoteInputs({ ...values, runId: values['run-id'], candidateImage: values['candidate-image'],
-      scriptSha: values['script-sha'], generatorDigest: values['generator-digest'] })));
+      scriptSha: values['script-sha'], generatorDigest: values['generator-digest'], startAt: values['start-at'] })));
   } catch { console.error('[remote-inputs] Refused invalid or non-private run inputs'); process.exitCode = 1; }
 }

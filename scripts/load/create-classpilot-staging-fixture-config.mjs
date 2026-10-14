@@ -10,12 +10,13 @@ import { reliabilityProfile } from './classpilot-reliability-profile.mjs';
 export function freshStagingFixtureConfig(primaryDevices, identity = randomBytes(5).toString('hex')) {
   reliabilityProfile(primaryDevices);
   assert.match(identity, /^[a-f0-9]{10}$/);
-  const fixtureId = `rel-${primaryDevices}-${identity}`, domain = 'classpilot-staging.invalid';
+  const fixtureId = `rel-${primaryDevices}-${identity}`, operatorDomain = 'classpilot-staging.invalid';
+  const domain = `${fixtureId}.${operatorDomain}`;
   return {
     version: 1, fixtureId, baseUrl: 'https://staging.school-pilot.net', syntheticStaging: true, reliabilityDeviceCount: primaryDevices,
     ownershipAcknowledgement: 'TOOL_OWNED_MARKED_NON_BILLABLE_SYNTHETIC_TENANTS_ONLY',
     emailDeliveryAcknowledgement: 'ISOLATED_STAGING_INVALID_ADDRESSES_NO_EMAIL_TRANSPORT',
-    operatorMailboxEmail: `operator@${domain}`, operatorOwnedAdminEmail: `operator+${fixtureId}-admin@${domain}`,
+    operatorMailboxEmail: `operator@${operatorDomain}`, operatorOwnedAdminEmail: `operator+${fixtureId}-admin@${domain}`,
     allowSchoolCreation: true, cleanupOwnedSchools: false,
     schools: {
       primary: { name: `[SYNTHETIC LOAD TEST - NON-BILLABLE] ${fixtureId} Primary`, domain, adminEmail: `operator+${fixtureId}-admin@${domain}` },

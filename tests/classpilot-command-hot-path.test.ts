@@ -52,8 +52,22 @@ describe("ClassPilot command and ACK hot path", () => {
       redis.indexOf("\nregisterCacheInvalidationPublisher", batchStart)
     );
     assert.match(batchSection, /publicationRuntime\.publish/);
-    assert.match(batchSection, /const pipeline = client\.multi\(\)/);
-    assert.match(batchSection, /for \(const \{ target, message, includeSource \} of cohort\)[\s\S]*?pipeline\.publish/);
+    assert.match(
+      batchSection,
+      /const serialized = items\.map\(\(\{ target, message, includeSource \}\) =>[\s\S]*?JSON\.stringify\(publicationEnvelope\(target, message, \{ includeSource \}\)\)\)/,
+    );
+    const serializationIndex = batchSection.indexOf("const serialized = items.map");
+    const cohortLoopIndex = batchSection.indexOf("for (let start = 0; start < serialized.length; start += 40)");
+    const firstAwaitIndex = batchSection.indexOf("await ");
+    assert.ok(serializationIndex >= 0 && cohortLoopIndex > serializationIndex && firstAwaitIndex > cohortLoopIndex,
+      "all input envelopes must be serialized before any cohort can await readiness or publication");
+    assert.match(batchSection, /const cohort = serialized\.slice\(start, start \+ 40\)/);
+    assert.equal(batchSection.match(/const pipeline = client\.multi\(\)/g)?.length, 1);
+    assert.match(batchSection, /for \(const envelope of cohort\) pipeline\.publish\(redisChannel, envelope\)/);
+    const publicationCallback = batchSection.slice(batchSection.indexOf("const outcome = await publicationRuntime.publish"),
+      batchSection.indexOf('if (outcome.status === "accepted")'));
+    assert.doesNotMatch(publicationCallback, /JSON\.stringify|publicationEnvelope/,
+      "publication may only consume the already frozen envelope bytes");
     assert.match(batchSection, /await pipeline\.exec\(\)/);
     assert.match(batchSection, /result\.status === "accepted" && result\.value > 0/);
     assert.match(dispatchSection, /withClasspilotStudentControlDeliveryBatch\(/);
