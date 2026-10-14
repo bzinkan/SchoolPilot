@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Suite','OfflineRehearsal','HostSmoke')]
+    [ValidateSet('Suite','OfflineRehearsal','HostSmoke','NativeProcessIdentity')]
     [string]$Mode = 'Suite',
     [string]$EvidenceOutputPath,
     [ValidateRange(1560, 2100)]
@@ -58,6 +58,109 @@ function Assert-Throws {
 function Get-Sha256 {
     param([string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Invoke-NativeProcessIdentityRegression {
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        $supervisorPath, [ref]$tokens, [ref]$errors
+    )
+    Assert-Condition ($errors.Count -eq 0) 'The native identity subject must parse.'
+    foreach ($name in @('Get-Value','Get-RequiredValue','ConvertTo-UtcString')) {
+        $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq $name
+        }, $true)
+        Assert-Condition ($null -ne $definition) 'A pure identity dependency is missing.'
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $definition = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Test-BoundProcessPresent'
+    }, $true)
+    Assert-Condition ($null -ne $definition) 'The actual supervisor identity subject is missing.'
+    $subject = $definition.Extent.Text.Replace(
+        'Test-BoundProcessPresent', 'Invoke-NativeIdentitySubject'
+    )
+    $exitCheck = 'try { if ($process.HasExited) { return $false } } catch { }'
+    Assert-Condition ($subject.Contains($exitCheck)) 'The proven-exit fence must remain in the actual subject.'
+    # The native fault is injected only between process lookup and property
+    # inspection; production still executes its real identity/exception path.
+    $exitInjection = @'
+        $script:NativeIdentityExitChild.StandardInput.WriteLine('exit')
+        if (-not $process.WaitForExit(5000)) { throw 'The controlled harmless child did not exit.' }
+        $actualStarted = ConvertTo-UtcString $process.StartTime
+'@
+    $legacy = $subject.Replace($exitCheck, '')
+    $forceExit = '$actualStarted = ConvertTo-UtcString $process.StartTime'
+    $forceAccessDenial = '$actualPath = [IO.Path]::GetFullPath($process.Path)'
+    $variants = @(
+        @{name='legacy-live';code=$legacy;expected='present'},
+        @{name='actual-live';code=$subject;expected='present'},
+        @{name='legacy-exit-during-inspection';code=$legacy.Replace($forceExit,$exitInjection);expected='rejection'},
+        @{name='actual-exit-during-inspection';code=$subject.Replace($forceExit,$exitInjection);expected='absent'},
+        @{name='legacy-inaccessible-live';code=$legacy.Replace($forceAccessDenial,'throw [ComponentModel.Win32Exception]::new(5)');expected='rejection'},
+        @{name='actual-inaccessible-live';code=$subject.Replace($forceAccessDenial,'throw [ComponentModel.Win32Exception]::new(5)');expected='rejection'},
+        @{name='actual-wrong-creation-time';code=$subject;expected='absent';wrongStart=$true},
+        @{name='actual-wrong-image';code=$subject;expected='absent';wrongPath=$true}
+    )
+    $results = [Collections.Generic.List[object]]::new()
+    foreach ($variant in $variants) {
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = (Get-Command pwsh -ErrorAction Stop).Source
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardInput = $true
+        foreach ($argument in @('-NoLogo','-NoProfile','-NonInteractive','-Command',
+            '[void][Console]::In.ReadLine(); exit 0')) { $start.ArgumentList.Add($argument) }
+        $child = [Diagnostics.Process]::new()
+        $child.StartInfo = $start
+        $script:NativeIdentityExitChild = $child
+        try {
+            Assert-Condition ($child.Start()) 'The test must create only its own harmless native child.'
+            $ready = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $child.Refresh()
+                if (-not $child.HasExited -and -not [string]::IsNullOrWhiteSpace($child.Path)) { break }
+                Start-Sleep -Milliseconds 10
+            } while ($ready.Elapsed.TotalSeconds -lt 5)
+            Assert-Condition (-not $child.HasExited -and -not [string]::IsNullOrWhiteSpace($child.Path)) `
+                'The harmless child image must be readable before its inspection fault is injected.'
+            $identity = @{
+                pid=$child.Id
+                startedAtUtc=ConvertTo-UtcString $child.StartTime
+                path=[IO.Path]::GetFullPath($child.Path)
+            }
+            if ($variant.ContainsKey('wrongStart')) {
+                $identity.startedAtUtc = [DateTimeOffset]::Parse($identity.startedAtUtc).AddSeconds(1).ToString('o')
+            }
+            if ($variant.ContainsKey('wrongPath')) {
+                $identity.path = Join-Path ([IO.Path]::GetTempPath()) 'different-owned-image.exe'
+            }
+            . ([scriptblock]::Create($variant.code))
+            try {
+                $present = Invoke-NativeIdentitySubject $identity
+                $outcome = if ($present) { 'present' } else { 'absent' }
+            }
+            catch {
+                Assert-Condition ($_.Exception.Message -ceq 'The bound process identity could not be inspected safely.') `
+                    'Live inspection denial must retain its strict masked failure.'
+                $outcome = 'rejection'
+            }
+            Assert-Condition ($outcome -ceq $variant.expected) ('Native identity case failed: ' + $variant.name)
+            $results.Add(@{case=$variant.name;expected=$variant.expected;actual=$outcome;passed=$true})
+        }
+        finally {
+            if (-not $child.HasExited) { $child.Kill(); [void]$child.WaitForExit(5000) }
+            $child.Dispose()
+            $script:NativeIdentityExitChild = $null
+        }
+    }
+    Assert-Condition ($results.Count -eq 8) 'All eight native exit/identity cases must execute.'
+    Write-Output ('PASS: 8 native process identity cases; no AWS or preparation mutation.')
 }
 
 function Test-ExactProcessPresent {
@@ -1145,6 +1248,11 @@ function Get-SupervisorBindingArguments {
         '-SupervisorResultPath',$resultPath,
         '-ExpectedSupervisorResultSha256',(Get-Sha256 $resultPath)
     )
+}
+
+if ($Mode -in @('Suite','NativeProcessIdentity')) {
+    Invoke-NativeProcessIdentityRegression
+    if ($Mode -ceq 'NativeProcessIdentity') { return }
 }
 
 foreach ($path in @($workerPath,$supervisorPath,$binderPath,$diagnosticPath,$certificationPath)) {
