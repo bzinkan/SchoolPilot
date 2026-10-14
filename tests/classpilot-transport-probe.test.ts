@@ -7,6 +7,9 @@ import pg from "pg";
 import { WebSocket } from "ws";
 
 process.env.REDIS_URL = "";
+// This socket-only test imports the application pool but must never connect.
+// Keep it independent of a developer .env and the DB-enabled CI lanes.
+process.env.DATABASE_URL = "postgresql://unit:unit@127.0.0.1:1/schoolpilot_unit";
 
 test("authenticated transport probes echo only bounded nonces without DB, presence or authority renewal", { timeout: 10_000 }, async t => {
   const transport = await import("../src/realtime/websocket.js");
