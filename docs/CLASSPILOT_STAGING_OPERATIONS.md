@@ -18,15 +18,25 @@ $stagingWorkspace = Get-Content (Join-Path $stagingPrivateRoot 'staging-workspac
 $env:TF_DATA_DIR = $stagingWorkspace.dataDirectory
 $env:TF_WORKSPACE = 'default'
 Remove-Item Env:TF_CLI_ARGS,Env:TF_CLI_ARGS_init,Env:TF_CLI_ARGS_plan,Env:TF_CLI_ARGS_apply -ErrorAction SilentlyContinue
-terraform ('-chdir=' + $stagingWorkspace.terraformRoot) init -backend=false -input=false -lockfile=readonly
-terraform ('-chdir=' + $stagingWorkspace.terraformRoot) validate -no-tests
-terraform ('-chdir=' + $stagingWorkspace.terraformRoot) plan -input=false `
-  -var-file=staging.tfvars -var=staging_bootstrap=true `
-  -var=ecs_desired_count=0 -var=worker_desired_count=0 `
+if ($stagingWorkspace.environment -ne 'staging') { throw 'Unexpected workspace environment' }
+$implicitState = Join-Path $stagingWorkspace.terraformRoot 'terraform.tfstate'
+if (Test-Path -LiteralPath $implicitState) { throw 'Unexpected snapshot-local state; stop and reconcile private custody' }
+if (Test-Path -LiteralPath $stagingWorkspace.statePath) { throw 'Initial bootstrap requires absent explicit staging state' }
+terraform ('-chdir=' + $stagingWorkspace.terraformRoot) init '-backend=false' '-input=false' '-lockfile=readonly'
+terraform ('-chdir=' + $stagingWorkspace.terraformRoot) validate '-no-tests'
+terraform ('-chdir=' + $stagingWorkspace.terraformRoot) plan '-input=false' `
+  '-var-file=staging.tfvars' '-var=staging_bootstrap=true' `
+  '-var=ecs_desired_count=0' '-var=worker_desired_count=0' `
   ('-state=' + $stagingWorkspace.statePath) ('-out=' + $stagingWorkspace.bootstrapPlanPath)
+# Apply only after saved-plan review and the encrypted before backup.
+terraform ('-chdir=' + $stagingWorkspace.terraformRoot) apply '-input=false' `
+  ('-state=' + $stagingWorkspace.statePath) $stagingWorkspace.bootstrapPlanPath
+if (-not (Test-Path -LiteralPath $stagingWorkspace.statePath -PathType Leaf) -or
+    (Test-Path -LiteralPath $implicitState)) { throw 'Explicit staging state custody did not converge' }
 ```
 
-The preparer refuses an existing workspace/state/data directory and copies only
+The preparer refuses existing workspace/state/data/receipt paths, inherited or
+other-user directory access, and reparse-point traversal. It copies only
 source files and the two required capacity/RLS JSON configurations. It does not
 read or copy the repository's `.terraform` or `terraform.tfstate`. Do not run
 `init`, `plan`, `apply`, `state` or `destroy` in the repository infrastructure
@@ -40,6 +50,20 @@ the run. Root applies the reviewed saved plan and verifies the explicit staging
 state location, service counts and unchanged production state identity. Back up
 private state and receipts after each mutation using the protected DPAPI and
 AES recovery procedure; never print secret values or decrypted backups.
+Before/After `RecoveryPath` values must be under
+`$OneDrive/SchoolPilot-Recovery`, as enforced by
+`scripts/terraform-state-backup.ps1`.
+
+Every later plan **and saved-plan apply** must include
+`('-state=' + $stagingWorkspace.statePath)` explicitly. The saved plan alone
+does not reliably preserve the plan command's local state path. Before either
+command, require the explicit state file to exist and refuse any
+`terraform.tfstate` inside the isolated snapshot. Preserve encrypted Before and
+After copies. The first staging apply wrote state inside the isolated snapshot;
+the operator encrypted/backed it up, verified its hash, and moved it to the
+receipt's explicit state path. Production state remained unchanged. Do not
+repeat that recovery by creating a second empty staging state or reapplying a
+create-only plan.
 
 ## Image, schema and fresh credentials
 
@@ -104,6 +128,20 @@ is added. Validate public login/logout, CSRF, enrollment, socket authentication,
 foreign-school denial and cookie isolation before load.
 
 ## Fixed capacity and cleanup
+
+Optional remote generator custody is in `infra/staging-load-generator.tf`.
+Enable it only in the next reviewed staging plan with
+`enable_staging_load_generator=true` and the exact `staging_load_run_id`.
+The private, encrypted, versioned bucket is
+`schoolpilot-staging-load-135775632425`; lifecycle rules expire current and
+noncurrent campaign objects after one day. The generator task role can only
+GET `runs/<campaign>/<subrun>/inputs/*` and PUT
+`runs/<campaign>/<subrun>/results/*`. It has no SSM, database or bucket-list
+permission. Use a new `40-<id>`, `500-<id>` or `800-<id>` subrun each time, and
+exact-key downloads/uploads. Its separate ECS execution role handles image
+pulls/logs; its 2-vCPU/4-GiB load task does not count as serving API capacity.
+Export artifacts before expiry and remove this optional custody stack during
+the same reviewed teardown.
 
 The profile uses three API tasks at 1024 CPU/2048 MiB and one worker at
 512 CPU/1024 MiB; smoke may use one API. It explicitly selects Single-AZ

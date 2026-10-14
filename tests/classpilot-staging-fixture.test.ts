@@ -3,7 +3,9 @@ import { test } from "node:test";
 import pg from "pg";
 import { stagingOperatorConnection, stagingOperatorEnvironment } from "../src/cli/bootstrapClasspilotStagingOperator.js";
 const { buildFixtureBlueprint, buildDryRunSummary, validateConfig } = await import(new URL("../scripts/load/prepare-classpilot-load-test.mjs", import.meta.url).href);
-const { validateReliabilityCommandBodies } = await import(new URL("../scripts/load/select-classpilot-reliability-cohort.mjs", import.meta.url).href);
+const { validateReliabilityCommandBodies, selectReliabilityCohort } = await import(new URL("../scripts/load/select-classpilot-reliability-cohort.mjs", import.meta.url).href);
+const { freshStagingFixtureConfig } = await import(new URL("../scripts/load/create-classpilot-staging-fixture-config.mjs", import.meta.url).href);
+const { loadSessionCookieName } = await import(new URL("../scripts/load/session-cookie.mjs", import.meta.url).href);
 import { initialReliabilityCommandBurst, stampReliabilityFrame, readReliabilityFrame } from "../scripts/load/reliability-rendered-frame.mjs";
 
 const host = "schoolpilot-staging-db.fixture.us-east-1.rds.amazonaws.com";
@@ -117,4 +119,48 @@ test("initial reliability commands all enter before any response, and unique fra
   assert.deepEqual(readReliabilityFrame(first), { capturedAt: timestamp, ordinal: 1 });
   assert.equal(readReliabilityFrame(source), null);
   assert.throws(() => stampReliabilityFrame('data:image/png;base64,aaa', timestamp, 1));
+});
+
+test("fresh generated staging fixtures export exact50/510/810 governed actors and refuse cross-bound source devices", () => {
+  for (const count of [40, 500, 800]) {
+    const normalized = validateConfig(freshStagingFixtureConfig(count, 'abcdef1234'));
+    const blueprint = buildFixtureBlueprint(normalized);
+    const students = {
+      primary: blueprint.primaryStudents.map((student: { ordinal: number }) => ({ ...student, id: `primary-student-${student.ordinal}` })),
+      canary: blueprint.canaryStudents.map((student: { ordinal: number }) => ({ ...student, id: `canary-student-${student.ordinal}` })),
+    };
+    const teachers = blueprint.teachers.map((teacher: { ordinal: number }) => ({ ...teacher, userId: `teacher-${teacher.ordinal}`,
+      membershipId: `membership-${teacher.ordinal}`, classId: `class-${teacher.ordinal}`, className: blueprint.classes[teacher.ordinal - 1].name }));
+    const devices = blueprint.devices.map((device: { schoolKey: "primary" | "canary"; studentOrdinal: number; classOrdinal: number | null }) => ({
+      ...device, schoolId: device.schoolKey, studentId: students[device.schoolKey][device.studentOrdinal - 1].id,
+      classId: device.classOrdinal === null ? null : `class-${device.classOrdinal}`,
+    }));
+    const schools = Object.fromEntries(["primary", "canary"].map(key => [key, { ...normalized.schools[key], id: key,
+      createdByTool: true, nonBillableVerifiedAt: new Date().toISOString(), billingProtectionVerified: true }]));
+    const sessions = teachers.map((teacher: { userId: string; classId: string }, index: number) => ({ teacherUserId: teacher.userId,
+      classId: teacher.classId, sessionId: `session-${index}` }));
+    const state = { schemaVersion: 1, fixtureId: normalized.fixtureId, baseUrl: normalized.baseUrl,
+      ownershipAcknowledgement: normalized.ownershipAcknowledgement, schools, students, teachers, devices, sessions,
+      admin: { userId: "admin", email: normalized.schools.primary.adminEmail } };
+    const expiresAt = new Date(Date.now() + 48 * 3600_000).toISOString();
+    const jwt = (userId: string, email: string) => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ userId, email, exp: Math.floor(Date.parse(expiresAt) / 1000) })).toString('base64url')}.synthetic`;
+    const teacherAuth = teachers.map((teacher: { userId: string; email: string; classId: string }, index: number) => ({ teacherId: teacher.userId,
+      schoolId: "primary", role: "teacher", teachingSessionId: sessions[index].sessionId,
+      teacherCookie: `${loadSessionCookieName()}=synthetic-${index}`, csrfToken: `csrf-${index}`, teacherToken: jwt(teacher.userId, teacher.email), expiresAt,
+      studentIds: devices.filter((device: { classId: string | null }) => device.classId === teacher.classId).map((device: { studentId: string }) => device.studentId) }));
+    const auth = { schemaVersion: 2, baseUrl: normalized.baseUrl, schoolId: "primary", role: "school_admin",
+      expiresAt, deviceManifestExpiresAt: expiresAt, teacherCookie: `${loadSessionCookieName()}=synthetic-admin`, csrfToken: "admin-csrf",
+      teacherToken: jwt("admin", state.admin.email), teacherAuth };
+    const manifest = devices.map((device: { deviceId: string; studentId: string; schoolId: string; classId: string | null }) => ({
+      deviceId: device.deviceId, studentId: device.studentId, schoolId: device.schoolId, classId: device.classId, studentToken: "synthetic-device-token" }));
+    const commands = teacherAuth.map((actor: { teachingSessionId: string }) => ({ teachingSessionId: actor.teachingSessionId,
+      targetScope: "class", commandType: "open-tab", commandPayload: { url: normalized.commandUrl } }));
+    const input = { config: normalized, state, auth, devices: manifest, commands, primaryDevices: count };
+    const selected = selectReliabilityCohort(input);
+    assert.equal(selected.devices.length, count + 10);
+    assert.equal(selected.auth.teacherAuth.length, count === 40 ? 1 : 20);
+    assert.ok(selected.devices.slice(0, 10).every((device: { schoolId: string }) => device.schoolId === "canary"));
+    const tampered = structuredClone(manifest); tampered[10]!.studentId = "foreign-student";
+    assert.throws(() => selectReliabilityCohort({ ...input, devices: tampered }));
+  }
 });
