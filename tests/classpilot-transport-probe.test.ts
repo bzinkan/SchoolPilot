@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { on, once } from "node:events";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { setTimeout as pause } from "node:timers/promises";
 import pg from "pg";
 import { WebSocket } from "ws";
 
@@ -30,9 +29,24 @@ test("authenticated transport probes echo only bounded nonces without DB, presen
   await once(client, "open");
   const [socket] = await connected; assert.ok(socket instanceof WebSocket);
   const binding = { schoolId: "synthetic-school", studentId: "synthetic-student", studentSessionId: "synthetic-session", deviceId: "synthetic-device" };
+  const sendAndFlush = async (frames: readonly Record<string, unknown>[]) => {
+    const arrivals = on(socket, "message", { signal: t.signal });
+    try {
+      for (const frame of frames) client.send(JSON.stringify(frame));
+      let count = 0;
+      for await (const _ of arrivals) if (++count === frames.length) break;
+      await transport.drainWebSocketWork();
+      // Observe native consumption and queue completion before mutating this
+      // fixture's auth state. A control-frame round trip also flushes any prior
+      // server reply to the client before the negative assertion is checked.
+      const flushed = once(client, "pong", { signal: t.signal });
+      client.ping("probe_fixture_flush");
+      const [payload] = await flushed;
+      assert.equal(payload.toString(), "probe_fixture_flush");
+    } finally { await arrivals.return?.(); }
+  };
   try {
-    client.send(JSON.stringify({ type: "transport-probe", nonce: "anonymous_1" }));
-    await pause(30);
+    await sendAndFlush([{ type: "transport-probe", nonce: "anonymous_1" }]);
     assert.equal(received.length, 0, "an unauthenticated socket cannot obtain the negotiated echo");
     assert.equal(await transport.deliverClasspilotStudentBindingRedisMessage({ kind: "student-binding", ...binding }, { type: "synthetic" }), false);
     const state = sockets.authenticateWsClient(socket, { role: "student", ...binding, acceptedCapabilities: [] });
@@ -50,10 +64,8 @@ test("authenticated transport probes echo only bounded nonces without DB, presen
     assert.equal(sockets.hasStudentBindingSocketLocal(binding, { type: "synthetic" }, { requiredCapability: "not-supported" }), false);
     assert.equal(await transport.deliverClasspilotStudentBindingRedisMessage({ kind: "student-binding", ...binding, studentSessionId: "replacement-session" }, { type: "synthetic" }), false);
     const count = received.length;
-    for (const nonce of ["short", "x".repeat(65), "invalid nonce", "éééééééé", null, { value: "object_1" }]) {
-      client.send(JSON.stringify({ type: "transport-probe", nonce }));
-    }
-    await pause(30);
+    await sendAndFlush(["short", "x".repeat(65), "invalid nonce", "éééééééé", null, { value: "object_1" }]
+      .map(nonce => ({ type: "transport-probe", nonce })));
     assert.equal(received.length, count);
     assert.equal(queries, 0);
   } finally {
