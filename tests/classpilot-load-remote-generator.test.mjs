@@ -46,6 +46,17 @@ const goodSummary = () => ({ runId: config.runId, targetOrigin: baseEnv.CLP_GENE
     testOnlyLatencyThresholdMultiplier: 1, plannedTrafficSeconds: 600, actualTrafficSeconds: 600 },
   artifacts: { externalProgressFinalized: true, externalSummaryWritten: true } });
 
+test('generator image copies exactly the immutable runtime manifest modules', () => {
+  const dockerfile = readFileSync(new URL('../scripts/load/Dockerfile.remote-generator', import.meta.url), 'utf8');
+  const copies = dockerfile.split(/\r?\n/).filter(line => line.startsWith('COPY ') && line.endsWith(' /app/scripts/load/'));
+  assert.equal(copies.length, 1);
+  const sources = copies[0].split(/\s+/).slice(2, -1);
+  assert.ok(sources.every(source => source.startsWith('scripts/load/')));
+  const names = sources.map(source => source.slice('scripts/load/'.length));
+  assert.equal(new Set(names).size, names.length);
+  assert.deepEqual(names.sort(), [...REMOTE_GENERATOR_SCRIPTS].sort());
+});
+
 test('remote campaign refuses production, mutable images, provider credentials and mismatched task identity', () => {
   assert.equal(config.profile.durationSeconds, 600);
   for (const override of [{ CLP_GENERATOR_ORIGIN: 'https://school-pilot.net' }, { CLP_GENERATOR_BUCKET: 'production' },

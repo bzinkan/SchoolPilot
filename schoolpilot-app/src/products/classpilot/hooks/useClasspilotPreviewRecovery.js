@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { apiRequest } from '../../../lib/queryClient';
-import { withClasspilotReadDeadline, stepClasspilotPreviewRecovery } from '../lib/classpilotRecovery';
+import { withClasspilotReadDeadline, stepClasspilotPreviewRecovery, normalizeClasspilotPreviewTimestamp } from '../lib/classpilotRecovery';
 
 export function useClasspilotPreviewRecovery({ fastScreenshotStudents, screenshotsByStudent, screenshotTileReadsEnabled,
   deniedScreenshotReadIds, studentView, claimedStudentObservationStatus, observationLeaseStatus,
@@ -51,10 +51,11 @@ export function useClasspilotPreviewRecovery({ fastScreenshotStudents, screensho
       if (document.visibilityState !== 'visible') return;
       const current = previewRecoverySnapshotRef.current;
       const buffer = clientHealthRef.current;
+      const now = Date.now();
       if (current?.enabled) for (const student of current.students) {
         if (current.denied.has(student.studentId)) continue;
-        const capturedAt = Date.parse(current.screenshots.get(student.studentId)?.timestamp || '');
-        const age = Date.now() - capturedAt;
+        const capturedAt = normalizeClasspilotPreviewTimestamp(current.screenshots.get(student.studentId)?.timestamp, now);
+        const age = capturedAt === null ? NaN : now - capturedAt;
         const bucket = !Number.isFinite(age) || age < -60_000 ? 5 : age <= 5_000 ? 0 : age <= 10_000 ? 1 : age <= 15_000 ? 2 : age <= 30_000 ? 3 : 4;
         buffer.freshnessBuckets[bucket] += 1;
       }

@@ -37,13 +37,13 @@ after(() => {
   rmSync(target, { recursive: true, force: true });
 });
 
-test('actual controller accepts exactly fourteen immutable LF dependencies', () => {
+test('actual controller accepts exactly nineteen immutable LF dependencies', () => {
   const evidence = assertRenderedControllerDependencyClosure(freshClosure());
-  assert.equal(names.length, 14);
+  assert.equal(names.length, 19);
   assert.equal(Object.isFrozen(RENDERED_CONTROLLER_DEPENDENCIES), true);
   assert.equal(Object.isFrozen(evidence), true);
   assert.equal(evidence.version, 1);
-  assert.equal(evidence.files, 14);
+  assert.equal(evidence.files, 19);
   assert.match(evidence.sha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(evidence, RENDERED_CONTROLLER_DEPENDENCY_EVIDENCE);
 });

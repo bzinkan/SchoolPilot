@@ -1,7 +1,15 @@
+import { normalizeObservedAtForDisplay } from './studentMonitoringDisplay.js';
+
 export const CLASSPILOT_READ_DEADLINE_MS = 8_000;
 export const CLASSPILOT_FAST_READ_MS = 5_000;
 export const CLASSPILOT_PREVIEW_WATCHDOG_MS = 8_000;
 export const CLASSPILOT_FAST_STUDENT_LIMIT = 100;
+
+export function normalizeClasspilotPreviewTimestamp(value, now = Date.now()) {
+  return typeof value === 'number' || typeof value === 'string'
+    ? normalizeObservedAtForDisplay(value, now)
+    : null;
+}
 
 export function selectClasspilotFastStudents(students, { eligibleIds, nearViewportIds, tracking, priorityStudentId }) {
   const eligible = students.filter(student => eligibleIds.has(student.studentId));
@@ -26,8 +34,7 @@ export function stepClasspilotPreviewRecovery(recoveries, { students, screenshot
       recoveries.delete(id); continue;
     }
     const frame = screenshots.get(id);
-    const raw = Date.parse(frame?.timestamp || '');
-    const capturedAt = Number.isFinite(raw) ? Math.min(raw, now) : null;
+    const capturedAt = normalizeClasspilotPreviewTimestamp(frame?.timestamp, now);
     const bindingKey = JSON.stringify([student.realtimeBinding || '', frame?.bindingVersion || '']);
     let entry = recoveries.get(id);
     if (!entry || entry.bindingKey !== bindingKey) {

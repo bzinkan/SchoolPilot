@@ -82,11 +82,89 @@ test('all endpoint histograms remain bounded and their serialized final evidence
   }
   const summary = collection.summary();
   const serialized = JSON.stringify(summary);
-  assert.ok(Buffer.byteLength(serialized) < 2 * 1024 * 1024, 'even worst-case safe counters leave room for the remaining aggregate run summary');
+  assert.ok(Buffer.byteLength(serialized) < 4 * 1024 * 1024, 'twenty-seven fixed categories with worst-case safe counters retain bounded aggregate headroom');
   assert.ok(Buffer.byteLength(JSON.stringify(summary, null, 2)) < 16 * 1024 * 1024, 'the actual formatted evidence encoding also stays bounded');
   assert.equal(summary.bucketUpperBoundsMs.length, bucketCount);
   assert.equal(summary.bucketUpperBoundsMs[FINE_LATENCY_MAX_MS], 8_000);
   assert.equal(summary.bucketUpperBoundsMs[FINE_LATENCY_OVERFLOW_INDEX], null);
   assert.ok(Object.values(summary.endpoints).every(value => value.counts.every(Number.isSafeInteger)));
   assert.equal(JSON.parse(serialized).resolutionMs, 1);
+});
+
+const teacherDashboardRoutes = [
+  ['GET', '/api/sessions/active', 'GET /api/sessions/active'],
+  ['GET', '/api/classpilot/dashboard-activity', 'GET /api/classpilot/dashboard-activity'],
+  ['GET', '/api/coverage/summary', 'GET /api/coverage/summary'],
+  ['GET', '/api/teacher/messages', 'GET /api/teacher/messages'],
+  ['GET', '/api/classpilot/schedule-changes/today', 'GET /api/classpilot/schedule-changes/today'],
+  ['POST', '/api/classpilot/monitoring/client-health', 'POST /api/classpilot/monitoring/client-health'],
+  ['GET', '/api/classpilot/commands/private-command/status', 'GET /api/classpilot/commands/{commandId}/status'],
+  ['GET', '/api/settings', 'GET /api/settings'],
+  ['GET', '/api/flight-paths', 'GET /api/flight-paths'],
+  ['GET', '/api/block-lists', 'GET /api/block-lists'],
+  ['GET', '/api/teacher/groups', 'GET /api/teacher/groups'],
+  ['GET', '/api/coverage/capabilities', 'GET /api/coverage/capabilities'],
+  ['GET', '/api/groups/private-group/subgroups', 'GET /api/groups/{groupId}/subgroups'],
+  ['GET', '/api/classpilot/teacher/preferences', 'GET /api/classpilot/teacher/preferences'],
+  ['GET', '/api/admin/attendance', 'GET /api/admin/attendance'],
+];
+
+test('actual teacher polling and mount route shapes have fixed method-scoped labels without query or identifier evidence', () => {
+  const collection = new FineEndpointLatencies();
+  for (const [method, pathname, expected] of teacherDashboardRoutes) {
+    for (const query of ['', '?scope=mine&sessionId=private-query&date=private-date']) {
+      const label = fineLatencyEndpoint(method, pathname + query);
+      assert.equal(label, expected);
+      collection.observe(label, 100.1);
+    }
+  }
+  const summary = collection.summary();
+  assert.equal(summary.unclassifiedCount, 0);
+  assert.equal(Object.keys(summary.endpoints).length, teacherDashboardRoutes.length);
+  assert.ok(Object.values(summary.endpoints).every(value => value.count === 2 && value.p95Bounds.upperMs === 101));
+  assert.doesNotMatch(JSON.stringify(summary), /private-command|private-group|private-query|private-date|scope=|sessionId=|https?:/);
+});
+
+test('teacher endpoint categories refuse other methods, sibling routes and malformed dynamic segments', () => {
+  for (const [method, pathname] of teacherDashboardRoutes) {
+    assert.equal(fineLatencyEndpoint(method === 'GET' ? 'POST' : 'GET', pathname), null);
+    assert.equal(fineLatencyEndpoint(method.toLowerCase(), pathname), null);
+    assert.equal(fineLatencyEndpoint(method + ' ', pathname), null);
+    assert.equal(fineLatencyEndpoint(method, pathname + '/extra'), null);
+    assert.equal(fineLatencyEndpoint(method, pathname + '#private'), null);
+    assert.equal(fineLatencyEndpoint(method, pathname + '\n'), null);
+    assert.equal(fineLatencyEndpoint(method, 'https://foreign.invalid' + pathname), null);
+  }
+  for (const prefix of ['/api/classpilot/commands/', '/api/groups/']) {
+    const suffix = prefix.includes('commands') ? '/status' : '/subgroups';
+    for (const id of ['', '.', '..', '{commandId}', '{groupId}', '%2fprivate', '%2Fprivate', 'part/part', 'private space', 'private\\part', 'private;part', 'x'.repeat(257)]) {
+      assert.equal(fineLatencyEndpoint('GET', prefix + id + suffix), null);
+    }
+    assert.notEqual(fineLatencyEndpoint('GET', prefix + 'x'.repeat(256) + suffix + '?ignored=private'), null);
+  }
+  for (const method of [null, undefined, 1, { toString: () => 'GET' }]) {
+    assert.equal(fineLatencyEndpoint(method, '/api/sessions/active'), null);
+  }
+  for (const pathname of [null, undefined, 1, {}, '/api/unknown/private', '/api/unknown?path=/api/settings', '/api/sessions/active-extra']) {
+    assert.equal(fineLatencyEndpoint('GET', pathname), null);
+  }
+});
+
+test('teacher categories preserve the original twelve producer and capture metric families exactly', () => {
+  const original = [
+    'POST /api/classpilot/device/heartbeat', 'POST /api/classpilot/device/screenshot',
+    'GET /api/students-aggregated', 'POST /api/classpilot/tiles/history',
+    'POST /api/classpilot/tiles/screenshots', 'POST /api/classpilot/commands',
+    'GET /api/classpilot/commands/active-state', 'GET /api/classpilot/teacher/raised-hands',
+    'PUT /api/classpilot/teaching-sessions/{teachingSessionId}/observation-lease',
+    'DELETE /api/classpilot/teaching-sessions/{teachingSessionId}/observation-lease',
+    'GET /api/classpilot/heartbeats/{deviceId}', 'GET /api/classpilot/device/screenshot/{deviceId}',
+  ];
+  assert.deepEqual(FINE_LATENCY_ENDPOINTS.slice(0, original.length), original);
+  assert.equal(new Set(FINE_LATENCY_ENDPOINTS).size, FINE_LATENCY_ENDPOINTS.length);
+  for (const label of original) {
+    const space = label.indexOf(' '), method = label.slice(0, space);
+    const pathname = label.slice(space + 1).replace(/\{[^}]+\}/g, 'private-binding');
+    assert.equal(fineLatencyEndpoint(method, pathname + '?ignored=private'), label);
+  }
 });

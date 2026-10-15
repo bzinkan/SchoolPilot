@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { RenderedHttpMetrics, RENDERED_HTTP_DEADLINE_MS, RENDERED_SIZE_DIAGNOSTIC_DEADLINE_MS } from '../scripts/load/rendered-http-metrics.mjs';
+import { renderedHttpEndpointClassificationComplete } from '../scripts/load/run-classpilot-rendered-dashboards.mjs';
 
 function fixture(maxTracked) {
   let now = 0;
@@ -11,6 +12,56 @@ function fixture(maxTracked) {
   const request = (path, method = 'GET') => ({ url: () => 'https://staging.school-pilot.net' + path, method: () => method });
   return { metrics, request, timers, advance: value => { now = value; } };
 }
+
+test('actual teacher dashboard route inventory is timed once per full body with fixed privacy-safe categories', () => {
+  const { metrics, request, advance } = fixture();
+  const routes = [
+    ['GET', '/api/sessions/active'], ['GET', '/api/classpilot/dashboard-activity'],
+    ['GET', '/api/coverage/summary'], ['GET', '/api/teacher/messages'],
+    ['GET', '/api/classpilot/schedule-changes/today'], ['POST', '/api/classpilot/monitoring/client-health'],
+    ['GET', '/api/classpilot/commands/private-command/status'], ['GET', '/api/settings'],
+    ['GET', '/api/flight-paths'], ['GET', '/api/block-lists'], ['GET', '/api/teacher/groups'],
+    ['GET', '/api/coverage/capabilities'], ['GET', '/api/groups/private-group/subgroups'],
+    ['GET', '/api/classpilot/teacher/preferences'], ['GET', '/api/admin/attendance'],
+  ];
+  metrics.startWindow(0, 600_000);
+  for (const [index, [method, pathname]] of routes.entries()) {
+    const current = request(pathname + '?scope=private-query', method), start = index * 100;
+    advance(start); metrics.begin(current, 0);
+    advance(start + 5); metrics.response(current, 200);
+    advance(start + 20); metrics.finish(current);
+    metrics.finish(current);
+  }
+  const unknown = request('/api/not-a-known-teacher-route/private-value?secret=private-query');
+  metrics.begin(unknown); metrics.response(unknown, 200); metrics.finish(unknown);
+  const summary = metrics.summary();
+  assert.equal(summary.counters.requestsStarted, 16);
+  assert.equal(summary.counters.measurementsSettled, 16);
+  assert.equal(summary.counters.bodiesCompleted, 16);
+  assert.equal(summary.counters.unclassifiedRequests, 1);
+  assert.equal(summary.fineEndpointLatency.unclassifiedCount, 1);
+  assert.equal(Object.keys(summary.fineEndpointLatency.endpoints).length, 15);
+  assert.ok(Object.values(summary.fineEndpointLatency.endpoints).every(value => value.count === 1 && value.p95Bounds.upperMs === 20));
+  assert.ok(Object.values(summary.endpointRequestsPerActor).every(counts => counts[0] === 1 && counts.slice(1).every(count => count === 0)));
+  assert.equal(summary.allStartedRequestsMeasured, true, 'whole-body census completeness does not certify classification completeness');
+  assert.equal(renderedHttpEndpointClassificationComplete(summary), false);
+  assert.equal(summary.rawInFlightAfterDrain, 0);
+  assert.doesNotMatch(JSON.stringify(summary), /private-command|private-group|private-query|private-value|not-a-known-teacher-route|secret=|scope=|https?:/);
+});
+
+test('endpoint acceptance requires both complete fixed-label censuses and rejects missing evidence', () => {
+  const { metrics, request, advance } = fixture();
+  metrics.startWindow(0, 600_000);
+  const current = request('/api/sessions/active');
+  metrics.begin(current, 0); advance(20); metrics.response(current, 200); metrics.finish(current);
+  const summary = metrics.summary();
+  assert.equal(renderedHttpEndpointClassificationComplete(summary), true);
+  for (const value of [undefined, {}, { counters: { unclassifiedRequests: 0 } },
+    { ...summary, counters: { ...summary.counters, unclassifiedRequests: 1 } },
+    { ...summary, fineEndpointLatency: { ...summary.fineEndpointLatency, unclassifiedCount: 1 } }]) {
+    assert.equal(renderedHttpEndpointClassificationComplete(value), false);
+  }
+});
 
 test('browser census excludes setup/outside traffic and times the complete body rather than headers', () => {
   const { metrics, request, advance } = fixture();

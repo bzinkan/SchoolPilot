@@ -9,6 +9,14 @@ export const FINE_LATENCY_ENDPOINTS = Object.freeze([
   'PUT /api/classpilot/teaching-sessions/{teachingSessionId}/observation-lease',
   'DELETE /api/classpilot/teaching-sessions/{teachingSessionId}/observation-lease',
   'GET /api/classpilot/heartbeats/{deviceId}', 'GET /api/classpilot/device/screenshot/{deviceId}',
+  'GET /api/sessions/active', 'GET /api/classpilot/dashboard-activity',
+  'GET /api/coverage/summary', 'GET /api/teacher/messages',
+  'GET /api/classpilot/schedule-changes/today', 'POST /api/classpilot/monitoring/client-health',
+  'GET /api/classpilot/commands/{commandId}/status',
+  'GET /api/settings', 'GET /api/flight-paths', 'GET /api/block-lists',
+  'GET /api/teacher/groups', 'GET /api/coverage/capabilities',
+  'GET /api/groups/{groupId}/subgroups', 'GET /api/classpilot/teacher/preferences',
+  'GET /api/admin/attendance',
 ]);
 const allowed = new Set(FINE_LATENCY_ENDPOINTS);
 const aliases = Object.freeze({
@@ -19,16 +27,22 @@ const aliases = Object.freeze({
 
 /** Fixed labels only; neither URL queries nor target identifiers enter evidence. */
 export function fineLatencyEndpoint(method, path) {
-  if (typeof path !== 'string') return null;
+  if (typeof method !== 'string' || typeof path !== 'string') return null;
   const pathname = path.split('?', 1)[0];
   const alias = aliases[`${method} ${pathname}`];
   if (alias) return alias;
   const exact = `${method} ${pathname}`;
-  if (allowed.has(exact)) return exact;
+  if (allowed.has(exact) && !pathname.includes('{')) return exact;
   if (method === 'GET' && /^\/api\/classpilot\/heartbeats\/[^/]+$/.test(pathname)) return 'GET /api/classpilot/heartbeats/{deviceId}';
   if (method === 'GET' && /^\/api\/classpilot\/device\/screenshot\/[^/]+$/.test(pathname)) return 'GET /api/classpilot/device/screenshot/{deviceId}';
   if (['PUT', 'DELETE'].includes(method) && /^\/api\/classpilot\/teaching-sessions\/[^/]+\/observation-lease$/.test(pathname)) {
     return `${method} /api/classpilot/teaching-sessions/{teachingSessionId}/observation-lease`;
+  }
+  if (method === 'GET') {
+    const command = /^\/api\/classpilot\/commands\/[A-Za-z0-9_-]{1,256}\/status$/.exec(pathname);
+    if (command?.[0] === pathname) return 'GET /api/classpilot/commands/{commandId}/status';
+    const group = /^\/api\/groups\/[A-Za-z0-9_-]{1,256}\/subgroups$/.exec(pathname);
+    if (group?.[0] === pathname) return 'GET /api/groups/{groupId}/subgroups';
   }
   return null;
 }

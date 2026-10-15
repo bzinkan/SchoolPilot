@@ -1,3 +1,6 @@
+import * as SourceSDK from '@aws-sdk/client-s3';
+import { fromContainerMetadata } from '@smithy/credential-provider-imds';
+import { prepareParentSourceLedger,validateSourceTaskCredentialEnvironment } from './source-ledger-harness-runtime.mjs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, renameSync, statSync } from 'node:fs';
@@ -8,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { REMOTE_GENERATOR_SCRIPTS, scriptManifest } from './remote-generator-manifest.mjs';
 import { reliabilityProfile, measurementExpected, validateCapturePulse, validateRevisionBootstrap, BoundedControlReader, MEASUREMENT_LIMITS, validateMeasurementSignal, CapturePulseProducer, SerialHeartbeatWriter,
-  MeasurementStartupGate, validateMeasurementWaiting, measurementPendingSignal, validateMeasurementPendingSignal,
+  publicBindingFromDevice, MeasurementStartupGate, validateMeasurementWaiting, measurementPendingSignal, validateMeasurementPendingSignal,
   measurementReadySignal, validateMeasurementReadySignal } from './classpilot-reliability-profile.mjs';
 import { validateStagingStartAt, validateStagingRunManifest } from './staging-start-barrier.mjs';
 
@@ -719,6 +722,21 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
     const measurementChannel = createMeasurementArtifactChannel({ role: 'producer', expected, startAt: config.startAt, s3: measurementS3,
       devices: JSON.parse(readFileSync(join(artifactRoot, INPUTS.devices))) });
     ownedMeasurementChannel = measurementChannel;
+    if (env.CLP_GENERATOR_SOURCE_LEDGER === 'reviewed-ledger-fifo-early-tail-v2') {
+      validateSourceTaskCredentialEnvironment(env);
+      if(env.CLP_GENERATOR_SOURCE_LEDGER_EXECUTION_APPROVED !== 'true')throw Error('Source ledger execution approval absent');
+      const rows=JSON.parse(readFileSync(join(artifactRoot,INPUTS.devices)));
+      const auth=JSON.parse(readFileSync(join(artifactRoot,INPUTS.auth)));
+      if(!Array.isArray(rows)||typeof auth.schoolId!=='string')throw Error('Exact source school scope required');
+      const primary=rows.filter(device=>device.schoolId===auth.schoolId);
+      if(primary.length!==config.profile.primaryDevices)throw Error('Exact source cohort required');
+      const publicBindings=primary.map(publicBindingFromDevice);
+      childEnv.LOAD_SOURCE_LEDGER_CONFIG=join(directory,'source-ledger-child.json');
+      childEnv.LOAD_SOURCE_LEDGER_PRIORITY=join(directory,'source-ledger-priority.json');
+      const sourceContext={origin:ORIGIN,campaign:config.campaign,runId:config.runId,primaryDevices:config.profile.primaryDevices,durationMs:config.profile.durationSeconds*1000,manifestSha256:config.inputSha256,producerBundleSha256:config.scriptBundleSha256,cohortSha256:expected.cohortSha256,bindingMapSha256:sha256(JSON.stringify(publicBindings)),producerTaskArn:task.taskArn,publicBindings};
+      const preparedSource=await prepareParentSourceLedger({context:sourceContext,SDK:SourceSDK,taskRoleProvider:fromContainerMetadata({timeout:100,maxRetries:0}),configPath:childEnv.LOAD_SOURCE_LEDGER_CONFIG,priorityPath:childEnv.LOAD_SOURCE_LEDGER_PRIORITY,emit:value=>console.log(JSON.stringify(value))});
+      childEnv.LOAD_SOURCE_LEDGER_CONFIG_SHA256=preparedSource.configSha256;
+    }
     const startupGate = await establishMeasurementStartup({ channel: measurementChannel, expected, startAt: config.startAt,
       notify: startupReady => console.log(JSON.stringify({ schemaVersion: 1, kind: 'measurement-producer-ready-v1',
         phase: 'measurement-ready', task, startupReady, applicationRequests: 0, trafficStarted: false })) });
@@ -764,11 +782,13 @@ export async function runRemoteGenerator({ env = process.env, manifestPath = '/a
           if (nonce && !uploaded && existsSync(filename)) {
             try {
               const value = validateMeasurementSignal(JSON.parse(readFileSync(filename)), expected, kind, nonce);
+              if(childEnv.LOAD_SOURCE_LEDGER_PRIORITY)atomic(childEnv.LOAD_SOURCE_LEDGER_PRIORITY,Buffer.from(JSON.stringify({version:1,criticalControlPending:true})));
               await measurementChannel.publish(kind === 'measurement-started-v3' ? 'measurement-started.json' : 'measurement-drained.json', value, { kind, nonce });
               if (kind === 'measurement-started-v3') startUploaded = true; else drainUploaded = true;
             } catch { controller.abort(); }
           }
         }
+        if(childEnv.LOAD_SOURCE_LEDGER_PRIORITY)atomic(childEnv.LOAD_SOURCE_LEDGER_PRIORITY,Buffer.from(JSON.stringify({version:1,criticalControlPending:Boolean(firstNonce&&!startUploaded||drainNonce&&!drainUploaded)})));
         syncChannelCounters();
         await new Promise(resolve_ => setTimeout(resolve_, MEASUREMENT_LIMITS.pollMs));
       }

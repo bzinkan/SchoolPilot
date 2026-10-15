@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import * as SourceSDK from '@aws-sdk/client-s3';
+import { fromContainerMetadata } from '@smithy/credential-provider-imds';
+import { createHarnessSourceLedger,validateSourceTaskCredentialEnvironment } from './source-ledger-harness-runtime.mjs';
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -21,7 +24,7 @@ import {
   validateReliabilityEnvironment, RELIABILITY_ENDPOINT_SHA256, RELIABILITY_CAPABILITIES,
   minimumReliabilitySamples, reliabilityScreenshotBindingMatches, makeReliabilityJpegFixture, reliabilityFixtureEvidence,
   makeReliabilityColorFixtures, reliabilityColorFixtureEvidence, CapturePulseProducer, stampCausalCapture, validateCapturePulse, measurementExpected,
-  publicBindingFromDevice, validateRevisionBootstrap, navigationSnapshot, SerialHeartbeatWriter, MEASUREMENT_LIMITS, measurementSignal,
+  readCausalCapture, capturePulseMarker, publicBindingFromDevice, validateRevisionBootstrap, navigationSnapshot, SerialHeartbeatWriter, MEASUREMENT_LIMITS, measurementSignal,
 } from "./classpilot-reliability-profile.mjs";
 import {
   buildStaggeredPollAccounting,
@@ -2166,6 +2169,7 @@ function heartbeatBody(device) {
   };
 }
 
+let sourceLedgerHook = null;
 let reliabilityFrameOrdinal = 0;
 function screenshotBody(device) {
   const capturedAt = Date.now();
@@ -2186,12 +2190,14 @@ function screenshotBody(device) {
     reliabilityCaptureEncoding.cpuUserMs += used.user / 1000;
     reliabilityCaptureEncoding.cpuSystemMs += used.system / 1000;
   }
-  return {
+  const body = {
     ...(reliabilityWorkload ? { capturedAt: new Date(capturedAt).toISOString(), screenshotAuthority: device.reliabilityPolicy.authority } : {}),
     screenshot,
     tabTitle: `Load ${device.deviceId}`,
     tabUrl: `https://example.edu/load/${encodeURIComponent(device.deviceId)}`,
   };
+  if (sourceLedgerHook) sourceLedgerHook.record({ publicBinding: publicBindingFromDevice(device), body, pulse: capturePulseProducer.latest, primary: device.schoolId === teacherSchoolId });
+  return body;
 }
 
 function sendCommandAck(state, commandId, status) {
@@ -3470,6 +3476,7 @@ function summarize(shutdownReason) {
         ? Number((ratio(commandTotals.serverCompleted, commandTotals.expected) * 100).toFixed(2))
         : null,
     },
+    sourceLedger: sourceLedgerHook?.summary() ?? null,
     measurementV3: { ...measurementDeviceCounters, navigationRounds: measurementNavigationRound,
       primaryBindingCount: revisionBaselines.size, captureTimingAccepted: false,
       rawDateCaptureAgeDiagnosticOnly: true, browserCausalCaptureRequired: Boolean(measurementPaths),
@@ -3563,6 +3570,9 @@ async function shutdown(reason) {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     latchTrafficStop();
+    const sourceTail = reason === "duration" && sourceLedgerHook ? sourceLedgerHook.finishDuration() : Promise.resolve(null);
+    sourceTail.catch(() => {});
+    if (reason !== "duration") sourceLedgerHook?.close();
     durationDeadline?.cancel();
     for (const timer of intervals) clearInterval(timer);
     intervals.clear();
@@ -3572,6 +3582,9 @@ async function shutdown(reason) {
     if (reason === "duration" && commandSettleMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, commandSettleMs));
     }
+    const tailOutcome = await sourceTail.catch(() => ({outcome:"unknown"}));
+    if (sourceLedgerHook && reason === "duration" && tailOutcome?.outcome !== "accepted") triggerFatalGate("source-ledger-failure", { source: "measurement-tail" }, false);
+    sourceLedgerHook?.close();
     await releaseReliabilityObservationLeases();
     captureFinalSocketGate();
 
@@ -3585,7 +3598,7 @@ async function shutdown(reason) {
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
     }
 
-    const settleInFlight = Promise.allSettled([...inFlight]);
+    const settleInFlight = Promise.allSettled([...inFlight, ...(sourceLedgerHook?[sourceLedgerHook.whenSettled()]:[])]);
     let shutdownTimer;
     const shutdownTimeout = new Promise((resolve) => {
       shutdownTimer = setTimeout(resolve, shutdownGraceMs);
@@ -3716,11 +3729,17 @@ if (validateConfigOnly) {
     measurementFirstPulse = first;
   }
   revalidateArtifactLifetimeAtTrafficStart();
+  if (process.env.LOAD_SOURCE_LEDGER_CONFIG) {
+    if (!measurementContext || !capturePulseProducer) throw Error('Exact causal staging source hook required');
+    validateSourceTaskCredentialEnvironment(process.env);
+    sourceLedgerHook = createHarnessSourceLedger({configPath:process.env.LOAD_SOURCE_LEDGER_CONFIG,configSha256:process.env.LOAD_SOURCE_LEDGER_CONFIG_SHA256,measurementContext,publicBindings:devices.filter(device=>device.schoolId===teacherSchoolId).map(publicBindingFromDevice),SDK:SourceSDK,taskRoleProvider:fromContainerMetadata({timeout:100,maxRetries:0}),readCausalCapture,capturePulseMarker,now:monotonicNowMs});
+  }
   progressDescriptor = externalProgressPath
     ? fs.openSync(externalProgressPath, "a", 0o600)
     : null;
   console.log(`Starting ClassPilot load test: ${devices.length} devices, ${screenshotBytes}B screenshots, ${Math.round(durationMs / 1000)}s`);
   runStartedAtMonoNs = monotonicNowNs();
+  if(sourceLedgerHook)sourceLedgerHook.start(monotonicNowMs());
   if (measurementFirstPulse) writeAtomicJson(measurementPaths.started,
     measurementSignal(measurementContext, 'measurement-started-v3', measurementFirstPulse.nonce));
   appendProgressOrFail("start");
@@ -3729,6 +3748,7 @@ if (validateConfigOnly) {
     await renewReliabilityObservationLeases();
     if (reliabilityWorkload) every(() => void renewReliabilityObservationLeases(), 30_000);
     deviceStates.forEach(startDeviceTraffic);
+    if(sourceLedgerHook)every(()=>{void sourceLedgerHook.tick().catch(()=>{measurementDeviceCounters.invalidControls+=1;triggerFatalGate('source-ledger-failure',{source:'measurement'});});},1000);
     if (measurementPaths) every(pollMeasurementControl, MEASUREMENT_LIMITS.pollMs);
     startTeacherTraffic();
     startScreenshotPolling();

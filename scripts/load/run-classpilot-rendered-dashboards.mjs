@@ -12,18 +12,23 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
-  "classpilot-load-test.mjs": "484d03f4c2c597d823b25b1bbb443a63c9370680196db9ceb3e4e55113f11dd8",
+  "classpilot-load-test.mjs": "3456ee9e18047ff6cd3a390533ad8e78e1aae36b69beb6b5cae37fecb1c3f40b",
   "classpilot-reliability-profile.mjs": "e667d334eb8ef9f785d4ff07115ac2eb32b1268a403ecd9f497ba405149dfe32",
   "command-status-observer.mjs": "8d3dacb4fae02d0bf8b0a3ef1be312b1f0c6732b3b9e0760b129a49725ae87af",
-  "fine-endpoint-latency.mjs": "0a12667e463c10e4abd235f4899909db7da37a92857a7fe9b3f6065a1f9cd546",
+  "fine-endpoint-latency.mjs": "cf315a20c92fdf5f1edbd1d8f54f95a130432ad1b161039ff68da8c5a4f5de2a",
   "monotonic-deadline.mjs": "4b63a0de37a931d37112603101d20d2419fc1b7ed4f83029aea534f27a35bc49",
   "prepare-classpilot-load-test.mjs": "04d617610fec0add453b0f15e6a2398788ed8df3d1c18b8ec282e8d3160a551e",
+  "producer-source-hook.mjs": "b909b3dbbb2286e7d477cacb76ef577c33ffc2af02a832fc2f689ed33b8480cb",
+  "producer-source-ledger.mjs": "f46ccfccc8f9943f92d04a3bc9e15048dc3490c5a811c7c420fe47d421921805",
   "reliability-rendered-frame.mjs": "6108cd9f0898999de8a84b73e6df737fc1b39d0c1bc97aa17a71beb903e59eb7",
-  "remote-generator-manifest.mjs": "b0a02f6b8c8d81aac654fbea90f9fb7d7a6231302a589e2703df8a1ef097c2be",
+  "remote-generator-manifest.mjs": "ca00f895d943db2b1e667fc8d8898d80a06724971536939eb0b5cb48483019ba",
   "rendered-http-metrics.mjs": "0d8870681081ab48675bc20ef9b2a51d4101ffe92dbbf38ba5dfbb9314f642dc",
   "run-classpilot-reliability.mjs": "db9981c531314e772fc2875030aaed52fd16c67254813d1008d942b2bafb1f95",
-  "run-classpilot-remote-generator.mjs": "b5d4a7e526e127208aed670dfcae87e70aa12100fa3568b7053b44b930f649d7",
+  "run-classpilot-remote-generator.mjs": "0a47103641b600c9a4fa6dbc74fdf81094b03fb694410fe8e78af262e5e5e511",
   "session-cookie.mjs": "8c5d40d5217a05a08777cb53d3f27b43851b7189a9af631d0badb9c03f4bc8be",
+  "source-ledger-harness-runtime.mjs": "7b1659aeed1657b9dde9233dcf6e3cd39e0431fedbeded590b93d02e0d5685ac",
+  "source-ledger-sdk-bridge.mjs": "7006092b95b76eb2c9f0d56ddfada525289c53fda95646cec1fbb756fd2f870f",
+  "source-startup-contract.mjs": "f40b5ff56563bdfa554b53386ba0363f3ebf8ba12cec7d452e5db5fc39e8316c",
   "staging-start-barrier.mjs": "6c117f54ea8dbf4305e068ec52090f7729748041382ad632dc0cfa380e8814a2",
   "tile-poll-accounting.mjs": "9845f899f5cac81737a165a955afc7fb154985255c63b225c582c5ccd8d6e808"
 });
@@ -82,6 +87,37 @@ export async function renderedDeadline(operation, milliseconds = 8000) {
   try { const result=await Promise.race([operation, timeout]);if(typeof trace==='function')trace({category:'caller_fulfilled',at:performance.now()});return result; }
   catch(error){if(typeof trace==='function')trace({category:'caller_rejected',at:performance.now()});throw error;}
   finally { controller.abort(); }
+}
+
+export function renderedHttpEndpointClassificationComplete(summary) {
+  return summary?.counters?.unclassifiedRequests === 0
+    && summary?.fineEndpointLatency?.unclassifiedCount === 0;
+}
+
+export function createRenderedInterruptionEvidence({now=()=>performance.now(),startAt=()=>null,endAt=()=>null,phase=()=> 'other'}={}) {
+  const sources=['signal','navigation','publication','publication-drain','other'],phases=['preparing','start-barrier','warming','classroom-command-burst','sampling','draining-http-evidence','other'];
+  const counts=Object.fromEntries(sources.map(key=>[key,0]));let first=null;
+  return Object.freeze({record(source,error){
+    source=sources.includes(source)?source:'other';counts[source]=Math.min(1000000,counts[source]+1);
+    if(first)return;
+    const at=now(),start=startAt(),end=endAt(),actualPhase=phase();
+    const valid=Number.isFinite(at)&&Number.isFinite(start)&&at>=start;
+    const category=source==='signal'?'signal':source==='publication-drain'?'publication-drain-failed'
+      :[403,404].includes(error?.$metadata?.httpStatusCode)||[error?.name,error?.Code,error?.code].some(value=>value==='AccessDenied'||value==='NoSuchKey')?'storage-denied'
+      :error?.name==='AbortError'?'cancelled':['deadline','busy'].includes(error?.measurementReadCode)?'deadline-or-busy'
+      :error?.code==='ERR_ASSERTION'?'validation':'operation-rejected';
+    first={source,category,phase:phases.includes(actualPhase)?actualPhase:'other',elapsedMs:valid?at-start:null,afterTimedWindow:valid&&Number.isFinite(end)&&at>=end};
+  },summary:()=>({first:first?{...first}:null,counts:{...counts}})});
+}
+
+// Stop admission first, then allow the already admitted publisher caller to
+// settle under its original500ms bound before destroying its SDK. One sleeping
+// cadence wait can add at most1000ms. A true failure remains an interruption.
+export async function drainRenderedPublicationBeforeClose({publicationLoop,close,onFailure,timeoutMs=1500}) {
+  assert.equal(typeof close,'function');assert.equal(typeof onFailure,'function');assert.ok(Number.isFinite(timeoutMs)&&timeoutMs>0&&timeoutMs<=1500);
+  try{if(publicationLoop)await renderedDeadline(publicationLoop,timeoutMs);}
+  catch(error){onFailure(error);}
+  finally{try{close();}catch(error){onFailure(error);throw error;}}
 }
 
 // Lossless full-resolution native capture. Timeout poisons this controller
@@ -1072,9 +1108,11 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
   const httpMetrics = new RenderedHttpMetrics({ origin: auth.baseUrl });
   const staticTraffic = { requests: 0, completed: 0, failed: 0, encodedBytes: 0, inFlight: 0 };
 
-  let thrown = false, interrupted = false, phase = 'preparing';
+  let thrown = false, interrupted = false, phase = 'preparing',timedWindowCompleteBeforeShutdown=false,timedWindowObservedMs=null;
   const barrierAbort = new AbortController();
-  const stop = () => { interrupted = true; barrierAbort.abort(); };
+  const interruption=createRenderedInterruptionEvidence({startAt:()=>startedMonotonic,endAt:()=>endMonotonic,phase:()=>phase});
+  const markInterrupted=(source,error)=>{interruption.record(source,error);interrupted=true;barrierAbort.abort();};
+  const stop = () => markInterrupted('signal');
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, stop);
   try {
     const identity = await promisify(execFile)('aws', ['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text', '--region', 'us-east-1'],
@@ -1302,11 +1340,11 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
         if (round === 1 && previousRound === 0) priorPaint.setTrigger(pulseController.navigationHistory.get(1).t0);
         await putControl('measurement-control.json', pulse);
         if (drainNonce && !bootstrapComplete) await bootstrap(pulse);
-        if (round > previousRound) { const task=observeRound(round);task.catch(()=>{interrupted=true;barrierAbort.abort();});navigationTasks.push(task); }
+        if (round > previousRound) { const task=observeRound(round);task.catch(error=>markInterrupted('navigation',error));navigationTasks.push(task); }
         nextPulseAt += 1000; if (nextPulseAt < performance.now()) nextPulseAt = performance.now();
       }
     })();
-    publicationLoop.catch(() => { interrupted = true; barrierAbort.abort(); });
+    publicationLoop.catch(error => markInterrupted('publication',error));
     phase = 'warming';
     while (!interrupted && performance.now() < startedMonotonic + 60_000) await delay(1000);
     assert.equal(interrupted, false, 'Full campaign required');
@@ -1372,6 +1410,8 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       } });
     counters.sampleRounds = capturePhases.counters.plannedPhases;
     while (!interrupted && performance.now() < endMonotonic) await delay(Math.min(1000, endMonotonic - performance.now()));
+    timedWindowObservedMs=performance.now()-startedMonotonic;
+    timedWindowCompleteBeforeShutdown=!interrupted&&performance.now()>=endMonotonic;
     controlStopped = true;
     await Promise.allSettled(actors.map(runtime => runtime.owner.observe(async ({ page, isCurrent }) => {
       const generation = runtime.socketGeneration, subscribed = runtime.subscribed;
@@ -1385,7 +1425,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       if (!navigationRoundsAttempted.has(round)) for (let index = 0; index < profile.primaryDevices; index++) navigationSamples.push(Infinity);
     }
     httpMetrics.closeWindow();
-    measurementChannel.close();
+    await drainRenderedPublicationBeforeClose({publicationLoop,close:()=>measurementChannel.close(),onFailure:error=>markInterrupted('publication-drain',error)});
     priorPaint.dispose();
     cleanupProof = await observerRuntime.close({ extraDrains: [publicationLoop?.catch(() => {}),
       Promise.allSettled(navigationTasks), priorPreparation?.catch(() => {}), capturePhases?.whenSettled()].filter(Boolean) });
@@ -1415,6 +1455,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     if (commandSubmissionTimes.length !== profile.classrooms || commandDispatchSpreadMs > 1000) failures.push('UI command dispatches did not form a one-second concurrent classroom burst');
     if (!http.allStartedRequestsMeasured || http.rawInFlightAfterDrain || http.counters.http403 || http.counters.http429
       || http.counters.otherHttpErrors) failures.push('incomplete or blocked browser API request evidence');
+    if (!renderedHttpEndpointClassificationComplete(http)) failures.push('browser HTTP endpoint classification incomplete');
     if (!http.counters.requestsStarted || http.counters.failedMeasurements / http.counters.requestsStarted > 0.01) failures.push('browser API measurement failure rate exceeds one percent');
     for (const endpoint of ['GET /api/classpilot/commands/active-state', 'GET /api/classpilot/teacher/raised-hands']) {
       const latency = http.fineEndpointLatency.endpoints[endpoint];
@@ -1464,12 +1505,15 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     finalSummary.observerRuntime = observerRuntime.summary();
     finalSummary.cleanup = cleanupProof;
     finalSummary.plannedCapture = capturePhases?.counters ?? null;
+    finalSummary.interruption=interruption.summary();
+    finalSummary.timedWindowCompleteBeforeShutdown=timedWindowCompleteBeforeShutdown;
+    finalSummary.timedWindowObservedMs=timedWindowObservedMs;
     finalSummary.controllerRssBytes = process.memoryUsage().rss;
     finalSummary.binaryBudgetScope = 'native PNG/raw decode/prior RGBA only; excludes Chrome, RPC/base64 and DOM cache RSS';
     if (!cleanupProof.passed) finalSummary.failures.push('owned browser closure or true raw measurement settlement incomplete');
     if (capturePhases && ages.summary().count !== capturePhases.counters.plannedTargets) finalSummary.failures.push('all planned capture targets were not accounted');
     finalSummary.browserPaintValidated = !thrown && finalSummary.failures.length === 0 && cleanupProof.passed;
-    writeFileSync(join(paths.outputPath, 'rendered-summary.json'), JSON.stringify(finalSummary, null, 2));
+    writeFileSync(join(paths.outputPath, 'rendered-summary.json'), JSON.stringify(finalSummary));
     console.log(JSON.stringify({ operation: 'rendered-browser-finished', classrooms: profile.classrooms,
       browserPaintValidated: finalSummary.browserPaintValidated, failures: finalSummary.failures }));
     if (!finalSummary.browserPaintValidated) process.exitCode = 1;

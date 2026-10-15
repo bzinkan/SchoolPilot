@@ -137,3 +137,142 @@ test('legacy pong, hidden pause and resume cannot leak duplicate heartbeat inter
     monitor.dispose(); context.mock.timers.tick(60_000); assert.equal(timeouts, 0);
   } finally { globalThis.document = previous; }
 });
+
+// Backend screenshots retain epoch milliseconds through the exact-binding tile index.
+import * as previewRecovery from '../src/products/classpilot/lib/classpilotRecovery.js';
+import { indexTileScreenshots } from '../src/products/classpilot/lib/tileBatchPolling.js';
+import { readFileSync } from 'node:fs';
+
+const PREVIEW_NOW = Date.parse('2026-10-14T12:00:00.000Z');
+const previewStudent = (studentId = 'preview-student') => ({ studentId, realtimeBinding: 'current-binding',
+  acceptedCapabilities: { screenshotActiveObservationCadenceV1: true } });
+const previewFrame = (student, timestamp, bindingVersion = 'v2:current-binding') => ({ studentId: student.studentId,
+  bindingVersion, screenshot: { timestamp, capturedAt: new Date(PREVIEW_NOW).toISOString(), bindingVersion, screenshot: 'synthetic-pixel-payload' } });
+const previewState = (student, screenshots) => ({ students: [student], screenshots, denied: new Set(), observationStatus: () => 'observed' });
+
+function actualPreviewHealthHook() {
+  const source = readFileSync(new URL('../src/products/classpilot/hooks/useClasspilotPreviewRecovery.js', import.meta.url), 'utf8');
+  const imports = source.match(/^import\s+[\s\S]*?\s+from\s+['"][^'"]+['"];\r?\n/gm);
+  assert.equal(imports?.length, 3);
+  const body = source.replace(/^import\s+[\s\S]*?\s+from\s+['"][^'"]+['"];\r?\n/gm, '')
+    .replace('export function useClasspilotPreviewRecovery', 'function useClasspilotPreviewRecovery');
+  return new Function('useEffect', 'useLayoutEffect', 'useRef', 'apiRequest', 'withClasspilotReadDeadline',
+    'stepClasspilotPreviewRecovery', 'normalizeClasspilotPreviewTimestamp', body + '\nreturn useClasspilotPreviewRecovery;');
+}
+
+async function sampleActualPreviewHealth({ students, screenshots, denied = new Set(), update = () => {}, advanceMs = 0 }) {
+  const effects = [], requests = [], queued = [], clientHealthRef = { current: null };
+  let now = PREVIEW_NOW, interval = null, intervalMs = null;
+  const previous = { document: globalThis.document, now: Date.now, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval };
+  globalThis.document = { visibilityState: 'visible' };
+  Date.now = () => now;
+  globalThis.setInterval = (callback, milliseconds) => { interval = callback; intervalMs = milliseconds; return 'owned-health-interval'; };
+  globalThis.clearInterval = () => {};
+  let cleanup;
+  try {
+    const hook = actualPreviewHealthHook()(callback => effects.push(callback), callback => callback(),
+      current => ({ current }), (method, endpoint, body) => { requests.push({ method, endpoint, body }); return Promise.resolve({ ok: true }); },
+      previewRecovery.withClasspilotReadDeadline, previewRecovery.stepClasspilotPreviewRecovery, previewRecovery.normalizeClasspilotPreviewTimestamp);
+    hook({ fastScreenshotStudents: students, screenshotsByStudent: screenshots, screenshotTileReadsEnabled: true,
+      deniedScreenshotReadIds: denied, studentView: 'class', claimedStudentObservationStatus: () => 'inactive', observationLeaseStatus: 'observed',
+      targetedScreenshotFenceKey: 'exact-current-context', queueTargetedScreenshotRefresh: ids => queued.push(ids),
+      screenshotRecoveryRef: { current: new Map() }, clientHealthRef, activeSchoolId: 'synthetic-school', viewerId: 'synthetic-viewer', token: 'synthetic-token' });
+    cleanup = effects.at(-1)();
+    assert.equal(intervalMs, 5_000);
+    for (let tick = 0; tick < 12; tick += 1) { now += advanceMs; update(now, tick); interval(); }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, 1); assert.equal(requests[0].method, 'POST');
+    assert.equal(requests[0].endpoint, '/classpilot/monitoring/client-health');
+    assert.equal(requests[0].body.intervalSeconds, 60); assert.deepEqual(queued, []);
+    return requests[0].body;
+  } finally {
+    cleanup?.(); globalThis.document = previous.document; Date.now = previous.now;
+    globalThis.setInterval = previous.setInterval; globalThis.clearInterval = previous.clearInterval;
+  }
+}
+
+test('fresh advancing backend numeric capture timestamps never start extra preview recovery', () => {
+  const student = previewStudent(), recoveries = new Map();
+  const screenshots = indexTileScreenshots({ tiles: [previewFrame(student, PREVIEW_NOW)] });
+  assert.equal(typeof screenshots.get(student.studentId).timestamp, 'number');
+  const state = previewState(student, screenshots);
+  for (let offset = 0; offset <= 120_000; offset += 5_000) {
+    screenshots.set(student.studentId, { ...screenshots.get(student.studentId), timestamp: PREVIEW_NOW + offset });
+    const result = stepClasspilotPreviewRecovery(recoveries, { ...state, now: PREVIEW_NOW + offset });
+    assert.deepEqual(result.due, []); assert.equal(result.gapRecoveries, 0);
+  }
+});
+
+test('actual health reporter recognizes numeric backend frames as fresh without extra recovery reads', async () => {
+  const student = previewStudent(), screenshots = indexTileScreenshots({ tiles: [previewFrame(student, PREVIEW_NOW)] });
+  const body = await sampleActualPreviewHealth({ students: [student], screenshots, advanceMs: 5_000,
+    update: now => screenshots.set(student.studentId, { ...screenshots.get(student.studentId), timestamp: now, capturedAt: new Date(now).toISOString() }) });
+  assert.deepEqual(body.freshnessBuckets, [12, 0, 0, 0, 0, 0]);
+  assert.equal(body.counters.eventGapRecoveries, 0);
+});
+
+test('numeric and ISO capture timestamps share canonical skew and invalid-value behavior', () => {
+  const normalize = previewRecovery.normalizeClasspilotPreviewTimestamp;
+  for (const value of [PREVIEW_NOW - 1_000, new Date(PREVIEW_NOW - 1_000).toISOString(), String(PREVIEW_NOW - 1_000)]) {
+    assert.equal(normalize(value, PREVIEW_NOW), PREVIEW_NOW - 1_000);
+  }
+  for (const value of [PREVIEW_NOW + 60_000, new Date(PREVIEW_NOW + 60_000).toISOString()]) assert.equal(normalize(value, PREVIEW_NOW), PREVIEW_NOW);
+  for (const value of [PREVIEW_NOW + 60_001, new Date(PREVIEW_NOW + 60_001).toISOString(), undefined, null, '', 'invalid-time', NaN, Infinity, 0, -1, {}, [], true]) {
+    assert.equal(normalize(value, PREVIEW_NOW), null);
+  }
+  assert.equal(normalize(PREVIEW_NOW, NaN), null);
+});
+
+test('numeric and ISO frames keep the original eight-second watchdog and five-second retry cadence', () => {
+  for (const encode of [value => value, value => new Date(value).toISOString()]) {
+    const student = previewStudent(), recoveries = new Map(), screenshots = new Map([[student.studentId, { timestamp: encode(PREVIEW_NOW), bindingVersion: 'v2:current-binding' }]]);
+    const state = previewState(student, screenshots), step = offset => stepClasspilotPreviewRecovery(recoveries, { ...state, now: PREVIEW_NOW + offset });
+    assert.deepEqual(step(0).due, []); assert.deepEqual(step(7_999).due, []);
+    for (let offset = 8_000; offset <= 98_000; offset += 5_000) {
+      const result = step(offset); assert.deepEqual(result.due, [student.studentId]);
+      assert.equal(result.nextAt, PREVIEW_NOW + offset + 5_000); assert.equal(result.gapRecoveries, offset === 8_000 ? 1 : 0);
+    }
+    screenshots.set(student.studentId, { timestamp: encode(PREVIEW_NOW + 100_000), bindingVersion: 'v2:current-binding' });
+    assert.deepEqual(step(100_000).due, []); assert.equal(recoveries.get(student.studentId).recovering, false);
+    assert.deepEqual(step(107_999).due, []); assert.equal(step(108_000).gapRecoveries, 1);
+  }
+});
+
+test('actual health bucket boundaries, allowed skew, and invalid future or missing frames agree for both wire formats', async () => {
+  for (const encode of [value => value, value => new Date(value).toISOString()]) {
+    const ages = [-60_001, -60_000, 0, 5_000, 5_001, 10_000, 10_001, 15_000, 15_001, 30_000, 30_001];
+    const students = ages.map((_, index) => previewStudent('bucket-' + index));
+    const screenshots = new Map(students.map((student, index) => [student.studentId, { timestamp: encode(PREVIEW_NOW - ages[index]) }]));
+    students.push(previewStudent('missing-frame'), previewStudent('invalid-frame'));
+    screenshots.set('invalid-frame', { timestamp: 'invalid-time' });
+    const body = await sampleActualPreviewHealth({ students, screenshots });
+    assert.deepEqual(body.freshnessBuckets, [36, 24, 24, 24, 12, 36]);
+  }
+});
+
+test('exact binding rejection, denial latches, observation scope and capability gates remain independent of timestamp format', async () => {
+  const student = previewStudent(), tile = previewFrame(student, PREVIEW_NOW);
+  tile.screenshot.bindingVersion = 'v2:foreign-binding';
+  const screenshots = indexTileScreenshots({ tiles: [tile] }); assert.equal(screenshots.get(student.studentId), null);
+  const body = await sampleActualPreviewHealth({ students: [student], screenshots }); assert.deepEqual(body.freshnessBuckets, [0, 0, 0, 0, 0, 12]);
+  const recoveries = new Map(), state = previewState(student, screenshots);
+  stepClasspilotPreviewRecovery(recoveries, { ...state, now: PREVIEW_NOW });
+  for (const altered of [{ denied: new Set([student.studentId]) }, { observationStatus: () => 'expired' },
+    { students: [{ ...student, acceptedCapabilities: {} }] }]) {
+    const result = stepClasspilotPreviewRecovery(recoveries, { ...state, ...altered, now: PREVIEW_NOW + 30_000 });
+    assert.deepEqual(result.due, []); assert.equal(recoveries.has(student.studentId), false);
+  }
+  const denied = await sampleActualPreviewHealth({ students: [student], screenshots, denied: new Set([student.studentId]) });
+  assert.deepEqual(denied.freshnessBuckets, [0, 0, 0, 0, 0, 0]);
+});
+
+test('preview timestamp recovery does not change student connectivity or revive a retired binding', () => {
+  const student = { ...previewStudent(), isOnline: false, connectionStatus: 'offline' }, before = structuredClone(student);
+  const screenshots = indexTileScreenshots({ tiles: [previewFrame(student, PREVIEW_NOW)] }), recoveries = new Map();
+  const state = previewState(student, screenshots);
+  stepClasspilotPreviewRecovery(recoveries, { ...state, now: PREVIEW_NOW });
+  student.realtimeBinding = 'successor-binding'; screenshots.clear();
+  assert.deepEqual(stepClasspilotPreviewRecovery(recoveries, { ...state, now: PREVIEW_NOW + 7_000 }).due, []);
+  assert.equal(recoveries.get(student.studentId).recovering, false); assert.equal(recoveries.get(student.studentId).nextAt, PREVIEW_NOW + 15_000);
+  assert.equal(student.isOnline, before.isOnline); assert.equal(student.connectionStatus, before.connectionStatus);
+});

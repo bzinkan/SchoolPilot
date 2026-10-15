@@ -18,9 +18,9 @@ const expected = measurementExpected(manifest, sha(JSON.stringify(manifest))), b
 const baseline = { schemaVersion: 1, runId: expected.runId, sourceArtifactSha256: expected.sourceArtifactSha256, cohortSha256: expected.cohortSha256,
   planSha256: expected.planSha256, revisionBaselines: devices.slice(10).map(value => ({ publicBinding: publicBindingFromDevice(value), revisionBase: 1700000000000000 })) };
 const tick = () => new Promise(resolve => setImmediate(resolve));
-test('V3 plans retain fixed profiles, rates, strict identity and 12-file closure', () => {
+test('V3 plans retain fixed profiles, rates, strict identity and 17-file closure', () => {
   for (const count of [40,500,800]) { const p = reliabilityProfile(count); assert.equal(p.version, 'classpilot-reliability-v3'); assert.equal(p.heartbeatIntervalMs, 10000); assert.equal(p.screenshotIntervalMs, 5000); assert.equal(p.deviceIngestLimit, 100000); assert.equal(p.screenshotBytes,40960); validateMeasurementPlan(p.measurementPlan,count,measurementPlanDigest(count)); }
-  assert.equal(REMOTE_GENERATOR_SCRIPTS.length,12); assert.equal(Object.keys(scriptManifest(new URL('../scripts/load/', import.meta.url).pathname.replace(/^\/(C:)/,'$1'), manifest.candidateApiImage, REMOTE_GENERATOR_SCRIPTS).files).length,12);
+  assert.equal(REMOTE_GENERATOR_SCRIPTS.length,17); assert.equal(Object.keys(scriptManifest(new URL('../scripts/load/', import.meta.url).pathname.replace(/^\/(C:)/,'$1'), manifest.candidateApiImage, REMOTE_GENERATOR_SCRIPTS).files).length,17);
   assert.throws(() => validateMeasurementPlan({ ...measurementPlan(40), navigationPeriodMs:30000 },40,measurementPlanDigest(40)));
 });
 test('causal pulse records t0 before nonce and ignores all remote wall/monotonic origins', () => {
