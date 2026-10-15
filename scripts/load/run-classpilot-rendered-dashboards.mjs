@@ -19,7 +19,7 @@ export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
   "monotonic-deadline.mjs": "4b63a0de37a931d37112603101d20d2419fc1b7ed4f83029aea534f27a35bc49",
   "prepare-classpilot-load-test.mjs": "04d617610fec0add453b0f15e6a2398788ed8df3d1c18b8ec282e8d3160a551e",
   "producer-source-hook.mjs": "b909b3dbbb2286e7d477cacb76ef577c33ffc2af02a832fc2f689ed33b8480cb",
-  "producer-source-ledger.mjs": "f46ccfccc8f9943f92d04a3bc9e15048dc3490c5a811c7c420fe47d421921805",
+  "producer-source-ledger.mjs": "20a96bb8178b87551b831728e11f89ae9c40396e518aac5cd1898645aad43cce",
   "reliability-rendered-frame.mjs": "6108cd9f0898999de8a84b73e6df737fc1b39d0c1bc97aa17a71beb903e59eb7",
   "remote-generator-manifest.mjs": "ca00f895d943db2b1e667fc8d8898d80a06724971536939eb0b5cb48483019ba",
   "rendered-http-metrics.mjs": "0d8870681081ab48675bc20ef9b2a51d4101ffe92dbbf38ba5dfbb9314f642dc",

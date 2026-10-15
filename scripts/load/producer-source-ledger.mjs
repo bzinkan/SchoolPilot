@@ -48,7 +48,7 @@ export function createRetainedSourceReader({context,read,history,criticalControl
      catch(error){if(sourceOperationDenied(error)||!abort.signal.aborted&&error?.name!=='AbortError')fatal();throw error;}
      // Ownership is reserved BEFORE considering deadline or header validity.
      body=response?.Body;
-     try{assert.ok(response&&[200,304].includes(response.status));if(response.status===304){assert.ok(etag);assert.ok(body===undefined||body===null);}else{assert.equal(response.ContentType,'application/json');assert.equal(response.ServerSideEncryption,'AES256');assert.match(response.ETag,/^"[a-f0-9]{32}"$/);assert.equal(typeof body?.[Symbol.asyncIterator],'function');}}
+     try{assert.ok(response&&[200,304].includes(response.status));if(response.status===304){assert.ok(etag);assert.ok(body===undefined||body===null||typeof body[Symbol.asyncIterator]==='function');}else{assert.equal(response.ContentType,'application/json');assert.equal(response.ServerSideEncryption,'AES256');assert.match(response.ETag,/^"[a-f0-9]{32}"$/);assert.equal(typeof body?.[Symbol.asyncIterator],'function');}}
      catch(error){failure=error;fatal();}
      if(!current())failure||=Error('Source reader original deadline');
      if(failure)destroyBody();
@@ -62,7 +62,7 @@ export function createRetainedSourceReader({context,read,history,criticalControl
        if(count<=60000)chunks.push(Buffer.from(chunk));
       }
      }
-     if(response?.status===304){if(failure)throw failure;assert.ok(current());return{unchanged:true};}
+     if(response?.status===304){if(count!==0){failure||=Error('Source304 body must be empty');fatal();}if(failure)throw failure;assert.ok(current());return{unchanged:true};}
      const bytes=Buffer.concat(chunks);try{
       if(failure){if(count<=60000){try{const value=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(bytes));assert.equal(canonical(value),bytes.toString('utf8'));validateBody(value);}catch{fatal();}}throw failure;}
       assert.ok(current());const adopted=history.adopt(bytes,{isCurrent:current});assert.ok(current());etag=response.ETag;return{unchanged:false,pending:adopted?.pending===true};
