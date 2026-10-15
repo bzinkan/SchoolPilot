@@ -24,7 +24,7 @@ export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
   "remote-generator-manifest.mjs": "ca00f895d943db2b1e667fc8d8898d80a06724971536939eb0b5cb48483019ba",
   "rendered-http-metrics.mjs": "0d8870681081ab48675bc20ef9b2a51d4101ffe92dbbf38ba5dfbb9314f642dc",
   "run-classpilot-reliability.mjs": "db9981c531314e772fc2875030aaed52fd16c67254813d1008d942b2bafb1f95",
-  "run-classpilot-remote-generator.mjs": "0a47103641b600c9a4fa6dbc74fdf81094b03fb694410fe8e78af262e5e5e511",
+  "run-classpilot-remote-generator.mjs": "dfb4c3c7ff0e695838b3c440ff06016be51f3e1fd3883cfedbbc74abb380927f",
   "session-cookie.mjs": "8c5d40d5217a05a08777cb53d3f27b43851b7189a9af631d0badb9c03f4bc8be",
   "source-ledger-harness-runtime.mjs": "7b1659aeed1657b9dde9233dcf6e3cd39e0431fedbeded590b93d02e0d5685ac",
   "source-ledger-sdk-bridge.mjs": "7006092b95b76eb2c9f0d56ddfada525289c53fda95646cec1fbb756fd2f870f",
@@ -1199,12 +1199,44 @@ function assetHashes(directory, relative = '') {
   });
 }
 
-export async function acceptActualRenderedMeasurementReady({channel,waiting,expected,startAt,nowWall=Date.now}) {
+export async function acceptActualRenderedMeasurementReady({channel,waiting,expected,startAt,nowWall=Date.now,
+  now=()=>performance.now(),sleep=milliseconds=>delay(milliseconds),stopped=()=>false}) {
   validateMeasurementWaiting(waiting,expected,{startAt,mode:'workload',now:nowWall()});
-  // Exactly one lookup of the previously accepted producer publication. A
-  // missing/denied object is an invalid preparation, never positive readiness.
-  const value=await channel.read('measurement-ready.json');
-  validateMeasurementReadySignal(value,expected,waiting,nowWall());return value;
+  // Recover only transient reads of the immutable, already accepted Ready
+  // publication. The channel retains its raw guard after timeout, so busy
+  // polls cannot overlap SDK work. Never replay a startup publication.
+  const began=now(),deadline=began+8_000;let previous=began,attempts=0;
+  const remaining=()=>{
+    const current=now();
+    assert.ok(Number.isFinite(current)&&Number.isFinite(began)&&current>=previous,'Invalid startup monotonic clock');previous=current;
+    const budget=Math.min(deadline-current,Date.parse(startAt)-1_000-nowWall());
+    if(!(budget>0)||stopped())throw Object.assign(Error('Rendered Ready read deadline'),{measurementReadCode:'deadline'});
+    return budget;
+  };
+  while(true){
+    remaining();
+    try{
+      attempts++;
+      const value=await channel.read('measurement-ready.json');
+      remaining();validateMeasurementReadySignal(value,expected,waiting,nowWall());return value;
+    }catch(error){
+      if(!measurementOperationRetryable(error))throw error;
+      if(error?.measurementReadCode==='busy')attempts--;
+      if(attempts>=4)throw error;
+      await sleep(Math.min(100,remaining()));
+    }
+  }
+}
+export function renderedFailureDiagnostic(error,phase){
+  const phases=['preparing','measurement-ready','start-barrier','warming','classroom-command-burst','sampling','draining-http-evidence'];
+  const status=error?.$metadata?.httpStatusCode;
+  const code=status===403||error?.name==='AccessDenied'?'access-denied'
+    :status===404||error?.name==='NoSuchKey'?'missing-required-object'
+    :status===429?'rate-limited':Number.isInteger(status)&&status>=500&&status<=599?'storage-unavailable'
+    :error?.measurementReadCode==='busy'?'read-unsettled'
+    :error?.measurementReadCode==='deadline'||error?.name==='AbortError'||error?.name==='TimeoutError'?'deadline'
+    :['ECONNRESET','ECONNREFUSED','EAI_AGAIN','ENOTFOUND','ETIMEDOUT'].includes(error?.code)?'transport-failure':'refused';
+  return {schemaVersion:1,kind:'rendered-stage-failure-v1',phase:phases.includes(phase)?phase:'unknown',code};
 }
 export async function awaitActualRenderedCausalSignal({channel,waiting,expected,name,kind,nonce,deadline,
   now=()=>performance.now(),nowWall=Date.now,sleep=milliseconds=>delay(milliseconds),stopped=()=>false,onRead=()=>{}}) {
@@ -1297,7 +1329,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
   const httpMetrics = new RenderedHttpMetrics({ origin: auth.baseUrl });
   const staticTraffic = { requests: 0, completed: 0, failed: 0, encodedBytes: 0, inFlight: 0 };
 
-  let thrown = false, interrupted = false, phase = 'preparing',timedWindowCompleteBeforeShutdown=false,timedWindowObservedMs=null;
+  let thrown = false, failureDiagnostic = null, interrupted = false, phase = 'preparing',timedWindowCompleteBeforeShutdown=false,timedWindowObservedMs=null;
   const barrierAbort = new AbortController();
   const interruption=createRenderedInterruptionEvidence({startAt:()=>startedMonotonic,endAt:()=>endMonotonic,phase:()=>phase});
   const markInterrupted=(source,error)=>{interruption.record(source,error);interrupted=true;barrierAbort.abort();};
@@ -1395,8 +1427,9 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     // first causal pulse is then emitted directly at the controller start.
     await Promise.all(actors.map(runtime => observerRuntime.prepareWarm(runtime)(scope =>
       warmActualRenderedCaptureBaseline(runtime, scope, { auth, runId: manifest.runId }))));
+    phase = 'measurement-ready';
+    await acceptActualRenderedMeasurementReady({channel:measurementChannel,waiting,expected:measurementContext,startAt:manifest.startAt,stopped:()=>interrupted});syncMeasurementCounters();startupGate.markReady();
     phase = 'start-barrier';
-    await acceptActualRenderedMeasurementReady({channel:measurementChannel,waiting,expected:measurementContext,startAt:manifest.startAt});syncMeasurementCounters();startupGate.markReady();
     barrier = await waitForStagingStart({ startAt: manifest.startAt, origin: auth.baseUrl,
       inputCreatedAt: manifest.createdAt, signal: barrierAbort.signal,
       onReady: ready => writeFileSync(join(paths.outputPath, 'rendered-ready.json'), JSON.stringify({ schemaVersion: 1,
@@ -1682,7 +1715,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
       managedDevicesValidated: false, productionAccepted: false, failures };
     finalSummary = summary;
 
-  } catch { thrown = true; throw new Error('Rendered dashboard campaign failed; no private response details emitted'); }
+  } catch(error) { thrown = true; failureDiagnostic=renderedFailureDiagnostic(error,phase);throw new Error('Rendered dashboard campaign failed; no private response details emitted'); }
   finally {
     controlStopped = true;
     measurementChannel.close();
@@ -1692,7 +1725,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     cleanupProof = await observerRuntime.close({ extraDrains: drains });
     syncMeasurementCounters();
     if (!finalSummary) finalSummary = { browserPaintValidated: false, productionAccepted: false,
-      managedDevicesValidated: false, failurePhase: phase, counters, http: httpMetrics.summary(), failures: ['incomplete rendered dashboard campaign'] };
+      managedDevicesValidated: false, failurePhase: phase, failureDiagnostic, measurementChannel:measurementChannel.summary(), counters, http: httpMetrics.summary(), failures: ['incomplete rendered dashboard campaign'] };
     // Final accounting and acceptance happen only after exact owned closure and
     // true raw settlement. Provisional pre-cleanup success is never published.
     finalSummary.observerRuntime = observerRuntime.summary();

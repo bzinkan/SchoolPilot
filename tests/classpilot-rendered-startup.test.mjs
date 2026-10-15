@@ -22,11 +22,11 @@ const measurementOperationRetryable=runInNewContext(remoteSource.slice(retryStar
 const helperStart = driver.indexOf('export async function acceptActualRenderedMeasurementReady(');
 const helperEnd = driver.indexOf('export async function runRenderedDashboards(', helperStart);
 assert(helperStart > 0 && helperEnd > helperStart);
-const helpers = runInNewContext(driver.slice(helperStart, helperEnd).replaceAll('export async function', 'async function')
-  + '\n({acceptActualRenderedMeasurementReady,awaitActualRenderedCausalSignal})',
+const helpers = runInNewContext(driver.slice(helperStart, helperEnd).replaceAll('export async function', 'async function').replaceAll('export function','function')
+  + '\n({acceptActualRenderedMeasurementReady,awaitActualRenderedCausalSignal,renderedFailureDiagnostic})',
   { assert, performance, delay, validateMeasurementWaiting, validateMeasurementReadySignal,
     validateMeasurementPendingSignal, validateMeasurementSignal, measurementOperationRetryable });
-const { acceptActualRenderedMeasurementReady, awaitActualRenderedCausalSignal } = helpers;
+const { acceptActualRenderedMeasurementReady, awaitActualRenderedCausalSignal, renderedFailureDiagnostic } = helpers;
 const digest = value => createHash('sha256').update(value).digest('hex');
 const base = Date.now(), startAt = new Date(base + 120_000).toISOString();
 const expected = measurementExpected({ campaign: 'classpilot-staging-20261013-0d1060d261d5',
@@ -69,6 +69,67 @@ test('actual renderer rejects Ready with changed waiting body, nonce, mode or so
   }
   await assert.rejects(acceptActualRenderedMeasurementReady({ ...startupArguments({ read: async () => ready() }),
     waiting: { ...waiting, createdAt: new Date(base - 1).toISOString() } }));
+});
+
+test('startup recovers transient immutable Ready reads while retaining raw singleflight', async () => {
+  let clock=0,calls=0;
+  const channel={read:async()=>{
+    calls++;
+    if(calls===1){clock+=250;throw Object.assign(Error('private body'),{measurementReadCode:'deadline'});}
+    if(calls<4)throw Object.assign(Error('private raw still active'),{measurementReadCode:'busy'});
+    return ready();
+  }};
+  const result=await acceptActualRenderedMeasurementReady({...startupArguments(channel),now:()=>clock,sleep:async ms=>{clock+=ms;}});
+  assert.equal(calls,4);assert.equal(clock,550);assert.equal(result.capacityAcceptance,false);
+});
+
+test('startup stops after four failed actual attempts and never retries ordinary transport or validation failures', async () => {
+  let clock=0,calls=0;
+  const channel={read:async()=>{calls++;clock+=250;throw Object.assign(Error('private'),{measurementReadCode:'deadline'});}};
+  await assert.rejects(acceptActualRenderedMeasurementReady({...startupArguments(channel),now:()=>clock,sleep:async ms=>{clock+=ms;}}));
+  assert.equal(calls,4);assert.equal(clock,1300);
+  for(const failure of [Error('private body'),Object.assign(Error('private endpoint'),{code:'ECONNRESET'}),Object.assign(Error('private'),{$metadata:{httpStatusCode:503}})]){
+    calls=0;
+    await assert.rejects(acceptActualRenderedMeasurementReady(startupArguments({read:async()=>{calls++;throw failure;}})),error=>error===failure);
+    assert.equal(calls,1);
+  }
+});
+
+test('startup busy polls stay within eight seconds and the original prestart margin', async () => {
+  for(const wallOffset of [10,118_800]){
+    let clock=0,calls=0;
+    const channel={read:async()=>{calls++;throw Object.assign(Error('private'),{measurementReadCode:'busy'});}};
+    await assert.rejects(acceptActualRenderedMeasurementReady({...startupArguments(channel),now:()=>clock,nowWall:()=>base+wallOffset+clock,sleep:async ms=>{clock+=ms;}}));
+    assert.equal(clock,wallOffset===10?8000:200);assert.equal(calls,wallOffset===10?80:2);
+  }
+});
+
+test('startup cannot accept late Ready, cancellation or a backwards monotonic clock', async () => {
+  for(const failureMode of ['late','cancelled','backwards']){
+    let clock=0,stopped=false,calls=0;
+    const channel={read:async()=>{calls++;clock=failureMode==='late'?8000:failureMode==='backwards'?-1:0;stopped=failureMode==='cancelled';return ready();}};
+    await assert.rejects(acceptActualRenderedMeasurementReady({...startupArguments(channel),now:()=>clock,stopped:()=>stopped,sleep:async ms=>{clock+=ms;}}));
+    assert.equal(calls,1);
+  }
+});
+
+test('failure diagnostics retain only fixed codes and phases, never error text or identities',()=>{
+  const secret='private student cookie URL response';
+  const cases=[
+    [{$metadata:{httpStatusCode:403}},'access-denied'],[{$metadata:{httpStatusCode:404}},'missing-required-object'],
+    [{name:'NoSuchKey'},'missing-required-object'],[{$metadata:{httpStatusCode:429}},'rate-limited'],
+    [{$metadata:{httpStatusCode:503}},'storage-unavailable'],[{measurementReadCode:'busy'},'read-unsettled'],
+    [{measurementReadCode:'deadline'},'deadline'],[{name:'AbortError'},'deadline'],[{code:'ECONNRESET'},'transport-failure'],
+    [{name:'constructor',code:'__proto__'},'refused'],[{},'refused']
+  ];
+  for(const [fields,code] of cases){
+    const result=renderedFailureDiagnostic(Object.assign(Error(secret),fields),'measurement-ready');
+    assert.equal(result.code,code);assert.equal(result.phase,'measurement-ready');
+    assert.equal(JSON.stringify(result).includes(secret),false);assert.equal(Object.keys(result).length,4);
+  }
+  assert.equal(renderedFailureDiagnostic(Error(secret),'__proto__').phase,'unknown');
+  assert.match(driver,/failureDiagnostic=renderedFailureDiagnostic\(error,phase\)/);
+  assert.match(driver,/measurementChannel:measurementChannel\.summary\(\)/);
 });
 test('actual renderer pending polls cannot complete a causal signal and preserve its original deadline', async () => {
   let calls = 0, observed = 0;

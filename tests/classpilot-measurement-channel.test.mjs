@@ -5,9 +5,13 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { S3Client } from '@aws-sdk/client-s3';
-import { createMeasurementArtifactChannel, measurementChannelPreflightSignal, runMeasurementChannelPreflight } from '../scripts/load/run-classpilot-remote-generator.mjs';
-import { CapturePulseController, measurementExpected, measurementPlan, publicBindingFromDevice, measurementSignal } from '../scripts/load/classpilot-reliability-profile.mjs';
+import { createMeasurementArtifactChannel, measurementChannelPreflightSignal, runMeasurementChannelPreflight,
+ measurementOperationRetryable } from '../scripts/load/run-classpilot-remote-generator.mjs';
+import { CapturePulseController, measurementExpected, measurementPlan, publicBindingFromDevice, measurementSignal,
+ measurementWaiting, measurementReadySignal, validateMeasurementWaiting,
+ validateMeasurementReadySignal } from '../scripts/load/classpilot-reliability-profile.mjs';
 
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const expected=measurementExpected({campaign:'classpilot-staging-20261014-abcdefabcdef',runId:'40-abcdefabcdefabcd',
@@ -26,6 +30,86 @@ class FakeS3 {
 const stream=value=>Readable.from([Buffer.from(JSON.stringify(value))]);
 const assertDeadline=elapsed=>assert.ok(elapsed>=220&&elapsed<800,'Actual250ms full-body caller deadline, allowing scheduling latency only');
 const devices=Array.from({length:50},(_,i)=>{const value={deviceId:'synthetic-device-'+i,studentId:'synthetic-student-'+i,schoolId:'synthetic-school'};return{...value,studentToken:'x.'+Buffer.from(JSON.stringify({...value,sessionId:'synthetic-session-'+i})).toString('base64url')+'.x'};});
+function startupController(handler) {
+ const startAt=new Date(Date.now()+120_000).toISOString();
+ const waiting=measurementWaiting(expected,{startAt,mode:'workload',nonce:'b'.repeat(48)});
+ const ready=measurementReadySignal(expected,waiting),sdk=new FakeS3(handler);
+ return{sdk,ready,waiting,startAt,channel:createMeasurementArtifactChannel({role:'controller',expected,startAt,startup:waiting,s3:sdk})};
+}
+const abortInsensitiveBody=bytes=>({destroy(){},async*[Symbol.asyncIterator](){yield bytes;}});
+async function rawReadSettled(channel) {
+ const deadline=performance.now()+2000;
+ while(channel.summary().readInFlight&&performance.now()<deadline)await delay(1);
+ assert.equal(channel.summary().readInFlight,false,'Actual raw read must settle before another GET');
+}
+
+test('controller Ready late403 remains fatal after the caller deadline and cannot be hidden by a later valid object',async()=>{
+ const hold=deferred(),denied=Object.assign(Error('fixed denial'),{$metadata:{httpStatusCode:403}});
+ let value;const{channel,sdk,ready}=startupController(()=>sdk.calls===1?hold.promise:{Body:stream(value)});value=ready;
+ try{
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode==='deadline');
+  assert.equal(channel.summary().readInFlight,true);hold.reject(denied);await rawReadSettled(channel);
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error===denied);
+  assert.equal(sdk.calls,1);assert.equal(channel.summary().startupReadyFailed,true);
+ }finally{hold.reject(denied);channel.close();}
+});
+
+for(const badKind of ['malformed-json','foreign-ready','oversized'])test('controller Ready late '+badKind+' permanently fences fresh GET recovery',async()=>{
+ const hold=deferred();let value;const{channel,sdk,ready}=startupController(()=>sdk.calls===1?hold.promise:{Body:stream(value)});value=ready;
+ const bytes=badKind==='malformed-json'?Buffer.from('{'):badKind==='oversized'?Buffer.alloc(4097)
+  :Buffer.from(JSON.stringify({...ready,sourceArtifactSha256:'e'.repeat(64)}));
+ try{
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode==='deadline');
+  hold.resolve({Body:abortInsensitiveBody(bytes)});await rawReadSettled(channel);
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode!=='deadline');
+  assert.equal(sdk.calls,1);assert.equal(channel.summary().startupReadyFailed,true);assert.equal(channel.summary().bytesRead,0);
+ }finally{hold.resolve({Body:Readable.from([])});channel.close();}
+});
+
+test('controller Ready latevalid body releases only its raw guard and allows a new independently validated GET',async()=>{
+ const hold=deferred();let value;const{channel,sdk,ready}=startupController(()=>sdk.calls===1?hold.promise:{Body:stream(value)});value=ready;
+ try{
+  const began=performance.now();await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode==='deadline');assertDeadline(performance.now()-began);
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode==='busy');assert.equal(sdk.calls,1);
+  hold.resolve({Body:abortInsensitiveBody(Buffer.from(JSON.stringify(ready)))});await rawReadSettled(channel);assert.equal(channel.summary().bytesRead,0);
+  assert.deepEqual(await channel.read('measurement-ready.json'),ready);assert.equal(sdk.calls,2);
+  assert.equal(channel.summary().startupReadyFailed,false);assert.equal(channel.summary().reader.lateSettlements,1);
+ }finally{hold.resolve({Body:Readable.from([])});channel.close();}
+});
+
+// Compose the exact controller recovery body with the real shared adapter,
+// without loading native browser dependencies or creating a network client.
+const driver=readFileSync(new URL('../scripts/load/run-classpilot-rendered-dashboards.mjs',import.meta.url),'utf8');
+const readyHelperStart=driver.indexOf('export async function acceptActualRenderedMeasurementReady(');
+const readyHelperEnd=driver.indexOf('export function renderedFailureDiagnostic(',readyHelperStart);
+assert(readyHelperStart>0&&readyHelperEnd>readyHelperStart);
+const acceptActualRenderedMeasurementReady=runInNewContext(driver.slice(readyHelperStart,readyHelperEnd).replace('export async function','async function')
+ +'\nacceptActualRenderedMeasurementReady',{assert,performance,delay,validateMeasurementWaiting,validateMeasurementReadySignal,measurementOperationRetryable});
+for(const outcome of ['late-valid','late403'])test('actual controller recovery plus actual channel preserves '+outcome+' raw outcome',async()=>{
+ const hold=deferred(),denied=Object.assign(Error('fixed denial'),{$metadata:{httpStatusCode:403}});
+ let value;const{channel,sdk,ready,waiting,startAt}=startupController(()=>sdk.calls===1?hold.promise:{Body:stream(value)});value=ready;
+ const timer=setTimeout(()=>outcome==='late403'?hold.reject(denied):hold.resolve({Body:abortInsensitiveBody(Buffer.from(JSON.stringify(ready)))}),320);
+ try{
+  const operation=acceptActualRenderedMeasurementReady({channel,waiting,expected,startAt});
+  if(outcome==='late403'){await assert.rejects(operation,error=>error===denied);assert.equal(sdk.calls,1);}
+  else{assert.deepEqual(await operation,ready);assert.equal(sdk.calls,2);}
+  await rawReadSettled(channel);assert.equal(channel.summary().reader.timeouts,1);
+  assert.equal(channel.summary().startupReadyFailed,outcome==='late403');
+  assert.equal(channel.summary().publishAttempts,0);
+ }finally{clearTimeout(timer);hold.resolve({Body:Readable.from([])});channel.close();}
+});
+
+test('controller Ready abort-insensitive body holds singleflight until EOF and validates late denial content',async()=>{
+ const hold=deferred();let destroyed=0;const{channel,sdk,ready}=startupController(()=>({Body:{destroy(){destroyed++;},async*[Symbol.asyncIterator](){yield Buffer.from('{');await hold.promise;yield Buffer.from('}');}}}));
+ try{
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode==='deadline');
+  assert.equal(destroyed,1);assert.equal(channel.summary().readInFlight,true);
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode==='busy');assert.equal(sdk.calls,1);
+  hold.resolve();await rawReadSettled(channel);
+  await assert.rejects(channel.read('measurement-ready.json'),error=>error.measurementReadCode!=='deadline');assert.equal(sdk.calls,1);
+  assert.equal(channel.summary().startupReadyFailed,true);assert.equal(channel.summary().bytesRead,0);assert.equal(ready.startupOnly,true);
+ }finally{hold.resolve();channel.close();}
+});
 
 test('channel rejects wrong roles/keys/context/mode before SDK dispatch and freezes context',async()=>{
  const sdk=new FakeS3(()=>{throw Error('Unexpected dispatch');});

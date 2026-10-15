@@ -124,13 +124,15 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
     if (attempts !== 1 || region !== 'us-east-1') throw Error('Measurement SDK must use one attempt in the exact region');
     return client.send(command, { abortSignal: signal });
   };
-  let startupWaitingFatal = null;
+  let startupWaitingFatal = null, startupReadyFatal = null;
   const startupWaitingRead = name => role === 'producer' && Boolean(startAt)
     && !startupAccepted && name === 'measurement-control.json';
+  const startupReadyRead = name => role === 'controller' && Boolean(startAt) && name === 'measurement-ready.json';
   const bodyDeadline = () => Object.assign(Error('Measurement body deadline fenced'), { measurementReadCode: 'deadline' });
   const reader = new BoundedControlReader(async ({ name }, { signal }) => {
     counters.readAttempts += 1;
-    const startupRead = startupWaitingRead(name);
+    const waitingRead = startupWaitingRead(name), readyRead = startupReadyRead(name);
+    const startupRead = waitingRead || readyRead;
     try {
       const side = role === 'controller' ? 'results' : 'inputs';
       const response = await checkedSend(new GetObjectCommand({ Bucket: context.bucket, ExpectedBucketOwner: context.account,
@@ -152,10 +154,13 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
         // Startup validation happens before releasing the raw GET guard. A
         // late authoritative denial or known invalid body cannot be hidden by
         // an earlier caller timeout and followed by a successful retry.
-        if (startupRead) {
+        if (waitingRead) {
           const value = validateMeasurementWaiting(JSON.parse(bytes.toString('utf8')), context, { startAt, mode });
           if (waiting && JSON.stringify(waiting) !== JSON.stringify(value)) throw Error('Startup waiting replay refused');
           waiting = waiting || Object.freeze({ ...value });
+        } else if (readyRead) {
+          if (!waiting) throw Error('Exact waiting control required before positive readiness');
+          validateMeasurementReadySignal(JSON.parse(bytes.toString('utf8')), context, waiting);
         }
         if (signal.aborted) throw bodyDeadline();
         counters.bytesRead += length;
@@ -165,7 +170,8 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
       const denied = [403, 404].includes(error?.$metadata?.httpStatusCode) || ['NoSuchKey', 'AccessDenied'].includes(error?.name);
       const failure = startupRead && signal.aborted && !denied && error?.code === 'ERR_STREAM_PREMATURE_CLOSE'
         ? bodyDeadline() : error;
-      if (startupRead && !measurementOperationRetryable(failure)) startupWaitingFatal = failure;
+      if (waitingRead && !measurementOperationRetryable(failure)) startupWaitingFatal = failure;
+      if (readyRead && !measurementOperationRetryable(failure)) startupReadyFatal = failure;
       throw failure;
     }
   }, { timeoutMs: MEASUREMENT_LIMITS.readMs, maximumBytes: MEASUREMENT_LIMITS.bootstrapBytes });
@@ -184,6 +190,9 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
       admit('read', name);
       if (startupWaitingRead(name) && (startupWaitingFatal || startupFailed)) {
         throw startupWaitingFatal || Error('Unknown or failed startup is permanently fenced');
+      }
+      if (startupReadyRead(name) && (startupReadyFatal || startupFailed)) {
+        throw startupReadyFatal || Error('Unknown or failed startup is permanently fenced');
       }
       // Signal expectation is checked before sending; malformed expected
       // nonces cannot cause a lookup or falsely accept an old result.
@@ -225,7 +234,7 @@ export function createMeasurementArtifactChannel({ role, expected, devices, mode
       if (name === 'measurement-ready.json') startupAccepted = true;
       return result;
     },
-    summary: () => ({ role, mode, ...counters, startupAccepted, startupFailed, acceptedPending: acceptedPending.size,
+    summary: () => ({ role, mode, ...counters, startupAccepted, startupFailed, startupReadyFailed: Boolean(startupReadyFatal), acceptedPending: acceptedPending.size,
       reader: { ...reader.counters }, publisher: { ...writer.counters },
       readInFlight: Boolean(reader.active), publicationInFlight: Boolean(writer.active) }),
     // This logical fence never aborts or replays an uncertain mutation. The
