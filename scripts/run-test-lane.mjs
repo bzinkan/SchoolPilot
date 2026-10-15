@@ -94,6 +94,7 @@ const DB_SERIAL = new Set([
   "classpilot-scheduled-classroom.integration.test.ts",
   "classpilot-chat-channel-control.integration.test.ts",
   "classpilot-realtime-status-redis.integration.test.ts",
+  "classpilot-observation-redis.integration.test.ts",
   "classpilot-chat-oversight.integration.test.ts",
   "classpilot-schedule-profiles.integration.test.ts",
   "safety-notification-bundling.integration.test.ts",
