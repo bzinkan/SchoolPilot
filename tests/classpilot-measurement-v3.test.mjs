@@ -76,13 +76,13 @@ test('first-start and drained receipts are exact typed run/source/nonce signals'
   for(const value of [false,null,'true',1]) assert.throws(()=>validateMeasurementSignal({...signal,trafficStarted:value},expected,'measurement-started-v3',nonce));
   assert.throws(()=>validateMeasurementSignal(signal,expected,'measurement-drained-v3',nonce)); assert.throws(()=>validateMeasurementSignal(signal,expected,'measurement-started-v3','3'.repeat(48)));
 });
-for(const failure of['failed','rejected'])test('regular heartbeat '+failure+' queues a finite retry, coalesces fresh navigation and preserves hold/cooldown/deny',async()=>{
+for(const failure of['failed','rejected'])test('regular heartbeat '+failure+' does not replay; fresh events preserve hold/cooldown/deny',async()=>{
   let now=100,cooldown=0,body='initial',next=0;const timers=new Map(),sent=[];
   const writer=new SerialHeartbeatWriter({now:()=>now,cooldownUntil:()=>cooldown,schedule:(run,ms)=>{assert.ok(Number.isFinite(ms)&&ms>0);const id=++next;timers.set(id,{run,due:now+ms,ms});return id;},clear:id=>timers.delete(id),snapshot:()=>({body}),send:async value=>{
     sent.push(value);if(sent.length===1){if(failure==='rejected')throw Error('Synthetic failed regular');return{ok:false};}return{ok:true};}});
-  writer.regular();await tick();await tick();assert.equal(sent.length,1);assert.equal(writer.eventDue,2100);assert.equal(timers.size,1);assert.equal([...timers.values()][0].ms,2000);
-  now=200;body='navigation-one';writer.navigation();now=250;body='navigation-latest';writer.navigation();assert.equal(writer.eventDue,2250);assert.equal(timers.size,1);assert.equal(sent.length,1);
-  writer.hold();cooldown=5000;now=2250;const waiting=[...timers.entries()][0];timers.delete(waiting[0]);waiting[1].run();await tick();assert.equal(sent.length,1,'Hold fences retry without dropping the event');assert.equal(writer.pendingEvent,true);
+  writer.regular();await tick();await tick();assert.equal(sent.length,1);assert.equal(writer.eventDue,Infinity);assert.equal(timers.size,0);assert.equal(writer.pendingEvent,false);
+  now=200;body='navigation-one';writer.navigation();now=250;body='navigation-latest';writer.navigation();assert.equal(writer.eventDue,2200);assert.equal(timers.size,1);assert.equal(sent.length,1);
+  writer.hold();cooldown=5000;now=2200;const waiting=[...timers.entries()][0];timers.delete(waiting[0]);waiting[1].run();await tick();assert.equal(sent.length,1,'Hold fences new work without dropping the event');assert.equal(writer.pendingEvent,true);
   writer.release();assert.equal(timers.size,1);assert.equal([...timers.values()][0].due,5000,'Existing cooldown remains authoritative');now=5000;const ready=[...timers.entries()][0];timers.delete(ready[0]);ready[1].run();await tick();await tick();assert.equal(sent.length,2);assert.deepEqual(sent[1],{body:'navigation-latest'});assert.equal(writer.active,false);assert.equal(writer.pendingEvent,false);assert.equal(timers.size,0);
   writer.send=async()=>({denied:true});writer.regular();await tick();await tick();assert.equal(writer.denied,true);writer.navigation();writer.regular();assert.equal(timers.size,0);assert.equal(writer.counters.started,3,'A denial still latches further dispatch');
 });

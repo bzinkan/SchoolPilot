@@ -416,7 +416,7 @@ async function observationStatusForSubject(options: {
       `${indexKey}:viewer:`,
       options.studentId,
       String(MAX_OBSERVATION_STUDENTS),
-    ], { readyTimeoutMs: 200 });
+    ], { readyTimeoutMs: 200, diagnosticOperation: "observation_status" });
     if (Array.isArray(result) && result.length === 2) {
       if (result[0] === -1 && result[1] === 0) {
         return { status: "unavailable", expiresInSeconds: 0 };

@@ -134,6 +134,23 @@ const HOT_PATH_LOG_INTERVAL_MS = 60_000;
 const REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS = 500;
 const REDIS_DISCONNECT_GRACE_MS = 250;
 export const PUBLICATION_LATENCY_BUCKETS_MS = [25, 50, 100, 200, 250, 500, 1_000, 2_000, 5_000] as const;
+const OBSERVATION_NOT_ADMITTED_LABELS = Object.freeze({
+  not_ready: "not_admitted_not_ready",
+  queue_full: "not_admitted_queue_full",
+  circuit_open: "not_admitted_circuit_open",
+  shutdown: "not_admitted_shutdown",
+  aborted: "not_admitted_aborted",
+  not_configured: "not_admitted_not_configured",
+} as const);
+const OBSERVATION_UNKNOWN_LABELS = Object.freeze({
+  timeout: "unknown_timeout",
+  transport_lost: "unknown_transport_lost",
+  shutdown: "unknown_shutdown",
+  aborted: "unknown_aborted",
+} as const);
+type ObservationStatusDiagnostic = "accepted"
+  | typeof OBSERVATION_NOT_ADMITTED_LABELS[keyof typeof OBSERVATION_NOT_ADMITTED_LABELS]
+  | typeof OBSERVATION_UNKNOWN_LABELS[keyof typeof OBSERVATION_UNKNOWN_LABELS];
 
 type HotPathActivity = {
   publicationOutcomes: Partial<Record<PublicationDiagnostic, number>>;
@@ -142,6 +159,7 @@ type HotPathActivity = {
   }>>;
   coordinationOutcomes: Partial<Record<PublicationDiagnostic, number>>;
   coordinationLatency: HotPathActivity["publicationLatency"];
+  observationStatusOutcomes: Partial<Record<ObservationStatusDiagnostic, number>>;
   redisMessagesPublished: number;
   redisSubscriberDeliveries: number;
   redisMessagesReceived: number;
@@ -166,6 +184,7 @@ function emptyHotPathActivity(): HotPathActivity {
     publicationLatency: {},
     coordinationOutcomes: {},
     coordinationLatency: {},
+    observationStatusOutcomes: {},
     redisMessagesPublished: 0,
     redisSubscriberDeliveries: 0,
     redisMessagesReceived: 0,
@@ -190,6 +209,7 @@ function flushHotPathActivity(): void {
     activity.screenshotUploads === 0 &&
     Object.keys(activity.publicationOutcomes).length === 0 &&
     Object.keys(activity.coordinationOutcomes).length === 0 &&
+    Object.keys(activity.observationStatusOutcomes).length === 0 &&
     Object.keys(activity.commandPhases).length === 0
   ) {
     return;
@@ -272,6 +292,17 @@ function recordRedisDiagnostic(stream: "publication" | "coordination", event: Pu
   histogram.totalMs += duration;
   histogram.maxMs = Math.max(histogram.maxMs, duration);
   latencies[event] = histogram;
+}
+
+function recordObservationStatusOutcome(outcome: RedisPublicationOutcome<unknown>): void {
+  try {
+    const label = outcome.status === "accepted" ? "accepted"
+      : outcome.status === "not_admitted" && Object.hasOwn(OBSERVATION_NOT_ADMITTED_LABELS, outcome.reason)
+        ? OBSERVATION_NOT_ADMITTED_LABELS[outcome.reason]
+        : outcome.status === "unknown" && Object.hasOwn(OBSERVATION_UNKNOWN_LABELS, outcome.reason)
+          ? OBSERVATION_UNKNOWN_LABELS[outcome.reason] : undefined;
+    if (label) hotPathActivity.observationStatusOutcomes[label] = (hotPathActivity.observationStatusOutcomes[label] ?? 0) + 1;
+  } catch { /* Fixed diagnostics cannot change a coordination operation's disposition. */ }
 }
 
 const coordinationRuntime = new BoundedRedisPublication({
@@ -408,12 +439,18 @@ export async function executeRealtimeRedisCommand<T = unknown>(
  * rate-limit client this bounds replies after socket write, and an AbortSignal
  * bounds only the caller, never corrupts the Redis delayed-reply queue. */
 export async function realtimeRedisCommand(
-  args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal } = {},
+  args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal; diagnosticOperation?: "observation_status" } = {},
 ): Promise<unknown | undefined> {
-  if (!redisUrl) return undefined;
+  if (!redisUrl) {
+    if (options.diagnosticOperation === "observation_status") {
+      recordObservationStatusOutcome({ status: "not_admitted", reason: "not_configured" });
+    }
+    return undefined;
+  }
   const outcome = await coordinationRuntime.publish(client => client.sendCommand(args), {
     budgetMs: 250, signal: options.signal,
   });
+  if (options.diagnosticOperation === "observation_status") recordObservationStatusOutcome(outcome);
   return outcome.status === "accepted" ? outcome.value : undefined;
 }
 

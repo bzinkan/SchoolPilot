@@ -12,8 +12,8 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
-  "classpilot-load-test.mjs": "12e25632b1d42c1bfbb1292f4c0d9409b28d1f0e3193c16218372c1d3f90d58d",
-  "classpilot-reliability-profile.mjs": "e667d334eb8ef9f785d4ff07115ac2eb32b1268a403ecd9f497ba405149dfe32",
+  "classpilot-load-test.mjs": "9f9548c0612f515dbf480fecd44fe571e3c7b28e8a8640695613b3ec232fe717",
+  "classpilot-reliability-profile.mjs": "65af9dc4c9985cf70218ed5a0dab288678c9fdfddf03ccb0bd379f80eb9c5f83",
   "command-status-observer.mjs": "8d3dacb4fae02d0bf8b0a3ef1be312b1f0c6732b3b9e0760b129a49725ae87af",
   "fine-endpoint-latency.mjs": "415a63011f412fb02311d5643291840c365628f1e86ca9954c0b985d3e58cea4",
   "monotonic-deadline.mjs": "4b63a0de37a931d37112603101d20d2419fc1b7ed4f83029aea534f27a35bc49",

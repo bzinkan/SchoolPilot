@@ -78,6 +78,7 @@ import {
   classpilotTeacherChatAckRejection,
   withClasspilotStudentControlDeliveryAuthority,
   classpilotStudentRelayMessageAllowed,
+  withClasspilotPlainOpenTabDeliveryBatch,
   withClasspilotStudentWebSocketBootstrapAuthority,
 } from "../services/storage.js";
 import {
@@ -98,6 +99,7 @@ import {
 } from "../services/runtimePerformanceMetrics.js";
 import { getRuntimeMetadata } from "../services/runtimeMetadata.js";
 import { WebSocketWorkTracker } from "./websocketWork.js";
+import { ClasspilotPlainOpenTabRelay } from "./classpilotPlainOpenTabRelay.js";
 import {
   resolveActiveStudentTokenSession,
   type ActiveStudentTokenSession,
@@ -193,14 +195,24 @@ const MAX_PASSIVE_AUTH_SCHOOLS = 4_096;
 const MAX_PASSIVE_AUTH_INFLIGHT = 4_096;
 const webSocketWork = new WebSocketWorkTracker();
 const stopWebSocketProducers = new Set<() => void>();
+const plainOpenTabRelay = new ClasspilotPlainOpenTabRelay({
+  hasLocal: (target, message) => hasStudentBindingSocketLocal(target, message, target),
+  sendLocal: (target, message) => sendToStudentBindingLocal(target, message, target),
+  fallback: deliverClasspilotStudentBindingRedisMessageSerial,
+  onQueueWait: durationMs => recordRuntimePerformanceTiming("studentRelayBatchQueueMs", durationMs),
+  onNotAdmitted: () => recordRuntimePerformanceCounter("studentRelayBatchNotAdmitted"),
+  runBatch: (options, send) => runWithTenantContext({ schoolId: options.schoolId },
+    () => withClasspilotPlainOpenTabDeliveryBatch(options, send)),
+});
 
 export function stopWebSocketWork(): void {
   webSocketWork.stop();
+  plainOpenTabRelay.stop();
   for (const stop of stopWebSocketProducers) stop();
 }
 
-export function drainWebSocketWork(): Promise<void> {
-  return webSocketWork.drain();
+export async function drainWebSocketWork(): Promise<void> {
+  await Promise.all([plainOpenTabRelay.drain(), webSocketWork.drain()]);
 }
 
 /**
@@ -219,8 +231,15 @@ export async function deliverClasspilotStudentBindingRedisMessage(
 ): Promise<boolean> {
   if (!webSocketWork.canStart()) return false;
   if (!hasStudentBindingSocketLocal(target, message, target)) return false;
+  return webSocketWork.track(plainOpenTabRelay.deliver(target, message));
+}
+
+async function deliverClasspilotStudentBindingRedisMessageSerial(
+  target: Extract<WsRedisTarget, { kind: "student-binding" }>,
+  message: unknown,
+): Promise<boolean> {
   try {
-    return await webSocketWork.track(runWithTenantContext({ schoolId: target.schoolId }, async () => {
+    return await runWithTenantContext({ schoolId: target.schoolId }, async () => {
       const delivery = await withClasspilotStudentControlDeliveryAuthority(
         target,
         (database) => classpilotStudentRelayMessageAllowed(target, message, database),
@@ -231,7 +250,7 @@ export async function deliverClasspilotStudentBindingRedisMessage(
         })
       );
       return delivery.authorized && delivery.value;
-    }));
+    });
   } catch (error) {
     console.warn(
       "[Redis] Exact student-binding delivery revalidation failed",
@@ -602,7 +621,9 @@ export function setupWebSocket(
       if (outcome.status === "accepted" && outcome.subscriberCount === 0) {
         throw new Error("Ordered ClassPilot command publication had no subscribers");
       }
-      if (outcome.status === "stale") throw new Error("Ordered ClassPilot command publication was superseded");
+      // A newer advisory-locked snapshot already covers this revision. Treat
+      // supersession as settled; ACKs received since capture still mark dirty
+      // and schedule the normal refresh rather than an error backoff.
       state.retryCount = 0;
       redisSucceeded = true;
     } finally {

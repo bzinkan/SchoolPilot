@@ -1411,6 +1411,13 @@ const counters = {
   reliabilityPolicyUnavailablePermission: 0,
   reliabilityPolicyUnavailableAuthority: 0,
   reliabilityPolicyUnavailableCadenceBackground: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundExplicit: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundActiveElapsed: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundMalformed: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundMissing: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundOmitted: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundActiveAtAdoption: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundUnknown: 0,
   reliabilityPolicyUnavailableCadenceExpired: 0,
   reliabilityPolicyUnavailableSourceNone: 0,
   reliabilityPolicyUnavailableSourceAuth: 0,
@@ -2209,6 +2216,33 @@ const CAPTURE_POLICY_SOURCE_COUNTERS = Object.freeze({
   upload: "reliabilityPolicyUnavailableSourceUpload",
   denial: "reliabilityPolicyUnavailableSourceDenial",
 });
+const CAPTURE_CADENCE_ORIGIN_COUNTERS = Object.freeze({
+  "explicit-background": "reliabilityPolicyUnavailableCadenceBackgroundExplicit",
+  "active-elapsed-response": "reliabilityPolicyUnavailableCadenceBackgroundActiveElapsed",
+  malformed: "reliabilityPolicyUnavailableCadenceBackgroundMalformed",
+  missing: "reliabilityPolicyUnavailableCadenceBackgroundMissing",
+  omitted: "reliabilityPolicyUnavailableCadenceBackgroundOmitted",
+  "active-at-adoption": "reliabilityPolicyUnavailableCadenceBackgroundActiveAtAdoption",
+  unknown: "reliabilityPolicyUnavailableCadenceBackgroundUnknown",
+});
+function recoveryScreenshotCadenceOrigin(raw, policy) {
+  if (!policy) return "malformed";
+  if (!Object.hasOwn(raw, "captureCadence")) return "missing";
+  const cadence = raw.captureCadence;
+  if (!cadence || typeof cadence !== "object" || Array.isArray(cadence)) return "malformed";
+  if (cadence.mode === "background" && cadence.intervalSeconds === 30
+    && Number.isSafeInteger(cadence.expiresInSeconds) && cadence.expiresInSeconds >= 0
+    && cadence.expiresInSeconds <= 90) return "explicit-background";
+  if (cadence.mode !== "active_view" || cadence.intervalSeconds !== 5
+    || !Number.isSafeInteger(cadence.expiresInSeconds) || cadence.expiresInSeconds <= 0
+    || cadence.expiresInSeconds > 90) return "malformed";
+  return policy.captureCadence.mode === "active_view" ? "active-at-adoption" : "active-elapsed-response";
+}
+function applyRecoveryScreenshotCadenceDiagnostic(state, guard, origin) {
+  // Only callers that pass the existing policy-adoption fences reach here.
+  // Retain no raw policy values, identifiers or response timestamps.
+  state.screenshotCadenceAppliedDiagnostic = Object.freeze({ epoch: guard.epoch, generation: guard.generation, origin });
+}
 function screenshotRecoveryBinding(device) {
   // Normalized manifest rows intentionally omit sessionId. Reuse the existing
   // claims/manifest tuple validation; never invent a parallel session field.
@@ -2235,6 +2269,7 @@ function reserveScreenshotRecovery(state, wall = Date.now(), mono = monotonicNow
     state.screenshotRecoveryEpoch = (state.screenshotRecoveryEpoch || 0) + 1;
     state.screenshotPolicyApplied = 0;
     state.screenshotPolicyAppliedSource = "none";
+    state.screenshotCadenceAppliedDiagnostic = null;
     state.device.reliabilityPolicy = null;
     state.screenshotCapabilities = new Set();
   }
@@ -2288,6 +2323,7 @@ function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.n
     } else state.device.reliabilityPolicy = null;
     state.screenshotPolicyApplied = guard.generation;
     state.screenshotPolicyAppliedSource = appliedSource;
+    applyRecoveryScreenshotCadenceDiagnostic(state, guard, "omitted");
     return false;
   }
   const policy = normalizeRecoveryScreenshotPolicy(state, body.screenshotPolicy, guard, wall, mono);
@@ -2295,6 +2331,7 @@ function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.n
     state.device.reliabilityPolicy = null;
     state.screenshotPolicyApplied = guard.generation;
     state.screenshotPolicyAppliedSource = appliedSource;
+    applyRecoveryScreenshotCadenceDiagnostic(state, guard, "malformed");
     return false;
   }
   if (current && policy.captureAllowed && policy.authority.kind === "teaching_session"
@@ -2302,6 +2339,7 @@ function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.n
   state.device.reliabilityPolicy = policy;
   state.screenshotPolicyApplied = guard.generation;
   state.screenshotPolicyAppliedSource = appliedSource;
+  applyRecoveryScreenshotCadenceDiagnostic(state, guard, recoveryScreenshotCadenceOrigin(body.screenshotPolicy, policy));
   return true;
 }
 function classifyRecoveryScreenshot409(state, body, guard, wall = Date.now(), mono = monotonicNowMs()) {
@@ -2348,6 +2386,14 @@ function recordRecoveryScreenshotCaptureRefusal(state) {
     const source = Object.hasOwn(CAPTURE_POLICY_SOURCE_COUNTERS, state.screenshotPolicyAppliedSource)
       ? state.screenshotPolicyAppliedSource : "none";
     counters[CAPTURE_POLICY_SOURCE_COUNTERS[source]] += 1;
+    if (reason === "cadence-background") {
+      const diagnostic = state.screenshotCadenceAppliedDiagnostic;
+      const origin = diagnostic?.epoch === state.screenshotRecoveryEpoch
+        && diagnostic?.generation === state.screenshotPolicyApplied
+        && typeof diagnostic.origin === "string" && Object.hasOwn(CAPTURE_CADENCE_ORIGIN_COUNTERS, diagnostic.origin)
+        ? diagnostic.origin : "unknown";
+      counters[CAPTURE_CADENCE_ORIGIN_COUNTERS[origin]] += 1;
+    }
   }
 }
 function recoveryScreenshotHintCurrent(state, message) {
@@ -2707,6 +2753,7 @@ function pollMeasurementControl() {
 
 function startDeviceTraffic(state, index) {
   state.heartbeatWriter = new SerialHeartbeatWriter({ now: monotonicNowMs, schedule: (callback, ms) => later(callback, ms, { scale: false }), clear: cancelLater,
+    identity: () => reliabilityWorkload ? screenshotRecoveryBinding(state.device) : JSON.stringify([state.device.deviceId, state.device.studentToken]),
     snapshot: () => heartbeatBody(state.device), send: async body => {
       if (stoppingTraffic) return { ok: false, denied: true };
       counters.heartbeat += 1;

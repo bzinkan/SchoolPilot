@@ -251,6 +251,8 @@ const captureRefusalCases = [
 const reasonCounterNames = ['Binding', 'Capabilities', 'MissingPolicy', 'Permission', 'Authority', 'CadenceBackground', 'CadenceExpired']
   .map(name => `reliabilityPolicyUnavailable${name}`);
 const sourceCounterNames = ['None', 'Auth', 'Heartbeat', 'Upload', 'Denial'].map(name => `reliabilityPolicyUnavailableSource${name}`);
+const cadenceOriginCounterNames = ['Explicit', 'ActiveElapsed', 'Malformed', 'Missing', 'Omitted', 'ActiveAtAdoption', 'Unknown']
+  .map(name => `reliabilityPolicyUnavailableCadenceBackground${name}`);
 
 test('fixed first-false diagnostics equal the unchanged predicate, including combined failures', () => {
   const allowed = fixture();
@@ -300,8 +302,10 @@ test('each refusal records exactly one fixed reason and source without persistin
     assert.equal(reasonCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
     assert.equal(sourceCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
     assert.equal(f.counters.reliabilityPolicyUnavailableSourceNone, 1);
+    assert.equal(cadenceOriginCounterNames.reduce((sum, name) => sum + f.counters[name], 0), reason === 'cadence-background' ? 1 : 0);
     assert(!JSON.stringify(f.counters).includes('untrusted-free-form'));
-    assert(Object.keys(f.counters).every(name => reasonCounterNames.includes(name) || sourceCounterNames.includes(name)));
+    assert(Object.keys(f.counters).every(name => reasonCounterNames.includes(name)
+      || sourceCounterNames.includes(name) || cadenceOriginCounterNames.includes(name)));
   }
   const f = fixture(); f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
   assert.equal(Object.keys(f.counters).length, 0);
@@ -357,6 +361,7 @@ test('actual periodic refusal branch keeps the same primary-only warmup and aggr
   assert.equal(reasonCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 2);
   assert.equal(sourceCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 2);
   assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackground, 2);
+  assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundActiveAtAdoption, 2);
   assert.equal(f.counters.reliabilityPolicyUnavailableSourceHeartbeat, 2);
   f.state.device.schoolId = 'canary-school';
   f.state.device.studentToken = 'synthetic.' + Buffer.from(JSON.stringify({
@@ -381,4 +386,104 @@ test('a newer valid background policy can cause a local refusal despite HTTP suc
   assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), null);
   assert.equal(f.state.screenshotPolicyAppliedSource, 'heartbeat');
   assert.equal(f.fatals.length, 0); assert.equal(f.counters.httpErrors, 0);
+});
+
+const rawCadenceOriginCases = [
+  ['Explicit', (f, value) => { value.captureCadence = { mode: 'background', intervalSeconds: 30, expiresInSeconds: 90 }; }],
+  ['ActiveElapsed', (f, value) => {
+    value.captureCadence.expiresInSeconds = 1; f.clock.mono += 1001; f.clock.wall += 1001;
+  }],
+  ['Malformed', (f, value) => { value.captureCadence = { mode: 'private-mode', intervalSeconds: 5, expiresInSeconds: 84 }; }],
+  ['Missing', (f, value) => { delete value.captureCadence; }],
+  ['Omitted', null],
+];
+for (const [origin, change] of rawCadenceOriginCases) {
+  test(`actual policy adoption attributes cadence-background to ${origin} only when the existing refusal is counted`, () => {
+    const f = fixture(), guard = f.reserve(), value = f.policy();
+    if (change) { change(f, value); assert.equal(f.adopt(guard, value), true); }
+    else assert.equal(f.context.adoptRecoveryScreenshotPolicy(f.state, {}, guard, 'heartbeat'), false);
+    assert.equal(f.context.recoveryScreenshotCaptureAllowed(f.state), false);
+    assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), 'cadence-background');
+    assert.equal(cadenceOriginCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 0);
+    f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+    assert.equal(f.counters[`reliabilityPolicyUnavailableCadenceBackground${origin}`], 1);
+    assert.equal(cadenceOriginCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
+    assert.equal(reasonCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
+    assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackground, 1);
+    assert.equal(f.counters.reliabilityPolicyUnavailableSourceHeartbeat, 1);
+    assert.equal(f.counters.reliabilityPolicyUnavailable, 0); // Still owned by the unchanged periodic caller.
+  });
+}
+
+test('active-at-adoption and malformed whole policies add no cadence-background attribution without that refusal', () => {
+  const f = fixture();
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic.origin, 'active-at-adoption');
+  f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+  const guard = f.reserve();
+  assert.equal(f.adopt(guard, null), false);
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic.origin, 'malformed');
+  assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), 'missing-policy');
+  f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+  assert.equal(f.counters.reliabilityPolicyUnavailableMissingPolicy, 1);
+  assert.equal(cadenceOriginCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 0);
+});
+
+test('malformed cadence cannot masquerade as explicit backend background or active response expiry', () => {
+  for (const cadence of [null, [], { mode: 'background', intervalSeconds: 5, expiresInSeconds: 90 },
+    { mode: 'background', intervalSeconds: 30, expiresInSeconds: '90' },
+    { mode: 'active_view', intervalSeconds: 5, expiresInSeconds: 0 },
+    { mode: 'active_view', intervalSeconds: 5, expiresInSeconds: 91 },
+    { mode: 'constructor', intervalSeconds: 30, expiresInSeconds: 90 }]) {
+    const f = fixture(), value = f.policy(); value.captureCadence = cadence;
+    assert.equal(f.adopt(f.reserve(), value), true);
+    f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+    assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundMalformed, 1);
+    assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundExplicit, 0);
+    assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundActiveElapsed, 0);
+    assert.deepEqual(Object.keys(f.state.screenshotCadenceAppliedDiagnostic).sort(), ['epoch', 'generation', 'origin']);
+    assert(!JSON.stringify(f.state.screenshotCadenceAppliedDiagnostic).includes('constructor'));
+  }
+});
+
+test('late identity, generation, revision and scope responses cannot replace the current fixed cadence diagnostic', () => {
+  const f = fixture(), old = f.reserve(), currentGuard = f.reserve(), background = f.policy(2);
+  background.captureCadence = { mode: 'background', intervalSeconds: 30, expiresInSeconds: 90 };
+  assert.equal(f.adopt(currentGuard, background), true);
+  const current = f.state.screenshotCadenceAppliedDiagnostic;
+  assert.equal(f.adopt(old, f.policy(), 'auth'), false);
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic, current);
+  assert.equal(f.adopt(f.reserve(), f.policy(1), 'denial'), false);
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic, current);
+  const foreignScope = f.reserve();
+  f.state.device.reliabilityPolicy.authority.controlRevision = 3;
+  assert.equal(f.adopt(foreignScope, f.policy(3), 'upload'), false);
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic, current);
+  f.state.device.studentToken = token('session-b'); f.reserve();
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic, null);
+  f.state.device.studentToken = token('session-a'); const newIdentity = f.reserve();
+  const noCadence = f.policy(4); delete noCadence.captureCadence;
+  assert.equal(f.adopt(newIdentity, noCadence), true);
+  const latest = f.state.screenshotCadenceAppliedDiagnostic;
+  assert.equal(f.adopt(currentGuard, background, 'auth'), false);
+  assert.equal(f.state.screenshotCadenceAppliedDiagnostic, latest);
+  f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+  assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundMissing, 1);
+  assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundExplicit, 0);
+});
+
+test('stale or unknown fixed diagnostic state has bounded unknown attribution and no raw fields escape', () => {
+  for (const change of [d => ({ ...d, epoch: d.epoch - 1 }), d => ({ ...d, generation: d.generation - 1 }),
+    d => ({ ...d, origin: '__proto__' }), d => ({ ...d, origin: 'constructor' }),
+    d => ({ ...d, origin: 'private-value' }), () => null]) {
+    const f = fixture(), value = f.policy();
+    value.captureCadence = { mode: 'background', intervalSeconds: 30, expiresInSeconds: 90 };
+    assert.equal(f.adopt(f.reserve(), value), true);
+    f.state.screenshotCadenceAppliedDiagnostic = change(f.state.screenshotCadenceAppliedDiagnostic);
+    f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+    assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackgroundUnknown, 1);
+    assert.equal(cadenceOriginCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
+    assert(!JSON.stringify(f.counters).includes('private-value'));
+    assert(Object.keys(f.counters).every(name => reasonCounterNames.includes(name)
+      || sourceCounterNames.includes(name) || cadenceOriginCounterNames.includes(name)));
+  }
 });

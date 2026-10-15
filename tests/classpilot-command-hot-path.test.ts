@@ -138,10 +138,7 @@ describe("ClassPilot command and ACK hot path", () => {
       commandUpdateSection,
       /outcome\.subscriberCount === 0[\s\S]*?publication had no subscribers/
     );
-    assert.match(
-      commandUpdateSection,
-      /outcome\.status === "stale"[\s\S]*?publication was superseded/
-    );
+    assert.doesNotMatch(commandUpdateSection, /publication was superseded/);
   });
 
   it("emits aggregate PII-free phase metrics for command and ACK work", () => {

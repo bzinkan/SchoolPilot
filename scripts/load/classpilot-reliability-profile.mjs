@@ -199,33 +199,49 @@ export class BoundedControlReader {
 // authenticated device binding. snapshot() is queried at dispatch, never at
 // event receipt. No second browser heartbeat writer exists.
 export class SerialHeartbeatWriter {
-  constructor({ now, schedule, clear, send, snapshot, cooldownUntil = () => 0 }) {
-    Object.assign(this, { now, schedule, clear, send, snapshot, cooldownUntil });
+  constructor({ now, schedule, clear, send, snapshot, cooldownUntil = () => 0, identity = () => null }) {
+    Object.assign(this, { now, schedule, clear, send, snapshot, cooldownUntil, identity });
+    this.scope = identity(); this.scopeEpoch = 0;
     this.generation = 0; this.pendingEvent = false; this.regularPending = false;
     this.active = false; this.timer = null; this.eventDue = Infinity; this.denied = false;
     this.counters = { started: 0, eventRequests: 0, regularRequests: 0, failed: 0, denied: 0 };
   }
+  synchronizeIdentity() {
+    const scope = this.identity();
+    if (!Object.is(scope, this.scope)) {
+      this.scope = scope; this.scopeEpoch += 1; this.pendingEvent = false; this.regularPending = false;
+      this.eventDue = Infinity; this.denied = false;
+      if (this.timer !== null) { this.clear(this.timer); this.timer = null; }
+    }
+    return scope;
+  }
   hold() { this.held = true; }
   release() { this.held = false; this.pump(); }
-  regular() { this.regularPending = true; this.pump(); }
-  navigation() { this.generation += 1; this.pendingEvent = true;
-    this.eventDue = this.now() + NAVIGATION_LIMITS.eventCoalesceMs; this.pump(); }
+  regular() { this.synchronizeIdentity(); this.regularPending = true; this.pump(); }
+  navigation() { this.synchronizeIdentity(); this.generation += 1;
+    if (!this.pendingEvent) this.eventDue = this.now() + NAVIGATION_LIMITS.eventCoalesceMs;
+    this.pendingEvent = true; this.pump(); }
   pump() {
+    this.synchronizeIdentity();
     if (this.denied || this.active || this.held) return;
     if (this.timer !== null) { this.clear(this.timer); this.timer = null; }
     if (!this.regularPending && !this.pendingEvent) return;
     const now = this.now(), availableAt = Math.max(this.cooldownUntil(), this.regularPending ? now : this.eventDue);
     if (availableAt > now) { this.timer = this.schedule(() => { this.timer = null; this.pump(); }, availableAt - now); return; }
-    const generation = this.generation, reason = this.regularPending ? 'regular' : 'navigation';
-    this.active = true; this.regularPending = false; this.pendingEvent = false;
-    this.counters.started += 1; this.counters[reason === 'regular' ? 'regularRequests' : 'eventRequests'] += 1;
-    const freshBody = this.snapshot();
-    Promise.resolve().then(() => this.send(freshBody, { generation, reason })).then(result => {
+    const generation = this.generation, scope = this.scope, scopeEpoch = this.scopeEpoch, reason = this.regularPending ? 'regular' : 'navigation';
+    this.active = true; this.regularPending = false;
+    if (this.pendingEvent && this.eventDue <= now) { this.pendingEvent = false; this.eventDue = Infinity; }
+    Promise.resolve().then(() => {
+      if (!Object.is(this.synchronizeIdentity(), scope) || this.scopeEpoch !== scopeEpoch) return;
+      const freshBody = this.snapshot();
+      if (!Object.is(this.synchronizeIdentity(), scope) || this.scopeEpoch !== scopeEpoch) return;
+      this.counters.started += 1; this.counters[reason === 'regular' ? 'regularRequests' : 'eventRequests'] += 1;
+      return this.send(freshBody, { generation, reason });
+    }).then(result => {
+      if (!Object.is(this.synchronizeIdentity(), scope) || this.scopeEpoch !== scopeEpoch) return;
       if (result?.denied) { this.denied = true; this.counters.denied += 1; return; }
-      if (!result?.ok) { this.counters.failed += 1; this.pendingEvent = true;
-        this.eventDue = Math.max(Number.isFinite(this.eventDue)?this.eventDue:0, this.now() + NAVIGATION_LIMITS.eventCoalesceMs); }
-    }, () => { this.counters.failed += 1; this.pendingEvent = true;
-      this.eventDue = Math.max(Number.isFinite(this.eventDue)?this.eventDue:0, this.now() + NAVIGATION_LIMITS.eventCoalesceMs); })
+      if (!result?.ok) this.counters.failed += 1;
+    }, () => { if (Object.is(this.synchronizeIdentity(), scope) && this.scopeEpoch === scopeEpoch) this.counters.failed += 1; })
       .finally(() => { this.active = false; this.pump(); });
   }
 }

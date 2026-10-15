@@ -4,6 +4,7 @@ import { before, after, test } from "node:test";
 import { sql } from "drizzle-orm";
 import pg from "pg";
 import { getDatabaseErrorDetails } from "../src/util/databaseError.js";
+import { ClasspilotPlainOpenTabRelay, type PlainOpenTabRelayTarget } from "../src/realtime/classpilotPlainOpenTabRelay.js";
 
 process.env.RLS_GUC_ENABLED = "true";
 process.env.SCHEDULER_ENABLED = "false";
@@ -1132,4 +1133,121 @@ test("plain delivery cannot borrow a genuine foreign school's command or exact s
     await admin.query("DELETE FROM school_memberships WHERE school_id=$1", [foreignSchool]);
     await fixture.dispose();
   }
+});
+
+async function incomingPlainFrames(fixture: PlainOpenFixture, expiresAt?: Date) {
+  const { classpilotCommandFrameForTarget } = await import("../src/services/classpilotCommandDispatcher.js");
+  const { classpilotCommandAuthorityEnvelope } = await import("../src/services/classpilotCommandAuthority.js");
+  const stored = await inSchool(() => storage.getClasspilotCommandByIdAndSchool(fixture.commandId, schoolId));
+  assert.ok(stored?.expiresAt);
+  const payload = stored.commandPayload;
+  assert.ok(payload && typeof payload === "object");
+  return fixture.chosen.map(binding => {
+    const message = classpilotCommandFrameForTarget(schoolId, "open-tab", "open-tab",
+      { ...payload, commandId: stored.id }, { ...binding, studentName: "Synthetic", available: true, stateAuthorized: true },
+      { policy: "transient_action", expiresAt: expiresAt ?? stored.expiresAt }, undefined,
+      classpilotCommandAuthorityEnvelope(stored));
+    assert.ok(message);
+    return { binding: { kind: "student-binding" as const, ...binding }, message };
+  });
+}
+
+function incomingRelay(options: {
+  beforeBatch?: () => Promise<void>;
+  send?: (binding: PlainOpenTabRelayTarget, message: unknown) => boolean;
+} = {}) {
+  let batchCalls = 0, fallbackCalls = 0;
+  const sent: unknown[] = [];
+  const relay = new ClasspilotPlainOpenTabRelay({
+    hasLocal: () => true,
+    sendLocal: (binding, message) => { sent.push(message); return options.send?.(binding, message) ?? true; },
+    fallback: async () => { fallbackCalls++; return false; },
+    runBatch: (batch, send) => inSchool(async () => {
+      batchCalls++; await options.beforeBatch?.();
+      return storage.withClasspilotPlainOpenTabDeliveryBatch(batch, send);
+    }),
+  });
+  return { relay, sent, counts: () => ({ batchCalls, fallbackCalls }) };
+}
+
+for (const supervision of [false, true]) test(`incoming plain ${supervision ? "context" : "class"} relay sends forty immutable originals in one real authority transaction`, async () => {
+  const fixture = await plainOpenFixture(undefined, supervision), rows = await incomingPlainFrames(fixture);
+  const h = incomingRelay();
+  try {
+    assert.deepEqual(await Promise.all(rows.map(row => h.relay.deliver(row.binding, row.message))), Array(40).fill(true));
+    assert.deepEqual(h.sent, rows.map(row => row.message));
+    assert.ok(h.sent.every(message => Object.isFrozen(message)));
+    assert.deepEqual(h.counts(), { batchCalls: 1, fallbackCalls: 0 });
+    const persisted = await admin.query<{ status: string; sent_at: Date | null }>("SELECT status,sent_at FROM classpilot_command_targets WHERE command_id=$1", [fixture.commandId]);
+    assert.ok(persisted.rows.every(row => row.status === "requested" && row.sent_at === null), "receiving relay does not rebuild or mutate one-shot delivery state");
+  } finally { h.relay.stop(); await h.relay.drain(); await fixture.dispose(); }
+});
+
+for (const mutation of ["binding", "control", "membership", "context"] as const) test(`incoming relay rechecks ${mutation} transferred while queued behind the actual student lock`, { timeout: 10_000 }, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4), mutation === "context");
+  const rows = await incomingPlainFrames(fixture), writer = await admin.connect();
+  let deliveryPid: number | undefined, pending: Promise<boolean[]> | undefined;
+  const h = incomingRelay({ beforeBatch: async () => {
+    const store = tenant.getOwnedTenantStore(); assert.ok(store);
+    deliveryPid = (await store.client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+  } });
+  try {
+    await writer.query("BEGIN");
+    const first = [...fixture.chosen].sort((a, b) => a.studentId.localeCompare(b.studentId))[0]!;
+    await writer.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0::bigint))", [lockKey(first.studentId)]);
+    const writerPid = (await writer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    pending = Promise.all(rows.map(row => h.relay.deliver(row.binding, row.message)));
+    let blocked = false; const deadline = performance.now() + 3000;
+    while (!blocked && performance.now() < deadline) {
+      blocked = deliveryPid !== undefined && (await admin.query<{ blockers: number[] }>("SELECT pg_blocking_pids($1) AS blockers", [deliveryPid])).rows[0]!.blockers.includes(writerPid);
+      if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(blocked, true, "test must race a real owned delivery transaction, not a mocked authority reader");
+    if (mutation === "binding") await writer.query("UPDATE student_sessions SET is_active=false WHERE id=$1", [fixture.chosen[0]!.studentSessionId]);
+    if (mutation === "control") await writer.query("UPDATE classpilot_student_control_states SET teaching_session_id=NULL,supervision_context_id=NULL,hard_expires_at=NULL,scheduled_end_at=NULL,revision=revision+1 WHERE school_id=$1 AND student_id=$2", [schoolId, fixture.chosen[0]!.studentId]);
+    if (mutation === "membership") {
+      // Real staff lifecycle requires live assignments to retire atomically;
+      // never disable its trigger merely to manufacture an invalid fixture.
+      await writer.query("UPDATE teaching_sessions SET end_time=clock_timestamp() WHERE id=$1", [fixture.authorityId]);
+      await writer.query("UPDATE groups SET status='archived' WHERE id=$1", [fixture.groupId]);
+      await writer.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, fixture.actorId]);
+    }
+    if (mutation === "context") await writer.query("UPDATE classpilot_supervision_contexts SET status='ended' WHERE id=$1", [fixture.authorityId]);
+    await writer.query("COMMIT");
+    assert.deepEqual(await pending, mutation === "binding" || mutation === "control" ? [false, true] : [false, false]);
+    assert.equal(h.sent.length, mutation === "binding" || mutation === "control" ? 1 : 0);
+    assert.deepEqual(h.counts(), { batchCalls: 1, fallbackCalls: 0 });
+  } finally {
+    await writer.query("ROLLBACK"); writer.release(); h.relay.stop(); await h.relay.drain();
+    if (pending) await Promise.allSettled([pending]);
+    await admin.query("UPDATE student_sessions SET is_active=true WHERE id=$1", [fixture.chosen[0]!.studentSessionId]);
+    await fixture.dispose();
+  }
+});
+
+test("incoming relay retains the original deadline while real DB command and manual session remain renewed", async () => {
+  const fixture = await plainOpenFixture([bindings[0]!, bindings[2]!]);
+  await admin.query("UPDATE classpilot_commands SET expires_at=clock_timestamp()+interval '1 minute' WHERE id=$1", [fixture.commandId]);
+  await admin.query("UPDATE student_sessions SET manual_lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1", [bindings[0]!.studentSessionId]);
+  const rows = await incomingPlainFrames(fixture, new Date(Date.now() + 500));
+  const h = incomingRelay({ beforeBatch: async () => {
+    const store = tenant.getOwnedTenantStore(); assert.ok(store); await store.client.query("SELECT pg_sleep(0.6)");
+  } });
+  try {
+    assert.deepEqual(await Promise.all(rows.map(row => h.relay.deliver(row.binding, row.message))), [false, false]);
+    assert.equal(h.sent.length, 0); assert.deepEqual(h.counts(), { batchCalls: 1, fallbackCalls: 0 });
+  } finally { h.relay.stop(); await h.relay.drain(); await fixture.dispose(); }
+});
+
+test("incoming relay owns a partial real transaction send failure and never retries its original Redis duplicate", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)), rows = await incomingPlainFrames(fixture);
+  const h = incomingRelay({ send: () => { throw Error("Synthetic local send uncertainty after side effect"); } });
+  try {
+    assert.deepEqual(await Promise.all(rows.map(row => h.relay.deliver(row.binding, row.message))), [false, false]);
+    assert.equal(h.sent.length, 1);
+    assert.equal(await h.relay.deliver(rows[0]!.binding, rows[0]!.message), false);
+    assert.deepEqual(h.counts(), { batchCalls: 1, fallbackCalls: 0 }); assert.equal(h.sent.length, 1);
+    const state = await admin.query<{ status: string }>("SELECT status FROM classpilot_command_targets WHERE command_id=$1", [fixture.commandId]);
+    assert.ok(state.rows.every(row => row.status === "requested"));
+  } finally { h.relay.stop(); await h.relay.drain(); await fixture.dispose(); }
 });
