@@ -158,7 +158,7 @@ The managed-device classroom pilot must supply that evidence.
 
 Build `scripts/load/Dockerfile.remote-generator` from the repository root with
 `CANDIDATE_API_IMAGE` set to the verified staging API pull digest. The derived
-image contains exactly the twelve executed fleet/generator scripts and no private
+image contains exactly the seventeen executed fleet/generator scripts and no private
 inputs. Its image manifest binds that API image and the SHA-256 of every script.
 Use a single-platform immutable ECR pull digest for the generator task and record
 the reviewed tooling commit separately from the API commit.

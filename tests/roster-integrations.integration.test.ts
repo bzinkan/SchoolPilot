@@ -20,7 +20,7 @@ before(async()=>{
   ({runWithTenantContext:tenant}=await import("../src/middleware/tenantContext.js"));
   store=await import("../src/services/rosterIntegrationStore.js");
   await pool.query(ROSTER_INTEGRATIONS_SQL);
-  await pool.query("INSERT INTO schools(id,name,domain) VALUES($1,'Roster integration test','test.example.edu'),($2,'Other roster test','test.example.edu')",[schoolId,otherSchoolId]);
+  await pool.query("INSERT INTO schools(id,name,domain) VALUES($1,$2,'test.example.edu'),($3,$4,'test.example.edu')",[schoolId,`Roster integration test ${schoolId}`,otherSchoolId,`Other roster test ${otherSchoolId}`]);
   await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Admin','Teacher')",[adminId,`${adminId}@test.example.edu`]);
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'admin','active')",[schoolId,adminId]);
   await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')",[schoolId]);

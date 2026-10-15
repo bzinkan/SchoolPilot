@@ -137,13 +137,13 @@ test('real SDK middleware signs exact S3 role paths/owner/encryption without net
  const c=createMeasurementArtifactChannel({role:'controller',expected,s3:putSdk});await c.publish('measurement-control.json',first);c.close();assert.equal(requests,2);
 });
 
-test('actual producer uses shared adapter;12-file closure and metadata-only activation remain distinct',()=>{
+test('actual producer uses shared adapter;17-file closure and metadata-only activation remain distinct',()=>{
  const source=readFileSync(new URL('../scripts/load/run-classpilot-remote-generator.mjs',import.meta.url),'utf8');
  assert.match(source,/const measurementChannel = createMeasurementArtifactChannel/);
  assert.match(source,/measurementS3/);assert.doesNotMatch(source,/const controlReader = new BoundedControlReader/);
  const manifest=readFileSync(new URL('../scripts/load/remote-generator-manifest.mjs',import.meta.url),'utf8');
  const list=manifest.slice(manifest.indexOf('REMOTE_GENERATOR_SCRIPTS'),manifest.indexOf(']);',manifest.indexOf('REMOTE_GENERATOR_SCRIPTS')));
- assert.equal([...list.matchAll(/'[a-z0-9-]+\.mjs'/g)].length,12);
+ assert.equal([...list.matchAll(/'[a-z0-9-]+\.mjs'/g)].length,17);
  assert.match(source,/phase: 'metadata-preflight'/);assert.match(source,/trafficStarted: false, inputsDownloaded: false/);
 });
 
