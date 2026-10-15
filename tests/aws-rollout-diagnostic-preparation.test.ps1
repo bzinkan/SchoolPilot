@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Suite','OfflineRehearsal','HostSmoke')]
+    [ValidateSet('Suite','OfflineRehearsal','HostSmoke','NativeProcessIdentity','TzifSourceSelection')]
     [string]$Mode = 'Suite',
     [string]$EvidenceOutputPath,
     [ValidateRange(1560, 2100)]
@@ -58,6 +58,109 @@ function Assert-Throws {
 function Get-Sha256 {
     param([string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Invoke-NativeProcessIdentityRegression {
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        $supervisorPath, [ref]$tokens, [ref]$errors
+    )
+    Assert-Condition ($errors.Count -eq 0) 'The native identity subject must parse.'
+    foreach ($name in @('Get-Value','Get-RequiredValue','ConvertTo-UtcString')) {
+        $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq $name
+        }, $true)
+        Assert-Condition ($null -ne $definition) 'A pure identity dependency is missing.'
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $definition = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Test-BoundProcessPresent'
+    }, $true)
+    Assert-Condition ($null -ne $definition) 'The actual supervisor identity subject is missing.'
+    $subject = $definition.Extent.Text.Replace(
+        'Test-BoundProcessPresent', 'Invoke-NativeIdentitySubject'
+    )
+    $exitCheck = 'try { if ($process.HasExited) { return $false } } catch { }'
+    Assert-Condition ($subject.Contains($exitCheck)) 'The proven-exit fence must remain in the actual subject.'
+    # The native fault is injected only between process lookup and property
+    # inspection; production still executes its real identity/exception path.
+    $exitInjection = @'
+        $script:NativeIdentityExitChild.StandardInput.WriteLine('exit')
+        if (-not $process.WaitForExit(5000)) { throw 'The controlled harmless child did not exit.' }
+        $actualStarted = ConvertTo-UtcString $process.StartTime
+'@
+    $legacy = $subject.Replace($exitCheck, '')
+    $forceExit = '$actualStarted = ConvertTo-UtcString $process.StartTime'
+    $forceAccessDenial = '$actualPath = [IO.Path]::GetFullPath($process.Path)'
+    $variants = @(
+        @{name='legacy-live';code=$legacy;expected='present'},
+        @{name='actual-live';code=$subject;expected='present'},
+        @{name='legacy-exit-during-inspection';code=$legacy.Replace($forceExit,$exitInjection);expected='rejection'},
+        @{name='actual-exit-during-inspection';code=$subject.Replace($forceExit,$exitInjection);expected='absent'},
+        @{name='legacy-inaccessible-live';code=$legacy.Replace($forceAccessDenial,'throw [ComponentModel.Win32Exception]::new(5)');expected='rejection'},
+        @{name='actual-inaccessible-live';code=$subject.Replace($forceAccessDenial,'throw [ComponentModel.Win32Exception]::new(5)');expected='rejection'},
+        @{name='actual-wrong-creation-time';code=$subject;expected='absent';wrongStart=$true},
+        @{name='actual-wrong-image';code=$subject;expected='absent';wrongPath=$true}
+    )
+    $results = [Collections.Generic.List[object]]::new()
+    foreach ($variant in $variants) {
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = (Get-Command pwsh -ErrorAction Stop).Source
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardInput = $true
+        foreach ($argument in @('-NoLogo','-NoProfile','-NonInteractive','-Command',
+            '[void][Console]::In.ReadLine(); exit 0')) { $start.ArgumentList.Add($argument) }
+        $child = [Diagnostics.Process]::new()
+        $child.StartInfo = $start
+        $script:NativeIdentityExitChild = $child
+        try {
+            Assert-Condition ($child.Start()) 'The test must create only its own harmless native child.'
+            $ready = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $child.Refresh()
+                if (-not $child.HasExited -and -not [string]::IsNullOrWhiteSpace($child.Path)) { break }
+                Start-Sleep -Milliseconds 10
+            } while ($ready.Elapsed.TotalSeconds -lt 5)
+            Assert-Condition (-not $child.HasExited -and -not [string]::IsNullOrWhiteSpace($child.Path)) `
+                'The harmless child image must be readable before its inspection fault is injected.'
+            $identity = @{
+                pid=$child.Id
+                startedAtUtc=ConvertTo-UtcString $child.StartTime
+                path=[IO.Path]::GetFullPath($child.Path)
+            }
+            if ($variant.ContainsKey('wrongStart')) {
+                $identity.startedAtUtc = [DateTimeOffset]::Parse($identity.startedAtUtc).AddSeconds(1).ToString('o')
+            }
+            if ($variant.ContainsKey('wrongPath')) {
+                $identity.path = Join-Path ([IO.Path]::GetTempPath()) 'different-owned-image.exe'
+            }
+            . ([scriptblock]::Create($variant.code))
+            try {
+                $present = Invoke-NativeIdentitySubject $identity
+                $outcome = if ($present) { 'present' } else { 'absent' }
+            }
+            catch {
+                Assert-Condition ($_.Exception.Message -ceq 'The bound process identity could not be inspected safely.') `
+                    'Live inspection denial must retain its strict masked failure.'
+                $outcome = 'rejection'
+            }
+            Assert-Condition ($outcome -ceq $variant.expected) ('Native identity case failed: ' + $variant.name)
+            $results.Add(@{case=$variant.name;expected=$variant.expected;actual=$outcome;passed=$true})
+        }
+        finally {
+            if (-not $child.HasExited) { $child.Kill(); [void]$child.WaitForExit(5000) }
+            $child.Dispose()
+            $script:NativeIdentityExitChild = $null
+        }
+    }
+    Assert-Condition ($results.Count -eq 8) 'All eight native exit/identity cases must execute.'
+    Write-Output ('PASS: 8 native process identity cases; no AWS or preparation mutation.')
 }
 
 function Test-ExactProcessPresent {
@@ -512,6 +615,49 @@ function New-FakeFixtureTemplate {
     })
 }
 
+function Resolve-TestTzifSource {
+    param([string]$GitRoot)
+    $candidates = @(
+        (Join-Path $GitRoot 'mingw64/share/zoneinfo/America/New_York'),
+        (Join-Path $GitRoot 'usr/share/zoneinfo/America/New_York'),
+        (Join-Path $GitRoot 'ucrt64/share/zoneinfo/America/New_York')
+    )
+    $source = @($candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace([string]$source)) {
+        throw 'The Windows Git runtime does not expose the pinned offline rehearsal TZif source.'
+    }
+    return [string]$source
+}
+
+function Invoke-TzifSourceSelectionRegression {
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $scratch = Join-Path $tempRoot ('schoolpilot-tzif-selection-' + [Guid]::NewGuid().ToString('N'))
+    $ucrtSource = Join-Path $scratch 'ucrt64/share/zoneinfo/America/New_York'
+    $gitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git -ErrorAction Stop).Source)
+    try {
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($ucrtSource))
+        [IO.File]::Copy((Resolve-TestTzifSource -GitRoot $gitRoot), $ucrtSource, $false)
+        Assert-Condition ((Resolve-TestTzifSource -GitRoot $scratch) -ceq $ucrtSource) `
+            'Offline fixture discovery must support a Git runtime with only UCRT64 timezone data.'
+        [IO.File]::Delete($ucrtSource)
+        Assert-Throws { Resolve-TestTzifSource -GitRoot $scratch } 'does not expose' `
+            'Missing offline timezone data must still fail closed.'
+        [void][IO.Directory]::CreateDirectory($ucrtSource)
+        Assert-Throws { Resolve-TestTzifSource -GitRoot $scratch } 'does not expose' `
+            'A directory cannot substitute for the pinned offline timezone file.'
+    }
+    finally {
+        $target = [IO.Path]::GetFullPath($scratch)
+        if ([IO.Path]::GetDirectoryName($target) -cne $tempRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) -or
+            -not [IO.Path]::GetFileName($target).StartsWith('schoolpilot-tzif-selection-')) {
+            throw 'Refusing cleanup outside the exact owned timezone selection fixture.'
+        }
+        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+    }
+    Write-Output 'PASS: 3 offline timezone source selection cases; no AWS or application calls.'
+}
+
 function New-TestContext {
     param(
         [string]$Name,
@@ -528,15 +674,7 @@ function New-TestContext {
     $tzifPath = Join-Path $externalRoot 'America-New_York.tzif'
     $tzifBase64 = 'VFppZjIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAVFppZjIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACvAAAABQAAABT/////XgPwkP////+eph5w/////5+662D/////oIYAcP////+hms1g/////6Jl4nD/////o4Pp4P////+kaq5w/////6U1p2D/////plPK8P////+nFYlg/////6gzrPD/////qP6l4P////+qE47w/////6reh+D/////q/Nw8P////+svmng/////63TUvD/////rp5L4P////+vszTw/////7B+LeD/////sZxRcP////+yZ0pg/////7N8M3D/////tEcsYP////+1XBVw/////7YnDmD/////tzv3cP////+4BvBg/////7kb2XD/////uebSYP////+7BPXw/////7vGtGD/////vOTX8P////+9r9Dg/////77EufD/////v4+y4P/////ApJvw/////8FvlOD/////woR98P/////DT3bg/////8RkX/D/////xS9Y4P/////GTXxw/////8cPOuD/////yC1ecP/////I+Fdg/////8oNQHD/////ytg5YP/////LiPBw/////9Ij9HD/////0mD74P/////TdeTw/////9RA3eD/////1VXG8P/////WIL/g/////9c1qPD/////2ACh4P/////ZFYrw/////9ngg+D/////2v6ncP/////bwGXg/////9zeiXD/////3amCYP/////evmtw/////9+JZGD/////4J5NcP/////haUZg/////+J+L3D/////40koYP/////kXhFw/////+VXLuD/////5kct8P/////nNxDg/////+gnD/D/////6Rby4P/////qBvHw/////+r21OD/////6+bT8P/////s1rbg/////+3GtfD/////7r/TYP/////vr9Jw//////CftWD/////8Y+0cP/////yf5dg//////NvlnD/////9F95YP/////1T3hw//////Y/W2D/////9y9acP/////4KHfg//////kPPHD/////+ghZ4P/////6+Fjw//////voO+D//////Ng68P/////9yB3g//////64HPD//////6f/4AAAAAAAl/7wAAAAAAGH4eAAAAAAAnfg8AAAAAADcP5gAAAAAARg/XAAAAAABVDgYAAAAAAGQN9wAAAAAAcwwmAAAAAAB40ZcAAAAAAJEKRgAAAAAAmtlPAAAAAACvCGYAAAAAAL4IVwAAAAAAzZouAAAAAADcBncAAAAAAOuYTgAAAAAA+pg/AAAAAAEJlm4AAAAAARiWXwAAAAABJ5SOAAAAAAE2lH8AAAAAAUWSrgAAAAABVJKfAAAAAAFjkM4AAAAAAXKQvwAAAAABgiKWAAAAAAGQjt8AAAAAAaAgtgAAAAABryCnAAAAAAG+HtYAAAAAAc0exwAAAAAB3Bz2AAAAAAHrHOcAAAAAAfobFgAAAAACB2APAAAAAAIYGTYAAAAAAiVeLwAAAAACNqr+AAAAAAJDXE8AAAAAAlSpHgAAAAACYVpvAAAAAAJypz4AAAAAAn/sNwAAAAACkKVeAAAAAAKd6lcAAAAAAq6jfgAAAAACu+h3AAAAAALNNUYAAAAAAtnmlwAAAAAC6zNmAAAAAAL35LcAAAAAAwkxhgAAAAADFnZ/AAAAAAMnL6YAAAAAAzR0nwAAAAADRS3GAAAAAANScr8AAAAAA2Mr5gAAAAADcHDfAAAAAAOBva4AAAAAA45u/wAAAAADn7vOAAAAAAOsbR8AAAAAA7257gAAAAADyv7nAAAAAAPbuA4AAAAAA+j9BwAAAAAD+bYuAAAAAAQG+ycAAAAABBhH9gAAAAAEJPlHAAAAAAQ2RhYAAAAABEL3ZwAAAAAEVEQ2AAAAAARfOo8AIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIDBAIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgECAQIBAgH//7qeAAD//8fAAQT//7mwAAj//8fAAQz//8fAARBMTVQARURUAEVTVABFV1QARVBUAApFU1Q1RURULE0zLjIuMCxNMTEuMS4wCg=='
     $gitRoot = Split-Path -Parent (Split-Path -Parent (Get-Command git -ErrorAction Stop).Source)
-    $tzifSourceCandidates = @(
-        (Join-Path $gitRoot 'mingw64/share/zoneinfo/America/New_York'),
-        (Join-Path $gitRoot 'usr/share/zoneinfo/America/New_York')
-    )
-    $tzifSource = @($tzifSourceCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) |
-        Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace([string]$tzifSource)) {
-        throw 'The Windows Git runtime does not expose the pinned offline rehearsal TZif source.'
-    }
+    $tzifSource = Resolve-TestTzifSource -GitRoot $gitRoot
     [IO.File]::Copy([string]$tzifSource, $tzifPath, $false)
     Set-ExactPrivateAcl $tzifPath
 
@@ -1145,6 +1283,15 @@ function Get-SupervisorBindingArguments {
         '-SupervisorResultPath',$resultPath,
         '-ExpectedSupervisorResultSha256',(Get-Sha256 $resultPath)
     )
+}
+
+if ($Mode -in @('Suite','TzifSourceSelection')) {
+    Invoke-TzifSourceSelectionRegression
+    if ($Mode -ceq 'TzifSourceSelection') { return }
+}
+if ($Mode -in @('Suite','NativeProcessIdentity')) {
+    Invoke-NativeProcessIdentityRegression
+    if ($Mode -ceq 'NativeProcessIdentity') { return }
 }
 
 foreach ($path in @($workerPath,$supervisorPath,$binderPath,$diagnosticPath,$certificationPath)) {

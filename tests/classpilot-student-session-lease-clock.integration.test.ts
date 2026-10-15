@@ -82,7 +82,7 @@ after(async () => {
         await db.delete(devices).where(eq(devices.schoolId, schoolId));
         await db.delete(students).where(eq(students.schoolId, schoolId));
         await db.delete(productLicenses).where(eq(productLicenses.schoolId, schoolId));
-        await db.delete(schools).where(eq(schools.id, schoolId));
+        // Current lifecycle guards retain this synthetic root in the disposable local fixture DB.
       });
     }
   } finally {

@@ -97,8 +97,7 @@ after(async () => {
   });
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
-  await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
-  await pool.query("DELETE FROM users WHERE id IN($1,$2,$3)", [ids.teacher, ids.replacement, ids.central]);
+  // Retain the uniquely owned synthetic school/staff lifecycle roots.
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
   const { sessionPool } = await import("../src/db.js");
   const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
@@ -217,13 +216,21 @@ test("an optional distinct central recipient gets a separate copy with the same 
   assert.ok(messages.every((message) => message.startTime === "9:00 AM" && message.endTime === "10:45 AM"));
 });
 
-test("an unavailable configured central recipient records failure without preventing the supervisor's summary", async () => {
+test("a configured central recipient without an email records failure without preventing the supervisor's summary", async () => {
   await statement(sql`UPDATE settings SET central_email_recipient_user_id=${ids.central} WHERE school_id=${ids.school}`);
-  await pool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.central]);
-  await ready(); const rows = await allDeliveries(); assert.equal(rows.length, 2);
-  assert.equal(rows.find((row) => row.recipientKind === "central")?.state, "failed");
-  assert.equal(rows.find((row) => row.recipientKind === "supervisor")?.state, "queued");
-  assert.equal((await dispatch(at(106), async () => ({ status: "sent", providerMessageId: "supervisor-only" }))).sent, 1);
+  // Membership revocation must first reassign the live central-recipient role;
+  // a missing email exercises unavailable delivery without bypassing that guard.
+  const original = await pool.query<{ email: string }>("SELECT email FROM users WHERE id=$1", [ids.central]);
+  await pool.query("UPDATE users SET email='' WHERE id=$1", [ids.central]);
+  try {
+    await ready(); const rows = await allDeliveries(); assert.equal(rows.length, 2);
+    assert.equal(rows.find((row) => row.recipientKind === "central")?.state, "failed");
+    assert.equal(rows.find((row) => row.recipientKind === "central")?.lastError, "recipient_email_unavailable");
+    assert.equal(rows.find((row) => row.recipientKind === "supervisor")?.state, "queued");
+    assert.equal((await dispatch(at(106), async () => ({ status: "sent", providerMessageId: "supervisor-only" }))).sent, 1);
+  } finally {
+    await pool.query("UPDATE users SET email=$2 WHERE id=$1", [ids.central, original.rows[0]!.email]);
+  }
 });
 
 test("transient failures retry once due while ambiguous submission is never automatically resent", async () => {
@@ -322,7 +329,8 @@ test("failed actual activation rolls back both supervision and reporting rows", 
 test("scheduled-class Coverage claim and teacher resolution capture one supervisor period and one delivery", async () => {
   const classId = randomUUID(), occurrenceId = randomUUID(), conflictId = randomUUID();
   const now = new Date(), finish = new Date(now.getTime() + 3_600_000), date = now.toISOString().slice(0, 10);
-  await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${classId},${ids.school},${ids.teacher},'Coverage needed','admin_class','active')`);
+  await scoped(() => storage.createGroup({ id: classId, schoolId: ids.school, teacherId: ids.teacher,
+    name: "Coverage needed", groupType: "admin_class", status: "active" }));
   try {
     await statement(sql`INSERT INTO classpilot_scheduled_conflicts(id,school_id,group_id,teacher_id,scheduled_date,block_start_time,block_end_time,status)
       VALUES(${conflictId},${ids.school},${classId},${ids.teacher},${date},'09:00','10:00','coverage_needed')`);
@@ -348,7 +356,10 @@ test("scheduled-class Coverage claim and teacher resolution capture one supervis
     await statement(sql`DELETE FROM classpilot_supervision_contexts WHERE school_id=${ids.school}`);
     await statement(sql`DELETE FROM teaching_sessions WHERE id=${occurrenceId}`);
     await statement(sql`DELETE FROM classpilot_scheduled_conflicts WHERE id=${conflictId}`);
-    await statement(sql`DELETE FROM groups WHERE id=${classId}`);
+    await scoped(() => database.transaction(async tx => {
+      await tx.execute(sql`DELETE FROM group_teachers WHERE group_id=${classId}`);
+      await tx.execute(sql`DELETE FROM groups WHERE id=${classId}`);
+    }));
   }
 });
 

@@ -150,10 +150,10 @@ after(async () => {
         await tx.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
         await tx.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
         await tx.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
-        await tx.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
+        // Retain the uniquely owned synthetic school/staff roots required by
+        // current lifecycle guards in this disposable fixture database.
       }));
     }
-    await runWithTenantContext({ isSuper: true }, () => db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${DOMAIN}`}`));
   } finally {
     await schedulerLockPool?.end().catch(() => undefined);
     await schedulerPool?.end().catch(() => undefined);

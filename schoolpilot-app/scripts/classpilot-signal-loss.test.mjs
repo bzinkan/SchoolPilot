@@ -865,7 +865,7 @@ test('a stopped WebRTC stream cannot bypass the signal-loss preview', () => {
   assert.match(dashboardSource, /useWebRTC\(wsRef, handleLiveStreamStopped\)/);
   assert.match(dashboardSource, /message\.type === 'live-view-requested'[\s\S]*message\.negotiationId/);
   assert.match(dashboardSource, /message\.type === 'auth-error'[\s\S]*webrtc\.cleanup\(\)/);
-  assert.match(dashboardSource, /socket\.onclose = \(\) => \{[\s\S]*webrtc\.cleanup\(\)/);
+  assert.match(dashboardSource, /socket\.onclose = \(event\) => \{[\s\S]*webrtc\.cleanup\(\)/);
   assert.match(dashboardSource, /A peer-to-peer stream can outlive signaling[\s\S]*cleanupLiveViews\(\)/);
   assert.match(dashboardSource, /message\.type === 'student-signed-out'[\s\S]*webrtc\.stopLiveView\(message\.studentId\)/);
   assert.match(

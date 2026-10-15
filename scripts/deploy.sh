@@ -673,7 +673,8 @@ production_eastern_tzif_path() {
   local candidate winter summer
   for candidate in \
     "/usr/share/zoneinfo/America/New_York" \
-    "/mingw64/share/zoneinfo/America/New_York"; do
+    "/mingw64/share/zoneinfo/America/New_York" \
+    "/ucrt64/share/zoneinfo/America/New_York"; do
     if [[ ! -f "$candidate" ]]; then
       continue
     fi

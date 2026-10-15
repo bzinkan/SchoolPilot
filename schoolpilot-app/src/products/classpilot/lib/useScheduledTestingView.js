@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiRequest } from '../../../lib/queryClient';
+import { apiRequest as request } from '../../../lib/queryClient';
+import { classpilotSnapshotRequest } from './classpilotRecovery';
 import { normalizeDashboardActivity, resolveActivityView } from './dashboardActivity';
 
 const EMPTY_CONTEXTS = [];
+const apiRequest = (method, path, body, options) => classpilotSnapshotRequest(request, method, path, body, options);
 const UNAVAILABLE_ACTIVITY = Object.freeze({ current: null, next: null, transitionKey: 'unavailable', pending: false });
 const validContext = context => typeof context?.id === 'string' && context.id.length > 0
   && Number.isSafeInteger(context.activeStudentCount) && context.activeStudentCount >= 0

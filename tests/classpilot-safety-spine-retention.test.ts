@@ -29,6 +29,8 @@ const studentB = randomUUID();
 // message, teaching session, and student, so each school gets one session.
 const sessionA = randomUUID();
 const sessionB = randomUUID();
+const teachers = new Map<string, string>([[schoolA, randomUUID()], [schoolB, randomUUID()]]);
+const fixtureGroups = new Map<string, string>([[schoolA, randomUUID()], [schoolB, randomUUID()]]);
 
 const rows = {
   aiOldA: randomUUID(),
@@ -152,8 +154,8 @@ async function insertDelivery(input: {
   await schedulerPool.query(
     `INSERT INTO chat_messages (
        id, school_id, session_id, student_id, sender_id, sender_type, content, message_type
-     ) VALUES ($1, $2, $3, $4, 'retention-fixture-teacher', 'teacher', 'Retention fixture', 'text')`,
-    [chatMessageId, input.schoolId, input.sessionId, input.studentId]
+     ) VALUES ($1, $2, $3, $4, $5, 'teacher', 'Retention fixture', 'text')`,
+    [chatMessageId, input.schoolId, input.sessionId, input.studentId, teachers.get(input.schoolId)]
   );
   await schedulerPool.query(
     `INSERT INTO classpilot_chat_deliveries (
@@ -213,9 +215,23 @@ describe("ClassPilot safety spine retention purge", () => {
         [studentId, schoolId]
       );
       await schedulerPool.query(
-        `INSERT INTO teaching_sessions (id, school_id, group_id, teacher_id)
-         VALUES ($1, $2, 'retention-fixture-group', 'retention-fixture-teacher')`,
-        [sessionId, schoolId]
+        `INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Retention','Teacher')`,
+        [teachers.get(schoolId), `${teachers.get(schoolId)}@example.test`]
+      );
+      await schedulerPool.query(
+        `INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')`,
+        [schoolId, teachers.get(schoolId)]
+      );
+      // Retention operates on historical rows, backed by real same-school
+      // parents rather than the old nonexistent group/teacher placeholders.
+      await schedulerPool.query(
+        `INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Retention fixture','teacher_created','archived')`,
+        [fixtureGroups.get(schoolId), schoolId, teachers.get(schoolId)]
+      );
+      await schedulerPool.query(
+        `INSERT INTO teaching_sessions (id, school_id, group_id, teacher_id,start_time,end_time)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [sessionId, schoolId, fixtureGroups.get(schoolId), teachers.get(schoolId), daysAgo(200), daysAgo(100)]
       );
     }
 
@@ -286,10 +302,11 @@ describe("ClassPilot safety spine retention purge", () => {
 
   after(async () => {
     try {
-      for (const table of [...TENANT_TABLES, "chat_messages", "teaching_sessions", "students"]) {
+      for (const table of [...TENANT_TABLES, "chat_messages", "teaching_sessions", "groups", "students", "school_memberships"]) {
         await schedulerPool.query(`DELETE FROM ${table} WHERE school_id IN ($1, $2)`, [schoolA, schoolB]);
       }
-      await schedulerPool.query("DELETE FROM schools WHERE id IN ($1, $2)", [schoolA, schoolB]);
+      // Current lifecycle guards retain the uniquely owned synthetic school
+      // and staff roots in this disposable local fixture database.
     } finally {
       errorMonitor.dispose();
       await Promise.allSettled([pool.end(), schedulerPool.end(), schedulerLockPool.end()]);

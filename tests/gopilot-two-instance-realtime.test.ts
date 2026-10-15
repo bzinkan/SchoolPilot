@@ -392,18 +392,17 @@ test(
       );
 
       if (school) {
-        await runWithTenantContext({ isSuper: true }, async () => {
-          await db.execute(sql`DELETE FROM parent_student WHERE school_id = ${school!.id}`);
-          await db.execute(sql`DELETE FROM homeroom_teachers WHERE school_id = ${school!.id}`);
-          await db.execute(sql`DELETE FROM homerooms WHERE school_id = ${school!.id}`);
-          await db.execute(sql`DELETE FROM students WHERE school_id = ${school!.id}`);
-          await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school!.id}`);
-          await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school!.id}`);
-          await db.execute(sql`DELETE FROM schools WHERE id = ${school!.id}`);
-          if (userIds.length > 0) {
-            await db.execute(sql`DELETE FROM users WHERE id IN (${sql.join(userIds.map((id) => sql`${id}`), sql`, `)})`);
-          }
-        });
+        await runWithTenantContext({ isSuper: true }, () => db.transaction(async (tx) => {
+          await tx.execute(sql`DELETE FROM parent_student WHERE school_id = ${school!.id}`);
+          // Primary homeroom mirrors and their parent must disappear together.
+          await tx.execute(sql`DELETE FROM homeroom_teachers WHERE school_id = ${school!.id}`);
+          await tx.execute(sql`DELETE FROM homerooms WHERE school_id = ${school!.id}`);
+          await tx.execute(sql`DELETE FROM students WHERE school_id = ${school!.id}`);
+          await tx.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school!.id}`);
+          await tx.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school!.id}`);
+          // Current lifecycle guards retain uniquely owned synthetic roots in
+          // this disposable fixture database.
+        }));
       }
       await pool.end();
     }

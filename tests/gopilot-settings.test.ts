@@ -93,8 +93,8 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM settings WHERE school_id IN (${list})`);
     await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${list})`);
     await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${list})`);
-    await db.execute(sql`DELETE FROM schools WHERE id IN (${list})`);
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
+    // Current lifecycle guards retain the uniquely tagged synthetic roots in
+    // this disposable fixture database after their children are removed.
   });
 }
 

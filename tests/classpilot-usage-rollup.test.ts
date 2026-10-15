@@ -777,7 +777,8 @@ describe("computation coverage ledger (DB lane)", { concurrency: false }, () => 
     const schoolId = await createSchool("Cleanup during delta", "720");
     const studentId = await createStudent(schoolId, "Cleanup");
     const admin = await createUser(schoolId, "admin", "cleanup-admin");
-    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const date = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -2);
+    const day = rollup.classpilotUsageRollupDay(date, TIME_ZONE);
     const firstCutoff = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
     await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://same.example.edu", category: "educational" });
     await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });

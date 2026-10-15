@@ -21,7 +21,7 @@ const { runWithTenantContext } = await import(
 );
 const storage = await import("../dist/services/storage.js");
 const schema = await import("../dist/schema/index.js");
-const { eq, like } = await import("drizzle-orm");
+const { like } = await import("drizzle-orm");
 const { PgDialect } = await import("drizzle-orm/pg-core");
 
 const {
@@ -29,7 +29,7 @@ const {
   createSchool,
   getHeartbeatTileHistoryBatch,
 } = storage;
-const { heartbeats, schools } = schema;
+const { heartbeats } = schema;
 
 const tag = `tile-history-lateral-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const cohortSize = 40;
@@ -111,9 +111,8 @@ after(async () => {
   try {
     await asSystem(async () => {
       await db.delete(heartbeats).where(like(heartbeats.id, `${tag}-%`));
-      if (schoolId) {
-        await db.delete(schools).where(eq(schools.id, schoolId));
-      }
+      // Current lifecycle guards retain the uniquely owned synthetic school
+      // root in this disposable fixture database after its telemetry is removed.
     });
   } finally {
     await Promise.allSettled([pool.end(), sessionPool.end()]);

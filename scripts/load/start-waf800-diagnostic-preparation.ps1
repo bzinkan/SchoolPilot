@@ -991,7 +991,13 @@ function Test-BoundProcessPresent {
         return $actualStarted -ceq $expectedStarted -and
             [string]::Equals($actualPath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)
     }
-    catch { throw "The bound process identity could not be inspected safely." }
+    catch {
+        # A naturally exiting process can disappear between lookup and its
+        # creation-time/image reads. Only proven exit of this acquired object
+        # means absent; an inaccessible live identity must still fail closed.
+        try { if ($process.HasExited) { return $false } } catch { }
+        throw "The bound process identity could not be inspected safely."
+    }
     finally { $process.Dispose() }
 }
 

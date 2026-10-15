@@ -143,7 +143,7 @@ async function cleanupSchool(schoolId: string): Promise<void> {
     await tx.execute(sql`DELETE FROM product_licenses WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM school_memberships WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM settings WHERE school_id = ${schoolId}`);
-    await tx.execute(sql`DELETE FROM schools WHERE id = ${schoolId}`);
+    // Retain protected school/user roots in this disposable fixture database.
   }));
 }
 
@@ -201,7 +201,6 @@ after(async () => {
     for (const target of [school, foreignSchool]) {
       if (target?.id) await cleanupSchool(target.id);
     }
-    await asSystem(() => db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${DOMAIN}`} OR email LIKE ${`%@${FOREIGN_DOMAIN}`}`));
   } finally {
     await schedulerLockPool?.end().catch(() => undefined);
     await schedulerPool?.end().catch(() => undefined);
@@ -357,7 +356,27 @@ describe("ClassPilot School Library routes", { concurrency: false }, () => {
     const former = await storage.createUser({ email: `former@${DOMAIN}`, firstName: "Former", lastName: "Teacher" });
     const formerMembership = await storage.createMembership({ userId: former.id, schoolId: school.id, role: "teacher", status: "active" });
     const formerShared = await createPath(former, "Detail former shared", { visibility: "school" });
-    await asSystem(() => db.execute(sql`UPDATE school_memberships SET status = 'inactive' WHERE id = ${formerMembership.id}`));
+    const impact: any = await inSchool(school.id, () => lifecycle.getStaffAssignmentImpact(school.id, formerMembership.id));
+    await inSchool(school.id, () => lifecycle.transitionStaffAssignments({
+      schoolId: school.id,
+      membershipId: formerMembership.id,
+      actorUserId: admin.id,
+      actorRole: "admin",
+      request: {
+        expectedRevision: impact.revision,
+        action: "deactivate",
+        decisions: impact.assignments.map((assignment: any) => ({
+          assignmentType: assignment.assignmentType,
+          assignmentId: assignment.assignmentId,
+          operation: "remove",
+        })),
+      },
+    }));
+    assert.equal(
+      await inSchool(school.id, () => storage.getTeachingResourceOwnerName(school.id, former.id)),
+      null,
+      "retained former staff identity must not be exposed as a library owner name",
+    );
     const formerView = await requestJson("GET", `/flight-paths/${formerShared.id}`, teacherB);
     assert.equal(formerView.status, 200, formerView.text);
     assert.equal(formerView.body.flightPath.ownerName, null);

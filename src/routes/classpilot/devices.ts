@@ -1115,7 +1115,7 @@ async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBin
     const outcome = await publishOrderedWS({
       kind: "staff-session", schoolId: binding.schoolId, sessionId: binding.teachingSessionId,
     }, message, { orderedKey, revision, signal: controller.signal });
-    if ((outcome.status === "accepted" || outcome.status === "failed")
+    if (outcome.status === "accepted"
       && recordLocalOrderedDelivery(orderedKey, revision)) {
       broadcastToStaffSessionLocal(binding.schoolId, binding.teachingSessionId, message);
     }
@@ -1140,7 +1140,7 @@ async function publishLockedSupervisionScreenshotAvailable(
     const outcome = await publishOrderedWS({ kind: "staff-context", schoolId: binding.schoolId,
       supervisionContextId: binding.supervisionContextId, assignedStaffId, contextAuthorityRevision, audience: "owner-and-observers" },
       message, { orderedKey, revision, signal: controller.signal });
-    if ((outcome.status === "accepted" || outcome.status === "failed") && recordLocalOrderedDelivery(orderedKey, revision)) {
+    if (outcome.status === "accepted" && recordLocalOrderedDelivery(orderedKey, revision)) {
       broadcastToStaffContextLocal(binding.schoolId, binding.supervisionContextId, message, assignedStaffId, contextAuthorityRevision, "owner-and-observers");
     }
   } finally { clearTimeout(timeout); }
@@ -1168,7 +1168,7 @@ async function publishOrderedRealtimeAudience(
   }
 
   if (
-    (outcome.status === "accepted" || outcome.status === "failed")
+    outcome.status === "accepted"
     && recordLocalOrderedDelivery(options.scopedOrderedKey, revision)
   ) {
     options.deliverLocal();

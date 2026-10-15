@@ -7,6 +7,8 @@ import {
 } from "./cacheInvalidation.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { correlateClasspilotSessionMessage, correlateClasspilotContextMessage } from "../services/classpilotSessionSubscription.js";
+import { BoundedRedisPublication, REDIS_PUBLICATION_LIMITS, type RedisPublicationOutcome,
+  type PublicationDiagnostic } from "./boundedRedisPublication.js";
 
 export type WsRedisTarget =
   | { kind: "staff"; schoolId: string }
@@ -59,7 +61,7 @@ type PublishWSOptions = {
 export type OrderedPublishOutcome =
   | { status: "accepted"; subscriberCount: number }
   | { status: "stale"; subscriberCount: 0 }
-  | { status: "failed"; subscriberCount: 0 };
+  | { status: "not_admitted" | "unknown"; subscriberCount: 0; reason: string };
 
 export type PublishWSBatchItem = {
   target: WsRedisTarget;
@@ -131,8 +133,33 @@ const redisChannel = `${redisPrefix}:ws:broadcast`;
 const HOT_PATH_LOG_INTERVAL_MS = 60_000;
 const REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS = 500;
 const REDIS_DISCONNECT_GRACE_MS = 250;
+export const PUBLICATION_LATENCY_BUCKETS_MS = [25, 50, 100, 200, 250, 500, 1_000, 2_000, 5_000] as const;
+const OBSERVATION_NOT_ADMITTED_LABELS = Object.freeze({
+  not_ready: "not_admitted_not_ready",
+  queue_full: "not_admitted_queue_full",
+  circuit_open: "not_admitted_circuit_open",
+  shutdown: "not_admitted_shutdown",
+  aborted: "not_admitted_aborted",
+  not_configured: "not_admitted_not_configured",
+} as const);
+const OBSERVATION_UNKNOWN_LABELS = Object.freeze({
+  timeout: "unknown_timeout",
+  transport_lost: "unknown_transport_lost",
+  shutdown: "unknown_shutdown",
+  aborted: "unknown_aborted",
+} as const);
+type ObservationStatusDiagnostic = "accepted"
+  | typeof OBSERVATION_NOT_ADMITTED_LABELS[keyof typeof OBSERVATION_NOT_ADMITTED_LABELS]
+  | typeof OBSERVATION_UNKNOWN_LABELS[keyof typeof OBSERVATION_UNKNOWN_LABELS];
 
 type HotPathActivity = {
+  publicationOutcomes: Partial<Record<PublicationDiagnostic, number>>;
+  publicationLatency: Partial<Record<PublicationDiagnostic, {
+    count: number; totalMs: number; maxMs: number; buckets: number[];
+  }>>;
+  coordinationOutcomes: Partial<Record<PublicationDiagnostic, number>>;
+  coordinationLatency: HotPathActivity["publicationLatency"];
+  observationStatusOutcomes: Partial<Record<ObservationStatusDiagnostic, number>>;
   redisMessagesPublished: number;
   redisSubscriberDeliveries: number;
   redisMessagesReceived: number;
@@ -153,6 +180,11 @@ type HotPathActivity = {
 
 function emptyHotPathActivity(): HotPathActivity {
   return {
+    publicationOutcomes: {},
+    publicationLatency: {},
+    coordinationOutcomes: {},
+    coordinationLatency: {},
+    observationStatusOutcomes: {},
     redisMessagesPublished: 0,
     redisSubscriberDeliveries: 0,
     redisMessagesReceived: 0,
@@ -175,6 +207,9 @@ function flushHotPathActivity(): void {
     activity.redisMessagesPublished === 0 &&
     activity.redisMessagesReceived === 0 &&
     activity.screenshotUploads === 0 &&
+    Object.keys(activity.publicationOutcomes).length === 0 &&
+    Object.keys(activity.coordinationOutcomes).length === 0 &&
+    Object.keys(activity.observationStatusOutcomes).length === 0 &&
     Object.keys(activity.commandPhases).length === 0
   ) {
     return;
@@ -185,6 +220,7 @@ function flushHotPathActivity(): void {
   console.log(JSON.stringify({
     event: "realtime_hot_path_summary",
     intervalSeconds: HOT_PATH_LOG_INTERVAL_MS / 1_000,
+    publicationLatencyBoundsMs: PUBLICATION_LATENCY_BUCKETS_MS,
     ...activity,
   }));
 }
@@ -240,6 +276,60 @@ let redisInitPromise: Promise<void> | null = null;
 let subscribed = false;
 let subscriptionStarted = false;
 let redisDisposed = false;
+let redisSubscriptionRetryTimer: NodeJS.Timeout | undefined;
+
+function recordRedisDiagnostic(stream: "publication" | "coordination", event: PublicationDiagnostic, durationMs?: number) {
+  const outcomes = stream === "publication" ? hotPathActivity.publicationOutcomes : hotPathActivity.coordinationOutcomes;
+  const latencies = stream === "publication" ? hotPathActivity.publicationLatency : hotPathActivity.coordinationLatency;
+  outcomes[event] = (outcomes[event] ?? 0) + 1;
+  if (durationMs === undefined || !Number.isFinite(durationMs)) return;
+  const histogram = latencies[event] ?? { count: 0, totalMs: 0, maxMs: 0,
+    buckets: Array(PUBLICATION_LATENCY_BUCKETS_MS.length + 1).fill(0) };
+  const duration = Math.max(0, durationMs);
+  const index = PUBLICATION_LATENCY_BUCKETS_MS.findIndex(bound => duration <= bound);
+  histogram.buckets[index < 0 ? PUBLICATION_LATENCY_BUCKETS_MS.length : index]!++;
+  histogram.count++;
+  histogram.totalMs += duration;
+  histogram.maxMs = Math.max(histogram.maxMs, duration);
+  latencies[event] = histogram;
+}
+
+function recordObservationStatusOutcome(outcome: RedisPublicationOutcome<unknown>): void {
+  try {
+    const label = outcome.status === "accepted" ? "accepted"
+      : outcome.status === "not_admitted" && Object.hasOwn(OBSERVATION_NOT_ADMITTED_LABELS, outcome.reason)
+        ? OBSERVATION_NOT_ADMITTED_LABELS[outcome.reason]
+        : outcome.status === "unknown" && Object.hasOwn(OBSERVATION_UNKNOWN_LABELS, outcome.reason)
+          ? OBSERVATION_UNKNOWN_LABELS[outcome.reason] : undefined;
+    if (label) hotPathActivity.observationStatusOutcomes[label] = (hotPathActivity.observationStatusOutcomes[label] ?? 0) + 1;
+  } catch { /* Fixed diagnostics cannot change a coordination operation's disposition. */ }
+}
+
+const coordinationRuntime = new BoundedRedisPublication({
+  create: () => {
+    const client = createClient({ url: redisUrl, disableOfflineQueue: true,
+      commandsQueueMaxLength: 2_048, socket: { connectTimeout: 1_000 } });
+    redisPublisher = client;
+    client.on("error", error => { warnRedis(error); });
+    return client;
+  },
+  onDiagnostic: (event, durationMs) => recordRedisDiagnostic("coordination", event, durationMs),
+});
+
+// Dedicated publication socket: a stalled write must never pin the subscriber
+// or advisory coordination/presence connection. Do not queue effects offline.
+const publicationRuntime = new BoundedRedisPublication({
+  create: () => {
+    const client = createClient({ url: redisUrl, disableOfflineQueue: true,
+      commandsQueueMaxLength: 2_048, socket: { connectTimeout: 1_000 } });
+    client.on("error", error => { warnRedis(error); });
+    return client;
+  },
+  onDiagnostic: (event, durationMs) => recordRedisDiagnostic("publication", event, durationMs),
+});
+
+export function getRedisPublicationSnapshot() { return publicationRuntime.snapshot(); }
+export function getRedisCoordinationSnapshot() { return coordinationRuntime.snapshot(); }
 
 function warnRedis(error?: unknown) {
   if (redisWarned) {
@@ -260,6 +350,8 @@ async function ensureRedisReady(): Promise<void> {
   if (!redisUrl || redisDisposed) {
     return;
   }
+  publicationRuntime.warmup();
+  coordinationRuntime.warmup();
   if (redisInitPromise) {
     return redisInitPromise;
   }
@@ -267,19 +359,15 @@ async function ensureRedisReady(): Promise<void> {
   redisInitPromise = (async () => {
     try {
       console.log(`[Redis] Instance ${instanceShortId} connecting to Redis...`);
-      redisPublisher = createClient({ url: redisUrl });
-      redisPublisher.on("error", (err: unknown) => {
-        console.error(
-          `[Redis] Instance ${instanceShortId} publisher error:`,
-          safeErrorMetadata(err)
-        );
-        warnRedis(err);
-      });
-      await redisPublisher.connect();
+      const coordination = await coordinationRuntime.publish(client => client.ping(), { budgetMs: 500 });
+      if (coordination.status !== "accepted") return;
       if (redisDisposed) return;
       console.log(`[Redis] Instance ${instanceShortId} publisher connected`);
 
-      redisSubscriber = redisPublisher.duplicate();
+      // Rebuilding a wedged coordination generation must not leak or replace
+      // a healthy subscriber. node-redis owns resubscription on its reconnects.
+      if (!redisSubscriber) {
+      redisSubscriber = createClient({ url: redisUrl });
       redisSubscriber.on("error", (err: unknown) => {
         subscribed = false;
         console.error(
@@ -293,7 +381,8 @@ async function ensureRedisReady(): Promise<void> {
       redisSubscriber.on("ready", () => {
         if (subscriptionStarted) subscribed = true;
       });
-      await redisSubscriber.connect();
+      }
+      if (!redisSubscriber.isOpen) await redisSubscriber.connect();
       if (redisDisposed) return;
       console.log(`[Redis] Instance ${instanceShortId} subscriber connected`);
 
@@ -307,7 +396,7 @@ async function ensureRedisReady(): Promise<void> {
       );
       warnRedis(error);
     }
-  })();
+  })().finally(() => { redisInitPromise = null; });
 
   return redisInitPromise;
 }
@@ -340,32 +429,29 @@ export async function executeRealtimeRedisCommand<T = unknown>(
 ): Promise<T | undefined> {
   if (!redisUrl) return undefined;
   const timeoutMs = Math.max(50, options.timeoutMs ?? 500);
-  let readyTimer: NodeJS.Timeout | undefined;
-  const ready = await Promise.race([
-    ensureRedisReady().then(() => true, () => false),
-    new Promise<boolean>((resolve) => {
-      readyTimer = setTimeout(() => resolve(false), timeoutMs);
-      readyTimer.unref?.();
-    }),
-  ]);
-  if (readyTimer) clearTimeout(readyTimer);
-  if (!ready) return undefined;
-  if (!redisEnabled || !redisPublisher?.isReady) return undefined;
-  const controller = new AbortController();
-  const commandTimer = setTimeout(() => controller.abort(), timeoutMs);
-  commandTimer.unref?.();
-  try {
-    return await redisPublisher.sendCommand<T>(command, { abortSignal: controller.signal });
-  } catch (error) {
-    // Do not log the command because coordination keys can contain scoped
-    // identifiers. The shared Redis warning already reports infrastructure
-    // health without exposing tenant or user data.
-    console.warn("[WebSocket] Redis coordination command failed");
-    warnRedis(error);
+  const outcome = await coordinationRuntime.publish(client => client.sendCommand<T>(command), { budgetMs: timeoutMs });
+  // Advisory presence/refresh claims fail closed. An uncertain SET is not
+  // retried; its frozen timestamps/NX lease remain bounded if it executes late.
+  return outcome.status === "accepted" ? outcome.value : undefined;
+}
+
+/** Compatibility signature for operational caches/leases. Unlike the legacy
+ * rate-limit client this bounds replies after socket write, and an AbortSignal
+ * bounds only the caller, never corrupts the Redis delayed-reply queue. */
+export async function realtimeRedisCommand(
+  args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal; diagnosticOperation?: "observation_status" } = {},
+): Promise<unknown | undefined> {
+  if (!redisUrl) {
+    if (options.diagnosticOperation === "observation_status") {
+      recordObservationStatusOutcome({ status: "not_admitted", reason: "not_configured" });
+    }
     return undefined;
-  } finally {
-    clearTimeout(commandTimer);
   }
+  const outcome = await coordinationRuntime.publish(client => client.sendCommand(args), {
+    budgetMs: 250, signal: options.signal,
+  });
+  if (options.diagnosticOperation === "observation_status") recordObservationStatusOutcome(outcome);
+  return outcome.status === "accepted" ? outcome.value : undefined;
 }
 
 export async function subscribeWS(
@@ -375,7 +461,17 @@ export async function subscribeWS(
     return;
   }
   await ensureRedisReady();
-  if (!redisEnabled || !redisSubscriber || subscriptionStarted) {
+  if (!redisEnabled || !redisSubscriber) {
+    if (!redisDisposed && !redisSubscriptionRetryTimer) {
+      redisSubscriptionRetryTimer = setTimeout(() => {
+        redisSubscriptionRetryTimer = undefined;
+        void subscribeWS(onMessage);
+      }, 1_000);
+      redisSubscriptionRetryTimer.unref?.();
+    }
+    return;
+  }
+  if (subscriptionStarted) {
     return;
   }
 
@@ -428,182 +524,97 @@ export async function subscribeWS(
   }
 }
 
+export type WsPublicationOutcome = RedisPublicationOutcome<number>;
+
+function publicationEnvelope(target: WsRedisTarget, message: unknown, options: PublishWSOptions = {}): WsRedisEnvelope {
+  return { instanceId, target, message: messageForTarget(target, message),
+    includeSource: options.includeSource || undefined, orderedKey: options.orderedKey, revision: options.revision };
+}
+
+/** Explicit uncertainty is retained for callers that need transport evidence.
+ * Legacy boolean helpers below remain advisory; they never mutate targets. */
+export async function publishWSOutcome(
+  target: WsRedisTarget, message: unknown, options: PublishWSOptions = {},
+): Promise<WsPublicationOutcome> {
+  if (!redisUrl) return { status: "not_admitted", reason: "not_configured" };
+  const serialized = JSON.stringify(publicationEnvelope(target, message, options));
+  const ordered = Boolean(options.orderedKey && options.revision);
+  const result = await publicationRuntime.publish(client => ordered
+    ? client.sendCommand<number>(["EVAL", ORDERED_PUBLISH_SCRIPT, "1",
+        `${redisPrefix}:ws:ordered:${options.orderedKey}`, options.revision!,
+        String(ORDERED_PUBLISH_TTL_SECONDS), redisChannel, serialized])
+    : client.publish(redisChannel, serialized), { signal: options.signal });
+  if (result.status === "accepted" && result.value >= 0) {
+    hotPathActivity.redisMessagesPublished++;
+    hotPathActivity.redisSubscriberDeliveries += result.value;
+  }
+  return result;
+}
+
 export async function publishWS(
-  target: WsRedisTarget,
-  message: unknown,
-  options: PublishWSOptions = {}
+  target: WsRedisTarget, message: unknown, options: PublishWSOptions = {},
 ): Promise<boolean> {
-  if (!redisUrl) {
-    return false;
-  }
-  if (options.signal) {
-    if (options.signal.aborted) return false;
-    let removeAbortListener: (() => void) | undefined;
-    const ready = await Promise.race([
-      ensureRedisReady().then(() => true, () => false),
-      new Promise<boolean>((resolve) => {
-        const onAbort = () => resolve(false);
-        options.signal!.addEventListener("abort", onAbort, { once: true });
-        removeAbortListener = () => options.signal!.removeEventListener("abort", onAbort);
-        if (options.signal!.aborted) onAbort();
-      }),
-    ]);
-    removeAbortListener?.();
-    if (!ready || options.signal.aborted) return false;
-  } else {
-    await ensureRedisReady();
-  }
-  if (!redisEnabled || !redisPublisher) {
-    return false;
-  }
-
-  const payload: WsRedisEnvelope = {
-    instanceId,
-    target,
-    message: messageForTarget(target, message),
-    includeSource: options.includeSource || undefined,
-    orderedKey: options.orderedKey,
-    revision: options.revision,
-  };
-
-  try {
-    const serialized = JSON.stringify(payload);
-    const ordered = Boolean(options.orderedKey && options.revision);
-    const command = ordered
-      ? [
-          "EVAL",
-          ORDERED_PUBLISH_SCRIPT,
-          "1",
-          `${redisPrefix}:ws:ordered:${options.orderedKey}`,
-          options.revision!,
-          String(ORDERED_PUBLISH_TTL_SECONDS),
-          redisChannel,
-          serialized,
-        ]
-      : ["PUBLISH", redisChannel, serialized];
-    // Do not attach AbortSignal to an already-sent node-redis command. In
-    // node-redis 4.7.x an aborted queued PUBLISH can corrupt delayed-reply
-    // bookkeeping and leave its TCP socket alive. The cache layer bounds the
-    // caller wait while retaining this raw promise for terminal disposal.
-    const numSubscribers = ordered
-      ? await redisPublisher.sendCommand<number>(
-          command
-        )
-      : await redisPublisher.publish(redisChannel, serialized);
-    if (numSubscribers === -1) return true;
-    hotPathActivity.redisMessagesPublished += 1;
-    hotPathActivity.redisSubscriberDeliveries += numSubscribers;
-    return numSubscribers > 0;
-  } catch (error) {
-    console.error(`[Redis] Instance ${instanceShortId} publish failed:`, safeErrorMetadata(error));
-    warnRedis(error);
-    return false;
-  }
+  const result = await publishWSOutcome(target, message, options);
+  return result.status === "accepted" && (result.value > 0 || result.value === -1);
 }
 
-/**
- * Atomically claim and publish a revisioned WebSocket snapshot.
- *
- * Callers that also fan out locally must wait for this result and perform the
- * local fan-out only when status is "accepted". That global Redis decision
- * prevents a delayed callback on another API task from broadcasting an older
- * snapshot locally before Redis rejects it as stale.
- */
-export async function publishOrderedWS(
-  target: WsRedisTarget,
-  message: unknown,
-  options: {
-    orderedKey: string;
-    revision: string;
-    includeSource?: boolean;
-    signal?: AbortSignal;
-  }
-): Promise<OrderedPublishOutcome> {
-  if (!redisUrl) return { status: "failed", subscriberCount: 0 };
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return { status: "failed", subscriberCount: 0 };
-  }
-
-  const payload: WsRedisEnvelope = {
-    instanceId,
-    target,
-    message: messageForTarget(target, message),
-    includeSource: options.includeSource || undefined,
-    orderedKey: options.orderedKey,
-    revision: options.revision,
-  };
-
-  try {
-    const serialized = JSON.stringify(payload);
-    const subscriberCount = await redisPublisher.sendCommand<number>([
-      "EVAL",
-      ORDERED_PUBLISH_SCRIPT,
-      "1",
-      `${redisPrefix}:ws:ordered:${options.orderedKey}`,
-      options.revision,
-      String(ORDERED_PUBLISH_TTL_SECONDS),
-      redisChannel,
-      serialized,
-    ], options.signal ? { abortSignal: options.signal } : undefined);
-    if (subscriberCount === -1) {
-      return { status: "stale", subscriberCount: 0 };
-    }
-    hotPathActivity.redisMessagesPublished += 1;
-    hotPathActivity.redisSubscriberDeliveries += subscriberCount;
-    return { status: "accepted", subscriberCount };
-  } catch (error) {
-    console.error(
-      `[Redis] Instance ${instanceShortId} ordered publish failed:`,
-      safeErrorMetadata(error)
-    );
-    warnRedis(error);
-    return { status: "failed", subscriberCount: 0 };
-  }
+/** Only an accepted global revision claim permits source-local fan-out. A late
+ * unknown publication can be superseded by a fresh authoritative snapshot; it
+ * must never cause an unordered local fallback or a target failure. */
+export async function publishOrderedWS(target: WsRedisTarget, message: unknown, options: {
+  orderedKey: string; revision: string; includeSource?: boolean; signal?: AbortSignal;
+}): Promise<OrderedPublishOutcome> {
+  if (!redisUrl) return { status: "not_admitted", subscriberCount: 0, reason: "not_configured" };
+  const serialized = JSON.stringify(publicationEnvelope(target, message, options));
+  const result = await publicationRuntime.publish(client => client.sendCommand<number>([
+    "EVAL", ORDERED_PUBLISH_SCRIPT, "1", `${redisPrefix}:ws:ordered:${options.orderedKey}`,
+    options.revision, String(ORDERED_PUBLISH_TTL_SECONDS), redisChannel, serialized,
+  ]), { signal: options.signal, budgetMs: REDIS_PUBLICATION_LIMITS.orderedMs });
+  if (result.status !== "accepted") return { status: result.status, subscriberCount: 0, reason: result.reason };
+  if (result.value === -1) return { status: "stale", subscriberCount: 0 };
+  hotPathActivity.redisMessagesPublished++;
+  hotPathActivity.redisSubscriberDeliveries += result.value;
+  return { status: "accepted", subscriberCount: result.value };
 }
 
-/**
- * Publish an ordered input list in one Redis round trip. Redis executes the
- * queued PUBLISH commands in input order, so remote tasks observe the same
- * target/message order used for local delivery. This intentionally supports
- * only ordinary (non-revisioned) publications; revisioned command snapshots
- * continue to use publishWS and its compare-and-publish script.
- */
-export async function publishWSBatch(
-  items: readonly PublishWSBatchItem[]
-): Promise<boolean[]> {
-  if (items.length === 0) return [];
-  if (!redisUrl) return items.map(() => false);
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) return items.map(() => false);
-
-  try {
-    const serialized = items.map(({ target, message, includeSource }) => JSON.stringify({
-      instanceId,
-      target,
-      message: messageForTarget(target, message),
-      includeSource: includeSource || undefined,
-    } satisfies WsRedisEnvelope));
-    const pipeline = redisPublisher.multi();
-    for (const payload of serialized) {
-      pipeline.publish(redisChannel, payload);
+/** Bounded cohorts retain input ordering. Each raw MULTI is tracked through
+ * terminal settlement; no timeout retries an ambiguous one-shot publication. */
+export async function publishWSBatchOutcomes(items: readonly PublishWSBatchItem[]): Promise<WsPublicationOutcome[]> {
+  if (!redisUrl) return items.map(() => ({ status: "not_admitted", reason: "not_configured" }));
+  // Capture every post-commit envelope before readiness or an earlier cohort
+  // yields. Callers may reuse their mutable target/message objects afterward.
+  const serialized = items.map(({ target, message, includeSource }) =>
+    JSON.stringify(publicationEnvelope(target, message, { includeSource })));
+  const results: WsPublicationOutcome[] = [];
+  const deadline = performance.now() + REDIS_PUBLICATION_LIMITS.ordinaryMs;
+  for (let start = 0; start < serialized.length; start += 40) {
+    const cohort = serialized.slice(start, start + 40);
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      results.push(...serialized.slice(start).map(() => ({ status: "not_admitted" as const, reason: "not_ready" as const })));
+      break;
     }
-    const results = await pipeline.exec();
-    const subscriberCounts = results.map((value) => Number(value ?? 0));
-    hotPathActivity.redisMessagesPublished += subscriberCounts.length;
-    hotPathActivity.redisSubscriberDeliveries += subscriberCounts.reduce(
-      (total, count) => total + Math.max(0, count),
-      0
-    );
-    return subscriberCounts.map((count) => count > 0);
-  } catch (error) {
-    console.error(
-      `[Redis] Instance ${instanceShortId} batch publish failed:`,
-      safeErrorMetadata(error)
-    );
-    warnRedis(error);
-    return items.map(() => false);
+    const outcome = await publicationRuntime.publish(async client => {
+      const pipeline = client.multi();
+      for (const envelope of cohort) pipeline.publish(redisChannel, envelope);
+      const replies = await pipeline.exec();
+      const counts = replies.map(value => Number(value));
+      if (counts.length !== cohort.length || counts.some(value => !Number.isSafeInteger(value) || value < 0)) {
+        throw new Error("Invalid Redis publication batch reply");
+      }
+      return counts;
+    }, { budgetMs: remaining });
+    if (outcome.status === "accepted") {
+      hotPathActivity.redisMessagesPublished += outcome.value.length;
+      hotPathActivity.redisSubscriberDeliveries += outcome.value.reduce((total, count) => total + count, 0);
+      results.push(...outcome.value.map(value => ({ status: "accepted" as const, value })));
+    } else results.push(...cohort.map(() => outcome));
   }
+  return results;
+}
+
+export async function publishWSBatch(items: readonly PublishWSBatchItem[]): Promise<boolean[]> {
+  return (await publishWSBatchOutcomes(items)).map(result => result.status === "accepted" && result.value > 0);
 }
 
 export type RedisShutdownClient = {
@@ -675,9 +686,11 @@ export async function closeRedisRuntimeForShutdown(
 export async function disposeWSRedis(): Promise<void> {
   redisDisposed = true;
   clearInterval(hotPathLogTimer);
+  if (redisSubscriptionRetryTimer) clearTimeout(redisSubscriptionRetryTimer);
+  await Promise.all([publicationRuntime.dispose(), coordinationRuntime.dispose()]);
   await closeRedisRuntimeForShutdown({
     initialization: redisInitPromise,
-    clients: () => [redisSubscriber, redisPublisher],
+    clients: () => [redisSubscriber],
   });
   redisPublisher = null;
   redisSubscriber = null;
@@ -965,80 +978,42 @@ export function supervisionBoundScreenshotMatchesBinding(
     && Math.abs(capturedAtMs - data.timestamp) <= 1_000;
 }
 
-export async function setScreenshot(
-  binding: ScreenshotBinding,
-  data: BoundScreenshotData
-): Promise<boolean> {
+// A delayed cache write may complete after its HTTP caller timed out. Compare
+// capture timestamps atomically so it cannot replace a newer authorized image.
+export const SET_SCREENSHOT_IF_NEWER_SCRIPT = `
+local timestamp = tonumber(ARGV[2])
+for _, key in ipairs(KEYS) do
+  local current = redis.call('GET', key)
+  local newer = false
+  if current then
+    local ok, value = pcall(cjson.decode, current)
+    newer = ok and type(value) == 'table' and tonumber(value.timestamp) and tonumber(value.timestamp) > timestamp
+  end
+  if not newer then redis.call('SET', key, ARGV[1], 'EX', ARGV[3]) end
+end
+return 1
+`;
+
+async function storeScreenshot(keys: string[], data: ScreenshotData): Promise<boolean> {
+  if (!redisUrl) return false;
+  const result = await executeRealtimeRedisCommand<number>(["EVAL", SET_SCREENSHOT_IF_NEWER_SCRIPT,
+    String(keys.length), ...keys, JSON.stringify(data), String(data.timestamp), String(SCREENSHOT_TTL_SECONDS)], { timeoutMs: 250 });
+  return result === 1;
+}
+
+export async function setScreenshot(binding: ScreenshotBinding, data: BoundScreenshotData): Promise<boolean> {
   if (!screenshotMatchesBinding(data, binding)) return false;
-  if (!redisUrl) {
-    return false; // Fallback to in-memory
-  }
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return false;
-  }
-
-  try {
-    const exactKey = screenshotBindingCacheKey(binding);
-    const legacyKey = `${SCREENSHOT_KEY_PREFIX}${binding.deviceId}`;
-    const serialized = JSON.stringify(data);
-    await redisPublisher
-      .multi()
-      .setEx(exactKey, SCREENSHOT_TTL_SECONDS, serialized)
-      // One-TTL compatibility bridge for API tasks that still read the old
-      // device-only key. The payload itself carries the complete binding.
-      .setEx(legacyKey, SCREENSHOT_TTL_SECONDS, serialized)
-      .exec();
-    return true;
-  } catch (error) {
-    console.warn("[Screenshot] Redis setEx failed:", safeErrorMetadata(error));
-    return false;
-  }
+  return storeScreenshot([screenshotBindingCacheKey(binding), `${SCREENSHOT_KEY_PREFIX}${binding.deviceId}`], data);
 }
 
-export async function setClassBoundScreenshot(
-  binding: ClassBoundScreenshotBinding,
-  data: ClassBoundScreenshotData
-): Promise<boolean> {
+export async function setClassBoundScreenshot(binding: ClassBoundScreenshotBinding, data: ClassBoundScreenshotData): Promise<boolean> {
   if (!classBoundScreenshotMatchesBinding(data, binding)) return false;
-  if (!redisUrl) return false;
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) return false;
-  try {
-    await redisPublisher.setEx(
-      classBoundScreenshotBindingCacheKey(binding),
-      SCREENSHOT_TTL_SECONDS,
-      JSON.stringify(data)
-    );
-    return true;
-  } catch (error) {
-    console.warn("[Screenshot] Redis class-bound setEx failed:", safeErrorMetadata(error));
-    return false;
-  }
+  return storeScreenshot([classBoundScreenshotBindingCacheKey(binding)], data);
 }
 
-export async function setSupervisionBoundScreenshot(
-  binding: SupervisionBoundScreenshotBinding,
-  data: SupervisionBoundScreenshotData
-): Promise<boolean> {
+export async function setSupervisionBoundScreenshot(binding: SupervisionBoundScreenshotBinding, data: SupervisionBoundScreenshotData): Promise<boolean> {
   if (!supervisionBoundScreenshotMatchesBinding(data, binding)) return false;
-  if (!redisUrl) return false;
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) return false;
-  try {
-    await redisPublisher.setEx(
-      supervisionBoundScreenshotBindingCacheKey(binding),
-      SCREENSHOT_TTL_SECONDS,
-      JSON.stringify(data)
-    );
-    return true;
-  } catch (error) {
-    console.warn(
-      "[Screenshot] Redis supervision-bound setEx failed:",
-      safeErrorMetadata(error)
-    );
-    return false;
-  }
+  return storeScreenshot([supervisionBoundScreenshotBindingCacheKey(binding)], data);
 }
 
 export async function getScreenshot(
@@ -1139,7 +1114,7 @@ export async function getScreenshots(
   try {
     // Keep the API rate-limiter Redis client out of lightweight one-off
     // processes that import this module only to publish an invalidation.
-    const { redisCommand } = await import("../middleware/rateLimiter.js");
+    const redisCommand = realtimeRedisCommand;
     const result = await redisCommand(
       [
         "MGET",
@@ -1171,7 +1146,7 @@ export async function getClassBoundScreenshots(
   const timeout = setTimeout(() => controller.abort(), 250);
   timeout.unref?.();
   try {
-    const { redisCommand } = await import("../middleware/rateLimiter.js");
+    const redisCommand = realtimeRedisCommand;
     const result = await redisCommand(
       ["MGET", ...bindings.map(classBoundScreenshotBindingCacheKey)],
       { readyTimeoutMs: 100, signal: controller.signal }
@@ -1199,7 +1174,7 @@ export async function getSupervisionBoundScreenshots(
   const timeout = setTimeout(() => controller.abort(), 250);
   timeout.unref?.();
   try {
-    const { redisCommand } = await import("../middleware/rateLimiter.js");
+    const redisCommand = realtimeRedisCommand;
     const result = await redisCommand(
       ["MGET", ...bindings.map(supervisionBoundScreenshotBindingCacheKey)],
       { readyTimeoutMs: 100, signal: controller.signal }
@@ -1228,93 +1203,27 @@ export type FlightPathStatus = {
 };
 
 export async function setFlightPathStatus(deviceId: string, data: FlightPathStatus): Promise<boolean> {
-  if (!redisUrl) {
-    return false; // Fallback to in-memory
-  }
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return false;
-  }
-
-  try {
-    const key = `${FLIGHT_PATH_KEY_PREFIX}${deviceId}`;
-    if (data.active) {
-      await redisPublisher.setEx(key, FLIGHT_PATH_TTL_SECONDS, JSON.stringify(data));
-    } else {
-      // When removing flight path, delete the key
-      await redisPublisher.del(key);
-    }
-    return true;
-  } catch (error) {
-    console.warn("[FlightPath] Redis set failed:", safeErrorMetadata(error));
-    return false;
-  }
+  const key = `${FLIGHT_PATH_KEY_PREFIX}${deviceId}`;
+  const result = await executeRealtimeRedisCommand(data.active
+    ? ["SETEX", key, String(FLIGHT_PATH_TTL_SECONDS), JSON.stringify(data)] : ["DEL", key]);
+  return result !== undefined;
 }
 
 export async function getFlightPathStatus(deviceId: string): Promise<FlightPathStatus | null> {
-  if (!redisUrl) {
-    return null; // Fallback to in-memory
-  }
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return null;
-  }
-
-  try {
-    const key = `${FLIGHT_PATH_KEY_PREFIX}${deviceId}`;
-    const data = await redisPublisher.get(key);
-    if (!data) {
-      return null;
-    }
-    return JSON.parse(data) as FlightPathStatus;
-  } catch (error) {
-    console.warn("[FlightPath] Redis get failed:", safeErrorMetadata(error));
-    return null;
-  }
+  const data = await executeRealtimeRedisCommand<string | null>(["GET", `${FLIGHT_PATH_KEY_PREFIX}${deviceId}`]);
+  if (typeof data !== "string") return null;
+  try { return JSON.parse(data) as FlightPathStatus; } catch { return null; }
 }
 
-// Device lastSeenAt storage in Redis (for multi-instance deployments)
-// This ensures all ECS instances see the same lastSeenAt timestamp
 const DEVICE_LASTSEEN_KEY_PREFIX = `${redisPrefix}:lastseen:`;
-const DEVICE_LASTSEEN_TTL_SECONDS = 300; // 5 minutes TTL
-
+const DEVICE_LASTSEEN_TTL_SECONDS = 300;
 export async function setDeviceLastSeen(deviceId: string, timestamp: number): Promise<boolean> {
-  if (!redisUrl) {
-    return false; // Fallback to in-memory
-  }
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return false;
-  }
-
-  try {
-    const key = `${DEVICE_LASTSEEN_KEY_PREFIX}${deviceId}`;
-    await redisPublisher.setEx(key, DEVICE_LASTSEEN_TTL_SECONDS, timestamp.toString());
-    return true;
-  } catch (error) {
-    console.warn("[LastSeen] Redis set failed:", safeErrorMetadata(error));
-    return false;
-  }
+  return (await executeRealtimeRedisCommand(["SETEX", `${DEVICE_LASTSEEN_KEY_PREFIX}${deviceId}`,
+    String(DEVICE_LASTSEEN_TTL_SECONDS), String(timestamp)])) !== undefined;
 }
-
 export async function getDeviceLastSeen(deviceId: string): Promise<number | null> {
-  if (!redisUrl) {
-    return null; // Fallback to in-memory
-  }
-  await ensureRedisReady();
-  if (!redisEnabled || !redisPublisher) {
-    return null;
-  }
-
-  try {
-    const key = `${DEVICE_LASTSEEN_KEY_PREFIX}${deviceId}`;
-    const data = await redisPublisher.get(key);
-    if (!data) {
-      return null;
-    }
-    return parseInt(data, 10);
-  } catch (error) {
-    console.warn("[LastSeen] Redis get failed:", safeErrorMetadata(error));
-    return null;
-  }
+  const data = await executeRealtimeRedisCommand<string | null>(["GET", `${DEVICE_LASTSEEN_KEY_PREFIX}${deviceId}`]);
+  if (typeof data !== "string") return null;
+  const value = Number(data);
+  return Number.isFinite(value) ? value : null;
 }

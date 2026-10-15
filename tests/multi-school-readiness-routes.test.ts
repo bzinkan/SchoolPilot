@@ -56,6 +56,7 @@ let adminUser: any;
 let superUser: any;
 let teacherA: any;
 let teacherB: any;
+let foreignTeacher: any;
 let multiSchoolTeacher: any;
 let homeroomA: any;
 let homeroomB: any;
@@ -326,6 +327,14 @@ before(async () => {
       status: "active",
     } as any);
   });
+  foreignTeacher = await createUser({
+    email: `${TAG}-foreign-teacher@${TAG}-b.example.edu`,
+    firstName: "Foreign",
+    lastName: "Teacher",
+  });
+  await inSchool(schoolB.id, () => createMembership({
+    userId: foreignTeacher.id, schoolId: schoolB.id, role: "teacher", status: "active",
+  }));
 
   const { createApp } = await import("../dist/app.js");
   const app = createApp();
@@ -358,7 +367,10 @@ after(async () => {
       await db.execute(sql`DELETE FROM classpilot_session_staff WHERE teaching_session_id LIKE ${`${TAG}-student-data-session-%`}`);
       await db.execute(sql`DELETE FROM teaching_sessions WHERE id LIKE ${`${TAG}-student-data-session-%`}`);
       await db.execute(sql`DELETE FROM group_students WHERE group_id LIKE ${`${TAG}-student-data-group-%`}`);
-      await db.execute(sql`DELETE FROM groups WHERE id LIKE ${`${TAG}-student-data-group-%`}`);
+      await db.transaction(async tx => {
+        await tx.execute(sql`DELETE FROM group_teachers WHERE group_id LIKE ${`${TAG}-student-data-group-%`}`);
+        await tx.execute(sql`DELETE FROM groups WHERE id LIKE ${`${TAG}-student-data-group-%`}`);
+      });
       await db.execute(sql`DELETE FROM dismissal_overrides WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_changes WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_queue WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
@@ -370,12 +382,13 @@ after(async () => {
       await db.execute(sql`DELETE FROM parent_student WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM settings WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
-      await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
-      await db.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
-      await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
-      await db.execute(sql`DELETE FROM schools WHERE id IN (${schoolA.id}, ${schoolB.id})`);
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`${TAG}%@%`}`);
+      await db.transaction(async tx => {
+        await tx.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
+        await tx.execute(sql`DELETE FROM homerooms WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      });
+      await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      // Retain lifecycle-protected school/user roots in this disposable DB.
       await db.execute(sql`DELETE FROM "session" WHERE sess::text LIKE ${`%${TAG}%`}`);
     });
   } catch {
@@ -453,17 +466,21 @@ describe("multi-school readiness route hardening", () => {
     const sessionAId = `${TAG}-student-data-session-a`;
     const sessionBId = `${TAG}-student-data-session-b`;
     await asSystem(async () => {
-      await db.execute(sql`
+      await db.transaction(async tx => {
+        await tx.execute(sql`
         INSERT INTO groups (
           id, school_id, teacher_id, name, group_type, status, created_at
         ) VALUES (
           ${groupAId}, ${schoolA.id}, ${teacherA.id}, 'Teacher A Science',
           'admin_class', 'active', now()
         ), (
-          ${groupBId}, ${schoolB.id}, ${teacherB.id}, 'Foreign Science',
+          ${groupBId}, ${schoolB.id}, ${foreignTeacher.id}, 'Foreign Science',
           'admin_class', 'active', now()
         )
       `);
+        await tx.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES
+        (${groupAId},${teacherA.id},'primary'),(${groupBId},${foreignTeacher.id},'primary')`);
+      });
       await db.execute(sql`
         INSERT INTO teaching_sessions (
           id, school_id, group_id, teacher_id, session_mode,
@@ -474,7 +491,7 @@ describe("multi-school readiness route hardening", () => {
           now() - interval '50 minutes', now() - interval '20 minutes',
           'Teacher A Science', ${timeZone}, now() - interval '50 minutes', now() - interval '50 minutes'
         ), (
-          ${sessionBId}, ${schoolB.id}, ${groupBId}, ${teacherB.id}, 'live',
+          ${sessionBId}, ${schoolB.id}, ${groupBId}, ${foreignTeacher.id}, 'live',
           now() - interval '50 minutes', now() - interval '20 minutes',
           'Foreign Science', ${schoolB.schoolTimezone || "America/New_York"},
           now() - interval '50 minutes', now() - interval '50 minutes'
@@ -488,8 +505,8 @@ describe("multi-school readiness route hardening", () => {
           ${schoolA.id}, ${sessionAId}, ${teacherA.id}, 'primary',
           'Teacher A', ${teacherA.email}, now() - interval '50 minutes'
         ), (
-          ${schoolB.id}, ${sessionBId}, ${teacherB.id}, 'primary',
-          'Teacher B', ${teacherB.email}, now() - interval '50 minutes'
+          ${schoolB.id}, ${sessionBId}, ${foreignTeacher.id}, 'primary',
+          'Foreign Teacher', ${foreignTeacher.email}, now() - interval '50 minutes'
         )
       `);
       await db.execute(sql`
@@ -735,7 +752,8 @@ describe("multi-school readiness route hardening", () => {
       await db.execute(sql`
         UPDATE students SET status = 'inactive' WHERE id = ${formerStudent.id}
       `);
-      await db.execute(sql`
+      await db.transaction(async tx => {
+        await tx.execute(sql`
         INSERT INTO groups (
           id, school_id, teacher_id, name, group_type, status, created_at
         ) VALUES
@@ -748,6 +766,12 @@ describe("multi-school readiness route hardening", () => {
           ,(${overduePriorGroupId}, ${schoolA.id}, ${teacherA.id}, 'Prior Overdue Class', 'admin_class', 'archived', now())
           ,(${hardCappedGroupId}, ${schoolA.id}, ${teacherA.id}, 'Twelve Hour Capped Class', 'admin_class', 'archived', now())
       `);
+        await tx.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES
+        (${reassignedGroupId},${teacherB.id},'primary'),(${expiredGroupId},${teacherA.id},'primary'),
+        (${incompleteGroupId},${teacherA.id},'primary'),(${failedGroupId},${teacherA.id},'primary'),
+        (${scheduledPastGroupId},${teacherA.id},'primary'),(${scheduledLiveGroupId},${teacherA.id},'primary'),
+        (${overduePriorGroupId},${teacherA.id},'primary'),(${hardCappedGroupId},${teacherA.id},'primary')`);
+      });
       await db.execute(sql`
         INSERT INTO group_students (group_id, student_id) VALUES
           (${reassignedGroupId}, ${teacherBStudent.id}),
@@ -1411,10 +1435,7 @@ describe("multi-school readiness route hardening", () => {
         await db.execute(sql`DELETE FROM school_memberships WHERE user_id = ${dualProductParent.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE user_id = ${baseParent.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${gopilotOnlySchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${gopilotOnlySchool.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${retainedParent.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${dualProductParent.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${baseParent.id}`);
+        // Retain lifecycle-protected school/user roots in this disposable DB.
       });
     }
   });
@@ -2671,11 +2692,13 @@ describe("multi-school readiness route hardening", () => {
         await asSystem(async () => {
           await db.execute(sql`DELETE FROM settings WHERE school_id = ${districtSchool.id}`);
           await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${districtSchool.id}`);
-          await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${districtSchool.id}`);
           await db.execute(sql`DELETE FROM students WHERE school_id = ${districtSchool.id}`);
-          await db.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id = ${districtSchool.id})`);
-          await db.execute(sql`DELETE FROM homerooms WHERE school_id = ${districtSchool.id}`);
-          await db.execute(sql`DELETE FROM schools WHERE id = ${districtSchool.id}`);
+          await db.transaction(async tx => {
+            await tx.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id = ${districtSchool.id})`);
+            await tx.execute(sql`DELETE FROM homerooms WHERE school_id = ${districtSchool.id}`);
+          });
+          await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${districtSchool.id}`);
+          // Retain the lifecycle-protected school root in this disposable DB.
         });
       }
     }
@@ -2767,11 +2790,9 @@ describe("multi-school readiness route hardening", () => {
           await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${ppSchool.id}`);
           await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${ppSchool.id}`);
           await db.execute(sql`DELETE FROM students WHERE school_id = ${ppSchool.id}`);
-          await db.execute(sql`DELETE FROM schools WHERE id = ${ppSchool.id}`);
+          // Retain the lifecycle-protected school root in this disposable DB.
         }
-        if (ppTeacher?.id) {
-          await db.execute(sql`DELETE FROM users WHERE id = ${ppTeacher.id}`);
-        }
+        // Retain the lifecycle-protected staff root in this disposable DB.
       });
     }
   });

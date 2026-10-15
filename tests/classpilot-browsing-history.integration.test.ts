@@ -10,6 +10,7 @@ let pool:import("pg").Pool, database:typeof import("../src/db.js").default;
 let tenant:typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
 let history:typeof import("../src/services/classpilotBrowsingHistory.js");
 let lookup:typeof import("../src/services/classpilotBrowsingHistoryLookup.js");
+let storage:typeof import("../src/services/storage.js");
 const scoped=<T>(fn:()=>Promise<T>)=>tenant({schoolId},fn);
 const request={schoolId,studentId,actorId:teacherId,role:"admin" as const,startDate:"2026-09-01",endDate:"2026-09-01",now};
 before(async()=>{
@@ -17,6 +18,7 @@ before(async()=>{
   const module=await import("../src/db.js");pool=module.pool;database=module.default;
   ({runWithTenantContext:tenant}=await import("../src/middleware/tenantContext.js"));history=await import("../src/services/classpilotBrowsingHistory.js");
   lookup=await import("../src/services/classpilotBrowsingHistoryLookup.js");
+  storage=await import("../src/services/storage.js");
   // Drizzle-only CI omits these migration-owned tables. Install the exact
   // reporting contract before fixtures and cleanup, independently of test order.
   const connectionString = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -35,10 +37,11 @@ before(async()=>{
   await pool.query("INSERT INTO schools(id,name,school_timezone) VALUES($1,'History fixture','America/New_York'),($2,'Other history fixture','America/New_York')",[schoolId,otherSchoolId]);
   await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'History','Teacher'),($3,$4,'Coverage','Teacher')",[teacherId,`${teacherId}@example.edu`,otherTeacherId,`${otherTeacherId}@example.edu`]);
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active'),($1,$3,'teacher','active')",[schoolId,teacherId,otherTeacherId]);
+  await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active'),($1,$3,'teacher','active')",[otherSchoolId,teacherId,otherTeacherId]);
   await scoped(async()=>{const {sql}=await import("drizzle-orm");
     await database.execute(sql`INSERT INTO settings(school_id,school_name,ws_shared_key,retention_hours,school_timezone) VALUES(${schoolId},'History fixture','fixture-key','720','America/Chicago')`);
     await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name) VALUES(${studentId},${schoolId},'History','Student')`);
-    await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${groupId},${schoolId},${otherTeacherId},'Reassigned class','admin_class','active')`);
+    await storage.createGroup({ id: groupId, schoolId, teacherId: otherTeacherId, name: "Reassigned class", groupType: "admin_class", status: "active" });
     await database.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,end_time,roster_snapshot_completed_at) VALUES(${sessionId},${schoolId},${groupId},${teacherId},'live','2026-09-01 13:00:00','2026-09-01 14:00:00','2026-09-01 13:00:00Z')`);
     await database.execute(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role,captured_at) VALUES(${schoolId},${sessionId},${teacherId},'primary','2026-09-01 13:00:00Z')`);
     await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${studentId},'2026-09-01 13:00:00Z')`);
@@ -49,8 +52,10 @@ before(async()=>{
   });
 });
 after(async()=>{
-  if(!pool)return;await tenant({isSuper:true},async()=>{const {sql}=await import("drizzle-orm");await database.execute(sql`DELETE FROM group_teachers WHERE group_id IN(SELECT id FROM groups WHERE school_id IN(${schoolId},${otherSchoolId}))`);await database.execute(sql`DELETE FROM group_students WHERE group_id IN(SELECT id FROM groups WHERE school_id IN(${schoolId},${otherSchoolId}))`);for(const table of ["heartbeats","daily_usage","classpilot_supervision_student_reports","classpilot_supervision_report_segments","classpilot_supervision_students","classpilot_supervision_contexts","classpilot_session_usage","classpilot_session_staff","classpilot_session_students","classpilot_session_reports","teaching_sessions","groups","students","settings"])await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);await database.execute(sql`DELETE FROM groups WHERE school_id=${otherSchoolId}`);await database.execute(sql`DELETE FROM students WHERE school_id=${otherSchoolId}`);});
-  await pool.query("DELETE FROM school_memberships WHERE school_id=$1",[schoolId]);await pool.query("DELETE FROM users WHERE id IN($1,$2)",[teacherId,otherTeacherId]);await pool.query("DELETE FROM schools WHERE id IN($1,$2)",[schoolId,otherSchoolId]);const {sessionPool}=await import("../src/db.js");await Promise.all([pool.end(),sessionPool.end()]);
+  if(!pool)return;await tenant({isSuper:true},async()=>{const {sql}=await import("drizzle-orm");await database.execute(sql`UPDATE groups SET status='archived' WHERE school_id IN(${schoolId},${otherSchoolId})`);await database.execute(sql`DELETE FROM group_teachers WHERE group_id IN(SELECT id FROM groups WHERE school_id IN(${schoolId},${otherSchoolId}))`);await database.execute(sql`DELETE FROM group_students WHERE group_id IN(SELECT id FROM groups WHERE school_id IN(${schoolId},${otherSchoolId}))`);for(const table of ["heartbeats","daily_usage","classpilot_supervision_student_reports","classpilot_supervision_report_segments","classpilot_supervision_students","classpilot_supervision_contexts","classpilot_session_usage","classpilot_session_staff","classpilot_session_students","classpilot_session_reports","teaching_sessions","groups","students","settings"])await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);await database.execute(sql`DELETE FROM groups WHERE school_id=${otherSchoolId}`);await database.execute(sql`DELETE FROM students WHERE school_id=${otherSchoolId}`);});
+  await pool.query("DELETE FROM school_memberships WHERE school_id IN($1,$2)",[schoolId,otherSchoolId]);
+  // Current lifecycle guards retain uniquely owned school/staff roots in this disposable fixture DB.
+  const {sessionPool}=await import("../src/db.js");await Promise.all([pool.end(),sessionPool.end()]);
 });
 
 describe("Offline student discovery for browsing history", () => {
@@ -71,7 +76,7 @@ describe("Offline student discovery for browsing history", () => {
         const id = ids[key as keyof typeof ids];
         await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,email,status) VALUES(${id},${schoolId},'Lookup',${label},${`${id}@lookup.example.edu`},${key === "inactive" || key === "historical" ? "inactive" : "active"})`);
       }
-      await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${ids.ownGroup},${schoolId},${teacherId},'Current assignments do not authorize history','admin_class','active')`);
+      await storage.createGroup({ id: ids.ownGroup, schoolId, teacherId, name: "Current assignments do not authorize history", groupType: "admin_class", status: "active" });
       await database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.ownGroup},${ids.currentOnly})`);
       for (const id of [ids.historical, ids.delegated]) {
         await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${schoolId},${sessionId},${groupId},${id},'2026-09-01 13:00:00Z')`);
@@ -188,16 +193,19 @@ describe("Browsing history grade and class filters", () => {
       }
       for (const [id, owner, label, grade, type, status] of [
         [ids.primary, teacherId, "Filter primary", "7", "admin_class", "active"],
-        [ids.linkedPrimary, otherTeacherId, "Filter linked primary", "K", "admin_class", "active"],
+        [ids.linkedPrimary, teacherId, "Filter linked primary", "K", "admin_class", "active"],
         [ids.coTaught, otherTeacherId, "Filter co-taught", "8", "admin_class", "active"],
         [ids.otherClass, otherTeacherId, "Filter another teacher", "7", "admin_class", "active"],
         [ids.observerClass, otherTeacherId, "Filter observer only", "9", "admin_class", "active"],
         [ids.archivedClass, teacherId, "Filter archived", "5", "admin_class", "archived"],
         [ids.informalClass, teacherId, "Filter informal", "6", "teacher_created", "active"],
       ]) {
-        await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status) VALUES(${id},${schoolId},${owner},${label},${grade},${type},${status})`);
+        await storage.createGroup({ id, schoolId, teacherId: owner!, name: label!, gradeLevel: grade, groupType: type, status });
       }
-      await database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.linkedPrimary},${teacherId},'primary'),(${ids.coTaught},${teacherId},'co-teacher'),(${ids.observerClass},${teacherId},'observer')`);
+      await database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.coTaught},${teacherId},'co-teacher')`);
+      // Observe is a request-scoped administrator view. It creates neither an
+      // instructional group assignment nor a frozen session staff membership.
+      // The observer-only class deliberately has no assignment for this actor.
       for (const [group, roster] of [
         [ids.primary, [ids.alpha, ids.beta, ids.currentOnly, ids.delegated, ids.unattended, ids.expired, ids.inactive]],
         [ids.linkedPrimary, [ids.linkedStudent]], [ids.coTaught, [ids.coStudent, ids.beta]], [ids.otherClass, [ids.outside]],
@@ -223,7 +231,7 @@ describe("Browsing history grade and class filters", () => {
     });
     await tenant({ schoolId: otherSchoolId }, async () => {
       await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,grade_level) VALUES(${ids.foreign},${otherSchoolId},'Filter','Foreign','12')`);
-      await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status) VALUES(${ids.foreignClass},${otherSchoolId},${teacherId},'Filter foreign','12','admin_class','active')`);
+      await storage.createGroup({ id: ids.foreignClass, schoolId: otherSchoolId, teacherId: otherTeacherId, name: "Filter foreign", gradeLevel: "12", groupType: "admin_class", status: "active" });
       await database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.foreignClass},${ids.foreign})`);
       await database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.foreignClass},${teacherId},'co-teacher')`);
     });
@@ -310,7 +318,10 @@ describe("Browsing history grade and class filters", () => {
     const first = await scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary, limit: 1 }));
     assert(first.nextCursor);
     try {
-      await scoped(() => database.execute(sql`UPDATE groups SET teacher_id=${otherTeacherId} WHERE school_id=${schoolId} AND id=${ids.primary}`));
+      await scoped(() => database.transaction(async tx => {
+        await tx.execute(sql`UPDATE groups SET teacher_id=${otherTeacherId} WHERE school_id=${schoolId} AND id=${ids.primary}`);
+        await tx.execute(sql`UPDATE group_teachers SET teacher_id=${otherTeacherId} WHERE group_id=${ids.primary} AND role='primary'`);
+      }));
       await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.primary, cursor: first.nextCursor })), { code: "HISTORY_FILTER_DENIED" });
       await scoped(() => database.execute(sql`DELETE FROM group_teachers WHERE group_id=${ids.coTaught} AND teacher_id=${teacherId}`));
       await assert.rejects(scoped(() => lookup.findStudentBrowsingHistory({ ...teacherRequest, classId: ids.coTaught })), { code: "HISTORY_FILTER_DENIED" });
@@ -320,7 +331,10 @@ describe("Browsing history grade and class filters", () => {
       const detail = await scoped(() => history.getStudentBrowsingHistory({ ...request, role: "teacher", studentId: ids.alpha, now: weekend }));
       assert.equal(detail.state, "empty", "Frozen authority still permits the student's historical day even without heartbeat rows");
     } finally {
-      await scoped(() => database.execute(sql`UPDATE groups SET teacher_id=${teacherId} WHERE school_id=${schoolId} AND id=${ids.primary}`));
+      await scoped(() => database.transaction(async tx => {
+        await tx.execute(sql`UPDATE groups SET teacher_id=${teacherId} WHERE school_id=${schoolId} AND id=${ids.primary}`);
+        await tx.execute(sql`UPDATE group_teachers SET teacher_id=${teacherId} WHERE group_id=${ids.primary} AND role='primary'`);
+      }));
       await scoped(() => database.execute(sql`INSERT INTO group_teachers(group_id,teacher_id,role) VALUES(${ids.coTaught},${teacherId},'co-teacher') ON CONFLICT(group_id,teacher_id) DO NOTHING`));
     }
     try {

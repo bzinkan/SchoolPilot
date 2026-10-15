@@ -57,6 +57,36 @@ let httpServer: Server | undefined;
 let wss: WebSocketServer | undefined;
 let wsUrl = "";
 const clients: WebSocket[] = [];
+const runtimeCounterNames = new Set([
+  "transientCommandTargetExpired", "transientCommandTargetSuperseded",
+  "transientCommandReplayedOnAuth", "transientCommandReplayFailed",
+]);
+const flushedRuntimeCounters = new Map<string, number>();
+let restoreRuntimeLog = () => {};
+
+function collectFlushedRuntimeCounters(line: unknown, totals: Map<string, number>): void {
+  if (typeof line !== "string") return;
+  let value: unknown;
+  try { value = JSON.parse(line); } catch { return; }
+  if (!value || typeof value !== "object" || !("event" in value)
+    || value.event !== "schoolpilot_runtime_performance_summary" || !("counters" in value)
+    || !value.counters || typeof value.counters !== "object") return;
+  for (const [name, count] of Object.entries(value.counters)) {
+    if (runtimeCounterNames.has(name) && typeof count === "number" && Number.isSafeInteger(count) && count > 0) {
+      totals.set(name, (totals.get(name) ?? 0) + count);
+    }
+  }
+}
+
+function cumulativeRuntimeCounters(current: Record<string, number | undefined>, flushed: Map<string, number>) {
+  const totals: Record<string, number | undefined> = Object.fromEntries(flushed);
+  for (const [name, count] of Object.entries(current)) {
+    if (runtimeCounterNames.has(name) && typeof count === "number" && count > 0) totals[name] = (totals[name] ?? 0) + count;
+  }
+  return totals;
+}
+
+after(() => restoreRuntimeLog());
 
 const inSchool = <T>(fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
 
@@ -95,6 +125,14 @@ before(async () => {
   replay = await import("../src/services/classpilotTransientCommandReplay.js");
   websocket = await import("../src/realtime/websocket.js");
   runtime = await import("../src/services/runtimePerformanceMetrics.js");
+  // Production metrics rotate on minute boundaries even within one test. Keep
+  // their emitted fixed counters as well as the current, unflushed bucket.
+  const log = console.log;
+  console.log = (...args: unknown[]) => {
+    if (args.length === 1) collectFlushedRuntimeCounters(args[0], flushedRuntimeCounters);
+    log(...args);
+  };
+  restoreRuntimeLog = () => { console.log = log; };
   lifecycle = await import("../src/services/classpilotSessionLifecycle.js");
   pushes = await import("../src/services/classpilotLifecyclePushes.js");
   ({ createStudentToken } = await import("../src/services/deviceJwt.js"));
@@ -312,8 +350,11 @@ async function closeClients(): Promise<void> {
 const remoteControl = (connection: Connection) => connection.frames.filter((frame) => frame.type === "remote-control");
 const withoutMessageId = ({ _msgId: _ignored, ...frame }: Frame) => frame;
 const payloadOf = (dispatched: Dispatched) => dispatched.command.commandPayload as Record<string, any>;
-const counters = () => runtime.snapshotRuntimePerformanceMetrics().counters as Record<string, number | undefined>;
-const resetCounters = () => { runtime.snapshotRuntimePerformanceMetrics({ reset: true }); };
+const counters = () => cumulativeRuntimeCounters(runtime.snapshotRuntimePerformanceMetrics().counters, flushedRuntimeCounters);
+const resetCounters = () => {
+  runtime.snapshotRuntimePerformanceMetrics({ reset: true });
+  flushedRuntimeCounters.clear();
+};
 
 async function targetRows(commandId: string): Promise<TargetRow[]> {
   const result = await admin.query(
@@ -371,6 +412,21 @@ describe("transient command replay on student WebSocket auth-success", () => {
   let pendingPoll: Dispatched;
   let openTab: Dispatched;
   let liveFrame: Frame;
+
+  it("keeps the exact counter assertions across a real runtime metrics minute-boundary flush", () => {
+    let now = 59_990;
+    const flushed = new Map<string, number>();
+    const metrics = new runtime.RuntimePerformanceMetrics(() => now, line => collectFlushedRuntimeCounters(line, flushed));
+    metrics.recordCounter("transientCommandReplayedOnAuth");
+    now = 60_000;
+    metrics.recordCounter("transientCommandReplayedOnAuth");
+    assert.equal(flushed.get("transientCommandReplayedOnAuth"), 1, "the real interval emitter flushed the first replay");
+    assert.equal(metrics.snapshot().counters.transientCommandReplayedOnAuth, 1, "the second replay is in the new interval");
+    assert.equal(cumulativeRuntimeCounters(metrics.snapshot().counters, flushed).transientCommandReplayedOnAuth, 2);
+    metrics.snapshot({ reset: true });
+    flushed.clear();
+    assert.deepEqual(cumulativeRuntimeCounters(metrics.snapshot().counters, flushed), {}, "a test reset clears both parts");
+  });
 
   it("with every lane control unset a timer and a poll write no session_settings row and carry no order, so the teacher's next FAB toggle is accepted", async () => {
     // Production posture at deploy. Before this lane a phase-0 timer or poll
@@ -472,66 +528,72 @@ describe("transient command replay on student WebSocket auth-success", () => {
   });
 
   it("replays the un-received poll frame to its exact binding after auth-success, honours the school allowlist, and never replays open-tab", async () => {
-    process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
-    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = randomUUID();
-    resetCounters();
-    assert.deepEqual(remoteControl(await connect(students[0]!)), [], "another school's canary: no replay here");
-    assert.equal(counters().transientCommandReplayedOnAuth, undefined);
-    await closeClients();
+    try {
+      process.env.CLASSPILOT_TRANSIENT_REPLAY_ON_AUTH = "true";
+      process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = randomUUID();
+      resetCounters();
+      assert.deepEqual(remoteControl(await connect(students[0]!)), [], "another school's canary: no replay here");
+      assert.equal(counters().transientCommandReplayedOnAuth, undefined);
+      await closeClients();
 
-    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
-    const first = await connect(students[0]!);
-    const replayed = remoteControl(first);
-    assert.equal(replayed.length, 1, JSON.stringify(replayed));
-    const frame = replayed[0]!;
-    assert.ok(
-      first.frames.indexOf(frame) > first.frames.findIndex((candidate) => candidate.type === "auth-success"),
-      "the replayed frame follows auth-success",
-    );
-    assert.equal(frame.commandId, pendingPoll.command.id);
-    assert.equal(frame.command.type, "poll");
-    assert.equal(frame.command.commandId, pendingPoll.command.id);
-    assert.equal(frame.command.data.action, "start");
-    assert.equal(frame.command.data.pollId, payloadOf(pendingPoll).pollId);
-    assert.deepEqual(frame.command.data.options, ["Yes", "No"]);
-    assert.equal(frame.studentId, students[0]!.studentId);
-    assert.equal(frame.studentSessionId, students[0]!.studentSessionId);
-    assert.equal(frame.command.teachingSessionId, teachingSessionId);
-    assert.equal(frame.command.authority.teachingSessionId, teachingSessionId);
-    assert.equal(frame.deliveryPolicy, "transient_action");
-    assert.equal(frame.expiresAt, pendingPoll.command.expiresAt!.toISOString());
-    assert.ok(!JSON.stringify(frame).includes(students[0]!.deviceId), "device ids stay transport-only");
-    assert.equal(counters().transientCommandReplayedOnAuth, 1);
-    // Replay is not receipt: only the device's ACK moves a target.
-    for (const row of await targetRows(pendingPoll.command.id)) {
-      assert.equal(row.status, "sent");
-      assert.equal(row.received_at, null);
+      process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
+      const first = await connect(students[0]!);
+      const replayed = remoteControl(first);
+      assert.equal(replayed.length, 1, JSON.stringify(replayed));
+      const frame = replayed[0]!;
+      assert.ok(
+        first.frames.indexOf(frame) > first.frames.findIndex((candidate) => candidate.type === "auth-success"),
+        "the replayed frame follows auth-success",
+      );
+      assert.equal(frame.commandId, pendingPoll.command.id);
+      assert.equal(frame.command.type, "poll");
+      assert.equal(frame.command.commandId, pendingPoll.command.id);
+      assert.equal(frame.command.data.action, "start");
+      assert.equal(frame.command.data.pollId, payloadOf(pendingPoll).pollId);
+      assert.deepEqual(frame.command.data.options, ["Yes", "No"]);
+      assert.equal(frame.studentId, students[0]!.studentId);
+      assert.equal(frame.studentSessionId, students[0]!.studentSessionId);
+      assert.equal(frame.command.teachingSessionId, teachingSessionId);
+      assert.equal(frame.command.authority.teachingSessionId, teachingSessionId);
+      assert.equal(frame.deliveryPolicy, "transient_action");
+      assert.equal(frame.expiresAt, pendingPoll.command.expiresAt!.toISOString());
+      assert.ok(!JSON.stringify(frame).includes(students[0]!.deviceId), "device ids stay transport-only");
+      assert.equal(counters().transientCommandReplayedOnAuth, 1);
+      // Replay is not receipt: only the device's ACK moves a target.
+      for (const row of await targetRows(pendingPoll.command.id)) {
+        assert.equal(row.status, "sent");
+        assert.equal(row.received_at, null);
+      }
+      await closeClients();
+
+      // The connected student never acknowledged, so its own target is still
+      // pending and replays to that binding. The rebuilt frame is the
+      // dispatcher's live frame for the same binding, with only a new message id.
+      const second = remoteControl(await connect(students[1]!));
+      assert.equal(second.length, 1, JSON.stringify(second));
+      assert.equal(second[0]!.studentId, students[1]!.studentId);
+      assert.notEqual(second[0]!._msgId, liveFrame._msgId);
+      assert.deepEqual(withoutMessageId(second[0]!), withoutMessageId(liveFrame));
+      assert.equal(counters().transientCommandReplayedOnAuth, 2);
+    } finally {
+      await closeClients();
+
+      process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
+      await markReceived(pendingPoll.command.id);
+      await markReceived(openTab.command.id);
+      // One active poll per class: close it before the next case. Its targets
+      // are already received, so the close supersedes nothing.
+      resetCounters();
+      const closed = await dispatch("poll", { action: "close", pollId: payloadOf(pendingPoll).pollId });
+      try {
+        for (const row of await targetRows(pendingPoll.command.id)) {
+          assert.equal(row.status, "received", "received targets are never superseded");
+        }
+        assert.equal(counters().transientCommandTargetSuperseded, undefined);
+      } finally {
+        await markReceived(closed.command.id);
+      }
     }
-    await closeClients();
-
-    // The connected student never acknowledged, so its own target is still
-    // pending and replays to that binding. The rebuilt frame is the
-    // dispatcher's live frame for the same binding, with only a new message id.
-    const second = remoteControl(await connect(students[1]!));
-    assert.equal(second.length, 1, JSON.stringify(second));
-    assert.equal(second[0]!.studentId, students[1]!.studentId);
-    assert.notEqual(second[0]!._msgId, liveFrame._msgId);
-    assert.deepEqual(withoutMessageId(second[0]!), withoutMessageId(liveFrame));
-    assert.equal(counters().transientCommandReplayedOnAuth, 2);
-    await closeClients();
-
-    process.env.CLASSPILOT_TRANSIENT_REPLAY_SCHOOL_IDS = schoolId;
-    await markReceived(pendingPoll.command.id);
-    await markReceived(openTab.command.id);
-    // One active poll per class: close it before the next case. Its targets
-    // are already received, so the close supersedes nothing.
-    resetCounters();
-    const closed = await dispatch("poll", { action: "close", pollId: payloadOf(pendingPoll).pollId });
-    for (const row of await targetRows(pendingPoll.command.id)) {
-      assert.equal(row.status, "received", "received targets are never superseded");
-    }
-    assert.equal(counters().transientCommandTargetSuperseded, undefined);
-    await markReceived(closed.command.id);
   });
 
   it("a poll close supersedes the undelivered start at dispatch: start targets expire and only the close is replayed", async () => {

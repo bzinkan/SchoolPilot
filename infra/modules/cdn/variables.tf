@@ -6,6 +6,11 @@ variable "domain_aliases" {
   default = []
 }
 variable "api_domain" { type = string }
+variable "forwarded_cookie_names" {
+  description = "Empty preserves production all-cookie forwarding; staging forwards only its exact session and ALB affinity cookies"
+  type        = list(string)
+  default     = []
+}
 variable "certificate_arn" { type = string }
 variable "api_origin_protocol_policy" {
   type    = string

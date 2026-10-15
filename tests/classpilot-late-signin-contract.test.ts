@@ -632,21 +632,52 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
 
   const commandDelivery = section(
     dispatcher,
-    "const authorizedDeliveries = await Promise.all",
+    "const authorizedDeliveries = plainOpenTab",
     "const redisPublishStartedAt",
   );
-  assert.match(
+  const richCommandDelivery = section(
     commandDelivery,
+    ": await withClasspilotStudentControlDeliveryBatch",
+    "for (const delivery of authorizedDeliveries)",
+  );
+  const plainCommandDelivery = section(
+    commandDelivery,
+    "? (await withClasspilotPlainOpenTabDeliveryBatch",
+    ": await withClasspilotStudentControlDeliveryBatch",
+  );
+  const plainEligibility = section(
+    dispatcher,
+    "const plainOpenTab = isClasspilotPlainOpenTab",
+    "const authorizedDeliveries = plainOpenTab",
+  );
+  assert.match(
+    richCommandDelivery,
     /withClasspilotStudentControlDeliveryAuthority\([\s\S]*sendToStudentBindingLocal\(exactTarget, message,[\s\S]*requiredCapability: exactTarget\.requiredCapability/,
     "post-persistence command delivery must remain inside exact binding authority",
   );
-  assert.match(commandDelivery, /kind: "student-binding" as const/);
+  assert.match(richCommandDelivery, /kind: "student-binding" as const/);
   assert.match(
-    commandDelivery,
+    richCommandDelivery,
     /deferredIds\.has\(target\.studentId\)[\s\S]*\["lateSignInRestrictionSsoV1" as const\][\s\S]*requiredCapabilities/,
   );
   assert.match(commandDelivery, /deliveryAuthority\.authorized[\s\S]*remotePublications\.push/);
   assert.doesNotMatch(commandDelivery, /sendToDeviceLocal|kind: "device"/);
+  assert.match(
+    plainEligibility,
+    /isClasspilotPlainOpenTab\(created\.commandType, created\.commandPayload\)[\s\S]*classpilotPlainOpenTabTargetsEligible[\s\S]*!options\.replayCommand[\s\S]*!shouldPersistBeforeDelivery[\s\S]*!focusNewAction[\s\S]*!lessonOpen[\s\S]*!currentPageRequested[\s\S]*!requiredToolsCapability[\s\S]*controlStateIds\.size === 0[\s\S]*classroomStateByStudent\.size === 0/,
+    "plain open-tab delivery must exclude deferred and rich control-state paths",
+  );
+  assert.match(
+    plainCommandDelivery,
+    /authority\.command\.commandPayload[\s\S]*classpilotCommandAuthorityEnvelope\(authority\.command\)[\s\S]*kind: "student-binding" as const, schoolId: options\.schoolId,[\s\S]*studentId: binding\.studentId, studentSessionId: binding\.studentSessionId, deviceId: binding\.deviceId/,
+    "plain delivery must use persisted command authority and the exact authorized binding",
+  );
+  assert.match(
+    plainCommandDelivery,
+    /copyPlainOpenTabPublication\(\{ target: exactTarget, message \}\);\s*if \(!authority\.isCurrent\(\)\) return null;\s*sendToStudentBindingLocal\(exactTarget, publication\.message\)/,
+    "the immutable plain frame must pass its current deadline immediately before local delivery",
+  );
+  assert.doesNotMatch(plainCommandDelivery, /async \(binding, authority\)/);
 });
 
 test("Dashboard rollback projection cannot masquerade a deferred revision as applied realtime state", () => {
