@@ -1405,6 +1405,16 @@ async function waitForSupervisorStartGate() {
 
 const counters = {
   reliabilityPolicyUnavailable: 0,
+  reliabilityScreenshotHeartbeatRequired: 0,
+  reliabilityScreenshotAuthoritySuperseded: 0,
+  reliabilityScreenshotCapturePaused: 0,
+  reliabilityScreenshotPausedUnobserved: 0,
+  reliabilityScreenshotCaptureExpired: 0,
+  reliabilityScreenshotCaptureTimeInvalid: 0,
+  reliabilityScreenshotRefusalUnknown: 0,
+  reliabilityScreenshotRefusalBodyUnavailable: 0,
+  reliabilityScreenshotRefreshHints: 0,
+  reliabilityScreenshotRefreshHintsIgnored: 0,
   reliabilityObservationRenewals: 0,
   reliabilityScreenshotAgeAttempts: 0,
   reliabilityScreenshotAgeUnavailable: 0,
@@ -1923,6 +1933,7 @@ async function request(path, {
   probeExpectedStatus = null,
   expectedDeviceId = "",
   expectedStudentIds = null,
+  screenshotRecovery = null,
 }) {
   const startedAt = monotonicNowMs();
   if (countWorkload) counters.httpTotal += 1;
@@ -1957,7 +1968,10 @@ async function request(path, {
     expectedStudentIds,
   };
   pendingRequests.set(record.id, record);
-  const requestTimeout = setTimeout(() => controller.abort(new Error("request timeout")), requestTimeoutMs);
+  const screenshotResponse = reliabilityWorkload && kind === "screenshotPost" && screenshotRecovery;
+  const requestBudgetMs = screenshotResponse ? Math.min(requestTimeoutMs, 8000) : requestTimeoutMs;
+  let deferredScreenshot409 = false, classifiedScreenshot409 = false;
+  const requestTimeout = setTimeout(() => controller.abort(new Error("request timeout")), requestBudgetMs);
   requestTimeout.unref?.();
   try {
     const headers = { "user-agent": LOAD_GATE_USER_AGENT };
@@ -1981,11 +1995,15 @@ async function request(path, {
     // Any redirect or client rejection of valid workload traffic invalidates
     // the launch gate immediately. Tenant-isolation probes are deliberately
     // excluded via countWorkload=false and retain their exact-status contract.
-    if (countWorkload && status >= 300 && status < 500) {
+    deferredScreenshot409 = Boolean(screenshotResponse && status === 409);
+    if (countWorkload && status >= 300 && status < 500 && !deferredScreenshot409) {
       triggerFatalGate(`valid-http-${status}`, { status, kind });
     }
-    const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass);
+    const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass) || screenshotResponse;
     const drained = await drainResponse(response, inspectJson);
+    if (screenshotResponse && (controller.signal.aborted || monotonicNowMs() - startedAt >= requestBudgetMs)) {
+      throw new Error("Screenshot response deadline");
+    }
     let json = null;
     if (inspectJson && drained.text) {
       if (drained.truncated) {
@@ -1998,6 +2016,17 @@ async function request(path, {
         }
       }
     }
+    let screenshotRefusal = null;
+    if (deferredScreenshot409) {
+      screenshotRefusal = classifyRecoveryScreenshot409(screenshotRecovery.state, json, screenshotRecovery.guard);
+      counters[SCREENSHOT_REFUSAL_COUNTERS[screenshotRefusal.code] || "reliabilityScreenshotRefusalUnknown"] += 1;
+      classifiedScreenshot409 = true;
+      if (countWorkload && !screenshotRefusal.recoverable) {
+        triggerFatalGate("valid-http-409", { status, kind, screenshotRefusalCode: screenshotRefusal.code });
+      }
+    }
+    // A recognized policy refusal still counts as HTTP4xx and failed latency.
+    // Recovery never removes it from the existing acceptance/error gates.
     finalizePendingRequest(record, status, null, drained.bytes);
     if (
       countWorkload &&
@@ -2054,8 +2083,12 @@ async function request(path, {
         triggerFatalGate("invalid-teacher-response", { kind: endpointClass, reason: validationError });
       }
     }
-    return { status, ok: response.ok, json };
+    return { status, ok: response.ok, json, screenshotRefusal };
   } catch (error) {
+    if (deferredScreenshot409 && !classifiedScreenshot409) {
+      counters.reliabilityScreenshotRefusalBodyUnavailable += 1;
+      if (countWorkload) triggerFatalGate("valid-http-409", { status, kind, screenshotRefusalCode: "body-unavailable" });
+    }
     finalizePendingRequest(record, status, error);
     return { status, ok: false, json: null };
   } finally {
@@ -2138,6 +2171,149 @@ function getCommandEntry(commandId) {
 function observeServerCommandTargets(entry, targets) {
   counters.commandServerStatusRegressions += observeCommandTargetStatuses(entry, targets, monotonicNowMs());
 }
+
+// BEGIN scoped screenshot recovery. Kept in this producer's existing closure.
+const SCREENSHOT_REFUSAL_COUNTERS = Object.freeze({
+  SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED: "reliabilityScreenshotHeartbeatRequired",
+  SCREENSHOT_AUTHORITY_SUPERSEDED: "reliabilityScreenshotAuthoritySuperseded",
+  SCREENSHOT_CAPTURE_PAUSED: "reliabilityScreenshotCapturePaused",
+  SCREENSHOT_PAUSED_UNOBSERVED: "reliabilityScreenshotPausedUnobserved",
+  SCREENSHOT_CAPTURE_EXPIRED: "reliabilityScreenshotCaptureExpired",
+  SCREENSHOT_CAPTURE_TIME_INVALID: "reliabilityScreenshotCaptureTimeInvalid",
+});
+function screenshotRecoveryBinding(device) {
+  // Normalized manifest rows intentionally omit sessionId. Reuse the existing
+  // claims/manifest tuple validation; never invent a parallel session field.
+  return JSON.stringify([publicBindingFromDevice(device), device.studentToken]);
+}
+function screenshotRecoverySession(device) {
+  publicBindingFromDevice(device);
+  return JSON.parse(Buffer.from(device.studentToken.split(".")[1], "base64url")).sessionId;
+}
+function screenshotRecoveryAuthBindingCurrent(state, message) {
+  const sessionId = screenshotRecoverySession(state.device), exact = message.exactBinding;
+  return message.schoolId === state.device.schoolId && message.studentId === state.device.studentId
+    && message.studentSessionId === sessionId && (!exact || exact.schoolId === state.device.schoolId
+      && exact.studentId === state.device.studentId && exact.studentSessionId === sessionId
+      && exact.deviceId === state.device.deviceId);
+}
+function screenshotRecoveryScope(authority) {
+  return authority ? JSON.stringify([authority.kind, authority.teachingSessionId || "", authority.controlRevision]) : null;
+}
+function reserveScreenshotRecovery(state, wall = Date.now(), mono = monotonicNowMs()) {
+  const binding = screenshotRecoveryBinding(state.device);
+  if (state.screenshotRecoveryBinding !== binding) {
+    state.screenshotRecoveryBinding = binding;
+    state.screenshotRecoveryEpoch = (state.screenshotRecoveryEpoch || 0) + 1;
+    state.screenshotPolicyApplied = 0;
+    state.device.reliabilityPolicy = null;
+    state.screenshotCapabilities = new Set();
+  }
+  return Object.freeze({ binding, epoch: state.screenshotRecoveryEpoch,
+    generation: state.screenshotPolicyRequested = (state.screenshotPolicyRequested || 0) + 1,
+    scope: screenshotRecoveryScope(state.device.reliabilityPolicy?.authority), wall, mono });
+}
+function screenshotRecoveryCurrent(state, guard) {
+  return Boolean(guard && guard.binding === screenshotRecoveryBinding(state.device)
+    && guard.binding === state.screenshotRecoveryBinding && guard.epoch === state.screenshotRecoveryEpoch);
+}
+function normalizeRecoveryScreenshotPolicy(state, raw, guard, wall, mono) {
+  if (!raw || Array.isArray(raw) || raw.mode !== "tracking_window_lease"
+    || typeof raw.captureAllowed !== "boolean" || typeof raw.expiresInSeconds !== "number"
+    || !Number.isFinite(raw.expiresInSeconds) || raw.expiresInSeconds < 0 || raw.expiresInSeconds > 90) return null;
+  const authority = raw.authority, revision = authority?.controlRevision;
+  if (!authority || !Number.isSafeInteger(revision) || revision < 0) return null;
+  const keys = Object.keys(authority).sort().join(",");
+  if (authority.kind === "student_session" ? keys !== "controlRevision,kind"
+    : authority.kind !== "teaching_session" || keys !== "controlRevision,kind,teachingSessionId"
+      || !state.expectedTeachingSessionId || authority.teachingSessionId !== state.expectedTeachingSessionId) return null;
+  const server = typeof raw.serverTime === "string" ? Date.parse(raw.serverTime) : NaN, elapsed = mono - guard.mono;
+  if (!Number.isFinite(server) || new Date(server).toISOString() !== raw.serverTime || !Number.isFinite(elapsed) || elapsed < 0
+    || wall < guard.wall || server < guard.wall - 30_000 || server > wall + 30_000) return null;
+  const remaining = Math.max(0, Math.min(raw.expiresInSeconds * 1000 - elapsed,
+    server + raw.expiresInSeconds * 1000 - wall));
+  const cadence = raw.captureCadence;
+  const cadenceRemaining = cadence?.mode === "active_view" && cadence.intervalSeconds === 5
+    && Number.isSafeInteger(cadence.expiresInSeconds) && cadence.expiresInSeconds > 0 && cadence.expiresInSeconds <= 90
+    ? Math.max(0, Math.min(remaining, cadence.expiresInSeconds * 1000 - elapsed,
+      server + cadence.expiresInSeconds * 1000 - wall)) : 0;
+  return { mode: raw.mode, captureAllowed: raw.captureAllowed && remaining > 0,
+    authority: { ...authority }, expiresAtMono: mono + remaining,
+    captureCadence: { mode: cadenceRemaining > 0 ? "active_view" : "background",
+      intervalSeconds: cadenceRemaining > 0 ? 5 : 30, expiresAtMono: mono + cadenceRemaining } };
+}
+function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.now(), mono = monotonicNowMs()) {
+  if (!screenshotRecoveryCurrent(state, guard) || guard.generation < (state.screenshotPolicyApplied || 0)) return false;
+  const current = state.device.reliabilityPolicy;
+  if (source === "upload" && guard.scope !== screenshotRecoveryScope(current?.authority)) return false;
+  if (Array.isArray(body?.acceptedCapabilities)) state.screenshotCapabilities = new Set(body.acceptedCapabilities);
+  if (!Object.prototype.hasOwnProperty.call(body || {}, "screenshotPolicy")) {
+    // An omitted policy cannot grant/extend a lease. Auth may retain an exact
+    // unexpired lease; HTTP omissions preserve permission but drop fast cadence.
+    if (current && state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+      && state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+      && guard.scope === screenshotRecoveryScope(current.authority) && current.expiresAtMono > mono) {
+      if (source !== "auth") state.device.reliabilityPolicy = { ...current,
+        captureCadence: { mode: "background", intervalSeconds: 30, expiresAtMono: 0 } };
+    } else state.device.reliabilityPolicy = null;
+    state.screenshotPolicyApplied = guard.generation;
+    return false;
+  }
+  const policy = normalizeRecoveryScreenshotPolicy(state, body.screenshotPolicy, guard, wall, mono);
+  if (!policy) { state.device.reliabilityPolicy = null; state.screenshotPolicyApplied = guard.generation; return false; }
+  if (current && policy.captureAllowed && policy.authority.kind === "teaching_session"
+    && policy.authority.controlRevision < current.authority.controlRevision) return false;
+  state.device.reliabilityPolicy = policy;
+  state.screenshotPolicyApplied = guard.generation;
+  return true;
+}
+function classifyRecoveryScreenshot409(state, body, guard, wall = Date.now(), mono = monotonicNowMs()) {
+  const code = typeof body?.code === "string" && Object.hasOwn(SCREENSHOT_REFUSAL_COUNTERS, body.code) ? body.code : null;
+  if (!code) return { code: "unknown", recoverable: false };
+  if (body.ok !== false) return { code, recoverable: false };
+  if (!screenshotRecoveryCurrent(state, guard)) return { code, recoverable: false };
+  if (code === "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED") return { code, recoverable: true };
+  // Invalid timestamps remain fatal; they are not authority-recovery signals.
+  if (["SCREENSHOT_CAPTURE_EXPIRED", "SCREENSHOT_CAPTURE_TIME_INVALID"].includes(code)) return { code, recoverable: false };
+  return { code, recoverable: Boolean(normalizeRecoveryScreenshotPolicy(state, body.screenshotPolicy, guard, wall, mono)) };
+}
+function recoveryScreenshotCaptureAllowed(state, now = monotonicNowMs()) {
+  const policy = state.device.reliabilityPolicy;
+  return state.screenshotRecoveryBinding === screenshotRecoveryBinding(state.device)
+    && state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+    && state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+    && state.screenshotCapabilities?.has("screenshotActiveObservationCadenceV1")
+    && policy?.captureAllowed === true && policy.expiresAtMono > now
+    && policy.authority?.kind === "teaching_session" && policy.authority.teachingSessionId === state.expectedTeachingSessionId
+    && policy.captureCadence?.mode === "active_view" && policy.captureCadence.intervalSeconds === 5
+    && policy.captureCadence.expiresAtMono > now;
+}
+function recoveryScreenshotHintCurrent(state, message) {
+  return state.authenticated && state.screenshotRecoveryBinding === screenshotRecoveryBinding(state.device)
+    && state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+    && state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+    && state.screenshotCapabilities?.has("screenshotActiveObservationCadenceV1")
+    && message.reason === "observation_changed" && message.studentId === state.device.studentId
+    && message.studentSessionId === screenshotRecoverySession(state.device) && !message.supervisionContextId
+    && (!message.schoolId || message.schoolId === state.device.schoolId)
+    && (!message.deviceId || message.deviceId === state.device.deviceId)
+    // The frozen authorized teacher mapping only validates a heartbeat hint;
+    // pixels still require a fresh, exact current policy and cadence above.
+    && Boolean(state.expectedTeachingSessionId) && message.teachingSessionId === state.expectedTeachingSessionId;
+}
+function applyRecoveryScreenshotResponse(state, result, guard) {
+  if (!screenshotRecoveryCurrent(state, guard)) return;
+  if (result.ok) {
+    state.reliabilityCaptures += 1;
+    adoptRecoveryScreenshotPolicy(state, result.json, guard, "upload");
+  } else if (result.screenshotRefusal?.recoverable) {
+    if (result.screenshotRefusal.code !== "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED") {
+      adoptRecoveryScreenshotPolicy(state, result.json, guard, "denial");
+    }
+    state.heartbeatWriter?.navigation();
+  }
+}
+// END scoped screenshot recovery.
 
 function heartbeatBody(device) {
   // Keep capacity tests on deterministic local classifications. Unknown hosts
@@ -2236,11 +2412,16 @@ function handleDeviceMessage(state, raw, onAuthenticated) {
     return;
   }
   if (message.type === "auth-success" && message.role === "student") {
+    if (reliabilityWorkload && !screenshotRecoveryAuthBindingCurrent(state, message)) {
+      counters.wsAuthErrors += 1;
+      state.socket?.close();
+      return;
+    }
     cancelLater(state.authTimer);
     state.authTimer = null;
     state.authenticated = true;
     state.transportProbe = message.transportProbeV1 === true;
-    if (reliabilityWorkload && message.screenshotPolicy) state.device.reliabilityPolicy = message.screenshotPolicy;
+    if (reliabilityWorkload) adoptRecoveryScreenshotPolicy(state, message, state.screenshotAuthGuard, "auth");
     state.reconnectAttempt = 0;
     counters.wsAuthenticated += 1;
     authenticatedDeviceIds.add(state.device.deviceId);
@@ -2276,6 +2457,15 @@ function handleDeviceMessage(state, raw, onAuthenticated) {
       counters.wsKeepalivePongsReceived += 1;
       state.socket._loadProbeNonce = null;
     }
+    return;
+  }
+  if (reliabilityWorkload && message.type === "screenshot-policy-refresh") {
+    if (recoveryScreenshotHintCurrent(state, message)) {
+      counters.reliabilityScreenshotRefreshHints += 1;
+      // Reuse the same two-second event coalescer and single heartbeat writer.
+      // The hint supplies no policy and never resubmits an old screenshot.
+      state.heartbeatWriter?.navigation();
+    } else counters.reliabilityScreenshotRefreshHintsIgnored += 1;
     return;
   }
 
@@ -2333,6 +2523,7 @@ function connectDevice(state) {
   socket.on("open", () => {
     if (state.generation !== generation) return;
     counters.wsOpened += 1;
+    if (reliabilityWorkload) state.screenshotAuthGuard = reserveScreenshotRecovery(state);
     socket.send(JSON.stringify({
       type: "auth",
       role: "student",
@@ -2383,6 +2574,8 @@ function connectDevice(state) {
 
 const deviceStates = devices.map((device) => ({
   device,
+  expectedTeachingSessionId: teacherAuthInputs.find(auth => auth.schoolId === device.schoolId
+    && auth.studentIds.has(device.studentId))?.teachingSessionId || null,
   socket: null,
   authenticated: false,
   authTimer: null,
@@ -2455,10 +2648,11 @@ function startDeviceTraffic(state, index) {
     snapshot: () => heartbeatBody(state.device), send: async body => {
       if (stoppingTraffic) return { ok: false, denied: true };
       counters.heartbeat += 1;
+      const screenshotGuard = reliabilityWorkload ? reserveScreenshotRecovery(state) : null;
       const result = await issue('/api/classpilot/device/heartbeat', { method: 'POST', token: state.device.studentToken,
         body, kind: 'heartbeat', parseJson: Boolean(reliabilityWorkload) });
       if (reliabilityWorkload && result.ok) state.reliabilityHeartbeats += 1;
-      if (reliabilityWorkload && result.ok && result.json?.screenshotPolicy) state.device.reliabilityPolicy = result.json.screenshotPolicy;
+      if (reliabilityWorkload && result.ok) adoptRecoveryScreenshotPolicy(state, result.json, screenshotGuard, "heartbeat");
       return { ok: result.ok, denied: result.status === 401 || result.status === 403 };
     } });
   const heartbeatJitter = Math.floor((index / devices.length) * heartbeatIntervalMs);
@@ -2476,9 +2670,7 @@ function startDeviceTraffic(state, index) {
     if (stoppingTraffic) return;
     const send = () => {
       if (stoppingTraffic) return;
-      if (reliabilityWorkload && (!state.device.reliabilityPolicy?.captureAllowed
-        || state.device.reliabilityPolicy.authority?.kind !== 'teaching_session'
-        || state.device.reliabilityPolicy.captureCadence?.intervalSeconds !== 5)) {
+      if (reliabilityWorkload && !recoveryScreenshotCaptureAllowed(state)) {
         // A missing/closed authoritative lease is never replaced with a fixture grant.
         // Canary devices intentionally have no observed classroom.
         if (state.device.schoolId === teacherSchoolId && monotonicNowMs() - Number(runStartedAtMonoNs / NANOSECONDS_PER_MILLISECOND) > 30_000) counters.reliabilityPolicyUnavailable += 1;
@@ -2489,12 +2681,17 @@ function startDeviceTraffic(state, index) {
         catch { measurementDeviceCounters.pulseMissingCapture += 1; return; }
       }
       counters.screenshotPost += 1;
+      const screenshotGuard = reliabilityWorkload ? reserveScreenshotRecovery(state) : null;
       void issue("/api/classpilot/device/screenshot", {
         method: "POST",
         token: state.device.studentToken,
         body: screenshotBody(state.device),
         kind: "screenshotPost",
-      }).then(result => { if (reliabilityWorkload && result.ok) state.reliabilityCaptures += 1; });
+        ...(reliabilityWorkload ? { screenshotRecovery: { state, guard: screenshotGuard } } : {}),
+      }).then(result => {
+        if (!reliabilityWorkload) return;
+        applyRecoveryScreenshotResponse(state, result, screenshotGuard);
+      });
     };
     send();
     workloadEvery(send, screenshotIntervalMs);

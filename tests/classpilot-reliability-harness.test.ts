@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { createHash } from "node:crypto";
 import { readReliabilityFrame } from "../scripts/load/reliability-rendered-frame.mjs";
-import { CAPTURE_COLOR_BASES } from "../scripts/load/classpilot-reliability-profile.mjs";
+import { CAPTURE_COLOR_BASES, RELIABILITY_CAPABILITIES } from "../scripts/load/classpilot-reliability-profile.mjs";
 const captureBases=CAPTURE_COLOR_BASES.map(value=>Buffer.from(value.base64,"base64"));
 const captureBaseBytes=captureBases[0]!.length;
 assert.ok(captureBases.every(base=>base.length===captureBaseBytes));
@@ -79,8 +79,12 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
   const commands = new Map<string, Map<string, string>>();
   const captureTimes = new Map<string, string>();
   const capturePayloads = new Map<string, string>();
-  const policy = { captureAllowed: true, captureCadence: { intervalSeconds: 5 },
-    authority: { kind: "teaching_session", teachingSessionId: "session", revision: 1 } };
+  const policy = () => ({ mode: "tracking_window_lease", captureAllowed: true,
+    expiresInSeconds: 90, serverTime: new Date().toISOString(),
+    captureCadence: { mode: "active_view", intervalSeconds: 5, expiresInSeconds: 84 },
+    authority: { kind: "teaching_session", teachingSessionId: "session", controlRevision: 1 } });
+  const acceptedCapabilities = (value: unknown) => RELIABILITY_CAPABILITIES.filter(capability =>
+    Array.isArray(value) && value.includes(capability));
   let leases = 0, releases = 0, probes = 0, screenshots = 0, histories = 0, sequence = 0;
   const negativeTileProbes = new Set<string>();
   const fixtureTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -113,10 +117,11 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
       }
       return send(200, { ok: true });
     }
-    if (path === "/api/classpilot/device/heartbeat") return send(200, { screenshotPolicy: policy });
+    if (path === "/api/classpilot/device/heartbeat") return send(200, {
+      screenshotPolicy: policy(), acceptedCapabilities: acceptedCapabilities(parsed.capabilities) });
     if (path === "/api/classpilot/device/screenshot") {
       assert.ok(leases > 0);
-      assert.deepEqual(parsed.screenshotAuthority, policy.authority);
+      assert.deepEqual(parsed.screenshotAuthority, policy().authority);
       assert.ok(Number.isFinite(Date.parse(parsed.capturedAt)));
       // Ingest identity comes from device authentication, not a body deviceId.
       const device = String(parsed.tabTitle).replace(/^Load /, ""), bytes = Buffer.from(parsed.screenshot.slice('data:image/jpeg;base64,'.length), 'base64');
@@ -128,7 +133,7 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
       if (capturePayloads.has(device)) assert.equal(capturePayloads.get(device), payloadHash, 'A device reuses its immutable entropy cache');
       capturePayloads.set(device, payloadHash);
       captureTimes.set(device, parsed.capturedAt);
-      return send(200, { ok: true });
+      return send(200, { ok: true, screenshotPolicy: policy() });
     }
     if (path.startsWith("/api/students-aggregated")) {
       assert.equal(new URL(path, "http://localhost").searchParams.get("teachingSessionId"), "session");
@@ -184,8 +189,12 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
           if (defect === "auth-silent") return;
           if (defect === "auth-rejected") { socket.send(JSON.stringify({ type: "auth-error" })); return; }
         }
+        const claims = message.role === "student"
+          ? JSON.parse(Buffer.from(message.studentToken.split(".")[1], "base64url").toString("utf8")) : null;
         socket.send(JSON.stringify({ type: "auth-success", role: defect === "auth-role" && message.role === "teacher" ? "student" : message.role,
-          transportProbeV1: true, screenshotPolicy: policy }));
+          ...(claims ? { schoolId: claims.schoolId, studentId: claims.studentId, studentSessionId: claims.sessionId,
+            acceptedCapabilities: acceptedCapabilities(message.capabilities) } : {}),
+          transportProbeV1: true, screenshotPolicy: policy() }));
       } else if (message.type === "subscribe-session") {
         assert.equal(teacherAuthenticated, true);
         assert.equal(message.teachingSessionId, "session");
@@ -247,8 +256,14 @@ for (const defect of ["none", "binding", "foreign-tile", "subscription-rejected"
   const origin = `http://127.0.0.1:${address.port}`;
   const expiresAt = new Date(Date.now() + 48 * 3600_000).toISOString();
   const jwt = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 48 * 3600 })).toString("base64url")}.private-signature`;
-  const manifest = [...Array.from({ length: 10 }, (_, i) => ({ deviceId: `canary-device-${i}`, studentId: `canary-student-${i}`, schoolId: "foreign", classId: null, studentToken: jwt })),
-    ...studentIds.map(studentId => ({ deviceId: `device-${studentId}`, studentId, schoolId: "primary", classId: "class", studentToken: jwt }))];
+  const studentJwt = (schoolId: string, studentId: string, deviceId: string) =>
+    `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(JSON.stringify({
+      exp: Math.floor(Date.now() / 1000) + 48 * 3600, schoolId, studentId, deviceId, sessionId: `student-session-${studentId}`,
+    })).toString("base64url")}.private-signature`;
+  const manifest = [...Array.from({ length: 10 }, (_, i) => ({ deviceId: `canary-device-${i}`, studentId: `canary-student-${i}`, schoolId: "foreign", classId: null,
+    studentToken: studentJwt("foreign", `canary-student-${i}`, `canary-device-${i}`) })),
+    ...studentIds.map(studentId => ({ deviceId: `device-${studentId}`, studentId, schoolId: "primary", classId: "class",
+      studentToken: studentJwt("primary", studentId, `device-${studentId}`) }))];
   const manifestPath = join(root, "devices.private.json"), authPath = join(root, "teachers.private.json"), commandsPath = join(root, "commands.private.json");
   writeFileSync(manifestPath, JSON.stringify(manifest));
   writeFileSync(authPath, JSON.stringify({ schemaVersion: 2, baseUrl: origin, schoolId: "primary", expiresAt, deviceManifestExpiresAt: expiresAt,
