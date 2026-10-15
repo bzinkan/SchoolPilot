@@ -21738,7 +21738,20 @@ export async function createClasspilotCommandWithTargets(
           throw Object.assign(new Error("Follow-up recipients do not match the original activity"), { status: 409, code: "COMMAND_TARGET_ROSTER_STALE" });
         }
       }
-      await lockClasspilotStudentControlAuthorities(authority.schoolId, studentIds, transactionDb);
+      // The plain URL-only creation path takes the same sorted transaction locks
+      // in one bounded round trip; every authority/binding check below is retained.
+      const boundedPlainOpenTabCreation = isClasspilotPlainOpenTab(commandData.commandType, commandData.commandPayload)
+        && targetData.length > 0 && targetData.length <= CLASSPILOT_DELIVERY_BATCH_SIZE
+        && studentIds.length === targetData.length
+        && studentIds.every(id => typeof id === "string" && id.length > 0 && id === id.trim())
+        && targetData.every(target => target.schoolId === authority.schoolId
+          && target.teachingSessionId === (authority.teachingSessionId || null)
+          && target.supervisionContextId === (authority.supervisionContextId || null));
+      if (boundedPlainOpenTabCreation) {
+        await lockClasspilotStudentControlAuthorityCohort(authority.schoolId, studentIds, transactionDb);
+      } else {
+        await lockClasspilotStudentControlAuthorities(authority.schoolId, studentIds, transactionDb);
+      }
       if (hasTeachingAuthority) {
       const [lockedSession] = await tx
         .select()

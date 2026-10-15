@@ -476,6 +476,216 @@ async function plainOpenFixture(chosen = bindings.slice(1, 41), supervision = fa
     } };
 }
 
+type CreationInput = Parameters<typeof storage.createClasspilotCommandWithTargets>;
+type PlainOpenFixture = Awaited<ReturnType<typeof plainOpenFixture>>;
+
+function creationInput(fixture: PlainOpenFixture): CreationInput {
+  return [{
+    id: randomUUID(), schoolId, ...fixture.authority, teacherId: fixture.actorId,
+    targetScope: fixture.authority.teachingSessionId ? "class" : "context",
+    commandType: "open-tab", commandPayload: { url: "https://example.invalid/created" },
+    requestedCount: fixture.chosen.length, expiresAt: new Date(Date.now() + 15_000),
+  }, fixture.chosen.map(binding => ({
+    ...binding, ...fixture.authority, commandId: "assigned-by-transaction", status: "requested",
+  })), { authority: {
+    schoolId, actorId: fixture.actorId,
+    ...(fixture.authority.teachingSessionId ? { teachingSessionId: fixture.authority.teachingSessionId }
+      : { supervisionContextId: fixture.authority.supervisionContextId! }),
+  } }];
+}
+
+function creationTrace() {
+  return { cohortKeys: [] as string[][], serialKeys: [] as string[], begins: 0, commits: 0 };
+}
+
+async function observeCreation(input: CreationInput, trace = creationTrace()) {
+  return inSchool(async () => {
+    const store = tenant.getOwnedTenantStore(); assert.ok(store);
+    const original = store.client.query;
+    store.client.query = function (this: pg.PoolClient, ...args: unknown[]) {
+      const query = args[0] as string | { text?: string; values?: unknown[] };
+      const text = typeof query === "string" ? query : query.text || "";
+      const values = (typeof query === "string" ? args[1] : query.values ?? args[1]) as unknown[] | undefined;
+      if (text.includes("classpilot_plain_open_tab_locks")) {
+        assert.equal(this, store.client, "cohort locks stay on the owned tenant connection");
+        const keys = values?.[0]; assert.ok(Array.isArray(keys));
+        trace.cohortKeys.push(keys.map(String));
+      } else if (/pg_advisory_xact_lock\(hashtextextended/i.test(text)) {
+        for (const value of values ?? []) if (typeof value === "string" && value.startsWith(`classpilot:student-control:${schoolId}:`)) trace.serialKeys.push(value);
+      }
+      if (/^begin(?:\s|$)/i.test(text)) trace.begins++;
+      if (/^commit(?:\s|$)/i.test(text)) trace.commits++;
+      return Reflect.apply(original, this, args);
+    } as typeof original;
+    try { return await storage.createClasspilotCommandWithTargets(...input); }
+    finally { store.client.query = original; }
+  });
+}
+
+async function removeCreatedCommand(input: CreationInput) {
+  await admin.query("DELETE FROM classpilot_command_targets WHERE command_id=$1", [input[0].id]);
+  await admin.query("DELETE FROM classpilot_commands WHERE id=$1", [input[0].id]);
+}
+
+// Exercise the real creation transaction after it has waited behind a writer
+// holding the same first canonical student lock; do not stub authority reads.
+async function createAfterLockedChange(input: CreationInput, change: (writer: pg.PoolClient) => Promise<void>) {
+  const blocker = await admin.connect();
+  let pending: Promise<Awaited<ReturnType<typeof storage.createClasspilotCommandWithTargets>>> | undefined;
+  try {
+    await blocker.query("BEGIN");
+    const first = [...new Set(input[1].map(target => target.studentId))].sort((a, b) => a.localeCompare(b))[0]!;
+    await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0::bigint))", [lockKey(first)]);
+    const blockerPid = (await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    let creationPid: number | undefined;
+    pending = inSchool(async () => {
+      const store = tenant.getOwnedTenantStore(); assert.ok(store);
+      creationPid = (await store.client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+      return storage.createClasspilotCommandWithTargets(...input);
+    });
+    pending.catch(() => {});
+    let blocked = false;
+    const deadline = performance.now() + 3_000;
+    while (!blocked && performance.now() < deadline) {
+      blocked = creationPid !== undefined && (await admin.query<{ blockers: number[] }>("SELECT pg_blocking_pids($1) AS blockers", [creationPid])).rows[0]!.blockers.includes(blockerPid);
+      if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(blocked, true, "creation must wait on the existing canonical student lock before re-reading authority");
+    await change(blocker);
+    await blocker.query("COMMIT");
+    return await pending;
+  } finally {
+    await blocker.query("ROLLBACK"); blocker.release();
+    if (pending) await Promise.allSettled([pending]);
+  }
+}
+
+for (const supervision of [false, true]) test(`plain ${supervision ? "supervision" : "class"} creation persists forty exact targets using one sorted owned lock query`, async () => {
+  const fixture = await plainOpenFixture([...bindings.slice(1, 41)].reverse(), supervision);
+  const input = creationInput(fixture), trace = creationTrace();
+  try {
+    const created = await observeCreation(input, trace);
+    assert.deepEqual(trace.cohortKeys, [[...fixture.chosen].sort((a, b) => a.studentId.localeCompare(b.studentId)).map(binding => lockKey(binding.studentId))]);
+    assert.deepEqual(trace.serialKeys, []);
+    assert.equal(trace.begins, 1); assert.equal(trace.commits, 1);
+    assert.equal(created.id, input[0].id); assert.equal(created.targets.length, 40);
+    assert.deepEqual(created.commandPayload, input[0].commandPayload);
+    assert.equal(created.expiresAt!.getTime(), input[0].expiresAt!.getTime());
+    assert.equal((await admin.query("SELECT 1 FROM classpilot_commands WHERE id=$1", [created.id])).rowCount, 1);
+    for (const binding of fixture.chosen) {
+      const target = created.targets.find(target => target.studentId === binding.studentId)!;
+      assert.equal(target.schoolId, schoolId);
+      assert.equal(target.studentSessionId, binding.studentSessionId); assert.equal(target.deviceId, binding.deviceId);
+      assert.equal(target.teachingSessionId, fixture.authority.teachingSessionId);
+      assert.equal(target.supervisionContextId, fixture.authority.supervisionContextId);
+      assert.equal(target.status, "requested"); assert.equal(target.sentAt, null, "creation cannot pre-mark a send");
+    }
+    const { publicClasspilotCommand } = await import("../src/services/classpilotCommandPublic.js");
+    assert.doesNotMatch(JSON.stringify(publicClasspilotCommand(created)), /deviceId|studentSessionId|frozenControlRevision/);
+  } finally { await removeCreatedCommand(input); await fixture.dispose(); }
+});
+
+test("creation keeps serialized locks and persisted target cardinality for rich, other-type, duplicate, empty and 41-target commands", async () => {
+  const fixture = await plainOpenFixture(bindings);
+  const inputs: CreationInput[] = [];
+  try {
+    for (const variant of ["rich", "other-type", "duplicate", "empty", "oversize"] as const) {
+      const input = creationInput(fixture); inputs.push(input);
+      if (variant !== "oversize") input[1] = input[1].slice(1, 4);
+      if (variant === "rich") input[0].commandPayload = { url: "https://example.invalid/created", focusAfterOpen: false };
+      if (variant === "other-type") { input[0].commandType = "close-tabs"; input[0].commandPayload = {}; }
+      if (variant === "duplicate") input[1] = [input[1][0]!, { ...input[1][0]! }];
+      if (variant === "empty") input[1] = [];
+      input[0].requestedCount = input[1].length;
+      const trace = creationTrace(), created = await observeCreation(input, trace);
+      const ids = [...new Set(input[1].map(target => target.studentId))].sort((a, b) => a.localeCompare(b));
+      assert.deepEqual(trace.cohortKeys, [], variant);
+      assert.deepEqual(trace.serialKeys, ids.map(lockKey), variant);
+      assert.equal(created.targets.length, input[1].length, `${variant}: preserve the existing transaction's target cardinality`);
+      assert.equal(created.requestedCount, input[1].length);
+      assert.equal(trace.begins, 1); assert.equal(trace.commits, 1);
+    }
+  } finally { for (const input of inputs) await removeCreatedCommand(input); await fixture.dispose(); }
+});
+
+for (const supervision of [false, true]) test(`creation rechecks ${supervision ? "supervision assignment" : "class staff"} after waiting for student locks and rolls back without a command`, { timeout: 15_000 }, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4), supervision), input = creationInput(fixture);
+  try {
+    await assert.rejects(createAfterLockedChange(input, async writer => {
+      if (supervision) {
+        const successor = randomUUID();
+        await writer.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','Successor')", [successor, `${successor}@${schoolId}.example.edu`]);
+        await writer.query("UPDATE classpilot_supervision_contexts SET assigned_staff_id=$2 WHERE id=$1", [fixture.authorityId, successor]);
+      } else await writer.query("DELETE FROM classpilot_session_staff WHERE teaching_session_id=$1 AND staff_id=$2", [fixture.authorityId, fixture.actorId]);
+    }), (error: unknown) => getDatabaseErrorDetails(error).code === "COMMAND_ACTOR_AUTHORITY_STALE");
+    assert.equal((await admin.query("SELECT 1 FROM classpilot_commands WHERE id=$1", [input[0].id])).rowCount, 0);
+    assert.equal((await admin.query("SELECT 1 FROM classpilot_command_targets WHERE command_id=$1", [input[0].id])).rowCount, 0);
+  } finally { await removeCreatedCommand(input); await fixture.dispose(); }
+});
+
+test("creation waiting behind a binding retirement persists only that target as unavailable", { timeout: 15_000 }, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)), input = creationInput(fixture);
+  const retired = fixture.chosen[0]!;
+  try {
+    const created = await createAfterLockedChange(input, async writer => {
+      await writer.query("UPDATE student_sessions SET is_active=false WHERE id=$1", [retired.studentSessionId]);
+    });
+    const target = created.targets.find(target => target.studentId === retired.studentId)!;
+    assert.equal(target.status, "unavailable"); assert.equal(target.studentSessionId, null); assert.equal(target.deviceId, null);
+    assert.equal(created.unavailableCount, 1);
+    assert.equal(created.targets.find(target => target.studentId !== retired.studentId)!.status, "requested");
+  } finally {
+    await admin.query("UPDATE student_sessions SET is_active=true WHERE id=$1", [retired.studentSessionId]);
+    await removeCreatedCommand(input); await fixture.dispose();
+  }
+});
+
+test("creation cannot transfer an old target grant onto a genuinely replaced student session", async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)), input = creationInput(fixture);
+  const old = fixture.chosen[0]!, replacementDevice = randomUUID(), replacementSession = randomUUID();
+  try {
+    await admin.query("INSERT INTO devices(device_id,school_id,class_id) VALUES($1,$2,'synthetic')", [replacementDevice, schoolId]);
+    const transfer = await inSchool(() => storage.startStudentSessionWithReplacements(schoolId, old.studentId, replacementDevice,
+      { authKind: "managed_profile", sessionId: replacementSession }));
+    assert.equal(transfer.session.id, replacementSession);
+    assert.ok(transfer.replacedSessions.some(session => session.id === old.studentSessionId));
+    const created = await observeCreation(input);
+    const stale = created.targets.find(target => target.studentId === old.studentId)!;
+    assert.equal(stale.status, "unavailable"); assert.equal(stale.studentSessionId, null); assert.equal(stale.deviceId, null);
+    assert.equal(created.targets.find(target => target.studentId !== old.studentId)!.status, "requested");
+    assert.ok(created.targets.every(target => target.studentSessionId !== replacementSession && target.deviceId !== replacementDevice));
+  } finally {
+    await removeCreatedCommand(input); await fixture.dispose();
+    await admin.query("DELETE FROM student_sessions WHERE id=$1", [replacementSession]);
+    await admin.query("DELETE FROM student_devices WHERE student_id=$1 AND device_id=$2", [old.studentId, replacementDevice]);
+    await admin.query("DELETE FROM devices WHERE device_id=$1 AND school_id=$2", [replacementDevice, schoolId]);
+    await admin.query("UPDATE student_sessions SET is_active=true,ended_at=NULL WHERE id=$1", [old.studentSessionId]);
+  }
+});
+
+test("creation rechecks roster removal after canonical student locks without persisting a partial command", { timeout: 15_000 }, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)), input = creationInput(fixture);
+  try {
+    await assert.rejects(createAfterLockedChange(input, async writer => {
+      await writer.query("DELETE FROM classpilot_session_students WHERE teaching_session_id=$1 AND student_id=$2", [fixture.authorityId, fixture.chosen[0]!.studentId]);
+    }), (error: unknown) => getDatabaseErrorDetails(error).code === "COMMAND_TARGET_ROSTER_STALE");
+    assert.equal((await admin.query("SELECT 1 FROM classpilot_commands WHERE id=$1", [input[0].id])).rowCount, 0);
+    assert.equal((await admin.query("SELECT 1 FROM classpilot_command_targets WHERE command_id=$1", [input[0].id])).rowCount, 0);
+  } finally { await removeCreatedCommand(input); await fixture.dispose(); }
+});
+
+test("a command expiring while creation waits keeps its original deadline and cannot send afterward", { timeout: 15_000 }, async () => {
+  const fixture = await plainOpenFixture(bindings.slice(2, 4)), input = creationInput(fixture);
+  input[0].expiresAt = new Date(Date.now() + 500);
+  try {
+    const created = await createAfterLockedChange(input, async writer => { await writer.query("SELECT pg_sleep(0.6)"); });
+    assert.equal(created.expiresAt!.getTime(), input[0].expiresAt.getTime());
+    const outcomes = await inSchool(() => storage.withClasspilotPlainOpenTabDeliveryBatch({ schoolId, commandId: created.id, targets: fixture.chosen }, () => assert.fail("expired creation sent a frame")));
+    assert.ok(outcomes.every(outcome => !outcome.authorized));
+    assert.ok(created.targets.every(target => target.status === "requested" && target.sentAt === null));
+  } finally { await removeCreatedCommand(input); await fixture.dispose(); }
+});
+
 test("plain class open-tab retains reference authority with a constant SQL cohort and no savepoints", { timeout: 20_000 }, async () => {
   const fixture = await plainOpenFixture();
   try {
@@ -825,6 +1035,7 @@ test("plain partial synchronous side effects never fall back or replay after a d
 test("plain execute-command keeps authority-unavailable and binding-retirement outcomes in a mixed forty-student teacher response", { timeout: 20_000 }, async () => {
   const fixture = await plainOpenFixture(); const dispatcher = await import("../src/services/classpilotCommandDispatcher.js");
   let issuedCommandId: string | undefined, injected = false, transactionStatements = 0, deliveryStatements = 0, measuringDelivery = false;
+  let cohortLockQueries = 0, creationCommitted = false;
   try {
     const result = await inSchool(async () => {
       const store = tenant.getOwnedTenantStore(); assert.ok(store); const original = store.client.query;
@@ -832,7 +1043,9 @@ test("plain execute-command keeps authority-unavailable and binding-retirement o
         const query = args[0] as string | { text?: string }; const text = typeof query === "string" ? query : query.text || "";
         if (/^begin\b/i.test(text.trim())) transactionStatements = 0;
         transactionStatements++;
-        if (!injected && text.includes("classpilot_plain_open_tab_locks")) {
+        if (text.includes("classpilot_plain_open_tab_locks")) cohortLockQueries++;
+        if (!injected && cohortLockQueries === 2 && text.includes("classpilot_plain_open_tab_locks")) {
+          assert.equal(creationCommitted, true, "delivery race begins only after the real creation transaction commits");
           injected = true; measuringDelivery = true;
           const writer = await admin.connect();
           try {
@@ -845,6 +1058,7 @@ test("plain execute-command keeps authority-unavailable and binding-retirement o
           } finally { writer.release(); }
         }
         const result = await Reflect.apply(original, this, args);
+        if (cohortLockQueries === 1 && /^commit\b/i.test(text.trim())) creationCommitted = true;
         if (measuringDelivery && /^commit\b/i.test(text.trim())) { deliveryStatements = transactionStatements; measuringDelivery = false; }
         return result;
       } as typeof original;
@@ -854,6 +1068,7 @@ test("plain execute-command keeps authority-unavailable and binding-retirement o
       finally { store.client.query = original; }
     });
     issuedCommandId = result.command.id;
+    assert.equal(cohortLockQueries, 2, "creation and delivery each use their own bounded cohort transaction");
     assert.equal(injected, true, "race occurs after immutable command creation and before delivery authority acquisition");
     assert.equal(deliveryStatements, 13, "real revisionless execute-command uses the bounded cohort transaction");
     console.log(`Plain natural execute cohort SQL statements: ${deliveryStatements}`);
