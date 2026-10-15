@@ -129,7 +129,7 @@ and actual encoded response sizes for both codecs. Earlier low entropy v1
 passes remain diagnostic and cannot establish V3 screenshot wire capacity.
 
 Schema2 input manifests bind the exact rendered controller bytes and measurement
-plan separately from the12-file generator and candidate API image. The controller
+plan separately from the17-file generator and candidate API image. The controller
 publishes an unpredictable start pulse before any timed fleet traffic and verifies
 the producer's distinct actual-start receipt within one second on its own monotonic
 clock. Raw cross-host UTC skew and Date.now capture ages remain diagnostic.
@@ -232,7 +232,7 @@ Seed the exact prepared `measurement-waiting.json` as the fresh subrun's
 `inputs/measurement-control.json` before starting its task. Keep the approved
 campaign prefix; a new subrun does not broaden the task's IAM permissions.
 The schema2 manifest stays unchanged. This separate protected waiting body binds
-its raw manifest digest, API image, twelve-script bundle, cohort, measurement
+its raw manifest digest, API image, seventeen-script bundle, cohort, measurement
 plan, shared UTC start, finite expiry, mode and fresh startup nonce.
 
 The producer positively reads that waiting body and conditionally publishes its

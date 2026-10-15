@@ -420,7 +420,7 @@ establish Chromebook pilot readiness while the capacity campaign is failing.
 
 The V3 harness requires independent navigation and capture evidence before any
 40/500/800 profile may pass. It binds the actual rendered controller bytes,
-12-file generator bundle, candidate API image, exact synthetic cohort and new
+17-file generator bundle, candidate API image, exact synthetic cohort and new
 shared input manifest. Backend/frontend runtime identities remain separate.
 
 One controller monotonic clock records a trigger before each unpredictable
