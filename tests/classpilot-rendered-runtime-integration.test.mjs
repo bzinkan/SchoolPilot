@@ -290,7 +290,8 @@ test('later navigation compares actual same-coordinate pixels across different S
   const placeholder = { studentId: 'student1', points: Array.from({ length: 7 }, (_, n) => ({ x: 20 + n % 3, y: 20 + Math.floor(n / 3) })) };
   const svgPaint = { matched: true, pixels: Array(13).fill([25, 115, 230, 255]).flat() }, placeholderPaint = { matched: true, pixels: Array(7).fill([150, 150, 150, 255]).flat() };
   const decide = (previous, witness, composed) => actualRenderedNavigationPaintDecision({ runtime, auth, fence, scopeEpoch, isCurrent: () => true,
-    receivedAt: 100, deadline: 1000, expected, witness, composed, previous, round: 2 });
+    receivedAt: 100, proofCompletedAt: 100, triggerAt: 0, diagnosticDomObservedAt: 10,
+    nativeCaptureStartedAt: 20, nativeCapturedAt: 80, deadline: 1000, expected, witness, composed, previous, round: 2 });
   assert.equal(decide(nativeNavigationPaintEvidence(svg, svgPaint, fence, scopeEpoch), placeholder, placeholderPaint), true);
   assert.equal(decide(nativeNavigationPaintEvidence(placeholder, placeholderPaint, fence, scopeEpoch), svg, svgPaint), true);
   const shifted = { ...placeholder, points: placeholder.points.map(point => ({ x: point.x + 100, y: point.y + 100 })) };

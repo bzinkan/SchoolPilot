@@ -835,27 +835,30 @@ async function captureDiagnosticTiming(diagnostics, stage, operation, now) {
   try { return await operation(); }
   finally { diagnostics.timing(stage, now() - beganAt); }
 }
-// Content-free diagnostics separate delivery from the native witness overhead.
-// The existing end-to-end navigation gate remains the acceptance measurement.
+export const RENDERED_NAVIGATION_TIMING_VERSION = 'native-capture-completion-after-full-proof-v2';
+// Content-free diagnostics retain physical capture and completed proof separately.
 export function createRenderedNavigationDiagnostics() {
   const bounds = [100, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 8000, Infinity];
   const stages = ['trigger-to-socket', 'socket-to-owner-check', 'trigger-to-dom-witness',
-    'dom-to-native-proof', 'trigger-to-native-proof'];
+    'dom-to-native-proof', 'trigger-to-native-proof', 'dom-to-native-capture',
+    'native-capture-to-proof', 'trigger-to-native-capture'];
   const counts = Object.fromEntries(stages.map(stage => [stage, bounds.map(() => 0)]));
   let provenPaintTargets = 0, invalidCount = 0;
   return {
-    observe({ triggerAt, socketAt, ownerAt, domAt, proofAt }) {
-      const times = [triggerAt, socketAt, ownerAt, domAt, proofAt];
+    observe({ triggerAt, socketAt, ownerAt, domAt, nativeCapturedAt, proofAt }) {
+      const times = [triggerAt, socketAt, ownerAt, domAt, nativeCapturedAt, proofAt];
       if (times.some(value => !Number.isFinite(value) || value < 0)
         || times.some((value, index) => index > 0 && value < times[index - 1])) { invalidCount++; return false; }
       const durations = [socketAt - triggerAt, ownerAt - socketAt, domAt - triggerAt,
-        proofAt - domAt, proofAt - triggerAt];
+        proofAt - domAt, proofAt - triggerAt, nativeCapturedAt - domAt,
+        proofAt - nativeCapturedAt, nativeCapturedAt - triggerAt];
       for (let index = 0; index < stages.length; index++) counts[stages[index]][bounds.findIndex(bound => durations[index] <= bound)]++;
       provenPaintTargets++;
       return true;
     },
     summary() {
-      return { version: 'fixed-navigation-phase-diagnostics-v1', diagnosticOnly: true, provenPaintTargets, invalidCount,
+      return { version: 'fixed-navigation-phase-diagnostics-v2', timingVersion: RENDERED_NAVIGATION_TIMING_VERSION,
+        diagnosticOnly: true, provenPaintTargets, invalidCount,
         boundsMs: bounds.map(value => Number.isFinite(value) ? value : null),
         counts: Object.fromEntries(stages.map(stage => [stage, counts[stage].slice()])) };
     },
@@ -926,13 +929,20 @@ export async function observeActualRenderedNavigationPaint(scope, expectedRows, 
     .filter(row => row.matched);
   if (!witness.length) return null;
   const diagnosticDomObservedAt = now();
-  const bundle = await captureNativeWitnessClips(scope.page, planNativeWitnessClips(witness, { kind: 'navigation' }), scope.capture);
+  const bundle = await captureNativeWitnessClips(scope.page, planNativeWitnessClips(witness, { kind: 'navigation' }), scope.capture, { now });
   try {
     const afterRows = await renderedDeadline(scope.page.evaluate(collectRenderedNavigationPixelWitness,
       { expectedRows, skipAnimationFrames: true }), afterReadMs);
     const originAfter = await readNativeViewportOrigin(scope.page, RENDERED_VIEWPORT, Math.min(2000, bundle.deadlineAt - now()));
     const composed = await compareNativeWitnessClips({ bundle, rows: witness, afterRows, kind: 'navigation', originAfter, now }, scope.decoder);
-    return { witness, composed, receivedAt: now(), diagnosticDomObservedAt };
+    const proofCompletedAt = now();
+    const times = [diagnosticDomObservedAt, bundle.startedAt, bundle.capturedAt, proofCompletedAt, bundle.deadlineAt];
+    assert.ok(times.every(value => Number.isFinite(value) && value >= 0)
+      && times.every((value, index) => index === 0 || value >= times[index - 1]), 'Native navigation proof clock order invalid');
+    // These exact bytes existed by capturedAt. Credit that upper bound only
+    // after full native comparison and every final authority/deadline fence.
+    return { witness, composed, receivedAt: proofCompletedAt, proofCompletedAt,
+      diagnosticDomObservedAt, nativeCaptureStartedAt: bundle.startedAt, nativeCapturedAt: bundle.capturedAt };
   } finally {
     // After-DOM/origin failures must zero already-owned native bytes too.
     for (const part of bundle.parts) part.png.fill(0);
@@ -961,9 +971,13 @@ export function nativeNavigationPaintChanged(previous, witness, composed, fence,
   } catch { return false; }
 }
 export function actualRenderedNavigationPaintDecision({ runtime, auth, fence, scopeEpoch, isCurrent,
-  receivedAt, deadline, expected, witness, composed, previous, round, priorPaint, triggerAt }) {
+  receivedAt, proofCompletedAt, diagnosticDomObservedAt, nativeCaptureStartedAt, nativeCapturedAt,
+  deadline, expected, witness, composed, previous, round, priorPaint, triggerAt }) {
+  const times = [triggerAt, diagnosticDomObservedAt, nativeCaptureStartedAt, nativeCapturedAt, proofCompletedAt, deadline];
   if (!isCurrent() || (runtime.scopeEpoch ?? 0) !== scopeEpoch || !renderedRuntimeAuthorityMatches(runtime, auth, fence)
-    || !Number.isFinite(receivedAt) || receivedAt > deadline || !composed?.matched
+    || !times.every(value => Number.isFinite(value) && value >= 0)
+    || !times.every((value, index) => index === 0 || value >= times[index - 1])
+    || receivedAt !== proofCompletedAt || !composed?.matched
     || !navigationMessageMatches(runtime.realtime.get(expected.studentId), expected, runtime)) return false;
   if (previous) return nativeNavigationPaintChanged(previous, witness, composed, fence, scopeEpoch);
   return round === 1 && runtime.priorStripAbsent && priorPaint.changed(runtime.actor.teacherId,
@@ -1450,17 +1464,19 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           if (!expectedRows.length) return;
           const painted = await observeActualRenderedNavigationPaint({ page, capture, decoder }, expectedRows);
           if (!painted) return;
-          const { witness, composed, receivedAt } = painted;
+          const { witness, composed, receivedAt, proofCompletedAt, diagnosticDomObservedAt,
+            nativeCaptureStartedAt, nativeCapturedAt } = painted;
           for (const row of composed) {
             const expected = expectedRows.find(expected => expected.studentId === row.studentId), previous = navigationPixels.get(row.studentId);
             const currentWitness = witness.find(value => value.studentId === row.studentId);
-            if (actualRenderedNavigationPaintDecision({ runtime, auth, fence, scopeEpoch, isCurrent, receivedAt, deadline,
+            if (actualRenderedNavigationPaintDecision({ runtime, auth, fence, scopeEpoch, isCurrent, receivedAt,
+              proofCompletedAt, diagnosticDomObservedAt, nativeCaptureStartedAt, nativeCapturedAt, deadline,
               expected, witness: currentWitness, composed: row, previous, round, priorPaint, triggerAt: entry.t0 })) {
               observed.add(row.studentId); navigationDevices.add(row.studentId);
               navigationPixels.set(row.studentId, nativeNavigationPaintEvidence(currentWitness, row, fence, scopeEpoch));
-              navigationSamples.push(receivedAt - entry.t0); counters.navigationObserved += 1;
+              navigationSamples.push(nativeCapturedAt - entry.t0); counters.navigationObserved += 1;
               navigationDiagnostics.observe({ triggerAt: entry.t0, ...firstReady.get(row.studentId),
-                domAt: painted.diagnosticDomObservedAt, proofAt: receivedAt });
+                domAt: diagnosticDomObservedAt, nativeCapturedAt, proofAt: proofCompletedAt });
             }
           }
         }, { kind: 'navigation' })));
@@ -1684,6 +1700,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     finalSummary.plannedCapture = capturePhases?.counters ?? null;
     finalSummary.captureDiagnostics = captureDiagnostics.summary();
     finalSummary.navigationDiagnostics = navigationDiagnostics.summary();
+    finalSummary.navigationTimingVersion = RENDERED_NAVIGATION_TIMING_VERSION;
     finalSummary.interruption=interruption.summary();
     finalSummary.timedWindowCompleteBeforeShutdown=timedWindowCompleteBeforeShutdown;
     finalSummary.timedWindowObservedMs=timedWindowObservedMs;

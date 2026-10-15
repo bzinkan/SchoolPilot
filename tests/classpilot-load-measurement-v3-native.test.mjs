@@ -258,12 +258,15 @@ nativeTest('actual later navigation decisions prove SVG-to-placeholder and place
         teachingSessionId: runtime.actor.teachingSessionId, realtimeBinding: value.publicBinding, realtimeRevision: revision, status: 'active',
         ...value, allOpenTabs: [{ tabRef: value.activeTabRef, title: value.activeTabTitle, url: value.activeTabUrl }] }, performance.now()), false);
       const before = (await renderedDeadline(page.evaluate(collectRenderedNavigationPixelWitness, [value])))[0];
-      const png = await capture.capture(page); retained.push(png);
+      const diagnosticDomObservedAt = performance.now(), nativeCaptureStartedAt = performance.now();
+      const png = await capture.capture(page); const nativeCapturedAt = performance.now(); retained.push(png);
       const after = (await renderedDeadline(page.evaluate(collectRenderedNavigationPixelWitness, { expectedRows: [value], skipAnimationFrames: true })))[0];
       const composed = (await compareRenderedNavigationPaint({ png, rows: [before], afterRows: [after] }, decoder))[0];
       assert.equal(before.matched, true); assert.equal(composed.matched, true);
+      const proofCompletedAt = performance.now();
       const accepted = actualRenderedNavigationPaintDecision({ runtime, auth, fence, scopeEpoch: 0, isCurrent: () => true,
-        receivedAt: performance.now(), deadline, expected: value, witness: before, composed, previous, round, priorPaint: prior, triggerAt });
+        receivedAt: proofCompletedAt, proofCompletedAt, diagnosticDomObservedAt, nativeCaptureStartedAt,
+        nativeCapturedAt, deadline, expected: value, witness: before, composed, previous, round, priorPaint: prior, triggerAt });
       return { accepted, witness: before, composed, evidence: accepted ? nativeNavigationPaintEvidence(before, composed, fence, 0) : null };
     };
     let value = expected('first-svg', favicon); await install(value); const svg = await observe(value, null, 1);
@@ -281,5 +284,10 @@ nativeTest('actual later navigation decisions prove SVG-to-placeholder and place
     value = expected('shifted-svg', favicon); await install(value); await page.locator('span img').evaluate(image => { image.style.transform = 'translateX(100px)'; });
     assert.equal((await observe(value, nextSvg.evidence, 4)).accepted, false, 'Disjoint original native coordinates cannot establish a previous-to-current paint change');
     assert.equal(proof().actualOutbound, 0); assert.equal(capture.summary().active, 0); assert.equal(decoder.summary().active, 0);
-  } finally { prior.dispose(); for (const png of retained) png.fill(0); await browser.close(); }
+  } finally {
+    prior.dispose(); for (const png of retained) png.fill(0); await browser.close();
+    assert.equal(browser.isConnected(), false);
+    assert.ok(retained.every(png => png.every(value => value === 0)));
+    assert.equal(capture.summary().active, 0); assert.equal(decoder.summary().active, 0);
+  }
 });
