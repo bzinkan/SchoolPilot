@@ -16,6 +16,7 @@ const drainSource = between('async function drainResponse(', '\nfunction observe
 const observeSource = between('function observeHttp(', '\nfunction responseIsolationViolation(');
 const finalizeSource = between('function finalizePendingRequest(', '\nasync function request(');
 const messageSource = between('function handleDeviceMessage(', '\nfunction connectDevice(');
+const trafficSource = between('function startDeviceTraffic(', '\nconst devicesForTeacherCache');
 const tick = () => new Promise(setImmediate);
 const capabilities = ['scopedAuthorityChecksV1', 'screenshotTrackingWindowLeaseV1', 'screenshotActiveObservationCadenceV1'];
 const token = (sessionId = 'session-a') => 'synthetic.' + Buffer.from(JSON.stringify({
@@ -236,4 +237,148 @@ test('unrelated409 keeps its original immediate fatal behavior before body EOF',
   const p = f.context.request('/api/classpilot/device/heartbeat', { method: 'POST', kind: 'heartbeat' });
   await tick(); assert.equal(f.fatals[0].reason, 'valid-http-409'); release(); await p;
   assert.equal(f.counters.http4xx, 1);
+});
+
+const captureRefusalCases = [
+  ['binding', f => { f.state.screenshotRecoveryBinding = 'foreign'; }],
+  ['capabilities', f => { f.state.screenshotCapabilities = new Set(); }],
+  ['missing-policy', f => { f.state.device.reliabilityPolicy = null; }],
+  ['permission-unavailable', f => { f.state.device.reliabilityPolicy.captureAllowed = false; }],
+  ['authority', f => { f.state.device.reliabilityPolicy.authority.teachingSessionId = 'foreign'; }],
+  ['cadence-background', f => { f.state.device.reliabilityPolicy.captureCadence.mode = 'background'; }],
+  ['cadence-expired', f => { f.state.device.reliabilityPolicy.captureCadence.expiresAtMono = f.clock.mono; }],
+];
+const reasonCounterNames = ['Binding', 'Capabilities', 'MissingPolicy', 'Permission', 'Authority', 'CadenceBackground', 'CadenceExpired']
+  .map(name => `reliabilityPolicyUnavailable${name}`);
+const sourceCounterNames = ['None', 'Auth', 'Heartbeat', 'Upload', 'Denial'].map(name => `reliabilityPolicyUnavailableSource${name}`);
+
+test('fixed first-false diagnostics equal the unchanged predicate, including combined failures', () => {
+  const allowed = fixture();
+  assert.equal(allowed.context.recoveryScreenshotCaptureAllowed(allowed.state), true);
+  assert.equal(allowed.context.recoveryScreenshotCaptureRefusalReason(allowed.state), null);
+  for (let first = 0; first < captureRefusalCases.length; first++) {
+    for (let second = first; second < captureRefusalCases.length; second++) {
+      const f = fixture();
+      // Apply downstream changes first; missing policy may remove their parent.
+      captureRefusalCases[second][1](f); captureRefusalCases[first][1](f);
+      assert.equal(Boolean(f.context.recoveryScreenshotCaptureAllowed(f.state)), false);
+      assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), captureRefusalCases[first][0]);
+    }
+  }
+  for (const capability of capabilities) {
+    const f = fixture(); f.state.screenshotCapabilities.delete(capability);
+    assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), 'capabilities');
+  }
+});
+
+test('diagnostics preserve exact permission, authority, cadence and expiry boundaries', () => {
+  for (const [reason, mutate] of [
+    ['permission-unavailable', f => { f.state.device.reliabilityPolicy.expiresAtMono = f.clock.mono; }],
+    ['permission-unavailable', f => { f.state.device.reliabilityPolicy.expiresAtMono = NaN; }],
+    ['authority', f => { f.state.device.reliabilityPolicy.authority = { kind: 'student_session' }; }],
+    ['cadence-background', f => { f.state.device.reliabilityPolicy.captureCadence.intervalSeconds = 30; }],
+    ['cadence-background', f => { delete f.state.device.reliabilityPolicy.captureCadence; }],
+    ['cadence-expired', f => { f.state.device.reliabilityPolicy.captureCadence.expiresAtMono = NaN; }],
+  ]) {
+    const f = fixture(); mutate(f);
+    assert.equal(Boolean(f.context.recoveryScreenshotCaptureAllowed(f.state)), false);
+    assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), reason);
+  }
+  const f = fixture();
+  f.state.device.reliabilityPolicy.expiresAtMono = f.clock.mono + 1;
+  f.state.device.reliabilityPolicy.captureCadence.expiresAtMono = f.clock.mono + 1;
+  assert.equal(f.context.recoveryScreenshotCaptureAllowed(f.state), true);
+  assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), null);
+});
+
+test('each refusal records exactly one fixed reason and source without persisting untrusted fields', () => {
+  for (const [index, [reason, mutate]] of captureRefusalCases.entries()) {
+    const f = fixture(); mutate(f);
+    f.state.screenshotPolicyAppliedSource = 'untrusted-free-form';
+    f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+    assert.equal(f.counters[reasonCounterNames[index]], 1, reason);
+    assert.equal(reasonCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
+    assert.equal(sourceCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 1);
+    assert.equal(f.counters.reliabilityPolicyUnavailableSourceNone, 1);
+    assert(!JSON.stringify(f.counters).includes('untrusted-free-form'));
+    assert(Object.keys(f.counters).every(name => reasonCounterNames.includes(name) || sourceCounterNames.includes(name)));
+  }
+  const f = fixture(); f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+  assert.equal(Object.keys(f.counters).length, 0);
+});
+
+test('last-applied policy source follows accepted, omitted and malformed policies but not rejected generations or scopes', () => {
+  for (const source of ['auth', 'heartbeat', 'upload', 'denial']) {
+    const f = fixture(); assert.equal(f.adopt(f.reserve(), f.policy(), source), true);
+    assert.equal(f.state.screenshotPolicyAppliedSource, source);
+    f.state.device.reliabilityPolicy.captureCadence.mode = 'background';
+    f.context.recordRecoveryScreenshotCaptureRefusal(f.state);
+    assert.equal(f.counters[sourceCounterNames[['auth', 'heartbeat', 'upload', 'denial'].indexOf(source) + 1]], 1);
+    const newer = f.reserve(); f.context.adoptRecoveryScreenshotPolicy(f.state, {}, newer, source);
+    assert.equal(f.state.screenshotPolicyAppliedSource, source);
+    const malformed = f.reserve();
+    f.context.adoptRecoveryScreenshotPolicy(f.state, { screenshotPolicy: { mode: 'malformed' } }, malformed, source);
+    assert.equal(f.state.device.reliabilityPolicy, null);
+    assert.equal(f.state.screenshotPolicyAppliedSource, source);
+  }
+  const f = fixture(), old = f.reserve(), newer = f.reserve();
+  assert.equal(f.adopt(newer, f.policy(2), 'heartbeat'), true);
+  assert.equal(f.adopt(old, f.policy(), 'auth'), false);
+  const lowerRevision = f.reserve();
+  assert.equal(f.adopt(lowerRevision, f.policy(1), 'denial'), false);
+  const foreignScope = f.reserve();
+  f.state.device.reliabilityPolicy.authority.controlRevision = 3;
+  assert.equal(f.adopt(foreignScope, f.policy(3), 'upload'), false);
+  assert.equal(f.state.screenshotPolicyAppliedSource, 'heartbeat');
+  f.state.device.studentToken = token('session-b'); f.reserve();
+  assert.equal(f.state.screenshotPolicyAppliedSource, 'none');
+  assert.equal(f.adopt(newer, f.policy(3), 'auth'), false);
+  assert.equal(f.state.screenshotPolicyAppliedSource, 'none');
+});
+
+test('actual periodic refusal branch keeps the same primary-only warmup and aggregate accounting with zero requests', () => {
+  const f = fixture(), scheduled = []; let requests = 0;
+  Object.assign(f.context, {
+    SerialHeartbeatWriter: class { regular() {} },
+    later: callback => { scheduled.push(callback); }, cancelLater() {},
+    workloadEvery() {}, stoppingTraffic: false, acceleratedRequestStaggerMs: 0,
+    heartbeatIntervalMs: 10000, screenshotIntervalMs: 5000, devices: [f.state.device],
+    teacherSchoolId: 'school-a', runStartedAtMonoNs: 0n, NANOSECONDS_PER_MILLISECOND: 1000000n,
+    issue: () => { requests++; }, capturePulseProducer: null,
+  });
+  vm.runInContext(trafficSource, f.context);
+  f.state.device.reliabilityPolicy.captureCadence.mode = 'background';
+  f.context.startDeviceTraffic(f.state, 0);
+  const capture = scheduled[1];
+  f.clock.mono = 30000; capture();
+  assert.equal(f.counters.reliabilityPolicyUnavailable, 0);
+  f.clock.mono = 30001; capture(); capture();
+  assert.equal(f.counters.reliabilityPolicyUnavailable, 2);
+  assert.equal(reasonCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 2);
+  assert.equal(sourceCounterNames.reduce((sum, name) => sum + f.counters[name], 0), 2);
+  assert.equal(f.counters.reliabilityPolicyUnavailableCadenceBackground, 2);
+  assert.equal(f.counters.reliabilityPolicyUnavailableSourceHeartbeat, 2);
+  f.state.device.schoolId = 'canary-school';
+  f.state.device.studentToken = 'synthetic.' + Buffer.from(JSON.stringify({
+    schoolId: 'canary-school', studentId: 'student-a', deviceId: 'device-a', sessionId: 'session-a',
+  })).toString('base64url') + '.fixture';
+  f.reserve(); capture();
+  assert.equal(f.counters.reliabilityPolicyUnavailable, 2);
+  assert.equal(requests, 0);
+});
+
+test('a newer valid background policy can cause a local refusal despite HTTP success, then a newer active policy restores it', () => {
+  const f = fixture(), current = f.policy();
+  current.captureCadence = { mode: 'background', intervalSeconds: 30, expiresInSeconds: 90 };
+  const background = f.reserve();
+  f.context.applyRecoveryScreenshotResponse(f.state, { ok: true, json: { ok: true, screenshotPolicy: current } }, background);
+  assert.equal(f.state.reliabilityCaptures, 1);
+  assert.equal(f.context.recoveryScreenshotCaptureAllowed(f.state), false);
+  assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), 'cadence-background');
+  assert.equal(f.state.screenshotPolicyAppliedSource, 'upload');
+  assert.equal(f.adopt(f.reserve(), f.policy(), 'heartbeat'), true);
+  assert.equal(f.context.recoveryScreenshotCaptureAllowed(f.state), true);
+  assert.equal(f.context.recoveryScreenshotCaptureRefusalReason(f.state), null);
+  assert.equal(f.state.screenshotPolicyAppliedSource, 'heartbeat');
+  assert.equal(f.fatals.length, 0); assert.equal(f.counters.httpErrors, 0);
 });

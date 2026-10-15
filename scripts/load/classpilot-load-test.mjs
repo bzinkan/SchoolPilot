@@ -1405,6 +1405,18 @@ async function waitForSupervisorStartGate() {
 
 const counters = {
   reliabilityPolicyUnavailable: 0,
+  reliabilityPolicyUnavailableBinding: 0,
+  reliabilityPolicyUnavailableCapabilities: 0,
+  reliabilityPolicyUnavailableMissingPolicy: 0,
+  reliabilityPolicyUnavailablePermission: 0,
+  reliabilityPolicyUnavailableAuthority: 0,
+  reliabilityPolicyUnavailableCadenceBackground: 0,
+  reliabilityPolicyUnavailableCadenceExpired: 0,
+  reliabilityPolicyUnavailableSourceNone: 0,
+  reliabilityPolicyUnavailableSourceAuth: 0,
+  reliabilityPolicyUnavailableSourceHeartbeat: 0,
+  reliabilityPolicyUnavailableSourceUpload: 0,
+  reliabilityPolicyUnavailableSourceDenial: 0,
   reliabilityScreenshotHeartbeatRequired: 0,
   reliabilityScreenshotAuthoritySuperseded: 0,
   reliabilityScreenshotCapturePaused: 0,
@@ -2181,6 +2193,22 @@ const SCREENSHOT_REFUSAL_COUNTERS = Object.freeze({
   SCREENSHOT_CAPTURE_EXPIRED: "reliabilityScreenshotCaptureExpired",
   SCREENSHOT_CAPTURE_TIME_INVALID: "reliabilityScreenshotCaptureTimeInvalid",
 });
+const CAPTURE_REFUSAL_COUNTERS = Object.freeze({
+  binding: "reliabilityPolicyUnavailableBinding",
+  capabilities: "reliabilityPolicyUnavailableCapabilities",
+  "missing-policy": "reliabilityPolicyUnavailableMissingPolicy",
+  "permission-unavailable": "reliabilityPolicyUnavailablePermission",
+  authority: "reliabilityPolicyUnavailableAuthority",
+  "cadence-background": "reliabilityPolicyUnavailableCadenceBackground",
+  "cadence-expired": "reliabilityPolicyUnavailableCadenceExpired",
+});
+const CAPTURE_POLICY_SOURCE_COUNTERS = Object.freeze({
+  none: "reliabilityPolicyUnavailableSourceNone",
+  auth: "reliabilityPolicyUnavailableSourceAuth",
+  heartbeat: "reliabilityPolicyUnavailableSourceHeartbeat",
+  upload: "reliabilityPolicyUnavailableSourceUpload",
+  denial: "reliabilityPolicyUnavailableSourceDenial",
+});
 function screenshotRecoveryBinding(device) {
   // Normalized manifest rows intentionally omit sessionId. Reuse the existing
   // claims/manifest tuple validation; never invent a parallel session field.
@@ -2206,6 +2234,7 @@ function reserveScreenshotRecovery(state, wall = Date.now(), mono = monotonicNow
     state.screenshotRecoveryBinding = binding;
     state.screenshotRecoveryEpoch = (state.screenshotRecoveryEpoch || 0) + 1;
     state.screenshotPolicyApplied = 0;
+    state.screenshotPolicyAppliedSource = "none";
     state.device.reliabilityPolicy = null;
     state.screenshotCapabilities = new Set();
   }
@@ -2246,6 +2275,7 @@ function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.n
   if (!screenshotRecoveryCurrent(state, guard) || guard.generation < (state.screenshotPolicyApplied || 0)) return false;
   const current = state.device.reliabilityPolicy;
   if (source === "upload" && guard.scope !== screenshotRecoveryScope(current?.authority)) return false;
+  const appliedSource = Object.hasOwn(CAPTURE_POLICY_SOURCE_COUNTERS, source) ? source : "none";
   if (Array.isArray(body?.acceptedCapabilities)) state.screenshotCapabilities = new Set(body.acceptedCapabilities);
   if (!Object.prototype.hasOwnProperty.call(body || {}, "screenshotPolicy")) {
     // An omitted policy cannot grant/extend a lease. Auth may retain an exact
@@ -2257,14 +2287,21 @@ function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.n
         captureCadence: { mode: "background", intervalSeconds: 30, expiresAtMono: 0 } };
     } else state.device.reliabilityPolicy = null;
     state.screenshotPolicyApplied = guard.generation;
+    state.screenshotPolicyAppliedSource = appliedSource;
     return false;
   }
   const policy = normalizeRecoveryScreenshotPolicy(state, body.screenshotPolicy, guard, wall, mono);
-  if (!policy) { state.device.reliabilityPolicy = null; state.screenshotPolicyApplied = guard.generation; return false; }
+  if (!policy) {
+    state.device.reliabilityPolicy = null;
+    state.screenshotPolicyApplied = guard.generation;
+    state.screenshotPolicyAppliedSource = appliedSource;
+    return false;
+  }
   if (current && policy.captureAllowed && policy.authority.kind === "teaching_session"
     && policy.authority.controlRevision < current.authority.controlRevision) return false;
   state.device.reliabilityPolicy = policy;
   state.screenshotPolicyApplied = guard.generation;
+  state.screenshotPolicyAppliedSource = appliedSource;
   return true;
 }
 function classifyRecoveryScreenshot409(state, body, guard, wall = Date.now(), mono = monotonicNowMs()) {
@@ -2287,6 +2324,31 @@ function recoveryScreenshotCaptureAllowed(state, now = monotonicNowMs()) {
     && policy.authority?.kind === "teaching_session" && policy.authority.teachingSessionId === state.expectedTeachingSessionId
     && policy.captureCadence?.mode === "active_view" && policy.captureCadence.intervalSeconds === 5
     && policy.captureCadence.expiresAtMono > now;
+}
+function recoveryScreenshotCaptureRefusalReason(state, now = monotonicNowMs()) {
+  // Diagnose the first false term without changing the eligibility predicate.
+  // Permission includes an explicit denial as well as an expired lease.
+  const policy = state.device.reliabilityPolicy;
+  if (state.screenshotRecoveryBinding !== screenshotRecoveryBinding(state.device)) return "binding";
+  if (!state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+    || !state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+    || !state.screenshotCapabilities?.has("screenshotActiveObservationCadenceV1")) return "capabilities";
+  if (!policy) return "missing-policy";
+  if (policy.captureAllowed !== true || !(policy.expiresAtMono > now)) return "permission-unavailable";
+  if (policy.authority?.kind !== "teaching_session"
+    || policy.authority.teachingSessionId !== state.expectedTeachingSessionId) return "authority";
+  if (policy.captureCadence?.mode !== "active_view" || policy.captureCadence.intervalSeconds !== 5) return "cadence-background";
+  if (!(policy.captureCadence.expiresAtMono > now)) return "cadence-expired";
+  return null;
+}
+function recordRecoveryScreenshotCaptureRefusal(state) {
+  const reason = recoveryScreenshotCaptureRefusalReason(state);
+  if (reason) {
+    counters[CAPTURE_REFUSAL_COUNTERS[reason]] += 1;
+    const source = Object.hasOwn(CAPTURE_POLICY_SOURCE_COUNTERS, state.screenshotPolicyAppliedSource)
+      ? state.screenshotPolicyAppliedSource : "none";
+    counters[CAPTURE_POLICY_SOURCE_COUNTERS[source]] += 1;
+  }
 }
 function recoveryScreenshotHintCurrent(state, message) {
   return state.authenticated && state.screenshotRecoveryBinding === screenshotRecoveryBinding(state.device)
@@ -2673,7 +2735,10 @@ function startDeviceTraffic(state, index) {
       if (reliabilityWorkload && !recoveryScreenshotCaptureAllowed(state)) {
         // A missing/closed authoritative lease is never replaced with a fixture grant.
         // Canary devices intentionally have no observed classroom.
-        if (state.device.schoolId === teacherSchoolId && monotonicNowMs() - Number(runStartedAtMonoNs / NANOSECONDS_PER_MILLISECOND) > 30_000) counters.reliabilityPolicyUnavailable += 1;
+        if (state.device.schoolId === teacherSchoolId && monotonicNowMs() - Number(runStartedAtMonoNs / NANOSECONDS_PER_MILLISECOND) > 30_000) {
+          counters.reliabilityPolicyUnavailable += 1;
+          recordRecoveryScreenshotCaptureRefusal(state);
+        }
         return;
       }
       if (capturePulseProducer && state.device.schoolId === teacherSchoolId) {
