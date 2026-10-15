@@ -15,7 +15,7 @@ export const RENDERED_CONTROLLER_DEPENDENCIES = Object.freeze({
   "classpilot-load-test.mjs": "3456ee9e18047ff6cd3a390533ad8e78e1aae36b69beb6b5cae37fecb1c3f40b",
   "classpilot-reliability-profile.mjs": "e667d334eb8ef9f785d4ff07115ac2eb32b1268a403ecd9f497ba405149dfe32",
   "command-status-observer.mjs": "8d3dacb4fae02d0bf8b0a3ef1be312b1f0c6732b3b9e0760b129a49725ae87af",
-  "fine-endpoint-latency.mjs": "cf315a20c92fdf5f1edbd1d8f54f95a130432ad1b161039ff68da8c5a4f5de2a",
+  "fine-endpoint-latency.mjs": "415a63011f412fb02311d5643291840c365628f1e86ca9954c0b985d3e58cea4",
   "monotonic-deadline.mjs": "4b63a0de37a931d37112603101d20d2419fc1b7ed4f83029aea534f27a35bc49",
   "prepare-classpilot-load-test.mjs": "04d617610fec0add453b0f15e6a2398788ed8df3d1c18b8ec282e8d3160a551e",
   "producer-source-hook.mjs": "b909b3dbbb2286e7d477cacb76ef577c33ffc2af02a832fc2f689ed33b8480cb",
@@ -794,18 +794,80 @@ export function renderedRuntimeAuthorityMatches(runtime, auth, fence, nowWall = 
   catch { return false; }
 }
 
+// Diagnostic outcomes explain unavailable proof without changing freshness or authority.
+const CAPTURE_DIAGNOSTIC_REASONS = Object.freeze(['observed', 'authority-changed', 'missed-phase', 'owner-failure',
+  'late-or-empty-attempt', 'result-missing', 'not-visible', 'not-displayed', 'not-decoded', 'frame-missing',
+  'frame-not-authorized', 'before-after-dom-changed', 'native-pixel-mismatch', 'baseline-unproved',
+  'unchanged-causal-paint-unproved', 'causal-age-rejected', 'unclassified-unavailable']);
+const CAPTURE_DIAGNOSTIC_STAGES = Object.freeze(['before-dom', 'native-capture', 'after-dom', 'native-compare', 'owner-attempt']);
+const CAPTURE_DIAGNOSTIC_MS = Object.freeze([5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 8000, Infinity]);
+export function createRenderedCaptureDiagnostics() {
+  const reasons = Object.fromEntries(CAPTURE_DIAGNOSTIC_REASONS.map(reason => [reason, 0]));
+  const timings = Object.fromEntries(CAPTURE_DIAGNOSTIC_STAGES.map(stage => [stage, CAPTURE_DIAGNOSTIC_MS.map(() => 0)]));
+  let plannedTargets = 0, accountedTargets = 0, invalidCount = 0, invalidTimingCount = 0;
+  return {
+    planTargets(count) {
+      if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(plannedTargets + count)) { invalidCount++; return; }
+      plannedTargets += count;
+    },
+    account(reason, count = 1) {
+      if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(accountedTargets + count)) { invalidCount++; return; }
+      if (!Object.hasOwn(reasons, reason)) { reason = 'unclassified-unavailable'; invalidCount++; }
+      reasons[reason] += count; accountedTargets += count;
+    },
+    timing(stage, milliseconds) {
+      if (!Object.hasOwn(timings, stage) || !Number.isFinite(milliseconds) || milliseconds < 0) { invalidTimingCount++; return; }
+      timings[stage][CAPTURE_DIAGNOSTIC_MS.findIndex(bound => milliseconds <= bound)]++;
+    },
+    summary() {
+      return { version: 'fixed-capture-refusal-and-timing-v1', diagnosticOnly: true, plannedTargets, accountedTargets,
+        pendingTargets: Math.max(0, plannedTargets - accountedTargets), finiteTargets: reasons.observed,
+        unavailableTargets: accountedTargets - reasons.observed, overaccountedTargets: Math.max(0, accountedTargets - plannedTargets),
+        reasonCounts: { ...reasons }, invalidCount, invalidTimingCount,
+        timingBoundsMs: CAPTURE_DIAGNOSTIC_MS.map(value => Number.isFinite(value) ? value : null),
+        timingCounts: Object.fromEntries(CAPTURE_DIAGNOSTIC_STAGES.map(stage => [stage, timings[stage].slice()])) };
+    },
+  };
+}
+async function captureDiagnosticTiming(diagnostics, stage, operation, now) {
+  if (!diagnostics) return operation();
+  const beganAt = now();
+  try { return await operation(); }
+  finally { diagnostics.timing(stage, now() - beganAt); }
+}
+export function renderedCaptureRefusalReason({ age, visible, card, after, authorized, composed, previous, ageRejected }) {
+  if (Number.isFinite(age)) return 'observed';
+  if (!visible) return 'not-visible';
+  if (!card?.displayed) return 'not-displayed';
+  if (!card.decoded) return 'not-decoded';
+  if (!card.frame) return 'frame-missing';
+  if (!authorized) return 'frame-not-authorized';
+  if (!composed?.matched) return !renderedCaptureFenceMatches(card, after) ? 'before-after-dom-changed' : 'native-pixel-mismatch';
+  if (ageRejected) return 'causal-age-rejected';
+  if (!previous?.rgba && previous?.nativeAbsence !== true) return 'baseline-unproved';
+  return 'unchanged-causal-paint-unproved';
+}
+export function accountRenderedCaptureDiagnostic(diagnostics, attempt, result, authorized, age, metadata) {
+  diagnostics.account(Number.isFinite(age) ? 'observed' : !attempt ? metadata.diagnosticReason || 'late-or-empty-attempt'
+    : !authorized ? 'authority-changed' : result?.diagnosticReason || 'result-missing');
+}
+
 export async function observeActualRenderedCapture(runtime, scope, { auth, runId, publicBindings, pulseController,
-  deadlineAt, now = () => performance.now(), nowWall = () => Date.now() }) {
+  deadlineAt, now = () => performance.now(), nowWall = () => Date.now(), diagnostics }) {
   const fence = renderedRuntimeAuthoritySnapshot(runtime, auth, runId, nowWall());
   const scopeEpoch = runtime.scopeEpoch ?? 0;
   if (!scope.isCurrent() || now() >= deadlineAt) return null;
-  const sample = await renderedDeadline(scope.page.evaluate(collectRenderedDashboardSample));
-  const bundle = await captureNativeWitnessClips(scope.page, planNativeWitnessClips(sample.cards, { kind: 'capture' }), scope.capture);
+  const sample = await captureDiagnosticTiming(diagnostics, 'before-dom',
+    () => renderedDeadline(scope.page.evaluate(collectRenderedDashboardSample)), now);
+  const bundle = await captureDiagnosticTiming(diagnostics, 'native-capture',
+    () => captureNativeWitnessClips(scope.page, planNativeWitnessClips(sample.cards, { kind: 'capture' }), scope.capture), now);
   const compositorSha256 = hash(Buffer.from(bundle.parts.map(part => hash(part.png)).join(':')));
   try {
-    const after = await renderedDeadline(scope.page.evaluate(collectRenderedDashboardSample, { skipAnimationFrames: true }));
+    const after = await captureDiagnosticTiming(diagnostics, 'after-dom',
+      () => renderedDeadline(scope.page.evaluate(collectRenderedDashboardSample, { skipAnimationFrames: true })), now);
     const originAfter = await readNativeViewportOrigin(scope.page, RENDERED_VIEWPORT, Math.min(2000, bundle.deadlineAt - now()));
-    const pixels = await compareNativeWitnessClips({ bundle, rows: sample.cards, afterRows: after.cards, kind: 'capture', originAfter, now }, scope.decoder);
+    const pixels = await captureDiagnosticTiming(diagnostics, 'native-compare',
+      () => compareNativeWitnessClips({ bundle, rows: sample.cards, afterRows: after.cards, kind: 'capture', originAfter, now }, scope.decoder), now);
     const observedAt = now();
     // t1 is the completion of actual native decode, never a corrected clock.
     if (!scope.isCurrent() || observedAt >= deadlineAt || (runtime.scopeEpoch ?? 0) !== scopeEpoch || !renderedRuntimeAuthorityMatches(runtime, auth, fence, nowWall())) return null;
@@ -813,13 +875,16 @@ export async function observeActualRenderedCapture(runtime, scope, { auth, runId
       const card = sample.cards.find(row => row.studentId === studentId), composed = pixels.find(row => row.studentId === studentId);
       const contributors = composed?.contributors || [];
       const authorized = contributors.length > 0 && contributors.every(frame => renderedCaptureFrameAuthorized(frame, runtime.frames.get(studentId)));
-      let age = Infinity;
+      let age = Infinity, ageRejected = false;
       if (sample.visible && card?.displayed && card.decoded && card.frame && authorized && composed?.matched) {
         try { age = scoreRenderedCaptureAge({ frame: card.frame, composed, previous: runtime.lastPaints.get(studentId),
           publicBinding: publicBindings.get(studentId), observedAt, pulseController }); }
-        catch { /* Unknown or aliased paint remains Infinity. */ }
+        catch { ageRejected = true; /* Unknown or aliased paint remains Infinity. */ }
       }
-      return { studentId, age, authorized, card, after: after.cards.find(row => row.studentId === studentId), composed };
+      const afterCard = after.cards.find(row => row.studentId === studentId);
+      const diagnosticReason = renderedCaptureRefusalReason({ age, visible: sample.visible, card, after: afterCard, authorized,
+        composed, previous: runtime.lastPaints.get(studentId), ageRejected });
+      return { studentId, age, authorized, card, after: afterCard, composed, diagnosticReason };
     });
     return { fence, scopeEpoch, observedAt, visible: sample.visible, wrongClass: sample.cards.length !== runtime.actor.studentIds.length
       || new Set(sample.cards.map(card => card.studentId)).size !== runtime.actor.studentIds.length
@@ -831,8 +896,9 @@ export async function observeActualRenderedCapture(runtime, scope, { auth, runId
 export async function observeActualRenderedNavigationPaint(scope, expectedRows, { afterReadMs = 2000,
   now = () => performance.now() } = {}) {
   assert.ok(Number.isFinite(afterReadMs) && afterReadMs > 0 && afterReadMs <= 2000);
-  const witness = await renderedDeadline(scope.page.evaluate(collectRenderedNavigationPixelWitness, expectedRows), afterReadMs);
-  if (!witness.every(row => row.matched)) return null;
+  const witness = (await renderedDeadline(scope.page.evaluate(collectRenderedNavigationPixelWitness, expectedRows), afterReadMs))
+    .filter(row => row.matched);
+  if (!witness.length) return null;
   const bundle = await captureNativeWitnessClips(scope.page, planNativeWitnessClips(witness, { kind: 'navigation' }), scope.capture);
   try {
     const afterRows = await renderedDeadline(scope.page.evaluate(collectRenderedNavigationPixelWitness,
@@ -894,7 +960,7 @@ export function retainActualRenderedCaptureEvidence(runtime, result, visible) {
 }
 
 export async function runActualRenderedCapturePhases({ actors, startAt, endAt, observe, account, stopped = () => false,
-  now = () => performance.now(), pause = delay }) {
+  now = () => performance.now(), pause = delay, diagnostics }) {
   const phases = nativeObservationPhases(startAt, Math.ceil((endAt - startAt) / 5000));
   const pending = new Set();
   const plannedStudents = new Map(actors.map(runtime => [runtime, Object.freeze(runtime.actor.studentIds.slice())]));
@@ -905,25 +971,29 @@ export async function runActualRenderedCapturePhases({ actors, startAt, endAt, o
   const launch = (runtime, plannedAt) => {
     const deadlineAt = Math.min(plannedAt + 5000, endAt);
     let operation;
+    const ownerStartedAt = diagnostics ? now() : null;
     try { operation = runtime.owner.observe(scope => observe(runtime, scope, deadlineAt), { kind: 'capture' }); }
     catch (error) { operation = Promise.reject(error); }
     counters.enqueued++;
     const settled = Promise.resolve(operation).then(value => {
       const timely = !stopped() && value && now() < deadlineAt;
-      account(runtime, timely ? value : null, { plannedAt, deadlineAt, studentIds: plannedStudents.get(runtime) });
+      account(runtime, timely ? value : null, { plannedAt, deadlineAt, studentIds: plannedStudents.get(runtime),
+        diagnosticReason: timely ? null : 'late-or-empty-attempt' });
       counters.completedTargets += plannedStudents.get(runtime).length;
     }, () => {
       counters.failedOwnerAttempts++;
-      account(runtime, null, { plannedAt, deadlineAt, studentIds: plannedStudents.get(runtime) });
+      account(runtime, null, { plannedAt, deadlineAt, studentIds: plannedStudents.get(runtime), diagnosticReason: 'owner-failure' });
       counters.completedTargets += plannedStudents.get(runtime).length;
     });
-    pending.add(settled); settled.finally(() => pending.delete(settled)).catch(() => {});
+    pending.add(settled); settled.finally(() => {
+      pending.delete(settled); if (diagnostics) diagnostics.timing('owner-attempt', now() - ownerStartedAt);
+    }).catch(() => {});
   };
   for (const plannedAt of phases) {
     if (!stopped()) await pause(Math.max(0, plannedAt - now()));
     if (stopped() || now() >= Math.min(plannedAt + 5000, endAt)) {
       counters.missedPhases++;
-      for (const runtime of actors) { account(runtime, null, { plannedAt, deadlineAt: Math.min(plannedAt + 5000, endAt), studentIds: plannedStudents.get(runtime) }); counters.completedTargets += plannedStudents.get(runtime).length; }
+      for (const runtime of actors) { account(runtime, null, { plannedAt, deadlineAt: Math.min(plannedAt + 5000, endAt), studentIds: plannedStudents.get(runtime), diagnosticReason: 'missed-phase' }); counters.completedTargets += plannedStudents.get(runtime).length; }
     } else for (const runtime of actors) launch(runtime, plannedAt);
   }
   return { counters, whenSettled: async () => {
@@ -1087,6 +1157,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     controlPutAttempts: 0, controlGetAttempts: 0, controlBytes: 0, pulseSkipped: 0, navigationObserved: 0,
     finalUnsubscribed: 0, finalNotLive: 0, connectionDenials: 0 };
   const ages = renderedAgeHistogram(), actors = [], loadedAssets = new Set(), knownCaptureBindings = new Set();
+  const captureDiagnostics = createRenderedCaptureDiagnostics();
   const pulseController = new CapturePulseController(measurementContext, { now: () => performance.now() });
   const measurementChannel=createMeasurementArtifactChannel({role:'controller',expected:measurementContext,devices:privateDevices,startAt:manifest.startAt,startup:waiting});
   let controlStopped = false, publicationLoop = null, bootstrapSha = null, drainNonce = null,
@@ -1272,8 +1343,8 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           const expectedRows = pending.map(studentId => {
             const snapshot = navigationSnapshot({ runId: manifest.runId, round, nonce: entry.nonce }, publicBindings.get(studentId), runtime.revisionSeeds.get(studentId));
             return { ...snapshot, studentId, publicBinding: publicBindings.get(studentId) };
-          });
-          if (!expectedRows.every(row => navigationMessageMatches(runtime.realtime.get(row.studentId), row, runtime))) return;
+          }).filter(row => navigationMessageMatches(runtime.realtime.get(row.studentId), row, runtime));
+          if (!expectedRows.length) return;
           const painted = await observeActualRenderedNavigationPaint({ page, capture, decoder }, expectedRows);
           if (!painted) return;
           const { witness, composed, receivedAt } = painted;
@@ -1387,17 +1458,18 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     phase = 'sampling';
     const sampleStartAt = performance.now();
     capturePhases = await runActualRenderedCapturePhases({ actors, startAt: sampleStartAt, endAt: endMonotonic,
-      stopped: () => interrupted || controlStopped,
+      stopped: () => interrupted || controlStopped, diagnostics: captureDiagnostics,
       observe: (runtime, scope, deadlineAt) => observeActualRenderedCapture(runtime, scope, { auth, runId: manifest.runId,
-        publicBindings, pulseController, deadlineAt }),
+        publicBindings, pulseController, deadlineAt, diagnostics: captureDiagnostics }),
       account: (runtime, attempt, metadata) => {
-        if (metadata.plannedOnly) { counters.samples += metadata.count; runtime.samples += metadata.count; return; }
+        if (metadata.plannedOnly) { counters.samples += metadata.count; runtime.samples += metadata.count; captureDiagnostics.planTargets(metadata.count); return; }
         const authorized = attempt && (runtime.scopeEpoch ?? 0) === attempt.scopeEpoch && renderedRuntimeAuthorityMatches(runtime, auth, attempt.fence);
         if (attempt && !attempt.visible) counters.hidden++;
         if (attempt?.wrongClass) counters.wrongClass++;
         for (const studentId of metadata.studentIds) {
           const result = authorized && attempt.results.find(row => row.studentId === studentId), age = result?.age ?? Infinity;
           ages.observe(age);
+          accountRenderedCaptureDiagnostic(captureDiagnostics, attempt, result, authorized, age, metadata);
           const nativePaint = result && retainActualRenderedCaptureEvidence(runtime, result, attempt.visible);
           if (!Number.isFinite(age)) { counters.unavailable++; runtime.unavailable++; continue; }
           knownCaptureBindings.add(publicBindings.get(studentId));
@@ -1406,7 +1478,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
         if (authorized && !runtime.initialPaint) { runtime.compositorSha256 = attempt.compositorSha256; runtime.initialPaint = true; }
         writeFileSync(join(paths.outputPath, 'rendered-progress.json'), JSON.stringify({ runId: manifest.runId,
           plannedStartAt: manifest.startAt, elapsedSeconds: (performance.now() - startedMonotonic) / 1000,
-          classrooms: actors.length, counters, http: httpMetrics.progress(), p95CaptureAgeMs: ages.percentile(95), p99CaptureAgeMs: ages.percentile(99) }));
+          classrooms: actors.length, counters, captureDiagnostics: captureDiagnostics.summary(), http: httpMetrics.progress(), p95CaptureAgeMs: ages.percentile(95), p99CaptureAgeMs: ages.percentile(99) }));
       } });
     counters.sampleRounds = capturePhases.counters.plannedPhases;
     while (!interrupted && performance.now() < endMonotonic) await delay(Math.min(1000, endMonotonic - performance.now()));
@@ -1505,6 +1577,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     finalSummary.observerRuntime = observerRuntime.summary();
     finalSummary.cleanup = cleanupProof;
     finalSummary.plannedCapture = capturePhases?.counters ?? null;
+    finalSummary.captureDiagnostics = captureDiagnostics.summary();
     finalSummary.interruption=interruption.summary();
     finalSummary.timedWindowCompleteBeforeShutdown=timedWindowCompleteBeforeShutdown;
     finalSummary.timedWindowObservedMs=timedWindowObservedMs;

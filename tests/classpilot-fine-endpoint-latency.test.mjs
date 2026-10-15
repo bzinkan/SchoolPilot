@@ -168,3 +168,24 @@ test('teacher categories preserve the original twelve producer and capture metri
     assert.equal(fineLatencyEndpoint(method, pathname + '?ignored=private'), label);
   }
 });
+
+const rolloutLabel = 'GET /api/classpilot/class-tools/rollout';
+test('dashboard rollout poll has one fixed content-free label', () => {
+  assert.equal(fineLatencyEndpoint('GET', '/api/classpilot/class-tools/rollout'), rolloutLabel);
+  assert.equal(fineLatencyEndpoint('GET', '/api/classpilot/class-tools/rollout?schoolId=synthetic-only'), rolloutLabel);
+});
+test('rollout classification rejects other methods', () => {
+  for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) assert.equal(fineLatencyEndpoint(method, '/api/classpilot/class-tools/rollout'), null);
+});
+test('rollout classification rejects non-exact routes', () => {
+  for (const route of ['/api/classpilot/class-tools/rollout/', '/api/classpilot/class-tools/rollout/extra', '/api/classpilot/class-tools/rollout-suffix', '/api/classpilot/class-tools/state', '/api/another-product/class-tools/rollout']) assert.equal(fineLatencyEndpoint('GET', route), null);
+});
+test('real rollout poll enters the bounded latency histogram without a query label', () => {
+  const latencies = new FineEndpointLatencies();
+  latencies.observe(fineLatencyEndpoint('GET', '/api/classpilot/class-tools/rollout?schoolId=synthetic-only'), 111.2);
+  const summary = latencies.summary();
+  assert.equal(summary.unclassifiedCount, 0);
+  assert.deepEqual(Object.keys(summary.endpoints), [rolloutLabel]);
+  assert.equal(summary.endpoints[rolloutLabel].count, 1);
+  assert.equal(summary.endpoints[rolloutLabel].p95Bounds.upperMs, 112);
+});

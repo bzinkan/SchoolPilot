@@ -12,6 +12,7 @@ export const FINE_LATENCY_ENDPOINTS = Object.freeze([
   'GET /api/sessions/active', 'GET /api/classpilot/dashboard-activity',
   'GET /api/coverage/summary', 'GET /api/teacher/messages',
   'GET /api/classpilot/schedule-changes/today', 'POST /api/classpilot/monitoring/client-health',
+  'GET /api/classpilot/class-tools/rollout',
   'GET /api/classpilot/commands/{commandId}/status',
   'GET /api/settings', 'GET /api/flight-paths', 'GET /api/block-lists',
   'GET /api/teacher/groups', 'GET /api/coverage/capabilities',
