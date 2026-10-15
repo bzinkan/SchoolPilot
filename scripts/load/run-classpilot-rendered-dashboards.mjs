@@ -835,6 +835,32 @@ async function captureDiagnosticTiming(diagnostics, stage, operation, now) {
   try { return await operation(); }
   finally { diagnostics.timing(stage, now() - beganAt); }
 }
+// Content-free diagnostics separate delivery from the native witness overhead.
+// The existing end-to-end navigation gate remains the acceptance measurement.
+export function createRenderedNavigationDiagnostics() {
+  const bounds = [100, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 8000, Infinity];
+  const stages = ['trigger-to-socket', 'socket-to-owner-check', 'trigger-to-dom-witness',
+    'dom-to-native-proof', 'trigger-to-native-proof'];
+  const counts = Object.fromEntries(stages.map(stage => [stage, bounds.map(() => 0)]));
+  let provenPaintTargets = 0, invalidCount = 0;
+  return {
+    observe({ triggerAt, socketAt, ownerAt, domAt, proofAt }) {
+      const times = [triggerAt, socketAt, ownerAt, domAt, proofAt];
+      if (times.some(value => !Number.isFinite(value) || value < 0)
+        || times.some((value, index) => index > 0 && value < times[index - 1])) { invalidCount++; return false; }
+      const durations = [socketAt - triggerAt, ownerAt - socketAt, domAt - triggerAt,
+        proofAt - domAt, proofAt - triggerAt];
+      for (let index = 0; index < stages.length; index++) counts[stages[index]][bounds.findIndex(bound => durations[index] <= bound)]++;
+      provenPaintTargets++;
+      return true;
+    },
+    summary() {
+      return { version: 'fixed-navigation-phase-diagnostics-v1', diagnosticOnly: true, provenPaintTargets, invalidCount,
+        boundsMs: bounds.map(value => Number.isFinite(value) ? value : null),
+        counts: Object.fromEntries(stages.map(stage => [stage, counts[stage].slice()])) };
+    },
+  };
+}
 export function renderedCaptureRefusalReason({ age, visible, card, after, authorized, composed, previous, ageRejected }) {
   if (Number.isFinite(age)) return 'observed';
   if (!visible) return 'not-visible';
@@ -899,13 +925,14 @@ export async function observeActualRenderedNavigationPaint(scope, expectedRows, 
   const witness = (await renderedDeadline(scope.page.evaluate(collectRenderedNavigationPixelWitness, expectedRows), afterReadMs))
     .filter(row => row.matched);
   if (!witness.length) return null;
+  const diagnosticDomObservedAt = now();
   const bundle = await captureNativeWitnessClips(scope.page, planNativeWitnessClips(witness, { kind: 'navigation' }), scope.capture);
   try {
     const afterRows = await renderedDeadline(scope.page.evaluate(collectRenderedNavigationPixelWitness,
       { expectedRows, skipAnimationFrames: true }), afterReadMs);
     const originAfter = await readNativeViewportOrigin(scope.page, RENDERED_VIEWPORT, Math.min(2000, bundle.deadlineAt - now()));
     const composed = await compareNativeWitnessClips({ bundle, rows: witness, afterRows, kind: 'navigation', originAfter, now }, scope.decoder);
-    return { witness, composed, receivedAt: now() };
+    return { witness, composed, receivedAt: now(), diagnosticDomObservedAt };
   } finally {
     // After-DOM/origin failures must zero already-owned native bytes too.
     for (const part of bundle.parts) part.png.fill(0);
@@ -946,17 +973,93 @@ export function actualRenderedNavigationPaintDecision({ runtime, auth, fence, sc
 export function retainActualRenderedCaptureEvidence(runtime, result, visible) {
   const { age, card, after, composed } = result || {};
   if (!visible || !result?.authorized || !card?.displayed || !card.decoded
-    || !composed?.matched || composed.transitioned || card.opacity < 1 || !(after?.opacity >= 1)) return;
+    || !composed?.matched || !after || !Array.isArray(composed.rgba) || composed.rgba.length !== 4
+    || !composed.rgba.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255)) return;
   const previous = runtime.lastPaints.get(result.studentId);
-  if (!Number.isFinite(age)) {
-    // Physical native RGBA is a baseline only; no causal frame or freshness.
-    if (!previous?.rgba || nativePixelsCausallyChanged(previous.rgba, composed.rgba))
+  const opaque = !composed.transitioned && card.opacity >= 1 && after.opacity >= 1;
+  if (!Number.isFinite(age) || !opaque) {
+    // An authorized, matched native fade is physical evidence, even when it
+    // cannot identify one opaque frame. Never attach a frame or fresh age to
+    // that baseline. Retiring the old frame prevents repeated fixture colours
+    // from being compared forever against an unrelated, expired frame.
+    if (!previous?.rgba || nativePixelsCausallyChanged(previous.rgba, composed.rgba) || !opaque && previous?.frame)
       runtime.lastPaints.set(result.studentId, { frame: null, rgba: composed.rgba, absent: false });
   } else if (sameFrame(previous?.frame, card.frame) || previous?.nativeAbsence === true
     || nativePixelsCausallyChanged(previous?.rgba, composed.rgba)) {
     runtime.lastPaints.set(result.studentId, { frame: card.frame, rgba: composed.rgba, absent: false });
   }
   return runtime.lastPaints.get(result.studentId);
+}
+
+export function updateActualRenderedCaptureBinding(runtime, studentId, bindingVersion, invalidatePrior) {
+  if (runtime.bindings.get(studentId) !== bindingVersion) {
+    runtime.frames.delete(studentId);
+    runtime.lastPaints.delete(studentId);
+    invalidatePrior(); runtime.priorStripAbsent = false;
+  }
+  runtime.bindings.set(studentId, bindingVersion);
+}
+
+// Reuse the one pre-start native screenshot as an anonymous physical baseline.
+// Missing images/bindings remain UNKNOWN; this never establishes frame age.
+export async function warmActualRenderedCaptureBaseline(runtime, scope, { auth, runId,
+  now = () => performance.now(), nowWall = () => Date.now() }) {
+  const beganAt = now(), deadlineAt = beganAt + 8000, epoch = runtime.scopeEpoch ?? 0;
+  let lastNow = beganAt, png;
+  const snapshot = () => {
+    const actor = runtime.actor, wall = nowWall(), expiresAt = Math.min(Date.parse(actor.expiresAt), Date.parse(auth.expiresAt), Date.parse(auth.deviceManifestExpiresAt));
+    assert.equal(actor.role, 'teacher'); assert.equal(actor.schoolId, auth.schoolId);
+    assert.ok(runtime.subscribed && Number.isSafeInteger(runtime.socketGeneration) && runtime.socketGeneration > 0);
+    assert.ok(Number.isFinite(expiresAt) && Number.isFinite(wall) && wall < expiresAt);
+    assert.ok(actor.studentIds.every(id => runtime.allowed.has(id)));
+    return JSON.stringify({ actorId: actor.teacherId, runId, schoolId: actor.schoolId, teachingSessionId: actor.teachingSessionId,
+      socketGeneration: runtime.socketGeneration, studentIds: actor.studentIds, expiresAt,
+      bindings: actor.studentIds.map(id => [id, typeof runtime.bindings.get(id) === 'string' ? runtime.bindings.get(id) : null]) });
+  };
+  const fence = snapshot();
+  const remaining = () => {
+    const at = now(); assert.ok(Number.isFinite(at) && at >= lastNow && at < deadlineAt, 'Whole native warm deadline exceeded'); lastNow = at;
+    assert.ok(scope.isCurrent() && (runtime.scopeEpoch ?? 0) === epoch && snapshot() === fence, 'Native warm authority changed');
+    return deadlineAt - at;
+  };
+  const read = async argument => {
+    const budget = remaining(), value = await renderedDeadline(scope.page.evaluate(collectRenderedDashboardSample, argument), budget);
+    remaining(); return value;
+  };
+  const exactCards = sample => Array.isArray(sample?.cards) && sample.cards.length === runtime.actor.studentIds.length
+    && new Set(sample.cards.map(card => card.studentId)).size === sample.cards.length
+    && sample.cards.every(card => runtime.actor.studentIds.includes(card.studentId));
+  for (const id of runtime.actor.studentIds) runtime.lastPaints.set(id, { frame: null, rgba: null, absent: false });
+  try {
+    const before = await read();
+    await readNativeViewportOrigin(scope.page, RENDERED_VIEWPORT, Math.min(2000, remaining())); remaining();
+    const captureBudget = remaining(); png = await scope.capture.capture(scope.page, RENDERED_VIEWPORT, null, captureBudget); remaining();
+    const after = await read({ skipAnimationFrames: true });
+    await readNativeViewportOrigin(scope.page, RENDERED_VIEWPORT, Math.min(2000, remaining())); remaining();
+    const compositorSha256 = hash(png); remaining();
+    runtime.priorCompositorSha256 = compositorSha256;
+    if (!before.visible || !after.visible || !exactCards(before) || !exactCards(after)) return { seeded: 0, compositorSha256 };
+    const pixels = await compareRenderedCapturePaint({ png, cards: before.cards, afterCards: after.cards }, {
+      run: (bytes, viewport, sample) => scope.decoder.run(bytes, viewport, sample, remaining()),
+    });
+    remaining();
+    const seeds = [];
+    for (const composed of pixels) {
+      const card = before.cards.find(row => row.studentId === composed.studentId), afterCard = after.cards.find(row => row.studentId === composed.studentId);
+      const binding = runtime.bindings.get(composed.studentId), contributors = composed.contributors ?? [];
+      if (typeof binding !== 'string' || !binding.length || !composed.matched || composed.transitioned
+        || !card?.displayed || !afterCard?.displayed || !card.decoded || !afterCard.decoded
+        || !sameFrame(card.frame, afterCard.frame)
+        || (card.previousFrame || afterCard.previousFrame) && !sameFrame(card.previousFrame, afterCard.previousFrame)
+        || !contributors.length || !contributors.every(frame => renderedCaptureFrameAuthorized(frame, runtime.frames.get(composed.studentId)))
+        || !Array.isArray(composed.rgba) || composed.rgba.length !== 4
+        || !composed.rgba.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255)) continue;
+      seeds.push([composed.studentId, { frame: null, rgba: composed.rgba.slice(), absent: false }]);
+    }
+    remaining();
+    for (const [studentId, value] of seeds) runtime.lastPaints.set(studentId, value);
+    return { seeded: seeds.length, compositorSha256 };
+  } finally { png?.fill(0); }
 }
 
 export async function runActualRenderedCapturePhases({ actors, startAt, endAt, observe, account, stopped = () => false,
@@ -1158,6 +1261,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     finalUnsubscribed: 0, finalNotLive: 0, connectionDenials: 0 };
   const ages = renderedAgeHistogram(), actors = [], loadedAssets = new Set(), knownCaptureBindings = new Set();
   const captureDiagnostics = createRenderedCaptureDiagnostics();
+  const navigationDiagnostics = createRenderedNavigationDiagnostics();
   const pulseController = new CapturePulseController(measurementContext, { now: () => performance.now() });
   const measurementChannel=createMeasurementArtifactChannel({role:'controller',expected:measurementContext,devices:privateDevices,startAt:manifest.startAt,startup:waiting});
   let controlStopped = false, publicationLoop = null, bootstrapSha = null, drainNonce = null,
@@ -1247,8 +1351,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           const body = await renderedDeadline(response.json());
           for (const tile of body.tiles || []) {
             if (!allowed.has(tile.studentId)) { counters.wrongClass += 1; continue; }
-            if (runtime.bindings.get(tile.studentId) !== tile.bindingVersion){frames.delete(tile.studentId);priorPaint.invalidate(actor.teacherId);runtime.priorStripAbsent=false;}
-            runtime.bindings.set(tile.studentId, tile.bindingVersion);
+            updateActualRenderedCaptureBinding(runtime, tile.studentId, tile.bindingVersion, () => priorPaint.invalidate(actor.teacherId));
             if (!tile.screenshot) continue;
             if (!reliabilityScreenshotBindingMatches(tile)) { counters.wrongBinding += 1; continue; }
             const source = tile.screenshot.screenshot;
@@ -1276,15 +1379,8 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     assert.equal(actors.length, profile.classrooms);
     // Establish prior real compositor state before the shared start. The
     // first causal pulse is then emitted directly at the controller start.
-    await Promise.all(actors.map(runtime => observerRuntime.prepareWarm(runtime)(async ({ page, capture, isCurrent }) => {
-      const sample = await renderedDeadline(page.evaluate(collectRenderedDashboardSample));
-      const png = await capture.capture(page);
-      try {
-        assert.equal(isCurrent(), true);
-        for (const card of sample.cards) runtime.lastPaints.set(card.studentId, { frame: null, rgba: null, absent: false });
-        runtime.priorCompositorSha256 = hash(png);
-      } finally { png.fill(0); }
-    })));
+    await Promise.all(actors.map(runtime => observerRuntime.prepareWarm(runtime)(scope =>
+      warmActualRenderedCaptureBaseline(runtime, scope, { auth, runId: manifest.runId }))));
     phase = 'start-barrier';
     await acceptActualRenderedMeasurementReady({channel:measurementChannel,waiting,expected:measurementContext,startAt:manifest.startAt});syncMeasurementCounters();startupGate.markReady();
     barrier = await waitForStagingStart({ startAt: manifest.startAt, origin: auth.baseUrl,
@@ -1335,7 +1431,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     const observeRound = async round => {
       navigationRoundsAttempted.add(round);
       const entry = pulseController.navigationHistory.get(round), deadline = entry.t0 + 8000;
-      const observed = new Set();
+      const observed = new Set(), firstReady = new Map();
       while (performance.now() < deadline && observed.size < profile.primaryDevices && !controlStopped) {
         await Promise.allSettled(actors.map(runtime => runtime.owner.observe(async ({ page, capture, decoder, isCurrent }) => {
           const fence = priorProvenance(runtime), scopeEpoch = runtime.scopeEpoch ?? 0;
@@ -1343,7 +1439,14 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
           const expectedRows = pending.map(studentId => {
             const snapshot = navigationSnapshot({ runId: manifest.runId, round, nonce: entry.nonce }, publicBindings.get(studentId), runtime.revisionSeeds.get(studentId));
             return { ...snapshot, studentId, publicBinding: publicBindings.get(studentId) };
-          }).filter(row => navigationMessageMatches(runtime.realtime.get(row.studentId), row, runtime));
+          }).filter(row => {
+            const message = runtime.realtime.get(row.studentId), matched = navigationMessageMatches(message, row, runtime);
+            const previous = firstReady.get(row.studentId);
+            if (matched && (!previous || previous.socketGeneration !== runtime.socketGeneration || previous.scopeEpoch !== scopeEpoch))
+              firstReady.set(row.studentId, { socketAt: message.observedAt, ownerAt: performance.now(),
+                socketGeneration: runtime.socketGeneration, scopeEpoch });
+            return matched;
+          });
           if (!expectedRows.length) return;
           const painted = await observeActualRenderedNavigationPaint({ page, capture, decoder }, expectedRows);
           if (!painted) return;
@@ -1356,6 +1459,8 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
               observed.add(row.studentId); navigationDevices.add(row.studentId);
               navigationPixels.set(row.studentId, nativeNavigationPaintEvidence(currentWitness, row, fence, scopeEpoch));
               navigationSamples.push(receivedAt - entry.t0); counters.navigationObserved += 1;
+              navigationDiagnostics.observe({ triggerAt: entry.t0, ...firstReady.get(row.studentId),
+                domAt: painted.diagnosticDomObservedAt, proofAt: receivedAt });
             }
           }
         }, { kind: 'navigation' })));
@@ -1578,6 +1683,7 @@ export async function runRenderedDashboards(arguments_ = process.argv.slice(2)) 
     finalSummary.cleanup = cleanupProof;
     finalSummary.plannedCapture = capturePhases?.counters ?? null;
     finalSummary.captureDiagnostics = captureDiagnostics.summary();
+    finalSummary.navigationDiagnostics = navigationDiagnostics.summary();
     finalSummary.interruption=interruption.summary();
     finalSummary.timedWindowCompleteBeforeShutdown=timedWindowCompleteBeforeShutdown;
     finalSummary.timedWindowObservedMs=timedWindowObservedMs;
