@@ -158,17 +158,20 @@ export function createClasspilotScreenshotQueue({ concurrency = 3, intervalMs = 
       }
       drain();
     },
-    read({ key, studentIds, read, signal, priority = false }) {
+    read({ key, studentIds, read, signal, priority = false, refresh = false }) {
       if (signal?.aborted) return Promise.reject(cancelled());
       if (!studentIds.length || studentIds.length > 50) return Promise.reject(new Error('Preview requests require 1–50 students'));
       let state = cohorts.get(key);
       if (!state) { state = { lastStarted: -Infinity, running: null, pending: null }; cohorts.set(key, state); }
       return new Promise((resolve, reject) => {
         const waiter = { resolve, reject, signal };
-        // Join an existing read only when it already covers every target.
-        const job = state.running && studentIds.every(id => state.running.ids.has(id))
+        // Notifications require a snapshot after the in-flight read. Keep one
+        // trailing job; periodic readers join it rather than the older snapshot.
+        const job = state.pending || (!refresh && state.running && studentIds.every(id => state.running.ids.has(id))
           ? state.running
-          : state.pending || (state.pending = { ids: new Set(), read, waiters: [], priority });
+          : (state.pending = { ids: new Set(), read, waiters: [], priority }));
+        if (new Set([...job.ids, ...studentIds]).size > 50) return reject(new Error('Preview requests require 1–50 students'));
+        if (job === state.pending) job.read = read;
         job.priority ||= priority;
         studentIds.forEach(id => job.ids.add(id));
         job.waiters.push(waiter);

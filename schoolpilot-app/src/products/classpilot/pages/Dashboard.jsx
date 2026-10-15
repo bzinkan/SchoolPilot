@@ -3729,7 +3729,7 @@ export default function Dashboard() {
       await refetchStudents();
     }).catch(() => {});
   };
-  const fetchAuthorizedTileBatch = useCallback(async (request, authorities, signal) => {
+  const fetchAuthorizedTileBatch = useCallback(async (request, authorities, signal, { refresh = false } = {}) => {
     const screenshotSnapshot = request.kind === 'screenshots' ? targetedScreenshotContextRef.current : null;
     const screenshotReadCurrent = () => request.kind !== 'screenshots' || (
       isCurrentScreenshotRead(screenshotSnapshot, targetedScreenshotContextRef.current)
@@ -3746,7 +3746,7 @@ export default function Dashboard() {
       };
       const response = request.kind === 'screenshots'
         ? await screenshotQueueRef.current.read({ key: JSON.stringify(request.queryKey), studentIds: allowed.body.studentIds, read, signal,
-          priority: allowed.body.studentIds.some(id => fastScreenshotStudentIdsRef.current.has(id)) })
+          priority: allowed.body.studentIds.some(id => fastScreenshotStudentIdsRef.current.has(id)), refresh })
         : await read(allowed.body.studentIds, signal);
       if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
       // A simultaneous targeted request may have denied a row while this
@@ -3947,7 +3947,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const controller = new AbortController();
       targetedScreenshotAbortControllersRef.current.add(controller);
       try {
-        let response = await fetchAuthorizedTileBatch({ ...request, body: { ...request.body, studentIds: requestedIds } }, snapshot.authorities, controller.signal);
+        let response = await fetchAuthorizedTileBatch({ ...request, body: { ...request.body, studentIds: requestedIds } }, snapshot.authorities, controller.signal, { refresh: true });
         assertTileScreenshotStoreAvailable(response);
         if (
           targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey

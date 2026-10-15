@@ -6,6 +6,21 @@ import { createClasspilotScreenshotQueue, withClasspilotReadDeadline, withClassp
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const turn = () => new Promise(resolve => setTimeout(resolve, 0));
 
+async function flushQueue() {
+  for (let index = 0; index < 12; index += 1) await Promise.resolve();
+}
+
+function queueClock(context) {
+  let now = 0;
+  context.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  context.mock.method(performance, 'now', () => now);
+  return async milliseconds => {
+    now += milliseconds;
+    context.mock.timers.tick(milliseconds);
+    await flushQueue();
+  };
+}
+
 test('the authorized open student drawer gets a fast permit within the hundred-target limit even offscreen', () => {
   const students = Array.from({ length: 160 }, (_, index) => ({ studentId: String(index) }));
   const eligibleIds = new Set(students.map(student => student.studentId));
@@ -84,6 +99,149 @@ test('latest pending targets merge and a slow cohort does not block another coho
   gate.resolve(); await first;
   assert.deepEqual(await pendingB, ['b', 'c']); assert.deepEqual(await pendingC, ['b', 'c']);
   assert.equal(calls.length, 3); queue.clear();
+});
+
+test('a notification after an in-flight snapshot waits for one latest five-second trailing read', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue();
+  const snapshotTaken = deferred(), release = deferred(), calls = [];
+  let version = 0;
+  const read = async ids => {
+    const snapshot = { ids, version };
+    calls.push({ ...snapshot, at: performance.now() });
+    if (calls.length === 1) { snapshotTaken.resolve(); await release.promise; }
+    return snapshot;
+  };
+  const first = queue.read({ key: 'school-a/session-a/binding-a', studentIds: ['a'], read });
+  await snapshotTaken.promise;
+  version = 1;
+  const notification = queue.read({ key: 'school-a/session-a/binding-a', studentIds: ['a'], read, refresh: true });
+  const repeated = queue.read({ key: 'school-a/session-a/binding-a', studentIds: ['a', 'b'], read, refresh: true });
+  const periodic = queue.read({ key: 'school-a/session-a/binding-a', studentIds: ['a'], read });
+  let refreshed = false;
+  notification.then(() => { refreshed = true; });
+  release.resolve();
+  assert.equal((await first).version, 0);
+  await flushQueue();
+  assert.equal(refreshed, false, 'The notification cannot be satisfied by the earlier server snapshot');
+  version = 2;
+  await tick(4_999);
+  assert.equal(calls.length, 1);
+  await tick(1);
+  for (const result of await Promise.all([notification, repeated, periodic])) {
+    assert.equal(result.version, 2);
+    assert.deepEqual(result.ids, ['a', 'b']);
+  }
+  assert.deepEqual(calls.map(call => call.at), [0, 5_000]);
+  await tick(5_000);
+  assert.equal(calls.length, 2, 'Repeated notifications and a periodic read coalesce into one trailing request');
+  queue.clear();
+});
+
+test('ordinary duplicate readers still share a covered in-flight snapshot without an extra request', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue(), release = deferred();
+  let calls = 0;
+  const read = async ids => { calls += 1; await release.promise; return ids; };
+  const first = queue.read({ key: 'same-authority', studentIds: ['a', 'b'], read });
+  await flushQueue();
+  const periodic = queue.read({ key: 'same-authority', studentIds: ['a'], read });
+  release.resolve();
+  assert.deepEqual(await first, ['a', 'b']); assert.deepEqual(await periodic, ['a', 'b']);
+  await tick(5_000); assert.equal(calls, 1); queue.clear();
+});
+
+test('a coalesced trailing request uses the latest reader while preserving the target bound', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue({ concurrency: 1 }), busy = deferred();
+  const occupied = queue.read({ key: 'busy', studentIds: ['busy'], read: () => busy.promise });
+  await flushQueue();
+  const ids = Array.from({ length: 50 }, (_, index) => String(index));
+  let staleReads = 0, currentReads = 0, refusedReads = 0;
+  const first = queue.read({ key: 'bounded', studentIds: ids, read: () => { staleReads += 1; return []; }, refresh: true });
+  const latest = queue.read({ key: 'bounded', studentIds: ['0'], read: requested => { currentReads += 1; return requested; } });
+  await assert.rejects(queue.read({ key: 'bounded', studentIds: ['extra'], read: () => { refusedReads += 1; return []; }, refresh: true }));
+  busy.resolve(); await occupied; await tick(0);
+  assert.deepEqual(await first, ids); assert.deepEqual(await latest, ids);
+  assert.equal(staleReads, 0); assert.equal(currentReads, 1); assert.equal(refusedReads, 0); queue.clear();
+});
+
+test('trailing reads retain cohort single-flight and the three-request browser limit', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue();
+  const gates = { a: [deferred(), deferred()], b: [deferred()], c: [deferred()], d: [deferred()] };
+  const counts = new Map(), inFlight = new Map(), calls = []; let active = 0, peak = 0;
+  const read = key => async () => {
+    const ordinal = counts.get(key) || 0; counts.set(key, ordinal + 1);
+    inFlight.set(key, (inFlight.get(key) || 0) + 1); assert.equal(inFlight.get(key), 1);
+    active += 1; peak = Math.max(peak, active); calls.push({ key, ordinal, at: performance.now() });
+    try { await gates[key][ordinal].promise; return key; }
+    finally { active -= 1; inFlight.set(key, inFlight.get(key) - 1); }
+  };
+  const first = ['a', 'b', 'c'].map(key => queue.read({ key, studentIds: [key], read: read(key) }));
+  await flushQueue();
+  const trailing = queue.read({ key: 'a', studentIds: ['a'], read: read('a'), refresh: true });
+  const other = queue.read({ key: 'd', studentIds: ['d'], read: read('d') });
+  gates.a[0].resolve(); await first[0]; await flushQueue();
+  assert.deepEqual(calls.map(call => call.key), ['a', 'b', 'c', 'd']);
+  await tick(5_000); assert.equal(counts.get('a'), 1, 'A due trailing read still needs a browser permit');
+  gates.b[0].resolve(); await first[1]; await flushQueue();
+  assert.equal(counts.get('a'), 2); assert.equal(calls.at(-1).at, 5_000);
+  gates.a[1].resolve(); gates.c[0].resolve(); gates.d[0].resolve();
+  await Promise.all([...first, trailing, other]);
+  assert.equal(peak, 3); assert.equal(active, 0); queue.clear();
+});
+
+test('retiring a school or binding rejects running and trailing work before a successor can publish', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue(), release = deferred();
+  const oldKey = 'school-a/session-a/binding-a', nextKey = 'school-b/session-b/binding-b';
+  const calls = []; let oldSignal;
+  const oldRead = async (ids, signal) => { calls.push({ key: oldKey, ids }); oldSignal = signal; await release.promise; return 'old school pixels'; };
+  const first = queue.read({ key: oldKey, studentIds: ['old-student'], read: oldRead });
+  await flushQueue();
+  const trailing = queue.read({ key: oldKey, studentIds: ['old-student'], read: oldRead, refresh: true });
+  const retired = Promise.allSettled([first, trailing]);
+  queue.retain(new Set([nextKey]));
+  assert.equal(oldSignal.aborted, true);
+  const next = await queue.read({ key: nextKey, studentIds: ['new-student'], read: ids => { calls.push({ key: nextKey, ids }); return 'new school pixels'; } });
+  assert.equal(next, 'new school pixels');
+  assert((await retired).every(value => value.status === 'rejected' && value.reason.name === 'AbortError'));
+  release.resolve(); await tick(5_000);
+  assert.deepEqual(calls, [{ key: oldKey, ids: ['old-student'] }, { key: nextKey, ids: ['new-student'] }]);
+  queue.clear();
+});
+
+test('cancelling one trailing waiter preserves the other, while clearing removes every pending refresh', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue(), release = deferred();
+  let calls = 0;
+  const read = async () => { calls += 1; if (calls === 1) await release.promise; return calls; };
+  const first = queue.read({ key: 'exact-binding', studentIds: ['a'], read });
+  await flushQueue();
+  const cancelled = new AbortController();
+  const notification = queue.read({ key: 'exact-binding', studentIds: ['a'], read, refresh: true, signal: cancelled.signal });
+  const refused = assert.rejects(notification, { name: 'AbortError' });
+  const periodic = queue.read({ key: 'exact-binding', studentIds: ['a'], read });
+  cancelled.abort(); await refused;
+  release.resolve(); await first; await tick(5_000);
+  assert.equal(await periodic, 2); assert.equal(calls, 2);
+  const pending = queue.read({ key: 'exact-binding', studentIds: ['a'], read, refresh: true });
+  const cleared = assert.rejects(pending, { name: 'AbortError' });
+  queue.clear(); await cleared; await tick(5_000); assert.equal(calls, 2);
+});
+
+test('a trailing request keeps the original eight-second header-and-body caller deadline', async context => {
+  const tick = queueClock(context), queue = createClasspilotScreenshotQueue();
+  await queue.read({ key: 'bounded-read', studentIds: ['a'], read: () => 'initial' });
+  await flushQueue();
+  let started = false, aborted = false, settled = false;
+  const pending = queue.read({ key: 'bounded-read', studentIds: ['a'], refresh: true, read: (_, signal) => {
+    started = true;
+    return withClasspilotReadDeadline(bounded => {
+      bounded.addEventListener('abort', () => { aborted = true; });
+      return new Promise(() => {});
+    }, signal);
+  } });
+  const failed = assert.rejects(pending, { code: 'CLASSPILOT_READ_TIMEOUT' }).then(() => { settled = true; });
+  await tick(4_999); assert.equal(started, false);
+  await tick(1); assert.equal(started, true);
+  await tick(7_999); assert.equal(settled, false); assert.equal(aborted, false);
+  await tick(1); await failed; assert.equal(aborted, true); queue.clear();
 });
 
 test('screenshot concurrency, cohort cancellation and maximum targets remain bounded', async () => {
