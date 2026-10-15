@@ -615,6 +615,7 @@ for (const supervision of [false, true]) test(`creation rechecks ${supervision ?
       if (supervision) {
         const successor = randomUUID();
         await writer.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','Successor')", [successor, `${successor}@${schoolId}.example.edu`]);
+        await writer.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [schoolId, successor]);
         await writer.query("UPDATE classpilot_supervision_contexts SET assigned_staff_id=$2 WHERE id=$1", [fixture.authorityId, successor]);
       } else await writer.query("DELETE FROM classpilot_session_staff WHERE teaching_session_id=$1 AND staff_id=$2", [fixture.authorityId, fixture.actorId]);
     }), (error: unknown) => getDatabaseErrorDetails(error).code === "COMMAND_ACTOR_AUTHORITY_STALE");
