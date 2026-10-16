@@ -12,7 +12,7 @@
     "test:api-routing": "node scripts/assert-api-routing.mjs",
     "test:classpilot-tile-batching": "node scripts/assert-classpilot-tile-batching.mjs && npm run test:classpilot-dashboard-isolation",
     "test:classpilot-student-tile": "node scripts/classpilot-student-tile-browser.mjs",
-    "test:classpilot-dashboard-theme": "node --test scripts/dashboard-theme-presets.test.mjs scripts/dashboard-theme-calendar.test.mjs",
+    "test:classpilot-dashboard-theme": "node --test scripts/dashboard-theme-presets.test.mjs scripts/dashboard-theme-calendar.test.mjs scripts/dashboard-theme-isolation.test.mjs",
     "test:passpilot-kiosk-theme": "node --test scripts/kiosk-theme.test.mjs scripts/passpilot-kiosk-theme-browser.test.mjs",
     "test:classpilot-session-lifecycle": "node --test scripts/classpilot-session-monitoring-report.test.mjs && node --test scripts/classpilot-session-lifecycle.test.mjs",
     "test:classpilot-realtime-cache": "node --test scripts/classpilot-realtime-cache.test.mjs scripts/classpilot-recovery.test.mjs",

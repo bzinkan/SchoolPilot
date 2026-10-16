@@ -20,6 +20,7 @@ const validRoutes = new Set([
   "/classpilot/coverage",
   "/classpilot/my-settings",
   "/classpilot/my-settings/schedule-changes",
+  "/classpilot/my-settings?section=appearance",
   "/classpilot/admin",
   "/classpilot/admin?tab=staff",
   "/classpilot/admin/scheduling?section=school-year",
@@ -35,6 +36,7 @@ const validRoutes = new Set([
   "/classpilot/roster",
   "/classpilot/settings",
   "/classpilot/settings?section=school",
+  "/classpilot/settings?section=appearance",
   "/classpilot/students",
 ]);
 

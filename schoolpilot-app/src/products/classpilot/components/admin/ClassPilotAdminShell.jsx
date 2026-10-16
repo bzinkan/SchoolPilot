@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { useAdminNavigation } from '../../hooks/useAdminNavigation';
 import { ADMIN_NAVIGATION, adminIdentityKey, adminLegacyDestination, adminNavigationTarget, adminRoute } from '../../lib/adminNavigation';
 import AdminNavigationProvider from './AdminNavigationProvider';
+import AdminDashboardThemeMenu from './AdminDashboardThemeMenu';
 
 function Navigation({ active, emailEnabled, mobile = false }) {
   const location = useLocation();
@@ -32,7 +33,7 @@ function Navigation({ active, emailEnabled, mobile = false }) {
   </nav>;
 }
 
-export function AdminShellFrame({ route, schoolName, displayName, emailEnabled, onLogout, children }) {
+export function AdminShellFrame({ route, schoolName, displayName, emailEnabled, onLogout, themeMenu = null, children }) {
   const location = useLocation();
   const [menu, setMenu] = useState({ key: location.key, open: false });
   const menuOpen = menu.key === location.key && menu.open;
@@ -56,7 +57,7 @@ export function AdminShellFrame({ route, schoolName, displayName, emailEnabled, 
           </Sheet>
           <div className="order-first w-full min-w-0 sm:order-none sm:w-auto sm:flex-1"><p className="truncate text-xs font-medium text-muted-foreground">{schoolName || 'School administration'}</p><h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">{route.title}</h1></div>
           <Button variant="ghost" size="sm" className="shrink-0" aria-label="Back to ClassPilot" title="Back to ClassPilot" onClick={() => { void navigation.navigate('/classpilot'); }}><ArrowLeft className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Back to ClassPilot</span></Button>
-          <div className="flex items-center gap-2"><span className="hidden max-w-32 truncate text-xs text-muted-foreground xl:block">{displayName}</span><ThemeToggle />
+          <div className="flex items-center gap-2"><span className="hidden max-w-32 truncate text-xs text-muted-foreground xl:block">{displayName}</span>{themeMenu}<ThemeToggle />
             {onLogout && <Button variant="ghost" size="icon" aria-label="Sign out" onClick={() => { void navigation.requestAction(onLogout, { id: 'logout' }); }}><LogOut className="h-4 w-4" /></Button>}
           </div>
         </div>
@@ -88,6 +89,7 @@ export default function ClassPilotAdminLayout() {
   const scopeKey = adminIdentityKey(user, activeMembership, activeSchoolId);
   return <AdminNavigationProvider key={scopeKey} scopeKey={scopeKey}>
     <AdminShellFrame route={route} schoolName={school?.name} displayName={currentUser?.displayName}
-      emailEnabled={currentUser?.mailpilotEntitled} onLogout={logout}><Outlet /></AdminShellFrame>
+      emailEnabled={currentUser?.mailpilotEntitled} onLogout={logout}
+      themeMenu={<AdminDashboardThemeMenu schoolId={activeSchoolId} viewerId={currentUser?.id} timeZone={school?.schoolTimezone || school?.timezone} />}><Outlet /></AdminShellFrame>
   </AdminNavigationProvider>;
 }

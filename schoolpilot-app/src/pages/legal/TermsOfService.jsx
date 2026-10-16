@@ -81,6 +81,7 @@ export default function TermsOfService() {
               <li>Attempt to access accounts or data belonging to other schools or users</li>
               <li>Use the Service to harass, intimidate, or discriminate against students</li>
               <li>Reverse engineer, decompile, or attempt to extract the source code of the Service</li>
+              <li>Upload images as dashboard backgrounds unless you have the right to use them; uploaded images remain private to the account that uploaded them</li>
               <li>Use the Service in violation of any applicable laws or regulations</li>
             </ul>
           </section>
