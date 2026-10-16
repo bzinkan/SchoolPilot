@@ -38,7 +38,7 @@ function RemoteControlToolbar({
 
   return (
     <>
-      <div className="border-b border-border bg-muted/30 px-6 py-4 mb-8">
+      <div className="chrome-surface chrome-toolbar border-b border-border bg-muted/30 px-6 py-4 mb-8">
         <div className="max-w-screen-2xl mx-auto">
           <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 lg:justify-start">

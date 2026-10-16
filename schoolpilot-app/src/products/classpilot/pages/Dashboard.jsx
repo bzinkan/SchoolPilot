@@ -47,6 +47,10 @@ import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
+import DashboardThemeMenu from '../components/DashboardThemeMenu';
+import { DashboardThemeContext } from '../contexts/DashboardThemeContext';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
+import '../dashboardThemes.css';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import {
@@ -470,6 +474,8 @@ export default function Dashboard() {
   const location = useLocation();
   const { currentUser, school, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
+  // The viewer's own dashboard theme. Presentation only, and never the class owner's.
+  const dashboardTheme = useDashboardTheme({ schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: Boolean(isTeacher || isAdmin) });
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const { absentIds } = useAbsentStudents();
@@ -6793,7 +6799,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       : 'bg-slate-400';
 
   return (
-    <div className="min-h-screen">
+    <DashboardThemeContext.Provider value={dashboardTheme.active}>
+    <div className="min-h-screen" data-theme={dashboardTheme.active?.id} data-theme-ornament={dashboardTheme.active?.ornament} data-theme-clearance={dashboardTheme.active?.clearance}
+      style={dashboardTheme.active ? { '--page-image': `url("${dashboardTheme.active.artwork}")` } : undefined}>
       {/* One observation lease per claimed supervision group. Rendered rather
           than looped in a hook, because a hook cannot be called in a map. */}
       {claimedPreviewContexts.map(context => (
@@ -6810,7 +6818,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         />
       ))}
       {/* Header */}
-      <header data-class-tools-navigation className="sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
+      <header data-class-tools-navigation className="chrome-surface sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
         <div className="max-w-screen-2xl mx-auto px-6 py-3">
           <div className="flex items-center justify-between gap-4">
@@ -7043,6 +7051,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
+              <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
               <ThemeToggle />
               {(isTeacher || isAdmin) && !scheduledSupervisionId && (
                 <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-chrome-control-border px-3 py-2 text-xs font-medium text-chrome-subtle hover:bg-chrome-control-hover" data-testid="button-my-settings" title="Teaching tools">
@@ -7212,25 +7221,25 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {/* Stats Cards */}
         {canShowStudentWorkspace && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
+            <div className="chrome-stat p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-green-500 flex items-center justify-center"><Users className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-online-count">{classStudentCountsKnown ? onlineCount : '—'}</p><p className="text-[13px] text-green-500 font-medium">Online Now</p></div>
               </div>
             </div>
-            <div className="p-5 rounded-xl bg-amber-500/10 border border-amber-500/20 dark:bg-amber-500/10 dark:border-amber-500/20 transition-all duration-300">
+            <div className="chrome-stat p-5 rounded-xl bg-amber-500/10 border border-amber-500/20 dark:bg-amber-500/10 dark:border-amber-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-amber-500 flex items-center justify-center"><Activity className="h-6 w-6 text-slate-900" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-idle-count">{classStudentCountsKnown ? idleCount : '—'}</p><p className="text-[13px] text-amber-500 font-medium">Idle</p></div>
               </div>
             </div>
-            <div className="p-5 rounded-xl bg-slate-500/10 border border-slate-500/20 dark:bg-slate-500/10 dark:border-slate-500/20 transition-all duration-300">
+            <div className="chrome-stat p-5 rounded-xl bg-slate-500/10 border border-slate-500/20 dark:bg-slate-500/10 dark:border-slate-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-slate-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{classStudentCountsKnown ? offlineCount : '—'}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
               </div>
             </div>
-            <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
+            <div className="chrome-stat p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-red-500 flex items-center justify-center"><AlertTriangle className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offtask-count">{classStudentCountsKnown ? offTaskCount : '—'}</p><p className="text-[13px] text-red-500 font-medium">Off-Task Alert</p></div>
@@ -7505,7 +7514,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         ) : null}
         {studentView === 'claimed' && !dashboardCapabilities.observedOtherClass ? (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3" data-testid="claimed-students-controls">
-            <div><h2 className="text-lg font-semibold">Claimed students</h2>
+            <div><h2 className="text-lg font-semibold page-heading">Claimed students</h2>
               <p className="text-sm text-muted-foreground">Supervisor: {currentUser?.displayName}</p>
               <p className="text-sm text-muted-foreground">These are earlier supervision sessions. <button className="underline" onClick={() => navigate('/classpilot/coverage?tab=live')}>Open Supervision to combine them into My room.</button></p>
               {[...new Map(claimedPickupStudents.filter(student => student.contextEndsAt).map(student => [student.contextId, student])).values()].map(student => (
@@ -7521,7 +7530,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold">Available students</h2>
+                <h2 className="text-lg font-semibold page-heading">Available students</h2>
                 <p className="text-sm text-muted-foreground">Online students from your supervision permissions who are not in an active class.</p>
                 {availablePickupData.claim?.endsAt && <p className="mt-1 text-sm" data-testid="quick-claim-deadline">Claim to {availablePickupData.claim.supervisorName || currentUser?.displayName} · ends {new Date(availablePickupData.claim.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.timezone || 'America/New_York' })}. Adding students keeps the current deadline.</p>}
               </div>
@@ -7762,7 +7771,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </p>
           </div>
         ) : (
-          <div style={{ marginRight: classToolsReservedWidth }} className="grid grid-cols-[repeat(auto-fill,minmax(min(224px,100%),1fr))] gap-6 motion-safe:transition-[margin] motion-safe:duration-200">
+          <div data-student-grid style={{ marginRight: classToolsReservedWidth }} className="grid grid-cols-[repeat(auto-fill,minmax(min(224px,100%),1fr))] gap-6 motion-safe:transition-[margin] motion-safe:duration-200">
             {filteredStudents.map((student) => {
               const studentRealtimeKey = student.studentId;
               const supervisedElsewhere = isStudentMonitoringSuppressed(student);
@@ -8969,5 +8978,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         />
       )}
     </div>
+    </DashboardThemeContext.Provider>
   );
 }

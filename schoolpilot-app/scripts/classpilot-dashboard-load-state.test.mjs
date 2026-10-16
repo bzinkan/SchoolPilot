@@ -274,6 +274,7 @@ async function configureDashboard(page, {
   authenticateTransport = true,
   transportProbe = false,
   respondTransport = true,
+  teacherPreferences = null,
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
@@ -348,6 +349,11 @@ async function configureDashboard(page, {
       });
     }
 
+    if (pathname === "/api/classpilot/teacher/preferences") {
+      await route.fulfill({ json: teacherPreferences ?? { schoolId: SCHOOL_ID, revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null,
+        effectiveMaxTabsPerStudent: null, dashboardTheme: null, effectiveDashboardTheme: null, dashboardThemesEnabled: false, dashboardThemeUploadsEnabled: false } });
+      return;
+    }
     if (pathname === "/api/auth/me") {
       await route.fulfill({ json: typeof authentication === 'function' ? await authentication(request) : authentication || authResponse(userRole) });
       return;
@@ -7576,3 +7582,54 @@ test('reliability: online and authenticated recovery bypass two held old lease P
 });
 
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));
+
+test('a dashboard theme repaints only the chrome, pauses dark mode and leaves every tile identical', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const measure = async (teacherPreferences) => {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    await page.addInitScript(() => localStorage.setItem('sp_theme', 'dark'));
+    await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+    const harness = await configureDashboard(page, { aggregate: aggregateController({ scoped: success(offlineTestingRoster()) }),
+      userRole: 'teacher', acknowledgeSessionSubscriptions: true,
+      dashboardActivity: scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:11:30Z' }),
+      coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] }, teacherPreferences });
+    await page.goto(`${baseURL}/classpilot`);
+    await page.getByTestId('card-student-offline-test-22').waitFor();
+    if (teacherPreferences?.dashboardThemesEnabled) {
+      await page.locator('[data-theme]').waitFor();
+      // The override lands on the provider's next commit; wait for that end state rather than a timer.
+      await page.waitForFunction(() => !document.documentElement.classList.contains('dark'), null, { timeout: 10_000 });
+    }
+    const tiles = await page.locator('[data-testid^="card-student-"]').evaluateAll(nodes => nodes.map(node => {
+      const box = node.getBoundingClientRect();
+      return { id: node.dataset.testid, x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height), text: node.innerText };
+    }));
+    const document_ = await page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      theme: document.querySelector('[data-theme]')?.dataset.theme ?? null,
+      ornaments: document.querySelectorAll('.tile-ornament').length,
+      leaked: document.querySelectorAll('body > [data-theme], html[data-theme]').length,
+    }));
+    const toggleLocked = await page.getByTestId('button-theme-toggle').getAttribute('aria-disabled');
+    assert.deepEqual(harness.pageErrors, []);
+    await page.close();
+    return { tiles, document: document_, toggleLocked };
+  };
+  const plain = await measure(null);
+  const theme = { kind: 'preset', preset: 'halloween' };
+  const themed = await measure({ schoolId: SCHOOL_ID, revision: 3, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
+    dashboardTheme: theme, effectiveDashboardTheme: theme, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
+  assert.equal(plain.document.theme, null);
+  assert.equal(plain.document.dark, true, 'dark mode applies when no theme is set');
+  assert.equal(plain.toggleLocked, null);
+  assert.equal(plain.document.ornaments, 0);
+  assert.equal(themed.document.theme, 'halloween');
+  assert.equal(themed.document.dark, false, 'an active theme pauses dark mode without touching the stored preference');
+  assert.equal(themed.toggleLocked, 'true', 'the light/dark toggle is inert while a theme is active');
+  assert.equal(themed.document.leaked, 0, 'the theme attribute lives on the dashboard root, never on html or body');
+  assert.ok(themed.tiles.length > 0);
+  assert.equal(themed.document.ornaments, themed.tiles.length, 'one ornament per tile');
+  const geometry = ({ text: _text, ...rest }) => rest;
+  assert.deepEqual(themed.tiles.map(geometry), plain.tiles.map(geometry), 'tile geometry is identical with and without a theme');
+  assert.deepEqual(themed.tiles.map(tile => tile.text), plain.tiles.map(tile => tile.text), 'tile copy, badges and status labels are identical');
+});

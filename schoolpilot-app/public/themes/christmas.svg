@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" width="1920" height="1200" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A decorated Christmas tree beside a lit brick fireplace with stockings and a garland">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b0a0a"/>
+      <stop offset="1" stop-color="#6b1515"/>
+    </linearGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7c5230"/>
+      <stop offset="1" stop-color="#4a2d18"/>
+    </linearGradient>
+    <radialGradient id="fireglow" cx="0.5" cy="0.6" r="0.5">
+      <stop offset="0" stop-color="#fb923c" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#fb923c" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="brick" width="88" height="44" patternUnits="userSpaceOnUse">
+      <rect width="88" height="44" fill="#7c2d12"/>
+      <path d="M0 22 H88 M44 0 V22 M0 22 V44 M88 22 V44" stroke="#9a3412" stroke-width="4"/>
+    </pattern>
+    <g id="bulbs">
+      <circle cx="0" cy="0" r="7" fill="#ef4444"/><circle cx="56" cy="10" r="7" fill="#facc15"/><circle cx="112" cy="0" r="7" fill="#22c55e"/><circle cx="168" cy="10" r="7" fill="#3b82f6"/>
+    </g>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#wall)"/>
+  <rect y="980" width="1920" height="220" fill="url(#floor)"/>
+  <g stroke="#3a2210" stroke-width="3" opacity="0.6"><path d="M0 1040 H1920 M0 1100 H1920 M0 1160 H1920"/></g>
+  <g fill="#ffffff" opacity="0.5">
+    <circle cx="140" cy="120" r="3"/><circle cx="420" cy="80" r="2.5"/><circle cx="700" cy="160" r="3"/><circle cx="1000" cy="70" r="2.5"/>
+    <circle cx="1300" cy="130" r="3"/><circle cx="1620" cy="90" r="2.5"/><circle cx="1840" cy="180" r="3"/><circle cx="260" cy="320" r="2.5"/>
+    <circle cx="880" cy="300" r="2.5"/><circle cx="1480" cy="330" r="3"/><circle cx="1760" cy="400" r="2.5"/><circle cx="560" cy="420" r="2.5"/>
+  </g>
+  <!-- window with night sky -->
+  <rect x="1480" y="200" width="300" height="360" rx="10" fill="#0f172a"/>
+  <rect x="1500" y="220" width="260" height="320" rx="6" fill="#1e3a8a"/>
+  <path d="M1630 220 V540 M1500 380 H1760" stroke="#f8fafc" stroke-width="12"/>
+  <g fill="#ffffff" opacity="0.9"><circle cx="1540" cy="260" r="4"/><circle cx="1700" cy="300" r="3"/><circle cx="1580" cy="470" r="4"/><circle cx="1720" cy="430" r="3"/><circle cx="1660" cy="250" r="2.5"/></g>
+  <path d="M1500 540 Q1560 500 1630 530 Q1700 500 1760 540 V560 H1500 Z" fill="#f8fafc"/>
+  <!-- fireplace -->
+  <ellipse cx="960" cy="920" rx="520" ry="300" fill="url(#fireglow)"/>
+  <rect x="620" y="420" width="680" height="560" fill="url(#brick)"/>
+  <rect x="580" y="380" width="760" height="56" rx="8" fill="#92400e"/>
+  <rect x="760" y="520" width="400" height="460" rx="12" fill="#1c0a05"/>
+  <rect x="790" y="930" width="340" height="30" rx="8" fill="#3f2a1d"/>
+  <path d="M960 940 C860 870 880 760 950 700 C965 760 1000 780 1015 735 C1070 800 1060 900 960 940 Z" fill="#f97316"/>
+  <path d="M960 930 C905 880 920 820 950 780 C965 820 990 835 995 805 C1030 850 1015 905 960 930 Z" fill="#fbbf24"/>
+  <path d="M960 920 C930 890 937 860 952 835 C963 860 978 866 980 856 C998 882 988 905 960 920 Z" fill="#fef3c7"/>
+  <path d="M600 400 Q960 480 1320 400" stroke="#166534" stroke-width="20" fill="none" stroke-linecap="round"/>
+  <use href="#bulbs" transform="translate(640 420)"/><use href="#bulbs" transform="translate(880 450)"/><use href="#bulbs" transform="translate(1120 420)"/>
+  <g>
+    <path d="M700 440 h50 v80 c0 26 -36 32 -50 12 Z" fill="#dc2626"/><rect x="700" y="440" width="50" height="20" fill="#fff"/>
+    <path d="M1170 440 h50 v80 c0 26 -36 32 -50 12 Z" fill="#16a34a"/><rect x="1170" y="440" width="50" height="20" fill="#fff"/>
+  </g>
+  <!-- tree -->
+  <ellipse cx="300" cy="1000" rx="230" ry="26" fill="#000" opacity="0.25"/>
+  <path d="M300 260 L440 480 L160 480 Z" fill="#16a34a"/>
+  <path d="M300 360 L480 620 L120 620 Z" fill="#15803d"/>
+  <path d="M300 470 L530 790 L70 790 Z" fill="#14532d"/>
+  <path d="M300 600 L580 980 L20 980 Z" fill="#166534"/>
+  <rect x="270" y="960" width="60" height="50" fill="#78350f"/>
+  <path d="M300 200 L316 246 L364 248 L326 278 L339 326 L300 300 L261 326 L274 278 L236 248 L284 246 Z" fill="#fcd34d"/>
+  <g>
+    <circle cx="260" cy="430" r="14" fill="#ef4444"/><circle cx="350" cy="470" r="14" fill="#3b82f6"/><circle cx="220" cy="580" r="14" fill="#facc15"/>
+    <circle cx="380" cy="600" r="14" fill="#ef4444"/><circle cx="300" cy="700" r="14" fill="#f472b6"/><circle cx="160" cy="740" r="14" fill="#3b82f6"/>
+    <circle cx="440" cy="760" r="14" fill="#facc15"/><circle cx="330" cy="860" r="14" fill="#ef4444"/><circle cx="110" cy="920" r="14" fill="#3b82f6"/><circle cx="500" cy="910" r="14" fill="#f472b6"/>
+  </g>
+  <g fill="#fef3c7">
+    <circle cx="280" cy="380" r="5"/><circle cx="330" cy="420" r="5"/><circle cx="240" cy="520" r="5"/><circle cx="360" cy="540" r="5"/><circle cx="200" cy="650" r="5"/>
+    <circle cx="410" cy="680" r="5"/><circle cx="270" cy="800" r="5"/><circle cx="470" cy="840" r="5"/><circle cx="150" cy="860" r="5"/><circle cx="380" cy="940" r="5"/>
+  </g>
+  <g>
+    <rect x="520" y="900" width="110" height="80" rx="6" fill="#ef4444"/><rect x="568" y="900" width="14" height="80" fill="#fcd34d"/><rect x="520" y="934" width="110" height="14" fill="#fcd34d"/>
+    <rect x="640" y="930" width="80" height="50" rx="6" fill="#3b82f6"/><rect x="674" y="930" width="12" height="50" fill="#fff"/>
+    <rect x="40" y="920" width="90" height="60" rx="6" fill="#f472b6"/><rect x="79" y="920" width="12" height="60" fill="#fff"/>
+  </g>
+</svg>

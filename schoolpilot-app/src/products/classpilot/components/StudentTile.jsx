@@ -23,6 +23,7 @@ import {
   screenshotStaleThresholdMs,
 } from "../lib/studentMonitoringDisplay";
 import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
+import TileOrnament from "./TileOrnament";
 import { useDecodedScreenshot } from "../hooks/useDecodedScreenshot";
 import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
 import { normalizedTileControlRevision } from "../lib/tileBatchPolling";
@@ -503,6 +504,7 @@ function StudentTile({
           }
         : undefined}
     >
+      <TileOrnament />
       <div className="p-4 space-y-3">
         {/* Header Zone - Avatar + Student Name + Available Status */}
         <div className="flex items-center justify-between gap-3">

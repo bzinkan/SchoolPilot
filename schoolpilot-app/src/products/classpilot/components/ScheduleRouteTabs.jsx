@@ -34,7 +34,7 @@ export function TeacherSettingsTabs() {
   const location = useLocation();
   const root = '/classpilot/my-settings';
   const section = teachingToolsSection(location.search);
-  const items = [['websites', 'Website tools'], ['classes', 'Class setup'], ['defaults', 'Classroom defaults']];
+  const items = [['websites', 'Website tools'], ['classes', 'Class setup'], ['defaults', 'Classroom defaults'], ['appearance', 'Appearance']];
   return <nav aria-label="Teaching tools sections" className="flex flex-wrap gap-x-5 gap-y-1 border-b">
     {items.map(([id, label]) => {
       const params = new URLSearchParams(location.pathname === root ? location.search : ''); params.set('section', id); params.delete('tab');
