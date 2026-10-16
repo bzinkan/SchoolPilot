@@ -119,10 +119,14 @@ function BackgroundUpload({ schoolId, queryKey, asset, busy, onReady, onRemove }
     const reserved = await apiRequest('POST', '/classpilot/teacher/theme-asset', { contentType: prepared.contentType, size: bytes.byteLength, sha256: await sha256Hex(bytes) }, headers(schoolId));
     const result = await apiRequest('PUT', `/classpilot/teacher/theme-asset/${encodeURIComponent(reserved.asset.id)}/content`, prepared.blob,
       { headers: { 'X-School-Id': schoolId, 'Content-Type': prepared.contentType } });
-    return result.asset;
-  }, onMutate: () => { setError(''); setStatus('Uploading your background…'); }, onSuccess: saved => {
+    return result;
+  }, onMutate: () => { setError(''); setStatus('Uploading your background…'); }, onSuccess: result => {
     if (!alive.current) return;
-    queryClient.setQueryData(queryKey, current => current && ({ ...current, dashboardThemeAsset: { id: saved.id, contentType: saved.contentType, byteSize: saved.byteSize, width: saved.width, height: saved.height } }));
+    // The server returns the refreshed preferences beside the asset (reserving
+    // may have created the row); an older server returns the asset alone.
+    const saved = result.asset;
+    queryClient.setQueryData(queryKey, current => result.preferences ?? (current && ({ ...current,
+      dashboardThemeAsset: { id: saved.id, status: saved.status, contentType: saved.contentType, byteSize: saved.byteSize, width: saved.width, height: saved.height } })));
     setStatus('Background ready. Save to use it.'); onReady();
   }, onError: failure => {
     if (!alive.current) return;
