@@ -43,17 +43,19 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
   const storedPreset = stored?.kind === 'preset' ? stored.preset : stored?.kind === 'image' ? 'image' : null;
   const storedName = typeof stored?.name === 'string' ? stored.name : '';
   const storedCalendar = stored?.calendar === true;
+  const storedKiosk = stored?.kiosk !== false;
   const preset = draft ? draft.preset : storedPreset;
   const name = draft ? draft.name : storedName;
   const calendar = draft ? draft.calendar : storedCalendar;
-  const dirty = preset !== storedPreset || name.trim() !== storedName || calendar !== storedCalendar;
+  const kiosk = draft ? draft.kiosk : storedKiosk;
+  const dirty = preset !== storedPreset || name.trim() !== storedName || calendar !== storedCalendar || kiosk !== storedKiosk;
   const uploadsEnabled = incoming.dashboardThemeUploadsEnabled === true;
   // In calendar mode the saved preset is only the Advent hint; today's pick is shown for context.
   const today = calendar ? resolveDashboardTheme({ kind: 'preset', preset: preset === 'advent' ? 'advent' : 'fall', calendar: true }, { timeZone }) : null;
   const effectivePreset = preset === 'image' ? 'image' : calendar ? (preset === 'advent' ? 'advent' : (today?.id ?? 'fall')) : preset;
   const nameValid = name.trim().length <= 40;
   const payloadTheme = () => {
-    const label = name.trim() ? { name: name.trim() } : {};
+    const label = { ...(name.trim() ? { name: name.trim() } : {}), ...(kiosk ? {} : { kiosk: false }) };
     if (effectivePreset === 'image') return asset ? { kind: 'image', imageAssetId: asset.id, ...label } : null;
     return effectivePreset ? { kind: 'preset', preset: effectivePreset, ...(calendar ? { calendar: true } : {}), ...label } : null;
   };
@@ -76,8 +78,8 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
   }, onError: () => { if (alive.current) setNotice('The background could not be removed. Try again.'); } });
   const busy = save.isPending || remove.isPending;
   useAdminNavigationBlocker({ id: 'dashboard-theme', dirty, busy, shouldBlock: teachingToolsShouldBlock, onDiscard: () => setDraft(null) });
-  const choose = id => { setDraft({ baseline, preset: id, name, calendar: id === 'image' ? false : calendar }); setNotice(''); };
-  const setCalendar = next => { setDraft({ baseline, preset: next && (preset === null || preset === 'image') ? (today?.id ?? 'fall') : preset, name, calendar: next }); setNotice(''); };
+  const choose = id => { setDraft({ baseline, preset: id, name, calendar: id === 'image' ? false : calendar, kiosk }); setNotice(''); };
+  const setCalendar = next => { setDraft({ baseline, preset: next && (preset === null || preset === 'image') ? (today?.id ?? 'fall') : preset, name, calendar: next, kiosk }); setNotice(''); };
   return <div className="space-y-5">
     {isUnavailableDashboardTheme(stored) && <p role="status" className="text-sm text-muted-foreground" data-testid="dashboard-theme-unavailable">Your saved theme is no longer available, so your dashboard shows Default.</p>}
     <fieldset disabled={busy}><legend className="mb-2 text-sm font-medium">Preloaded themes</legend>
@@ -94,8 +96,10 @@ function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
     </div>}
     <div className="max-w-sm space-y-2"><Label htmlFor="dashboard-theme-name">Name it (optional)</Label>
       <Input id="dashboard-theme-name" data-testid="input-dashboard-theme-name" value={name} maxLength={40} placeholder="Who Dey" disabled={busy || effectivePreset === null}
-        onChange={event => { setDraft({ baseline, preset, name: event.target.value, calendar }); setNotice(''); }} />
+        onChange={event => { setDraft({ baseline, preset, name: event.target.value, calendar, kiosk }); setNotice(''); }} />
       <p className="text-sm text-muted-foreground">Up to 40 characters. Only you see it.</p></div>
+    {effectivePreset !== null && <label className="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-kiosk" checked={kiosk} disabled={busy}
+      onChange={event => { setDraft({ baseline, preset, name, calendar, kiosk: event.target.checked }); setNotice(''); }} />Show my theme on the PassPilot kiosk while it is bound to my class</label>}
     {uploadsEnabled
       ? <BackgroundUpload schoolId={schoolId} queryKey={queryKey} asset={asset} busy={busy} onReady={() => choose('image')} onRemove={() => remove.mutate()} />
       : <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="dashboard-theme-upload-slot">Custom background images are not turned on for your school.</div>}

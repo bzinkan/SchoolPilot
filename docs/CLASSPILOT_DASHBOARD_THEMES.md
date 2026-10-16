@@ -210,6 +210,14 @@ that the client uses to choose between `Kiosk.jsx` and `KioskSimple.jsx`. The th
   personal data is displayed. Uploaded-image themes get a neutral glass plate, no illustration.
 - **Isolation.** Same §4.10 guarantees: theme is presentation only, the kiosk ticket, checkout and checkin flows do not
   read it, and a missing image falls back to the flat theme color.
+- **Where it lives (Phase 5 as built).** Rules: `src/services/passpilotKioskThemeRules.ts` (pure, unit-tested); loaders and the
+  kiosk asset read: `src/services/passpilotKioskTheme.ts`; calendar mode is resolved server-side by
+  `src/services/classpilotThemeCalendar.ts` (a port of the browser `calendar.js`, kept identical by a test), so the kiosk only
+  ever receives a concrete `{ kind: 'preset', preset }` or `{ kind: 'image', imageAssetId }`. The teacher's switch is the
+  optional `kiosk: false` key on the stored theme JSON (absent = on). Client: `shared/themes/kiosk.js`,
+  `passpilot/useKioskTheme.js`, `passpilot/kioskTheme.css`, `KioskNamePlate.jsx`, `KioskThemeTag.jsx`; the image is fetched
+  through the kiosk API client (token + session headers) from `GET /api/passpilot/kiosk/theme-asset/:id/content` and painted
+  from an object URL. When the gate is off the kiosk routes make no theme queries at all.
 - **Tests.** Kiosk browser test (`passpilot-kiosk-controller-browser` family): bound teacher with Halloween → kiosk shows it;
   retarget to a teacher with Default → kiosk clears it; uploaded image hidden until the admin switch is on; checkout and
   checkin pass under a theme; blocked image falls back.

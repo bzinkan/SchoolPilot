@@ -543,11 +543,14 @@ test('Appearance saves a personal dashboard theme through the preference writer 
     assert.equal(await page.getByTestId('dashboard-theme-choice-default').getAttribute('aria-checked'), 'true');
     await page.getByTestId('dashboard-theme-choice-halloween').click();
     await page.getByTestId('input-dashboard-theme-name').fill('Who Dey');
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-kiosk').isChecked(), true, 'the kiosk follows the theme by default');
+    await page.getByTestId('checkbox-dashboard-theme-kiosk').uncheck();
     await page.getByText('Unsaved theme', { exact: true }).waitFor();
     await page.getByTestId('button-save-dashboard-theme').click();
     await page.getByText('Unsaved theme', { exact: true }).waitFor({ state: 'detached' });
     await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
-    assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'preset', preset: 'halloween', name: 'Who Dey' } }]);
+    assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'preset', preset: 'halloween', name: 'Who Dey', kiosk: false } }]);
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-kiosk').isChecked(), false, 'the saved switch state is shown');
     assert.equal(await page.getByTestId('dashboard-theme-choice-halloween').getAttribute('aria-checked'), 'true');
     await page.getByTestId('dashboard-theme-choice-default').click();
     await page.getByText('Unsaved theme', { exact: true }).waitFor();

@@ -520,6 +520,7 @@ export function normalizeKioskSnapshot(value) {
     activity: payload.activity ?? null,
     assignmentRevision: payload.assignmentRevision ?? null,
     kioskStyle: payload.kioskStyle ?? config.kioskStyle,
+    theme: payload.theme ?? config.theme ?? null,
     source,
     classId,
     className,

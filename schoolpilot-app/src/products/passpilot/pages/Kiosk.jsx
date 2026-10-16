@@ -8,6 +8,10 @@ import { Badge } from "../../../components/ui/badge";
 import { ArrowLeftRight, LogIn, X } from "lucide-react";
 import { PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import KioskOfflineBanner from "../components/KioskOfflineBanner";
+import KioskNamePlate from "../components/KioskNamePlate";
+import { useKioskTheme } from "../useKioskTheme";
+import { kioskGreeting } from "../../../shared/themes/kiosk";
+import "../kioskTheme.css";
 import { usePassNow } from "../components/LivePassDuration";
 import {
   createKioskApiClient,
@@ -59,6 +63,10 @@ export default function KioskPage() {
   const [student, setStudent] = useState(null);
   const [activePass, setActivePass] = useState(null);
   const [message, setMessage] = useState("");
+  // Theme of the teacher this kiosk is bound to, as the server resolved it,
+  // and the first name shown on the confirmation plate.
+  const [theme, setTheme] = useState(null);
+  const [successName, setSuccessName] = useState(null);
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
   const [kioskPin, setKioskPin] = useState(() => kioskPinStore().getItem(KIOSK_PIN_KEY) ?? "");
   const [launchTicket, setLaunchTicket] = useState(() => takeKioskLaunchTicket());
@@ -110,6 +118,7 @@ export default function KioskPage() {
     getSessionId: () => sessionIdRef.current,
     commonHeaders: PASSPILOT_CLASS_MODEL_HEADER,
   }), [schoolId, kioskPin]);
+  const kioskTheme = useKioskTheme(theme, kioskClient);
 
   const savePin = (pin) => {
     kioskPinStore().setItem(KIOSK_PIN_KEY, pin);
@@ -151,6 +160,7 @@ export default function KioskPage() {
     sessionIdRef.current = null;
     resetSnapshotValidation();
     setSession(null);
+    setTheme(null);
     setActivity(null);
     activityRevisionRef.current = null;
     setResumeOffer(null);
@@ -361,6 +371,7 @@ export default function KioskPage() {
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setBootstrapError(null);
       setSession(data.session);
+      setTheme(data.theme ?? null);
       setResumeOffer(data.session.status === "unclaimed" ? (data.resume ?? null) : null);
       setSessionMode(true);
       return;
@@ -379,12 +390,14 @@ export default function KioskPage() {
       activityRevisionRef.current = data.assignmentRevision;
       setActivity(data.activity);
       if (redirectForKioskStyle(data.kioskStyle)) return;
+      setTheme(data.theme ?? null);
       if (data.session) setSession(data.session);
       return;
     }
     if (result.kind === "config") {
       const data = result.data;
       if (redirectForKioskStyle(data.kioskStyle)) return;
+      setTheme(data.theme ?? null);
       if (!data.session) return;
       setSession({
         id: data.session.id,
@@ -475,6 +488,7 @@ export default function KioskPage() {
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setResumeOffer(null);
       setSession(data.session);
+      setTheme(data.theme ?? null);
       setSessionMode(true);
     } catch {
       // Connection error — keep the offer; the teacher can tap again.
@@ -580,6 +594,7 @@ export default function KioskPage() {
       }
 
       setState("success");
+      setSuccessName(student.firstName ?? null);
       setMessage(`Pass issued! Heading to ${destination}.`);
       refreshKiosk();
     } catch {
@@ -609,7 +624,8 @@ export default function KioskPage() {
       }
 
       setState("success");
-      setMessage("Welcome back! Pass returned.");
+      setSuccessName(student.firstName ?? null);
+      setMessage(kioskTheme.active ? `${kioskGreeting(kioskTheme.active.id, student.firstName)} Pass returned.` : "Welcome back! Pass returned.");
       refreshKiosk();
     } catch {
       setState("error");
@@ -630,7 +646,7 @@ export default function KioskPage() {
   if (!schoolId) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
-        <Card className="bg-gray-900 border-gray-700 max-w-md w-full">
+        <Card className="kiosk-glass bg-gray-900 border-gray-700 max-w-md w-full">
           <CardContent className="py-12 text-center">
             <h1 className="text-2xl font-bold mb-4">Kiosk Setup Required</h1>
             <p className="text-gray-400">
@@ -645,7 +661,7 @@ export default function KioskPage() {
   if (!kioskPin) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
-        <Card className="bg-gray-900 border-gray-700 max-w-md w-full">
+        <Card className="kiosk-glass bg-gray-900 border-gray-700 max-w-md w-full">
           <CardContent className="py-12 text-center space-y-6">
             <h1 className="text-2xl font-bold">Enter Kiosk PIN</h1>
             <p className="text-gray-400 text-sm">
@@ -747,7 +763,7 @@ export default function KioskPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white flex flex-col items-center justify-center p-8">
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white flex flex-col items-center justify-center p-8" {...kioskTheme.rootProps}>
       <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
       <h1 className="text-3xl font-bold mb-8 text-blue-400">
         PassPilot Kiosk
@@ -761,7 +777,7 @@ export default function KioskPage() {
       <KioskActivityBanner activity={activity} />
       {/* Scan screen */}
       {state === "scan" && (
-        <Card className="bg-gray-900 border-gray-700 max-w-md w-full">
+        <Card className="kiosk-glass bg-gray-900 border-gray-700 max-w-md w-full">
           <CardContent className="py-8 space-y-6 text-center">
             <p className="text-xl text-gray-300">Scan your badge or enter your student ID</p>
             <Input
@@ -783,7 +799,7 @@ export default function KioskPage() {
 
       {/* Student found */}
       {state === "found" && student && (
-        <Card className="bg-gray-900 border-gray-700 max-w-lg w-full">
+        <Card className="kiosk-glass bg-gray-900 border-gray-700 max-w-lg w-full">
           <CardContent className="py-8 space-y-6 text-center">
             <h2 className="text-3xl font-bold">
               {student.firstName} {student.lastName}
@@ -845,7 +861,9 @@ export default function KioskPage() {
       {state === "success" && (
         <Card className="bg-green-900/50 border-green-700 max-w-md w-full">
           <CardContent className="py-12 text-center space-y-4">
-            <div className="text-6xl">{"\u2705"}</div>
+            {kioskTheme.active && successName
+              ? <KioskNamePlate themeId={kioskTheme.active.id} firstName={successName} />
+              : <div className="text-6xl">{"\u2705"}</div>}
             <h2 className="text-2xl font-bold text-green-300">{message}</h2>
             <p className="text-gray-400 text-sm">Returning to scan in a few seconds...</p>
           </CardContent>

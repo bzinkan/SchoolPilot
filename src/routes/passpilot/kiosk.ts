@@ -63,6 +63,8 @@ import {
   type KioskClassTarget,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
+import { kioskThemeFor, readKioskThemeAssetContent } from "../../services/passpilotKioskTheme.js";
+import { DashboardThemeAssetUnavailableError } from "../../services/classpilotThemeAssetStore.js";
 import type { KioskSession, Pass } from "../../schema/passpilot.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import {
@@ -141,8 +143,9 @@ async function activitySnapshot(schoolId: string, session: KioskSession, kioskNa
   for (const row of returnable) if (!roster.has(row.student.id)) roster.set(row.student.id, { ...row.student, returnOnly: true });
   const { roster: _roster, ...activity } = assignment;
   const classId = assignment.current?.classId ?? null;
+  const theme = await kioskThemeFor(schoolId, session.teacherId ?? null, school.schoolTimezone);
   const config = { source: assignment.source, classId, className: assignment.current?.name ?? null, kioskName,
-    kioskEnabled: school.kioskEnabled, kioskRequiresApproval: school.kioskRequiresApproval, defaultPassDuration: school.defaultPassDuration, kioskStyle: school.kioskStyle };
+    kioskEnabled: school.kioskEnabled, kioskRequiresApproval: school.kioskRequiresApproval, defaultPassDuration: school.defaultPassDuration, kioskStyle: school.kioskStyle, theme };
   return { ...config, config, activity, assignmentRevision: assignment.revision,
     session: { id: session.id, status: session.status, ...config, revision: session.revision },
     students: [...roster.values()].map(student => ({ ...student, classId, canReturn: returnIds.has(student.id),
@@ -683,6 +686,7 @@ router.get("/snapshot", kioskLimiter, async (req, res, next) => {
         kioskRequiresApproval: school.kioskRequiresApproval,
         defaultPassDuration: school.defaultPassDuration,
         kioskStyle: school.kioskStyle,
+        theme: await kioskThemeFor(schoolId, kioskSession?.teacherId ?? school.kioskActivatedByUserId ?? null, school.schoolTimezone),
       };
       const roster = studentRows.map((student) => ({
         id: student.id,
@@ -796,6 +800,7 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
           return res.json({
             session: await kioskSessionDeviceView(schoolId, existing),
             kioskStyle: school.kioskStyle,
+            theme: await kioskThemeFor(schoolId, existing.status === "active" ? existing.teacherId : null, school.schoolTimezone),
             resume:
               existing.status === "unclaimed"
                 ? await kioskDeviceResumeOffer(schoolId, deviceId)
@@ -807,6 +812,7 @@ router.post("/session", kioskLimiter, async (req, res, next) => {
       return res.status(201).json({
         session: await kioskSessionDeviceView(schoolId, session),
         kioskStyle: school.kioskStyle,
+        theme: await kioskThemeFor(schoolId, null, school.schoolTimezone),
         resume: await kioskDeviceResumeOffer(schoolId, deviceId),
       });
     });
@@ -863,6 +869,7 @@ router.post("/session/resume", kioskLimiter, async (req, res, next) => {
       return res.status(201).json({
         session: await kioskSessionDeviceView(schoolId, session),
         kioskStyle: school.kioskStyle,
+        theme: await kioskThemeFor(schoolId, session.teacherId ?? null, school.schoolTimezone),
       });
     });
   } catch (err) {
@@ -1338,6 +1345,55 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
   }
 });
 
+// GET /api/passpilot/kiosk/theme-asset/:id/content - The bound teacher's
+// uploaded dashboard background for this kiosk. Public (PIN-gated) like the
+// other kiosk reads: the session header names the teacher, and the bytes are
+// served only while the school allows custom backgrounds on kiosks and the
+// image is that teacher's current one. No session, no image; nothing is public.
+router.get("/theme-asset/:id/content", kioskLimiter, async (req, res, next) => {
+  try {
+    const schoolId = getKioskSchoolId(req);
+    if (!schoolId) {
+      return res.status(400).json({ error: "School ID required" });
+    }
+    const kioskAuthorization = await validateKiosk(schoolId, req.headers);
+    if (!kioskAuthorization.school) {
+      return respondKioskAuthorizationError(res, kioskAuthorization);
+    }
+    await runWithKioskTenantContext(schoolId, async () => {
+      const unavailable = () => res.status(404).json({
+        error: "This background is not available on the kiosk.",
+        code: "PASSPILOT_KIOSK_THEME_ASSET_UNAVAILABLE",
+      });
+      const sessionId = getKioskSessionId(req);
+      const session = sessionId ? await getLiveKioskSessionById(schoolId, sessionId) : null;
+      if (!session || session.status !== "active" || !session.teacherId) return unavailable();
+      let content;
+      try {
+        content = await readKioskThemeAssetContent(schoolId, session.teacherId, String(req.params.id));
+      } catch (error) {
+        if (error instanceof DashboardThemeAssetUnavailableError) {
+          return res.status(503).json({
+            error: "This background is temporarily unavailable.",
+            code: "PASSPILOT_KIOSK_THEME_ASSET_UNAVAILABLE",
+          });
+        }
+        throw error;
+      }
+      if (!content) return unavailable();
+      res.setHeader("Content-Type", content.contentType);
+      res.setHeader("Content-Length", String(content.byteSize));
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("ETag", `"${content.sha256}"`);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+      return res.end(content.body);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/passpilot/kiosk/config - Get kiosk configuration
 router.get("/config", kioskLimiter, async (req, res, next) => {
   try {
@@ -1375,6 +1431,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
               kioskRequiresApproval: school.kioskRequiresApproval,
               defaultPassDuration: school.defaultPassDuration,
               kioskStyle: school.kioskStyle,
+              theme: await kioskThemeFor(schoolId, null, school.schoolTimezone),
             });
           }
           recordPasspilotKioskQueryStatements("config");
@@ -1438,6 +1495,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
             kioskRequiresApproval: school.kioskRequiresApproval,
             defaultPassDuration: school.defaultPassDuration,
             kioskStyle: school.kioskStyle,
+            theme: await kioskThemeFor(schoolId, session.teacherId ?? null, school.schoolTimezone),
           });
         }
 
@@ -1489,6 +1547,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
           kioskRequiresApproval: school.kioskRequiresApproval,
           defaultPassDuration: school.defaultPassDuration,
           kioskStyle: school.kioskStyle,
+          theme: await kioskThemeFor(schoolId, school.kioskActivatedByUserId ?? null, school.schoolTimezone),
         });
       });
     } finally {
