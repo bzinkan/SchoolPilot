@@ -54,9 +54,9 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6 }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
+  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: null, effectiveDashboardTheme: null, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: false }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
   state.precise = precise;
   await page.route('**/api/**', async route => {
@@ -85,7 +85,9 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
       if (req.method() === 'PATCH') {
         if (state.holdSave) await new Promise(resolve => { state.releaseSave = resolve; });
         if (state.conflict) { const current = state.conflict; state.conflict = null; return route.fulfill({ status: 409, json: { code: 'CLASSPILOT_PREFERENCES_CONFLICT', current } }); }
-        const saved = { schoolId, revision: body.expectedRevision + 1, maxTabsPerStudent: body.maxTabsPerStudent, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: body.maxTabsPerStudent ?? 6 };
+        const saved = { ...state.preference, schoolId, revision: body.expectedRevision + 1,
+          ...('maxTabsPerStudent' in body ? { maxTabsPerStudent: body.maxTabsPerStudent, effectiveMaxTabsPerStudent: body.maxTabsPerStudent ?? 6 } : {}),
+          ...('dashboardTheme' in body ? { dashboardTheme: body.dashboardTheme, effectiveDashboardTheme: body.dashboardTheme } : {}) };
         if (schoolId === 'school-a') state.preference = saved;
         return route.fulfill({ json: saved });
       }
@@ -131,7 +133,7 @@ test('Teaching tools keeps section drafts, saves scoped inherited preferences wi
     await page.getByText('Research destinations', { exact: true }).waitFor();
     assert.equal(await page.getByTestId('classpilot-admin-shell').count(), 0);
     assert.equal(await page.getByRole('heading', { name: 'Teaching tools', exact: true }).count(), 1);
-    assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').count(), 3);
+    assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').count(), 4);
     await page.getByRole('button', { name: 'Back to ClassPilot', exact: true }).waitFor();
     await page.screenshot({ path: path.join(artifacts, 'teaching-tools-websites-desktop.png'), fullPage: true, animations: 'disabled' });
     await page.getByRole('link', { name: 'Classroom defaults', exact: true }).click();
@@ -522,4 +524,37 @@ test('Manage Tabs honors resolved unlimited and cleanup distinguishes scoped too
   assert.equal(teachingToolsQuery({ queryKey: ['/api/groups','class-a','students'] }), false);
   assert.equal(teachingToolsQuery({ queryKey: ['/api/groups','class-a','students','school-a','teacher-a'] }), true);
   assert.equal(teachingToolsQuery({ queryKey: ['/api/flight-paths'] }), false);
+});
+
+test('Appearance saves a personal dashboard theme through the preference writer and hides choices when themes are off', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance' });
+  try {
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    await page.getByText('Preloaded themes', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link', { name: 'Appearance', exact: true }).count(), 1);
+    assert.equal(await page.getByTestId('dashboard-theme-choice-default').getAttribute('aria-checked'), 'true');
+    await page.getByTestId('dashboard-theme-choice-halloween').click();
+    await page.getByTestId('input-dashboard-theme-name').fill('Who Dey');
+    await page.getByText('Unsaved theme', { exact: true }).waitFor();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Unsaved theme', { exact: true }).waitFor({ state: 'detached' });
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'preset', preset: 'halloween', name: 'Who Dey' } }]);
+    assert.equal(await page.getByTestId('dashboard-theme-choice-halloween').getAttribute('aria-checked'), 'true');
+    await page.getByTestId('dashboard-theme-choice-default').click();
+    await page.getByText('Unsaved theme', { exact: true }).waitFor();
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Unsaved theme', { exact: true }).waitFor({ state: 'detached' });
+    assert.deepEqual(writes(state).at(-1).body, { expectedRevision: 1, dashboardTheme: null });
+    assert(writes(state).every(row => row.path === '/api/classpilot/teacher/preferences' && row.schoolId === 'school-a'));
+    assert(!state.requests.some(row => row.path.includes('/commands')), 'saving a theme never sends a student command');
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+  const off = await open({ route: '/classpilot/my-settings?section=appearance', themes: false });
+  try {
+    await off.page.getByTestId('dashboard-theme-disabled').waitFor();
+    assert.equal(await off.page.getByTestId('dashboard-theme-choice-halloween').count(), 0);
+    assert.deepEqual(writes(off.state), []);
+    assert.deepEqual(off.state.errors, []);
+  } finally { await off.page.close(); }
 });

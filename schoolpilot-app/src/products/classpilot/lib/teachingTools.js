@@ -5,6 +5,7 @@ export function teachingToolsSection(search) {
   const section = params.get('section') || params.get('tab');
   if (['classes', 'subgroups', 'co-teachers'].includes(section)) return 'classes';
   if (['defaults', 'classroom-controls'].includes(section)) return 'defaults';
+  if (['appearance', 'theme', 'themes'].includes(section)) return 'appearance';
   return 'websites';
 }
 export function teachingToolsShouldBlock({ kind, actionId, currentLocation, nextLocation }) {

@@ -18,6 +18,7 @@ import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { teachingToolsSection, teachingToolsShouldBlock } from "../lib/teachingTools";
 import TeachingDefaults from "../components/TeachingDefaults";
+import DashboardThemeCard from "../components/DashboardThemeCard";
 import ClassroomWebsiteImport from "../components/ClassroomWebsiteImport";
 import { teachingResourceBadge, teachingResourceErrorMessage, teachingResourceList } from "../lib/teachingResourceLibrary";
 import { restrictionResourceLabel, restrictionResourceUrl } from "../lib/restrictionResourceMatcher";
@@ -1250,6 +1251,9 @@ function TeachingToolsContent({ currentUser, logout }) {
           </section>
           <section hidden={section !== "defaults"} aria-label="Personal defaults">
             <TeachingDefaults schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'defaults'} />
+          </section>
+          <section hidden={section !== "appearance"} aria-label="Appearance">
+            <DashboardThemeCard schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'appearance'} />
           </section>
         </div>
       </div>
