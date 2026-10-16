@@ -311,9 +311,14 @@ if ($ContainmentInterruptionFixture) {
 }
 
 try {
-    # --- Configuration: only the eight managed names, exact values only ---
+    # --- Configuration: only the nine managed names, exact values only ---
     Reset-ProductMock
     Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_RULES_MODE = 'on' }))['PASSPILOT_RULES_MODE'] -ceq 'on') 'An exact managed value must parse.'
+    Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ CLASSPILOT_DASHBOARD_THEMES_ENABLED = 'true' }))['CLASSPILOT_DASHBOARD_THEMES_ENABLED'] -ceq 'true') 'Dashboard themes must parse the exact true value.'
+    foreach ($value in @('on', 'True', 'TRUE', ' true', 'true ', '1')) {
+        Assert-Throws { ConvertTo-ProductChanges (New-TestConfig @{ CLASSPILOT_DASHBOARD_THEMES_ENABLED = $value }) } 'Dashboard theme aliases must be refused.'
+    }
+    Assert-Condition ('dashboardThemes' -cin (Get-ProductActivations (Get-ProductManagedState (Get-ProductEnvironment $script:Mock.Tasks[$script:TestApiArn].taskDefinition 'api')) (Resolve-ProductDesiredState (Get-ProductManagedState (Get-ProductEnvironment $script:Mock.Tasks[$script:TestApiArn].taskDefinition 'api')) (ConvertTo-ProductChanges (New-TestConfig @{ CLASSPILOT_DASHBOARD_THEMES_ENABLED = 'true' }))))) 'Turning dashboard themes on is an activation with no admission gate.'
     Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'v2' }))['PASSPILOT_REPORTS_MODE'] -ceq 'v2') 'Reports must parse the exact reviewed v2 value.'
     foreach ($value in @('on', 'V2', ' v2', 'v2 ')) {
         Assert-Throws { ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_REPORTS_MODE = $value }) } 'Report mode aliases must be refused.'
