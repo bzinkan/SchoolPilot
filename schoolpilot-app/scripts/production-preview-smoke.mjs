@@ -398,6 +398,19 @@ export function responseBodyFor(
 
   const classpilotResponses = {
     '/api/mydesk/capabilities': { enabled: false },
+    // The dashboard reads the viewer's own preferences once for the theme
+    // layer; themes stay off in the preview so the console renders Default.
+    '/api/classpilot/teacher/preferences': {
+      schoolId: testCase.persona.schoolId,
+      revision: 0,
+      maxTabsPerStudent: null,
+      schoolMaxTabsPerStudent: 6,
+      effectiveMaxTabsPerStudent: 6,
+      dashboardTheme: null,
+      effectiveDashboardTheme: null,
+      dashboardThemesEnabled: false,
+      dashboardThemeUploadsEnabled: false,
+    },
     '/api/classpilot/dashboard-activity': {
       enabled: false,
       schoolId: testCase.persona.schoolId,
