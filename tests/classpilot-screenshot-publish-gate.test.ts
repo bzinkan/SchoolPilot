@@ -11,6 +11,11 @@ import type { WebSocket } from "ws";
 // tracking-window and active-observation capabilities are rolled out.
 process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "false";
+assert.ok(process.env.TEST_REDIS_URL, "Ordered screenshot publication requires an explicit local Redis fixture");
+assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(new URL(process.env.TEST_REDIS_URL).hostname),
+  "Screenshot publication fixtures refuse non-loopback Redis");
+// Keep unrelated API limiter clients in this fixture's original MemoryStore
+// mode; only the realtime adapter under test owns the explicit Redis socket.
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
 process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
@@ -28,6 +33,9 @@ globalThis.setInterval = ((
   timer.unref?.();
   return timer;
 }) as typeof setInterval;
+
+await import(new URL("../dist/middleware/rateLimiter.js", import.meta.url).href);
+process.env.REDIS_URL = process.env.TEST_REDIS_URL;
 
 const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const { runWithTenantContext } = await import("../dist/middleware/tenantContext.js");
@@ -47,7 +55,7 @@ const {
   renewClasspilotObservationLease,
   resetClasspilotObservationLeasesForTests,
 } = await import("../dist/services/classpilotObservationLease.js");
-const { recordLocalOrderedDelivery } = await import("../dist/realtime/ws-redis.js");
+const { recordLocalOrderedDelivery, disposeWSRedis } = await import("../dist/realtime/ws-redis.js");
 const { classpilotScreenshotAvailableOrderingKey } = await import(
   "../dist/services/classpilotScreenshotAvailability.js"
 );
@@ -469,6 +477,7 @@ after(async () => {
       await db.execute(sql`UPDATE schools SET status='suspended',is_active=false,deleted_at=now() WHERE id = ${schoolId}`);
     });
   } finally {
+    await disposeWSRedis();
     await Promise.allSettled([
       pool.end(),
       sessionPool.end(),

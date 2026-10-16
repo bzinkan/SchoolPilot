@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { CLASSPILOT_SCHEDULE_BOUNDARY_SQL } from "../src/db/classpilotScheduleBoundaryMigration.js";
 
+// This fixture exercises the dedicated schedule worker's real query pools.
+process.env.SCHEDULER_ENABLED = "true";
 let pool: pg.Pool;
 let worker: typeof import("../src/services/classpilotScheduleBoundaries.js");
 let selectSchedule: typeof import("../src/services/classpilotDashboardSchedule.js")["selectDashboardSchedule"];
@@ -18,13 +20,14 @@ before(async () => {
   await pool.query(CLASSPILOT_SCHEDULE_BOUNDARY_SQL);
   worker = await import("../src/services/classpilotScheduleBoundaries.js");
   ({ selectDashboardSchedule: selectSchedule } = await import("../src/services/classpilotDashboardSchedule.js"));
-  await pool.query("INSERT INTO schools(id,name,domain) VALUES($1,'Boundary test','boundary.example.edu')", [schoolId]);
+  await pool.query("INSERT INTO schools(id,name,domain) VALUES($1,$2,$3)",
+    [schoolId, `Boundary test ${schoolId}`, `${schoolId}.boundary.example.edu`]);
   await pool.query("INSERT INTO classpilot_school_schedules(school_id,config,revision) VALUES($1,'{}',7)", [schoolId]);
 });
 
 after(async () => {
   await pool.query("DELETE FROM classpilot_school_schedules WHERE school_id=$1", [schoolId]);
-  await pool.query("DELETE FROM schools WHERE id=$1", [schoolId]);
+  // Current lifecycle guards retain this synthetic root in the disposable local fixture DB.
   const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
   const app = await import("../src/db.js");
   await Promise.all([pool.end(), schedulerPool.end(), schedulerLockPool.end(), app.pool.end(), app.sessionPool.end()]);

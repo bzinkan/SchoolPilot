@@ -93,6 +93,7 @@ const frames = [];
 const evidence = [];
 const workerLog = [];
 const heartbeatPolicies = [];
+const workerWakeDiagnostics = [];
 const inSchool = fn => tenant({ schoolId: school.id }, fn);
 const controlAuthority = state => state ? { teachingSessionId: state.teachingSessionId,
   supervisionContextId: state.supervisionContextId, revision: state.revision, desiredState: state.desiredState,
@@ -428,29 +429,104 @@ try {
   await staffRequest(`/api/classpilot/supervision-contexts/${lastScenario.authority.supervisionContextId}/observation-lease`,
     { viewerInstanceId: `preview-${randomUUID()}`, scope: { kind: 'class' } }, 'PUT');
   const extensionOrigin = `chrome-extension://${new URL(worker.url()).host}/`;
+  const suspendedWorker = worker;
+  const isolateMarker = randomUUID();
+  await suspendedWorker.evaluate(marker => { globalThis.__classpilotPreviewIsolate = marker; }, isolateMarker);
   const cdp = await browser.newCDPSession(studentPage);
   const versions = new Map();
-  cdp.on('ServiceWorker.workerVersionUpdated', event => { for (const version of event.versions || []) versions.set(version.versionId, version); });
+  let requestedStopIdentity;
+  let workerRetirementProof;
+  cdp.on('ServiceWorker.workerVersionUpdated', event => {
+    for (const version of event.versions || []) {
+      versions.set(version.versionId, version);
+      if (requestedStopIdentity && version.versionId === requestedStopIdentity.versionId
+        && version.scriptURL?.startsWith(extensionOrigin) && version.runningStatus === 'stopped') {
+        workerRetirementProof = 'exact-version-stopped';
+      }
+    }
+  });
+  cdp.on('Target.targetDestroyed', event => {
+    if (requestedStopIdentity && event.targetId === requestedStopIdentity.targetId) {
+      workerRetirementProof = 'exact-target-destroyed';
+    }
+  });
+  await cdp.send('Target.setDiscoverTargets', { discover: true });
   await cdp.send('ServiceWorker.enable');
-  await waitFor(() => [...versions.values()].some(version => version.scriptURL?.startsWith(extensionOrigin)), 'worker CDP identity');
-  for (const version of versions.values()) if (version.scriptURL?.startsWith(extensionOrigin)) await cdp.send('ServiceWorker.stopWorker', { versionId: version.versionId });
+  const originalVersion = await waitFor(async () => {
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const targets = targetInfos.filter(target => target.type === 'service_worker' && target.url.startsWith(extensionOrigin));
+    if (targets.length !== 1) return null;
+    return [...versions.values()].find(version => version.targetId === targets[0].targetId
+      && version.runningStatus === 'running' && version.scriptURL?.startsWith(extensionOrigin));
+  }, 'exact running worker CDP identity');
+  assert.equal(await suspendedWorker.evaluate(() => globalThis.__classpilotPreviewIsolate), isolateMarker,
+    'the marked original isolate must survive CDP identity acquisition');
+  const beforeStopTargets = (await cdp.send('Target.getTargets')).targetInfos
+    .filter(target => target.type === 'service_worker' && target.url.startsWith(extensionOrigin));
+  assert.deepEqual(beforeStopTargets.map(target => target.targetId), [originalVersion.targetId],
+    'stop only the exact marked original target');
+  requestedStopIdentity = originalVersion;
+  await cdp.send('ServiceWorker.stopWorker', { versionId: originalVersion.versionId });
   await waitFor(async () => { const { targetInfos } = await cdp.send('Target.getTargets');
-    return !targetInfos.some(target => target.type === 'service_worker' && target.url.startsWith(extensionOrigin));
-  }, 'real worker suspension');
+    // A surviving offscreen event may immediately wake a replacement. Prove
+    // retirement without requiring silence. Native retirement events retain
+    // the proof when the same identifier revives between 250ms polls.
+    if (!targetInfos.some(target => target.targetId === originalVersion.targetId)) {
+      workerRetirementProof ??= 'exact-target-absent';
+    }
+    return workerRetirementProof;
+  }, 'original worker target retirement');
   const restartAt = Date.now();
   await studentPage.goto(`${baseUrl}/lesson?after-suspension`); await studentPage.bringToFront();
+  let acceptedWorkerWake;
   worker = await waitFor(async () => {
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const freshTargets = targetInfos.filter(target => target.type === 'service_worker'
+      && target.url.startsWith(extensionOrigin));
+    if (freshTargets.length !== 1) return null;
+    const runningVersion = [...versions.values()].find(version => version.targetId === freshTargets[0].targetId
+      && version.runningStatus === 'running' && version.scriptURL?.startsWith(extensionOrigin));
+    if (!runningVersion) return null;
     for (const candidate of [...browser.serviceWorkers()].reverse()) {
-      try { if (await candidate.evaluate(() => chrome.runtime.id)) return candidate; } catch { /* retired worker */ }
+      if (!candidate.url().startsWith(extensionOrigin)) continue;
+      try {
+        const identity = await candidate.evaluate(() => ({ extensionId: chrome.runtime.id,
+          priorMarker: globalThis.__classpilotPreviewIsolate,
+          restoreDeclarationsPresent: typeof authStateRestorePromise !== 'undefined'
+            && typeof classroomStateRestorePromise !== 'undefined' }));
+        const diagnostic = { targetCount: freshTargets.length,
+          targetIdentifierReused: freshTargets[0].targetId === originalVersion.targetId,
+          versionIdentifierReused: runningVersion.versionId === originalVersion.versionId,
+          workerHandleReused: candidate === suspendedWorker,
+          extensionIdentityMatches: identity.extensionId === new URL(extensionOrigin).host,
+          originalIsolateMarkerAbsent: identity.priorMarker === undefined,
+          restoreDeclarationsPresent: identity.restoreDeclarationsPresent };
+        if (workerWakeDiagnostics.length < 64) workerWakeDiagnostics.push(diagnostic);
+        if (!diagnostic.extensionIdentityMatches || !diagnostic.originalIsolateMarkerAbsent
+          || !diagnostic.restoreDeclarationsPresent) continue;
+        // Chrome may revive the same target/version and Playwright handle. The
+        // observed retirement plus loss of the original global nonce proves a
+        // fresh V8 isolate; identifiers alone do not establish worker recovery.
+        const freshMarker = randomUUID();
+        await candidate.evaluate(marker => { globalThis.__classpilotPreviewIsolate = marker; }, freshMarker);
+        assert.equal(await candidate.evaluate(() => globalThis.__classpilotPreviewIsolate), freshMarker);
+        acceptedWorkerWake = diagnostic;
+        return candidate;
+      } catch {
+        if (workerWakeDiagnostics.length < 64) workerWakeDiagnostics.push({ evaluationUnavailable: true });
+      }
     }
     return null;
-  }, 'worker navigation wake');
+  }, 'fresh worker isolate after navigation wake');
   recordWorkerConsole(worker);
   const afterSuspend = await waitFor(async () => { const frame = await tile(lastScenario.authority);
     return frame && frame.screenshot !== beforeSuspend.screenshot && Number(frame.timestamp) >= restartAt ? frame : null;
   }, 'fresh capture after worker suspension', 30_000);
   await renderTile(lastScenario.authority, afterSuspend, [7, 89, 133]);
   evidence.push({ scenario: 'MV3 suspension and navigation wake', firstMs: Date.now() - restartAt,
+    originalWorkerTargetRetired: true, freshWorkerIsolateVerified: true,
+    workerRetirementProof,
+    workerWake: acceptedWorkerWake,
     screenshotDigest: createHash('sha256').update(afterSuspend.screenshot).digest('hex') });
   await cdp.detach();
   }
@@ -477,6 +553,7 @@ try {
   }, null, 2));
   await writeFile(join(evidencePath, 'worker.log'), workerLog.join('\n'));
   await writeFile(join(evidencePath, 'heartbeat-policies.json'), JSON.stringify(heartbeatPolicies, null, 2));
+  await writeFile(join(evidencePath, 'worker-wake-diagnostics.json'), JSON.stringify(workerWakeDiagnostics, null, 2));
   if (fixtureSocket) sockets.removeWsClient(fixtureSocket);
   await browser?.close();
   await teacherBrowser?.close();
@@ -490,9 +567,13 @@ try {
       'classpilot_session_summary_deliveries', 'teaching_sessions', 'classpilot_scheduled_conflicts']) {
       await db.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${school.id}`);
     }
-    await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=${school.id})`);
-    await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=${school.id})`);
-    await db.execute(sql`DELETE FROM groups WHERE school_id=${school.id}`);
+    // The primary-teacher mirror constraint is deferred until commit. Retire
+    // this generated school's membership rows and groups in one transaction.
+    await db.transaction(async tx => {
+      await tx.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=${school.id})`);
+      await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=${school.id})`);
+      await tx.execute(sql`DELETE FROM groups WHERE school_id=${school.id}`);
+    });
     if (student) await db.execute(sql`DELETE FROM student_sessions WHERE student_id=${student.id}`);
     for (const table of ['student_devices', 'devices', 'students', 'settings', 'product_licenses', 'school_memberships', 'classpilot_school_schedules']) {
       if (table === 'student_devices') { if (student) await db.execute(sql`DELETE FROM student_devices WHERE student_id=${student.id}`); }

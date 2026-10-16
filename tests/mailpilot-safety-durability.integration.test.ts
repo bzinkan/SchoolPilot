@@ -46,7 +46,7 @@ after(async()=>{
   try{
     await pool.query("DROP TRIGGER IF EXISTS mailpilot_durability_fixture_failure ON safety_notification_outbox; DROP FUNCTION IF EXISTS mailpilot_durability_fixture_failure()");
     for(const table of ["email_alerts","mailpilot_watches","email_scan_log","audit_logs","student_timeline_events","student_safety_cases","school_memberships","product_licenses","students"])await pool.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`,[[schoolA,schoolB]]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])",[[schoolA,schoolB]]);await pool.query("DELETE FROM users WHERE id=$1",[admin]);
+    // Current lifecycle guards retain uniquely owned synthetic school/staff roots in this disposable fixture DB.
   }finally{
     const {sessionPool}=await import("../src/db.js");const {schedulerPool,schedulerLockPool}=await import("../src/services/schedulerDb.js");
     await Promise.all([pool.end(),sessionPool.end(),schedulerPool.end(),schedulerLockPool.end()]);

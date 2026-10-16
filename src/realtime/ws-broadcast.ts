@@ -509,6 +509,30 @@ function validExactStudentSocketBinding(binding: ExactStudentSocketBinding): boo
   ].every((value) => typeof value === "string" && value.length > 0 && value.length <= 256);
 }
 
+/** Admission hint only. A matching socket never grants durable authority;
+ * receiving relays still take the canonical database locks before sending. */
+export function hasStudentBindingSocketLocal(
+  binding: ExactStudentSocketBinding,
+  message: unknown,
+  options: { requiredCapability?: string; requiredCapabilities?: readonly string[] } = {},
+): boolean {
+  if (!validExactStudentSocketBinding(binding)) return false;
+  const precise = classpilotStudentFrameCarriesPreciseRestriction(message);
+  if (precise && !classpilotStudentPreciseFrameDeliverable(message)) return false;
+  const required = [...new Set([
+    ...(options.requiredCapabilities ?? (options.requiredCapability ? [options.requiredCapability] : requiredStudentCapabilities(message))),
+    ...(precise ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY] : []),
+    ...(plainObject(message) && message.type === "teacher-message" && message.privateChatLifecycle != null ? ["privateChatLifecycleV1"] : []),
+  ])];
+  return [...(studentSocketsBySchool.get(binding.schoolId) ?? [])].some(ws => {
+    const client = wsClients.get(ws);
+    return client?.authenticated === true && client.role === "student"
+      && client.deviceId === binding.deviceId && client.studentId === binding.studentId
+      && client.studentSessionId === binding.studentSessionId && ws.readyState === WebSocket.OPEN
+      && required.every(capability => client.acceptedCapabilities?.includes(capability));
+  });
+}
+
 /**
  * Deliver only to the socket authenticated for one immutable student binding.
  * Redis delivery can run after the publishing transaction releases its

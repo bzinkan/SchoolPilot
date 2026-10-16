@@ -33,7 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from '../../../components/ui/textarea';
 import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
-import { apiRequest, queryClient } from '../../../lib/queryClient';
+import { apiRequest as unboundedApiRequest, queryClient } from '../../../lib/queryClient';
 import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
@@ -64,10 +64,10 @@ import {
   removeLegacyScreenshotsFromTileBatchData,
   removeStudentsFromTileBatchData,
   retainFreshTileScreenshotsOnNull,
-  runBoundedTileScreenshotJobs,
   screenshotCohortPlaceholderData,
   tileBatchRequestShouldPoll,
 } from '../lib/tileBatchPolling';
+import { createClasspilotScreenshotQueue, classpilotSnapshotRequest, classpilotReconnectDelay, createClasspilotTransportMonitor, selectClasspilotFastStudents } from '../lib/classpilotRecovery';
 import {
   purgeAllStudentTileCaches,
   purgeLegacyScreenshotTileCaches,
@@ -166,7 +166,8 @@ import {
   scheduleChangeKeys,
   unwrapToday,
 } from '../lib/scheduleChanges';
-import { useObservationLease } from '../hooks/useObservationLease';
+import { useObservationLease, CLASSPILOT_TRANSPORT_RECOVERED_EVENT } from '../hooks/useObservationLease';
+import { useClasspilotPreviewRecovery } from '../hooks/useClasspilotPreviewRecovery';
 import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
 import { chatStudentName, countUnreadByStudent, deriveChatConversations, describeChatReplyError, looksLikeQuestion } from '../lib/chatThreads';
@@ -220,11 +221,11 @@ const EMPTY_LIVE_VIEW = Object.freeze({
   expanded: false,
 });
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const apiRequest = (method, path, body, options) => classpilotSnapshotRequest(unboundedApiRequest, method, path, body, options);
 const SESSION_SUBSCRIPTION_ACK_TIMEOUT_MS = 5_000;
 const SESSION_SUBSCRIPTION_RETRY_MS = Object.freeze([1_000, 2_000, 5_000, 10_000, 30_000]);
-const SCREENSHOT_EVENT_COALESCE_MS = 1_000;
-const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;
-const SCREENSHOT_EVENT_MAX_CONCURRENCY = 3;
+const SCREENSHOT_EVENT_COALESCE_MS = 250;
+const SCREENSHOT_EVENT_RATE_LIMIT_MS = 250;
 // Retain the WebRTC integration without exposing it in the Dashboard.
 // Scheduled classrooms also use passive screenshots as their viewing surface.
 const LIVE_VIEW_UI_ENABLED = false;
@@ -689,7 +690,16 @@ export default function Dashboard() {
   const targetedScreenshotContextRef = useRef(null);
   const targetedScreenshotFenceGenerationRef = useRef({ key: null, generation: 0 });
   const targetedScreenshotAbortControllersRef = useRef(new Set());
-  const targetedScreenshotFlushInFlightRef = useRef(false);
+  const clientHealthRef = useRef({ freshnessBuckets: [0, 0, 0, 0, 0, 0], counters: { readTimeouts: 0, reconnects: 0, recoveries: 0, eventGapRecoveries: 0 } });
+  const [screenshotQueue] = useState(() => createClasspilotScreenshotQueue({
+    onSample: sample => { if (sample.outcome === 'timeout') clientHealthRef.current.counters.readTimeouts += 1; },
+  }));
+  const screenshotQueueRef = useRef(screenshotQueue);
+  const recoveryRefreshRef = useRef(() => Promise.resolve());
+  const fastScreenshotStudentIdsRef = useRef(new Set());
+  const screenshotRecoveryRef = useRef(new Map());
+  const [transportHealthy, setTransportHealthy] = useState(false);
+  const [connectionPhase, setConnectionPhase] = useState('connecting');
   const studentDetailsOpenerRef = useRef(null);
   const studentDetailsFocusGenerationRef = useRef(0);
   const expandedScreenshotOpenerRef = useRef(null);
@@ -741,7 +751,6 @@ export default function Dashboard() {
   }
   const studentViewRef = useRef(studentView);
   studentViewRef.current = studentView;
-  const maxReconnectDelay = 30000;
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
   const [sessionSubscriptionState, setSessionSubscriptionState] = useState({
     status: 'not_applicable',
@@ -795,7 +804,6 @@ export default function Dashboard() {
       }
     }
     if (pendingScreenshotStudentIdsRef.current.size === 0) return;
-    if (targetedScreenshotFlushInFlightRef.current) return;
     if (immediate && screenshotRefetchTimeoutRef.current) {
       clearTimeout(screenshotRefetchTimeoutRef.current);
       screenshotRefetchTimeoutRef.current = null;
@@ -816,12 +824,10 @@ export default function Dashboard() {
       pendingScreenshotStudentIdsRef.current.clear();
       if (pendingIds.length === 0) return;
       lastScreenshotRefetchAtRef.current = Date.now();
-      targetedScreenshotFlushInFlightRef.current = true;
-      void Promise.resolve(targetedScreenshotFlushRef.current(pendingIds)).finally(() => {
-        targetedScreenshotFlushInFlightRef.current = false;
-        if (pendingScreenshotStudentIdsRef.current.size > 0) {
-          queueTargetedScreenshotRefresh(EMPTY_LIST);
-        }
+      void Promise.resolve(targetedScreenshotFlushRef.current(pendingIds)).catch(() => {}).finally(() => {
+        // Wake any newer coalesced work without holding other cohorts behind
+        // this request. An already armed timer remains the single owner.
+        if (pendingScreenshotStudentIdsRef.current.size > 0) queueTargetedScreenshotRefresh(EMPTY_LIST);
       });
     }, delayMs);
   }, []);
@@ -1125,6 +1131,7 @@ export default function Dashboard() {
       return data;
     } catch (error) {
       if (activityScopeRef.current !== activityScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError');
+      if (error?.code === 'CLASSPILOT_READ_TIMEOUT' && !path.startsWith('/classpilot/tiles/')) clientHealthRef.current.counters.readTimeouts += 1;
       throw error;
     }
   }, [activeSchoolId, contextAuthorityRevision, activityScopeKey]);
@@ -1317,6 +1324,8 @@ export default function Dashboard() {
     ),
     [aggregatedStudentsScopeKey],
   );
+  const aggregateReadsEnabled = !terminalSessionError && !dashboardActivityLoading
+    && (!scheduledClassEnabled || Boolean(effectiveAuthority));
   const {
     data: cachedStudentsSnapshot,
     isLoading: studentsLoading,
@@ -1362,10 +1371,10 @@ export default function Dashboard() {
     },
     // WebSocket delivery is the fast path, never the only path. Keeping a
     // stable per-view jitter avoids a school-wide bell-time polling herd.
-    enabled: !terminalSessionError && !dashboardActivityLoading && (!scheduledClassEnabled || Boolean(effectiveAuthority)),
+    enabled: aggregateReadsEnabled,
     retry: (failureCount, error) => !isClasspilotSessionUnavailable(error, effectiveActivityId)
       && error?.response?.status !== 401 && failureCount < 1,
-    refetchInterval: terminalSessionError ? false : aggregateReconciliationIntervalMs,
+    refetchInterval: terminalSessionError ? false : transportHealthy ? aggregateReconciliationIntervalMs : 10000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10000,
@@ -1376,11 +1385,11 @@ export default function Dashboard() {
   const studentsError = terminalSessionError || aggregateError;
   const refetchStudents = useCallback(() => (
     coalescedRefreshRef.current(`aggregate:${aggregatedStudentsScopeKey}`, () => (
-      sessionReadDenialsRef.current.has(sessionReadAuthorityKey)
+      !aggregateReadsEnabled || sessionReadDenialsRef.current.has(sessionReadAuthorityKey)
         ? undefined
         : rawRefetchStudents({ cancelRefetch: false })
     ))
-  ), [aggregatedStudentsScopeKey, rawRefetchStudents, sessionReadAuthorityKey]);
+  ), [aggregatedStudentsScopeKey, rawRefetchStudents, sessionReadAuthorityKey, aggregateReadsEnabled]);
   useEffect(() => {
     if (!terminalSessionError) return;
     void queryClient.cancelQueries({ queryKey: aggregatedStudentsQueryKey, exact: true });
@@ -1534,7 +1543,7 @@ export default function Dashboard() {
       .sort(),
   );
   const sessionRealtimeHealthy = Boolean(
-    effectiveActivityId
+    transportHealthy && wsAuthenticated && wsConnected && effectiveActivityId
     && sessionSubscriptionState.status === 'active'
     && sessionSubscriptionState.sessionId === effectiveActivityId,
   );
@@ -1606,8 +1615,7 @@ export default function Dashboard() {
     const reconcileVisibleDashboard = () => {
       if (document.visibilityState === 'hidden') return;
       setFreshnessVersion((version) => version + 1);
-      void refreshDashboardActivity({ cancelRefetch: true });
-      void refetchStudents();
+      void recoveryRefreshRef.current();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') reconcileVisibleDashboard();
@@ -1833,7 +1841,7 @@ export default function Dashboard() {
     queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
     queryFn: ({ signal }) => requestActivityApi('GET', `/commands/active-state?${activityAuthorityQuery(effectiveAuthority)}`, undefined, { signal }),
     enabled: !!effectiveActivity?.id && !retainedObservedSession,
-    refetchInterval: scheduledSupervisionId ? 10000 : wsAuthenticated ? false : 30000,
+    refetchInterval: transportHealthy ? 30000 : 10000,
   });
   const activeClassroomStates = classroomStateResponse?.states ?? EMPTY_LIST;
   const restoredClassroomTransient = scheduledSupervisionId ? classroomStateResponse?.transient : null;
@@ -1910,7 +1918,7 @@ export default function Dashboard() {
     queryKey: ['/api/teacher/raised-hands', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
     queryFn: ({ signal }) => requestActivityApi('GET', `/teacher/raised-hands?${activityAuthorityQuery(effectiveAuthority, true)}`, undefined, { signal }),
     enabled: !!effectiveActivity?.id && dashboardCapabilities.canUseTeacherFab,
-    refetchInterval: wsAuthenticated ? false : 30000,
+    refetchInterval: transportHealthy ? 30000 : 10000,
   });
 
   const chat = useClasspilotSessionChat({
@@ -2012,6 +2020,21 @@ export default function Dashboard() {
     }
   }, [initialRaisedHands, effectiveActivity?.id]);
 
+  const reconcileRecoveredDashboard = useCallback(() => coalescedRefreshRef.current(`recovery:${activityScopeKey}`, async () => {
+    if (document.visibilityState !== 'visible') return;
+    const scope = activityScopeKey;
+    await Promise.allSettled([
+      refreshDashboardActivity({ cancelRefetch: false }), refetchStudents(),
+      queryClient.refetchQueries({ queryKey: coverageKeysRef.current.claimedStudentsQueryKey, exact: true, type: 'active' }),
+      queryClient.refetchQueries({ queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id], type: 'active' }),
+      queryClient.refetchQueries({ queryKey: ['/api/teacher/raised-hands', activeSchoolId, currentUser?.id, effectiveAuthorityKey], exact: true, type: 'active' }),
+      queryClient.refetchQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey], exact: true, type: 'active' }),
+    ]);
+    if (activityScopeRef.current !== scope || document.visibilityState !== 'visible') return;
+    queueTargetedScreenshotRefresh([...fastScreenshotStudentIdsRef.current], { immediate: true });
+  }), [activityScopeKey, refreshDashboardActivity, refetchStudents, activeSchoolId, currentUser?.id, effectiveAuthorityKey, queueTargetedScreenshotRefresh]);
+  useLayoutEffect(() => { recoveryRefreshRef.current = reconcileRecoveredDashboard; }, [reconcileRecoveredDashboard]);
+
   // WebSocket connection with automatic reconnection
   useEffect(() => {
     const generation = websocketGenerationRef.current + 1;
@@ -2019,6 +2042,9 @@ export default function Dashboard() {
     const pendingScreenshotStudentIds = pendingScreenshotStudentIdsRef.current;
     const targetedScreenshotAbortControllers = targetedScreenshotAbortControllersRef.current;
     let disposed = false;
+    let transportDenied = false;
+    let authenticatedOnce = false;
+    let lastAuthenticatedSocket = null;
     const isCurrentGeneration = () => !disposed && websocketGenerationRef.current === generation;
     const isCurrentSocket = (socket) => isCurrentGeneration() && wsRef.current === socket;
     if (reconnectTimeoutRef.current) {
@@ -2126,7 +2152,7 @@ export default function Dashboard() {
     };
 
     const connectWebSocket = () => {
-      if (!isCurrentGeneration()) return;
+      if (!isCurrentGeneration() || transportDenied || document.visibilityState !== 'visible' || navigator.onLine === false) return;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -2143,12 +2169,19 @@ export default function Dashboard() {
       try {
         const socket = new WebSocket(wsUrl);
         wsRef.current = socket;
+        setConnectionPhase('connecting'); setTransportHealthy(false);
+        socket._monitor = createClasspilotTransportMonitor({ socket,
+          onHealth: healthy => { if (isCurrentSocket(socket)) setTransportHealthy(healthy); },
+          onPhase: phase => { if (isCurrentSocket(socket)) setConnectionPhase(phase); },
+          onStable: () => { reconnectAttemptsRef.current = 0; },
+          onTimeout: () => { if (isCurrentSocket(socket)) socket.close(4000, 'Monitoring response timeout'); },
+        });
 
         socket.onopen = () => {
           if (!isCurrentSocket(socket)) return;
           console.log("[Dashboard] WebSocket connected successfully");
           setWsConnected(true);
-          reconnectAttemptsRef.current = 0;
+          socket._monitor.opened();
           const auth = websocketAuthRef.current;
           if (auth) {
             socket.send(JSON.stringify({
@@ -2157,19 +2190,14 @@ export default function Dashboard() {
             }));
           }
 
-          // Heartbeat to keep CloudFront/ALB connection alive
-          const heartbeatInterval = setInterval(() => {
-            if (socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({ type: 'ping' }));
-            }
-          }, 20000);
-          socket._heartbeatInterval = heartbeatInterval;
+
         };
 
         socket.onmessage = (event) => {
           if (!isCurrentSocket(socket)) return;
           try {
             const message = JSON.parse(event.data);
+            socket._monitor.message(message);
             if (
               message.type === 'session-subscription-success'
               || message.type === 'session-subscription-error'
@@ -2177,14 +2205,17 @@ export default function Dashboard() {
               sessionSubscriptionPendingRef.current?.handleMessage?.(message, generation);
             }
             if (message.type === 'auth-success') {
+              socket._monitor.authenticated(message);
+              if (authenticatedOnce && lastAuthenticatedSocket !== socket) window.dispatchEvent(new Event(CLASSPILOT_TRANSPORT_RECOVERED_EVENT));
+              authenticatedOnce = true;
+              lastAuthenticatedSocket = socket;
               setWsAuthenticated(true);
+              clientHealthRef.current.counters.recoveries += 1;
+              void recoveryRefreshRef.current();
               authenticatedSchoolIdRef.current = activeSchoolIdRef.current;
-              const queryKey = aggregatedStudentsQueryKeyRef.current;
-              if (queryKey) queryClient.refetchQueries({ queryKey, exact: true });
-              queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity', activeSchoolIdRef.current] });
             }
             if (message.type === 'auth-error') {
-              setWsAuthenticated(false);
+              setWsAuthenticated(false); setTransportHealthy(false); setConnectionPhase('recovering');
               authenticatedSchoolIdRef.current = null;
               webrtc.cleanup();
             }
@@ -2547,6 +2578,7 @@ export default function Dashboard() {
                 ? coverageRealtimeMessageEligibility(message)
                 : classRealtimeMessageEligibility(message);
               if (!eligible) return;
+              screenshotRecoveryRef.current.delete(message.studentId);
               queueTargetedScreenshotRefresh(message.studentId);
             }
             if (message.type === 'student-event') {
@@ -2563,17 +2595,19 @@ export default function Dashboard() {
           }
         };
 
-        socket.onclose = () => {
-          if (socket._heartbeatInterval) clearInterval(socket._heartbeatInterval);
-          socket._heartbeatInterval = null;
+        socket.onclose = (event) => {
+          socket._monitor?.dispose();
           if (!isCurrentSocket(socket)) return;
           webrtc.cleanup();
-          setWsConnected(false);
+          setWsConnected(false); setTransportHealthy(false);
+          setConnectionPhase(navigator.onLine === false ? 'offline' : 'recovering');
           setWsAuthenticated(false);
           authenticatedSchoolIdRef.current = null;
           wsRef.current = null;
+          if (event.code === 1008) { transportDenied = true; setConnectionPhase('denied'); return; }
           reconnectAttemptsRef.current++;
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), maxReconnectDelay);
+          clientHealthRef.current.counters.reconnects += 1;
+          const delay = classpilotReconnectDelay(reconnectAttemptsRef.current);
           reconnectTimeoutRef.current = setTimeout(connectWebSocket, delay);
         };
 
@@ -2587,14 +2621,33 @@ export default function Dashboard() {
         console.error("[Dashboard] Failed to create WebSocket:", error);
         setWsConnected(false);
         reconnectAttemptsRef.current++;
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), maxReconnectDelay);
+        const delay = classpilotReconnectDelay(reconnectAttemptsRef.current);
         reconnectTimeoutRef.current = setTimeout(connectWebSocket, delay);
       }
     };
 
+    const resumeSocket = () => {
+      if (document.visibilityState !== 'visible') {
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+        wsRef.current?._monitor?.visibility();
+        screenshotQueueRef.current.clear();
+        return;
+      }
+      if (navigator.onLine === false) { setTransportHealthy(false); setConnectionPhase('offline'); return; }
+      if (wsRef.current && [WebSocket.OPEN, WebSocket.CONNECTING].includes(wsRef.current.readyState)) wsRef.current._monitor?.visibility();
+      else connectWebSocket();
+    };
+    document.addEventListener('visibilitychange', resumeSocket);
+    window.addEventListener('online', resumeSocket);
+    window.addEventListener('offline', resumeSocket);
     connectWebSocket();
 
     return () => {
+      document.removeEventListener('visibilitychange', resumeSocket);
+      window.removeEventListener('online', resumeSocket);
+      window.removeEventListener('offline', resumeSocket);
+      screenshotQueueRef.current.clear();
       disposed = true;
       if (websocketGenerationRef.current === generation) {
         websocketGenerationRef.current = generation + 1;
@@ -2623,8 +2676,7 @@ export default function Dashboard() {
       pendingRealtimeEventsRef.current = [];
       const socket = wsRef.current;
       if (socket && wsRef.current === socket) {
-        if (socket._heartbeatInterval) clearInterval(socket._heartbeatInterval);
-        socket._heartbeatInterval = null;
+        socket._monitor?.dispose();
         socket.onopen = null;
         socket.onmessage = null;
         socket.onerror = null;
@@ -2640,7 +2692,7 @@ export default function Dashboard() {
     };
   // Replace the socket when its authenticated school or viewer changes.
   // Other live values are carried through refs.
-  }, [currentUser?.schoolId, currentUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser?.schoolId, currentUser?.id, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-authenticate when currentUser becomes available (e.g. token loaded after WS connected)
   useEffect(() => {
@@ -2747,6 +2799,7 @@ export default function Dashboard() {
           sessionSubscriptionPendingRef.current = null;
           if (message.type === 'session-subscription-success') {
             publishState('active');
+            void recoveryRefreshRef.current();
             return;
           }
           const errorCode = typeof message.code === 'string'
@@ -3676,7 +3729,7 @@ export default function Dashboard() {
       await refetchStudents();
     }).catch(() => {});
   };
-  const fetchAuthorizedTileBatch = useCallback(async (request, authorities, signal) => {
+  const fetchAuthorizedTileBatch = useCallback(async (request, authorities, signal, { refresh = false } = {}) => {
     const screenshotSnapshot = request.kind === 'screenshots' ? targetedScreenshotContextRef.current : null;
     const screenshotReadCurrent = () => request.kind !== 'screenshots' || (
       isCurrentScreenshotRead(screenshotSnapshot, targetedScreenshotContextRef.current)
@@ -3686,7 +3739,15 @@ export default function Dashboard() {
     const allowed = tileRequestWithoutDeniedStudents(request, tileReadDenialsRef.current, authorities);
     if (allowed.body.studentIds.length === 0) return { tiles: [] };
     try {
-      const response = await fetchTileBatch(allowed, requestActivityApi, signal);
+      const read = (ids, boundedSignal) => {
+        if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
+        const current = tileRequestWithoutDeniedStudents({ ...allowed, body: { ...allowed.body, studentIds: ids } }, tileReadDenialsRef.current, authorities);
+        return current.body.studentIds.length ? fetchTileBatch(current, requestActivityApi, boundedSignal) : Promise.resolve({ tiles: [] });
+      };
+      const response = request.kind === 'screenshots'
+        ? await screenshotQueueRef.current.read({ key: JSON.stringify(request.queryKey), studentIds: allowed.body.studentIds, read, signal,
+          priority: allowed.body.studentIds.some(id => fastScreenshotStudentIdsRef.current.has(id)), refresh })
+        : await read(allowed.body.studentIds, signal);
       if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
       // A simultaneous targeted request may have denied a row while this
       // reconciliation was pending. Its result cannot restore that row.
@@ -3806,6 +3867,11 @@ export default function Dashboard() {
       && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
       ? classScreenshotTileRequests
       : EMPTY_LIST;
+  const fastScreenshotStudents = useMemo(() => selectClasspilotFastStudents(screenshotTileQueryStudents, {
+    eligibleIds: eligibleScreenshotStudentIds, nearViewportIds: nearViewportStudentIds,
+    tracking: viewportTrackingActive, priorityStudentId: selectedStudentRow?.studentId,
+  }), [screenshotTileQueryStudents, eligibleScreenshotStudentIds, viewportTrackingActive, nearViewportStudentIds, selectedStudentRow?.studentId]);
+  useLayoutEffect(() => { fastScreenshotStudentIdsRef.current = new Set(fastScreenshotStudents.map(student => student.studentId)); }, [fastScreenshotStudents]);
   const historyTileRequests = useMemo(
     () => createTileBatchRequests(
       JSON.parse(historyTileStudentBindingsKey),
@@ -3863,16 +3929,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const jobs = snapshot.requests.flatMap((request) => {
       const allowed = tileRequestWithoutDeniedStudents(request, tileReadDenialsRef.current, snapshot.authorities);
       const requestedIds = allowed.body.studentIds.filter((studentId) => (
-        pendingIds.has(studentId) && !snapshot.locallyRevokedStudentIds.has(studentId)
+        pendingIds.has(studentId) && fastScreenshotStudentIdsRef.current.has(studentId) && !snapshot.locallyRevokedStudentIds.has(studentId)
       ));
       if (requestedIds.length === 0) return EMPTY_LIST;
       return [{ request, requestedIds }];
     });
 
-    await runBoundedTileScreenshotJobs(
-      jobs,
-      SCREENSHOT_EVENT_MAX_CONCURRENCY,
-      async ({ request, requestedIds }) => {
+    await Promise.allSettled(jobs.map(async ({ request, requestedIds }) => {
       if (
         targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey
         || targetedScreenshotContextRef.current?.fenceGeneration !== snapshot.fenceGeneration
@@ -3884,10 +3947,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const controller = new AbortController();
       targetedScreenshotAbortControllersRef.current.add(controller);
       try {
-        let response = await requestActivityApi('POST', '/classpilot/tiles/screenshots', {
-          studentIds: requestedIds,
-          ...activityAuthority(request.body),
-        }, { signal: controller.signal, contextAuthorityRevision: request.contextAuthorityRevision ?? snapshot.contextAuthorityRevision });
+        let response = await fetchAuthorizedTileBatch({ ...request, body: { ...request.body, studentIds: requestedIds } }, snapshot.authorities, controller.signal, { refresh: true });
         assertTileScreenshotStoreAvailable(response);
         if (
           targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey
@@ -3960,8 +4020,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       } finally {
         targetedScreenshotAbortControllersRef.current.delete(controller);
       }
-      },
-    );
+      }));
   };
   useEffect(() => {
     if (screenshotRefetchTimeoutRef.current) {
@@ -3969,6 +4028,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       screenshotRefetchTimeoutRef.current = null;
     }
     pendingScreenshotStudentIdsRef.current.clear();
+    screenshotQueueRef.current.retain(new Set(targetedScreenshotContextRef.current.requests.map(request => JSON.stringify(request.queryKey))));
+    screenshotRecoveryRef.current.clear();
     for (const controller of targetedScreenshotAbortControllersRef.current) {
       controller.abort();
     }
@@ -4111,6 +4172,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     if (screenshotTileQueries.length === 0) return EMPTY_TILE_MAP;
     return new Map(screenshotTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
   }, [screenshotTileQueries]);
+  useClasspilotPreviewRecovery({ fastScreenshotStudents, screenshotsByStudent, screenshotTileReadsEnabled,
+    deniedScreenshotReadIds, studentView, claimedStudentObservationStatus, observationLeaseStatus,
+    targetedScreenshotFenceKey, queueTargetedScreenshotRefresh, screenshotRecoveryRef, clientHealthRef,
+    activeSchoolId, viewerId: currentUser?.id, token });
   useEffect(() => {
     setUpdatingPreviewStudentIds((current) => {
       if (current.size === 0) return current;
@@ -6456,7 +6521,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (variables.roomReadScope) void queryClient.invalidateQueries({ queryKey: variables.roomReadScope.queryKey, exact: true,
         refetchType: releaseScopeCurrent(variables) ? 'active' : 'none' });
       if (!releaseScopeCurrent(variables)) return;
-      void purgeAllStudentTileCaches(queryClient);
+      // Revoke only the possibly released targets. Remaining exact-bound
+      // students retain their previews while the shared read queue reconciles.
+      void purgeStudentTileCaches(queryClient, variables.students.map(student => student.studentId), { refetch: false });
       void queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true });
       void queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
       void queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
@@ -6701,7 +6768,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     ? monitoringTransportUnavailable
       ? { label: 'Monitoring updates unavailable', tone: 'unavailable' }
       : { label: 'Refreshing', tone: 'neutral' }
-    : sessionRealtimeHealthy
+    : connectionPhase === 'offline'
+      ? { label: 'Offline', tone: 'unavailable' }
+      : connectionPhase === 'denied'
+      ? { label: 'Monitoring access unavailable', tone: 'unavailable' }
+      : sessionRealtimeHealthy
       ? { label: 'Live updates', tone: 'live' }
       : monitoringTransportUnavailable
         ? { label: 'Monitoring updates unavailable', tone: 'unavailable' }
@@ -7217,6 +7288,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {canUseRemoteControls && studentView !== "available" && (
           <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('open-tab', 'open-tab', { url: '' })} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('open-tab') && <ClassroomActions
               key={focusControlScopeKey}
               schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={focusControlScopeKey}
@@ -7234,8 +7306,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
               }}
             />}
-            {dashboardCapabilities.allows('stop-focus') && <Button size="sm" variant="outline" onClick={openStopFocus} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || selectionLossActive} data-testid="button-stop-focus">Stop Focus</Button>}
-            {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
+            {dashboardCapabilities.allows('stop-focus') && <Button size="sm" variant="outline" onClick={openStopFocus} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || selectionLossActive} title="Release tab Focus while keeping Waypoints, Flight Paths, and block lists in place" data-testid="button-stop-focus">Stop Focus</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
             {(dashboardCapabilities.allows('apply-flight-path') || flightPathMenuAvailable) && (

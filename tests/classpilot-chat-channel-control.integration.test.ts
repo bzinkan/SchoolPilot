@@ -98,8 +98,8 @@ after(async () => {
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
-  await pool.query("DELETE FROM schools WHERE id=$1", [ids.school]);
-  await pool.query("DELETE FROM users WHERE id=$1", [ids.teacher]);
+  // Current lifecycle guards retain these uniquely tagged synthetic school
+  // and staff roots in the disposable local fixture database.
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
   (await import("../src/services/classpilotRealtimeStatus.js")).setClasspilotRealtimeStatusCommandForTests(undefined);
   const scheduler = await import("../src/services/schedulerDb.js");
@@ -155,8 +155,8 @@ test("a teacher pause on the testing block is a revisioned soft state and the ha
 });
 
 test("a class session pause is distinct from disabling messaging and rides the settings revision", async () => {
-  await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status)
-    VALUES(${ids.group},${ids.school},${ids.teacher},'Homeroom','admin_class','active')`);
+  await inSchool(() => storage.createGroup({ id: ids.group, schoolId: ids.school, teacherId: ids.teacher,
+    name: "Homeroom", groupType: "admin_class", status: "active" }));
   await statement(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.group},${ids.student})`);
   await statement(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,start_time,roster_snapshot_completed_at,class_name_snapshot)
     VALUES(${ids.session},${ids.school},${ids.group},${ids.teacher},'live',now()-interval '1 minute',now(),'Homeroom')`);
@@ -251,8 +251,8 @@ const routeRefusesReply = async (t: TestContext, content: string) => {
 
 test("a paused live class still hears its teacher: the reply is stored with a queued delivery", async () => {
   await statement(sql`INSERT INTO students(id,school_id,first_name,last_name,status) VALUES(${ids.classStudent},${ids.school},'Class','Student','active')`);
-  await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status)
-    VALUES(${ids.classGroup},${ids.school},${ids.teacher},'Second period','admin_class','active')`);
+  await inSchool(() => storage.createGroup({ id: ids.classGroup, schoolId: ids.school, teacherId: ids.teacher,
+    name: "Second period", groupType: "admin_class", status: "active" }));
   await statement(sql`INSERT INTO group_students(group_id,student_id) VALUES(${ids.classGroup},${ids.classStudent})`);
   liveSession = await inSchool(() => storage.createTeachingSession({ groupId: ids.classGroup, teacherId: ids.teacher, sessionMode: "live" }));
 

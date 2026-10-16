@@ -141,7 +141,7 @@ describe("ClassPilot Session Summary startup migration contract", () => {
       "const presenceRecorded = recordStaffPresence(schoolId, userId)"
     );
     const authSuccess = websocketSource.indexOf(
-      'ws.send(JSON.stringify({ type: "auth-success", role }))',
+      'ws.send(JSON.stringify({ type: "auth-success", role, transportProbeV1: true }))',
       presenceRecord
     );
     const deferredPickup = websocketSource.indexOf(

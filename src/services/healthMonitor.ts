@@ -4,10 +4,11 @@
 import type { WebSocketServer } from "ws";
 import { pool, sessionPool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
-import { isRedisEnabled } from "../realtime/ws-redis.js";
+import { executeRealtimeRedisCommand } from "../realtime/ws-redis.js";
 import errorMonitor, { type ErrorCategory } from "./errorMonitor.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { checkHealthDatabaseRoundTrip } from "./healthDbRoundTrip.js";
+import { checkHealthRedis } from "./healthRedis.js";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STARTUP_DELAY_MS = 15_000; // 15s to let DB pool warm up
@@ -76,20 +77,7 @@ async function checkWebSocket(wss: WebSocketServer): Promise<CheckResult> {
 }
 
 async function checkRedis(): Promise<CheckResult> {
-  if (!isRedisEnabled()) {
-    return { ok: true, detail: "disabled (single-instance mode)" };
-  }
-  try {
-    const { getRedisPublisher } = await import("../realtime/ws-redis.js");
-    const pub = getRedisPublisher();
-    if (!pub) {
-      return { ok: false, error: "Redis enabled but publisher not connected" };
-    }
-    await pub.ping();
-    return { ok: true };
-  } catch (err: any) {
-    return { ok: false, error: err.message };
-  }
+  return checkHealthRedis(!!process.env.REDIS_URL, executeRealtimeRedisCommand);
 }
 
 // --- Alerting ---

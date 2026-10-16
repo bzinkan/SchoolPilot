@@ -35,7 +35,7 @@ jobs:
         # Use the verified official mirror digest for both Dockerfile FROM references.
         run: >-
           docker build
-          --build-context node:22-alpine=docker-image://public.ecr.aws/docker/library/node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+          --build-context node:22-alpine=docker-image://docker.io/library/node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
           -t schoolpilot-production-api:scan .
 
       - name: Run Trivy

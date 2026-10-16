@@ -76,8 +76,8 @@ check "database_capacity_contract" {
   assert {
     condition = (
       var.api_max_capacity == local.database_capacity.apiMaxTasks &&
-      var.worker_desired_count == local.database_capacity.workerTasks &&
-      var.db_pool_max == local.database_capacity.api.main &&
+      (var.worker_desired_count == local.database_capacity.workerTasks || var.staging_bootstrap) &&
+      min(var.db_pool_max, local.database_capacity.api.main) == local.database_capacity.api.main &&
       var.scheduler_db_pool_max == local.database_capacity.worker.scheduler &&
       (
         var.api_max_capacity * (
@@ -339,6 +339,7 @@ module "ecs" {
   assign_task_public_ip = var.ecs_tasks_in_public_subnets
   alb_target_group_arn  = module.alb.target_group_arn
   ecr_repository_url    = module.ecr.repository_url
+  api_image_digest      = var.api_image_digest
   container_port        = 4000
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 
@@ -359,9 +360,12 @@ module "ecs" {
   mydesk_ai_import_school_daily_pages  = var.mydesk_ai_import_school_daily_pages
 
   # Auto-derive URLs from domain, with manual override
-  public_base_url = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.public_base_url
-  cors_allowlist  = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.cors_allowlist
-  cookie_domain   = local.has_domain ? ".${var.domain}" : var.cookie_domain
+  public_base_url                        = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.public_base_url
+  cors_allowlist                         = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.cors_allowlist
+  cookie_domain                          = local.has_domain && var.environment == "production" ? ".${var.domain}" : var.cookie_domain
+  cookie_name                            = var.cookie_name
+  provider_secrets_enabled               = var.provider_secrets_enabled
+  staging_classpilot_reliability_enabled = var.staging_classpilot_reliability_enabled
 
   # Google OAuth
   google_client_id                                   = var.google_client_id
@@ -382,6 +386,7 @@ module "ecs" {
 
   # Scaling
   desired_count                   = var.ecs_desired_count
+  api_autoscaling_suspended       = var.api_autoscaling_suspended
   enable_api_arrival_capacity     = var.enable_api_arrival_capacity
   api_max_capacity                = var.api_max_capacity
   api_arrival_min_capacity        = var.api_arrival_min_capacity
@@ -417,6 +422,9 @@ module "cdn" {
   api_rate_limit             = var.waf_api_rate_limit
   device_ingest_rate_limit   = var.waf_device_ingest_rate_limit
   rate_rule_action           = var.waf_rate_rule_action
+  # Preserve the live production forwarding contract. Isolated staging never
+  # sends its sibling's parent-domain session cookie to the API or sockets.
+  forwarded_cookie_names = var.environment == "staging" ? [var.cookie_name, "AWSALB", "AWSALBCORS"] : []
 }
 
 # ============================================================================

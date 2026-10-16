@@ -1,12 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classroomLinks, classroomCanFocus, classroomLessonStarts, reviewedFlightPathMatches, runClassroomAction, waitForClassroomTargets }
+import { classroomLoadFailure, classroomLinks, classroomCanFocus, classroomLessonStarts, reviewedFlightPathMatches, runClassroomAction, waitForClassroomTargets }
   from '../src/products/classpilot/lib/classroomActions.js';
 
 const target = (studentId, status = 'completed', result = {}) => ({ studentId, status, result });
 const command = (id, targets, commandType = 'apply-flight-path') => ({ id, commandType, teachingSessionId: 'class-a', targets });
 const flightPath = { id: 'lesson-a', updatedAt: '2026-09-30T12:00:00.000Z' };
 const noRead = async () => { throw new Error('Unexpected status read'); };
+
+test('Classroom connection failures distinguish missing permissions, account mismatch and temporary errors', () => {
+  const failure = (code, error) => classroomLoadFailure({ response: { data: { code, error } } }, 'Assignments');
+  for (const code of ['MISSING_GOOGLE_SCOPE', 'NO_TOKENS', 'GOOGLE_RECONNECT_REQUIRED', 'INSUFFICIENT_PERMISSIONS', 'GOOGLE_DOMAIN_MISMATCH']) {
+    assert.equal(failure(code).reconnect, true, code);
+  }
+  assert.match(failure('MISSING_GOOGLE_SCOPE').message, /assignments, and materials/);
+  assert.match(failure('GOOGLE_DOMAIN_MISMATCH').message, /school Google account/);
+  assert.equal(failure(undefined, 'NO_TOKENS: Google not connected for this school').reconnect, true);
+  assert.equal(failure('SCHOOL_DOMAIN_REQUIRED').reconnect, false);
+  assert.match(failure('SCHOOL_DOMAIN_REQUIRED').message, /school administrator/);
+  assert.deepEqual(failure(undefined, '<script>untrusted provider error</script>'), {
+    reconnect: false, message: 'Assignments could not be loaded. Try again.',
+  });
+  assert.equal(classroomLoadFailure(new Error('Network error'), 'Courses').reconnect, false);
+});
 
 test('Open + Focus requires accepted capabilities and does not trust raw extension advertisement', () => {
   assert.equal(classroomCanFocus([{ acceptedCapabilities: [], extensionCapabilities: ['scopedAuthorityChecksV1', 'focusTabV1'] }]), false);

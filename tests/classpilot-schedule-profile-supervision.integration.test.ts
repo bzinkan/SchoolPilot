@@ -17,6 +17,8 @@ import { classpilotSchoolSchedules } from "../src/schema/classpilotScheduling.js
 import { classpilotSupervisionContexts, classpilotStudentControlStates } from "../src/schema/classpilot.js";
 
 process.env.REDIS_URL = "";
+// The fast-boundary case invokes the actual dedicated scheduler worker.
+process.env.SCHEDULER_ENABLED = "true";
 const ids = { school: randomUUID(), otherSchool: randomUUID(), teacher: randomUUID(), otherTeacher: randomUUID(),
   group: randomUUID(), student: randomUUID(), secondStudent: randomUUID() };
 const now = new Date();
@@ -108,8 +110,7 @@ after(async () => {
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM classpilot_school_schedules WHERE school_id=$1", [ids.otherSchool]);
-  await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
-  await pool.query("DELETE FROM users WHERE id IN($1,$2)", [ids.teacher, ids.otherTeacher]);
+  // Current lifecycle guards retain uniquely owned synthetic school/staff roots in this disposable fixture DB.
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
   const { sessionPool } = await import("../src/db.js");
   const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
@@ -303,8 +304,8 @@ test("fast boundary lifecycle gives testing its roster within five seconds and r
   const worker = await import("../src/services/classpilotScheduleBoundaries.js");
   const { getClasspilotDashboardActivity } = await import("../src/services/classpilotDashboardActivity.js");
   try {
-    await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status)
-      VALUES(${regularGroup},${ids.school},${ids.teacher},'Regular class','admin_class','active')`);
+    await scoped(() => storage.createGroup({ id: regularGroup, schoolId: ids.school, teacherId: ids.teacher,
+      name: "Regular class", groupType: "admin_class", status: "active" }));
     await statement(sql`INSERT INTO group_students(group_id,student_id) VALUES(${regularGroup},${ids.student}),(${regularGroup},${ids.secondStudent})`);
     await statement(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,roster_snapshot_completed_at,class_name_snapshot)
       VALUES(${regularSession},${ids.school},${regularGroup},${ids.teacher},now()-interval '1 minute',now(),'Regular class')`);
@@ -343,7 +344,10 @@ test("fast boundary lifecycle gives testing its roster within five seconds and r
     await statement(sql`DELETE FROM classpilot_session_students WHERE teaching_session_id=${regularSession}`);
     await statement(sql`DELETE FROM teaching_sessions WHERE id=${regularSession}`);
     await statement(sql`DELETE FROM group_students WHERE group_id=${regularGroup}`);
-    await statement(sql`DELETE FROM groups WHERE id=${regularGroup}`);
+    await scoped(() => database.transaction(async tx => {
+      await tx.execute(sql`DELETE FROM group_teachers WHERE group_id=${regularGroup}`);
+      await tx.execute(sql`DELETE FROM groups WHERE id=${regularGroup}`);
+    }));
     if (previousMode === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE; else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = previousMode;
   }
 });
@@ -361,9 +365,19 @@ test("changed exact roster and staff pairing fail visibly, without a later autom
 
 test("inactive staff, inactive students and a foreign school group cannot receive testing authority", async () => {
   const app = application(); await save([app]);
-  await pool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
-  await scan(); assert.equal((await statuses(app.id))[0]?.code, "STAFF_MEMBERSHIP_UNAVAILABLE");
-  await pool.query("UPDATE school_memberships SET status='active' WHERE school_id=$1", [ids.school]);
+  const assignment = (await scoped(() => storage.getActiveCoverageAssignmentsForStaff(ids.school, ids.teacher)))
+    .find(row => row.scopeType === "coverage_group" && row.scopeValue === ids.group);
+  assert.ok(assignment);
+  // Relinquish the concrete assignment before revocation; the persisted
+  // testing candidate must still reject this now-ineligible staff member.
+  await scoped(() => storage.updateCoverageAssignmentActive(ids.school, assignment.id, false));
+  try {
+    await pool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
+    await scan(); assert.equal((await statuses(app.id))[0]?.code, "STAFF_MEMBERSHIP_UNAVAILABLE");
+  } finally {
+    await pool.query("UPDATE school_memberships SET status='active' WHERE school_id=$1", [ids.school]);
+    await scoped(() => storage.updateCoverageAssignmentActive(ids.school, assignment.id, true));
+  }
   const next = application(); await save([app, next]);
   await statement(sql`UPDATE students SET status='inactive' WHERE id=${ids.student}`);
   await scan(); assert.equal((await statuses(next.id))[0]?.code, "STUDENT_SCOPE_CHANGED");
@@ -398,7 +412,8 @@ test("a newly opened class with pupils outside the testing snapshot blocks its a
   await scoped(() => storage.replaceCoverageScopeGroupMembers({ schoolId: ids.school, groupId: ids.group, studentIds: [ids.student] }));
   await save([app]);
   const group = randomUUID(), session = randomUUID();
-  await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${group},${ids.school},${ids.teacher},'Other pupils','admin_class','active')`);
+  await scoped(() => storage.createGroup({ id: group, schoolId: ids.school, teacherId: ids.teacher,
+    name: "Other pupils", groupType: "admin_class", status: "active" }));
   try {
     await statement(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time,roster_snapshot_completed_at,class_name_snapshot) VALUES(${session},${ids.school},${group},${ids.teacher},${new Date(now.getTime() - 60_000).toISOString()}::timestamptz,${new Date(now.getTime() + 30 * 60_000).toISOString()}::timestamptz,now(),'Other pupils')`);
     await statement(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES(${ids.school},${session},${group},${ids.secondStudent})`);
@@ -410,7 +425,10 @@ test("a newly opened class with pupils outside the testing snapshot blocks its a
     await statement(sql`DELETE FROM classpilot_session_staff WHERE teaching_session_id=${session}`);
     await statement(sql`DELETE FROM classpilot_session_students WHERE teaching_session_id=${session}`);
     await statement(sql`DELETE FROM teaching_sessions WHERE id=${session}`);
-    await statement(sql`DELETE FROM groups WHERE id=${group}`);
+    await scoped(() => database.transaction(async tx => {
+      await tx.execute(sql`DELETE FROM group_teachers WHERE group_id=${group}`);
+      await tx.execute(sql`DELETE FROM groups WHERE id=${group}`);
+    }));
   }
 });
 

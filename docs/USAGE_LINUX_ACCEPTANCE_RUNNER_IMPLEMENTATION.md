@@ -81,29 +81,34 @@ are retained; native Linux import must still prove the canonical image assertion
 
 ### Current-production source successor
 
-Production advanced before the attended window. Its actual API190 and worker206
-task definitions declare source `30bd7048c08e4d55eefa6cf4471504baeffcbf0a` and
-image `sha256:4bbc9d48887852db21f6f191f8d9f3dc2071ab5f9e569dc155d56c325802651c`.
-PR #646 was updated against that source; its CPU candidate is
-`42d5e209f6d7ff4845a35b0c81c49e95924f7d2e`, image
-`sha256:c186373bd432771b1c1a0c84decbb0bfe16835f3fbf6d10aa23fdebed7fb6a1e`.
-Both now have independently reviewed native 53-migration/129-table proofs and
-canonical security scans with zero High/Critical findings. The earlier candidate
-layer-hash refusal remains failed; a separately reviewed preparation successor
-proved all runtime contents equal except the expected CPU JavaScript/source-map
-change and enumerated COPY timestamps. This grants no performance acceptance.
+The October 16 successor binds the serving API191 and worker207 source
+`c265a3ab5ffc9fceb3e91e151f5cdee48a63ea5e` and image
+`sha256:b2dcac46ea2e6eda2e85b97ef6dbd12fafa35ddd6b6e89dd1e2153be23280934`.
+PR #646's CPU candidate is `94d522cd78fbc5c36400b6f4d0f9230921c4d5dd`, image
+`sha256:8351c53513fc6c159848561993b16f4ef6f271a8b5c76214938da47d6c322824`.
+It retains the same two-file CPU change on the serving baseline. Both source
+bindings have fresh independent native 53-migration/129-table proofs and
+reviewed canonical security scans with zero High/Critical findings. The new
+compiled-image and runtime-equivalence evidence is bound separately; previous
+layer refusals and failed rehearsals remain failures.
 
-Harness `d9c45a6ed21ff508045fd6c137e9535f6f8a46ae` adds the separately reviewed
-baseline ledger to paired declarations, arm-A reservations and receipt reloads.
-The controller now requires both source envelopes and verifies each source's
-checkout, complete ledger, schema, image binding and helper preparation. Historical
-unbound-baseline contracts remain available in their original harness. All 192
-canonical harness tests pass, and all 19 exact-head harness CI checks passed.
-The application/harness freeze is sealed as
-`3b2768c1227bdf6f69a00366b84da60f6776a0c4963e03174de4093e8929de8d`.
-The controller still requires its updated exact-head CI and separately reviewed
-input/launch packet. Workloads, paired ordering,
-concurrent workers and acceptance thresholds are unchanged.
+Harness `d9c45a6ed21ff508045fd6c137e9535f6f8a46ae` and its paired source-envelope,
+ledger and receipt-replay contracts remain fixed. The application/harness freeze
+is sealed as `d0be7ff1cbf2cbfc67fec01e23cb2fa6d8c2f69892ab9afaa451c715472e4d5f`.
+All 19 updated exact-head controller CI checks and a separately reviewed input
+and launch packet remain required. Fresh native Linux fixtures, restricted
+restore/custody and service/browser recovery must pass before measured admission.
+Workloads, paired ordering, concurrent workers and acceptance thresholds are
+unchanged. Artifact sealing establishes no CPU improvement, capacity acceptance,
+production activation or paid launch admission.
+
+The earlier October 12 envelope remains historical: baseline
+`30bd7048c08e4d55eefa6cf4471504baeffcbf0a`, image
+`sha256:4bbc9d48887852db21f6f191f8d9f3dc2071ab5f9e569dc155d56c325802651c`;
+candidate `42d5e209f6d7ff4845a35b0c81c49e95924f7d2e`, image
+`sha256:c186373bd432771b1c1a0c84decbb0bfe16835f3fbf6d10aa23fdebed7fb6a1e`;
+and freeze `3b2768c1227bdf6f69a00366b84da60f6776a0c4963e03174de4093e8929de8d`.
+Its proofs and earlier unbound-baseline contracts remain historical evidence.
 
 Source restoration now requires an explicit native receipt and independent review.
 Admission uses the pinned root-owned Git binary with isolated configuration,

@@ -5,8 +5,8 @@ import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const FREEZE_SHA256 = '3b2768c1227bdf6f69a00366b84da60f6776a0c4963e03174de4093e8929de8d';
-export const SOURCES = Object.freeze({ candidate: '42d5e209f6d7ff4845a35b0c81c49e95924f7d2e', baseline: '30bd7048c08e4d55eefa6cf4471504baeffcbf0a', harness: 'd9c45a6ed21ff508045fd6c137e9535f6f8a46ae' });
+export const FREEZE_SHA256 = 'd0be7ff1cbf2cbfc67fec01e23cb2fa6d8c2f69892ab9afaa451c715472e4d5f';
+export const SOURCES = Object.freeze({ candidate: '94d522cd78fbc5c36400b6f4d0f9230921c4d5dd', baseline: 'c265a3ab5ffc9fceb3e91e151f5cdee48a63ea5e', harness: 'd9c45a6ed21ff508045fd6c137e9535f6f8a46ae' });
 export function guard(condition, code) { if (!condition) { const error = new Error(code); error.code = code; throw error; } }
 export function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 export function assertSha(value) { guard(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value), 'INVALID_SHA256'); return value; }

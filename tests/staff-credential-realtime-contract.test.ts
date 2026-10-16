@@ -34,13 +34,11 @@ test("staff identity repair releases its lazily loaded realtime runtime", async 
     wsRedis,
     /registerCacheInvalidationPublisher\([\s\S]*?disposeWSRedis\s*\)/
   );
-  assert.doesNotMatch(
-    wsRedis.slice(0, wsRedis.indexOf("export async function getScreenshots")),
-    /middleware\/rateLimiter/
-  );
+  assert.doesNotMatch(wsRedis, /(?:from\s+["']|import\(["'])\.\.\/middleware\/rateLimiter\.js/);
+  assert.match(wsRedis, /await Promise\.all\(\[publicationRuntime\.dispose\(\), coordinationRuntime\.dispose\(\)\]\)/);
   assert.match(
     wsRedis.slice(wsRedis.indexOf("export async function getScreenshots")),
-    /await import\("\.\.\/middleware\/rateLimiter\.js"\)/
+    /const redisCommand = realtimeRedisCommand/
   );
 });
 

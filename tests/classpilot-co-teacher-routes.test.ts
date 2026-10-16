@@ -101,7 +101,7 @@ async function cleanupSchool(schoolId: string): Promise<void> {
     await tx.execute(sql`DELETE FROM product_licenses WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM school_memberships WHERE school_id = ${schoolId}`);
     await tx.execute(sql`DELETE FROM settings WHERE school_id = ${schoolId}`);
-    await tx.execute(sql`DELETE FROM schools WHERE id = ${schoolId}`);
+    // Current lifecycle guards retain synthetic school roots in this disposable DB.
   }));
 }
 
@@ -173,7 +173,7 @@ after(async () => {
       );
     }
     if (school?.id) await cleanupSchool(school.id);
-    await asSystem(() => db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`));
+    // Staff identities are retained lifecycle roots in the disposable fixture DB.
   } finally {
     await schedulerLockPool?.end().catch(() => undefined);
     await schedulerPool?.end().catch(() => undefined);

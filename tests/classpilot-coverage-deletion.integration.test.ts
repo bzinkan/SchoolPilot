@@ -25,8 +25,8 @@ before(async () => {
 after(async () => {
   try {
     for (const table of ["classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "audit_logs", "students", "settings", "school_memberships", "product_licenses"]) await pool.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
+    // Current lifecycle guards retain these synthetic school/staff roots in
+    // the disposable local fixture database.
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
     await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);

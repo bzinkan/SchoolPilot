@@ -22,6 +22,7 @@ import {
 } from "../dist/services/storage.js";
 
 const TAG = `gdfk_${Date.now().toString(36)}_${process.pid}`;
+type FixtureTransaction = Parameters<Parameters<typeof import("../src/db.js").default.transaction>[0]>[0];
 const ids = {
   schoolA: `${TAG}_school_a`,
   schoolB: `${TAG}_school_b`,
@@ -172,51 +173,45 @@ before(async () => {
 
 after(async () => {
   try {
-    await asSystem(async () => {
-      await db.execute(sql`
+    await asSystem(() => db.transaction(async (tx: FixtureTransaction) => {
+      await tx.execute(sql`
         DELETE FROM family_group_students
         WHERE family_group_id = ${ids.familyGroup}
            OR school_id IN (${ids.schoolA}, ${ids.schoolB})
       `);
-      await db.execute(sql`
+      await tx.execute(sql`
         DELETE FROM family_groups
         WHERE id = ${ids.familyGroup}
            OR school_id IN (${ids.schoolA}, ${ids.schoolB})
       `);
-      await db.execute(sql`
+      await tx.execute(sql`
         DELETE FROM homeroom_teachers
         WHERE homeroom_id = ${ids.homeroom}
            OR school_id IN (${ids.schoolA}, ${ids.schoolB})
       `);
-      await db.execute(sql`
+      await tx.execute(sql`
         UPDATE students
         SET homeroom_id = NULL
         WHERE homeroom_id = ${ids.homeroom}
       `);
-      await db.execute(sql`
+      await tx.execute(sql`
         DELETE FROM homerooms
         WHERE id = ${ids.homeroom}
            OR school_id IN (${ids.schoolA}, ${ids.schoolB})
       `);
-      await db.execute(sql`
+      await tx.execute(sql`
         DELETE FROM students
         WHERE id IN (${ids.studentOne}, ${ids.studentTwo})
            OR school_id IN (${ids.schoolA}, ${ids.schoolB})
       `);
-      await db.execute(sql`
+      await tx.execute(sql`
         DELETE FROM school_memberships
         WHERE id IN (${ids.primaryMembership}, ${ids.coMembership})
            OR school_id IN (${ids.schoolA}, ${ids.schoolB})
       `);
-      await db.execute(sql`
-        DELETE FROM schools
-        WHERE id IN (${ids.schoolA}, ${ids.schoolB})
-      `);
-      await db.execute(sql`
-        DELETE FROM users
-        WHERE id IN (${ids.primaryTeacher}, ${ids.coTeacher})
-      `);
-    });
+      // Remove primary homeroom mirrors with their parent in one transaction;
+      // current lifecycle guards retain uniquely owned synthetic roots.
+    }));
   } finally {
     await pool.end();
   }

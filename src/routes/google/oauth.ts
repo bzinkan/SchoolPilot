@@ -16,6 +16,10 @@ import {
   fetchGoogleUserInfo,
 } from "../../util/googleOAuthTokenExchange.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import {
+  CLASSROOM_RESOURCE_SCOPES,
+  missingGoogleOAuthScopes,
+} from "../../util/googleOAuthScopes.js";
 
 const router = Router();
 
@@ -49,12 +53,6 @@ const WORKSPACE_IMPORT_SCOPES = [
   // src/routes/google/workspaceAudit.ts for easy re-activation.
 ];
 
-const CLASSROOM_RESOURCE_SCOPES = [
-  "https://www.googleapis.com/auth/classroom.courses.readonly",
-  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
-  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
-];
-
 type GooglePurpose = "workspace_import" | "classroom_resources";
 
 function normalizePurpose(value: unknown): GooglePurpose {
@@ -74,11 +72,6 @@ function requestCanRequestPurpose(req: any, res: any, purpose: GooglePurpose): b
       ? ["admin", "school_admin"]
       : ["teacher", "admin", "school_admin"]
   );
-}
-
-function missingScopes(tokenScope: string | null | undefined, required: string[]): string[] {
-  const granted = new Set((tokenScope || "").split(/\s+/).filter(Boolean));
-  return required.filter((scope) => !granted.has(scope));
 }
 
 function getAllowedReturnUrl(returnTo: string | undefined, allowlist: string[]): URL | null {
@@ -216,7 +209,7 @@ router.get("/status", authenticate, requireSchoolContext, async (req, res, next)
     const connectedDomain = normalizeDomain(token?.connectedDomain || getEmailDomain(connectedEmail));
     const domainVerified = !!token && !!schoolDomain && !!connectedDomain && connectedDomain === schoolDomain;
     const requiresReconnect = !!token && (!connectedEmail || !connectedDomain);
-    const classroomResourceMissingScopes = missingScopes(token?.scope, scopesForPurpose("classroom_resources"));
+    const classroomResourceMissingScopes = missingGoogleOAuthScopes(token?.scope, scopesForPurpose("classroom_resources"));
 
     let errorCode: string | null = null;
     if (token && !schoolDomain) errorCode = "SCHOOL_DOMAIN_REQUIRED";

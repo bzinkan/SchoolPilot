@@ -8,6 +8,7 @@ import db, { pool, sessionPool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import {
   createClasspilotAiDecision,
+  createGroup,
   createMembership,
   createProductLicense,
   createSchool,
@@ -145,10 +146,7 @@ before(async () => {
       email: `student@${school.domain}`,
       status: "active",
     } as any);
-    const [group] = await db
-      .insert((await import("../dist/schema/classpilot.js")).groups)
-      .values({ schoolId: school.id, teacherId: teacher.id, name: "Privacy Class" })
-      .returning();
+    const group = await createGroup({ schoolId: school.id, teacherId: teacher.id, name: "Privacy Class" });
     assert.ok(group);
     await db.insert((await import("../dist/schema/classpilot.js")).groupStudents).values({
       groupId: group.id,
@@ -224,8 +222,8 @@ after(async () => {
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
-      await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${tag}.example.edu`}`);
+      // Current lifecycle guards retain school/user roots; these uniquely
+      // tagged identities remain in the disposable local fixture database.
     });
   } finally {
     mock.timers.reset();

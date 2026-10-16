@@ -7,7 +7,7 @@ import express from "express";
 import { pool, sessionPool } from "../src/db.js";
 import { runWithTenantContext } from "../src/middleware/tenantContext.js";
 import { commitSupervisionReview, previewSupervision, releaseTemporaryRoomStudents, returnSupervisionStudentsToOwnClass, supervisionSessionOptions } from "../src/services/classpilotSupervisionReview.js";
-import { assignAdHocSupervisionStudents, createSupervisionContextWithStudents, releaseSupervisionStudents } from "../src/services/storage.js";
+import { assignAdHocSupervisionStudents, createGroup, createSupervisionContextWithStudents, releaseSupervisionStudents } from "../src/services/storage.js";
 import { getClasspilotDashboardActivity } from "../src/services/classpilotDashboardActivity.js";
 import { signUserToken } from "../src/services/jwt.js";
 
@@ -30,13 +30,25 @@ after(async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()));
     }
-    for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_session_staff", "classpilot_session_students", "teaching_sessions", "groups", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "audit_logs", "devices", "settings", "school_memberships", "product_licenses"]) {
-      await pool.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schools]);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schools]);
+      await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schools]);
+      for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_session_staff", "classpilot_session_students", "teaching_sessions", "groups", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "audit_logs", "devices", "settings", "school_memberships", "product_licenses"]) {
+        await client.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [schools]);
+      }
+      await client.query("DELETE FROM student_sessions WHERE student_id=ANY($1::text[])", [pupils]);
+      await client.query("DELETE FROM students WHERE school_id=ANY($1::text[])", [schools]);
+      // Uniquely owned synthetic school/staff lifecycle roots are retained.
+      // Group deletion and its primary mirror commit together above.
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-    await pool.query("DELETE FROM student_sessions WHERE student_id=ANY($1::text[])", [pupils]);
-    await pool.query("DELETE FROM students WHERE school_id=ANY($1::text[])", [schools]);
-    await pool.query("DELETE FROM users WHERE id=ANY($1::text[])", [staff]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schools]);
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
     await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
@@ -79,7 +91,7 @@ const roomInput = (data: Fixture, overrides: Record<string, unknown> = {}) => ({
 
 async function currentClass(data: Fixture, teacherId: string, studentIds = data.studentIds) {
   const classId = randomUUID(), sessionId = randomUUID();
-  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name) VALUES($1,$2,$3,'Current class')", [classId, data.schoolId, teacherId]);
+  await scoped(data.schoolId, () => createGroup({ id: classId, schoolId: data.schoolId, teacherId, name: "Current class" }));
   await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,now())", [sessionId, data.schoolId, classId, teacherId]);
   await pool.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'primary')", [data.schoolId, sessionId, teacherId]);
   for (const pupil of studentIds) await pool.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES($1,$2,$3,$4)", [data.schoolId, sessionId, classId, pupil]);
@@ -155,7 +167,7 @@ test("unavailable selections require explicit removal and a new preview", async 
 
 test("teachers send only from frozen class authority and cannot reclaim a student moved since review", async () => {
   const data = await fixture(), classId = randomUUID(), sessionId = randomUUID();
-  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name) VALUES($1,$2,$3,'Current class')", [classId, data.schoolId, data.teacherId]);
+  await scoped(data.schoolId, () => createGroup({ id: classId, schoolId: data.schoolId, teacherId: data.teacherId, name: "Current class" }));
   await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,now())", [sessionId, data.schoolId, classId, data.teacherId]);
   await pool.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'primary')", [data.schoolId, sessionId, data.teacherId]);
   for (const pupil of data.studentIds) await pool.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES($1,$2,$3,$4)", [data.schoolId, sessionId, classId, pupil]);

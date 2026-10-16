@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import * as SourceSDK from '@aws-sdk/client-s3';
+import { fromContainerMetadata } from '@smithy/credential-provider-imds';
+import { createHarnessSourceLedger,validateSourceTaskCredentialEnvironment } from './source-ledger-harness-runtime.mjs';
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -13,6 +16,16 @@ import {
   teacherSessionOwnerKey,
 } from "./command-status-observer.mjs";
 import { createMonotonicDeadline } from "./monotonic-deadline.mjs";
+import { hasLoadSessionCookie, loadSessionCookieName } from "./session-cookie.mjs";
+import { stampReliabilityFrame, initialReliabilityCommandBurst } from "./reliability-rendered-frame.mjs";
+import { FineEndpointLatencies, fineLatencyEndpoint } from "./fine-endpoint-latency.mjs";
+import { validateStagingInputFreshness, validateStagingStartAt, waitForStagingStart } from "./staging-start-barrier.mjs";
+import {
+  validateReliabilityEnvironment, RELIABILITY_ENDPOINT_SHA256, RELIABILITY_CAPABILITIES,
+  minimumReliabilitySamples, reliabilityScreenshotBindingMatches, makeReliabilityJpegFixture, reliabilityFixtureEvidence,
+  makeReliabilityColorFixtures, reliabilityColorFixtureEvidence, CapturePulseProducer, stampCausalCapture, validateCapturePulse, measurementExpected,
+  readCausalCapture, capturePulseMarker, publicBindingFromDevice, validateRevisionBootstrap, navigationSnapshot, SerialHeartbeatWriter, MEASUREMENT_LIMITS, measurementSignal,
+} from "./classpilot-reliability-profile.mjs";
 import {
   buildStaggeredPollAccounting,
   TILE_BATCH_POLL_ACCOUNTING_VERSION,
@@ -188,8 +201,9 @@ function makeJpegFixture(targetBytes) {
 }
 
 class LatencyHistogram {
-  constructor() {
-    this.counts = new Array(LATENCY_BUCKETS_MS.length).fill(0);
+  constructor(bounds = LATENCY_BUCKETS_MS) {
+    this.bounds = bounds;
+    this.counts = new Array(bounds.length).fill(0);
     this.count = 0;
     this.sum = 0;
     this.max = 0;
@@ -202,7 +216,7 @@ class LatencyHistogram {
     this.sum += value;
     this.max = Math.max(this.max, value);
     if (failed) this.errors += 1;
-    const index = LATENCY_BUCKETS_MS.findIndex((bound) => value <= bound);
+    const index = this.bounds.findIndex((bound) => value <= bound);
     this.counts[index === -1 ? this.counts.length - 1 : index] += 1;
   }
 
@@ -213,7 +227,7 @@ class LatencyHistogram {
     for (let index = 0; index < this.counts.length; index += 1) {
       cumulative += this.counts[index];
       if (cumulative >= target) {
-        const bound = LATENCY_BUCKETS_MS[index];
+        const bound = this.bounds[index];
         return Number.isFinite(bound) ? bound : this.max;
       }
     }
@@ -550,6 +564,7 @@ const externalProgressPath = validateExternalOutputPath(
   process.env.LOAD_EXTERNAL_PROGRESS_PATH,
   "LOAD_EXTERNAL_PROGRESS_PATH"
 );
+const stagingReadyPath = validateExternalOutputPath(process.env.LOAD_TRAFFIC_READY_PATH, "LOAD_TRAFFIC_READY_PATH");
 const supervisorReadyPath = validateExternalOutputPath(
   process.env.LOAD_SUPERVISOR_READY_PATH,
   "LOAD_SUPERVISOR_READY_PATH"
@@ -569,6 +584,7 @@ const externalOutputPaths = [
   externalProgressPath,
   supervisorReadyPath,
   supervisorStartGatePath,
+  stagingReadyPath,
 ].filter(Boolean);
 if (new Set(externalOutputPaths.map((value) => value.toLowerCase())).size !== externalOutputPaths.length) {
   throw new Error("Load output, supervisor-ready, and supervisor-start-gate paths must be distinct files");
@@ -655,11 +671,16 @@ const acceleratedRequestStaggerMs = requestStaggerValue
   ? intEnv("LOAD_TEST_REQUEST_STAGGER_MS", 0, 100, 10_000)
   : 0;
 const heartbeatIntervalMs = intEnv("LOAD_HEARTBEAT_INTERVAL_MS", 10_000, 100, 60 * 60 * 1000);
+const reliabilityWorkload = validateReliabilityEnvironment(process.env, baseUrl);
+const stagingStartAt = reliabilityWorkload ? process.env.LOAD_TRAFFIC_START_AT : undefined;
+const stagingStartMs = reliabilityWorkload ? validateStagingStartAt(stagingStartAt, baseUrl) : null;
+if (stagingStartMs !== null) validateStagingInputFreshness(process.env.LOAD_INPUT_MANIFEST_CREATED_AT);
 const screenshotIntervalMs = intEnv("LOAD_SCREENSHOT_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
 const teacherIntervalMs = intEnv("LOAD_TEACHER_INTERVAL_MS", 5_000, 100, 60 * 60 * 1000);
 const teacherTemplateIntervalMs = intEnv("LOAD_TEACHER_TEMPLATE_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
 const teacherTemplateDeviceCount = intEnv("LOAD_TEACHER_TEMPLATE_DEVICE_COUNT", 0, 0, 10_000);
 const screenshotGetIntervalMs = intEnv("LOAD_SCREENSHOT_GET_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
+const historyReadIntervalMs = intEnv("LOAD_HISTORY_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
 const commandIntervalMs = intEnv("LOAD_COMMAND_INTERVAL_MS", 30_000, 100, 60 * 60 * 1000);
 const commandWarmupMs = intEnv("LOAD_COMMAND_WARMUP_MS", 30_000, 0, 10 * 60 * 1000);
 const commandSettleMs = intEnv("LOAD_COMMAND_SETTLE_MS", 5_000, 0, 60_000);
@@ -683,14 +704,14 @@ const wsAuthTimeoutMs = intEnv("LOAD_WS_AUTH_TIMEOUT_MS", 15_000, 1_000, 60_000)
 // application ping every 20 seconds and the managed ClassPilot extension sends
 // one every 25 seconds. These JSON messages (and the server's JSON pong) keep
 // CloudFront from treating an otherwise healthy WebSocket as origin-idle.
-const teacherWsKeepaliveIntervalMs = 20_000;
-const deviceWsKeepaliveIntervalMs = 25_000;
+const teacherWsKeepaliveIntervalMs = reliabilityWorkload ? 10_000 : 20_000;
+const deviceWsKeepaliveIntervalMs = reliabilityWorkload ? 10_000 : 25_000;
 const maxTrackedCommands = intEnv("LOAD_MAX_TRACKED_COMMANDS", 2_000, 1, 100_000);
 const expectedCanaryDevices = intEnv("LOAD_EXPECTED_CANARY_DEVICES", 10, 0, 10_000);
 const wafDeviceLimit = intEnv("LOAD_WAF_DEVICE_LIMIT", 100_000, 1, 2_000_000_000);
 const wafGeneralLimit = intEnv("LOAD_WAF_GENERAL_LIMIT", 50_000, 1, 2_000_000_000);
 const shutdownGraceMs = intEnv("LOAD_SHUTDOWN_GRACE_MS", 15_000, 100, 120_000);
-const requiredArtifactValidityUntil = Date.now() + durationMs + commandSettleMs + shutdownGraceMs;
+const requiredArtifactValidityUntil = Math.max(Date.now(), stagingStartMs ?? 0) + durationMs + commandSettleMs + shutdownGraceMs;
 for (const [index, device] of devices.entries()) {
   const expiresAt = decodeJwtExpiry(device.studentToken);
   if (expiresAt !== null && expiresAt <= requiredArtifactValidityUntil) {
@@ -711,6 +732,41 @@ const screenshotBytes = intEnv(
   64 * 1024
 );
 const screenshotFixture = makeJpegFixture(screenshotBytes);
+const reliabilityScreenshotFixtures = new WeakMap();
+const measurementPaths = reliabilityWorkload && targetUrl.origin === 'https://staging.school-pilot.net' ? {
+  manifest: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_MANIFEST, 'LOAD_MEASUREMENT_MANIFEST'),
+  control: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_CONTROL, 'LOAD_MEASUREMENT_CONTROL'),
+  bootstrap: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_BOOTSTRAP, 'LOAD_MEASUREMENT_BOOTSTRAP'),
+  started: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_STARTED, 'LOAD_MEASUREMENT_STARTED'),
+  drained: validateExternalOutputPath(process.env.LOAD_MEASUREMENT_DRAINED, 'LOAD_MEASUREMENT_DRAINED'),
+} : null;
+if (measurementPaths && Object.values(measurementPaths).some(value => !value)) throw Error('V3 staging requires bound measurement IPC paths');
+const measurementManifestBytes = measurementPaths && fs.readFileSync(measurementPaths.manifest);
+const measurementContext = measurementPaths && measurementExpected(JSON.parse(measurementManifestBytes), createHash('sha256').update(measurementManifestBytes).digest('hex'));
+if (measurementContext && (measurementContext.runId !== process.env.LOAD_RUN_ID || measurementContext.primaryDevices !== reliabilityWorkload.primaryDevices)) throw Error('Wrong measurement campaign');
+const capturePulseProducer = measurementContext && new CapturePulseProducer(measurementContext, monotonicNowMs);
+const revisionBaselines = new Map();
+const measurementDeviceCounters = { pulseAdopted: 0, pulseMissingCapture: 0, navigationGenerations: 0, revisionBootstrapAccepted: false, invalidControls: 0 };
+let measurementSequence = 0, measurementNavigationRound = 0, measurementBootstrapSha = null, measurementDrainNonce = null, measurementDrainStartedAt = null, measurementDrainWritten = false, measurementFirstPulse = null;
+let reliabilityFixtureMetrics = null;
+const reliabilityCaptureEncoding = { captures: 0, elapsedMs: 0, maximumElapsedMs: 0, cpuUserMs: 0, cpuSystemMs: 0 };
+if (reliabilityWorkload) {
+  const started = process.hrtime.bigint(), cpu = process.cpuUsage(), memory = process.memoryUsage();
+  const baseJpeg = Buffer.from(JPEG_1X1, 'base64');
+  const fixtures = devices.map(device => {
+    const fixture = makeReliabilityColorFixtures();
+    reliabilityScreenshotFixtures.set(device, fixture);
+    return fixture;
+  });
+  const evidence = reliabilityColorFixtureEvidence(fixtures), used = process.cpuUsage(cpu), after = process.memoryUsage();
+  reliabilityFixtureMetrics = { ...evidence, creation: {
+    elapsedMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+    cpuUserMs: used.user / 1000, cpuSystemMs: used.system / 1000,
+    rssIncreaseBytes: Math.max(0, after.rss - memory.rss), externalIncreaseBytes: Math.max(0, after.external - memory.external),
+    cacheStorage: 'per-device-decoded-buffers', generationCount: fixtures.length,
+  }, captureEncoding: reliabilityCaptureEncoding,
+  codecCostValidated: false, managedDeviceCaptureValidated: false };
+}
 const teacherAuthFileValue = process.env.LOAD_TEACHER_AUTH_FILE?.trim() || "";
 const envTeacherSchoolId = process.env.LOAD_TEACHER_SCHOOL_ID?.trim() || "";
 const envTeacherRole = process.env.LOAD_TEACHER_ROLE?.trim() || "teacher";
@@ -728,8 +784,8 @@ function normalizeTeacherAuth(raw, index, defaultExpiry = null) {
     throw new Error(`Teacher auth entry ${index + 1} contains a line break`);
   }
   if (/[\r\n]/.test(schoolId)) throw new Error(`Teacher auth entry ${index + 1} has an invalid schoolId`);
-  if (cookie && !/(?:^|;\s*)schoolpilot\.sid=[^;]+/.test(cookie)) {
-    throw new Error(`Teacher auth entry ${index + 1} must include the schoolpilot.sid session cookie`);
+  if (cookie && !hasLoadSessionCookie(cookie)) {
+    throw new Error(`Teacher auth entry ${index + 1} must include the ${loadSessionCookieName()} session cookie without another environment's session cookie`);
   }
   if (!["teacher", "school_admin", "super_admin"].includes(role)) {
     throw new Error(`Teacher auth entry ${index + 1} has an unsupported role`);
@@ -1221,6 +1277,41 @@ if (isLaunchGate) {
   }
 }
 const sharedIpLabel = process.env.LOAD_SHARED_IP_LABEL?.trim() || "single-generator-egress";
+if (reliabilityWorkload) {
+  const primary = devices.filter(device => device.schoolId === teacherSchoolId);
+  const canaries = devices.filter(device => device.schoolId && device.schoolId !== teacherSchoolId);
+  if (!teacherAuthFileValue || teacherAuthArtifactMeta?.schemaVersion !== 2
+    || !externalSummaryPath || !externalProgressPath || !process.env.LOAD_RUN_ID) {
+    throw new Error("Reliability requires version-two private teacher artifacts and a fresh run ID/progress/summary pair");
+  }
+  if (!teacherSchoolId || primary.length !== reliabilityWorkload.primaryDevices || canaries.length !== 10
+    || new Set(canaries.map(device => device.schoolId)).size !== 1
+    || devices.slice(0, 10).some(device => device.schoolId === teacherSchoolId)) {
+    throw new Error("Reliability requires the exact primary cohort and ten leading second-school canaries");
+  }
+  if (teacherAuthInputs.length !== reliabilityWorkload.classrooms || commandBodies.length !== reliabilityWorkload.classrooms
+    || commandSessionCount !== reliabilityWorkload.classrooms
+    || !tileBatchConfigured || commandEndpoint !== '/api/classpilot/commands') {
+    throw new Error("Reliability requires one independently authenticated command/tile actor per classroom");
+  }
+  const sessionIds = new Set(teacherAuthInputs.map(auth => auth.teachingSessionId));
+  if (sessionIds.size !== reliabilityWorkload.classrooms
+    || teacherAuthInputs.some(auth => !auth.cookie || !auth.csrf || !auth.token || !auth.actorId || !auth.teachingSessionId)
+    || commandBodies.some(body => !sessionIds.has(body.teachingSessionId) || body.targetScope !== 'class')) {
+    throw new Error("Reliability actors require cookie/CSRF/bearer and exact class-session ownership");
+  }
+  for (const auth of teacherAuthInputs) {
+    const assigned = primary.filter(device => deviceBelongsToTeacherAuth(device, auth));
+    if (assigned.length !== reliabilityWorkload.studentsPerClass
+      || assigned.some(device => !device.studentId || primary.filter(candidate => candidate.studentId === device.studentId).length !== 1)) {
+      throw new Error("Reliability class cohorts must have exactly the selected distinct roster students");
+    }
+  }
+  if (primary.some(device => teacherAuthInputs.filter(auth => deviceBelongsToTeacherAuth(device, auth)).length !== 1)) {
+    throw new Error("Reliability forbids unassigned or multiply assigned primary devices");
+  }
+}
+
 const stage = process.env.LOAD_STAGE?.trim() || `devices-${devices.length}-${Math.round(durationMs / 1000)}s`;
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(stage)) {
   throw new Error("LOAD_STAGE must be 1-128 letters, numbers, dots, underscores, or hyphens");
@@ -1240,6 +1331,7 @@ const inFlight = new Set();
 const pendingRequests = new Map();
 const histograms = new Map();
 const teacherEndpointHistograms = new Map();
+const fineEndpointLatencies = reliabilityWorkload ? new FineEndpointLatencies() : null;
 const exactCommandLatency = new BoundedExactLatencySamples(maxTrackedCommands);
 const fiveMinuteRequests = new RollingWindowCounter(300);
 const fiveMinuteDeviceIngestRequests = new RollingWindowCounter(300);
@@ -1266,6 +1358,7 @@ let lastProgressAtMonoNs = null;
 let lastProgressCounters = null;
 let progressFinalized = !externalProgressPath;
 let durationDeadline = null;
+let stagingStart = null;
 
 async function waitForSupervisorStartGate() {
   if (!supervisorStartGatePath) return;
@@ -1311,6 +1404,39 @@ async function waitForSupervisorStartGate() {
 }
 
 const counters = {
+  reliabilityPolicyUnavailable: 0,
+  reliabilityPolicyUnavailableBinding: 0,
+  reliabilityPolicyUnavailableCapabilities: 0,
+  reliabilityPolicyUnavailableMissingPolicy: 0,
+  reliabilityPolicyUnavailablePermission: 0,
+  reliabilityPolicyUnavailableAuthority: 0,
+  reliabilityPolicyUnavailableCadenceBackground: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundExplicit: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundActiveElapsed: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundMalformed: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundMissing: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundOmitted: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundActiveAtAdoption: 0,
+  reliabilityPolicyUnavailableCadenceBackgroundUnknown: 0,
+  reliabilityPolicyUnavailableCadenceExpired: 0,
+  reliabilityPolicyUnavailableSourceNone: 0,
+  reliabilityPolicyUnavailableSourceAuth: 0,
+  reliabilityPolicyUnavailableSourceHeartbeat: 0,
+  reliabilityPolicyUnavailableSourceUpload: 0,
+  reliabilityPolicyUnavailableSourceDenial: 0,
+  reliabilityScreenshotHeartbeatRequired: 0,
+  reliabilityScreenshotAuthoritySuperseded: 0,
+  reliabilityScreenshotCapturePaused: 0,
+  reliabilityScreenshotPausedUnobserved: 0,
+  reliabilityScreenshotCaptureExpired: 0,
+  reliabilityScreenshotCaptureTimeInvalid: 0,
+  reliabilityScreenshotRefusalUnknown: 0,
+  reliabilityScreenshotRefusalBodyUnavailable: 0,
+  reliabilityScreenshotRefreshHints: 0,
+  reliabilityScreenshotRefreshHintsIgnored: 0,
+  reliabilityObservationRenewals: 0,
+  reliabilityScreenshotAgeAttempts: 0,
+  reliabilityScreenshotAgeUnavailable: 0,
   heartbeat: 0,
   screenshotPost: 0,
   screenshotGet: 0,
@@ -1352,6 +1478,12 @@ const counters = {
   forcedReconnectSkippedUnauthenticated: 0,
   teacherWsAuthenticated: 0,
   teacherWsAuthErrors: 0,
+  teacherWsSubscriptionRequests: 0,
+  teacherWsSubscribed: 0,
+  teacherWsSubscriptionErrors: 0,
+  teacherWsSubscriptionTimeouts: 0,
+  teacherWsSubscriptionIgnored: 0,
+  commandUpdatesBeforeSubscription: 0,
   teacherWsUnexpectedClosed: 0,
   teacherWsKeepalivePingsSent: 0,
   teacherWsKeepalivePongsReceived: 0,
@@ -1377,6 +1509,9 @@ const counters = {
   crossSchoolHttpResponses: 0,
   tenantValidatedResponses: 0,
 };
+const reliabilityScreenshotFreshness = new LatencyHistogram([5_000, 10_000, 15_000, 30_000, Infinity]);
+const reliabilityObservationViewers = new Map();
+let reliabilityObservationRenewal = null;
 const statusCodes = Object.create(null);
 
 function progressRecord(event, nowMonoNs = monotonicNowNs()) {
@@ -1426,6 +1561,8 @@ function progressRecord(event, nowMonoNs = monotonicNowNs()) {
       crossSchoolCommandDeliveries: counters.crossSchoolCommandDeliveries,
       teacherAuthenticated: counters.teacherWsAuthenticated,
       teacherCurrentlyAuthenticated: teacherSocketStates.filter((state) => state.authenticated).length,
+      teacherCurrentlySubscribed: teacherSocketStates.filter((state) => state.subscribed).length,
+      teacherCurrentlyReady: teacherSocketStates.filter(teacherSocketReady).length,
       teacherUnexpectedCloses: counters.teacherWsUnexpectedClosed,
       keepalive: {
         devicePingsSent: counters.wsKeepalivePingsSent,
@@ -1539,7 +1676,10 @@ function every(callback, intervalMs) {
 }
 
 function workloadEvery(callback, intervalMs) {
-  if (acceleratedRuntimeMs) return null;
+  if (acceleratedRuntimeMs) {
+    if (!reliabilityWorkload) return null; // Preserve historical single-wave fixtures.
+    return every(callback, Math.max(100, Math.round(intervalMs * runtimeTimingScale)));
+  }
   return every(callback, intervalMs);
 }
 
@@ -1556,11 +1696,13 @@ function stopSocketKeepalive(timer) {
   intervals.delete(timer);
 }
 
-function startSocketKeepalive(socket, intervalMs, counterName) {
+function startSocketKeepalive(socket, intervalMs, counterName, supportsProbe = () => false) {
   return socketKeepaliveEvery(() => {
     if (stoppingTraffic || socket.readyState !== WebSocket.OPEN) return;
     try {
-      socket.send(JSON.stringify({ type: "ping" }));
+      const nonce = supportsProbe() ? randomUUID() : null;
+      socket._loadProbeNonce = nonce;
+      socket.send(JSON.stringify(nonce ? { type: "transport-probe", nonce } : { type: "ping" }));
       counters[counterName] += 1;
     } catch {
       counters.wsErrors += 1;
@@ -1668,6 +1810,7 @@ function observeHttp(record, status, error, responseBytes = 0) {
   const latencyMs = monotonicNowMs() - record.startedAt;
   const failed = Boolean(error) || status >= 400 || status === 0;
   histogram(record.kind).observe(latencyMs, failed);
+  fineEndpointLatencies?.observe(record.fineEndpointClass, latencyMs, failed);
   if (record.kind === "command") exactCommandLatency.observe(latencyMs, failed);
   if (record.endpointClass) teacherEndpointHistogram(record.endpointClass).observe(latencyMs, failed);
   counters.responseBytes += responseBytes;
@@ -1777,6 +1920,10 @@ function teacherResponseValidationError(endpointClass, json, expectedDeviceId, e
       (!tile.screenshot || typeof tile.screenshot !== "object")
     )) {
       return "tile-screenshot-invalid";
+    } else if (reliabilityWorkload && json.tiles.some(tile =>
+      tile.screenshot !== null && !reliabilityScreenshotBindingMatches(tile)
+    )) {
+      return "tile-screenshot-binding-mismatch";
     }
   }
   return null;
@@ -1805,6 +1952,7 @@ async function request(path, {
   probeExpectedStatus = null,
   expectedDeviceId = "",
   expectedStudentIds = null,
+  screenshotRecovery = null,
 }) {
   const startedAt = monotonicNowMs();
   if (countWorkload) counters.httpTotal += 1;
@@ -1834,15 +1982,24 @@ async function request(path, {
     probeObserved: false,
     probeUnexpectedSuccess: false,
     endpointClass,
+    fineEndpointClass: fineLatencyEndpoint(method, path),
     expectedDeviceId,
     expectedStudentIds,
   };
   pendingRequests.set(record.id, record);
-  const requestTimeout = setTimeout(() => controller.abort(new Error("request timeout")), requestTimeoutMs);
+  const screenshotResponse = reliabilityWorkload && kind === "screenshotPost" && screenshotRecovery;
+  const requestBudgetMs = screenshotResponse ? Math.min(requestTimeoutMs, 8000) : requestTimeoutMs;
+  let deferredScreenshot409 = false, classifiedScreenshot409 = false;
+  const requestTimeout = setTimeout(() => controller.abort(new Error("request timeout")), requestBudgetMs);
   requestTimeout.unref?.();
   try {
     const headers = { "user-agent": LOAD_GATE_USER_AGENT };
-    if (body !== undefined) headers["content-type"] = "application/json";
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+      // Node does not implicitly stream a DELETE body. Exact-viewer cleanup
+      // must carry its JSON identity just like the browser's fetch request.
+      headers["content-length"] = String(Buffer.byteLength(JSON.stringify(body)));
+    }
     if (token) headers.authorization = `Bearer ${token}`;
     if (cookie) headers.cookie = cookie;
     if (csrf) headers["x-csrf-token"] = csrf;
@@ -1857,11 +2014,15 @@ async function request(path, {
     // Any redirect or client rejection of valid workload traffic invalidates
     // the launch gate immediately. Tenant-isolation probes are deliberately
     // excluded via countWorkload=false and retain their exact-status contract.
-    if (countWorkload && status >= 300 && status < 500) {
+    deferredScreenshot409 = Boolean(screenshotResponse && status === 409);
+    if (countWorkload && status >= 300 && status < 500 && !deferredScreenshot409) {
       triggerFatalGate(`valid-http-${status}`, { status, kind });
     }
-    const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass);
+    const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass) || screenshotResponse;
     const drained = await drainResponse(response, inspectJson);
+    if (screenshotResponse && (controller.signal.aborted || monotonicNowMs() - startedAt >= requestBudgetMs)) {
+      throw new Error("Screenshot response deadline");
+    }
     let json = null;
     if (inspectJson && drained.text) {
       if (drained.truncated) {
@@ -1874,6 +2035,17 @@ async function request(path, {
         }
       }
     }
+    let screenshotRefusal = null;
+    if (deferredScreenshot409) {
+      screenshotRefusal = classifyRecoveryScreenshot409(screenshotRecovery.state, json, screenshotRecovery.guard);
+      counters[SCREENSHOT_REFUSAL_COUNTERS[screenshotRefusal.code] || "reliabilityScreenshotRefusalUnknown"] += 1;
+      classifiedScreenshot409 = true;
+      if (countWorkload && !screenshotRefusal.recoverable) {
+        triggerFatalGate("valid-http-409", { status, kind, screenshotRefusalCode: screenshotRefusal.code });
+      }
+    }
+    // A recognized policy refusal still counts as HTTP4xx and failed latency.
+    // Recovery never removes it from the existing acceptance/error gates.
     finalizePendingRequest(record, status, null, drained.bytes);
     if (
       countWorkload &&
@@ -1884,6 +2056,21 @@ async function request(path, {
     }
     if (kind === "screenshotGet" && response.ok) {
       if (endpointClass === "POST /api/classpilot/tiles/screenshots" && Array.isArray(json?.tiles)) {
+        if (reliabilityWorkload) for (const studentId of expectedStudentIds) {
+          counters.reliabilityScreenshotAgeAttempts += 1;
+          const tile = json.tiles.find(entry => entry?.studentId === studentId);
+          const capturedAt = typeof tile?.screenshot?.capturedAt === 'string'
+            ? Date.parse(tile.screenshot.capturedAt) : tile?.screenshot?.timestamp;
+          const hasPixels = typeof tile?.screenshot?.screenshot === 'string'
+            && tile.screenshot.screenshot.startsWith('data:image/jpeg;base64,');
+          if (hasPixels && reliabilityScreenshotBindingMatches(tile)
+            && typeof capturedAt === 'number' && Number.isFinite(capturedAt)
+            && capturedAt > 0 && capturedAt <= Date.now() + 1_000) {
+            reliabilityScreenshotFreshness.observe(Math.max(0, Date.now() - capturedAt));
+          } else {
+            counters.reliabilityScreenshotAgeUnavailable += 1;
+          }
+        }
         counters.screenshotGetSuccess += json.tiles.filter((tile) =>
           typeof tile?.screenshot?.screenshot === "string" &&
           tile.screenshot.screenshot.startsWith("data:image/jpeg;base64,")
@@ -1915,8 +2102,12 @@ async function request(path, {
         triggerFatalGate("invalid-teacher-response", { kind: endpointClass, reason: validationError });
       }
     }
-    return { status, ok: response.ok, json };
+    return { status, ok: response.ok, json, screenshotRefusal };
   } catch (error) {
+    if (deferredScreenshot409 && !classifiedScreenshot409) {
+      counters.reliabilityScreenshotRefusalBodyUnavailable += 1;
+      if (countWorkload) triggerFatalGate("valid-http-409", { status, kind, screenshotRefusalCode: "body-unavailable" });
+    }
     finalizePendingRequest(record, status, error);
     return { status, ok: false, json: null };
   } finally {
@@ -2000,6 +2191,238 @@ function observeServerCommandTargets(entry, targets) {
   counters.commandServerStatusRegressions += observeCommandTargetStatuses(entry, targets, monotonicNowMs());
 }
 
+// BEGIN scoped screenshot recovery. Kept in this producer's existing closure.
+const SCREENSHOT_REFUSAL_COUNTERS = Object.freeze({
+  SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED: "reliabilityScreenshotHeartbeatRequired",
+  SCREENSHOT_AUTHORITY_SUPERSEDED: "reliabilityScreenshotAuthoritySuperseded",
+  SCREENSHOT_CAPTURE_PAUSED: "reliabilityScreenshotCapturePaused",
+  SCREENSHOT_PAUSED_UNOBSERVED: "reliabilityScreenshotPausedUnobserved",
+  SCREENSHOT_CAPTURE_EXPIRED: "reliabilityScreenshotCaptureExpired",
+  SCREENSHOT_CAPTURE_TIME_INVALID: "reliabilityScreenshotCaptureTimeInvalid",
+});
+const CAPTURE_REFUSAL_COUNTERS = Object.freeze({
+  binding: "reliabilityPolicyUnavailableBinding",
+  capabilities: "reliabilityPolicyUnavailableCapabilities",
+  "missing-policy": "reliabilityPolicyUnavailableMissingPolicy",
+  "permission-unavailable": "reliabilityPolicyUnavailablePermission",
+  authority: "reliabilityPolicyUnavailableAuthority",
+  "cadence-background": "reliabilityPolicyUnavailableCadenceBackground",
+  "cadence-expired": "reliabilityPolicyUnavailableCadenceExpired",
+});
+const CAPTURE_POLICY_SOURCE_COUNTERS = Object.freeze({
+  none: "reliabilityPolicyUnavailableSourceNone",
+  auth: "reliabilityPolicyUnavailableSourceAuth",
+  heartbeat: "reliabilityPolicyUnavailableSourceHeartbeat",
+  upload: "reliabilityPolicyUnavailableSourceUpload",
+  denial: "reliabilityPolicyUnavailableSourceDenial",
+});
+const CAPTURE_CADENCE_ORIGIN_COUNTERS = Object.freeze({
+  "explicit-background": "reliabilityPolicyUnavailableCadenceBackgroundExplicit",
+  "active-elapsed-response": "reliabilityPolicyUnavailableCadenceBackgroundActiveElapsed",
+  malformed: "reliabilityPolicyUnavailableCadenceBackgroundMalformed",
+  missing: "reliabilityPolicyUnavailableCadenceBackgroundMissing",
+  omitted: "reliabilityPolicyUnavailableCadenceBackgroundOmitted",
+  "active-at-adoption": "reliabilityPolicyUnavailableCadenceBackgroundActiveAtAdoption",
+  unknown: "reliabilityPolicyUnavailableCadenceBackgroundUnknown",
+});
+function recoveryScreenshotCadenceOrigin(raw, policy) {
+  if (!policy) return "malformed";
+  if (!Object.hasOwn(raw, "captureCadence")) return "missing";
+  const cadence = raw.captureCadence;
+  if (!cadence || typeof cadence !== "object" || Array.isArray(cadence)) return "malformed";
+  if (cadence.mode === "background" && cadence.intervalSeconds === 30
+    && Number.isSafeInteger(cadence.expiresInSeconds) && cadence.expiresInSeconds >= 0
+    && cadence.expiresInSeconds <= 90) return "explicit-background";
+  if (cadence.mode !== "active_view" || cadence.intervalSeconds !== 5
+    || !Number.isSafeInteger(cadence.expiresInSeconds) || cadence.expiresInSeconds <= 0
+    || cadence.expiresInSeconds > 90) return "malformed";
+  return policy.captureCadence.mode === "active_view" ? "active-at-adoption" : "active-elapsed-response";
+}
+function applyRecoveryScreenshotCadenceDiagnostic(state, guard, origin) {
+  // Only callers that pass the existing policy-adoption fences reach here.
+  // Retain no raw policy values, identifiers or response timestamps.
+  state.screenshotCadenceAppliedDiagnostic = Object.freeze({ epoch: guard.epoch, generation: guard.generation, origin });
+}
+function screenshotRecoveryBinding(device) {
+  // Normalized manifest rows intentionally omit sessionId. Reuse the existing
+  // claims/manifest tuple validation; never invent a parallel session field.
+  return JSON.stringify([publicBindingFromDevice(device), device.studentToken]);
+}
+function screenshotRecoverySession(device) {
+  publicBindingFromDevice(device);
+  return JSON.parse(Buffer.from(device.studentToken.split(".")[1], "base64url")).sessionId;
+}
+function screenshotRecoveryAuthBindingCurrent(state, message) {
+  const sessionId = screenshotRecoverySession(state.device), exact = message.exactBinding;
+  return message.schoolId === state.device.schoolId && message.studentId === state.device.studentId
+    && message.studentSessionId === sessionId && (!exact || exact.schoolId === state.device.schoolId
+      && exact.studentId === state.device.studentId && exact.studentSessionId === sessionId
+      && exact.deviceId === state.device.deviceId);
+}
+function screenshotRecoveryScope(authority) {
+  return authority ? JSON.stringify([authority.kind, authority.teachingSessionId || "", authority.controlRevision]) : null;
+}
+function reserveScreenshotRecovery(state, wall = Date.now(), mono = monotonicNowMs()) {
+  const binding = screenshotRecoveryBinding(state.device);
+  if (state.screenshotRecoveryBinding !== binding) {
+    state.screenshotRecoveryBinding = binding;
+    state.screenshotRecoveryEpoch = (state.screenshotRecoveryEpoch || 0) + 1;
+    state.screenshotPolicyApplied = 0;
+    state.screenshotPolicyAppliedSource = "none";
+    state.screenshotCadenceAppliedDiagnostic = null;
+    state.device.reliabilityPolicy = null;
+    state.screenshotCapabilities = new Set();
+  }
+  return Object.freeze({ binding, epoch: state.screenshotRecoveryEpoch,
+    generation: state.screenshotPolicyRequested = (state.screenshotPolicyRequested || 0) + 1,
+    scope: screenshotRecoveryScope(state.device.reliabilityPolicy?.authority), wall, mono });
+}
+function screenshotRecoveryCurrent(state, guard) {
+  return Boolean(guard && guard.binding === screenshotRecoveryBinding(state.device)
+    && guard.binding === state.screenshotRecoveryBinding && guard.epoch === state.screenshotRecoveryEpoch);
+}
+function normalizeRecoveryScreenshotPolicy(state, raw, guard, wall, mono) {
+  if (!raw || Array.isArray(raw) || raw.mode !== "tracking_window_lease"
+    || typeof raw.captureAllowed !== "boolean" || typeof raw.expiresInSeconds !== "number"
+    || !Number.isFinite(raw.expiresInSeconds) || raw.expiresInSeconds < 0 || raw.expiresInSeconds > 90) return null;
+  const authority = raw.authority, revision = authority?.controlRevision;
+  if (!authority || !Number.isSafeInteger(revision) || revision < 0) return null;
+  const keys = Object.keys(authority).sort().join(",");
+  if (authority.kind === "student_session" ? keys !== "controlRevision,kind"
+    : authority.kind !== "teaching_session" || keys !== "controlRevision,kind,teachingSessionId"
+      || !state.expectedTeachingSessionId || authority.teachingSessionId !== state.expectedTeachingSessionId) return null;
+  const server = typeof raw.serverTime === "string" ? Date.parse(raw.serverTime) : NaN, elapsed = mono - guard.mono;
+  if (!Number.isFinite(server) || new Date(server).toISOString() !== raw.serverTime || !Number.isFinite(elapsed) || elapsed < 0
+    || wall < guard.wall || server < guard.wall - 30_000 || server > wall + 30_000) return null;
+  const remaining = Math.max(0, Math.min(raw.expiresInSeconds * 1000 - elapsed,
+    server + raw.expiresInSeconds * 1000 - wall));
+  const cadence = raw.captureCadence;
+  const cadenceRemaining = cadence?.mode === "active_view" && cadence.intervalSeconds === 5
+    && Number.isSafeInteger(cadence.expiresInSeconds) && cadence.expiresInSeconds > 0 && cadence.expiresInSeconds <= 90
+    ? Math.max(0, Math.min(remaining, cadence.expiresInSeconds * 1000 - elapsed,
+      server + cadence.expiresInSeconds * 1000 - wall)) : 0;
+  return { mode: raw.mode, captureAllowed: raw.captureAllowed && remaining > 0,
+    authority: { ...authority }, expiresAtMono: mono + remaining,
+    captureCadence: { mode: cadenceRemaining > 0 ? "active_view" : "background",
+      intervalSeconds: cadenceRemaining > 0 ? 5 : 30, expiresAtMono: mono + cadenceRemaining } };
+}
+function adoptRecoveryScreenshotPolicy(state, body, guard, source, wall = Date.now(), mono = monotonicNowMs()) {
+  if (!screenshotRecoveryCurrent(state, guard) || guard.generation < (state.screenshotPolicyApplied || 0)) return false;
+  const current = state.device.reliabilityPolicy;
+  if (source === "upload" && guard.scope !== screenshotRecoveryScope(current?.authority)) return false;
+  const appliedSource = Object.hasOwn(CAPTURE_POLICY_SOURCE_COUNTERS, source) ? source : "none";
+  if (Array.isArray(body?.acceptedCapabilities)) state.screenshotCapabilities = new Set(body.acceptedCapabilities);
+  if (!Object.prototype.hasOwnProperty.call(body || {}, "screenshotPolicy")) {
+    // An omitted policy cannot grant/extend a lease. Auth may retain an exact
+    // unexpired lease; HTTP omissions preserve permission but drop fast cadence.
+    if (current && state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+      && state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+      && guard.scope === screenshotRecoveryScope(current.authority) && current.expiresAtMono > mono) {
+      if (source !== "auth") state.device.reliabilityPolicy = { ...current,
+        captureCadence: { mode: "background", intervalSeconds: 30, expiresAtMono: 0 } };
+    } else state.device.reliabilityPolicy = null;
+    state.screenshotPolicyApplied = guard.generation;
+    state.screenshotPolicyAppliedSource = appliedSource;
+    applyRecoveryScreenshotCadenceDiagnostic(state, guard, "omitted");
+    return false;
+  }
+  const policy = normalizeRecoveryScreenshotPolicy(state, body.screenshotPolicy, guard, wall, mono);
+  if (!policy) {
+    state.device.reliabilityPolicy = null;
+    state.screenshotPolicyApplied = guard.generation;
+    state.screenshotPolicyAppliedSource = appliedSource;
+    applyRecoveryScreenshotCadenceDiagnostic(state, guard, "malformed");
+    return false;
+  }
+  if (current && policy.captureAllowed && policy.authority.kind === "teaching_session"
+    && policy.authority.controlRevision < current.authority.controlRevision) return false;
+  state.device.reliabilityPolicy = policy;
+  state.screenshotPolicyApplied = guard.generation;
+  state.screenshotPolicyAppliedSource = appliedSource;
+  applyRecoveryScreenshotCadenceDiagnostic(state, guard, recoveryScreenshotCadenceOrigin(body.screenshotPolicy, policy));
+  return true;
+}
+function classifyRecoveryScreenshot409(state, body, guard, wall = Date.now(), mono = monotonicNowMs()) {
+  const code = typeof body?.code === "string" && Object.hasOwn(SCREENSHOT_REFUSAL_COUNTERS, body.code) ? body.code : null;
+  if (!code) return { code: "unknown", recoverable: false };
+  if (body.ok !== false) return { code, recoverable: false };
+  if (!screenshotRecoveryCurrent(state, guard)) return { code, recoverable: false };
+  if (code === "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED") return { code, recoverable: true };
+  // Invalid timestamps remain fatal; they are not authority-recovery signals.
+  if (["SCREENSHOT_CAPTURE_EXPIRED", "SCREENSHOT_CAPTURE_TIME_INVALID"].includes(code)) return { code, recoverable: false };
+  return { code, recoverable: Boolean(normalizeRecoveryScreenshotPolicy(state, body.screenshotPolicy, guard, wall, mono)) };
+}
+function recoveryScreenshotCaptureAllowed(state, now = monotonicNowMs()) {
+  const policy = state.device.reliabilityPolicy;
+  return state.screenshotRecoveryBinding === screenshotRecoveryBinding(state.device)
+    && state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+    && state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+    && state.screenshotCapabilities?.has("screenshotActiveObservationCadenceV1")
+    && policy?.captureAllowed === true && policy.expiresAtMono > now
+    && policy.authority?.kind === "teaching_session" && policy.authority.teachingSessionId === state.expectedTeachingSessionId
+    && policy.captureCadence?.mode === "active_view" && policy.captureCadence.intervalSeconds === 5
+    && policy.captureCadence.expiresAtMono > now;
+}
+function recoveryScreenshotCaptureRefusalReason(state, now = monotonicNowMs()) {
+  // Diagnose the first false term without changing the eligibility predicate.
+  // Permission includes an explicit denial as well as an expired lease.
+  const policy = state.device.reliabilityPolicy;
+  if (state.screenshotRecoveryBinding !== screenshotRecoveryBinding(state.device)) return "binding";
+  if (!state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+    || !state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+    || !state.screenshotCapabilities?.has("screenshotActiveObservationCadenceV1")) return "capabilities";
+  if (!policy) return "missing-policy";
+  if (policy.captureAllowed !== true || !(policy.expiresAtMono > now)) return "permission-unavailable";
+  if (policy.authority?.kind !== "teaching_session"
+    || policy.authority.teachingSessionId !== state.expectedTeachingSessionId) return "authority";
+  if (policy.captureCadence?.mode !== "active_view" || policy.captureCadence.intervalSeconds !== 5) return "cadence-background";
+  if (!(policy.captureCadence.expiresAtMono > now)) return "cadence-expired";
+  return null;
+}
+function recordRecoveryScreenshotCaptureRefusal(state) {
+  const reason = recoveryScreenshotCaptureRefusalReason(state);
+  if (reason) {
+    counters[CAPTURE_REFUSAL_COUNTERS[reason]] += 1;
+    const source = Object.hasOwn(CAPTURE_POLICY_SOURCE_COUNTERS, state.screenshotPolicyAppliedSource)
+      ? state.screenshotPolicyAppliedSource : "none";
+    counters[CAPTURE_POLICY_SOURCE_COUNTERS[source]] += 1;
+    if (reason === "cadence-background") {
+      const diagnostic = state.screenshotCadenceAppliedDiagnostic;
+      const origin = diagnostic?.epoch === state.screenshotRecoveryEpoch
+        && diagnostic?.generation === state.screenshotPolicyApplied
+        && typeof diagnostic.origin === "string" && Object.hasOwn(CAPTURE_CADENCE_ORIGIN_COUNTERS, diagnostic.origin)
+        ? diagnostic.origin : "unknown";
+      counters[CAPTURE_CADENCE_ORIGIN_COUNTERS[origin]] += 1;
+    }
+  }
+}
+function recoveryScreenshotHintCurrent(state, message) {
+  return state.authenticated && state.screenshotRecoveryBinding === screenshotRecoveryBinding(state.device)
+    && state.screenshotCapabilities?.has("scopedAuthorityChecksV1")
+    && state.screenshotCapabilities?.has("screenshotTrackingWindowLeaseV1")
+    && state.screenshotCapabilities?.has("screenshotActiveObservationCadenceV1")
+    && message.reason === "observation_changed" && message.studentId === state.device.studentId
+    && message.studentSessionId === screenshotRecoverySession(state.device) && !message.supervisionContextId
+    && (!message.schoolId || message.schoolId === state.device.schoolId)
+    && (!message.deviceId || message.deviceId === state.device.deviceId)
+    // The frozen authorized teacher mapping only validates a heartbeat hint;
+    // pixels still require a fresh, exact current policy and cadence above.
+    && Boolean(state.expectedTeachingSessionId) && message.teachingSessionId === state.expectedTeachingSessionId;
+}
+function applyRecoveryScreenshotResponse(state, result, guard) {
+  if (!screenshotRecoveryCurrent(state, guard)) return;
+  if (result.ok) {
+    state.reliabilityCaptures += 1;
+    adoptRecoveryScreenshotPolicy(state, result.json, guard, "upload");
+  } else if (result.screenshotRefusal?.recoverable) {
+    if (result.screenshotRefusal.code !== "SCREENSHOT_CAPABILITY_HEARTBEAT_REQUIRED") {
+      adoptRecoveryScreenshotPolicy(state, result.json, guard, "denial");
+    }
+    state.heartbeatWriter?.navigation();
+  }
+}
+// END scoped screenshot recovery.
+
 function heartbeatBody(device) {
   // Keep capacity tests on deterministic local classifications. Unknown hosts
   // would fan out to Anthropic at startup/cache expiry and distort both cost
@@ -2007,6 +2430,7 @@ function heartbeatBody(device) {
   const domains = ["docs.google.com", "drive.google.com", "classroom.google.com"];
   const domain = domains[Math.floor(Math.random() * domains.length)];
   return {
+    ...(reliabilityWorkload ? { clientProtocolVersion: 3, capabilities: [...RELIABILITY_CAPABILITIES] } : {}),
     activeTabUrl: `https://${domain}/load/${encodeURIComponent(device.deviceId)}`,
     activeTabTitle: `Load ${domain}`,
     visibilityState: "visible",
@@ -2018,6 +2442,8 @@ function heartbeatBody(device) {
     status: "active",
     extensionVersion: "load-test",
     chromeVersion: "load-test",
+    ...(device.measurementSnapshot || {}),
+    ...(revisionBaselines.has(device) && !device.measurementSnapshot ? { tabSnapshotRevision: revisionBaselines.get(device) } : {}),
     screenshotHealth: {
       lastSuccessAt: new Date().toISOString(),
       attempts: 1,
@@ -2027,12 +2453,35 @@ function heartbeatBody(device) {
   };
 }
 
+let sourceLedgerHook = null;
+let reliabilityFrameOrdinal = 0;
 function screenshotBody(device) {
-  return {
-    screenshot: screenshotFixture,
+  const capturedAt = Date.now();
+  let screenshot = screenshotFixture;
+  if (reliabilityWorkload) {
+    const variants = reliabilityScreenshotFixtures.get(device), captureOrdinal = (device.reliabilityCaptureOrdinal || 0) + 1;
+    device.reliabilityCaptureOrdinal = captureOrdinal;
+    const fixture = variants?.[(captureOrdinal-1)%3];
+    if (!fixture) throw new Error('Missing per-device reliability fixture');
+    const started = process.hrtime.bigint(), cpu = process.cpuUsage();
+    screenshot = capturePulseProducer && device.schoolId === teacherSchoolId
+      ? stampCausalCapture(fixture, capturedAt, captureOrdinal, capturePulseProducer.markerForCapture(publicBindingFromDevice(device)))
+      : stampReliabilityFrame(`data:image/jpeg;base64,${fixture.toString('base64')}`, capturedAt, ++reliabilityFrameOrdinal);
+    const used = process.cpuUsage(cpu), elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    reliabilityCaptureEncoding.captures += 1;
+    reliabilityCaptureEncoding.elapsedMs += elapsedMs;
+    reliabilityCaptureEncoding.maximumElapsedMs = Math.max(reliabilityCaptureEncoding.maximumElapsedMs, elapsedMs);
+    reliabilityCaptureEncoding.cpuUserMs += used.user / 1000;
+    reliabilityCaptureEncoding.cpuSystemMs += used.system / 1000;
+  }
+  const body = {
+    ...(reliabilityWorkload ? { capturedAt: new Date(capturedAt).toISOString(), screenshotAuthority: device.reliabilityPolicy.authority } : {}),
+    screenshot,
     tabTitle: `Load ${device.deviceId}`,
     tabUrl: `https://example.edu/load/${encodeURIComponent(device.deviceId)}`,
   };
+  if (sourceLedgerHook) sourceLedgerHook.record({ publicBinding: publicBindingFromDevice(device), body, pulse: capturePulseProducer.latest, primary: device.schoolId === teacherSchoolId });
+  return body;
 }
 
 function sendCommandAck(state, commandId, status) {
@@ -2071,9 +2520,16 @@ function handleDeviceMessage(state, raw, onAuthenticated) {
     return;
   }
   if (message.type === "auth-success" && message.role === "student") {
+    if (reliabilityWorkload && !screenshotRecoveryAuthBindingCurrent(state, message)) {
+      counters.wsAuthErrors += 1;
+      state.socket?.close();
+      return;
+    }
     cancelLater(state.authTimer);
     state.authTimer = null;
     state.authenticated = true;
+    state.transportProbe = message.transportProbeV1 === true;
+    if (reliabilityWorkload) adoptRecoveryScreenshotPolicy(state, message, state.screenshotAuthGuard, "auth");
     state.reconnectAttempt = 0;
     counters.wsAuthenticated += 1;
     authenticatedDeviceIds.add(state.device.deviceId);
@@ -2102,6 +2558,22 @@ function handleDeviceMessage(state, raw, onAuthenticated) {
   }
   if (message.type === "pong") {
     counters.wsKeepalivePongsReceived += 1;
+    return;
+  }
+  if (message.type === "transport-probe-reply") {
+    if (message.nonce === state.socket?._loadProbeNonce) {
+      counters.wsKeepalivePongsReceived += 1;
+      state.socket._loadProbeNonce = null;
+    }
+    return;
+  }
+  if (reliabilityWorkload && message.type === "screenshot-policy-refresh") {
+    if (recoveryScreenshotHintCurrent(state, message)) {
+      counters.reliabilityScreenshotRefreshHints += 1;
+      // Reuse the same two-second event coalescer and single heartbeat writer.
+      // The hint supplies no policy and never resubmits an old screenshot.
+      state.heartbeatWriter?.navigation();
+    } else counters.reliabilityScreenshotRefreshHintsIgnored += 1;
     return;
   }
 
@@ -2159,11 +2631,13 @@ function connectDevice(state) {
   socket.on("open", () => {
     if (state.generation !== generation) return;
     counters.wsOpened += 1;
+    if (reliabilityWorkload) state.screenshotAuthGuard = reserveScreenshotRecovery(state);
     socket.send(JSON.stringify({
       type: "auth",
       role: "student",
       deviceId: state.device.deviceId,
       studentToken: state.device.studentToken,
+      ...(reliabilityWorkload ? { clientProtocolVersion: 3, capabilities: [...RELIABILITY_CAPABILITIES], extensionVersion: 'reliability-fixture' } : {}),
     }));
   });
   socket.on("message", (raw) => {
@@ -2172,7 +2646,8 @@ function connectDevice(state) {
         keepaliveTimer ||= startSocketKeepalive(
           socket,
           deviceWsKeepaliveIntervalMs,
-          "wsKeepalivePingsSent"
+          "wsKeepalivePingsSent",
+          () => state.transportProbe,
         );
       });
     }
@@ -2207,6 +2682,8 @@ function connectDevice(state) {
 
 const deviceStates = devices.map((device) => ({
   device,
+  expectedTeachingSessionId: teacherAuthInputs.find(auth => auth.schoolId === device.schoolId
+    && auth.studentIds.has(device.studentId))?.teachingSessionId || null,
   socket: null,
   authenticated: false,
   authTimer: null,
@@ -2215,14 +2692,78 @@ const deviceStates = devices.map((device) => ({
   reconnectStartedAt: 0,
   forcedReconnectStartedAt: 0,
   closeReason: "",
+  reliabilityHeartbeats: 0,
+  reliabilityCaptures: 0,
 }));
 const teacherSocketStates = teacherAuthInputs.map((auth) => ({
   auth,
   socket: null,
   authenticated: false,
+  subscribed: false,
+  generation: 0,
+  authTimer: null,
+  subscriptionTimer: null,
+  subscriptionRequestId: null,
 }));
 
+function teacherSocketReady(state) {
+  return state.authenticated && state.socket?.readyState === WebSocket.OPEN
+    && (!state.auth.teachingSessionId || state.subscribed);
+}
+
+function pollMeasurementControl() {
+  if (!measurementPaths || stoppingTraffic || !fs.existsSync(measurementPaths.control)) return;
+  try {
+    const bytes = fs.readFileSync(measurementPaths.control);
+    if (bytes.length > MEASUREMENT_LIMITS.controlBytes) throw Error('Oversized measurement control');
+    const pulse = validateCapturePulse(JSON.parse(bytes), measurementContext);
+    if (pulse.revisionDrainNonce && !measurementDrainNonce) {
+      measurementDrainNonce = pulse.revisionDrainNonce; measurementDrainStartedAt = monotonicNowMs();
+      for (const state of deviceStates) if (state.device.schoolId === teacherSchoolId) state.heartbeatWriter?.hold();
+    }
+    if (measurementDrainNonce && !measurementBootstrapSha) {
+      if (monotonicNowMs() - measurementDrainStartedAt > 2000) throw Error('Revision drain exceeded its caller budget');
+      if (!measurementDrainWritten && deviceStates.filter(state => state.device.schoolId === teacherSchoolId).every(state => !state.heartbeatWriter?.active)) {
+        writeAtomicJson(measurementPaths.drained, measurementSignal(measurementContext, 'measurement-drained-v3', measurementDrainNonce)); measurementDrainWritten = true;
+      }
+    }
+    if (pulse.pulseSequence <= measurementSequence) return;
+    if (pulse.revisionBaselinesSha256 && measurementBootstrapSha !== pulse.revisionBaselinesSha256) {
+      const bootstrapBytes = fs.readFileSync(measurementPaths.bootstrap);
+      if (bootstrapBytes.length > MEASUREMENT_LIMITS.bootstrapBytes || createHash('sha256').update(bootstrapBytes).digest('hex') !== pulse.revisionBaselinesSha256) throw Error('Bootstrap bytes mismatch');
+      const bootstrap = validateRevisionBootstrap(JSON.parse(bootstrapBytes), measurementContext, devices);
+      const bases = new Map(bootstrap.revisionBaselines.map(row => [row.publicBinding, row.revisionBase]));
+      for (const device of devices.slice(10)) revisionBaselines.set(device, bases.get(publicBindingFromDevice(device)));
+      measurementBootstrapSha = pulse.revisionBaselinesSha256; measurementDeviceCounters.revisionBootstrapAccepted = true;
+      for (const state of deviceStates) if (state.device.schoolId === teacherSchoolId) state.heartbeatWriter?.release();
+    }
+    capturePulseProducer.adopt(pulse); measurementSequence = pulse.pulseSequence; measurementDeviceCounters.pulseAdopted += 1;
+    if (pulse.navigationRound > measurementNavigationRound) {
+      if (pulse.navigationRound !== measurementNavigationRound + 1 || !measurementBootstrapSha) throw Error('Navigation continuity gap');
+      for (const state of deviceStates) {
+        if (!revisionBaselines.has(state.device)) continue;
+        const snapshot = navigationSnapshot({ runId: pulse.runId, round: pulse.navigationRound, nonce: pulse.navigationNonce }, publicBindingFromDevice(state.device), revisionBaselines.get(state.device));
+        const { marker, hostname, favicon, ...body } = snapshot;
+        state.device.measurementSnapshot = body; state.heartbeatWriter.navigation();
+      }
+      measurementNavigationRound = pulse.navigationRound; measurementDeviceCounters.navigationGenerations += 1;
+    }
+  } catch { measurementDeviceCounters.invalidControls += 1; triggerFatalGate('invalid-measurement-control', { source: 'measurement' }); }
+}
+
 function startDeviceTraffic(state, index) {
+  state.heartbeatWriter = new SerialHeartbeatWriter({ now: monotonicNowMs, schedule: (callback, ms) => later(callback, ms, { scale: false }), clear: cancelLater,
+    identity: () => reliabilityWorkload ? screenshotRecoveryBinding(state.device) : JSON.stringify([state.device.deviceId, state.device.studentToken]),
+    snapshot: () => heartbeatBody(state.device), send: async body => {
+      if (stoppingTraffic) return { ok: false, denied: true };
+      counters.heartbeat += 1;
+      const screenshotGuard = reliabilityWorkload ? reserveScreenshotRecovery(state) : null;
+      const result = await issue('/api/classpilot/device/heartbeat', { method: 'POST', token: state.device.studentToken,
+        body, kind: 'heartbeat', parseJson: Boolean(reliabilityWorkload) });
+      if (reliabilityWorkload && result.ok) state.reliabilityHeartbeats += 1;
+      if (reliabilityWorkload && result.ok) adoptRecoveryScreenshotPolicy(state, result.json, screenshotGuard, "heartbeat");
+      return { ok: result.ok, denied: result.status === 401 || result.status === 403 };
+    } });
   const heartbeatJitter = Math.floor((index / devices.length) * heartbeatIntervalMs);
   const screenshotJitter = Math.floor((index / devices.length) * screenshotIntervalMs);
   const acceleratedJitter = acceleratedRequestStaggerMs
@@ -2230,16 +2771,7 @@ function startDeviceTraffic(state, index) {
     : null;
   later(() => {
     if (stoppingTraffic) return;
-    const send = () => {
-      if (stoppingTraffic) return;
-      counters.heartbeat += 1;
-      void issue("/api/classpilot/device/heartbeat", {
-        method: "POST",
-        token: state.device.studentToken,
-        body: heartbeatBody(state.device),
-        kind: "heartbeat",
-      });
-    };
+    const send = () => { if (!stoppingTraffic) state.heartbeatWriter.regular(); };
     send();
     workloadEvery(send, heartbeatIntervalMs);
   }, acceleratedJitter ?? heartbeatJitter, { scale: acceleratedJitter === null });
@@ -2247,12 +2779,30 @@ function startDeviceTraffic(state, index) {
     if (stoppingTraffic) return;
     const send = () => {
       if (stoppingTraffic) return;
+      if (reliabilityWorkload && !recoveryScreenshotCaptureAllowed(state)) {
+        // A missing/closed authoritative lease is never replaced with a fixture grant.
+        // Canary devices intentionally have no observed classroom.
+        if (state.device.schoolId === teacherSchoolId && monotonicNowMs() - Number(runStartedAtMonoNs / NANOSECONDS_PER_MILLISECOND) > 30_000) {
+          counters.reliabilityPolicyUnavailable += 1;
+          recordRecoveryScreenshotCaptureRefusal(state);
+        }
+        return;
+      }
+      if (capturePulseProducer && state.device.schoolId === teacherSchoolId) {
+        try { capturePulseProducer.markerForCapture(publicBindingFromDevice(state.device)); }
+        catch { measurementDeviceCounters.pulseMissingCapture += 1; return; }
+      }
       counters.screenshotPost += 1;
+      const screenshotGuard = reliabilityWorkload ? reserveScreenshotRecovery(state) : null;
       void issue("/api/classpilot/device/screenshot", {
         method: "POST",
         token: state.device.studentToken,
         body: screenshotBody(state.device),
         kind: "screenshotPost",
+        ...(reliabilityWorkload ? { screenshotRecovery: { state, guard: screenshotGuard } } : {}),
+      }).then(result => {
+        if (!reliabilityWorkload) return;
+        applyRecoveryScreenshotResponse(state, result, screenshotGuard);
       });
     };
     send();
@@ -2303,6 +2853,7 @@ function devicesForTeacher(auth, authIndex) {
 }
 
 function expandTeacherPath(path, auth, authIndex) {
+  path = path.replaceAll("{teachingSessionId}", encodeURIComponent(auth.teachingSessionId || ""));
   if (!path.includes("{deviceId}") && !path.includes("{studentId}")) return [path];
   const matchingDevices = devicesForTeacher(auth, authIndex)
     .filter((device) => !path.includes("{studentId}") || Boolean(device.studentId));
@@ -2373,6 +2924,39 @@ function startTeacherTraffic() {
   }
 }
 
+async function renewReliabilityObservationLeases() {
+  if (!reliabilityWorkload || stoppingTraffic) return;
+  if (reliabilityObservationRenewal) return reliabilityObservationRenewal;
+  // Independent classrooms settle within one HTTP deadline. Renewals share
+  // one flight, so a slow server cannot create overlapping PUT waves.
+  reliabilityObservationRenewal = Promise.all(teacherAuthInputs.map(async (auth) => {
+    let viewerInstanceId = reliabilityObservationViewers.get(auth);
+    if (!viewerInstanceId) {
+      viewerInstanceId = randomUUID();
+      reliabilityObservationViewers.set(auth, viewerInstanceId);
+    }
+    const result = await issue(`/api/classpilot/teaching-sessions/${encodeURIComponent(auth.teachingSessionId)}/observation-lease`, {
+      ...teacherHttpAuth(auth), method: 'PUT', kind: 'observationLease',
+      body: { viewerInstanceId, scope: { kind: 'class' } }, parseJson: true,
+    });
+    if (result.ok) counters.reliabilityObservationRenewals += 1;
+  })).finally(() => { reliabilityObservationRenewal = null; });
+  return reliabilityObservationRenewal;
+}
+
+async function releaseReliabilityObservationLeases() {
+  if (!reliabilityWorkload) return;
+  // Settle old PUTs before their exact-viewer DELETEs; never leave a late
+  // successful renewal behind a cleanup request.
+  await reliabilityObservationRenewal;
+  await Promise.all([...reliabilityObservationViewers].map(async ([auth, viewerInstanceId]) => {
+    await issue(`/api/classpilot/teaching-sessions/${encodeURIComponent(auth.teachingSessionId)}/observation-lease`, {
+      ...teacherHttpAuth(auth), method: 'DELETE', kind: 'observationLeaseCleanup', body: { viewerInstanceId },
+    });
+  }));
+  reliabilityObservationViewers.clear();
+}
+
 function startScreenshotPolling() {
   if (!hasTeacherHttpAuth || !screenshotGetTemplate) return;
   const poll = () => {
@@ -2414,6 +2998,44 @@ function startScreenshotPolling() {
 
 function startTileBatchPolling() {
   if (!hasTeacherHttpAuth || !tileBatchConfigured) return;
+  if (reliabilityWorkload) {
+    const cohorts = teacherAuthInputs.map((auth, cohortIndex) => ({
+      auth, cohortIndex,
+      studentIds: devicesForTeacher(auth, cohortIndex).map(device => device.studentId).filter(Boolean),
+    }));
+    const pending = new Set();
+    const poll = (kind, intervalMs) => scheduleStaggered(cohorts, intervalMs, ({ auth, cohortIndex, studentIds }) => {
+      if (stoppingTraffic || pending.has(`${kind}:${cohortIndex}`)) return;
+      const screenshot = kind === 'screenshotGet';
+      const key = `${kind}:${cohortIndex}`;
+      pending.add(key);
+      counters.teacher += 1;
+      if (screenshot) {
+        counters.tileBatchScreenshotRequests += 1;
+        counters.tileBatchScreenshotRequestsByCohort[cohortIndex] += 1;
+        counters.tileScreenshotLogicalOperations += studentIds.length;
+        counters.screenshotGet += studentIds.length;
+      } else {
+        counters.tileBatchHistoryRequests += 1;
+        counters.tileBatchHistoryRequestsByCohort[cohortIndex] += 1;
+        counters.tileHistoryLogicalOperations += studentIds.length;
+      }
+      const endpoint = screenshot ? tileScreenshotsPath : tileHistoryPath;
+      void issue(endpoint, {
+        ...teacherHttpAuth(auth), method: 'POST', kind,
+        body: { studentIds, teachingSessionId: auth.teachingSessionId, ...(!screenshot ? { limit: 10 } : {}) },
+        endpointClass: redactedEndpointClass(endpoint), expectedStudentIds: new Set(studentIds),
+      }).finally(() => pending.delete(key));
+    });
+    later(() => {
+      if (stoppingTraffic) return;
+      poll('screenshotGet', screenshotGetIntervalMs);
+      poll('historyBatch', historyReadIntervalMs);
+      workloadEvery(() => poll('screenshotGet', screenshotGetIntervalMs), screenshotGetIntervalMs);
+      workloadEvery(() => poll('historyBatch', historyReadIntervalMs), historyReadIntervalMs);
+    }, teacherTileCohortWarmupMs);
+    return;
+  }
   const poll = () => {
     if (stoppingTraffic) return;
     const cohorts = [];
@@ -2468,23 +3090,35 @@ function startTenantIsolationProbes() {
   if (testProbe && !["localhost", "127.0.0.1", "::1"].includes(targetUrl.hostname)) {
     throw new Error("LOAD_TEST_ENABLE_ISOLATION_PROBES is restricted to loopback targets");
   }
-  if ((!isLaunchGate && !testProbe) || !teacherAuthInputs[0] || nonOwnedDeviceIds.size === 0) return;
+  if ((!isLaunchGate && !reliabilityWorkload && !testProbe) || !teacherAuthInputs[0] || nonOwnedDeviceIds.size === 0) return;
   const auth = teacherAuthInputs[0];
   const probes = [];
+  if (reliabilityWorkload) {
+    for (const studentId of nonOwnedStudentIds) {
+      for (const probePath of [tileHistoryPath, tileScreenshotsPath]) {
+        probes.push({ path: probePath, method: "POST", body: {
+          studentIds: [studentId], teachingSessionId: auth.teachingSessionId,
+          ...(probePath === tileHistoryPath ? { limit: 10 } : {}),
+        } });
+      }
+    }
+  } else {
   for (const deviceId of nonOwnedDeviceIds) {
     const encoded = encodeURIComponent(deviceId);
     for (const probePath of [
       `/api/classpilot/heartbeats/${encoded}`,
       `/api/classpilot/device/screenshot/${encoded}`,
     ]) {
-      probes.push(probePath);
+      probes.push({ path: probePath });
     }
   }
-  scheduleStaggered(probes, teacherIntervalMs, (probePath) => {
-    void issue(probePath, {
-        ...teacherHttpAuth(auth, { preferBearer: probePath.includes("/device/screenshot/") }),
+  }
+  scheduleStaggered(probes, teacherIntervalMs, (probe) => {
+    void issue(probe.path, {
+        ...teacherHttpAuth(auth, { preferBearer: probe.path.includes("/device/screenshot/") }),
+        method: probe.method || "GET", body: probe.body,
         kind: "tenantIsolationProbe",
-        endpointClass: redactedEndpointClass(probePath),
+        endpointClass: redactedEndpointClass(probe.path),
         countWorkload: false,
         probeExpectedStatus: 404,
     });
@@ -2521,7 +3155,7 @@ function startCommandTraffic() {
       entry.requestStartedAt ||= requestStartedAt;
       entry.expected = Math.max(0, Number(response.json?.summary?.sent || 0));
       entry.expectedDeviceIds = expectedCommandDeviceIds(body);
-      if (isLaunchGate) {
+      if (isLaunchGate || reliabilityWorkload) {
         const expectedSetSize = entry.expectedDeviceIds?.size ?? -1;
         const wrongExistingTarget = [...entry.deliveredDeviceIds].some(
           (deviceId) => !entry.expectedDeviceIds?.has(deviceId)
@@ -2542,12 +3176,20 @@ function startCommandTraffic() {
 
   const sendCycle = async () => {
     if (stoppingTraffic || commandRequestInFlight) return;
+    if (teacherSocketStates.some(state => state.auth.teachingSessionId && !teacherSocketReady(state))) {
+      triggerFatalGate("teacher-websocket-subscription", { kind: "teacher-not-ready-for-command" });
+      return;
+    }
     commandRequestInFlight = true;
     try {
       if (!initialSweepComplete) {
-        for (let index = 0; index < commandBodies.length; index += 1) {
-          if (stoppingTraffic) break;
-          await sendOne(commandBodies[index], index);
+        if (reliabilityWorkload) {
+          await initialReliabilityCommandBurst(commandBodies, sendOne);
+        } else {
+          for (let index = 0; index < commandBodies.length; index += 1) {
+            if (stoppingTraffic) break;
+            await sendOne(commandBodies[index], index);
+          }
         }
         initialSweepComplete = !stoppingTraffic;
         nextBodyIndex = 0;
@@ -2568,8 +3210,15 @@ function startCommandTraffic() {
 }
 
 function connectTeacherWebSocket(state) {
+  if (stoppingTraffic) return;
   const { auth } = state;
   if (!auth?.token || !auth.schoolId) return;
+  cancelLater(state.authTimer);
+  cancelLater(state.subscriptionTimer);
+  state.authenticated = false;
+  state.subscribed = false;
+  state.subscriptionRequestId = null;
+  const generation = ++state.generation;
   const socket = new WebSocket(wsUrl, {
     perMessageDeflate: false,
     handshakeTimeout: requestTimeoutMs,
@@ -2579,7 +3228,24 @@ function connectTeacherWebSocket(state) {
   state.socket = socket;
   sockets.add(socket);
   let keepaliveTimer = null;
+  const current = () => state.socket === socket && state.generation === generation;
+  const failSubscription = (kind, timeout = false) => {
+    if (!current() || stoppingTraffic) return;
+    state.subscribed = false;
+    state.subscriptionRequestId = null;
+    cancelLater(state.subscriptionTimer);
+    state.subscriptionTimer = null;
+    counters.teacherWsSubscriptionErrors += 1;
+    if (timeout) counters.teacherWsSubscriptionTimeouts += 1;
+    triggerFatalGate("teacher-websocket-subscription", { kind });
+  };
+  state.authTimer = later(() => {
+    if (!current() || stoppingTraffic || state.authenticated) return;
+    counters.teacherWsAuthErrors += 1;
+    triggerFatalGate("teacher-websocket-auth", { kind: "teacher-auth-timeout" });
+  }, wsAuthTimeoutMs, { scale: false });
   socket.on("open", () => {
+    if (!current() || stoppingTraffic) return;
     socket.send(JSON.stringify({
       type: "auth",
       role: auth.role,
@@ -2588,6 +3254,7 @@ function connectTeacherWebSocket(state) {
     }));
   });
   socket.on("message", (raw) => {
+    if (!current()) return;
     let message;
     try {
       message = JSON.parse(raw.toString());
@@ -2596,33 +3263,82 @@ function connectTeacherWebSocket(state) {
       return;
     }
     if (message.type === "auth-success") {
+      if (stoppingTraffic || state.authenticated) return;
+      if (message.role !== auth.role) {
+        counters.teacherWsAuthErrors += 1;
+        triggerFatalGate("teacher-websocket-auth", { kind: "teacher-auth-role-mismatch" });
+        return;
+      }
+      cancelLater(state.authTimer);
+      state.authTimer = null;
       state.authenticated = true;
+      state.transportProbe = message.transportProbeV1 === true;
       counters.teacherWsAuthenticated += 1;
       keepaliveTimer ||= startSocketKeepalive(
         socket,
         teacherWsKeepaliveIntervalMs,
-        "teacherWsKeepalivePingsSent"
+        "teacherWsKeepalivePingsSent",
+        () => state.transportProbe,
       );
+      if (auth.teachingSessionId) {
+        const requestId = `load-sub-${generation}-${randomUUID()}`;
+        state.subscriptionRequestId = requestId;
+        counters.teacherWsSubscriptionRequests += 1;
+        state.subscriptionTimer = later(() => failSubscription("teacher-subscription-timeout", true), wsAuthTimeoutMs, { scale: false });
+        socket.send(JSON.stringify({ type: "subscribe-session", teachingSessionId: auth.teachingSessionId, requestId }));
+      }
       return;
     }
     if (message.type === "auth-error") {
       counters.teacherWsAuthErrors += 1;
+      state.authenticated = false;
+      state.subscribed = false;
+      triggerFatalGate("teacher-websocket-auth", { kind: "teacher-auth-rejected" });
+      return;
+    }
+    if (message.type === "session-subscription-success" || message.type === "session-subscription-error") {
+      if (stoppingTraffic || !state.authenticated || !state.subscriptionRequestId || message.requestId !== state.subscriptionRequestId) {
+        counters.teacherWsSubscriptionIgnored += 1;
+        return;
+      }
+      if (message.type === "session-subscription-error") {
+        failSubscription("teacher-subscription-rejected");
+        return;
+      }
+      if (message.teachingSessionId !== auth.teachingSessionId || message.supervisionContextId !== undefined
+        || (message.sessionId !== undefined && message.sessionId !== auth.teachingSessionId)
+        || (message.schoolId !== undefined && message.schoolId !== auth.schoolId)) {
+        failSubscription("teacher-subscription-authority-mismatch");
+        return;
+      }
+      cancelLater(state.subscriptionTimer);
+      state.subscriptionTimer = null;
+      state.subscriptionRequestId = null;
+      state.subscribed = true;
+      counters.teacherWsSubscribed += 1;
       return;
     }
     if (message.type === "pong") {
       counters.teacherWsKeepalivePongsReceived += 1;
       return;
     }
+    if (message.type === 'transport-probe-reply') {
+      if (message.nonce === socket._loadProbeNonce) {
+        counters.teacherWsKeepalivePongsReceived += 1;
+        socket._loadProbeNonce = null;
+      }
+      return;
+    }
     if (message.type !== "classpilot-command-update") return;
+    if (!teacherSocketReady(state)) { counters.commandUpdatesBeforeSubscription += 1; return; }
     counters.commandUpdatesObserved += 1;
     const ownership = classifyCommandSnapshotOwnership(message.command, auth, teacherCommandOwnerKeys);
     if (ownership === "invalid") {
       counters.commandUpdateOwnershipErrors += 1;
       return;
     }
-    // Staff updates are school-wide. Measure status timing and monotonicity on
-    // the issuing teacher's ordered TCP stream instead of merging all 20
-    // independently ordered teacher connections.
+    // Observe status only after this exact session's correlated subscription,
+    // on the issuing teacher's ordered stream instead of merging connections.
     if (ownership !== "owned") return;
     const commandId = String(message.commandId || message.command?.id || "").trim();
     const entry = commandId ? getCommandEntry(commandId) : null;
@@ -2631,13 +3347,23 @@ function connectTeacherWebSocket(state) {
     observeServerCommandTargets(entry, targets);
     counters.commandOwnedUpdatesObserved += 1;
   });
-  socket.on("error", () => { counters.wsErrors += 1; });
+  socket.on("error", () => { if (current()) counters.wsErrors += 1; });
   socket.on("close", () => {
     stopSocketKeepalive(keepaliveTimer);
     keepaliveTimer = null;
     sockets.delete(socket);
-    if (!stoppingTraffic && state.authenticated) counters.teacherWsUnexpectedClosed += 1;
+    if (!current()) return;
+    cancelLater(state.authTimer);
+    cancelLater(state.subscriptionTimer);
+    state.authTimer = null;
+    state.subscriptionTimer = null;
+    state.subscriptionRequestId = null;
+    if (!stoppingTraffic) {
+      if (state.authenticated) counters.teacherWsUnexpectedClosed += 1;
+      triggerFatalGate("teacher-websocket-closed", { kind: "teacher-connection-closed" });
+    }
     state.authenticated = false;
+    state.subscribed = false;
     state.socket = null;
   });
 }
@@ -2677,7 +3403,6 @@ function ratio(numerator, denominator) {
 
 function captureFinalSocketGate() {
   const deviceReady = (state) => state.authenticated && state.socket?.readyState === WebSocket.OPEN;
-  const teacherReady = (state) => state.authenticated && state.socket?.readyState === WebSocket.OPEN;
   const stateOutstanding = deviceStates.filter((state) =>
     Boolean(
       state.reconnectStartedAt ||
@@ -2695,7 +3420,9 @@ function captureFinalSocketGate() {
     deviceAuthenticated: deviceStates.filter(deviceReady).length,
     selectedDevices: devices.length,
     outstandingReconnects: Math.max(stateOutstanding, counterOutstanding),
-    teacherAuthenticated: teacherSocketStates.filter(teacherReady).length,
+    teacherAuthenticated: teacherSocketStates.filter(state => state.authenticated && state.socket?.readyState === WebSocket.OPEN).length,
+    teacherSubscribed: teacherSocketStates.filter(state => state.subscribed && state.socket?.readyState === WebSocket.OPEN).length,
+    teacherReady: teacherSocketStates.filter(teacherSocketReady).length,
     selectedTeachers: teacherSocketStates.length,
   };
 }
@@ -2771,6 +3498,22 @@ function summarize(shutdownReason) {
   const teacherLatencyThresholdMs = COMMAND_LATENCY_CONTRACT_MS * testLatencyThresholdMultiplier;
 
   if (enforceThresholds) {
+    if (reliabilityWorkload) {
+      if (counters.reliabilityPolicyUnavailable > 0) failures.push('Five-second authoritative capture policy became unavailable');
+      if (counters.reliabilityObservationRenewals < reliabilityWorkload.classrooms) failures.push('Every reliability classroom must obtain an observation lease');
+      if (!reliabilityScreenshotFreshness.count) failures.push('No screenshot capture-age samples were observed');
+      if (!counters.reliabilityScreenshotAgeAttempts || ratio(counters.reliabilityScreenshotAgeUnavailable, counters.reliabilityScreenshotAgeAttempts) > 0.01) failures.push('More than 1% of expected screenshot tiles lack valid capture-age evidence');
+      if (reliabilityScreenshotFreshness.percentile(95) > 10_000 || reliabilityScreenshotFreshness.percentile(99) > 15_000) failures.push('Reliability screenshot age exceeds p95=10s or p99=15s');
+      if (counters.tenantIsolationProbePassed < 20) failures.push('Reliability requires all twenty second-school screenshot/history negative probes');
+      if (fullyTargetedClassBodies.size !== reliabilityWorkload.classrooms) failures.push('Every reliability class must complete its full-target command sweep');
+      const minimum = (intervalMs, warmupMs = 0) => minimumReliabilitySamples({
+        durationMs: runtimeDurationMs, intervalMs, warmupMs, timeoutMs: requestTimeoutMs, scale: runtimeTimingScale,
+      });
+      if (deviceStates.some(state => state.reliabilityHeartbeats < minimum(heartbeatIntervalMs))) failures.push('Reliability heartbeat cadence underrun on one or more devices');
+      if (deviceStates.some(state => state.device.schoolId === teacherSchoolId && state.reliabilityCaptures < minimum(screenshotIntervalMs, 30_000))) failures.push('Reliability five-second capture cadence underrun on one or more observed devices');
+      if (counters.tileBatchScreenshotRequestsByCohort.some(count => count < minimum(screenshotGetIntervalMs, teacherTileCohortWarmupMs))) failures.push('Reliability five-second screenshot-read cadence underrun on one or more teacher cohorts');
+      if (counters.tileBatchHistoryRequestsByCohort.some(count => count < minimum(historyReadIntervalMs, teacherTileCohortWarmupMs))) failures.push('Reliability history reconciliation cadence underrun on one or more teacher cohorts');
+    }
     if (fatalGate) failures.push(`fatal gate triggered: ${fatalGate.reasonCodes.join(", ")}`);
     if (shutdownReason !== "duration") {
       failures.push(`run ended because of ${shutdownReason} before its configured duration completed`);
@@ -2838,6 +3581,9 @@ function summarize(shutdownReason) {
       }
       if (finalSocketGate.selectedTeachers > 0 && finalSocketGate.teacherAuthenticated !== finalSocketGate.selectedTeachers) {
         failures.push(`only ${finalSocketGate.teacherAuthenticated}/${finalSocketGate.selectedTeachers} teacher sockets were authenticated at final pre-shutdown`);
+      }
+      if (finalSocketGate.teacherReady !== finalSocketGate.selectedTeachers) {
+        failures.push(`only ${finalSocketGate.teacherReady}/${finalSocketGate.selectedTeachers} teacher sockets had acknowledged their exact classroom subscription at final pre-shutdown`);
       }
     }
     if (counters.wsAuthErrors > 0) failures.push(`${counters.wsAuthErrors} device WebSocket authentications failed`);
@@ -2922,6 +3668,9 @@ function summarize(shutdownReason) {
           failures.push(`only ${counters.teacherWsAuthenticated}/${teacherAuthInputs.length} teacher WebSockets authenticated`);
         }
         if (counters.teacherWsUnexpectedClosed > 0) failures.push("one or more teacher WebSockets closed unexpectedly");
+        if (counters.teacherWsSubscriptionErrors > 0 || finalSocketGate?.teacherReady !== teacherAuthInputs.length) {
+          failures.push("one or more teacher WebSockets lacked an exact acknowledged classroom subscription");
+        }
         if (ratio(commandTotals.serverReceivedWithin2s, commandTotals.expected) < 0.99) failures.push("server did not report received status within 2 seconds for 99% of command targets");
         if (ratio(commandTotals.serverCompletedWithin5s, commandTotals.expected) < 0.99) failures.push("server did not report completed status within 5 seconds for 99% of command targets");
       }
@@ -2946,7 +3695,11 @@ function summarize(shutdownReason) {
   const activeScreenshotRequestsByCohort = counters.tileBatchScreenshotRequestsByCohort.filter(
     (_count, index) => tileCohortSizes[index] > 0
   );
-  const pollAccounting = buildStaggeredPollAccounting(
+  const pollAccounting = reliabilityWorkload ? {
+    pollAccountingVersion: 'reliability-separated-cadences-v1',
+    historyRequestsByCohort: activeHistoryRequestsByCohort,
+    screenshotRequestsByCohort: activeScreenshotRequestsByCohort,
+  } : buildStaggeredPollAccounting(
     activeHistoryRequestsByCohort,
     activeScreenshotRequestsByCohort,
     { expectedCohorts: isLaunchGate ? 20 : undefined },
@@ -2958,8 +3711,22 @@ function summarize(shutdownReason) {
     diagnosticOnly,
     engineeringAcceptance,
     certificationEligible,
+    ...(reliabilityWorkload ? {
+      reliabilityWorkload,
+      stagingStart,
+      fineEndpointLatency: fineEndpointLatencies.summary(),
+      screenshotCaptureAge: reliabilityScreenshotFreshness.summary(),
+      // HTTP samples cannot establish actual browser paint or managed adoption.
+      browserPaintValidated: false,
+      workloadCoverage: {
+        heartbeatCounts: deviceStates.map(state => state.reliabilityHeartbeats),
+        observedCaptureCounts: deviceStates.filter(state => state.device.schoolId === teacherSchoolId).map(state => state.reliabilityCaptures),
+        captureAgeAttempts: counters.reliabilityScreenshotAgeAttempts,
+        captureAgeUnavailable: counters.reliabilityScreenshotAgeUnavailable,
+      },
+    } : {}),
     workloadSchemaVersion: workloadSchemaVersion || null,
-    workloadEndpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
+    workloadEndpointShapeSha256: tileBatchConfigured ? (reliabilityWorkload ? RELIABILITY_ENDPOINT_SHA256 : TILE_BATCH_ENDPOINT_SHAPE_SHA256) : null,
     targetOrigin: baseUrl,
     devices: devices.length,
     declaredSecondSchoolCanaryDevices: canaryDevices,
@@ -2977,7 +3744,8 @@ function summarize(shutdownReason) {
       testOnlyLatencyThresholdMultiplier: testLatencyThresholdMultiplier,
       completedConfiguredDuration,
     },
-    screenshotFixture: { profile: screenshotProfile, decodedBytes: screenshotBytes },
+    screenshotFixture: { profile: screenshotProfile, decodedBytes: screenshotBytes,
+      ...(reliabilityWorkload ? { reliabilityPayload: reliabilityFixtureMetrics } : {}) },
     counters,
     statusCodes,
     rates: {
@@ -3017,6 +3785,12 @@ function summarize(shutdownReason) {
         ? Number((ratio(commandTotals.serverCompleted, commandTotals.expected) * 100).toFixed(2))
         : null,
     },
+    sourceLedger: sourceLedgerHook?.summary() ?? null,
+    measurementV3: { ...measurementDeviceCounters, navigationRounds: measurementNavigationRound,
+      primaryBindingCount: revisionBaselines.size, captureTimingAccepted: false,
+      rawDateCaptureAgeDiagnosticOnly: true, browserCausalCaptureRequired: Boolean(measurementPaths),
+      heartbeatWriters: { regularRequests: deviceStates.reduce((n, state) => n + (state.heartbeatWriter?.counters.regularRequests || 0), 0),
+        eventRequests: deviceStates.reduce((n, state) => n + (state.heartbeatWriter?.counters.eventRequests || 0), 0) } },
     screenshotRetrieval: {
       attempts: counters.screenshotGet,
       successes: counters.screenshotGetSuccess,
@@ -3025,12 +3799,13 @@ function summarize(shutdownReason) {
     tileBatch: {
       configured: tileBatchConfigured,
       ...pollAccounting,
-      pollAccountingVersion: tileBatchConfigured ? TILE_BATCH_POLL_ACCOUNTING_VERSION : null,
+      pollAccountingVersion: tileBatchConfigured ? pollAccounting.pollAccountingVersion : null,
       teacherCohorts: activeTileCohortSizes.length,
       studentsPerCohort: uniformTileCohortSize,
       teacherTileAssignments,
-      requestsPerCohortPerPoll: tileBatchConfigured ? 2 : 0,
-      logicalOperationsPerPoll: tileBatchConfigured ? teacherTileAssignments * 2 : 0,
+      requestsPerCohortPerPoll: reliabilityWorkload ? null : tileBatchConfigured ? 2 : 0,
+      logicalOperationsPerPoll: reliabilityWorkload ? null : tileBatchConfigured ? teacherTileAssignments * 2 : 0,
+      ...(reliabilityWorkload ? { screenshotReadIntervalMs: screenshotGetIntervalMs, historyReadIntervalMs } : {}),
       historyRequests: counters.tileBatchHistoryRequests,
       screenshotRequests: counters.tileBatchScreenshotRequests,
       historyLogicalOperations: counters.tileHistoryLogicalOperations,
@@ -3104,6 +3879,9 @@ async function shutdown(reason) {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     latchTrafficStop();
+    const sourceTail = reason === "duration" && sourceLedgerHook ? sourceLedgerHook.finishDuration() : Promise.resolve(null);
+    sourceTail.catch(() => {});
+    if (reason !== "duration") sourceLedgerHook?.close();
     durationDeadline?.cancel();
     for (const timer of intervals) clearInterval(timer);
     intervals.clear();
@@ -3113,6 +3891,10 @@ async function shutdown(reason) {
     if (reason === "duration" && commandSettleMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, commandSettleMs));
     }
+    const tailOutcome = await sourceTail.catch(() => ({outcome:"unknown"}));
+    if (sourceLedgerHook && reason === "duration" && tailOutcome?.outcome !== "accepted") triggerFatalGate("source-ledger-failure", { source: "measurement-tail" }, false);
+    sourceLedgerHook?.close();
+    await releaseReliabilityObservationLeases();
     captureFinalSocketGate();
 
     for (const timer of timeouts) clearTimeout(timer);
@@ -3125,7 +3907,7 @@ async function shutdown(reason) {
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
     }
 
-    const settleInFlight = Promise.allSettled([...inFlight]);
+    const settleInFlight = Promise.allSettled([...inFlight, ...(sourceLedgerHook?[sourceLedgerHook.whenSettled()]:[])]);
     let shutdownTimer;
     const shutdownTimeout = new Promise((resolve) => {
       shutdownTimer = setTimeout(resolve, shutdownGraceMs);
@@ -3195,13 +3977,15 @@ if (validateConfigOnly) {
     engineeringAcceptance,
     certificationEligible,
     workloadSchemaVersion: workloadSchemaVersion || null,
-    workloadEndpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
+    workloadEndpointShapeSha256: tileBatchConfigured ? (reliabilityWorkload ? RELIABILITY_ENDPOINT_SHA256 : TILE_BATCH_ENDPOINT_SHAPE_SHA256) : null,
+    ...(reliabilityWorkload ? { reliabilityWorkload } : {}),
+    ...(reliabilityWorkload ? { screenshotFixture: { decodedBytes: screenshotBytes, reliabilityPayload: reliabilityFixtureMetrics } } : {}),
     gateProfile,
     thresholdsEnforced: enforceThresholds,
     networkFamily: "IPv4",
     launchContract: {
       workloadSchemaVersion: workloadSchemaVersion || null,
-      endpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
+      endpointShapeSha256: tileBatchConfigured ? (reliabilityWorkload ? RELIABILITY_ENDPOINT_SHA256 : TILE_BATCH_ENDPOINT_SHAPE_SHA256) : null,
       totalSockets: devices.length,
       primaryDevices,
       canaryDevices,
@@ -3212,8 +3996,9 @@ if (validateConfigOnly) {
       teacherActors: teacherAuthInputs.length,
       teacherTileCohorts: teacherTileAssignments.filter((count) => count > 0).length,
       teacherTileAssignments: teacherTileAssignments.reduce((total, count) => total + count, 0),
-      tileBatchRequestsPerCohort: tileBatchConfigured ? 2 : 0,
-      tileLogicalOperationsPerPoll: teacherTileAssignments.reduce((total, count) => total + count, 0) * 2,
+      tileBatchRequestsPerCohort: reliabilityWorkload ? null : tileBatchConfigured ? 2 : 0,
+      tileLogicalOperationsPerPoll: reliabilityWorkload ? null : teacherTileAssignments.reduce((total, count) => total + count, 0) * 2,
+      ...(reliabilityWorkload ? { screenshotReadIntervalMs: screenshotGetIntervalMs, historyReadIntervalMs } : {}),
     },
     finalAcceptanceContract: {
       authenticatedDeviceSockets: devices.length,
@@ -3238,16 +4023,42 @@ if (validateConfigOnly) {
   // request until the bound AWS monitor has completed one healthy sample. The
   // supervisor releases this gate only after validating both process identities.
   await waitForSupervisorStartGate();
+  if (stagingStartMs !== null) {
+    if (!stagingReadyPath || fs.existsSync(stagingReadyPath)) throw new Error("Staging requires fresh external ready evidence before its shared start");
+    stagingStart = await waitForStagingStart({ startAt: stagingStartAt, origin: baseUrl,
+      inputCreatedAt: process.env.LOAD_INPUT_MANIFEST_CREATED_AT,
+      onReady: ready => writeAtomicJson(stagingReadyPath, { version: 1, runId, targetOrigin: baseUrl, ...ready, trafficStarted: false }) });
+  }
+  if (measurementPaths) {
+    const until = monotonicNowMs() + 10000;
+    while (!fs.existsSync(measurementPaths.control)) { if (monotonicNowMs() > until) throw Error('First causal start pulse unavailable'); await new Promise(resolve => setTimeout(resolve, 25)); }
+    const first = validateCapturePulse(JSON.parse(fs.readFileSync(measurementPaths.control)), measurementContext);
+    if (first.pulseSequence !== 1 || first.navigationRound !== 0 || first.revisionDrainNonce !== null) throw Error('Exact first causal start pulse required');
+    capturePulseProducer.adopt(first); measurementSequence = 1; measurementDeviceCounters.pulseAdopted += 1;
+    measurementFirstPulse = first;
+  }
   revalidateArtifactLifetimeAtTrafficStart();
+  if (process.env.LOAD_SOURCE_LEDGER_CONFIG) {
+    if (!measurementContext || !capturePulseProducer) throw Error('Exact causal staging source hook required');
+    validateSourceTaskCredentialEnvironment(process.env);
+    sourceLedgerHook = createHarnessSourceLedger({configPath:process.env.LOAD_SOURCE_LEDGER_CONFIG,configSha256:process.env.LOAD_SOURCE_LEDGER_CONFIG_SHA256,measurementContext,publicBindings:devices.filter(device=>device.schoolId===teacherSchoolId).map(publicBindingFromDevice),SDK:SourceSDK,taskRoleProvider:fromContainerMetadata({timeout:100,maxRetries:0}),readCausalCapture,capturePulseMarker,now:monotonicNowMs});
+  }
   progressDescriptor = externalProgressPath
     ? fs.openSync(externalProgressPath, "a", 0o600)
     : null;
   console.log(`Starting ClassPilot load test: ${devices.length} devices, ${screenshotBytes}B screenshots, ${Math.round(durationMs / 1000)}s`);
   runStartedAtMonoNs = monotonicNowNs();
+  if(sourceLedgerHook)sourceLedgerHook.start(monotonicNowMs());
+  if (measurementFirstPulse) writeAtomicJson(measurementPaths.started,
+    measurementSignal(measurementContext, 'measurement-started-v3', measurementFirstPulse.nonce));
   appendProgressOrFail("start");
   if (!stoppingTraffic) {
     every(() => appendProgressOrFail("minute"), progressIntervalMs);
+    await renewReliabilityObservationLeases();
+    if (reliabilityWorkload) every(() => void renewReliabilityObservationLeases(), 30_000);
     deviceStates.forEach(startDeviceTraffic);
+    if(sourceLedgerHook)every(()=>{void sourceLedgerHook.tick().catch(()=>{measurementDeviceCounters.invalidControls+=1;triggerFatalGate('source-ledger-failure',{source:'measurement'});});},1000);
+    if (measurementPaths) every(pollMeasurementControl, MEASUREMENT_LIMITS.pollMs);
     startTeacherTraffic();
     startScreenshotPolling();
     startTileBatchPolling();
@@ -3256,7 +4067,7 @@ if (validateConfigOnly) {
     startCommandTraffic();
     scheduleForcedReconnect();
     durationDeadline = createMonotonicDeadline({
-      deadlineNs: monotonicNowNs() + BigInt(runtimeDurationMs) * NANOSECONDS_PER_MILLISECOND,
+      deadlineNs: (stagingStart ? runStartedAtMonoNs : monotonicNowNs()) + BigInt(runtimeDurationMs) * NANOSECONDS_PER_MILLISECOND,
       nowNs: monotonicNowNs,
       schedule: (callback, delayMs) => later(callback, delayMs, { scale: false }),
       cancel: cancelLater,

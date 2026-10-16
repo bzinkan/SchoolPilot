@@ -217,8 +217,8 @@ after(async () => {
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${teacher.id}`);
+        // Current lifecycle guards retain uniquely owned synthetic school and
+        // staff roots in this disposable fixture database.
       });
     }
   } finally {

@@ -37,8 +37,7 @@ after(async () => {
     await pool.query("DELETE FROM students WHERE school_id=$1", [schoolId]);
     await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [schoolId]);
     await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [schoolId]);
-    await pool.query("DELETE FROM schools WHERE id=$1", [schoolId]);
-    await pool.query("DELETE FROM users WHERE id=$1", [adminId]);
+    // Current lifecycle guards retain uniquely owned synthetic school/staff roots in this disposable fixture DB.
   } finally { await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]); }
 });
 

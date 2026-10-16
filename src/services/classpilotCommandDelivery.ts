@@ -8,6 +8,23 @@ export type ClasspilotCommandDeliveryPolicy =
 
 export const CLASSPILOT_TRANSIENT_COMMAND_TTL_MS = 15_000;
 
+/** Existing supervision admin exception is deliberately narrower than the
+ * classroom tools available to the context's assigned staff member. */
+export const CLASSPILOT_SUPERVISION_ADMIN_COMMAND_TYPES: ReadonlySet<string> = new Set([
+  "open-tab", "close-tabs", "lock-screen", "unlock-screen", "teacher-message",
+  "apply-flight-path", "remove-flight-path", "apply-block-list", "remove-block-list",
+]);
+
+export function classpilotSupervisionRelayActorAllowed(options: {
+  actorId: string; assignedStaffId: string; commandType: string;
+  activeMembershipRole: string | null; isSuperAdmin: boolean;
+}): boolean {
+  const activeStaff = ["teacher", "admin", "school_admin", "office_staff"].includes(options.activeMembershipRole ?? "");
+  if (options.actorId === options.assignedStaffId && activeStaff) return true;
+  return CLASSPILOT_SUPERVISION_ADMIN_COMMAND_TYPES.has(options.commandType)
+    && (options.isSuperAdmin || ["admin", "school_admin"].includes(options.activeMembershipRole ?? ""));
+}
+
 /**
  * Timer and poll targets may stay deliverable longer than the 15 s one-shot
  * deadline, but only where something can still deliver them: the auth-success

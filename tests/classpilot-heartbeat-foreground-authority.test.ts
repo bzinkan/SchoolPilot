@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { AsyncLocalStorage } from "node:async_hooks";
 import ts from "typescript";
 
 const source = readFileSync(new URL("../src/services/storage.ts", import.meta.url), "utf8");
@@ -25,6 +26,7 @@ function fixture(options: { projection?: Projection; deny?: boolean; fault?: str
   } };
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => strings.reduce((s, part, i) => s + part + (i < values.length ? String(values[i]) : ""), "").trim();
   const fn = runInNewContext(executable, {
+    AsyncLocalStorage,
     trackHeartbeatPreparedReadTask: (_tx: object, work: () => Promise<unknown>) => work(),
     sealHeartbeatPreparedReads: async () => {},
     assertHeartbeatPreparedReadsSettled: () => {},

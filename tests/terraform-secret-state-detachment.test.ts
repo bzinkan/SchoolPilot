@@ -102,7 +102,12 @@ describe("Terraform application-secret state detachment", () => {
     for (const parameterName of runtimeParameterNames) {
       assert.match(ecsMain, new RegExp(`"${parameterName}"`));
     }
-    assert.doesNotMatch(ecsMain, /"OPENAI_API_KEY"/);
+    // Staging explicitly empties provider env names; that must never create
+    // an application parameter or inject the unused OpenAI credential.
+    const parameterNames = ecsMain.match(/application_secret_parameter_names\s*=\s*\[([\s\S]*?)\]/)?.[1];
+    assert.ok(parameterNames);
+    assert.doesNotMatch(parameterNames, /"OPENAI_API_KEY"/);
+    assert.doesNotMatch(ecsMain, /name\s*=\s*"OPENAI_API_KEY"\s*,\s*valueFrom/);
     assert.match(
       ecsMain,
       /name = "REDIS_URL", valueFrom = aws_ssm_parameter\.redis_url\.arn/
