@@ -13,6 +13,7 @@ import {
   uuid,
   check,
 } from "drizzle-orm/pg-core";
+import type { SchoolAppearance } from "../services/classpilotThemes.js";
 
 // ============================================================================
 // Settings - School-wide settings (from ClassPilot, extended for all products)
@@ -136,7 +137,13 @@ export const settings = pgTable("settings", {
   classpilotSsoPolicyRevision: integer("classpilot_sso_policy_revision")
     .notNull()
     .default(0),
+  // ClassPilot dashboard appearance governance; null means every default.
+  appearance: jsonb("appearance").$type<SchoolAppearance | null>(),
 }, (table) => [
+  check(
+    "settings_cp_appearance_object_check",
+    sql`${table.appearance} IS NULL OR jsonb_typeof(${table.appearance}) = 'object'`
+  ),
   check(
     "settings_passpilot_class_source_check",
     sql`${table.passpilotClassSource} IN ('legacy_grades', 'classpilot_groups')`

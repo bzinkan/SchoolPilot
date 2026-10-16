@@ -133,6 +133,11 @@ Ornaments that rise above the tile need `overflow: visible` on the card and a la
 
 ### 4.6 Teacher image upload
 
+> Implemented (Phase 4 backend) with one deliberate change from the sketch below: there is no new table. The single
+> asset record lives on the teacher's `classpilot_teacher_preferences` row as `dashboard_theme_asset` JSONB (already
+> RLS-covered), the routes are singular (`/teacher/theme-asset`, `/teacher/theme-asset/:id/content`), output is WebP
+> ≤ 2560 px with metadata stripped, and the exact contract is in `docs/CLASSPILOT_SETTINGS_ORGANIZATION.md`.
+
 Reuse the MyDesk object-store pattern (`src/services/mydeskFiles.ts`): reserve → PUT raw bytes → finalize.
 
 - New table `classpilot_theme_assets` (id, school_id, teacher_id, content_type, bytes, sha256, object_key, status,

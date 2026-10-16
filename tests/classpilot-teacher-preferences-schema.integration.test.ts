@@ -6,6 +6,7 @@ import pg from "pg";
 import { classpilotTeacherPreferences } from "../src/schema/classpilotTeacherPreferences.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL, CLASSPILOT_TEACHER_PREFERENCES_SQL, classpilotTeacherPreferencesMigration } from "../src/db/classpilotTeacherPreferencesMigration.js";
 import { CLASSPILOT_DASHBOARD_THEME_SQL, classpilotDashboardThemeMigration } from "../src/db/classpilotDashboardThemeMigration.js";
+import { CLASSPILOT_DASHBOARD_APPEARANCE_SQL, classpilotDashboardAppearanceMigration } from "../src/db/classpilotDashboardAppearanceMigration.js";
 import { runSchoolPilotMigrationLedger } from "../src/db/migrationLedger.js";
 import { schoolPilot27ExpandMigrations, schoolPilot27Migrations } from "../src/db/migrations27.js";
 
@@ -24,7 +25,9 @@ before(async () => {
     CREATE TABLE users(id VARCHAR PRIMARY KEY);
     CREATE TABLE school_memberships(school_id TEXT,user_id TEXT,role TEXT,status TEXT DEFAULT 'active');
     CREATE TABLE product_licenses(school_id TEXT,product TEXT DEFAULT 'CLASSPILOT',status TEXT DEFAULT 'active',expires_at TIMESTAMP);
-    CREATE TABLE teacher_settings(teacher_id TEXT UNIQUE,max_tabs_per_student TEXT,default_flight_path_id TEXT,allowed_domains TEXT[]);`);
+    CREATE TABLE teacher_settings(teacher_id TEXT UNIQUE,max_tabs_per_student TEXT,default_flight_path_id TEXT,allowed_domains TEXT[]);
+    CREATE TABLE settings(school_id TEXT PRIMARY KEY);`);
+  await admin.query("INSERT INTO settings(school_id) VALUES($1)", [schools.a]);
   for (const id of Object.values(schools)) await admin.query("INSERT INTO schools(id) VALUES($1)", [id]);
   for (const id of Object.values(authors)) await admin.query("INSERT INTO users(id) VALUES($1)", [id]);
   await admin.query("UPDATE schools SET status='suspended' WHERE id=$1", [schools.suspended]);
@@ -54,8 +57,9 @@ after(async () => {
 });
 
 test("ledger copies valid preferences once into eligible memberships and leaves future memberships inheriting", async () => {
-  const result = await runSchoolPilotMigrationLedger({ pool, migrations: [classpilotTeacherPreferencesMigration, classpilotDashboardThemeMigration], applicationSha: "fixture" });
-  assert.deepEqual(result.map(entry => entry.status), ["applied", "applied"]);
+  const migrations = [classpilotTeacherPreferencesMigration, classpilotDashboardThemeMigration, classpilotDashboardAppearanceMigration];
+  const result = await runSchoolPilotMigrationLedger({ pool, migrations, applicationSha: "fixture" });
+  assert.deepEqual(result.map(entry => entry.status), ["applied", "applied", "applied"]);
   const rows = (await admin.query("SELECT school_id,teacher_id,max_tabs_per_student FROM classpilot_teacher_preferences")).rows;
   assert.equal(rows.length, 6, "Two eligible memberships plus four inherited defaults; duplicate roles are deduplicated");
   for (const school of [schools.a, schools.b]) assert.equal(rows.find(row => row.school_id === school && row.teacher_id === authors.valid)?.max_tabs_per_student, 7);
@@ -64,11 +68,15 @@ test("ledger copies valid preferences once into eligible memberships and leaves 
   assert.equal((await pool.query("SELECT current_setting('app.is_super',true) AS scope")).rows[0].scope, "off");
   await admin.query("UPDATE classpilot_teacher_preferences SET max_tabs_per_student=12 WHERE school_id=$1 AND teacher_id=$2", [schools.a, authors.valid]);
   await admin.query("INSERT INTO school_memberships(school_id,user_id,role) VALUES($1,$2,'teacher')", [schools.future, authors.valid]);
-  const retry = await runSchoolPilotMigrationLedger({ pool, migrations: [classpilotTeacherPreferencesMigration, classpilotDashboardThemeMigration], applicationSha: "later" });
-  assert.deepEqual(retry.map(entry => entry.status), ["skipped", "skipped"]);
+  const retry = await runSchoolPilotMigrationLedger({ pool, migrations, applicationSha: "later" });
+  assert.deepEqual(retry.map(entry => entry.status), ["skipped", "skipped", "skipped"]);
   await admin.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
   await admin.query(CLASSPILOT_DASHBOARD_THEME_SQL);
+  await admin.query(CLASSPILOT_DASHBOARD_APPEARANCE_SQL);
   assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='classpilot_teacher_preferences_dashboard_theme_object' AND conrelid='classpilot_teacher_preferences'::regclass")).rows[0].n, 1);
+  assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='classpilot_teacher_preferences_dashboard_theme_asset_object' AND conrelid='classpilot_teacher_preferences'::regclass")).rows[0].n, 1);
+  assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='settings_cp_appearance_object_check' AND conrelid='settings'::regclass")).rows[0].n, 1);
+  assert.equal((await admin.query("SELECT appearance FROM settings WHERE school_id=$1", [schools.a])).rows[0].appearance, null, "existing settings rows read as defaults");
   assert.equal((await admin.query("SELECT 1 FROM classpilot_teacher_preferences WHERE school_id=$1", [schools.future])).rowCount, 0);
   assert.equal((await admin.query("SELECT max_tabs_per_student FROM classpilot_teacher_preferences WHERE school_id=$1 AND teacher_id=$2", [schools.a, authors.valid])).rows[0].max_tabs_per_student, 12);
   assert.deepEqual((await admin.query("SELECT max_tabs_per_student,default_flight_path_id,allowed_domains FROM teacher_settings WHERE teacher_id=$1", [authors.valid])).rows[0], {
@@ -85,6 +93,10 @@ test("schema bounds, one-owner uniqueness, and same-school membership hold indep
   for (const value of [1, 100, null]) await admin.query("UPDATE classpilot_teacher_preferences SET max_tabs_per_student=$3 WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]);
   for (const value of ["[]", "\"halloween\"", "1", "true"]) await assert.rejects(admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]), { code: "23514" });
   for (const value of ["{}", "{\"kind\":\"preset\",\"preset\":\"halloween\",\"name\":\"Who Dey\"}", null]) await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]);
+  for (const value of ["[]", "\"ready\"", "1", "false"]) await assert.rejects(admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_asset=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]), { code: "23514" });
+  for (const value of ["{}", "{\"id\":\"00000000-0000-4000-8000-000000000000\",\"status\":\"reserved\"}", null]) await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_asset=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]);
+  for (const value of ["[]", "\"locked\"", "1", "true"]) await assert.rejects(admin.query("UPDATE settings SET appearance=$2::jsonb WHERE school_id=$1", [schools.a, value]), { code: "23514" });
+  for (const value of ["{}", "{\"lockToSchoolTheme\":true,\"schoolDefaultTheme\":{\"kind\":\"preset\",\"preset\":\"winter\"}}", null]) await admin.query("UPDATE settings SET appearance=$2::jsonb WHERE school_id=$1", [schools.a, value]);
 });
 
 test("typed schema, immutable ledger contract, and forced tenant RLS match", async () => {
@@ -99,6 +111,13 @@ test("typed schema, immutable ledger contract, and forced tenant RLS match", asy
   assert.equal(schoolPilot27Migrations.filter(migration => migration.id === classpilotDashboardThemeMigration.id).length, 1);
   assert.ok(schoolPilot27Migrations.findIndex(migration => migration.id === classpilotDashboardThemeMigration.id)
     > schoolPilot27Migrations.findIndex(migration => migration.id === classpilotTeacherPreferencesMigration.id));
+  assert.ok(columns.includes("dashboard_theme_asset"));
+  assert.equal(classpilotDashboardAppearanceMigration.id, "classpilot-dashboard-appearance-20261016");
+  assert.equal(classpilotDashboardAppearanceMigration.checksum, createHash("sha256").update(CLASSPILOT_DASHBOARD_APPEARANCE_SQL).digest("hex"));
+  assert.equal(classpilotDashboardAppearanceMigration.mode, "transactional");
+  assert.ok(schoolPilot27ExpandMigrations.some(migration => migration.id === classpilotDashboardAppearanceMigration.id));
+  assert.equal(schoolPilot27Migrations.filter(migration => migration.id === classpilotDashboardAppearanceMigration.id).length, 1);
+  assert.equal(schoolPilot27Migrations.at(-1)?.id, classpilotDashboardAppearanceMigration.id, "appended to the end of the manifest");
   const policy = (await admin.query(`SELECT c.relrowsecurity enabled,c.relforcerowsecurity forced,p.polname,pg_get_expr(p.polqual,p.polrelid) AS using,pg_get_expr(p.polwithcheck,p.polrelid) AS check
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_policy p ON p.polrelid=c.oid WHERE n.nspname=$1 AND c.relname='classpilot_teacher_preferences'`, [schema])).rows[0];
   assert.equal(policy.enabled, true); assert.equal(policy.forced, true); assert.equal(policy.polname, "tenant_isolation"); assert.equal(policy.using, policy.check);

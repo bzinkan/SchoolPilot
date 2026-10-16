@@ -31,18 +31,68 @@ protected caches, and late callbacks cannot populate a new editor.
   active-school preference. PATCH requires `expectedRevision` plus at least one
   of a nullable integer `maxTabsPerStudent` from 1 to 100 (null means school
   inheritance) and a nullable `dashboardTheme` object (`{ kind: "preset",
-  preset, name?, calendar? }`; null means the default look). Omitted fields keep
-  their stored value. Reads also return `effectiveDashboardTheme`,
-  `dashboardThemesEnabled` and `dashboardThemeUploadsEnabled`.
-- While `CLASSPILOT_DASHBOARD_THEMES_ENABLED` is off, a PATCH carrying
-  `dashboardTheme` fails `409 CLASSPILOT_DASHBOARD_THEMES_DISABLED`; `kind:
-  "image"` fails `409 CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED` until uploads
-  ship. Neither writes.
+  preset, name?, calendar?, kiosk? }` or `{ kind: "image", imageAssetId, name?,
+  kiosk? }`; null means the default look; `kiosk` means "show my theme on the
+  PassPilot kiosk", absent = true, stored as-is). Omitted fields keep their
+  stored value. Reads also return `schoolDashboardTheme` (the school default or
+  null), `dashboardThemeLocked`, `effectiveDashboardTheme`,
+  `dashboardThemesEnabled` (launch gate AND the school's `teacherThemesEnabled`),
+  `dashboardThemeUploadsEnabled` (themes enabled AND `teacherUploadsEnabled` AND
+  an attachments bucket is configured) and `dashboardThemeAsset` (`{ id, status,
+  contentType, byteSize, width, height }` for the teacher's ready image, else
+  null). The effective theme is the school default when locked or when the
+  teacher's own theme does not count; an own `image` theme counts only while
+  uploads are enabled and its asset is ready with the same id; it is null while
+  the launch gate is off.
+- Theme PATCH refusals, checked before the revision and never writing:
+  `409 CLASSPILOT_DASHBOARD_THEMES_DISABLED` (gate off or teacher themes off),
+  `409 CLASSPILOT_DASHBOARD_THEME_LOCKED` (`lockToSchoolTheme`),
+  `409 CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED` (`kind: "image"` without
+  uploads), `409 CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING` (`imageAssetId` is not
+  the teacher's ready asset).
+- Teacher background image, one per teacher, stored on the preferences row
+  (`dashboard_theme_asset` JSONB) with bytes in the private attachments bucket
+  under `classpilot/themes/<school>/<teacher>/<asset>`. Input is PNG, JPEG or
+  WebP up to 6 MiB and 24 megapixels; the server re-encodes to WebP at most
+  2560 px on the long edge with EXIF/XMP/ICC metadata stripped, so the served
+  bytes never equal the upload.
+  - `POST /api/classpilot/teacher/theme-asset` `{ contentType, size, sha256 }` →
+    `201 { asset, preferences }` (status `reserved`; a reservation replaces the
+    previous record, whose object is deleted once the new image is ready; a
+    teacher without a preference row gets one, revision 1).
+  - `PUT /api/classpilot/teacher/theme-asset/:id/content`: raw bytes with the
+    image `Content-Type` → `200 { asset, preferences }` (status `ready`,
+    `contentType: "image/webp"`). Bytes must match the reservation
+    (`409 CLASSPILOT_DASHBOARD_THEME_UPLOAD_MISMATCH`); a live lease answers
+    `409 CLASSPILOT_DASHBOARD_THEME_UPLOAD_IN_PROGRESS`; at most two uploads
+    decode per process (`429 CLASSPILOT_DASHBOARD_THEME_UPLOAD_BUSY`).
+    Uploading does not change `revision`; PATCH `dashboardTheme` with the new
+    `imageAssetId` afterwards.
+  - `GET /api/classpilot/teacher/theme-asset/:id/content`: the owner or a
+    same-school admin/school_admin; anyone else `404`. Also accepts
+    `?schoolId=` for stylesheet `url()` use. Headers: `Cache-Control: private,
+    max-age=86400`, `ETag: "<sha256>"`, `X-Content-Type-Options: nosniff`,
+    `Content-Security-Policy: sandbox; default-src 'none'`; `If-None-Match` → `304`.
+  - `DELETE /api/classpilot/teacher/theme-asset/:id`: owner only →
+    `200 { preferences }`; also clears an `image` theme pointing at it (then the
+    revision increments). Allowed even after uploads are disabled.
+  - Reserve and upload refuse `409 CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED`
+    when uploads are off for the teacher; other errors are
+    `415 ..._ASSET_UNSUPPORTED_TYPE`, `413 ..._ASSET_TOO_LARGE`,
+    `422 ..._ASSET_INVALID`, `404 ..._ASSET_NOT_FOUND`,
+    `409 ..._UPLOAD_CONFLICT`, `503 ..._ASSET_UNAVAILABLE` and
+    `503 ..._ASSET_PROCESSING_UNAVAILABLE`, all prefixed
+    `CLASSPILOT_DASHBOARD_THEME`.
 - `GET /api/classpilot/admin/settings`: canonical read-only school identity and
   section snapshots. Section values have opaque versions.
 - `PATCH /api/classpilot/admin/settings/:section`: only the named section's
   allowlisted fields and its expected version. Sections are `classroom`,
-  `monitoring`, `retention`, `email`, `signIn`, and `rosterGrades`.
+  `monitoring`, `retention`, `email`, `signIn`, `rosterGrades` and `appearance`.
+- `appearance` (stored as `settings.appearance` JSONB; missing or malformed
+  values read as defaults): `teacherThemesEnabled` (default true),
+  `teacherUploadsEnabled` (false), `kioskCustomBackgrounds` (false),
+  `lockToSchoolTheme` (false) and `schoolDefaultTheme` (a `kind: "preset"` theme
+  or null; an image is rejected with `400`).
 - `blockedWebsites` preserves the existing policy-revision contract. Student
   portal, schedule-change policy, staff sign-in policy, interruption digest,
   and setup-key operations retain their independent endpoints.
@@ -57,7 +107,10 @@ and the existing live command contract remain unchanged.
 
 `classpilot_teacher_preferences` has one row per school and teacher, a nullable
 tab limit, a nullable `dashboard_theme` JSONB object from its own additive ledger
-migration, revision and timestamps, tenant RLS, and independent application
+migration, a nullable `dashboard_theme_asset` JSONB record (one background image
+per teacher, re-encoded to WebP ≤ 2560 px with metadata stripped; added with
+`settings.appearance` by the `classpilot-dashboard-appearance-20261016` ledger
+migration), revision and timestamps, tenant RLS, and independent application
 ownership checks. Its immutable migration initializes currently eligible
 ClassPilot memberships once from valid legacy account-level tab values. Invalid
 or unset values inherit. Later memberships start with inheritance; runtime
