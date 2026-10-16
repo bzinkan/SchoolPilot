@@ -52,11 +52,26 @@ export function readyDashboardThemePresets() {
 // Turn a stored preference into the preset to draw, or null for Default.
 // Unknown, retired or not-yet-shipped ids resolve to null so a stale value can
 // never break the page; the picker reports them separately.
+// A teacher's own background is fetched through the authenticated asset
+// route. The stylesheet cannot send headers, so the school rides in the query.
+export function dashboardThemeAssetUrl(assetId, schoolId) {
+  const params = new URLSearchParams();
+  if (schoolId) params.set('schoolId', schoolId);
+  const query = params.toString();
+  return `/api/classpilot/teacher/theme-asset/${encodeURIComponent(assetId)}/content${query ? `?${query}` : ''}`;
+}
+
+export function imageDashboardTheme(assetId, schoolId) {
+  return Object.freeze({ id: 'image', label: 'Your background', ready: true, artwork: dashboardThemeAssetUrl(assetId, schoolId), ornament: 'none', clearance: 'none' });
+}
+
 // With `calendar: true` the stored preset is only a hint (Advent opts the
 // school into the liturgical variant); the date picks the preset to draw.
-export function resolveDashboardTheme(theme, { enabled = true, now = new Date(), timeZone = 'America/New_York' } = {}) {
+// An uploaded image resolves to a neutral-glass "image" look over the asset.
+export function resolveDashboardTheme(theme, { enabled = true, now = new Date(), timeZone = 'America/New_York', schoolId = null, uploadsEnabled = true } = {}) {
   if (!enabled || !theme || typeof theme !== 'object') return null;
-  if (theme.kind !== 'preset') return null; // uploaded images arrive in a later phase
+  if (theme.kind === 'image') return uploadsEnabled && typeof theme.imageAssetId === 'string' && theme.imageAssetId ? imageDashboardTheme(theme.imageAssetId, schoolId) : null;
+  if (theme.kind !== 'preset') return null;
   const id = theme.calendar === true
     ? calendarPresetFor(localDateParts(now, timeZone || 'America/New_York'), { liturgical: theme.preset === 'advent' })
     : theme.preset;

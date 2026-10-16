@@ -43,7 +43,12 @@ test('resolve returns a ready preset for a stored preset and null for everything
   assert.equal(resolveDashboardTheme('halloween'), null);
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'halloween' }, { enabled: false }), null, 'the server gate wins');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'not-a-theme' }), null, 'a retired id never breaks the page');
-  assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000' }), null, 'uploads arrive in a later phase');
+  const uploaded = resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000' }, { schoolId: 'school-a' });
+  assert.equal(uploaded?.id, 'image', 'an uploaded background resolves to the neutral image look');
+  assert.equal(uploaded?.artwork, '/api/classpilot/teacher/theme-asset/00000000-0000-4000-8000-000000000000/content?schoolId=school-a');
+  assert.equal(uploaded?.ornament, 'none');
+  assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000' }, { uploadsEnabled: false }), null, 'the school upload switch wins');
+  assert.equal(resolveDashboardTheme({ kind: 'image' }), null, 'an image theme without an asset is Default');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-10-16T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'halloween', 'calendar mode follows the date, not the stored hint');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'advent', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'advent', 'the Advent hint opts into the liturgical variant');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'christmas', 'without the hint December is Christmas');

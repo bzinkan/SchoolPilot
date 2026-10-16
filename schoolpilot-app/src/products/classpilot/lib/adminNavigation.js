@@ -5,6 +5,7 @@ export const SETTINGS_SECTIONS = [
   { section: 'browsing', label: 'Browsing & monitoring' },
   { section: 'notifications', label: 'Staff notifications' },
   { section: 'sign-in', label: 'Sign-in & devices' },
+  { section: 'appearance', label: 'Appearance' },
   { section: 'data', label: 'Data & maintenance' },
 ];
 
