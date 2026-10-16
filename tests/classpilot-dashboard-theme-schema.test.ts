@@ -73,8 +73,14 @@ describe("ClassPilot dashboard theme model", () => {
   it("matches the frontend preset catalog when it is present", t => {
     const catalog = new URL("../schoolpilot-app/src/shared/themes/presets.js", import.meta.url);
     if (!existsSync(catalog)) return t.skip("frontend catalog not in this checkout");
-    const ids = [...readFileSync(catalog, "utf8").matchAll(/\bid:\s*["']([a-z-]+)["']/g)].map(match => match[1]);
+    // Only the preloaded catalog entries count: the frontend also describes the
+    // teacher-uploaded "image" look with an id, which is not a preset.
+    const source = readFileSync(catalog, "utf8");
+    const block = source.match(/const PRESETS = Object\.freeze\(\[([\s\S]*?)\n\]\);/);
+    assert.ok(block, "the frontend catalog keeps its PRESETS array");
+    const ids = [...block[1].matchAll(/\bid:\s*["']([a-z-]+)["']/g)].map(match => match[1]);
     assert.deepEqual(ids, [...DASHBOARD_THEME_PRESET_IDS]);
+    assert.match(source, /id: 'image'/, "the uploaded-image look keeps its own id outside the preset list");
   });
 });
 
