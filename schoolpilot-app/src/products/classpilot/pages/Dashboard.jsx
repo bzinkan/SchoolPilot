@@ -6810,20 +6810,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         />
       ))}
       {/* Header */}
-      <header data-class-tools-navigation className="sticky top-0 z-40 bg-slate-900 border-b border-slate-700 relative">
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-400 to-amber-500" />
+      <header data-class-tools-navigation className="sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
+        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
         <div className="max-w-screen-2xl mx-auto px-6 py-3">
           <div className="flex items-center justify-between gap-4">
             {/* Left: Logo & School */}
             <div className="flex items-center gap-3">
               <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
-                <rect width="48" height="48" rx="12" fill="#fbbf24"/>
-                <path d="M12 24L36 14L30 36L24 28L36 14" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M24 28L26 34" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round"/>
+                <rect width="48" height="48" rx="12" fill="var(--brand)"/>
+                <path d="M12 24L36 14L30 36L24 28L36 14" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M24 28L26 34" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round"/>
               </svg>
               <div>
-                <h1 className="text-lg font-bold text-slate-100 tracking-tight">ClassPilot</h1>
-                <p className="text-xs text-slate-400">
+                <h1 className="text-lg font-bold text-chrome-fg tracking-tight">ClassPilot</h1>
+                <p className="text-xs text-chrome-muted">
                   {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
                   {currentUser?.schoolName && ' \u2022 '}
                   {isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard'}
@@ -6836,9 +6836,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
               </div>
-              {scheduledSupervisionId && studentView === 'class' ? <Badge variant="outline" className="text-amber-300" data-testid="badge-scheduled-testing">{activityTitle(effectiveActivity)}</Badge> : null}
+              {scheduledSupervisionId && studentView === 'class' ? <Badge variant="outline" className="text-brand-soft" data-testid="badge-scheduled-testing">{activityTitle(effectiveActivity)}</Badge> : null}
               {isTeacher && !scheduledSupervisionId && activeSession && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-active-session">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-active-session">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                   {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
                 </div>
@@ -6863,7 +6863,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                           type="button"
                           onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
                           disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
                           data-testid="button-resync-session"
                         >
                           <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
@@ -6875,7 +6875,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       <button
                         type="button"
                         onClick={() => setShowPastSessions(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors"
                         title="Open recent class sessions and their Session Summaries"
                         data-testid="button-past-sessions"
                       >
@@ -6888,7 +6888,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         value={startGroupId}
                         onChange={(event) => setStartGroupId(event.target.value)}
                         disabled={groups.length === 0 || startSessionMutation.isPending}
-                        className="h-8 max-w-[180px] rounded-md border border-slate-600 bg-slate-900 px-2 text-xs font-medium text-slate-100 shadow-sm focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="h-8 max-w-[180px] rounded-md border border-chrome-control-border bg-chrome-control px-2 text-xs font-medium text-chrome-fg shadow-sm focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
                         aria-label="Select ClassPilot class"
                         data-testid="select-start-session-group"
                       >
@@ -6914,7 +6914,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       <button
                         type="button"
                         onClick={() => setShowPastSessions(true)}
-                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800"
+                        className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover"
                         title="Open recent class sessions and their Session Summaries"
                         data-testid="button-past-sessions"
                       >
@@ -6927,7 +6927,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                           onClick={() => setSkipTodayGroup(selectedTeacherStartGroup)}
                           disabled={skipScheduledClassMutation.isPending}
                           data-testid="button-skip-scheduled-class-today"
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover disabled:pointer-events-none disabled:opacity-50"
                         >
                           Skip Today
                         </button>
@@ -6941,7 +6941,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <>
                   {activeSession && !scheduledSupervisionId && !retainedObservedSession && (
                     <>
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-admin-teaching">
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-admin-teaching">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                         Teaching: {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
                       </div>
@@ -6956,7 +6956,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                           type="button"
                           onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
                           disabled={dashboardCapabilities.observedOtherClass || resyncSessionMutation.isPending}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-chrome-control-border bg-chrome-control text-chrome-fg hover:bg-chrome-control-hover transition-colors disabled:opacity-50"
                           data-testid="button-admin-resync-session"
                         >
                           <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
@@ -6976,7 +6976,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
                         aria-label="Select ClassPilot class to teach"
                         data-testid="select-admin-start-session-group"
-                        className="h-8 max-w-[180px] rounded-md border border-slate-600 bg-slate-900 px-2 text-xs font-medium text-slate-100 shadow-sm focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="h-8 max-w-[180px] rounded-md border border-chrome-control-border bg-chrome-control px-2 text-xs font-medium text-chrome-fg shadow-sm focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {adminTeachingGroupsLoading ? (
                           <option value="">Loading classes...</option>
@@ -7007,14 +7007,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                           onClick={() => setSkipTodayGroup(selectedAdminStartGroup)}
                           disabled={dashboardCapabilities.observedOtherClass || skipScheduledClassMutation.isPending}
                           data-testid="button-admin-skip-scheduled-class-today"
-                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-slate-600 bg-slate-900 px-3 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-800 disabled:pointer-events-none disabled:opacity-50"
+                          className="inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md border border-chrome-control-border bg-chrome-control px-3 text-xs font-medium text-chrome-fg-soft transition-colors hover:bg-chrome-control-hover disabled:pointer-events-none disabled:opacity-50"
                         >
                           Skip Today
                         </button>
                       )}
                     </div>
                   )}
-                  <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors ${observedSession ? 'bg-slate-700 border-slate-600 text-slate-200' : 'bg-transparent border-slate-600 text-slate-400'}`}>
+                  <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors ${observedSession ? 'bg-chrome-elevated border-chrome-control-border text-chrome-fg-soft' : 'bg-transparent border-chrome-control-border text-chrome-muted'}`}>
                     <Eye className="h-4 w-4" />
                     <select
                       value={adminObservedSessionId || ""}
@@ -7045,19 +7045,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="flex items-center gap-2">
               <ThemeToggle />
               {(isTeacher || isAdmin) && !scheduledSupervisionId && (
-                <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800" data-testid="button-my-settings" title="Teaching tools">
+                <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-chrome-control-border px-3 py-2 text-xs font-medium text-chrome-subtle hover:bg-chrome-control-hover" data-testid="button-my-settings" title="Teaching tools">
                   <User className="h-4 w-4" /> Teaching tools
                 </button>
               )}
               {isAdmin && !scheduledSupervisionId && (
                 <>
-                  <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-admin">
+                  <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-chrome-control-border text-chrome-muted hover:bg-chrome-control-hover transition-colors" data-testid="button-admin">
                     <Shield className="h-4 w-4" /> Admin Panel
                   </button>
 
                 </>
               )}
-              <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
+              <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-chrome-elevated text-chrome-muted hover:bg-chrome-elevated-hover transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
                 <LogOut className="h-[18px] w-[18px]" />
               </button>
             </div>

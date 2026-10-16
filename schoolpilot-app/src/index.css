@@ -49,6 +49,42 @@
   --gp-blue: #2563eb;
   --gp-blue-light: #3b82f6;
   --gp-blue-bg: #eff6ff;
+
+  /* ─── ClassPilot console chrome (header, view rail, side tab) ────────
+     The console's current colors, lifted out of hard-coded Tailwind classes
+     so a dashboard theme can swap them. Student status colors are not chrome
+     and never move here. */
+  --chrome-bg: #0f172a;
+  --chrome-border: #334155;
+  --chrome-fg: #f1f5f9;
+  --chrome-fg-soft: #e2e8f0;
+  --chrome-subtle: #cbd5e1;
+  --chrome-muted: #94a3b8;
+  --chrome-control-bg: #0f172a;
+  --chrome-control-border: #475569;
+  --chrome-control-hover: #1e293b;
+  --chrome-elevated: #334155;
+  --chrome-elevated-hover: #475569;
+  --brand: #fbbf24;
+  --brand-strong: #f59e0b;
+  --brand-soft: #fcd34d;
+  --brand-fg: #0f172a;
+  --sidetab-bg: #1e293b;
+  --sidetab-hover: #334155;
+  --rail-box-bg: rgba(254, 252, 232, 0.8);
+  --rail-box-border: #fde047;
+  --rail-on-bg: #facc15;
+  --rail-on-border: #eab308;
+  --rail-on-hover: #fde047;
+  --rail-on-fg: #020617;
+  --rail-off-bg: #fefce8;
+  --rail-off-border: #fde047;
+  --rail-off-hover: #fef9c3;
+  --rail-off-fg: #020617;
+  --rail-ring: #eab308;
+  --rail-count-bg: rgba(255, 255, 255, 0.85);
+  --rail-count-fg: #020617;
+  --rail-count-ring: rgba(161, 98, 7, 0.2);
 }
 
 /* ─── Dark mode ───────────────────────────────────────────────────── */
@@ -74,7 +110,7 @@
   --accent-foreground: 210 8% 82%;
   --destructive: 0 72% 50%;
   --destructive-foreground: 0 10% 98%;
-  --border: 217 33% 17%;
+  --border: 215 25% 27%;              /* visible card edges in dark mode */
   --input: 210 10% 28%;
   --ring: 217 91% 52%;
 
@@ -82,6 +118,15 @@
   --cp-yellow-bg: #422006;
   --pp-purple-bg: #2e1065;
   --gp-blue-bg: #172554;
+
+  /* The console header is dark in both modes, so only the view rail changes:
+     until now it kept its light yellow tints on a near-black page. */
+  --rail-box-bg: rgba(250, 204, 21, 0.08);
+  --rail-box-border: rgba(250, 204, 21, 0.45);
+  --rail-off-bg: rgba(250, 204, 21, 0.12);
+  --rail-off-border: rgba(250, 204, 21, 0.5);
+  --rail-off-hover: rgba(250, 204, 21, 0.22);
+  --rail-off-fg: #f5f5f4;
 }
 
 /* ─── Tailwind v4 semantic color bridge ───────────────────────────── */
@@ -106,6 +151,39 @@
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
   --radius: var(--radius);
+
+  /* Console chrome utilities: bg-chrome, border-chrome-border, text-brand … */
+  --color-chrome: var(--chrome-bg);
+  --color-chrome-border: var(--chrome-border);
+  --color-chrome-fg: var(--chrome-fg);
+  --color-chrome-fg-soft: var(--chrome-fg-soft);
+  --color-chrome-subtle: var(--chrome-subtle);
+  --color-chrome-muted: var(--chrome-muted);
+  --color-chrome-control: var(--chrome-control-bg);
+  --color-chrome-control-border: var(--chrome-control-border);
+  --color-chrome-control-hover: var(--chrome-control-hover);
+  --color-chrome-elevated: var(--chrome-elevated);
+  --color-chrome-elevated-hover: var(--chrome-elevated-hover);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-fg: var(--brand-fg);
+  --color-sidetab: var(--sidetab-bg);
+  --color-sidetab-hover: var(--sidetab-hover);
+  --color-rail-box: var(--rail-box-bg);
+  --color-rail-box-border: var(--rail-box-border);
+  --color-rail-on: var(--rail-on-bg);
+  --color-rail-on-border: var(--rail-on-border);
+  --color-rail-on-hover: var(--rail-on-hover);
+  --color-rail-on-fg: var(--rail-on-fg);
+  --color-rail-off: var(--rail-off-bg);
+  --color-rail-off-border: var(--rail-off-border);
+  --color-rail-off-hover: var(--rail-off-hover);
+  --color-rail-off-fg: var(--rail-off-fg);
+  --color-rail-ring: var(--rail-ring);
+  --color-rail-count: var(--rail-count-bg);
+  --color-rail-count-fg: var(--rail-count-fg);
+  --color-rail-count-ring: var(--rail-count-ring);
 }
 
 /* ─── Base styles ─────────────────────────────────────────────────── */
@@ -114,19 +192,10 @@ body {
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   color: hsl(var(--foreground));
-  /* Mesh gradient background matching original ClassPilot */
+  /* Flat page background. The old mesh gradient survives only as the
+     opt-in .bg-mesh-gradient utility below; the page itself is flat. */
   background-color: hsl(var(--background));
-  background-image:
-    radial-gradient(at 0% 0%, hsla(252, 82%, 94%, 1) 0, transparent 50%),
-    radial-gradient(at 100% 0%, hsla(220, 80%, 94%, 1) 0, transparent 50%),
-    radial-gradient(at 100% 100%, hsla(280, 50%, 96%, 1) 0, transparent 50%);
   min-height: 100vh;
-}
-
-.dark body {
-  background-image:
-    radial-gradient(at 0% 0%, hsla(252, 82%, 15%, 0.5) 0, transparent 50%),
-    radial-gradient(at 100% 0%, hsla(220, 80%, 15%, 0.5) 0, transparent 50%);
 }
 
 /* Mesh gradient background (like original ClassPilot) */
