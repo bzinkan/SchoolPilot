@@ -28,7 +28,7 @@ test('preset ids are unique, ordered like the catalog, and mirrored by the serve
 
 test('ready presets ship artwork under /themes/ and a known ornament and clearance', () => {
   const ready = readyDashboardThemePresets();
-  assert.ok(ready.length >= 3);
+  assert.equal(ready.length, DASHBOARD_THEME_PRESET_IDS.length, 'every catalog preset ships');
   for (const preset of ready) {
     assert.match(preset.artwork, /^\/themes\/[a-z-]+\.svg$/);
     assert.ok(existsSync(path.join(appRoot, 'public', preset.artwork)), `${preset.artwork} must be shipped in public/`);
@@ -44,8 +44,9 @@ test('resolve returns a ready preset for a stored preset and null for everything
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'halloween' }, { enabled: false }), null, 'the server gate wins');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'not-a-theme' }), null, 'a retired id never breaks the page');
   assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000' }), null, 'uploads arrive in a later phase');
-  const notReady = DASHBOARD_THEME_PRESETS.find(preset => !preset.ready);
-  if (notReady) assert.equal(resolveDashboardTheme({ kind: 'preset', preset: notReady.id }), null, 'a reserved id resolves to Default until it ships');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-10-16T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'halloween', 'calendar mode follows the date, not the stored hint');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'advent', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'advent', 'the Advent hint opts into the liturgical variant');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'christmas', 'without the hint December is Christmas');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'halloween', name: 'Spooky' }), findDashboardThemePreset('halloween'));
 });
 

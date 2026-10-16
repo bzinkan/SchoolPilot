@@ -46,13 +46,13 @@ function ResourceBadge({ item }) {
 }
 
 export default function MySettings() {
-  const { currentUser, isLoading, logout } = useClassPilotAuth();
+  const { currentUser, school, isLoading, logout } = useClassPilotAuth();
   if (isLoading) return <p role="status" className="p-6">Loading Teaching tools…</p>;
   if (!currentUser?.schoolId || !currentUser?.roles?.some(role => ['teacher', 'admin', 'school_admin'].includes(role))) return <p className="p-6">Sign in with an active school teaching account to use Teaching tools.</p>;
-  return <TeachingToolsContent key={`${currentUser.schoolId}:${currentUser.id}:${currentUser.roles.join(',')}`} currentUser={currentUser} logout={logout} />;
+  return <TeachingToolsContent school={school} key={`${currentUser.schoolId}:${currentUser.id}:${currentUser.roles.join(',')}`} currentUser={currentUser} logout={logout} />;
 }
 
-function TeachingToolsContent({ currentUser, logout }) {
+function TeachingToolsContent({ currentUser, logout, school }) {
   const { navigate, requestAction } = useAdminNavigation();
   const location = useLocation();
   const routeNavigate = useNavigate();
@@ -1253,7 +1253,7 @@ function TeachingToolsContent({ currentUser, logout }) {
             <TeachingDefaults schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'defaults'} />
           </section>
           <section hidden={section !== "appearance"} aria-label="Appearance">
-            <DashboardThemeCard schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'appearance'} />
+            <DashboardThemeCard schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'appearance'} timeZone={school?.timezone} />
           </section>
         </div>
       </div>

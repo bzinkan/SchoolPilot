@@ -7,11 +7,11 @@ import { Label } from '../../../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { useAdminNavigationBlocker } from '../hooks/useAdminNavigation';
 import { teacherPreferencesKey, teachingToolsShouldBlock } from '../lib/teachingTools';
-import { isUnavailableDashboardTheme, readyDashboardThemePresets } from '../../../shared/themes/presets';
+import { findDashboardThemePreset, isUnavailableDashboardTheme, readyDashboardThemePresets, resolveDashboardTheme } from '../../../shared/themes/presets';
 
 // Teaching tools › Appearance. Personal to the signed-in teacher; saving a theme
 // never sends a student command and never changes anyone else's dashboard.
-export default function DashboardThemeCard({ schoolId, viewerId, active = true }) {
+export default function DashboardThemeCard({ schoolId, viewerId, active = true, timeZone }) {
   const key = teacherPreferencesKey(schoolId, viewerId);
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => apiRequest('GET', '/classpilot/teacher/preferences', undefined,
     { signal, headers: { 'X-School-Id': schoolId } }), enabled: Boolean(active && schoolId && viewerId), retry: false });
@@ -19,13 +19,13 @@ export default function DashboardThemeCard({ schoolId, viewerId, active = true }
     <CardDescription>Pick a look for your own ClassPilot dashboard. Student status colors never change, so alerts always look the same. A theme replaces light or dark mode while it is on.</CardDescription></CardHeader>
     <CardContent>{query.data
       ? (query.data.dashboardThemesEnabled
-        ? <ThemeEditor incoming={query.data} queryKey={key} schoolId={schoolId} />
+        ? <ThemeEditor incoming={query.data} queryKey={key} schoolId={schoolId} timeZone={timeZone} />
         : <p role="status" className="text-sm text-muted-foreground" data-testid="dashboard-theme-disabled">Dashboard themes are not turned on for your school yet.</p>)
       : query.isError ? <p role="alert">Your theme could not be loaded. <Button variant="link" onClick={() => query.refetch()}>Retry</Button></p>
         : <p role="status">Loading your theme…</p>}</CardContent></Card>;
 }
 
-function ThemeEditor({ incoming, queryKey, schoolId }) {
+function ThemeEditor({ incoming, queryKey, schoolId, timeZone }) {
   const [draft, setDraft] = useState(null), [notice, setNotice] = useState('');
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -33,13 +33,18 @@ function ThemeEditor({ incoming, queryKey, schoolId }) {
   const stored = baseline.dashboardTheme ?? null;
   const storedPreset = stored?.kind === 'preset' ? stored.preset : null;
   const storedName = typeof stored?.name === 'string' ? stored.name : '';
+  const storedCalendar = stored?.calendar === true;
   const preset = draft ? draft.preset : storedPreset;
   const name = draft ? draft.name : storedName;
-  const dirty = preset !== storedPreset || name.trim() !== storedName;
+  const calendar = draft ? draft.calendar : storedCalendar;
+  const dirty = preset !== storedPreset || name.trim() !== storedName || calendar !== storedCalendar;
+  // In calendar mode the saved preset is only the Advent hint; today's pick is shown for context.
+  const today = calendar ? resolveDashboardTheme({ kind: 'preset', preset: preset === 'advent' ? 'advent' : 'fall', calendar: true }, { timeZone }) : null;
+  const effectivePreset = calendar ? (preset === 'advent' ? 'advent' : (today?.id ?? 'fall')) : preset;
   const nameValid = name.trim().length <= 40;
   const save = useMutation({ mutationFn: () => apiRequest('PATCH', '/classpilot/teacher/preferences', {
     expectedRevision: baseline.revision,
-    dashboardTheme: preset ? { kind: 'preset', preset, ...(name.trim() ? { name: name.trim() } : {}) } : null,
+    dashboardTheme: effectivePreset ? { kind: 'preset', preset: effectivePreset, ...(calendar ? { calendar: true } : {}), ...(name.trim() ? { name: name.trim() } : {}) } : null,
   }, { headers: { 'X-School-Id': schoolId } }), onSuccess: response => {
     if (!alive.current) return;
     queryClient.setQueryData(queryKey, response); setDraft(null); setNotice('Dashboard theme saved.');
@@ -51,18 +56,24 @@ function ThemeEditor({ incoming, queryKey, schoolId }) {
     } else setNotice('Your theme could not be saved. Your choice is still here.');
   } });
   useAdminNavigationBlocker({ id: 'dashboard-theme', dirty, busy: save.isPending, shouldBlock: teachingToolsShouldBlock, onDiscard: () => setDraft(null) });
-  const choose = id => { setDraft({ baseline, preset: id, name }); setNotice(''); };
+  const choose = id => { setDraft({ baseline, preset: id, name, calendar }); setNotice(''); };
+  const setCalendar = next => { setDraft({ baseline, preset: next && preset === null ? (today?.id ?? 'fall') : preset, name, calendar: next }); setNotice(''); };
   return <div className="space-y-5">
     {isUnavailableDashboardTheme(stored) && <p role="status" className="text-sm text-muted-foreground" data-testid="dashboard-theme-unavailable">Your saved theme is no longer available, so your dashboard shows Default.</p>}
     <fieldset disabled={save.isPending}><legend className="mb-2 text-sm font-medium">Preloaded themes</legend>
       <div role="radiogroup" aria-label="Preloaded themes" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <ThemeOption id={null} label="Default" selected={preset === null} onChoose={choose} />
+        <ThemeOption id={null} label="Default" selected={preset === null && !calendar} onChoose={choose} />
         {readyDashboardThemePresets().map(option => <ThemeOption key={option.id} id={option.id} label={option.label} artwork={option.artwork} selected={preset === option.id} onChoose={choose} />)}
       </div>
     </fieldset>
+    <div className="space-y-2 rounded-lg border p-3">
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-calendar" checked={calendar} disabled={save.isPending} onChange={event => setCalendar(event.target.checked)} />Follow the calendar: switch themes automatically by holiday and season</label>
+      {calendar && <label className="flex items-center gap-2 pl-6 text-sm"><input type="checkbox" data-testid="checkbox-dashboard-theme-advent" checked={preset === 'advent'} disabled={save.isPending} onChange={event => choose(event.target.checked ? 'advent' : (today?.id ?? 'fall'))} />Include Advent (Catholic calendar)</label>}
+      {calendar && today && <p className="pl-6 text-sm text-muted-foreground" data-testid="dashboard-theme-today">Today: {findDashboardThemePreset(today.id)?.label}</p>}
+    </div>
     <div className="max-w-sm space-y-2"><Label htmlFor="dashboard-theme-name">Name it (optional)</Label>
-      <Input id="dashboard-theme-name" data-testid="input-dashboard-theme-name" value={name} maxLength={40} placeholder="Who Dey" disabled={save.isPending || preset === null}
-        onChange={event => { setDraft({ baseline, preset, name: event.target.value }); setNotice(''); }} />
+      <Input id="dashboard-theme-name" data-testid="input-dashboard-theme-name" value={name} maxLength={40} placeholder="Who Dey" disabled={save.isPending || effectivePreset === null}
+        onChange={event => { setDraft({ baseline, preset, name: event.target.value, calendar }); setNotice(''); }} />
       <p className="text-sm text-muted-foreground">Up to 40 characters. Only you see it.</p></div>
     <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="dashboard-theme-upload-slot">Your own background image is coming in a later release.</div>
     {notice && <p role="status" className="text-sm">{notice}</p>}

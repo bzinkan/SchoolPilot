@@ -1,5 +1,9 @@
 import { useActiveDashboardTheme } from '../contexts/DashboardThemeContext';
 
+const HEART = 'M16 29 C8 22 2 17 2 10.5 C2 6 5.5 3 9.5 3 C12.3 3 14.6 4.6 16 7 C17.4 4.6 19.7 3 22.5 3 C26.5 3 30 6 30 10.5 C30 17 24 22 16 29 Z';
+const LEAFLET = 'M0 7 C-5.5 2.5 -8 -1 -8 -4.5 C-8 -7.5 -5.5 -9.5 -3 -9.5 C-1.4 -9.5 0 -8.5 0 -7 C0 -8.5 1.4 -9.5 3 -9.5 C5.5 -9.5 8 -7.5 8 -4.5 C8 -1 5.5 2.5 0 7 Z';
+const LEAF = 'M16 2 C27 8 30 19 16 30 C2 19 5 8 16 2 Z';
+
 // Decorative, theme-specific drawing on a student tile. Pure presentation:
 // absolutely positioned by dashboardThemes.css, never focusable, never a hit
 // target, hidden from assistive technology. Renders nothing without a theme.
@@ -38,6 +42,70 @@ export default function TileOrnament() {
         <span className="tile-ornament tile-ornament-lights" aria-hidden="true">
           <span className="tile-ornament-wire" />
           <span className="tile-ornament-bulbs" />
+        </span>
+      );
+    case 'hearts':
+      return (
+        <span className="tile-ornament tile-ornament-hearts" aria-hidden="true">
+          <svg viewBox="0 0 32 32" className="heart heart-a"><path d={HEART} fill="currentColor" /></svg>
+          <svg viewBox="0 0 32 32" className="heart heart-b"><path d={HEART} fill="currentColor" /></svg>
+          <svg viewBox="0 0 32 32" className="heart heart-c"><path d={HEART} fill="currentColor" /></svg>
+        </span>
+      );
+    case 'shamrock':
+      return (
+        <svg viewBox="0 0 40 40" {...svg}>
+          {[0, 120, 240].map(angle => (
+            <path key={angle} d={LEAFLET} fill="#16a34a" stroke="#15803d" strokeWidth="0.8" transform={`translate(20 19) rotate(${angle}) translate(0 -8.5)`} />
+          ))}
+          <path d="M20 22 Q23 30 19 37" stroke="#15803d" strokeWidth="2.6" fill="none" strokeLinecap="round" />
+        </svg>
+      );
+    case 'ears':
+      return (
+        <svg viewBox="0 0 48 34" {...svg}>
+          <g transform="rotate(-12 14 34)"><ellipse cx="14" cy="20" rx="7.5" ry="20" fill="#fff" stroke="#e5e7eb" strokeWidth="1" /><ellipse cx="14" cy="22" rx="3.6" ry="14" fill="#fbcfe8" /></g>
+          <g transform="rotate(12 34 34)"><ellipse cx="34" cy="20" rx="7.5" ry="20" fill="#fff" stroke="#e5e7eb" strokeWidth="1" /><ellipse cx="34" cy="22" rx="3.6" ry="14" fill="#fbcfe8" /></g>
+        </svg>
+      );
+    case 'daisy':
+      return (
+        <svg viewBox="0 0 40 40" {...svg}>
+          {[0, 45, 90, 135, 180, 225, 270, 315].map(angle => (
+            <ellipse key={angle} cx="20" cy="9" rx="4.2" ry="8" fill="#fff" stroke="rgba(0,0,0,.08)" transform={`rotate(${angle} 20 20)`} />
+          ))}
+          <circle cx="20" cy="20" r="6" fill="#fbbf24" />
+        </svg>
+      );
+    case 'sun':
+      return (
+        <svg viewBox="0 0 40 40" {...svg}>
+          {[0, 45, 90, 135, 180, 225, 270, 315].map(angle => (
+            <line key={angle} x1="20" y1="3" x2="20" y2="8" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round" transform={`rotate(${angle} 20 20)`} />
+          ))}
+          <circle cx="20" cy="20" r="9" fill="#fbbf24" />
+        </svg>
+      );
+    case 'leaf':
+      return (
+        <span className="tile-ornament tile-ornament-leaf" aria-hidden="true">
+          <svg viewBox="0 0 32 32" className="leaf-a"><path d={LEAF} fill="currentColor" /><path d="M16 6 L16 28 M16 14 L10 10 M16 18 L22 13" stroke="rgba(0,0,0,.25)" strokeWidth="1.5" fill="none" /></svg>
+          <svg viewBox="0 0 32 32" className="leaf-b"><path d={LEAF} fill="currentColor" /></svg>
+        </span>
+      );
+    case 'snowcap':
+      return (
+        <span className="tile-ornament tile-ornament-snowcap" aria-hidden="true">
+          <svg viewBox="0 0 120 14" preserveAspectRatio="none" style={{ width: '100%', height: '100%', display: 'block' }}>
+            <path d="M0 14 L0 9 Q8 2 18 8 Q27 13 36 6 Q46 0 56 7 Q66 13 76 5 Q86 -1 96 6 Q106 12 114 7 L120 9 L120 14 Z" fill="#fff" />
+          </svg>
+          <svg viewBox="0 0 40 40" className="flake">
+            {[0, 60, 120, 180, 240, 300].map(angle => (
+              <g key={angle} transform={`rotate(${angle} 20 20)`} stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                <line x1="20" y1="20" x2="20" y2="3" /><line x1="20" y1="8" x2="16" y2="5" strokeWidth="2" /><line x1="20" y1="8" x2="24" y2="5" strokeWidth="2" />
+              </g>
+            ))}
+          </svg>
         </span>
       );
     default:
