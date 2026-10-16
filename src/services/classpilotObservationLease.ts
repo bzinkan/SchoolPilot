@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { redisCommand } from "../middleware/rateLimiter.js";
+import { realtimeRedisCommand as redisCommand } from "../realtime/ws-redis.js";
 
 export const CLASSPILOT_OBSERVATION_RENEW_SECONDS = 30;
 export const CLASSPILOT_OBSERVATION_LEASE_SECONDS = 90;
@@ -347,6 +347,51 @@ export type ClasspilotObservationStatus =
   | { status: "observed" | "unobserved"; expiresInSeconds: number }
   | { status: "unavailable"; expiresInSeconds: 0 };
 
+// Read the bounded viewer cohort and its values in one atomic operation. A
+// release/renewal cannot interleave between the index and payload reads, and
+// only a status plus maximum matching expiry leaves Redis.
+const OBSERVATION_STATUS_SCRIPT = `
+local now = tonumber(ARGV[1])
+local viewers = redis.call('ZRANGEBYSCORE', KEYS[1], ARGV[2], '+inf', 'LIMIT', '0', ARGV[4])
+if #viewers > tonumber(ARGV[3]) then return {-1, 0} end
+if #viewers == 0 then return {0, 0} end
+local keys = {}
+for _, viewer in ipairs(viewers) do keys[#keys + 1] = ARGV[5] .. viewer end
+local values = redis.call('MGET', unpack(keys))
+local latest = 0
+for _, value in ipairs(values) do
+  if type(value) == 'string' then
+    local ok, lease = pcall(cjson.decode, value)
+    if ok and type(lease) == 'table' then
+      local expiry = lease.expiresAt
+      local scope = lease.scope
+      if type(expiry) == 'number' and expiry == expiry and expiry > now
+        and expiry <= 9007199254740991 and expiry == math.floor(expiry)
+        and type(scope) == 'table' then
+        local matches = scope.kind == 'class'
+        if scope.kind == 'students' and type(scope.studentIds) == 'table' then
+          local count, valid, included = 0, true, false
+          for key, student in pairs(scope.studentIds) do
+            count = count + 1
+            if count > tonumber(ARGV[7]) or type(key) ~= 'number' or key < 1
+              or key ~= math.floor(key) or key > #scope.studentIds
+              or type(student) ~= 'string' or student == '' then
+              valid = false
+              break
+            end
+            if student == ARGV[6] then included = true end
+          end
+          matches = valid and count > 0 and count == #scope.studentIds and included
+        end
+        if matches and expiry > latest then latest = expiry end
+      end
+    end
+  end
+end
+if latest > now then return {1, latest} end
+return {0, 0}
+`;
+
 async function observationStatusForSubject(options: {
   schoolId: string;
   subject: ObservationSubject;
@@ -359,42 +404,30 @@ async function observationStatusForSubject(options: {
   }
   const indexKey = subjectIndexKey(options.schoolId, options.subject);
   try {
-    const viewers = await redisCommand([
-      "ZRANGEBYSCORE",
+    const result = await redisCommand([
+      "EVAL",
+      OBSERVATION_STATUS_SCRIPT,
+      "1",
       indexKey,
+      String(now),
       String(now + 1),
-      "+inf",
-      "LIMIT",
-      "0",
+      String(CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION),
       String(CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION + 1),
-    ], { readyTimeoutMs: 200 });
-    if (Array.isArray(viewers)) {
-      if (viewers.length > CLASSPILOT_OBSERVATION_MAX_VIEWERS_PER_SESSION) {
+      `${indexKey}:viewer:`,
+      options.studentId,
+      String(MAX_OBSERVATION_STUDENTS),
+    ], { readyTimeoutMs: 200, diagnosticOperation: "observation_status" });
+    if (Array.isArray(result) && result.length === 2) {
+      if (result[0] === -1 && result[1] === 0) {
         return { status: "unavailable", expiresInSeconds: 0 };
       }
-      if (viewers.length === 0) return { status: "unobserved", expiresInSeconds: 0 };
-      const values = await redisCommand([
-        "MGET",
-        ...viewers.map((viewer) => viewerDataKey(indexKey, String(viewer))),
-      ], { readyTimeoutMs: 200 });
-      if (!Array.isArray(values)) return { status: "unavailable", expiresInSeconds: 0 };
-      let latestExpiry = 0;
-      for (const value of values) {
-        if (typeof value !== "string") continue;
-        try {
-          const lease = JSON.parse(value) as StoredObservationLease;
-          if (lease.expiresAt <= now) continue;
-          if (lease.scope.kind === "class"
-            || (lease.scope.kind === "students" && lease.scope.studentIds.includes(options.studentId))) {
-            latestExpiry = Math.max(latestExpiry, lease.expiresAt);
-          }
-        } catch {
-          // Invalid entries fail private and age out with the lease TTL.
-        }
+      if (result[0] === 0 && result[1] === 0) {
+        return { status: "unobserved", expiresInSeconds: 0 };
       }
-      return latestExpiry > now
-        ? { status: "observed", expiresInSeconds: Math.ceil((latestExpiry - now) / 1000) }
-        : { status: "unobserved", expiresInSeconds: 0 };
+      if (result[0] === 1 && typeof result[1] === "number"
+        && Number.isSafeInteger(result[1]) && result[1] > now) {
+        return { status: "observed", expiresInSeconds: Math.ceil((result[1] - now) / 1000) };
+      }
     }
   } catch {
     if (observationLeaseStoreRequired()) return { status: "unavailable", expiresInSeconds: 0 };

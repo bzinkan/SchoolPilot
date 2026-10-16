@@ -185,8 +185,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
-      await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
+      // Current lifecycle guards retain uniquely tagged synthetic school/staff roots.
     });
   } catch {
     // Best-effort cleanup keeps the original test failure visible.
@@ -318,7 +317,7 @@ describe("staff assignment lifecycle", () => {
     assert.equal(otherMembership?.role, "teacher");
     await asSystem(async () => {
       await db.delete(schoolMemberships).where(eq(schoolMemberships.schoolId, secondarySchool.id));
-      await db.delete(schools).where(eq(schools.id, secondarySchool.id));
+      // Retain this uniquely owned synthetic school root under lifecycle guards.
     });
   });
 
@@ -368,8 +367,7 @@ describe("staff assignment lifecycle", () => {
       await asSystem(async () => {
         await db.execute(sql`DELETE FROM block_lists WHERE school_id = ${restoreSchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${restoreSchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${restoreSchool.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${restoreTeacher.id}`);
+        // Retain uniquely owned synthetic school/staff roots under lifecycle guards.
       });
     }
   });
@@ -502,6 +500,12 @@ describe("staff assignment lifecycle", () => {
   });
 
   it("reports stale active ownership and primary-mirror mismatches as ID-only integrity findings", async () => {
+    const school = await createSchool({
+      name: `${TAG}_DormantMirrorIntegrity`,
+      domain: `${TAG}.example.edu`,
+      slug: `${TAG}-dormant-mirror`,
+    });
+    await createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" });
     const stale = await createUser({
       email: `stale@${TAG}.example.edu`,
       firstName: "Stale",
@@ -520,6 +524,10 @@ describe("staff assignment lifecycle", () => {
       groupType: "admin_class",
       status: "active",
     }));
+    // Current guards prohibit new corruption in live tenants. A separately
+    // retired tenant models retained legacy rows that must be repaired before
+    // restoration; the inventory intentionally accepts an explicit school ID.
+    await asSystem(() => updateSchool(school.id, { deletedAt: new Date() }));
     await asSystem(async () => {
       await db
         .update(schoolMemberships)
@@ -536,6 +544,11 @@ describe("staff assignment lifecycle", () => {
     assert.ok(integrity.invalidPrimaryAssignments.some((row) => row.groupId === staleGroup.id));
     assert.ok(integrity.primaryMirrorMismatches.some((row) => row.groupId === staleGroup.id));
     assert.ok(integrity.total >= 2);
+    await assert.rejects(
+      () => asSystem(() => updateSchool(school.id, { deletedAt: null })),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "SCHOOL_STAFF_ASSIGNMENT_INTEGRITY_REQUIRED",
+      "the dormant legacy fixture cannot become live before repair",
+    );
   });
 
   it("does not transfer user-owned classes while another active teachable membership remains", async () => {
@@ -1112,6 +1125,17 @@ describe("staff assignment lifecycle", () => {
   });
 
   it("enforces teacher-created class ownership and inventories every live assignment type", async () => {
+    const school = await createSchool({
+      name: `${TAG}_DormantAssignmentIntegrity`,
+      domain: `${TAG}.example.edu`,
+      slug: `${TAG}-dormant-assignments`,
+    });
+    await createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" });
+    await createMembership({ schoolId: school.id, userId: actor.id, role: "admin", status: "active" });
+    await createMembership({ schoolId: school.id, userId: replacement.id, role: "teacher", status: "active" });
+    const student = await inSchool(school.id, () => createStudent({
+      schoolId: school.id, firstName: "Dormant", lastName: "Fixture", gradeLevel: "7",
+    }));
     const staleOwner = await createUser({
       email: `inventory-owner@${TAG}.example.edu`,
       firstName: "Inventory",
@@ -1197,6 +1221,17 @@ describe("staff assignment lifecycle", () => {
         status: "active",
       })
     );
+    const liveImpact = await inSchool(school.id, () =>
+      getStaffAssignmentImpact(school.id, staleMembership.id)
+    );
+    const blockListImpact = liveImpact.assignments.find(
+      (assignment) => assignment.assignmentType === "block_list"
+    );
+    assert.equal(blockListImpact?.required, true);
+    assert.deepEqual(blockListImpact?.allowedOperations, ["replace"]);
+    // Retire before seeding the retained historical swap: canonical deletion
+    // correctly rejects a live tenant with an approved future reservation.
+    await asSystem(() => updateSchool(school.id, { deletedAt: new Date() }));
     const invalidScheduleLeg = await inSchool(school.id, () => db.transaction(async (tx) => {
       const [firstGroupId, secondGroupId] = [teacherCreated.id, scheduleIntegrityPeer.id].sort();
       const [pair] = await tx
@@ -1259,14 +1294,6 @@ describe("staff assignment lifecycle", () => {
       });
       return staleLeg!;
     }));
-    const liveImpact = await inSchool(school.id, () =>
-      getStaffAssignmentImpact(school.id, staleMembership.id)
-    );
-    const blockListImpact = liveImpact.assignments.find(
-      (assignment) => assignment.assignmentType === "block_list"
-    );
-    assert.equal(blockListImpact?.required, true);
-    assert.deepEqual(blockListImpact?.allowedOperations, ["replace"]);
     await asSystem(() =>
       db
         .update(schoolMemberships)
@@ -1310,6 +1337,11 @@ describe("staff assignment lifecycle", () => {
           row.reason === "missing_active_teachable_membership"
       ),
       "active reserved schedule-change snapshots must be included in readiness"
+    );
+    await assert.rejects(
+      () => asSystem(() => updateSchool(school.id, { deletedAt: null })),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "SCHOOL_STAFF_ASSIGNMENT_INTEGRITY_REQUIRED",
+      "the dormant assignment inventory cannot be restored with stale ownership",
     );
   });
 

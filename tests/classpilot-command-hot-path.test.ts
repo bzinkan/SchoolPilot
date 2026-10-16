@@ -51,10 +51,27 @@ describe("ClassPilot command and ACK hot path", () => {
       batchStart,
       redis.indexOf("\nregisterCacheInvalidationPublisher", batchStart)
     );
-    assert.match(batchSection, /const pipeline = redisPublisher\.multi\(\)/);
-    assert.match(batchSection, /for \(const payload of serialized\)[\s\S]*?pipeline\.publish\(redisChannel, payload\)/);
+    assert.match(batchSection, /publicationRuntime\.publish/);
+    assert.match(
+      batchSection,
+      /const serialized = items\.map\(\(\{ target, message, includeSource \}\) =>[\s\S]*?JSON\.stringify\(publicationEnvelope\(target, message, \{ includeSource \}\)\)\)/,
+    );
+    const serializationIndex = batchSection.indexOf("const serialized = items.map");
+    const cohortLoopIndex = batchSection.indexOf("for (let start = 0; start < serialized.length; start += 40)");
+    const firstAwaitIndex = batchSection.indexOf("await ");
+    assert.ok(serializationIndex >= 0 && cohortLoopIndex > serializationIndex && firstAwaitIndex > cohortLoopIndex,
+      "all input envelopes must be serialized before any cohort can await readiness or publication");
+    assert.match(batchSection, /const cohort = serialized\.slice\(start, start \+ 40\)/);
+    assert.equal(batchSection.match(/const pipeline = client\.multi\(\)/g)?.length, 1);
+    assert.match(batchSection, /for \(const envelope of cohort\) pipeline\.publish\(redisChannel, envelope\)/);
+    const publicationCallback = batchSection.slice(batchSection.indexOf("const outcome = await publicationRuntime.publish"),
+      batchSection.indexOf('if (outcome.status === "accepted")'));
+    assert.doesNotMatch(publicationCallback, /JSON\.stringify|publicationEnvelope/,
+      "publication may only consume the already frozen envelope bytes");
     assert.match(batchSection, /await pipeline\.exec\(\)/);
-    assert.match(batchSection, /catch \(error\)[\s\S]*?batch publish failed:[\s\S]*?items\.map\(\(\) => false\)/);
+    assert.match(batchSection, /result\.status === "accepted" && result\.value > 0/);
+    assert.match(dispatchSection, /withClasspilotStudentControlDeliveryBatch\(/);
+    assert.doesNotMatch(dispatchSection, /const authorizedDeliveries = await Promise\.all/);
   });
 
   it("coalesces ACK summaries before a revisioned snapshot without holding the DB lock during publication", () => {
@@ -73,7 +90,7 @@ describe("ClassPilot command and ACK hot path", () => {
     const summaryIndex = commandUpdateSection.indexOf("updateClasspilotCommandSummary(state.commandId)");
     const snapshotIndex = commandUpdateSection.indexOf("withClasspilotCommandBroadcastLock");
     assert.ok(summaryIndex >= 0 && snapshotIndex > summaryIndex);
-    assert.match(websocket, /setTimeout\(\(\) => \{[\s\S]*?\}, 50\)/);
+    assert.match(websocket, /state\.retryCount \? Math\.min\(1_000, 250 \* 2 \*\* \(state\.retryCount - 1\)\) : 50/);
     assert.match(websocket, /rawAckState === "expired"[\s\S]*?\? "expired"/);
     assert.match(commandUpdateSection, /deliveryPolicy: classpilotCommandDeliveryPolicy\(command\.commandType\)/);
     assert.match(commandUpdateSection, /summary: summarizeClasspilotCommandTargets\(command\)/);
@@ -112,6 +129,8 @@ describe("ClassPilot command and ACK hot path", () => {
       commandUpdateSection.slice(globalPublish, localSessionPublish),
       /outcome\.status === "accepted"/
     );
+    assert.match(commandUpdateSection, /const snapshot = await runWithTenantContext/);
+    assert.match(commandUpdateSection, /return value;[\s\S]*?\}\);[\s\S]*?if \(!snapshot\) return;[\s\S]*?await publishOrderedWS/);
     assert.match(commandUpdateSection, /kind: "staff-session"/);
     assert.match(commandUpdateSection, /kind: "staff-user"/);
     assert.doesNotMatch(commandUpdateSection, /broadcastToTeachersLocal/);
@@ -119,10 +138,7 @@ describe("ClassPilot command and ACK hot path", () => {
       commandUpdateSection,
       /outcome\.subscriberCount === 0[\s\S]*?publication had no subscribers/
     );
-    assert.match(
-      commandUpdateSection,
-      /outcome\.status === "stale"[\s\S]*?publication was superseded/
-    );
+    assert.doesNotMatch(commandUpdateSection, /publication was superseded/);
   });
 
   it("emits aggregate PII-free phase metrics for command and ACK work", () => {

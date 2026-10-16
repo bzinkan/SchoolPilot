@@ -130,7 +130,7 @@ export async function publishClasspilotStudentSessionEnded(
       clearTimeout(timeout);
     }
     if (
-      (outcome.status === "accepted" || outcome.status === "failed") &&
+      outcome.status === "accepted" &&
       recordLocalOrderedDelivery(orderedKey, String(snapshot.revision))
     ) {
       deliverLocal();

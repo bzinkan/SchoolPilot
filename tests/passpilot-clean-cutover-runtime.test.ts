@@ -173,17 +173,18 @@ after(async () => {
       await db.execute(sql`DELETE FROM audit_logs WHERE school_id IN (${list})`);
       await db.execute(sql`DELETE FROM passes WHERE school_id IN (${list})`);
       await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${list}))`);
-      await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${list}))`);
-      await db.execute(sql`DELETE FROM groups WHERE school_id IN (${list})`);
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${list}))`);
+        await tx.execute(sql`DELETE FROM groups WHERE school_id IN (${list})`);
+      });
       await db.execute(sql`DELETE FROM teacher_grades WHERE grade_id IN (SELECT id FROM grades WHERE school_id IN (${list}))`);
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (${list})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (${list})`);
       await db.execute(sql`DELETE FROM settings WHERE school_id IN (${list})`);
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${list})`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${list})`);
-      await db.execute(sql`DELETE FROM schools WHERE id IN (${list})`);
+      // Staff lifecycle guards retain protected fixture school/user roots.
     }
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
   });
   await pool.end();
 });

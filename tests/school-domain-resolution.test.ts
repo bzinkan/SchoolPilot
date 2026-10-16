@@ -67,7 +67,8 @@ after(async () => {
         const list = sql.join(schoolIds.map((id) => sql`${id}`), sql`, `);
         await db.execute(sql`DELETE FROM students WHERE school_id IN (${list})`);
         await db.execute(sql`DELETE FROM settings WHERE school_id IN (${list})`);
-        await db.execute(sql`DELETE FROM schools WHERE id IN (${list})`);
+        // Current lifecycle guards retain owned synthetic school roots in this
+        // disposable fixture database after student/settings cleanup.
       }
     });
   } finally {

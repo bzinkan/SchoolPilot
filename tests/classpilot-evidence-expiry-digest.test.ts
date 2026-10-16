@@ -76,7 +76,8 @@ describe("ClassPilot expired safety evidence binding digest", () => {
       "DELETE FROM students WHERE school_id = $1 AND id = $2",
       [schoolId, studentId]
     );
-    await schedulerPool.query("DELETE FROM schools WHERE id = $1", [schoolId]);
+    // Current lifecycle guards retain the synthetic school root in this
+    // disposable local fixture database.
     errorMonitor.dispose();
     await Promise.allSettled([
       pool.end(),

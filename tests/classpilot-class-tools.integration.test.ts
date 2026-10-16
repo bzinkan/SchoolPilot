@@ -91,8 +91,8 @@ after(async () => {
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
-  await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
-  await pool.query("DELETE FROM users WHERE id IN($1,$2)", [ids.teacher, ids.nextTeacher]);
+  // Current lifecycle guards retain these synthetic school/staff roots in
+  // the disposable local fixture database.
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
   (await import("../src/services/classpilotRealtimeStatus.js")).setClasspilotRealtimeStatusCommandForTests(undefined);
   const scheduler = await import("../src/services/schedulerDb.js");
@@ -296,7 +296,8 @@ test("follow-ups preserve the preview audience and individual unavailable outcom
 test("manual follow-ups record inactive original recipients without allowing arbitrary roster expansion", async () => {
   const groupId = randomUUID(), sessionId = randomUUID(), removedId = randomUUID();
   await statement(sql`INSERT INTO students(id,school_id,first_name,last_name,status) VALUES(${removedId},${ids.school},'Removed','Student','inactive')`);
-  await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${groupId},${ids.school},${ids.teacher},'Follow-up class','teacher_created','active')`);
+  await inSchool(() => storage.createGroup({ id: groupId, schoolId: ids.school, teacherId: ids.teacher,
+    name: "Follow-up class", groupType: "teacher_created", status: "active" }));
   await statement(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,session_mode,roster_snapshot_completed_at) VALUES(${sessionId},${ids.school},${groupId},${ids.teacher},'live',now())`);
   await statement(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES(${ids.school},${sessionId},${ids.teacher},'primary')`);
   await statement(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES(${ids.school},${sessionId},${groupId},${removedId})`);

@@ -30,6 +30,7 @@ import gopilotStudentRoutes from "./gopilot/students.js";
 import gopilotInstructionalCalendarRoutes from "./gopilot/instructionalCalendar.js";
 import deviceRoutes from "./classpilot/devices.js";
 import monitoringRoutes from "./classpilot/monitoring.js";
+import clientHealthRoutes from "./classpilot/clientHealth.js";
 import teachingSessionRoutes from "./classpilot/sessions.js";
 import groupRoutes from "./classpilot/groups.js";
 import adminClassRoutes from "./classpilot/adminClasses.js";
@@ -415,6 +416,7 @@ router.use("/", changeRoutes);
 router.use("/classpilot", deviceRoutes);
 router.use("/classpilot", liveViewTelemetryRoutes);
 router.use("/classpilot", monitoringRoutes);
+router.use("/classpilot", clientHealthRoutes);
 router.use("/classpilot/teaching-sessions", teachingSessionRoutes);
 router.use("/classpilot/admin/classes", adminClassRoutes);
 // Steps aside (unknown-route 404) unless CLASSPILOT_DIGITAL_USAGE_MODE is on and admitted.

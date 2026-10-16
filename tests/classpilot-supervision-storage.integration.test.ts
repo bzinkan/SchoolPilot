@@ -28,7 +28,7 @@ before(async () => {
 after(async () => {
   if (!pool) return;
   try {
-    if (schoolIds.length) await tenant({ isSuper: true }, async () => {
+    if (schoolIds.length) await tenant({ isSuper: true }, () => database.transaction(async tx => {
       const schoolList = sql.join(schoolIds.map(schoolId => sql`${schoolId}`), sql`, `);
       for (const table of ["classpilot_lesson_progress", "classpilot_tool_history", "classpilot_timers", "classpilot_lesson_activities",
         "classpilot_questions", "classpilot_picker_rounds", "classpilot_routine_runs", "poll_responses", "polls",
@@ -36,16 +36,16 @@ after(async () => {
         "classpilot_command_targets", "classpilot_commands", "classpilot_student_control_states", "classpilot_supervision_students",
         "classpilot_supervision_contexts", "classpilot_session_staff", "classpilot_session_students", "teaching_sessions",
         "classpilot_scheduled_conflicts", "devices", "students", "settings"]) {
-        if (table === "devices" && pupilIds.length) await database.execute(sql`DELETE FROM student_sessions WHERE student_id IN (${sql.join(pupilIds.map(studentId => sql`${studentId}`), sql`, `)})`);
-        await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id IN (${schoolList})`);
+        if (table === "devices" && pupilIds.length) await tx.execute(sql`DELETE FROM student_sessions WHERE student_id IN (${sql.join(pupilIds.map(studentId => sql`${studentId}`), sql`, `)})`);
+        await tx.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id IN (${schoolList})`);
       }
-      await database.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${schoolList}))`);
-      await database.execute(sql`DELETE FROM groups WHERE school_id IN (${schoolList})`);
-    });
+      await tx.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${schoolList}))`);
+      await tx.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (${schoolList}))`);
+      await tx.execute(sql`DELETE FROM groups WHERE school_id IN (${schoolList})`);
+    }));
     await pool.query("DELETE FROM product_licenses WHERE school_id=ANY($1::text[])", [schoolIds]);
     await pool.query("DELETE FROM school_memberships WHERE school_id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM schools WHERE id=ANY($1::text[])", [schoolIds]);
-    await pool.query("DELETE FROM users WHERE id=ANY($1::text[])", [userIds]);
+    // Retain the uniquely owned synthetic school/staff lifecycle roots.
   } finally {
     await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
     const dbModule = await import("../src/db.js"), scheduler = await import("../src/services/schedulerDb.js");
@@ -77,8 +77,8 @@ async function teaching(data: Fixture, options: { studentIds?: string[]; report?
   const groupId = randomUUID(), sessionId = randomUUID(), conflictId = randomUUID();
   const start = options.start ?? new Date(Date.now() - 60_000), end = options.end ?? new Date(Date.now() + 30 * 60_000);
   const date = start.toISOString().slice(0, 10), roster = options.studentIds ?? data.studentIds;
-  await statement(data.schoolId, sql`INSERT INTO groups(id,school_id,teacher_id,name,status)
-    VALUES(${groupId},${data.schoolId},${options.report ? data.receiverId : data.teacherId},'Frozen class','active')`);
+  await scoped(data.schoolId, () => storage.createGroup({ id: groupId, schoolId: data.schoolId,
+    teacherId: options.report ? data.receiverId : data.teacherId, name: "Frozen class", status: "active" }));
   await statement(data.schoolId, sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,session_mode,
     scheduled_conflict_id,scheduled_date,scheduled_timezone,scheduled_start_at,scheduled_end_at,scheduled_state,roster_snapshot_completed_at)
     VALUES(${sessionId},${data.schoolId},${groupId},${options.report ? data.receiverId : data.teacherId},${start.toISOString()},

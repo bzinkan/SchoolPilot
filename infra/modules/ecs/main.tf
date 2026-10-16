@@ -3,7 +3,8 @@
 # ============================================================================
 
 locals {
-  name = "${var.project}-${var.environment}"
+  name  = "${var.project}-${var.environment}"
+  image = var.api_image_digest != "" ? "${var.ecr_repository_url}@${var.api_image_digest}" : "${var.ecr_repository_url}:latest"
   # Reviewed production task sizes that passed the My Desk paperwork capacity
   # tests. tests/deploy-production-task-sizing.test.ts keeps these equal to
   # scripts/deploy.sh and infra/production.tfvars.
@@ -43,13 +44,25 @@ locals {
     { name = "PUBLIC_BASE_URL", value = var.public_base_url },
     { name = "CORS_ALLOWLIST", value = var.cors_allowlist },
     { name = "COOKIE_DOMAIN", value = var.cookie_domain },
-    { name = "GOOGLE_CLIENT_ID", value = var.google_client_id },
+    { name = "COOKIE_NAME", value = var.cookie_name },
+    { name = "GOOGLE_CLIENT_ID", value = var.provider_secrets_enabled ? var.google_client_id : "" },
     { name = "RUN_MIGRATIONS_ON_STARTUP", value = "false" },
     { name = "DB_POOL_MAX", value = tostring(var.db_pool_max) },
     { name = "SCHEDULER_DB_POOL_MAX", value = tostring(var.scheduler_db_pool_max) },
     { name = "RLS_GUC_ENABLED", value = "true" },
     { name = "RLS_ENABLED_TABLES", value = var.rls_enabled_tables },
   ]
+  disabled_provider_environment = var.provider_secrets_enabled ? [] : [
+    for name in ["SENDGRID_API_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "GOOGLE_CLIENT_SECRET", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "SENTRY_DSN"] :
+    { name = name, value = "" }
+  ]
+  staging_reliability_environment = var.environment == "staging" && var.staging_classpilot_reliability_enabled ? concat([
+    for name in ["PROTOCOL_V3_ENABLED", "CAP_SCOPED_AUTHORITY_CHECKS_V1", "CAP_SCREENSHOT_OBSERVATION_LEASE_V1", "CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1", "CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1", "CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1", "CAP_SCHEDULED_CLASSROOM_V1"] :
+    { name = "CLASSPILOT_${name}", value = "true" }
+    ], [
+    { name = "CLASSPILOT_SCHEDULED_CLASSROOM_MODE", value = "on" },
+    { name = "NODE_EXTRA_CA_CERTS", value = "/app/rds-ca.pem" },
+  ]) : []
   classpilot_turn_environment = var.classpilot_turn_hosts != "" ? [
     { name = "CLASSPILOT_TURN_HOSTS", value = var.classpilot_turn_hosts },
     { name = "CLASSPILOT_STUN_URLS", value = join(",", [for host in split(",", var.classpilot_turn_hosts) : "stun:${host}:3478"]) },
@@ -67,7 +80,7 @@ locals {
     { name = "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", value = tostring(var.mydesk_ai_import_teacher_daily_pages) },
     { name = "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES", value = tostring(var.mydesk_ai_import_school_daily_pages) },
   ] : []
-  optional_common_secrets = concat(
+  optional_common_secrets = var.provider_secrets_enabled ? concat(
     var.anthropic_api_key_parameter_arn != "" ? [
       { name = "ANTHROPIC_API_KEY", valueFrom = var.anthropic_api_key_parameter_arn },
     ] : [],
@@ -83,19 +96,20 @@ locals {
         valueFrom = var.google_oauth_previous_encryption_key_parameter_arn
       },
     ] : []
-  )
+  ) : []
   common_secrets = concat([
     { name = "DATABASE_URL", valueFrom = local.application_secret_parameter_arns["DATABASE_URL"] },
     { name = "REDIS_URL", valueFrom = aws_ssm_parameter.redis_url.arn },
     { name = "SESSION_SECRET", valueFrom = local.application_secret_parameter_arns["SESSION_SECRET"] },
     { name = "JWT_SECRET", valueFrom = local.application_secret_parameter_arns["JWT_SECRET"] },
     { name = "STUDENT_TOKEN_SECRET", valueFrom = local.application_secret_parameter_arns["STUDENT_TOKEN_SECRET"] },
-    { name = "GOOGLE_CLIENT_SECRET", valueFrom = local.application_secret_parameter_arns["GOOGLE_CLIENT_SECRET"] },
     { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", valueFrom = local.application_secret_parameter_arns["GOOGLE_OAUTH_ENCRYPTION_KEY"] },
+    ], var.provider_secrets_enabled ? [
+    { name = "GOOGLE_CLIENT_SECRET", valueFrom = local.application_secret_parameter_arns["GOOGLE_CLIENT_SECRET"] },
     { name = "SENDGRID_API_KEY", valueFrom = local.application_secret_parameter_arns["SENDGRID_API_KEY"] },
     { name = "STRIPE_SECRET_KEY", valueFrom = local.application_secret_parameter_arns["STRIPE_SECRET_KEY"] },
     { name = "STRIPE_WEBHOOK_SECRET", valueFrom = local.application_secret_parameter_arns["STRIPE_WEBHOOK_SECRET"] },
-    ], local.optional_common_secrets, var.classpilot_turn_rest_secret_arn != "" ? [
+    ] : [], local.optional_common_secrets, var.classpilot_turn_rest_secret_arn != "" ? [
     { name = "CLASSPILOT_TURN_REST_SECRET", valueFrom = var.classpilot_turn_rest_secret_arn },
   ] : [])
 }
@@ -228,14 +242,14 @@ resource "aws_ecs_task_definition" "api" {
   # terraform-apply this module expecting it to update production config.
   container_definitions = jsonencode([{
     name  = "api"
-    image = "${var.ecr_repository_url}:latest"
+    image = local.image
 
     portMappings = [{
       containerPort = var.container_port
       protocol      = "tcp"
     }]
 
-    environment = concat(local.common_environment, local.classpilot_turn_environment, local.mydesk_environment, [
+    environment = concat(local.common_environment, local.disabled_provider_environment, local.staging_reliability_environment, local.classpilot_turn_environment, local.mydesk_environment, [
       { name = "PORT", value = tostring(var.container_port) },
       { name = "SCHEDULER_ENABLED", value = "false" },
     ])
@@ -261,6 +275,10 @@ resource "aws_ecs_task_definition" "api" {
   }])
 
   lifecycle {
+    precondition {
+      condition     = var.environment != "staging" || (var.desired_count == 0 && var.worker_desired_count == 0) || var.api_image_digest != ""
+      error_message = "Serving staging services requires an immutable reviewed API/worker image digest."
+    }
     precondition {
       condition     = local.google_oauth_previous_encryption_key_parameter_arn_valid
       error_message = "The previous Google OAuth encryption key ARN must be empty or the exact environment-scoped GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS SSM parameter ARN."
@@ -325,10 +343,10 @@ resource "aws_ecs_task_definition" "worker" {
 
   container_definitions = jsonencode([{
     name    = "scheduler-worker"
-    image   = "${var.ecr_repository_url}:latest"
+    image   = local.image
     command = ["node", "dist/worker.js"]
 
-    environment = concat(local.common_environment, local.classpilot_turn_environment, local.mydesk_environment, [
+    environment = concat(local.common_environment, local.disabled_provider_environment, local.staging_reliability_environment, local.classpilot_turn_environment, local.mydesk_environment, [
       { name = "SCHEDULER_ENABLED", value = "true" },
     ])
 
@@ -394,6 +412,14 @@ resource "aws_appautoscaling_target" "api" {
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+  dynamic "suspended_state" {
+    for_each = var.api_autoscaling_suspended ? [1] : []
+    content {
+      dynamic_scaling_in_suspended  = true
+      dynamic_scaling_out_suspended = true
+      scheduled_scaling_suspended   = true
+    }
+  }
 
   lifecycle {
     precondition {

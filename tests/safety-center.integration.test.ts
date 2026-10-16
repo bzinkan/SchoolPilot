@@ -34,8 +34,7 @@ before(async()=>{
 after(async()=>{
   try{
     for(const table of ['audit_logs','safety_url_exceptions','student_safety_cases','classpilot_school_website_deliveries','classpilot_school_website_policies','settings','school_memberships','product_licenses','students'])await pool.query(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`,[[schoolA,schoolB]]);
-    await pool.query(`DELETE FROM schools WHERE id=ANY($1::text[])`,[[schoolA,schoolB]]);
-    await pool.query(`DELETE FROM users WHERE id=ANY($1::text[])`,[[admin,aliasAdmin,teacher,inactive,otherAdmin]]);
+    // Current lifecycle guards retain uniquely owned synthetic school/staff roots in this disposable fixture DB.
   }finally{await Promise.all([pool.end(),sessionPool.end(),schedulerPool.end(),schedulerLockPool.end()]);}
 });
 test("concurrent observations create one open case and one distinct alert, with both administrator roles deduplicated",async()=>{

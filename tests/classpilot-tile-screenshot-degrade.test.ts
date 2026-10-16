@@ -37,7 +37,7 @@ describe("ClassPilot tile screenshot store degrade", () => {
     assert.match(route, /res\.json\(\{\s*tiles,\s*\.\.\.\(screenshotStoreUnavailable \? \{ screenshotStore: "unavailable" \} : \{\}\),\s*\}\)/);
   });
 
-  it("the dashboard turns the degrade marker back into the transient error path on both fetch paths", () => {
+  it("the dashboard turns the degrade marker back into the transient error path on both fetch paths", async () => {
     const polling = read("schoolpilot-app/src/products/classpilot/lib/tileBatchPolling.js");
     assert.match(polling, /export function assertTileScreenshotStoreAvailable\(response\)/);
     assert.match(polling, /response\?\.screenshotStore !== 'unavailable'/);
@@ -46,12 +46,21 @@ describe("ClassPilot tile screenshot store degrade", () => {
 
     const dashboard = read("schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx");
     assert.match(dashboard, /^\s+assertTileScreenshotStoreAvailable,$/m);
-    assert.match(dashboard, /fetchTileBatch\(allowed, requestActivityApi, signal\)/);
-    const targeted = dashboard.indexOf("await requestActivityApi('POST', '/classpilot/tiles/screenshots'");
+    assert.match(dashboard, /fetchTileBatch\(current, requestActivityApi, boundedSignal\)/);
+    const targeted = dashboard.indexOf("let response = await fetchAuthorizedTileBatch(");
     assert.ok(targeted >= 0);
     const guard = dashboard.indexOf("assertTileScreenshotStoreAvailable(response);", targeted);
     const merge = dashboard.indexOf("mergeTargetedTileScreenshotResponse(", targeted);
     assert.ok(guard > targeted && merge > guard, "the targeted path must reject the degrade marker before merging into React Query");
+
+    // Both dashboard paths now share the bounded authorized reader. Exercise
+    // its actual degrade rejection so the source-shape check cannot conceal a
+    // successful-null result replacing previously retained private pixels.
+    const { fetchTileBatch } = await import(new URL("../schoolpilot-app/src/products/classpilot/lib/tileBatchPolling.js", import.meta.url).href);
+    const degraded = { screenshotStore: "unavailable", tiles: [{ studentId: "fixture-student", screenshot: null }] };
+    await assert.rejects(fetchTileBatch({
+      kind: "screenshots", endpoint: "/classpilot/tiles/screenshots", body: { studentIds: ["fixture-student"] },
+    }, async () => degraded), { code: "SCREENSHOT_STORE_UNAVAILABLE", response: { status: 503, data: degraded } });
   });
 
   it("keeps the admission-middleware 503 as the only cohort-level rejection", () => {

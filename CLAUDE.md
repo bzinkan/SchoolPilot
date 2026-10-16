@@ -316,6 +316,11 @@ No base fees. Pure per-student pricing.
 - **WebSocket** (`src/realtime/websocket.ts`) — ClassPilot device monitoring at `/ws`
 - **Redis pub/sub** — Cross-instance message broadcasting for distributed deployments
 
+ClassPilot's bounded publication, transport-only probe, dashboard recovery and
+content-free client-health contracts are in `docs/CLASSPILOT_RELIABILITY.md`.
+The separate reliability workload does not reopen paused production capacity
+campaigns or establish packed managed-Chromebook acceptance.
+
 ### ClassPilot Data Pipeline
 1. **Heartbeats** — While the MV3 worker is awake, the extension coalesces roughly 10-second heartbeats with a 30-second `chrome.alarms` fallback and immediate navigation/recovery sends. It calls compatibility path `/api/device/heartbeat`, which resolves to canonical `POST /api/classpilot/device/heartbeat`. The route performs uncached canonical entitlement before the cached hot-path projections and writes heartbeat/realtime status under the exact student/session/device binding. Pending inbox rows are checked on first heartbeat, after a 60-second monitoring gap, every 5 minutes as fallback, and every heartbeat while command-linked messages remain unacknowledged. `requestFabState: true` asks for a throttled authoritative FAB recovery snapshot.
 2. **Daily usage rollup** — `scheduler.ts` runs `rollupDailyUsage()` hourly (hour-gated). For each school with ClassPilot license, aggregates yesterday's heartbeats into the `daily_usage` table (totalSeconds, heartbeatCount, topDomains JSONB, firstSeen/lastSeen). Uses upsert on `(studentId, date)` for idempotency. The writer is `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` (default `shadow`: legacy writes plus a read-only set-based comparison; `on` = `set_based`); promote it only as described in `docs/SCALE_READINESS.md` ("Daily usage rollup mode and promotion").
@@ -480,6 +485,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `DATABASE_URL` — PostgreSQL connection (default: `postgresql://schoolpilot:schoolpilot_dev@localhost:5435/schoolpilot`)
 - `REDIS_URL` — Redis connection (default: `redis://localhost:6380`; production ElastiCache with required transit encryption uses `rediss://...`)
 - `APP_ENV` — Runtime environment dimension for CloudWatch embedded metrics (`production`, `staging`, `development`)
+- `COOKIE_NAME` — Web session cookie name, default `schoolpilot.sid`. Isolated staging must set `schoolpilot.staging.sid` and leave `COOKIE_DOMAIN` empty for a host-only cookie; `APP_ENV=staging` rejects the production name or a parent domain. Production keeps its existing name/domain. Same-origin staging routes `/api` and `/ws` through the staging frontend host. Load/preparation clients set `LOAD_SESSION_COOKIE_NAME=schoolpilot.staging.sid` (fallback: `COOKIE_NAME`, then the production default); never mix production and staging cookies in a load auth artifact.
 - `PUBLIC_BASE_URL` — Canonical API origin. Managed-device continuity preflights and device proofs are signed for this normalized deployment audience and fail closed with a scoped 503 in production if it is absent or invalid; never derive this audience from request forwarding headers.
 - `RUN_MIGRATIONS_ON_STARTUP` — Defaults to `false` everywhere and is rejected when enabled in production; use the explicit one-off migration task instead
 - `RUN_MIGRATIONS_ONLY` — One-off migration task mode used by `npm run migrate:startup` / `scripts/deploy.sh`

@@ -143,9 +143,9 @@ after(async () => {
       for (const schoolId of [school?.id, otherSchool?.id].filter(Boolean)) {
         await db.execute(sql`DELETE FROM flight_paths WHERE school_id = ${schoolId}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${schoolId}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${schoolId}`);
       }
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${DOMAIN}`}`);
+      // Current lifecycle guards retain school/user roots. Keep these uniquely
+      // tagged synthetic identities in the disposable local fixture database.
     });
   } finally {
     await schedulerLockPool?.end().catch(() => undefined);

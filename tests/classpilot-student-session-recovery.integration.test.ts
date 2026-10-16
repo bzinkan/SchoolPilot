@@ -1994,6 +1994,13 @@ describe("ClassPilot manual-session recovery authority", () => {
           sessionRecoveryTokenHash: alexRecovery.tokenHash,
         }
       ));
+      // Establish this fixture's intended authority order explicitly: the
+      // session uses the DB clock, while roster completion uses the host clock.
+      const beforeAlexSession = new Date(alexSession.session.startedAt.getTime() - 1_000);
+      await inSchool(() => db.update(teachingSessions).set({
+        startTime: beforeAlexSession,
+        rosterSnapshotCompletedAt: beforeAlexSession,
+      }).where(and(eq(teachingSessions.id, teachingSession.id), eq(teachingSessions.schoolId, schoolId))));
       const alexToken = createStudentToken({
         schoolId,
         studentId: alex.id,
@@ -2858,7 +2865,11 @@ describe("ClassPilot manual-session recovery authority", () => {
     }));
   });
 
-  it("validates PIN and email/ID credentials before cross-student replacement", async () => {
+  it("validates PIN and email/ID credentials before cross-student replacement", async t => {
+    // Counter baselines must share a metric interval across the real HTTP
+    // requests, including a UTC-minute rollover on a busy test host.
+    const metricsNow = Date.now();
+    t.mock.method(Date, "now", () => metricsNow);
     const enrollmentKey = `${tag}-handoff-enrollment-key`;
     const pinDeviceId = `${tag}-handoff-pin-device`;
     const emailDeviceId = `${tag}-handoff-email-device`;
@@ -3767,6 +3778,24 @@ describe("ClassPilot manual-session recovery authority", () => {
         }, source.session.id)
       );
       assert.equal(resumedHeartbeat.outcome, "recorded");
+      assert.ok(resumedHeartbeat.outcome === "recorded");
+      assert.ok(exactPresence.status === "present");
+      // The gate pulse uses the host clock and the real heartbeat defaults to
+      // the DB clock. Make only this owned row demonstrably newer before
+      // asserting that its exact authority supersedes the still-live pulse.
+      const resumedAt = new Date(Math.max(Date.now(), exactPresence.presence.observedAt + 1));
+      await inSchool(() => db.update(heartbeats).set({ timestamp: resumedAt }).where(and(
+        eq(heartbeats.id, resumedHeartbeat.id), eq(heartbeats.schoolId, schoolId),
+        eq(heartbeats.studentId, gateStudent.id), eq(heartbeats.deviceId, gateSourceDeviceId),
+      )));
+      const [resumedAuthority] = await inSchool(() =>
+        storage.getClasspilotLoginSessionAuthorities(schoolId, { studentId: gateStudent.id })
+      );
+      assert.equal(resumedAuthority?.id, source.session.id);
+      assert.ok(resumedAuthority);
+      assert.ok(resumedAuthority.latestHeartbeatAt
+        && resumedAuthority.latestHeartbeatAt.getTime() > exactPresence.presence.observedAt,
+        "the exact persisted resume heartbeat must be newer than the gate pulse");
       const hiddenAfterResume = await fetch(
         `${baseUrl}/login-roster?schoolId=${encodeURIComponent(schoolId)}&gradeLevel=7`,
         { headers: rosterHeaders }
@@ -5080,7 +5109,9 @@ describe("ClassPilot manual-session recovery authority", () => {
     ));
     await inSchool(async () => {
       await db.update(studentSessions)
-        .set({ manualLeaseExpiresAt: sql`now() - interval '20 seconds'` })
+        // Own the first global reaper slot even when another fixture retained
+        // an expired session. No other tenant's rows are changed by this setup.
+        .set({ manualLeaseExpiresAt: sql`'-infinity'::timestamptz` })
         .where(eq(studentSessions.id, first.session.id));
       await db.update(studentSessions)
         .set({ manualLeaseExpiresAt: sql`now() - interval '10 seconds'` })

@@ -22,6 +22,52 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "staging_bootstrap" {
+  description = "Staging-only infrastructure bootstrap with both serving services stopped until secrets, image and migrations are verified"
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.staging_bootstrap || (var.environment == "staging" && var.ecs_desired_count == 0 && var.worker_desired_count == 0)
+    error_message = "staging_bootstrap requires environment=staging and both service desired counts=0."
+  }
+}
+
+variable "api_image_digest" {
+  description = "Optional reviewed ECR image digest for both task templates; production bootstrap default is unchanged"
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.api_image_digest == "" || can(regex("^sha256:[0-9a-f]{64}$", var.api_image_digest))
+    error_message = "api_image_digest must be empty or a lowercase sha256 digest."
+  }
+}
+
+variable "api_autoscaling_suspended" {
+  description = "Suspend every API autoscaling action for fixed-size staging capacity gates"
+  type        = bool
+  default     = false
+}
+
+variable "provider_secrets_enabled" {
+  description = "Inject external provider credentials; false isolates synthetic staging from email, billing, Google OAuth and AI providers"
+  type        = bool
+  default     = true
+  validation {
+    condition     = var.provider_secrets_enabled || var.environment == "staging"
+    error_message = "Provider secret omission is restricted to isolated staging."
+  }
+}
+
+variable "staging_classpilot_reliability_enabled" {
+  description = "Admit reviewed ClassPilot capabilities only in the isolated synthetic staging stack"
+  type        = bool
+  default     = false
+  validation {
+    condition     = !var.staging_classpilot_reliability_enabled || var.environment == "staging"
+    error_message = "Synthetic reliability capability admission is staging-only."
+  }
+}
+
 # --- Networking ---
 variable "mydesk_mode" {
   description = "Internal global notebook control; every eligible ClassPilot school receives access when on"
@@ -386,6 +432,16 @@ variable "cookie_domain" {
   description = "Session cookie domain (e.g., .classpilot.net)"
   type        = string
   default     = ""
+}
+
+variable "cookie_name" {
+  description = "Exact session cookie name; staging must use its own host-only cookie"
+  type        = string
+  default     = "schoolpilot.sid"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]{1,128}$", var.cookie_name)) && (var.environment != "staging" || (var.cookie_name != "schoolpilot.sid" && var.cookie_domain == ""))
+    error_message = "Use a bounded cookie token; staging requires a distinct name and empty COOKIE_DOMAIN."
+  }
 }
 
 # --- Google OAuth ---

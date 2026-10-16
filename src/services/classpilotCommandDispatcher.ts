@@ -25,6 +25,12 @@ import {
   replaceClasspilotSupervisionControlSnapshots,
   revalidateClasspilotExactCommandTargetsForDispatch,
   withClasspilotStudentControlDeliveryAuthority,
+  withClasspilotStudentControlDeliveryBatch,
+  withClasspilotPlainOpenTabDeliveryBatch,
+  isClasspilotPlainOpenTab,
+  isClasspilotPlainOpenTabTargetMetadata,
+  CLASSPILOT_DELIVERY_BATCH_SIZE,
+  classpilotStudentRelayMessageAllowed,
   hasCurrentClasspilotStudentControlAuthority,
   supersedeClasspilotTransientCommandTargets,
   type ClasspilotCommandWithTargets,
@@ -117,6 +123,13 @@ export type ResolvedClasspilotCommandTarget = {
   /** Structurally commandable signed-out target admitted by the exact-school gate. */
   lateSignInEligible?: boolean;
 };
+
+export function classpilotPlainOpenTabTargetsEligible(targets: readonly ResolvedClasspilotCommandTarget[]): boolean {
+  return targets.length <= CLASSPILOT_DELIVERY_BATCH_SIZE
+    && new Set(targets.map(target => target.studentId)).size === targets.length
+    && targets.every(target => (target.controlRevision === undefined || Number.isSafeInteger(target.controlRevision))
+      && target.scheduledAuthorityRevision === undefined && target.durableAuthorityRevision === undefined);
+}
 
 /**
  * Authority revisions frozen on a persisted target row, in the shape the frame
@@ -681,6 +694,17 @@ function restrictionsAreEmpty(value: unknown): boolean {
     && restrictions.tabLimit === null
     && restrictions.temporaryAllows.length === 0
     && restrictions.focus?.active !== true;
+}
+
+/** A post-commit publication must not retain mutable dashboard/target objects. */
+function copyPlainOpenTabPublication(value: PublishWSBatchItem): PublishWSBatchItem {
+  const copy = structuredClone(value);
+  const freeze = (record: object) => {
+    for (const item of Object.values(record)) if (item && typeof item === "object") freeze(item);
+    Object.freeze(record);
+  };
+  freeze(copy);
+  return copy;
 }
 
 /**
@@ -1856,14 +1880,49 @@ export async function executeClasspilotCommand(options: {
   const localDeliveryStartedAt = performance.now();
   let localDeliverySucceeded = false;
   try {
-    const authorizedDeliveries = await Promise.all(
+    const availableTargets = committedTargets.filter(target => target.available && target.studentSessionId && target.deviceId);
+    const plainOpenTab = isClasspilotPlainOpenTab(created.commandType, created.commandPayload)
+      && classpilotPlainOpenTabTargetsEligible(availableTargets) && !options.replayCommand
+      && availableTargets.every(target => isClasspilotPlainOpenTabTargetMetadata(committedTargetByStudent.get(target.studentId)?.result))
+      && !!created.expiresAt && Number.isFinite(created.expiresAt.getTime())
+      && !shouldPersistBeforeDelivery && !focusNewAction && !lessonOpen && !currentPageRequested
+      && !requiredToolsCapability && controlStateIds.size === 0 && classroomStateByStudent.size === 0;
+    const authorizedDeliveries = plainOpenTab
+      ? (await withClasspilotPlainOpenTabDeliveryBatch({ schoolId: options.schoolId, commandId: created.id,
+          targets: availableTargets.map(target => ({ schoolId: options.schoolId, studentId: target.studentId,
+            studentSessionId: target.studentSessionId!, deviceId: target.deviceId!, originalTarget: target })),
+        }, (binding, authority) => {
+          const target = binding.originalTarget;
+          const message = classpilotCommandFrameForTarget(options.schoolId, "open-tab", normalized.extensionType,
+            { ...(authority.command.commandPayload as Record<string, unknown>), commandId: authority.command.id }, target,
+            { policy: deliveryPolicy, expiresAt: new Date(authority.expiresAt) }, undefined,
+            classpilotCommandAuthorityEnvelope(authority.command));
+          if (!message) return null;
+          const exactTarget = { kind: "student-binding" as const, schoolId: options.schoolId,
+            studentId: binding.studentId, studentSessionId: binding.studentSessionId, deviceId: binding.deviceId };
+          const publication = copyPlainOpenTabPublication({ target: exactTarget, message });
+          if (!authority.isCurrent()) return null;
+          sendToStudentBindingLocal(exactTarget, publication.message);
+          return { target: Object.freeze({ ...target }), publication };
+        })).map((outcome, index) => {
+          if (outcome.authorized) return outcome.value;
+          if (outcome.reason === "authority") {
+            const target = availableTargets[index]!;
+            authUnavailableReasons.set(target.studentId, "Classroom command authority changed before delivery");
+            lateAuthUnavailableStudentIds.add(target.studentId);
+          }
+          return null;
+        })
+      : await withClasspilotStudentControlDeliveryBatch(
+      options.schoolId,
       committedTargets
         .filter((target) =>
           target.available
           && target.studentSessionId
           && target.deviceId
-        )
-        .map(async (target) => {
+        ),
+      target => target.studentId,
+      async (target) => {
           // A durable row that still carries deferred origin must never fall
           // back to the raw legacy command envelope. That would bypass the
           // same capability gate that withheld its authoritative snapshot.
@@ -1888,9 +1947,19 @@ export async function executeClasspilotCommand(options: {
             deviceId: target.deviceId!,
           };
           const authorityStartedAt = performance.now();
+          let deliveryAuthorityExpiresAt: number | null = null;
           const deliveryAuthority = await withClasspilotStudentControlDeliveryAuthority(
             baseExactTarget,
             async (transactionDb) => {
+              // Local dispatch uses the same persisted actor/owner/deadline
+              // fence as a delayed cross-task relay, while the cohort still
+              // holds every target's student-control lock.
+              const relayAuthority = await classpilotStudentRelayMessageAllowed(baseExactTarget, {
+                commandId: created.id, authority: commandAuthority.authority,
+              }, transactionDb);
+              if (!relayAuthority) return { kind: "unavailable" as const,
+                reason: "Classroom command authority changed before delivery", authCapabilityMissing: false };
+              deliveryAuthorityExpiresAt = relayAuthority.expiresAt;
               if (lessonOpen) {
                 if (created.teachingSessionId && !await isAuthorizedClasspilotSessionStaff(created.schoolId, created.teachingSessionId, created.teacherId, transactionDb))
                   return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false };
@@ -2110,6 +2179,7 @@ export async function executeClasspilotCommand(options: {
             );
           }
           if (!deliveryAuthority.authorized) return null;
+          if (deliveryAuthorityExpiresAt !== null && deliveryAuthorityExpiresAt <= Date.now()) return null;
           const currentPageAuthority = deliveryAuthority.value;
           if (currentPageAuthority.kind === "focus_cleanup") return { target,
             publication: { target: baseExactTarget, message: currentPageAuthority.message } };
@@ -2179,6 +2249,8 @@ export async function executeClasspilotCommand(options: {
             commandAuthority
           );
           if (!message) return null;
+          if (expiresAt && expiresAt.getTime() <= Date.now()) return null;
+          if (deliveryAuthorityExpiresAt !== null && deliveryAuthorityExpiresAt <= Date.now()) return null;
 
           const exactTarget = {
             ...baseExactTarget,
@@ -2197,7 +2269,7 @@ export async function executeClasspilotCommand(options: {
             target,
             publication: { target: exactTarget, message } satisfies PublishWSBatchItem,
           };
-        })
+        }
     );
     if (lateAuthUnavailableStudentIds.size > 0) {
       await markClasspilotCommandTargetsUnavailableWithReasons(

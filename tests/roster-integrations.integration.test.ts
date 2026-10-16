@@ -20,7 +20,7 @@ before(async()=>{
   ({runWithTenantContext:tenant}=await import("../src/middleware/tenantContext.js"));
   store=await import("../src/services/rosterIntegrationStore.js");
   await pool.query(ROSTER_INTEGRATIONS_SQL);
-  await pool.query("INSERT INTO schools(id,name,domain) VALUES($1,'Roster integration test','test.example.edu'),($2,'Other roster test','test.example.edu')",[schoolId,otherSchoolId]);
+  await pool.query("INSERT INTO schools(id,name,domain) VALUES($1,$2,'test.example.edu'),($3,$4,'test.example.edu')",[schoolId,`Roster integration test ${schoolId}`,otherSchoolId,`Other roster test ${otherSchoolId}`]);
   await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Admin','Teacher')",[adminId,`${adminId}@test.example.edu`]);
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'admin','active')",[schoolId,adminId]);
   await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')",[schoolId]);
@@ -32,6 +32,8 @@ after(async()=>{
   await tenant({isSuper:true},async()=>{
     const {sql}=await import("drizzle-orm");
     for(const table of ["roster_integration_memberships","roster_integration_identities","roster_integration_runs","roster_integration_connections","import_runs","audit_logs"]){await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${schoolId}`);}
+    // Archive the owned imported classes before removing their primary mirrors.
+    await database.execute(sql`UPDATE groups SET status='archived', archived_at=now() WHERE school_id=${schoolId}`);
     await database.execute(sql`DELETE FROM group_students WHERE group_id IN(SELECT id FROM groups WHERE school_id=${schoolId})`);
     await database.execute(sql`DELETE FROM group_teachers WHERE group_id IN(SELECT id FROM groups WHERE school_id=${schoolId})`);
     await database.execute(sql`DELETE FROM groups WHERE school_id=${schoolId}`);
@@ -39,8 +41,7 @@ after(async()=>{
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1",[schoolId]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1",[schoolId]);
-  await pool.query("DELETE FROM users WHERE id=$1",[adminId]);
-  await pool.query("DELETE FROM schools WHERE id IN($1,$2)",[schoolId,otherSchoolId]);
+  // Current lifecycle guards retain uniquely owned synthetic school/staff roots in this disposable fixture DB.
   const {sessionPool}=await import("../src/db.js");await Promise.all([pool.end(),sessionPool.end()]);
 });
 

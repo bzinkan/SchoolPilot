@@ -36,12 +36,14 @@ before(async () => {
   for (const [id, role] of [[ids.teacher, "teacher"], [ids.otherTeacher, "teacher"], [ids.admin, "school_admin"]]) await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,$3,'active')", [ids.school, id, role]);
   await pool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [ids.school]);
   const { sql } = await import("drizzle-orm");
+  const { createGroup } = await import("../src/services/storage.js");
   await scoped(async () => {
     await database.execute(sql`INSERT INTO settings(school_id,school_name,ws_shared_key,school_timezone,enable_tracking_hours,tracking_start_time,tracking_end_time,tracking_days,after_hours_mode) VALUES(${ids.school},'Monitoring test','test-only','UTC',false,'00:01','23:00','{}'::text[],'off')`);
     await database.execute(sql`INSERT INTO students(id,school_id,first_name,last_name,status) VALUES(${ids.student},${ids.school},'Test','Student','active')`);
     for (const value of [deviceId, nextDeviceId]) await database.execute(sql`INSERT INTO devices(school_id,class_id,device_id,device_name) VALUES(${ids.school},${ids.school},${value},'Test Chromebook')`);
     await database.execute(sql`INSERT INTO student_sessions(id,student_id,device_id,started_at,last_seen_at,auth_kind,is_active) VALUES(${ids.session},${ids.student},${deviceId},${at(-120).toISOString()}::timestamptz,${at(1800).toISOString()}::timestamptz,'managed_profile',true)`);
-    await database.execute(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES(${ids.group},${ids.school},${ids.teacher},'Monitored class','admin_class','active')`);
+    await createGroup({ id: ids.group, schoolId: ids.school, teacherId: ids.teacher,
+      name: "Monitored class", groupType: "admin_class", status: "active" });
     await database.execute(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,roster_snapshot_completed_at,class_name_snapshot) VALUES(${ids.teaching},${ids.school},${ids.group},${ids.teacher},${at(-120).toISOString()}::timestamptz,${at(-120).toISOString()}::timestamptz,'Monitored class')`);
     await database.execute(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES(${ids.school},${ids.teaching},${ids.group},${ids.student},${at(-120).toISOString()}::timestamptz)`);
     await database.execute(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES(${ids.school},${ids.teaching},${ids.teacher},'primary')`);
@@ -64,8 +66,8 @@ after(async () => {
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
-  await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
-  await pool.query("DELETE FROM users WHERE id IN($1,$2,$3)", [ids.teacher, ids.otherTeacher, ids.admin]);
+  // Current lifecycle guards retain these uniquely owned synthetic school
+  // and staff roots in the disposable local fixture database.
   const { sessionPool } = await import("../src/db.js");
   const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
   await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);

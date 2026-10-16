@@ -27,9 +27,12 @@ describe("ClassPilot hot-path logging", () => {
     assert.doesNotMatch(devicesSource, /\[Screenshot\] Upload from device=/);
 
     assert.match(websocketSource, /MAX_CONCURRENT_COMMAND_UPDATE_PUBLICATIONS = 2/);
-    assert.match(websocketSource, /COMMAND_UPDATE_PUBLISH_TIMEOUT_MS = 1_500/);
+    const publicationSource = readFileSync(new URL("../src/realtime/boundedRedisPublication.ts", import.meta.url), "utf8");
+    assert.match(publicationSource, /ordinaryMs: 250, orderedMs: 500, maxInFlight: 32/);
+    assert.match(publicationSource, /rawWatchdogMs: 2_000/);
     assert.match(websocketSource, /includeSource: false/);
-    assert.match(websocketSource, /signal: controller\.signal/);
+    assert.match(publicationSource, /Promise\.race\(\[terminal, timeout\]\)/);
+    assert.match(redisSource, /budgetMs: REDIS_PUBLICATION_LIMITS\.orderedMs/);
     assert.match(websocketSource, /orderedKey: state\.key/);
     assert.match(websocketSource, /recordLocalOrderedDelivery\(state\.key, revision\)/);
     assert.match(websocketSource, /state\.dirty = true/);

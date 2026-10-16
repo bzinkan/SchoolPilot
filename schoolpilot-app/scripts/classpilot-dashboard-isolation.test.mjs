@@ -350,7 +350,7 @@ test('student tiles split screenshot enlargement from the explicit Details actio
   );
 });
 
-test('screenshot events coalesce one-second targeted refreshes without replacing cohort identity', async () => {
+test('screenshot events coalesce targeted refreshes through the bounded exact-cohort queue', async () => {
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
     'utf8',
@@ -361,15 +361,13 @@ test('screenshot events coalesce one-second targeted refreshes without replacing
   assert.ok(handlerStart >= 0);
   assert.match(handler, /queueTargetedScreenshotRefresh\(message\.studentId\)/);
   assert.doesNotMatch(handler, /refetchQueries/);
-  assert.match(dashboard, /const SCREENSHOT_EVENT_COALESCE_MS = 1_000;/);
-  assert.match(dashboard, /const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;/);
+  assert.match(dashboard, /const SCREENSHOT_EVENT_COALESCE_MS = 250;/);
+  assert.match(dashboard, /const SCREENSHOT_EVENT_RATE_LIMIT_MS = 250;/);
   assert.match(dashboard, /mergeTargetedTileScreenshotResponse/);
-  assert.match(dashboard, /\.\.\.activityAuthority\(request\.body\)/);
-  assert.match(
-    dashboard,
-    /targetedScreenshotFlushInFlightRef\.current = true[\s\S]{0,500}targetedScreenshotFlushInFlightRef\.current = false/,
-    'a second one-second flush must wait and coalesce while the prior bounded flush is active',
-  );
+  assert.match(dashboard, /fetchAuthorizedTileBatch\(\{ \.\.\.request/);
+  assert.match(dashboard, /screenshotQueueRef.current.read/);
+  assert.doesNotMatch(dashboard, /targetedScreenshotFlushInFlightRef/,
+    'one slow response cannot hold every cohort behind a global latch');
   assert.match(
     dashboard,
     /fenceGeneration:\s*targetedScreenshotFenceGenerationRef\.current\.generation/,

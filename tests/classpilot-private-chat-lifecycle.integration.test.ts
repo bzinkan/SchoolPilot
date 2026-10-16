@@ -177,6 +177,22 @@ const relay = (frame: unknown, index = 0) => websocket.deliverClasspilotStudentB
   kind: "student-binding", ...binding(index), requiredCapabilities: [],
 }, frame);
 
+const announcementFrame = async (message: string, index = 0) => {
+  const authority = index === 0
+    ? { teachingSessionId: live.id, supervisionContextId: null }
+    : { teachingSessionId: null, supervisionContextId: context.id };
+  const command = await inSchool(() => storage.createClasspilotCommandWithTargets({
+    schoolId: ids.school, teacherId: ids.teacher, ...authority,
+    targetScope: "students", commandType: "teacher-message", commandPayload: { message }, requestedCount: 1,
+  }, [{ ...binding(index), ...authority, commandId: "", status: "requested" }], {
+    authority: { schoolId: ids.school, actorId: ids.teacher,
+      teachingSessionId: authority.teachingSessionId ?? undefined,
+      supervisionContextId: authority.supervisionContextId ?? undefined },
+  }));
+  return { type: "teacher-message", commandId: command.id, message, authority,
+    studentId: ids.students[index]!, studentSessionId: bindings[index]! };
+};
+
 const legacySchoolFixture = async () => {
   const own = { school: randomUUID(), teacher: randomUUID(), student: randomUUID(), device: randomUUID() };
   const under = <T>(fn: () => Promise<T>) => tenant({ schoolId: own.school }, fn);
@@ -855,8 +871,7 @@ for (const channel of ["school", "activity"] as const) test(`Redis private relay
   try {
     await withStudentSocket(index, capabilities, async ({ inbox, drain }) => {
       assert.equal(await relay(old.frame, index), false); await drain(); assert.deepEqual(inbox, []);
-      const announcement = { type: "teacher-message", commandId: randomUUID(), message: "Separate ANNOUNCEMENT while private off",
-        studentId: ids.students[index]!, studentSessionId: bindings[index]! };
+      const announcement = await announcementFrame("Separate ANNOUNCEMENT while private off", index);
       assert.equal(await relay(announcement, index), true); await drain();
       assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [announcement]);
       await toggle(true);
@@ -908,8 +923,7 @@ test("Redis private relay cannot waive local socket lifecycle capability with an
   await withStudentSocket(0, olderCapabilities, async ({ inbox, drain }) => {
     const allowed = await relay(current.frame); await drain();
     assert.deepEqual({ allowed, inbox }, { allowed: false, inbox: [] });
-    const announcement = { type: "teacher-message", commandId: randomUUID(), message: "ANNOUNCEMENT supports older client",
-      studentId: ids.students[0]!, studentSessionId: bindings[0]! };
+    const announcement = await announcementFrame("ANNOUNCEMENT supports older client");
     assert.equal(await relay(announcement), true); await drain();
     assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [announcement]);
   });

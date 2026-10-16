@@ -219,7 +219,7 @@ jobs:
 
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        image: docker.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: sptest
@@ -231,7 +231,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: public.ecr.aws/docker/library/redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+        image: docker.io/library/redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports:
           - 6379:6379
         options: >-
@@ -302,6 +302,15 @@ jobs:
           cd schoolpilot-app
           npx playwright install --with-deps chromium
 
+      - name: Native monitoring measurement regressions (serial, no application traffic)
+        timeout-minutes: 5
+        env:
+          CLP_RUN_NATIVE_MEASUREMENT: "1"
+        run: |
+          npm run build --prefix schoolpilot-app
+          CLASSPILOT_CHROME_PATH="$(node -e 'const { createRequire } = require("node:module"); const requireFrontend = createRequire(process.cwd() + "/schoolpilot-app/package.json"); process.stdout.write(requireFrontend("playwright").chromium.executablePath());')" \
+            node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-load-measurement-v3-native.test.mjs tests/classpilot-native-roi-paint.test.mjs tests/classpilot-native-prior-paint.test.mjs tests/classpilot-native-roi-clips.test.mjs tests/classpilot-native-teacher-registry.test.mjs tests/classpilot-rendered-runtime-integration.test.mjs tests/classpilot-rendered-controller-closure.test.mjs
+
       - name: Real extension capture to observed and claimed tiles (serial)
         timeout-minutes: 5
         env:
@@ -341,7 +350,7 @@ jobs:
 
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        image: docker.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: sptest
@@ -660,6 +669,10 @@ jobs:
         timeout-minutes: 10
         working-directory: schoolpilot-app
         run: npx playwright install --with-deps chromium
+
+      - name: Validate ClassPilot rendered-fleet browser instrumentation
+        timeout-minutes: 2
+        run: node --test scripts/classpilot-rendered-frame-chrome.test.mjs
 
       - name: Test ClassPilot one-day schedule-change workflows
         working-directory: schoolpilot-app

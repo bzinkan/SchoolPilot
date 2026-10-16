@@ -9,7 +9,7 @@ import { z } from "zod";
 import db, { pool, sessionPool } from "../src/db.js";
 import { drainTenantContextReleases, runWithTenantContext } from "../src/middleware/tenantContext.js";
 import superAdminRouter from "../src/routes/admin/superAdmin.js";
-import { productLicenses, schoolMemberships, schools, users, type School } from "../src/schema/core.js";
+import { productLicenses, schoolMemberships, type School } from "../src/schema/core.js";
 import { auditLogs, settings } from "../src/schema/shared.js";
 import { students } from "../src/schema/students.js";
 import { signUserToken } from "../src/services/jwt.js";
@@ -23,7 +23,6 @@ import {
 
 const TAG = `school-counts-${randomUUID()}`;
 const schoolIds: string[] = [];
-const staffIds: string[] = [];
 let superUserId: string | undefined;
 let authorization: string;
 let server: Server | undefined;
@@ -117,7 +116,6 @@ async function staffFixture(school: School, role: string, status = "active"): Pr
       firstName: "Count",
       lastName: "Staff",
     });
-    staffIds.push(user.id);
     await db.insert(schoolMemberships).values({ schoolId: school.id, userId: user.id, role, status });
   });
 }
@@ -125,17 +123,14 @@ async function staffFixture(school: School, role: string, status = "active"): Pr
 async function cleanupFixtures(): Promise<void> {
   await asSystem(async () => {
     if (schoolIds.length > 0) {
+      // Protected roots remain retained, but cannot enter later test baselines.
+      for (const schoolId of schoolIds) await softDeleteSchool(schoolId, superUserId);
       await db.delete(auditLogs).where(inArray(auditLogs.schoolId, schoolIds));
       await db.delete(students).where(inArray(students.schoolId, schoolIds));
       await db.delete(settings).where(inArray(settings.schoolId, schoolIds));
       await db.delete(productLicenses).where(inArray(productLicenses.schoolId, schoolIds));
       await db.delete(schoolMemberships).where(inArray(schoolMemberships.schoolId, schoolIds));
-      await db.delete(schools).where(inArray(schools.id, schoolIds));
       schoolIds.length = 0;
-    }
-    if (staffIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, staffIds));
-      staffIds.length = 0;
     }
   });
 }
@@ -178,9 +173,6 @@ after(async () => {
     }
     await drainTenantContextReleases();
     await cleanupFixtures();
-    if (superUserId) {
-      await db.delete(users).where(eq(users.id, superUserId));
-    }
   } finally {
     const { schedulerPool, schedulerLockPool } = await import("../src/services/schedulerDb.js");
     await Promise.all([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);

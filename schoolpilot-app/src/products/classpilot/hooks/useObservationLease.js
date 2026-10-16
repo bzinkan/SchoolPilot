@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../../lib/queryClient';
+import { withClasspilotLeaseDeadline, withClasspilotReadDeadline } from '../lib/classpilotRecovery';
 import { activityAuthority, activityAuthorityKey, activityParentPath, activityRequestHeaders } from '../lib/dashboardActivity';
 import {
   normalizedObservationScope,
@@ -9,6 +10,9 @@ import {
 
 const RENEWAL_FALLBACK_MS = 30_000;
 const RETRY_MS = 10_000;
+const RECOVERY_RESET_MS = 20_000;
+const MAX_RAW_PUTS = 12;
+export const CLASSPILOT_TRANSPORT_RECOVERED_EVENT = 'classpilot-transport-recovered';
 
 function viewerInstanceId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -65,10 +69,15 @@ export function useObservationLease({
     const path = activityParentPath(requestedAuthority, 'observation-lease');
     let stopped = false;
     let timer = null;
+    let recoveryTimer = null;
     let requestEpoch = 0;
+    let logicalRequestEpoch = null;
     let activeViewerId = viewerInstanceId();
-    const knownViewerIds = new Set([activeViewerId]);
     let leaseWasActive = false;
+    let renewBlocked = false;
+    let lastRecoveryReset = -Infinity;
+    let currentPuts = new Set();
+    const pendingPuts = new Map();
     const setStatus = (nextStatus) => {
       setLeaseState({ contextKey: leaseContextKey, status: nextStatus });
     };
@@ -78,9 +87,9 @@ export function useObservationLease({
       timer = null;
     };
     const deleteLease = (viewerId) => (
-      apiRequest('DELETE', path, { viewerInstanceId: viewerId }, {
-        headers: activityRequestHeaders(schoolId, contextAuthorityRevision),
-      }).catch(() => {})
+      withClasspilotReadDeadline(signal => apiRequest('DELETE', path, { viewerInstanceId: viewerId }, {
+        signal, headers: activityRequestHeaders(schoolId, contextAuthorityRevision),
+      }), undefined, 3_000).catch(() => {})
     );
     const release = (viewerId = activeViewerId, force = false) => {
       if (!force && (!leaseWasActive || viewerId !== activeViewerId)) return;
@@ -89,29 +98,47 @@ export function useObservationLease({
     };
     const invalidateRequest = () => {
       requestEpoch += 1;
+      logicalRequestEpoch = null;
       clearTimer();
     };
     const schedule = (delayMs) => {
       if (stopped) return;
+      clearTimer();
       timer = setTimeout(renew, delayMs);
     };
     const renew = async () => {
       clearTimer();
       if (stopped || deniedContexts.current.has(leaseContextKey)) return;
+      if (logicalRequestEpoch !== null) return;
       if (document.visibilityState !== 'visible') {
         invalidateRequest();
         release(activeViewerId, true);
         setStatus('paused_unobserved');
         return;
       }
+      if (currentPuts.size >= 2 || pendingPuts.size >= MAX_RAW_PUTS) {
+        renewBlocked = true; setStatus('error'); schedule(RETRY_MS); return;
+      }
+      renewBlocked = false;
       const epoch = requestEpoch + 1;
       requestEpoch = epoch;
+      logicalRequestEpoch = epoch;
       const requestViewerId = activeViewerId;
       try {
-        const response = await apiRequest('PUT', path, {
+        const rawPut = apiRequest('PUT', path, {
           viewerInstanceId: requestViewerId,
           scope: normalizedScope,
-        }, { headers: activityRequestHeaders(schoolId, contextAuthorityRevision) });
+        }, { timeout: 90_000, headers: activityRequestHeaders(schoolId, contextAuthorityRevision) });
+        const admittedPuts = currentPuts;
+        admittedPuts.add(rawPut);
+        pendingPuts.set(rawPut, requestViewerId);
+        void rawPut.finally(() => {
+          pendingPuts.delete(rawPut); admittedPuts.delete(rawPut);
+          // A raw settlement frees a permit even when its logical caller has
+          // expired. Wake a blocked current generation without waiting 10s.
+          if (renewBlocked && !stopped && document.visibilityState === 'visible') schedule(0);
+        }).catch(() => {});
+        const response = await withClasspilotLeaseDeadline(rawPut, () => deleteLease(requestViewerId));
         const disposition = observationLeaseResponseDisposition({
           stopped,
           requestEpoch: epoch,
@@ -138,6 +165,13 @@ export function useObservationLease({
           await deleteLease(requestViewerId);
           return;
         }
+        if (error?.code === 'CLASSPILOT_READ_TIMEOUT') {
+          invalidateRequest();
+          release(requestViewerId, true);
+          activeViewerId = viewerInstanceId();
+          setStatus('error'); schedule(RETRY_MS);
+          return;
+        }
         const failure = observationLeaseRenewalFailureDisposition(error);
         if (!failure.releaseLease) {
           // A transport outage does not revoke an otherwise unexpired exact-
@@ -154,7 +188,30 @@ export function useObservationLease({
           // under this exact viewer id instead of waiting for its TTL.
           await deleteLease(requestViewerId);
         }
+      } finally {
+        if (logicalRequestEpoch === epoch) logicalRequestEpoch = null;
       }
+    };
+    const onTransportRecovered = () => {
+      if (stopped || document.visibilityState !== 'visible' || deniedContexts.current.has(leaseContextKey)) return;
+      if (recoveryTimer) return;
+      const delay = Math.max(0, lastRecoveryReset + RECOVERY_RESET_MS - performance.now());
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        if (stopped || document.visibilityState !== 'visible' || deniedContexts.current.has(leaseContextKey)) return;
+        lastRecoveryReset = performance.now();
+        invalidateRequest();
+        release(activeViewerId, true);
+        activeViewerId = viewerInstanceId();
+        leaseWasActive = false;
+        // Old raw PUTs retain their settlement/revoke handlers. They cannot
+        // exhaust the two current-generation permits after connectivity returns.
+        // Twenty-second reset spacing and the 90s raw ceiling bound draining
+        // work; the total cap is a final guard against a broken HTTP adapter.
+        currentPuts = new Set();
+        setStatus('pending');
+        void renew();
+      }, delay);
     };
     const onVisibilityChange = () => {
       invalidateRequest();
@@ -162,8 +219,8 @@ export function useObservationLease({
       // changed session authority is required after a terminal denial.
       if (deniedContexts.current.has(leaseContextKey)) return;
       if (document.visibilityState === 'visible') {
+        release(activeViewerId, true);
         activeViewerId = viewerInstanceId();
-        knownViewerIds.add(activeViewerId);
         leaseWasActive = false;
         setStatus('pending');
         void renew();
@@ -175,14 +232,21 @@ export function useObservationLease({
     };
 
     document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onTransportRecovered);
+    window.addEventListener(CLASSPILOT_TRANSPORT_RECOVERED_EVENT, onTransportRecovered);
     if (document.visibilityState === 'visible') void renew();
     else setStatus('paused_unobserved');
 
     return () => {
       stopped = true;
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onTransportRecovered);
+      window.removeEventListener(CLASSPILOT_TRANSPORT_RECOVERED_EVENT, onTransportRecovered);
+      clearTimeout(recoveryTimer);
       invalidateRequest();
-      for (const viewerId of knownViewerIds) release(viewerId, true);
+      // Settled historical viewers were already released; retain only the
+      // current viewer and the bounded raw PUTs that can still commit.
+      for (const viewerId of new Set([activeViewerId, ...pendingPuts.values()])) release(viewerId, true);
     };
   }, [eligible, enabled, leaseContextKey, normalizedScope, requestedSessionId, requestedAuthority, schoolId, contextAuthorityRevision]);
 

@@ -593,11 +593,11 @@ after(async () => {
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
+        // Retain the synthetic school lifecycle root in this disposable fixture DB.
       });
     }
     await asSystem(async () => {
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
+      // Current lifecycle guards also retain the tag-owned synthetic staff roots.
     });
   } catch {
     /* best-effort cleanup */
@@ -805,8 +805,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${emptySchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${emptySchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${emptySchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${emptySchool.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id IN (${emptyAdmin.id}, ${emptyTeacher.id})`);
+        // Current lifecycle guards retain these synthetic school/staff roots
+        // in the disposable local fixture database.
       });
     }
   });
@@ -1010,8 +1010,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${fallbackSchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${fallbackSchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${fallbackSchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${fallbackSchool.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id IN (${fallbackAdmin.id}, ${fallbackTeacher.id})`);
+        // Current lifecycle guards retain these synthetic school/staff roots
+        // in the disposable local fixture database.
       });
     }
   });

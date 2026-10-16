@@ -15,6 +15,9 @@ process.env.SENDGRID_API_KEY = "SG.classpilot-session-summary.lifecycle-test";
 // An explicit empty value also prevents app.ts's dotenv import from restoring
 // a developer Redis URL after realtime already initialized without a client.
 process.env.REDIS_URL = "";
+// This integration suite invokes dedicated scheduler jobs and probes their
+// real query pool in addition to serving its local HTTP fixture.
+process.env.SCHEDULER_ENABLED = "true";
 
 let db: any;
 let pool: any;
@@ -333,6 +336,7 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id})`);
     await db.execute(sql`DELETE FROM devices WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
+    await db.execute(sql`UPDATE groups SET status='archived' WHERE school_id=${school.id}`);
     await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
     await db.execute(sql`DELETE FROM groups WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
@@ -340,8 +344,7 @@ async function cleanup(): Promise<void> {
     await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
     await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
-    await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
-    await db.execute(sql`DELETE FROM users WHERE email LIKE ${`%@${TAG}.example.edu`}`);
+    // Current lifecycle guards retain these tag-owned synthetic school/staff roots in this disposable fixture DB.
   });
 }
 
@@ -489,6 +492,49 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       schoolTime.localDateTimeUtc("2031-11-02", "02:30", "America/New_York").toISOString(),
       "2031-11-02T07:30:00.000Z"
     );
+  });
+
+  it("starts a co-teacher's own manual class without replacing another teacher's shared class", async () => {
+    await setCentralRecipient(null);
+    const sharedGroup = await createClass({ name: "shared_class_before_co_teacher_start", roster: [studentOne] });
+    await inSchool(school.id, () => storage.addGroupTeacher(sharedGroup.id, secondTeacher.id));
+    const ownGroup = await createClass({ name: "co_teacher_independent_class", teacherId: secondTeacher.id, roster: [studentTwo] });
+    const replacementGroup = await createClass({ name: "co_teacher_owned_replacement", teacherId: secondTeacher.id, roster: [studentTwo] });
+    const sharedStart = await requestJson("POST", "/classpilot/teaching-sessions/start", { groupId: sharedGroup.id }, authFor(teacher));
+    assert.equal(sharedStart.status, 201);
+    const sharedSessionId = sharedStart.body.session.id;
+    const visibleBefore = await inSchool(school.id, () => storage.getActiveTeachingSessionForSchool(secondTeacher.id, school.id));
+    assert.equal(visibleBefore.id, sharedSessionId, "the co-teacher must really see the other owner's shared class before starting");
+
+    const ownStart = await inSchool(school.id, () => lifecycle.startManualClasspilotSession({
+      schoolId: school.id, teacherId: secondTeacher.id, groupId: ownGroup.id,
+    }));
+    assert.equal(ownStart.replacedSessionId, undefined, "shared visibility must not identify another owner's class as replaced");
+    assert.equal(ownStart.replacementFinalization, undefined);
+    const sharedAfterStart = await inSchool(school.id, () => storage.getTeachingSessionById(sharedSessionId));
+    assert.equal(sharedAfterStart.endTime, null);
+    assert.equal(sharedAfterStart.scheduledFinalizationReason, null);
+    assert.equal((await deliveryRows(sharedSessionId)).length, 0, "an unaffected class must not queue a finalization email");
+    assert.equal(await inSchool(school.id, () => storage.getClasspilotSessionReportBySession(school.id, sharedSessionId)), undefined);
+
+    const ownReplacement = await inSchool(school.id, () => lifecycle.startManualClasspilotSession({
+      schoolId: school.id, teacherId: secondTeacher.id, groupId: replacementGroup.id,
+    }));
+    assert.equal(ownReplacement.replacedSessionId, ownStart.session.id);
+    assert.equal(ownReplacement.replacementFinalization.session.id, ownStart.session.id);
+    const ownAfterReplacement = await inSchool(school.id, () => storage.getTeachingSessionById(ownStart.session.id));
+    assert.ok(ownAfterReplacement.endTime);
+    assert.equal(ownAfterReplacement.scheduledFinalizationReason, "replacement_start");
+    assert.equal((await inSchool(school.id, () => storage.getTeachingSessionById(sharedSessionId))).endTime, null);
+
+    const sharedRead = await requestJson("GET", `/classpilot/teaching-sessions/${sharedSessionId}`, undefined, authFor(secondTeacher));
+    assert.equal(sharedRead.status, 200, "explicit co-teacher read permission is preserved");
+    const sharedSettings = await requestJson("PUT", `/classpilot/teaching-sessions/${sharedSessionId}/settings`, { raiseHandEnabled: false }, authFor(secondTeacher));
+    assert.equal(sharedSettings.status, 200, "explicit co-teacher settings permission is preserved");
+    const explicitEnd = await requestJson("POST", `/classpilot/teaching-sessions/${sharedSessionId}/end`, {}, authFor(secondTeacher));
+    assert.equal(explicitEnd.status, 200, "an explicit authorized co-teacher End remains allowed");
+    assert.equal((await inSchool(school.id, () => storage.getTeachingSessionById(ownReplacement.session.id))).endTime, null);
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({ schoolId: school.id, sessionId: ownReplacement.session.id, reason: "manual_end" }));
   });
 
   it("blocks automatic occurrences, coverage, and email on a closed weekday even with teacher presence and a home heartbeat", async () => {
@@ -798,13 +844,13 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${missingSettingsSchool.id})`);
+        await db.execute(sql`UPDATE groups SET status='archived' WHERE school_id=${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${missingSettingsSchool.id})`);
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${missingSettingsSchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${missingSettingsSchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${missingSettingsSchool.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${missingSettingsTeacher.id}`);
+        // Retain synthetic school/staff lifecycle roots in this disposable fixture DB.
       });
     }
   });
@@ -1723,16 +1769,13 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       roster: [],
     });
     const scheduledDate = "2031-04-01";
+    // A canonical edit leaves current staff/group authority valid. Seed the
+    // formerly reviewed immutable snapshot afterwards to model a stale legacy
+    // approval; locked execution must reject it without using recurring times.
+    await inSchool(school.id, () => storage.updateGroup(secondGroup.id, {
+      scheduleEnabled: false,
+    }, centralRecipient.id));
     await seedScheduleChange({ firstGroup, secondGroup, scheduledDate });
-
-    // Simulate a legacy/direct writer that bypassed the normal assignment
-    // guards after approval. The locked runtime validator must not execute the
-    // swap or silently fall back to the recurring window.
-    await asSystem(() => db.execute(sql`
-      UPDATE school_memberships
-      SET status = 'inactive'
-      WHERE school_id = ${school.id} AND user_id = ${secondTeacher.id}
-    `));
     const logs: string[] = [];
     const logMock = mock.method(console, "log", (...args: unknown[]) => {
       logs.push(args.map(String).join(" "));
@@ -1749,11 +1792,6 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
       );
     } finally {
       logMock.mock.restore();
-      await asSystem(() => db.execute(sql`
-        UPDATE school_memberships
-        SET status = 'active'
-        WHERE school_id = ${school.id} AND user_id = ${secondTeacher.id}
-      `));
     }
 
     assert.equal(await occurrenceCount(firstGroup.id, scheduledDate), 0);
@@ -3877,7 +3915,7 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         await db.execute(sql`DELETE FROM heartbeats WHERE school_id = ${foreignSchool.id}`);
         await db.execute(sql`DELETE FROM students WHERE school_id = ${foreignSchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${foreignSchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${foreignSchool.id}`);
+        // Retain the synthetic school lifecycle root in this disposable fixture DB.
       });
     }
   });
@@ -4271,14 +4309,13 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
         await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${volumeSchool.id})`);
+        await db.execute(sql`UPDATE groups SET status='archived' WHERE school_id=${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${volumeSchool.id})`);
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM settings WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${volumeSchool.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${volumeSchool.id}`);
-        await db.execute(sql`DELETE FROM schools WHERE id = ${volumeSchool.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${volumeCentral.id}`);
-        await db.execute(sql`DELETE FROM users WHERE id = ${volumeTeacher.id}`);
+        // Retain synthetic school/staff lifecycle roots in this disposable fixture DB.
       });
     }
   });

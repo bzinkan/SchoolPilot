@@ -45,13 +45,61 @@ $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
 if ($exitCode -ne 0) {
     throw "The Git Bash Eastern-clock probe failed closed (exit=$exitCode): $text"
 }
-if ($text -notmatch '(?m)^tzif=/(?:usr|mingw64)/share/zoneinfo/America/New_York$' -or
+if ($text -notmatch '(?m)^tzif=/(?:usr|mingw64|ucrt64)/share/zoneinfo/America/New_York$' -or
     $text -notmatch '(?m)^winter=4 0700 -0500 EST$' -or
     $text -notmatch '(?m)^summer=3 0800 -0400 EDT$' -or
     $text -notmatch '(?m)^expectedBefore=[1-7] [0-2][0-9][0-5][0-9]$' -or
     $text -notmatch '(?m)^expectedAfter=[1-7] [0-2][0-9][0-5][0-9]$' -or
     $text -notmatch '(?m)^now=[1-7] [0-2][0-9][0-5][0-9]$') {
     throw 'The Git Bash deployment clock did not bind verified America/New_York TZif data.'
+}
+
+# Exercise the actual helper with only the UCRT64 candidate present, even on
+# older Git installations. Redirect only the three fixed lookup paths into an
+# owned temporary tree; the real TZif/date validation stays unchanged.
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('schoolpilot-tzif-' + [Guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($scratch) | Out-Null
+try {
+    $scratchPosix = (& $bash -c 'cygpath -u "$1"' -- $scratch).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($scratchPosix)) {
+        throw 'Could not map the owned TZif fixture directory into Git Bash.'
+    }
+    $testLibrary = $library
+    $apostrophe = [string][char]39
+    $escapedApostrophe = $apostrophe + '"' + $apostrophe + '"' + $apostrophe
+    foreach ($prefix in @('usr', 'mingw64', 'ucrt64')) {
+        $original = '"/' + $prefix + '/share/zoneinfo/America/New_York"'
+        if (-not $testLibrary.Contains($original)) { throw "Missing fixed TZif lookup path: $prefix" }
+        $candidate = $scratchPosix + '/' + $prefix + '/New_York'
+        $literal = $apostrophe + $candidate.Replace($apostrophe, $escapedApostrophe) + $apostrophe
+        $testLibrary = $testLibrary.Replace($original, $literal)
+    }
+    $selected = [regex]::Match($text, '(?m)^tzif=(/[^\r\n]+)').Groups[1].Value
+    $gitRoot = Split-Path -Parent (Split-Path -Parent $bash)
+    $validTzif = Join-Path $gitRoot $selected.TrimStart('/').Replace('/', [IO.Path]::DirectorySeparatorChar)
+    $fixture = Join-Path (Join-Path $scratch 'ucrt64') 'New_York'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $fixture)) | Out-Null
+    [IO.File]::Copy($validTzif, $fixture)
+    $positiveProbe = $testLibrary + "`nproduction_eastern_tzif_path || exit 91`n"
+    $positiveOutput = @($positiveProbe | & $bash -s 2>&1)
+    if ($LASTEXITCODE -ne 0 -or ($positiveOutput -join "`n") -cne ($scratchPosix + '/ucrt64/New_York')) {
+        throw 'The real Eastern-clock helper did not select the sole verified UCRT64 TZif fixture.'
+    }
+    foreach ($defect in @('malformed', 'missing')) {
+        if ($defect -eq 'malformed') { [IO.File]::WriteAllText($fixture, 'invalid TZif data') }
+        else { Remove-Item -LiteralPath $fixture }
+        $negativeOutput = @($positiveProbe | & $bash -s 2>&1)
+        if ($LASTEXITCODE -ne 91) {
+            throw "The real Eastern-clock helper accepted $defect timezone data: $($negativeOutput -join ' ')"
+        }
+    }
+} finally {
+    $resolvedScratch = [IO.Path]::GetFullPath($scratch)
+    if ((Split-Path -Parent $resolvedScratch) -ne [IO.Path]::GetTempPath().TrimEnd('\', '/') -or
+        (Split-Path -Leaf $resolvedScratch) -notmatch '^schoolpilot-tzif-[a-f0-9]{32}$') {
+        throw 'Refusing cleanup outside the exact owned TZif test directory.'
+    }
+    Remove-Item -LiteralPath $resolvedScratch -Recurse -Force
 }
 
 Write-Output 'Git Bash production Eastern clock test: PASS'
