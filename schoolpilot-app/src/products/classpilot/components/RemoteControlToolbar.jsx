@@ -23,18 +23,18 @@ function RemoteControlToolbar({
 }) {
   const [showStudentDataDialog, setShowStudentDataDialog] = useState(false);
   const coverageRailButtonClass = (active = false) => [
-    "h-9 rounded-md border px-4 text-sm font-semibold text-slate-950 shadow-sm transition-colors",
-    "focus-visible:ring-2 focus-visible:ring-yellow-500 focus-visible:ring-offset-1",
+    "h-9 rounded-md border px-4 text-sm font-semibold shadow-sm transition-colors",
+    "focus-visible:ring-2 focus-visible:ring-rail-ring focus-visible:ring-offset-1",
     active
-      ? "border-yellow-500 bg-yellow-400 hover:bg-yellow-300"
-      : "border-yellow-300 bg-yellow-50 hover:bg-yellow-100",
+      ? "border-rail-on-border bg-rail-on text-rail-on-fg hover:bg-rail-on-hover"
+      : "border-rail-off-border bg-rail-off text-rail-off-fg hover:bg-rail-off-hover",
   ].join(" ");
   const coverageActionButtonClass = [
-    "h-9 rounded-md border border-yellow-500 bg-yellow-400 px-4 text-sm font-semibold text-slate-950 shadow-sm",
-    "hover:bg-yellow-300 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-yellow-500 focus-visible:ring-offset-1",
+    "h-9 rounded-md border border-rail-on-border bg-rail-on px-4 text-sm font-semibold text-rail-on-fg shadow-sm",
+    "hover:bg-rail-on-hover hover:text-rail-on-fg focus-visible:ring-2 focus-visible:ring-rail-ring focus-visible:ring-offset-1",
     "disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-500",
   ].join(" ");
-  const coverageCountClass = "ml-1 min-w-5 rounded-full bg-white/85 px-1.5 py-0.5 text-center text-[11px] font-bold leading-none text-slate-950 ring-1 ring-yellow-700/20";
+  const coverageCountClass = "ml-1 min-w-5 rounded-full bg-rail-count px-1.5 py-0.5 text-center text-[11px] font-bold leading-none text-rail-count-fg ring-1 ring-rail-count-ring";
 
   return (
     <>
@@ -57,7 +57,7 @@ function RemoteControlToolbar({
 
             <div className="flex justify-center">
               {showCoverageRail ? (
-              <div className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-yellow-300 bg-yellow-50/80 p-1.5 shadow-sm" data-testid="coverage-action-rail">
+              <div className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-rail-box-border bg-rail-box p-1.5 shadow-sm" data-testid="coverage-action-rail">
                 {onPickupViewChange && (
                   <div className="flex flex-wrap items-center justify-center gap-1.5" data-testid="student-pickup-view-tabs">
                     <Button

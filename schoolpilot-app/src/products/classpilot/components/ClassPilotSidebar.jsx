@@ -32,7 +32,7 @@ export default function ClassPilotSidebar({ isOpen, onToggle }) {
         onClick={onToggle}
         className={`fixed z-40 hidden lg:flex items-center justify-center
           w-6 h-12 rounded-r-lg
-          bg-slate-800 hover:bg-slate-700 text-white/80 hover:text-white
+          bg-sidetab hover:bg-sidetab-hover text-chrome-fg/80 hover:text-chrome-fg
           transition-all duration-300 top-[calc(64px+1rem)] cursor-pointer
           ${isOpen ? 'left-80' : 'left-0'}`}
         title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
