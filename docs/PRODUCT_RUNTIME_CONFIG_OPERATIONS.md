@@ -24,6 +24,7 @@ survive each clone unchanged.
 | `PASSPILOT_REPORTS_MODE` | `off`, `v2` | `off` | PassPilot Reports v2 | complete preserved 128-table admission; report contract v2 and authority fence v1 in both services' exact serving source |
 | `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | `legacy`, `shadow`, `set_based`, `on` | `shadow` | `daily_usage` rollup (PR 10a) | promotion to `set_based`/`on`: live mode `shadow` plus an evidence file |
 | `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | usage rollups (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1 |
+| `CLASSPILOT_DASHBOARD_THEMES_ENABLED` | `false`, `true` | `false` | ClassPilot dashboard themes and the PassPilot kiosk theme (docs/CLASSPILOT_DASHBOARD_THEMES.md) | none; the serving release must read the name (themes phases 2–6) |
 | `CLASSPILOT_DIGITAL_USAGE_MODE` | `off`, `on` | `off` | Digital Usage API (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1; always requires `CLASSPILOT_USAGE_ROLLUP_MODE=on` |
 
 Values are exact: no case folding, no surrounding whitespace. `on` for the daily
@@ -71,7 +72,7 @@ Everything else is refused, including:
 - Production must be steady: both services stable on one completed deployment, API
   desired count 1–3 (1–6 for Usage off containment), the reviewed `100/200` deployment configuration, autoscaling not
   held, the reviewed task sizes (API 1024 CPU / 2048 MiB, worker 512 / 1024), and API
-  and worker carrying identical values for all eight names.
+  and worker carrying identical values for all nine names.
 - Use a dedicated evidence directory: an absolute path outside the repository,
   either a new leaf or one this tool created (marker file
   `.schoolpilot-product-runtime-evidence-v1`). The My Desk and ClassPilot evidence

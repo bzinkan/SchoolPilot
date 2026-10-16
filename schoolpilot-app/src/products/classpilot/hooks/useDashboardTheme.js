@@ -8,7 +8,9 @@ import { resolveDashboardTheme } from '../../../shared/themes/presets';
 // Reads the signed-in teacher's own dashboard theme and tells the ThemeProvider
 // while one is active, so light/dark mode pauses for the console. Always the
 // viewer's preference: observing another teacher's class never changes it.
-export function useDashboardTheme({ schoolId, viewerId, enabled = true, timeZone }) {
+// `apply: false` reads the preference without pausing light/dark mode, for
+// surfaces outside the dashboard (the admin header's quick switch).
+export function useDashboardTheme({ schoolId, viewerId, enabled = true, timeZone, apply = true }) {
   const query = useQuery({
     queryKey: teacherPreferencesKey(schoolId, viewerId),
     queryFn: ({ signal }) => apiRequest('GET', '/classpilot/teacher/preferences', undefined, { signal, headers: { 'X-School-Id': schoolId } }),
@@ -27,8 +29,9 @@ export function useDashboardTheme({ schoolId, viewerId, enabled = true, timeZone
   // re-applies the html class once this update lands. Cleared on unmount so
   // leaving the dashboard restores the stored light/dark preference.
   useEffect(() => {
+    if (!apply) return undefined;
     setDashboardThemeActive(Boolean(activeId));
     return () => setDashboardThemeActive(false);
-  }, [activeId, setDashboardThemeActive]);
+  }, [apply, activeId, setDashboardThemeActive]);
   return { preferences, themesEnabled, active, query };
 }

@@ -220,6 +220,22 @@ Choose the portal students open after ClassPilot sign-in while their Waypoint or
 > **Check before continuing:** Approved provider hosts remain available for authentication and portal launch while the restriction is active. Learning sites remain teacher-restricted, and a school or teacher block still wins.
 
 [Open Student Portal configuration](/classpilot/admin?tab=student-portal)
+
+### Govern dashboard themes and kiosk backgrounds
+
+**Who can use this:** Administrator or school administrator
+
+Decide whether teachers may theme their dashboards, whether they may upload images, what the kiosk may show, and whether the whole school shares one look.
+
+1. **Allow or pause teacher themes.** Teachers may use the preloaded themes is on by default. Turning it off returns every dashboard to the school default or the plain look; nothing else about ClassPilot changes.
+2. **Decide about uploads.** Teachers may upload a background image is off by default. Uploaded pictures are private to the teacher who uploaded them, are re-encoded with metadata removed, and are never shown to students on their own devices.
+3. **Decide what the kiosk may show.** The PassPilot kiosk follows the theme of the teacher it is bound to. Preloaded themes are always allowed there; Custom backgrounds may appear on kiosks is off by default because the kiosk is a shared screen students look at.
+4. **Set a school default or lock.** A school default theme applies to teachers who have not chosen one and to kiosks bound to no teacher. Lock everyone to the school theme overrides every personal choice until it is turned off.
+5. **Save deliberately.** Save dashboard themes writes only the Appearance section with a version check. Themes are presentation only: student status colors, alerts, commands and monitoring never read them.
+
+> **Flight note:** Launch themes with the default switches, then enable uploads once staff know the rule: upload only images you have the right to use.
+
+[Open Appearance settings](/classpilot/settings?section=appearance)
 ## Operations
 
 

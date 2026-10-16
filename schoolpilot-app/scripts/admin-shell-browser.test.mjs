@@ -150,7 +150,9 @@ test('actual Overview fetches only school-year readiness and renders desktop/mob
   try {
     await page.getByText('Current school year', { exact: true }).waitFor();
     assert.equal(await page.getByRole('heading', { level: 1 }).textContent(), 'Overview');
-    assert.deepEqual(requests, ['/api/classpilot/admin/scheduling']);
+    // School-year readiness for the Overview, plus the administrator's own dashboard
+    // theme preference for the header quick switch (presentation only).
+    assert.deepEqual([...requests].sort(), ['/api/classpilot/admin/scheduling', '/api/classpilot/teacher/preferences']);
     const nav = page.getByRole('navigation', { name: 'Admin navigation', exact: true });
     await nav.getByRole('button', { name: 'School operations' }).click();
     assert.equal(await nav.getByRole('link', { name: 'Email monitoring' }).isVisible(), true, 'An entitled school can discover setup before enabling monitoring');

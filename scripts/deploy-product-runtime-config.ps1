@@ -12,7 +12,7 @@ param(
 # transport, private files, task cloning, operation fence (the same DynamoDB
 # lease as the ClassPilot and My Desk tools, so one runtime-config operation
 # runs at a time), autoscaling hold, health checks and exact convergence. It
-# never invokes the capability workflow and writes no name outside the eight
+# never invokes the capability workflow and writes no name outside the nine
 # below: every other environment entry, secret and task field is fingerprinted
 # and must survive each clone unchanged.
 . "$PSScriptRoot/deploy-classpilot-runtime-config.ps1"
@@ -27,9 +27,13 @@ $script:ProductModeValues = [ordered]@{
     CLASSPILOT_DAILY_USAGE_ROLLUP_MODE = @('legacy', 'shadow', 'set_based', 'on')
     CLASSPILOT_USAGE_ROLLUP_MODE = @('off', 'on')
     CLASSPILOT_DIGITAL_USAGE_MODE = @('off', 'on')
+    # src/services/classpilotThemes.ts dashboardThemesEnabled(): only the exact
+    # string 'true' turns teacher dashboard themes on; unset or 'false' is off.
+    CLASSPILOT_DASHBOARD_THEMES_ENABLED = @('false', 'true')
 }
 $script:RuntimeEnvironmentNames = @('CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE', $script:ProductSchoolIdsName, 'PASSPILOT_RULES_MODE',
-    'PASSPILOT_APPOINTMENTS_MODE', 'PASSPILOT_REPORTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')
+    'PASSPILOT_APPOINTMENTS_MODE', 'PASSPILOT_REPORTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE',
+    'CLASSPILOT_DASHBOARD_THEMES_ENABLED')
 $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames)
 $script:AllowedSecretNames = @()
 # These features' mode readers stay off unless their whole table bundle is RLS
@@ -196,6 +200,7 @@ function Get-ProductExposure {
         dailyUsageRollupPromotion = $State['CLASSPILOT_DAILY_USAGE_ROLLUP_MODE'] -cin @('set_based', 'on')
         usageRollup = $State['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on'
         digitalUsage = $State['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on'
+        dashboardThemes = $State['CLASSPILOT_DASHBOARD_THEMES_ENABLED'] -ceq 'true'
     }
 }
 
@@ -209,7 +214,7 @@ function Get-ProductActivations {
     if (-not $before.AllSchools -and ($after.AllSchools -or @($after.Schools | Where-Object { $_ -cnotin $before.Schools }).Count)) {
         $activations.Add('sharedTeachingResources')
     }
-    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'passpilotReports', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage')) {
+    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'passpilotReports', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage', 'dashboardThemes')) {
         if ($after.$feature -and -not $before.$feature) { $activations.Add($feature) }
     }
     return ,$activations.ToArray()
