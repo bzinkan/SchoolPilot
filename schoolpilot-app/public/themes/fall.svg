@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" width="1920" height="1200" preserveAspectRatio="xMidYMid slice" role="img" aria-label="An autumn forest in orange and red with drifting leaves and pumpkins on the forest floor">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="0.5" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#c2410c"/>
+    </linearGradient>
+    <path id="leaf" d="M16 2 C27 8 30 19 16 30 C2 19 5 8 16 2 Z"/>
+    <g id="tree">
+      <path d="M-8 120 L-10 0 L10 0 L8 120 Z" fill="#5b2a0f"/>
+      <circle cx="0" cy="-20" r="70"/><circle cx="-50" cy="10" r="48"/><circle cx="52" cy="6" r="50"/><circle cx="0" cy="40" r="46"/>
+    </g>
+    <g id="pumpkin">
+      <rect x="29" y="4" width="7" height="14" rx="3" fill="#15803d"/>
+      <ellipse cx="32" cy="38" rx="27" ry="23" fill="#f97316"/>
+      <ellipse cx="18" cy="38" rx="11" ry="22" fill="#ea580c" opacity="0.55"/>
+      <ellipse cx="46" cy="38" rx="11" ry="22" fill="#ea580c" opacity="0.55"/>
+      <ellipse cx="32" cy="38" rx="10" ry="23" fill="#fb923c" opacity="0.7"/>
+    </g>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#sky)"/>
+  <g opacity="0.55" fill="#9a3412">
+    <use href="#tree" transform="translate(140 520) scale(1.1)"/><use href="#tree" transform="translate(520 500) scale(1.3)"/><use href="#tree" transform="translate(960 540)"/>
+    <use href="#tree" transform="translate(1400 500) scale(1.2)"/><use href="#tree" transform="translate(1800 530) scale(1.1)"/>
+  </g>
+  <g>
+    <use href="#tree" transform="translate(240 700) scale(1.4)" fill="#dc2626"/>
+    <use href="#tree" transform="translate(720 740) scale(1.2)" fill="#ea580c"/>
+    <use href="#tree" transform="translate(1200 720) scale(1.5)" fill="#f59e0b"/>
+    <use href="#tree" transform="translate(1660 740) scale(1.3)" fill="#b91c1c"/>
+  </g>
+  <path d="M0 980 Q480 920 960 980 T1920 960 L1920 1200 L0 1200 Z" fill="#7c2d12"/>
+  <path d="M0 1090 Q480 1040 960 1090 T1920 1070 L1920 1200 L0 1200 Z" fill="#5b2a0f"/>
+  <g opacity="0.95">
+    <use href="#leaf" transform="translate(200 120) rotate(20) scale(1.6)" fill="#dc2626"/>
+    <use href="#leaf" transform="translate(520 240) rotate(-35) scale(1.2)" fill="#fde047"/>
+    <use href="#leaf" transform="translate(860 100) rotate(65) scale(1.4)" fill="#b91c1c"/>
+    <use href="#leaf" transform="translate(1180 300) rotate(-10) scale(1.1)" fill="#ea580c"/>
+    <use href="#leaf" transform="translate(1500 160) rotate(90) scale(1.5)" fill="#dc2626"/>
+    <use href="#leaf" transform="translate(1780 320) rotate(-60) scale(1.3)" fill="#fde047"/>
+    <use href="#leaf" transform="translate(100 420) rotate(40) scale(1.2)" fill="#ea580c"/>
+    <use href="#leaf" transform="translate(680 460) rotate(120) scale(1)" fill="#b91c1c"/>
+    <use href="#leaf" transform="translate(1040 420) rotate(15) scale(1.3)" fill="#fde047"/>
+    <use href="#leaf" transform="translate(1860 560) rotate(-45) scale(1.2)" fill="#dc2626"/>
+    <use href="#leaf" transform="translate(400 1020) rotate(30) scale(1.4)" fill="#dc2626"/>
+    <use href="#leaf" transform="translate(900 1060) rotate(-80) scale(1.2)" fill="#fde047"/>
+    <use href="#leaf" transform="translate(1500 1030) rotate(70) scale(1.3)" fill="#ea580c"/>
+    <use href="#leaf" transform="translate(1720 1080) rotate(-20) scale(1.1)" fill="#b91c1c"/>
+  </g>
+  <use href="#pumpkin" transform="translate(140 1010) scale(2.2)"/>
+  <use href="#pumpkin" transform="translate(290 1060) scale(1.5)"/>
+  <use href="#pumpkin" transform="translate(1620 1020) scale(2)"/>
+  <g fill="#78350f"><ellipse cx="1150" cy="1120" rx="40" ry="26"/><rect x="1136" y="1086" width="28" height="12" rx="4"/><ellipse cx="1210" cy="1130" rx="30" ry="20"/><rect x="1200" y="1104" width="20" height="10" rx="3"/></g>
+</svg>

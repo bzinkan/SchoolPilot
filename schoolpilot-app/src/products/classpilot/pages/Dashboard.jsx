@@ -475,7 +475,7 @@ export default function Dashboard() {
   const { currentUser, school, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
   // The viewer's own dashboard theme. Presentation only, and never the class owner's.
-  const dashboardTheme = useDashboardTheme({ schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: Boolean(isTeacher || isAdmin) });
+  const dashboardTheme = useDashboardTheme({ schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: Boolean(isTeacher || isAdmin), timeZone: school?.schoolTimezone || school?.timezone });
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const { absentIds } = useAbsentStudents();

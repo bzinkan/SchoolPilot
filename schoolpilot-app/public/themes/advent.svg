@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" width="1920" height="1200" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Deep purple Advent background with an evergreen wreath, four candles and gentle stars">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e1065"/>
+      <stop offset="0.6" stop-color="#4c1d95"/>
+      <stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient>
+    <radialGradient id="candleglow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fcd34d" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#fcd34d" stop-opacity="0"/>
+    </radialGradient>
+    <g id="candle">
+      <rect x="-26" y="0" width="52" height="220" rx="8"/>
+      <rect x="-3" y="-28" width="6" height="30" fill="#1c1917"/>
+      <path d="M0 -92 C-20 -62 -22 -40 0 -24 C22 -40 20 -62 0 -92 Z" fill="#fbbf24"/>
+      <path d="M0 -70 C-10 -54 -10 -42 0 -32 C10 -42 10 -54 0 -70 Z" fill="#fef3c7"/>
+    </g>
+    <g id="sprig" fill="#14532d">
+      <path d="M0 0 C10 -30 30 -40 50 -34 C40 -10 20 2 0 0 Z"/><path d="M0 0 C-10 -30 -30 -40 -50 -34 C-40 -10 -20 2 0 0 Z"/>
+    </g>
+  </defs>
+  <rect width="1920" height="1200" fill="url(#bg)"/>
+  <g fill="#fde68a" opacity="0.8">
+    <circle cx="160" cy="140" r="3"/><circle cx="420" cy="80" r="2"/><circle cx="700" cy="200" r="3"/><circle cx="1040" cy="90" r="2"/><circle cx="1300" cy="180" r="3"/><circle cx="1620" cy="110" r="2"/><circle cx="1840" cy="240" r="3"/>
+    <circle cx="260" cy="380" r="2"/><circle cx="880" cy="340" r="2"/><circle cx="1480" cy="400" r="3"/><circle cx="1760" cy="520" r="2"/><circle cx="560" cy="520" r="2"/><circle cx="1140" cy="500" r="2"/>
+    <path d="M960 120 l6 16 16 2 -12 11 3 17 -13 -8 -13 8 3 -17 -12 -11 16 -2 Z" fill="#fcd34d"/>
+  </g>
+  <ellipse cx="960" cy="860" rx="560" ry="220" fill="url(#candleglow)"/>
+  <!-- wreath -->
+  <g transform="translate(960 900)">
+    <circle r="330" fill="none" stroke="#166534" stroke-width="70"/>
+    <g>
+      <use href="#sprig" transform="rotate(0) translate(0 -330) scale(1.4)"/><use href="#sprig" transform="rotate(45) translate(0 -330) scale(1.4)"/><use href="#sprig" transform="rotate(90) translate(0 -330) scale(1.4)"/><use href="#sprig" transform="rotate(135) translate(0 -330) scale(1.4)"/>
+      <use href="#sprig" transform="rotate(180) translate(0 -330) scale(1.4)"/><use href="#sprig" transform="rotate(225) translate(0 -330) scale(1.4)"/><use href="#sprig" transform="rotate(270) translate(0 -330) scale(1.4)"/><use href="#sprig" transform="rotate(315) translate(0 -330) scale(1.4)"/>
+    </g>
+    <g fill="#dc2626"><circle cx="-180" cy="-278" r="10"/><circle cx="60" cy="-326" r="10"/><circle cx="300" cy="-140" r="10"/><circle cx="-320" cy="80" r="10"/><circle cx="240" cy="230" r="10"/><circle cx="-120" cy="306" r="10"/></g>
+  </g>
+  <!-- four candles: three purple, one rose -->
+  <use href="#candle" transform="translate(660 760)" fill="#7c3aed"/>
+  <use href="#candle" transform="translate(860 700)" fill="#7c3aed"/>
+  <use href="#candle" transform="translate(1060 700)" fill="#f9a8d4"/>
+  <use href="#candle" transform="translate(1260 760)" fill="#7c3aed"/>
+  <path d="M0 1130 Q480 1080 960 1130 T1920 1110 L1920 1200 L0 1200 Z" fill="#2e1065"/>
+</svg>

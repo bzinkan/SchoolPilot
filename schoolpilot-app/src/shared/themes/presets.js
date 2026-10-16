@@ -6,6 +6,8 @@
 // page background and adds a small ornament to each tile. Student status
 // colors, badges and layout never come from here.
 
+import { calendarPresetFor, localDateParts } from './calendar.js';
+
 export const DASHBOARD_THEME_PRESET_IDS = Object.freeze([
   'halloween',
   'thanksgiving',
@@ -20,21 +22,21 @@ export const DASHBOARD_THEME_PRESET_IDS = Object.freeze([
   'winter',
 ]);
 
-// `ready` presets ship artwork and CSS; the rest are reserved ids until their
-// phase lands, so a stored id never has to change when they arrive.
+// Every preset ships artwork and CSS. `ready: false` is how a preset would be
+// retired without breaking stored values.
 // `clearance` is the extra room an ornament that rises above the tile needs.
 const PRESETS = Object.freeze([
   Object.freeze({ id: 'halloween', label: 'Halloween', ready: true, artwork: '/themes/halloween.svg', ornament: 'cobweb', clearance: 'none' }),
   Object.freeze({ id: 'thanksgiving', label: 'Thanksgiving', ready: true, artwork: '/themes/thanksgiving.svg', ornament: 'turkey', clearance: 'md' }),
   Object.freeze({ id: 'christmas', label: 'Christmas', ready: true, artwork: '/themes/christmas.svg', ornament: 'lights', clearance: 'sm' }),
-  Object.freeze({ id: 'advent', label: 'Advent', ready: false, artwork: '/themes/advent.svg', ornament: 'none', clearance: 'none' }),
-  Object.freeze({ id: 'valentines', label: "Valentine's Day", ready: false, artwork: '/themes/valentines.svg', ornament: 'hearts', clearance: 'sm' }),
-  Object.freeze({ id: 'st-patricks', label: "St. Patrick's Day", ready: false, artwork: '/themes/st-patricks.svg', ornament: 'shamrock', clearance: 'sm' }),
-  Object.freeze({ id: 'easter', label: 'Easter', ready: false, artwork: '/themes/easter.svg', ornament: 'ears', clearance: 'md' }),
-  Object.freeze({ id: 'spring', label: 'Spring', ready: false, artwork: '/themes/spring.svg', ornament: 'daisy', clearance: 'sm' }),
-  Object.freeze({ id: 'summer', label: 'Summer', ready: false, artwork: '/themes/summer.svg', ornament: 'sun', clearance: 'sm' }),
-  Object.freeze({ id: 'fall', label: 'Fall', ready: false, artwork: '/themes/fall.svg', ornament: 'leaf', clearance: 'sm' }),
-  Object.freeze({ id: 'winter', label: 'Winter', ready: false, artwork: '/themes/winter.svg', ornament: 'snowcap', clearance: 'sm' }),
+  Object.freeze({ id: 'advent', label: 'Advent', ready: true, artwork: '/themes/advent.svg', ornament: 'none', clearance: 'none' }),
+  Object.freeze({ id: 'valentines', label: "Valentine's Day", ready: true, artwork: '/themes/valentines.svg', ornament: 'hearts', clearance: 'sm' }),
+  Object.freeze({ id: 'st-patricks', label: "St. Patrick's Day", ready: true, artwork: '/themes/st-patricks.svg', ornament: 'shamrock', clearance: 'sm' }),
+  Object.freeze({ id: 'easter', label: 'Easter', ready: true, artwork: '/themes/easter.svg', ornament: 'ears', clearance: 'md' }),
+  Object.freeze({ id: 'spring', label: 'Spring', ready: true, artwork: '/themes/spring.svg', ornament: 'daisy', clearance: 'sm' }),
+  Object.freeze({ id: 'summer', label: 'Summer', ready: true, artwork: '/themes/summer.svg', ornament: 'sun', clearance: 'sm' }),
+  Object.freeze({ id: 'fall', label: 'Fall', ready: true, artwork: '/themes/fall.svg', ornament: 'leaf', clearance: 'sm' }),
+  Object.freeze({ id: 'winter', label: 'Winter', ready: true, artwork: '/themes/winter.svg', ornament: 'snowcap', clearance: 'sm' }),
 ]);
 
 export const DASHBOARD_THEME_PRESETS = PRESETS;
@@ -50,10 +52,15 @@ export function readyDashboardThemePresets() {
 // Turn a stored preference into the preset to draw, or null for Default.
 // Unknown, retired or not-yet-shipped ids resolve to null so a stale value can
 // never break the page; the picker reports them separately.
-export function resolveDashboardTheme(theme, { enabled = true } = {}) {
+// With `calendar: true` the stored preset is only a hint (Advent opts the
+// school into the liturgical variant); the date picks the preset to draw.
+export function resolveDashboardTheme(theme, { enabled = true, now = new Date(), timeZone = 'America/New_York' } = {}) {
   if (!enabled || !theme || typeof theme !== 'object') return null;
   if (theme.kind !== 'preset') return null; // uploaded images arrive in a later phase
-  const preset = findDashboardThemePreset(theme.preset);
+  const id = theme.calendar === true
+    ? calendarPresetFor(localDateParts(now, timeZone || 'America/New_York'), { liturgical: theme.preset === 'advent' })
+    : theme.preset;
+  const preset = findDashboardThemePreset(id);
   return preset && preset.ready ? preset : null;
 }
 

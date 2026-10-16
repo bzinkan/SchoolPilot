@@ -8,7 +8,7 @@ import { resolveDashboardTheme } from '../../../shared/themes/presets';
 // Reads the signed-in teacher's own dashboard theme and tells the ThemeProvider
 // while one is active, so light/dark mode pauses for the console. Always the
 // viewer's preference: observing another teacher's class never changes it.
-export function useDashboardTheme({ schoolId, viewerId, enabled = true }) {
+export function useDashboardTheme({ schoolId, viewerId, enabled = true, timeZone }) {
   const query = useQuery({
     queryKey: teacherPreferencesKey(schoolId, viewerId),
     queryFn: ({ signal }) => apiRequest('GET', '/classpilot/teacher/preferences', undefined, { signal, headers: { 'X-School-Id': schoolId } }),
@@ -19,7 +19,7 @@ export function useDashboardTheme({ schoolId, viewerId, enabled = true }) {
   });
   const preferences = query.data ?? null;
   const themesEnabled = preferences?.dashboardThemesEnabled === true;
-  const active = resolveDashboardTheme(preferences?.effectiveDashboardTheme ?? preferences?.dashboardTheme, { enabled: themesEnabled });
+  const active = resolveDashboardTheme(preferences?.effectiveDashboardTheme ?? preferences?.dashboardTheme, { enabled: themesEnabled, timeZone });
   const { setDashboardThemeActive } = useTheme();
   const activeId = active?.id ?? null;
   // Child effects run before the provider's, so the provider's own effect

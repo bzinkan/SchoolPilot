@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" width="1920" height="1200" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Cream background with beach doodles: suns, watermelon slices, palms, swim rings, flip-flops and starfish">
+  <defs>
+    <g id="sun" stroke="#92400e" stroke-width="5" stroke-linejoin="round">
+      <path d="M0 -70 L14 -48 L40 -58 L38 -30 L64 -22 L44 0 L64 22 L38 30 L40 58 L14 48 L0 70 L-14 48 L-40 58 L-38 30 L-64 22 L-44 0 L-64 -22 L-38 -30 L-40 -58 L-14 -48 Z" fill="#fbbf24"/>
+      <circle r="34" fill="#fde047"/>
+    </g>
+    <g id="melon" stroke="#92400e" stroke-width="5" stroke-linejoin="round">
+      <path d="M-80 0 A80 80 0 0 0 80 0 Z" fill="#16a34a"/>
+      <path d="M-66 0 A66 66 0 0 0 66 0 Z" fill="#f43f5e"/>
+      <g fill="#1c1917"><ellipse cx="-30" cy="24" rx="4" ry="7" transform="rotate(-20 -30 24)"/><ellipse cx="0" cy="34" rx="4" ry="7"/><ellipse cx="30" cy="24" rx="4" ry="7" transform="rotate(20 30 24)"/><ellipse cx="-12" cy="12" rx="4" ry="7" transform="rotate(-10 -12 12)"/><ellipse cx="14" cy="12" rx="4" ry="7" transform="rotate(10 14 12)"/></g>
+    </g>
+    <g id="ring" stroke="#92400e" stroke-width="5">
+      <circle r="60" fill="#ffffff"/><path d="M-60 0 A60 60 0 0 1 0 -60 L0 -26 A26 26 0 0 0 -26 0 Z M60 0 A60 60 0 0 1 0 60 L0 26 A26 26 0 0 0 26 0 Z" fill="#ef4444" stroke="none"/><circle r="26" fill="#fef3c7"/>
+    </g>
+    <g id="flipflop" stroke="#92400e" stroke-width="5" stroke-linejoin="round">
+      <path d="M-26 -60 C10 -70 34 -40 30 0 C28 40 10 66 -10 66 C-36 66 -44 30 -40 -10 C-38 -36 -40 -56 -26 -60 Z" fill="#3b82f6"/>
+      <path d="M-4 -24 C-16 0 -28 16 -32 36 M-4 -24 C8 0 18 18 20 38" fill="none"/>
+    </g>
+    <g id="palm" stroke="#92400e" stroke-width="5" stroke-linejoin="round">
+      <path d="M0 110 C6 60 4 20 0 0" fill="none"/>
+      <path d="M0 0 C-30 -40 -80 -30 -100 10 C-60 -4 -30 2 0 0 Z M0 0 C30 -40 80 -30 100 10 C60 -4 30 2 0 0 Z M0 0 C-40 -60 -20 -110 20 -120 C0 -80 4 -40 0 0 Z M0 0 C40 -60 90 -60 110 -30 C70 -34 30 -20 0 0 Z" fill="#14b8a6"/>
+    </g>
+    <g id="star" stroke="#92400e" stroke-width="5" stroke-linejoin="round">
+      <path d="M0 -40 L11 -12 L40 -12 L17 6 L26 36 L0 20 L-26 36 L-17 6 L-40 -12 L-11 -12 Z" fill="#f43f5e"/>
+    </g>
+    <g id="cone" stroke="#92400e" stroke-width="5" stroke-linejoin="round">
+      <path d="M-28 10 L0 80 L28 10 Z" fill="#fbbf24"/><circle cx="0" cy="-6" r="30" fill="#fbcfe8"/><circle cx="0" cy="-40" r="8" fill="#ef4444"/>
+    </g>
+  </defs>
+  <rect width="1920" height="1200" fill="#fef3c7"/>
+  <g fill="#ffffff" opacity="0.8">
+    <path d="M300 300 l6 12 12 2 -9 9 2 13 -11 -6 -11 6 2 -13 -9 -9 12 -2 Z"/><path d="M1200 180 l6 12 12 2 -9 9 2 13 -11 -6 -11 6 2 -13 -9 -9 12 -2 Z"/><path d="M700 900 l6 12 12 2 -9 9 2 13 -11 -6 -11 6 2 -13 -9 -9 12 -2 Z"/><path d="M1600 700 l6 12 12 2 -9 9 2 13 -11 -6 -11 6 2 -13 -9 -9 12 -2 Z"/>
+    <circle cx="520" cy="620" r="7"/><circle cx="1040" cy="520" r="7"/><circle cx="1480" cy="980" r="7"/><circle cx="160" cy="1000" r="7"/>
+  </g>
+  <use href="#ring" transform="translate(130 150)"/>
+  <use href="#palm" transform="translate(420 90) scale(0.9)"/>
+  <use href="#melon" transform="translate(760 120) rotate(-15)"/>
+  <use href="#flipflop" transform="translate(1060 150) rotate(20)"/>
+  <use href="#sun" transform="translate(1400 160)"/>
+  <use href="#ring" transform="translate(1760 180) scale(0.8)"/>
+  <use href="#star" transform="translate(150 520) rotate(15)"/>
+  <use href="#cone" transform="translate(1800 540)"/>
+  <use href="#melon" transform="translate(120 880) rotate(10) scale(0.9)"/>
+  <use href="#palm" transform="translate(1740 880) scale(0.85)"/>
+  <use href="#flipflop" transform="translate(460 1060) rotate(-18) scale(0.9)"/>
+  <use href="#star" transform="translate(900 1080) rotate(-10)"/>
+  <use href="#sun" transform="translate(1300 1060) scale(0.8)"/>
+  <use href="#ring" transform="translate(1600 1080) scale(0.7)"/>
+  <use href="#cone" transform="translate(690 1040) scale(0.9)"/>
+</svg>
