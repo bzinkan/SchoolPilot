@@ -1,0 +1,57 @@
+/* ─── PassPilot kiosk themes ─────────────────────────────────────────────
+   Presentation only, scoped under [data-kiosk-theme] on the kiosk root. The
+   artwork sits on a fixed layer behind everything under a dark scrim, so the
+   kiosk's white text keeps its contrast on any picture; the header and the
+   cards go on dark glass. Touch targets, text sizes and the sign-out flow are
+   untouched, and a missing image leaves the flat theme color. */
+
+[data-kiosk-theme] {
+  position: relative;
+  isolation: isolate;
+  background-color: #0b1220;
+  background-image: none;
+}
+[data-kiosk-theme]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: #0b1220;
+  background-image: linear-gradient(rgba(5, 8, 20, 0.55), rgba(5, 8, 20, 0.72)), var(--kiosk-image, none);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+[data-kiosk-theme] .kiosk-glass {
+  background-color: rgba(10, 14, 26, 0.78);
+  border-color: rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  [data-kiosk-theme] .kiosk-glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: rgba(10, 14, 26, 0.95);
+  }
+}
+
+@media print {
+  [data-kiosk-theme]::before { display: none; }
+}
+
+/* The student's first name inside a theme shape. Real text, so it is read
+   aloud and stays crisp; textLength keeps long names inside the shape. */
+.kiosk-plate {
+  display: block;
+  margin: 0 auto;
+  width: min(13rem, 55vw);
+  height: auto;
+}
+.kiosk-plate text {
+  font-family: "Segoe UI", ui-rounded, system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}

@@ -4,6 +4,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
 import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
 import KioskOfflineBanner from "../components/KioskOfflineBanner";
+import KioskNamePlate from "../components/KioskNamePlate";
+import KioskThemeTag from "../components/KioskThemeTag";
+import { useKioskTheme } from "../useKioskTheme";
+import { kioskGreeting } from "../../../shared/themes/kiosk";
+import "../kioskTheme.css";
 import { usePassNow } from "../components/LivePassDuration";
 import {
   createKioskApiClient,
@@ -81,6 +86,8 @@ export default function KioskSimplePage() {
   const [loading, setLoading] = useState(false);
   const [checkoutSelection, setCheckoutSelection] = useState(null);
   const [feedback, setFeedback] = useState(null);
+  // Theme of the teacher this kiosk is bound to, as the server resolved it.
+  const [theme, setTheme] = useState(null);
   const [kioskName, setKioskName] = useState(null);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configError, setConfigError] = useState(null);
@@ -151,6 +158,7 @@ export default function KioskSimplePage() {
     getSessionId: () => sessionIdRef.current,
     commonHeaders: PASSPILOT_CLASS_MODEL_HEADER,
   }), [schoolId, kioskPin]);
+  const kioskTheme = useKioskTheme(theme, kioskClient);
 
   // 401 = wrong PIN: clear it so the PIN screen re-prompts
   const checkPinRejected = useCallback((r) => {
@@ -185,6 +193,7 @@ export default function KioskSimplePage() {
     sessionIdRef.current = null;
     resetSnapshotValidation();
     setSession(null);
+    setTheme(null);
     setActivity(null);
     activityRevisionRef.current = null;
     setResumeOffer(null);
@@ -424,6 +433,7 @@ export default function KioskSimplePage() {
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setBootstrapError(null);
       setSession(data.session);
+      setTheme(data.theme ?? null);
       setResumeOffer(data.session.status === "unclaimed" ? (data.resume ?? null) : null);
       if (data.session.status === "active") {
         setClassSource(data.session.source || null);
@@ -461,6 +471,7 @@ export default function KioskSimplePage() {
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setConfigLoaded(true);
       setConfigError(null);
+      setTheme(data.theme ?? null);
       setClassSource(data.source);
       setKioskName(data.kioskName);
       if (data.session) setSession(data.session);
@@ -477,6 +488,7 @@ export default function KioskSimplePage() {
     if (redirectForKioskStyle(config.kioskStyle)) return;
     setConfigLoaded(true);
     setConfigError(null);
+    setTheme(config.theme ?? null);
     setClassSource(source);
     if (Array.isArray(classes)) setGrades(classes);
     if (config.kioskName !== undefined) setKioskName(config.kioskName ?? null);
@@ -591,6 +603,7 @@ export default function KioskSimplePage() {
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setResumeOffer(null);
       setSession(data.session);
+      setTheme(data.theme ?? null);
       setClassSource(data.session.source || null);
       setSelectedGradeId(data.session.classId || null);
       setKioskName(data.session.kioskName ?? null);
@@ -612,8 +625,8 @@ export default function KioskSimplePage() {
     schoolId,
   ]);
 
-  const showFeedback = (type, message) => {
-    setFeedback({ type, message });
+  const showFeedback = (type, message, firstName = null) => {
+    setFeedback({ type, message, firstName });
     if (feedbackRef.current) clearTimeout(feedbackRef.current);
     feedbackRef.current = setTimeout(() => setFeedback(null), 3000);
   };
@@ -653,7 +666,7 @@ export default function KioskSimplePage() {
           showFeedback("error", errBody?.error || "Failed to issue pass");
         }
       } else {
-        showFeedback("success", "Pass issued!");
+        showFeedback("success", "Pass issued!", students.find((s) => s.id === studentId)?.firstName ?? null);
         scrollToTop();
         refreshKiosk();
       }
@@ -680,7 +693,8 @@ export default function KioskSimplePage() {
           showFeedback("error", errBody?.error || "Failed to check in");
         }
       } else {
-        showFeedback("success", "Welcome back!");
+        const firstName = students.find((s) => s.id === studentId)?.firstName ?? null;
+        showFeedback("success", kioskTheme.active ? kioskGreeting(kioskTheme.active.id, firstName) : "Welcome back!", firstName);
         scrollToTop();
         refreshKiosk();
       }
@@ -867,10 +881,10 @@ export default function KioskSimplePage() {
   const studentsAvailable = visibleStudents.filter(s => !s.activePass && !s.returnOnly && (!activity || activity.status === "ready")).sort(sortByName);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" {...kioskTheme.rootProps}>
       <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between shrink-0">
+      <header className="kiosk-glass bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between shrink-0">
         {sessionMode === true || isCanonicalPassPilotSource(classSource) ? (
           <div className="w-16" aria-hidden="true" />
         ) : (
@@ -891,9 +905,12 @@ export default function KioskSimplePage() {
       <KioskActivityBanner activity={activity} />
       {/* Feedback toast */}
       {feedback && (
-        <div className={`mx-4 mt-3 px-4 py-3 rounded-lg text-center font-medium ${
+        <div data-testid="kiosk-feedback" className={`mx-4 mt-3 px-4 py-3 rounded-lg text-center font-medium ${
           feedback.type === "success" ? "bg-green-900/60 text-green-300" : "bg-red-900/60 text-red-300"
         }`}>
+          {feedback.type === "success" && kioskTheme.active && feedback.firstName ? (
+            <KioskNamePlate themeId={kioskTheme.active.id} firstName={feedback.firstName} className="mb-2" />
+          ) : null}
           {feedback.message}
         </div>
       )}
@@ -936,6 +953,7 @@ export default function KioskSimplePage() {
                   >
                     <div>
                       <span className="text-lg font-medium">
+                        <KioskThemeTag themeId={kioskTheme.active?.id} />
                         {student.lastName}, {student.firstName}
                       </span>
                       {student.returnOnly ? <span className="ml-3 text-sm text-amber-200">Return only</span> : null}
@@ -988,6 +1006,7 @@ export default function KioskSimplePage() {
                     >
                       <div>
                         <span className="text-lg font-medium">
+                          <KioskThemeTag themeId={kioskTheme.active?.id} />
                           {student.lastName}, {student.firstName}
                         </span>
                         {student.studentIdNumber && (
