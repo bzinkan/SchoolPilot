@@ -45,6 +45,8 @@ function reportFor(url, schoolId, mode = 'partial') {
     topEducationalDomains: mode === 'empty' ? [] : [{ domain: 'ixl.com', seconds: 3600 }], topNonEducationalDomains: mode === 'empty' ? [] : [{ domain: 'games.example.test', seconds: 900 }] };
 }
 
+const usageRequests = requests => requests.filter(row => row.path.endsWith('/admin/usage'));
+
 async function open({ mode = 'partial', role = 'school_admin', zone = 'America/New_York', now = '2026-09-30T12:00Z', handler } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.clock.install({ time: new Date(now) });
@@ -79,7 +81,7 @@ test('partial report preserves the internal gap and successful empty day, export
     assert.equal(await page.getByText('ixl.com', { exact: true }).isVisible(), true);
     const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export CSV', exact: true }).click();
     const download = await downloaded; assert.match(await readFile(await download.path(), 'utf8'), /Monitored Browser Time/);
-    assert.equal(requests.at(-1).params.format, 'csv'); assert.equal(requests.at(-1).schoolId, 'school-a'); assert.equal('id' in requests[0].params, false);
+    assert.equal(requests.at(-1).params.format, 'csv'); assert.equal(requests.at(-1).schoolId, 'school-a'); assert.equal('id' in usageRequests(requests)[0].params, false);
     await page.screenshot({ path: path.join(artifacts, 'usage-desktop.png'), fullPage: true, animations: 'disabled' });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -164,7 +166,8 @@ test('busy reports stay nonnumeric and retry only on an explicit request', async
 test('school-local presets and invalid custom ranges do not issue malformed requests', async () => {
   const { page, requests, errors } = await open({ zone: 'America/Los_Angeles', now: '2026-03-09T03:00Z' });
   try {
-    assert.equal(requests[0].params.to, '2026-03-08'); assert.equal(requests[0].params.from, '2026-03-02');
+    // The admin shell also reads the administrator's own dashboard theme preference; only usage requests are under test here.
+    assert.equal(usageRequests(requests)[0].params.to, '2026-03-08'); assert.equal(usageRequests(requests)[0].params.from, '2026-03-02');
     await page.getByLabel('Date range').selectOption('today'); await page.getByTestId('usage-report').waitFor();
     await page.getByLabel('Date range').selectOption('custom'); await page.getByLabel('Start date').fill('2026-03-10');
     await page.getByText('Choose an ordered range of at most 366 days.').waitFor();
