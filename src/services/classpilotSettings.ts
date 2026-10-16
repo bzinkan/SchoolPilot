@@ -15,6 +15,7 @@ import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch } from "../realtime/ws-redis.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
+import { dashboardThemeSchema, dashboardThemesEnabled } from "./classpilotThemes.js";
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Executor = Pick<typeof db, "select">;
@@ -40,7 +41,11 @@ const schemas = {
     .transform(values => [...new Set(values)]) }).strict(),
 };
 export type SchoolSettingsSection = keyof typeof schemas;
-const personalSchema = z.object({ expectedRevision: z.number().int().min(0), maxTabsPerStudent: tabLimit }).strict();
+// Teaching tools sends both personal fields; the dashboard quick switch sends
+// only the theme. Absent fields keep their stored value.
+const personalSchema = z.object({ expectedRevision: z.number().int().min(0), maxTabsPerStudent: tabLimit.optional(),
+  dashboardTheme: dashboardThemeSchema.nullable().optional() }).strict()
+  .refine(input => input.maxTabsPerStudent !== undefined || input.dashboardTheme !== undefined);
 const blockedSchema = z.object({ policyRevision: z.number().int().min(0), blockedDomains: rules }).strict();
 
 export class ClasspilotSettingsError extends Error {
@@ -83,25 +88,38 @@ async function preferenceDto(executor: Executor, scope: SettingsActor) {
     .where(eq(settings.schoolId, scope.schoolId));
   const maxTabsPerStudent = own?.maxTabsPerStudent ?? null;
   const schoolMaxTabsPerStudent = readTabLimit(school?.maxTabsPerStudent);
+  // School default and lock arrive with admin governance; until then the
+  // effective theme is the teacher's own. Uploads are a later phase.
+  const dashboardTheme = own?.dashboardTheme ?? null;
   return { schoolId: scope.schoolId, revision: own?.revision ?? 0, maxTabsPerStudent,
-    schoolMaxTabsPerStudent, effectiveMaxTabsPerStudent: maxTabsPerStudent ?? schoolMaxTabsPerStudent };
+    schoolMaxTabsPerStudent, effectiveMaxTabsPerStudent: maxTabsPerStudent ?? schoolMaxTabsPerStudent,
+    dashboardTheme, effectiveDashboardTheme: dashboardTheme,
+    dashboardThemesEnabled: dashboardThemesEnabled(), dashboardThemeUploadsEnabled: false };
 }
 export function getClasspilotTeacherPreferences(scope: SettingsActor) {
   return db.transaction(async tx => { await authorize(tx, scope, false); return preferenceDto(tx, scope); });
 }
 export function updateClasspilotTeacherPreferences(scope: SettingsActor, body: unknown) {
   const input = parse(personalSchema, body);
+  // Presentation-only preference: no student command and nothing to invalidate.
+  const patch = { ...(input.maxTabsPerStudent === undefined ? {} : { maxTabsPerStudent: input.maxTabsPerStudent }),
+    ...(input.dashboardTheme === undefined ? {} : { dashboardTheme: input.dashboardTheme }) };
   return db.transaction(async tx => {
     await authorize(tx, scope, false, true);
+    if (input.dashboardTheme !== undefined && !dashboardThemesEnabled()) {
+      throw new ClasspilotSettingsError("Dashboard themes are not available yet.", 409, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
+    }
+    if (input.dashboardTheme?.kind === "image") {
+      throw new ClasspilotSettingsError("Custom background uploads are not available yet.", 409, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
+    }
     const current = await preferenceDto(tx, scope);
     if (current.revision !== input.expectedRevision) {
       throw new ClasspilotSettingsError("Your teaching defaults changed. Review the latest values before saving.", 409, "CLASSPILOT_PREFERENCES_CONFLICT", current);
     }
     if (current.revision === 0) {
-      await tx.insert(classpilotTeacherPreferences).values({ schoolId: scope.schoolId, teacherId: scope.actorId,
-        maxTabsPerStudent: input.maxTabsPerStudent, revision: 1 });
+      await tx.insert(classpilotTeacherPreferences).values({ schoolId: scope.schoolId, teacherId: scope.actorId, ...patch, revision: 1 });
     } else {
-      const updated = await tx.update(classpilotTeacherPreferences).set({ maxTabsPerStudent: input.maxTabsPerStudent,
+      const updated = await tx.update(classpilotTeacherPreferences).set({ ...patch,
         revision: current.revision + 1, updatedAt: new Date() }).where(and(
         eq(classpilotTeacherPreferences.schoolId, scope.schoolId), eq(classpilotTeacherPreferences.teacherId, scope.actorId),
         eq(classpilotTeacherPreferences.revision, current.revision),

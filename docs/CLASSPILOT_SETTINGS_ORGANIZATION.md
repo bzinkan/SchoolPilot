@@ -28,8 +28,16 @@ protected caches, and late callbacks cannot populate a new editor.
 ## API and data contract
 
 - `GET/PATCH /api/classpilot/teacher/preferences`: the authenticated actor's
-  active-school preference. PATCH requires `expectedRevision` and a nullable
-  integer `maxTabsPerStudent` from 1 to 100. Null means school inheritance.
+  active-school preference. PATCH requires `expectedRevision` plus at least one
+  of a nullable integer `maxTabsPerStudent` from 1 to 100 (null means school
+  inheritance) and a nullable `dashboardTheme` object (`{ kind: "preset",
+  preset, name?, calendar? }`; null means the default look). Omitted fields keep
+  their stored value. Reads also return `effectiveDashboardTheme`,
+  `dashboardThemesEnabled` and `dashboardThemeUploadsEnabled`.
+- While `CLASSPILOT_DASHBOARD_THEMES_ENABLED` is off, a PATCH carrying
+  `dashboardTheme` fails `409 CLASSPILOT_DASHBOARD_THEMES_DISABLED`; `kind:
+  "image"` fails `409 CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED` until uploads
+  ship. Neither writes.
 - `GET /api/classpilot/admin/settings`: canonical read-only school identity and
   section snapshots. Section values have opaque versions.
 - `PATCH /api/classpilot/admin/settings/:section`: only the named section's
@@ -48,7 +56,8 @@ command: it only changes Manage Tabs' starting value. School policy enforcement
 and the existing live command contract remain unchanged.
 
 `classpilot_teacher_preferences` has one row per school and teacher, a nullable
-tab limit, revision and timestamps, tenant RLS, and independent application
+tab limit, a nullable `dashboard_theme` JSONB object from its own additive ledger
+migration, revision and timestamps, tenant RLS, and independent application
 ownership checks. Its immutable migration initializes currently eligible
 ClassPilot memberships once from valid legacy account-level tab values. Invalid
 or unset values inherit. Later memberships start with inheritance; runtime

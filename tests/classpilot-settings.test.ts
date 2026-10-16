@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { and, eq, inArray } from "drizzle-orm";
 import pg from "pg";
@@ -8,6 +9,7 @@ import * as schema from "../dist/schema/index.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "../src/db/classpilotTeacherPreferencesMigration.js";
+import { CLASSPILOT_DASHBOARD_THEME_SQL } from "../src/db/classpilotDashboardThemeMigration.js";
 
 const tag = `settings_${Date.now()}`;
 let schoolA: schema.School;
@@ -63,6 +65,15 @@ async function request(method: string, path: string, body?: unknown, headers = a
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, body: JSON.parse(await response.text()) };
 }
+// The API runs in this process, so the theme launch gate is toggled per case.
+async function withDashboardThemes<T>(enabled: boolean, action: () => Promise<T>) {
+  const previous = process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED;
+  process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED = enabled ? "true" : "false";
+  try { return await action(); } finally {
+    if (previous === undefined) delete process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED;
+    else process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED = previous;
+  }
+}
 async function schoolDto() {
   const response = await request("GET", schoolPath);
   assert.equal(response.status, 200);
@@ -83,6 +94,7 @@ before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1", "[::1]"].includes(new URL(process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL || "").hostname),
     "Schema fixtures require a local database");
   await fixturePool.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
+  await fixturePool.query(CLASSPILOT_DASHBOARD_THEME_SQL);
   await system(async () => {
     const schools = await db.insert(schema.schools).values([
       { name: "Canonical School A", slug: `${tag}_a`, schoolTimezone: "America/Chicago" },
@@ -158,7 +170,8 @@ describe("ClassPilot scoped settings saves", () => {
     const response = await request("GET", personalPath, undefined, auth(teacher));
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, { schoolId: schoolA.id, revision: 0, maxTabsPerStudent: null,
-      schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5 });
+      schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5, dashboardTheme: null, effectiveDashboardTheme: null,
+      dashboardThemesEnabled: process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED === "true", dashboardThemeUploadsEnabled: false });
     assert.deepEqual(await state(), before);
   });
 
@@ -208,6 +221,90 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(response.status, 400, JSON.stringify(body));
     }
     assert.deepEqual(await state(), before);
+  });
+
+  it("stores, keeps and clears a personal dashboard theme independently of the tab limit", async () => {
+    const theme = { kind: "preset", preset: "halloween", name: "Who Dey" };
+    await withDashboardThemes(true, async () => {
+      const before = await state();
+      const tabs = await request("PATCH", personalPath, { expectedRevision: 0, maxTabsPerStudent: 8 }, auth(teacher));
+      assert.equal(tabs.status, 200);
+      assert.equal(tabs.body.dashboardTheme, null);
+      const themed = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: theme }, auth(teacher));
+      assert.equal(themed.status, 200);
+      assert.equal(themed.body.revision, 2);
+      assert.deepEqual(themed.body.dashboardTheme, theme);
+      assert.deepEqual(themed.body.effectiveDashboardTheme, theme);
+      assert.equal(themed.body.maxTabsPerStudent, 8);
+      assert.equal(themed.body.dashboardThemesEnabled, true);
+      assert.equal(themed.body.dashboardThemeUploadsEnabled, false);
+      assert.deepEqual((await request("GET", personalPath, undefined, auth(teacher))).body, themed.body);
+      for (const headers of [auth(teacher, schoolB), auth(otherTeacher)]) {
+        assert.equal((await request("GET", personalPath, undefined, headers)).body.dashboardTheme, null);
+      }
+      const retabbed = await request("PATCH", personalPath, { expectedRevision: 2, maxTabsPerStudent: 4 }, auth(teacher));
+      assert.equal(retabbed.status, 200);
+      assert.deepEqual(retabbed.body.dashboardTheme, theme);
+      assert.equal(retabbed.body.maxTabsPerStudent, 4);
+      const cleared = await request("PATCH", personalPath, { expectedRevision: 3, dashboardTheme: null }, auth(teacher));
+      assert.equal(cleared.status, 200);
+      assert.equal(cleared.body.revision, 4);
+      assert.equal(cleared.body.dashboardTheme, null);
+      assert.equal(cleared.body.effectiveDashboardTheme, null);
+      assert.equal(cleared.body.maxTabsPerStudent, 4);
+      const stale = await request("PATCH", personalPath, { expectedRevision: 3, dashboardTheme: theme }, auth(teacher));
+      assert.equal(stale.status, 409);
+      assert.equal(stale.body.code, "CLASSPILOT_PREFERENCES_CONFLICT");
+      const after = await state();
+      assert.equal(after.preferences.length, 1);
+      assert.equal(after.preferences[0]!.dashboardTheme, null);
+      assert.equal(after.preferences[0]!.revision, 4);
+      assert.deepEqual(after.settings, before.settings);
+      assert.deepEqual(after.legacy, before.legacy);
+      assert.deepEqual(after.commands, before.commands);
+      assert.deepEqual(after.audit, before.audit);
+    });
+  });
+
+  it("rejects malformed themes and refuses image themes before any write", async () => {
+    await withDashboardThemes(true, async () => {
+      const before = await state();
+      for (const dashboardTheme of ["halloween", { kind: "preset" }, { kind: "preset", preset: "bengals" },
+        { kind: "preset", preset: "halloween", name: "x".repeat(41) }, { kind: "preset", preset: "halloween", name: "" },
+        { kind: "preset", preset: "halloween", accent: "#fb4f14" }, { kind: "preset", preset: "halloween", imageAssetId: randomUUID() },
+        { kind: "image", imageAssetId: "not-a-uuid" }, { kind: "mascot" }]) {
+        const response = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme }, auth(teacher));
+        assert.equal(response.status, 400, JSON.stringify(dashboardTheme));
+      }
+      const image = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: { kind: "image", imageAssetId: randomUUID() } }, auth(teacher));
+      assert.equal(image.status, 409);
+      assert.equal(image.body.code, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
+      assert.deepEqual(await state(), before);
+    });
+  });
+
+  it("refuses theme writes while the launch gate is off and keeps reporting the stored theme", async () => {
+    const theme = { kind: "preset", preset: "christmas" };
+    await withDashboardThemes(true, async () => {
+      assert.equal((await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: theme }, auth(teacher))).status, 200);
+    });
+    await withDashboardThemes(false, async () => {
+      const before = await state();
+      for (const dashboardTheme of [{ kind: "preset", preset: "halloween" }, null]) {
+        const response = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme }, auth(teacher));
+        assert.equal(response.status, 409);
+        assert.equal(response.body.code, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
+      }
+      assert.deepEqual(await state(), before);
+      const tabs = await request("PATCH", personalPath, { expectedRevision: 1, maxTabsPerStudent: 3 }, auth(teacher));
+      assert.equal(tabs.status, 200);
+      assert.deepEqual(tabs.body.dashboardTheme, theme);
+      assert.equal(tabs.body.dashboardThemesEnabled, false);
+      const after = await state();
+      assert.equal(after.preferences.length, 1);
+      assert.deepEqual(after.preferences[0]!.dashboardTheme, theme);
+      assert.deepEqual(after.commands, before.commands);
+    });
   });
 
   it("requires active teaching membership and current school entitlement for personal reads and writes", async () => {

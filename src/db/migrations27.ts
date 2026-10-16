@@ -10,6 +10,7 @@ import { classpilotUsageRollupDaysMigration } from "./classpilotUsageRollupDaysM
 import { classpilotHeartbeatScreenshotEvidenceMigration } from "./classpilotHeartbeatScreenshotEvidenceMigration.js";
 import { classpilotPrivateChatLifecycleMigration } from "./classpilotPrivateChatLifecycleMigration.js";
 import { passpilotAppointmentsMigration } from "./passpilotAppointmentsMigration.js";
+import { classpilotDashboardThemeMigration } from "./classpilotDashboardThemeMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -539,6 +540,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   flightPathContentRevisionMigration,
   classpilotPrivateChatLifecycleMigration,
   classpilotHeartbeatScreenshotEvidenceMigration,
+  classpilotDashboardThemeMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [
