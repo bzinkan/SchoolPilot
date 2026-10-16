@@ -1,15 +1,18 @@
 import { after, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { and, eq, inArray } from "drizzle-orm";
 import pg from "pg";
+import sharp from "sharp";
 import db, { pool, sessionPool } from "../dist/db.js";
 import * as schema from "../dist/schema/index.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
+import { setDashboardThemeAssetStore } from "../dist/services/classpilotThemeAssets.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "../src/db/classpilotTeacherPreferencesMigration.js";
 import { CLASSPILOT_DASHBOARD_THEME_SQL } from "../src/db/classpilotDashboardThemeMigration.js";
+import { CLASSPILOT_DASHBOARD_APPEARANCE_SQL } from "../src/db/classpilotDashboardAppearanceMigration.js";
 
 const tag = `settings_${Date.now()}`;
 let schoolA: schema.School;
@@ -29,6 +32,8 @@ const userIds: string[] = [];
 const fixturePool = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL, max: 1 });
 const personalPath = "/classpilot/teacher/preferences";
 const schoolPath = "/classpilot/admin/settings";
+const assetPath = "/classpilot/teacher/theme-asset";
+const appearanceDefaults = { teacherThemesEnabled: true, teacherUploadsEnabled: false, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null };
 const originalSettings = {
   schoolName: "Legacy settings name",
   schoolTimezone: "America/Los_Angeles",
@@ -50,6 +55,7 @@ const originalSettings = {
   sharedChromebookPinLoginEnabled: false,
   pauseChatDuringTesting: false,
   centralEmailRecipientUserId: null,
+  appearance: null,
 };
 
 function system<T>(action: () => Promise<T>) {
@@ -65,6 +71,20 @@ async function request(method: string, path: string, body?: unknown, headers = a
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: response.status, body: JSON.parse(await response.text()) };
 }
+// Raw-byte requests for image content: headers are passed through untouched.
+async function rawRequest(method: string, path: string, headers: Record<string, string>, body?: Buffer) {
+  const response = await fetch(`${baseUrl}${path}`, { method, headers, ...(body === undefined ? {} : { body: new Uint8Array(body) }) });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return { status: response.status, headers: response.headers, buffer, json: () => JSON.parse(buffer.toString("utf8")) };
+}
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+function memoryStore() {
+  const objects = new Map<string, { bytes: Buffer; contentType: string }>();
+  return { objects,
+    async put(key: string, bytes: Buffer, contentType: string) { objects.set(key, { bytes: Buffer.from(bytes), contentType }); },
+    async get(key: string) { const object = objects.get(key); if (!object) throw new Error("missing object"); return object.bytes; },
+    async delete(key: string) { objects.delete(key); } };
+}
 // The API runs in this process, so the theme launch gate is toggled per case.
 async function withDashboardThemes<T>(enabled: boolean, action: () => Promise<T>) {
   const previous = process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED;
@@ -77,6 +97,12 @@ async function withDashboardThemes<T>(enabled: boolean, action: () => Promise<T>
 async function schoolDto() {
   const response = await request("GET", schoolPath);
   assert.equal(response.status, 200);
+  return response.body;
+}
+async function setAppearance(patch: Record<string, unknown>) {
+  const { version, ...values } = (await schoolDto()).sections.appearance;
+  const response = await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: version, ...values, ...patch });
+  assert.equal(response.status, 200, JSON.stringify(response.body));
   return response.body;
 }
 async function state() {
@@ -95,6 +121,7 @@ before(async () => {
     "Schema fixtures require a local database");
   await fixturePool.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
   await fixturePool.query(CLASSPILOT_DASHBOARD_THEME_SQL);
+  await fixturePool.query(CLASSPILOT_DASHBOARD_APPEARANCE_SQL);
   await system(async () => {
     const schools = await db.insert(schema.schools).values([
       { name: "Canonical School A", slug: `${tag}_a`, schoolTimezone: "America/Chicago" },
@@ -128,6 +155,7 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  setDashboardThemeAssetStore(null);
   await system(async () => {
     await db.delete(schema.classpilotTeacherPreferences).where(inArray(schema.classpilotTeacherPreferences.schoolId, schoolIds));
     await db.delete(schema.auditLogs).where(inArray(schema.auditLogs.schoolId, schoolIds));
@@ -141,6 +169,7 @@ beforeEach(async () => {
 
 after(async () => {
   try {
+    setDashboardThemeAssetStore(null);
     if (server) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await system(() => db.transaction(async tx => {
       if (schoolIds.length) {
@@ -170,8 +199,9 @@ describe("ClassPilot scoped settings saves", () => {
     const response = await request("GET", personalPath, undefined, auth(teacher));
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, { schoolId: schoolA.id, revision: 0, maxTabsPerStudent: null,
-      schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5, dashboardTheme: null, effectiveDashboardTheme: null,
-      dashboardThemesEnabled: process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED === "true", dashboardThemeUploadsEnabled: false });
+      schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5, dashboardTheme: null, schoolDashboardTheme: null, dashboardThemeLocked: false,
+      effectiveDashboardTheme: null, dashboardThemesEnabled: process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED === "true",
+      dashboardThemeUploadsEnabled: false, dashboardThemeAsset: null });
     assert.deepEqual(await state(), before);
   });
 
@@ -224,7 +254,7 @@ describe("ClassPilot scoped settings saves", () => {
   });
 
   it("stores, keeps and clears a personal dashboard theme independently of the tab limit", async () => {
-    const theme = { kind: "preset", preset: "halloween", name: "Who Dey" };
+    const theme = { kind: "preset", preset: "halloween", name: "Who Dey", kiosk: false };
     await withDashboardThemes(true, async () => {
       const before = await state();
       const tabs = await request("PATCH", personalPath, { expectedRevision: 0, maxTabsPerStudent: 8 }, auth(teacher));
@@ -272,6 +302,7 @@ describe("ClassPilot scoped settings saves", () => {
       for (const dashboardTheme of ["halloween", { kind: "preset" }, { kind: "preset", preset: "bengals" },
         { kind: "preset", preset: "halloween", name: "x".repeat(41) }, { kind: "preset", preset: "halloween", name: "" },
         { kind: "preset", preset: "halloween", accent: "#fb4f14" }, { kind: "preset", preset: "halloween", imageAssetId: randomUUID() },
+        { kind: "preset", preset: "halloween", kiosk: "yes" },
         { kind: "image", imageAssetId: "not-a-uuid" }, { kind: "mascot" }]) {
         const response = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme }, auth(teacher));
         assert.equal(response.status, 400, JSON.stringify(dashboardTheme));
@@ -300,10 +331,296 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(tabs.status, 200);
       assert.deepEqual(tabs.body.dashboardTheme, theme);
       assert.equal(tabs.body.dashboardThemesEnabled, false);
+      assert.equal(tabs.body.effectiveDashboardTheme, null, "nothing is effective while the launch gate is off");
       const after = await state();
       assert.equal(after.preferences.length, 1);
       assert.deepEqual(after.preferences[0]!.dashboardTheme, theme);
       assert.deepEqual(after.commands, before.commands);
+    });
+  });
+
+  it("exposes appearance defaults, saves the section against its version and rejects image defaults", async () => {
+    const before = await state();
+    const loaded = await schoolDto();
+    const { version, ...values } = loaded.sections.appearance;
+    assert.match(version, /^[a-f0-9]{64}$/);
+    assert.deepEqual(values, appearanceDefaults);
+    const schoolDefaultTheme = { kind: "preset", preset: "winter", name: "School" };
+    const saved = await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: version, ...values, teacherUploadsEnabled: true, schoolDefaultTheme });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.body, { schoolId: schoolA.id, version: saved.body.version, ...appearanceDefaults, teacherUploadsEnabled: true, schoolDefaultTheme });
+    assert.notEqual(saved.body.version, version);
+    const stale = await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: version, ...values });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.code, "CLASSPILOT_SETTINGS_CONFLICT");
+    assert.equal(stale.body.current.teacherUploadsEnabled, true);
+    const current = (await schoolDto()).sections.appearance;
+    assert.equal(current.version, saved.body.version);
+    const stable = await state();
+    const invalid = [
+      { expectedVersion: current.version, ...values, schoolDefaultTheme: { kind: "image", imageAssetId: randomUUID() } },
+      { expectedVersion: current.version, ...values, schoolDefaultTheme: { kind: "preset", preset: "bengals" } },
+      { expectedVersion: current.version, ...values, schoolDefaultTheme: { kind: "preset", preset: "spring", kiosk: true } },
+      { expectedVersion: current.version, ...values, teacherThemesEnabled: "yes" },
+      { expectedVersion: current.version, ...values, schoolId: schoolB.id },
+      { expectedVersion: current.version, teacherThemesEnabled: true },
+      { ...values },
+    ];
+    for (const body of invalid) assert.equal((await request("PATCH", `${schoolPath}/appearance`, body)).status, 400, JSON.stringify(body));
+    assert.equal((await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: current.version, ...values }, auth(teacher))).status, 403);
+    assert.deepEqual(await state(), stable);
+    const a = stable.settings.find(row => row.schoolId === schoolA.id)!;
+    assert.deepEqual(a.appearance, { ...appearanceDefaults, teacherUploadsEnabled: true, schoolDefaultTheme });
+    assert.equal(a.maxTabsPerStudent, originalSettings.maxTabsPerStudent);
+    assert.deepEqual(stable.settings.find(row => row.schoolId === schoolB.id), before.settings.find(row => row.schoolId === schoolB.id));
+    assert.deepEqual(stable.preferences, before.preferences);
+    assert.equal(stable.audit.length, 1);
+    assert.deepEqual(stable.audit[0]!.metadata, { section: "appearance", fields: ["appearance"] });
+    assert.deepEqual((await request("GET", schoolPath, undefined, auth(outsider, schoolB))).body.sections.appearance, { version: (await request("GET", schoolPath, undefined, auth(outsider, schoolB))).body.sections.appearance.version, ...appearanceDefaults });
+  });
+
+  it("applies the school default, the lock and the teacher-themes switch to personal reads and writes", async () => {
+    const winter = { kind: "preset", preset: "winter" }, halloween = { kind: "preset", preset: "halloween" };
+    await withDashboardThemes(true, async () => {
+      await setAppearance({ schoolDefaultTheme: winter });
+      let prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.schoolDashboardTheme, winter);
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, winter);
+      assert.equal(prefs.body.dashboardTheme, null);
+      assert.equal(prefs.body.dashboardThemeLocked, false);
+      assert.equal(prefs.body.dashboardThemesEnabled, true);
+      const own = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: halloween }, auth(teacher));
+      assert.equal(own.status, 200);
+      assert.deepEqual(own.body.effectiveDashboardTheme, halloween);
+      assert.deepEqual(own.body.schoolDashboardTheme, winter);
+      await setAppearance({ schoolDefaultTheme: winter, lockToSchoolTheme: true });
+      prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(prefs.body.dashboardThemeLocked, true);
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, winter);
+      assert.deepEqual(prefs.body.dashboardTheme, halloween, "the stored personal theme is kept for when the lock lifts");
+      const locked = await state();
+      for (const dashboardTheme of [{ kind: "preset", preset: "fall" }, null]) {
+        const response = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme }, auth(teacher));
+        assert.equal(response.status, 409);
+        assert.equal(response.body.code, "CLASSPILOT_DASHBOARD_THEME_LOCKED");
+      }
+      assert.deepEqual((await state()).preferences, locked.preferences);
+      const tabs = await request("PATCH", personalPath, { expectedRevision: 1, maxTabsPerStudent: 6 }, auth(teacher));
+      assert.equal(tabs.status, 200, "the tab limit stays editable under a theme lock");
+      assert.deepEqual(tabs.body.effectiveDashboardTheme, winter);
+      await setAppearance({ schoolDefaultTheme: winter, lockToSchoolTheme: false, teacherThemesEnabled: false });
+      prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(prefs.body.dashboardThemesEnabled, false);
+      assert.equal(prefs.body.dashboardThemeLocked, false);
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, winter, "a personal theme does not count while teacher themes are off");
+      const off = await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: halloween }, auth(teacher));
+      assert.equal(off.status, 409);
+      assert.equal(off.body.code, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
+      const elsewhere = await request("GET", personalPath, undefined, auth(teacher, schoolB));
+      assert.equal(elsewhere.body.schoolDashboardTheme, null);
+      assert.equal(elsewhere.body.dashboardThemesEnabled, true);
+    });
+    await withDashboardThemes(false, async () => {
+      const prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.schoolDashboardTheme, winter);
+      assert.deepEqual(prefs.body.dashboardTheme, halloween);
+      assert.equal(prefs.body.effectiveDashboardTheme, null);
+      assert.equal(prefs.body.dashboardThemesEnabled, false);
+    });
+  });
+
+  it("uploads, normalizes, serves, scopes, applies, replaces and deletes a teacher background image", async () => {
+    const store = memoryStore();
+    setDashboardThemeAssetStore(store);
+    await withDashboardThemes(true, async () => {
+      await setAppearance({ teacherUploadsEnabled: true });
+      assert.equal((await request("GET", personalPath, undefined, auth(teacher))).body.dashboardThemeUploadsEnabled, true);
+      const jpeg = await sharp({ create: { width: 3000, height: 1800, channels: 3, background: "#fb4f14" } }).jpeg({ quality: 80 })
+        .withMetadata({ exif: { IFD0: { ImageDescription: "synthetic-exif-marker" } } }).toBuffer();
+      assert.ok(jpeg.includes("synthetic-exif-marker"), "the fixture carries metadata to strip");
+      const reserved = await request("POST", assetPath, { contentType: "image/jpeg", size: jpeg.length, sha256: sha256(jpeg) }, auth(teacher));
+      assert.equal(reserved.status, 201, JSON.stringify(reserved.body));
+      const { asset } = reserved.body;
+      assert.match(asset.id, /^[0-9a-f-]{36}$/);
+      assert.deepEqual(asset, { id: asset.id, status: "reserved", contentType: "image/jpeg", byteSize: jpeg.length, width: null, height: null });
+      assert.equal(reserved.body.preferences.revision, 1, "reserving creates the preference row");
+      assert.equal(reserved.body.preferences.dashboardThemeAsset, null, "a reservation is not a ready image");
+      const contentPath = `${assetPath}/${asset.id}/content`;
+      const mismatch = await rawRequest("PUT", contentPath, { ...auth(teacher), "content-type": "image/jpeg" }, Buffer.concat([jpeg, Buffer.from([0])]));
+      assert.equal(mismatch.status, 409);
+      assert.equal(mismatch.json().code, "CLASSPILOT_DASHBOARD_THEME_UPLOAD_MISMATCH");
+      const wrongType = await rawRequest("PUT", contentPath, { ...auth(teacher), "content-type": "image/png" }, jpeg);
+      assert.equal(wrongType.status, 409);
+      assert.equal(store.objects.size, 0);
+      const uploaded = await rawRequest("PUT", contentPath, { ...auth(teacher), "content-type": "image/jpeg; charset=binary" }, jpeg);
+      assert.equal(uploaded.status, 200, uploaded.buffer.toString("utf8"));
+      const ready = uploaded.json().asset;
+      assert.equal(ready.id, asset.id);
+      assert.equal(ready.status, "ready");
+      assert.equal(ready.contentType, "image/webp");
+      assert.equal(ready.width, 2560);
+      assert.equal(ready.height, 1536);
+      assert.equal(store.objects.size, 1);
+      const key = `classpilot/themes/${schoolA.id}/${teacher.id}/${asset.id}`;
+      assert.deepEqual([...store.objects.keys()], [key]);
+      const stored = store.objects.get(key)!;
+      assert.equal(stored.contentType, "image/webp");
+      assert.equal(ready.byteSize, stored.bytes.length);
+      assert.equal(stored.bytes.equals(jpeg), false, "the upload is re-encoded, never retained");
+      assert.equal(stored.bytes.includes("synthetic-exif-marker"), false, "metadata is stripped");
+      const metadata = await sharp(stored.bytes).metadata();
+      assert.equal(metadata.format, "webp");
+      assert.equal(metadata.exif, undefined);
+      assert.ok(metadata.width! <= 2560 && metadata.height! <= 2560);
+      assert.equal(JSON.stringify(uploaded.json()).includes(key), false, "storage keys never reach clients");
+      const again = await rawRequest("PUT", contentPath, { ...auth(teacher), "content-type": "image/jpeg" }, jpeg);
+      assert.equal(again.status, 200, "re-sending the same bytes is idempotent");
+      assert.equal(again.json().asset.status, "ready");
+      assert.equal(store.objects.size, 1);
+      // Serving: owner, conditional requests, query-string school, admin review, strangers.
+      const got = await rawRequest("GET", contentPath, auth(teacher));
+      assert.equal(got.status, 200);
+      assert.equal(got.headers.get("content-type"), "image/webp");
+      assert.equal(got.headers.get("content-length"), String(stored.bytes.length));
+      assert.equal(got.headers.get("cache-control"), "private, max-age=86400");
+      assert.equal(got.headers.get("etag"), `"${sha256(stored.bytes)}"`);
+      assert.equal(got.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(got.headers.get("content-security-policy"), "sandbox; default-src 'none'");
+      assert.ok(got.buffer.equals(stored.bytes));
+      const etag = got.headers.get("etag")!;
+      for (const header of [etag, `W/${etag}`, `"stale", ${etag}`]) {
+        const cached = await rawRequest("GET", contentPath, { ...auth(teacher), "if-none-match": header });
+        assert.equal(cached.status, 304, header);
+        assert.equal(cached.buffer.length, 0);
+        assert.equal(cached.headers.get("etag"), etag);
+      }
+      assert.equal((await rawRequest("GET", contentPath, { ...auth(teacher), "if-none-match": '"' + "0".repeat(64) + '"' })).status, 200);
+      const viaQuery = await rawRequest("GET", `${contentPath}?schoolId=${schoolA.id}`, { authorization: auth(teacher).authorization });
+      assert.equal(viaQuery.status, 200, "a stylesheet url() can name the school in the query string");
+      const stranger = await rawRequest("GET", contentPath, auth(otherTeacher));
+      assert.equal(stranger.status, 404);
+      assert.equal(stranger.json().code, "CLASSPILOT_DASHBOARD_THEME_ASSET_NOT_FOUND");
+      assert.equal((await rawRequest("GET", contentPath, auth(admin))).status, 200, "a same-school admin can review the image");
+      assert.ok([403, 404].includes((await rawRequest("GET", contentPath, auth(outsider))).status), "another school's admin never reads it");
+      assert.equal((await rawRequest("GET", `${assetPath}/not-a-uuid/content`, auth(teacher))).status, 404);
+      assert.equal((await rawRequest("GET", `${assetPath}/${randomUUID()}/content`, auth(teacher))).status, 404);
+      // Applying the image theme.
+      const image = { kind: "image", imageAssetId: asset.id, name: "Who Dey" };
+      const applied = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: image }, auth(teacher));
+      assert.equal(applied.status, 200, JSON.stringify(applied.body));
+      assert.deepEqual(applied.body.dashboardTheme, image);
+      assert.deepEqual(applied.body.effectiveDashboardTheme, image);
+      assert.deepEqual(applied.body.dashboardThemeAsset, ready);
+      const stolen = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: { kind: "image", imageAssetId: asset.id } }, auth(otherTeacher));
+      assert.equal(stolen.status, 409);
+      assert.equal(stolen.body.code, "CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING");
+      // Admin disables uploads: the image stops applying, stays readable, cannot be replaced.
+      await setAppearance({ teacherUploadsEnabled: false });
+      const disabled = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(disabled.body.dashboardThemeUploadsEnabled, false);
+      assert.deepEqual(disabled.body.dashboardTheme, image);
+      assert.equal(disabled.body.effectiveDashboardTheme, null);
+      assert.deepEqual(disabled.body.dashboardThemeAsset, ready);
+      const refused = await request("POST", assetPath, { contentType: "image/jpeg", size: jpeg.length, sha256: sha256(jpeg) }, auth(teacher));
+      assert.equal(refused.status, 409);
+      assert.equal(refused.body.code, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
+      assert.equal((await rawRequest("GET", contentPath, auth(admin))).status, 200);
+      assert.equal((await rawRequest("GET", contentPath, auth(teacher))).status, 200);
+      await setAppearance({ teacherUploadsEnabled: true });
+      // Replacement: the old object survives until the new image is ready.
+      const png = await sharp({ create: { width: 2000, height: 1200, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.5 } } }).png().toBuffer();
+      const second = (await request("POST", assetPath, { contentType: "image/png", size: png.length, sha256: sha256(png) }, auth(teacher))).body.asset;
+      assert.notEqual(second.id, asset.id);
+      assert.equal(store.objects.size, 1);
+      assert.ok(store.objects.has(key));
+      const between = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(between.body.dashboardThemeAsset, null);
+      assert.equal(between.body.effectiveDashboardTheme, null);
+      assert.equal(between.body.revision, 2, "asset work never bumps the preference revision");
+      const replaced = await rawRequest("PUT", `${assetPath}/${second.id}/content`, { ...auth(teacher), "content-type": "image/png" }, png);
+      assert.equal(replaced.status, 200, replaced.buffer.toString("utf8"));
+      assert.equal(replaced.json().asset.width, 2000);
+      assert.equal(replaced.json().asset.height, 1200);
+      assert.equal(replaced.json().asset.contentType, "image/webp");
+      assert.deepEqual([...store.objects.keys()], [`classpilot/themes/${schoolA.id}/${teacher.id}/${second.id}`], "the replaced object is deleted");
+      assert.equal((await rawRequest("GET", contentPath, auth(teacher))).status, 404);
+      const pointing = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(pointing.body.dashboardThemeAsset.id, second.id);
+      assert.deepEqual(pointing.body.dashboardTheme, image, "the stored theme still names the old asset");
+      assert.equal(pointing.body.effectiveDashboardTheme, null);
+      const repointed = await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: { kind: "image", imageAssetId: second.id } }, auth(teacher));
+      assert.equal(repointed.status, 200);
+      assert.equal(repointed.body.effectiveDashboardTheme.kind, "image");
+      assert.equal(repointed.body.effectiveDashboardTheme.imageAssetId, second.id);
+      // Delete clears the image and the theme that pointed at it.
+      assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(otherTeacher))).status, 404);
+      assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(admin))).status, 404, "admins review, they do not delete");
+      const deleted = await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(teacher));
+      assert.equal(deleted.status, 200);
+      assert.equal(deleted.body.preferences.dashboardTheme, null);
+      assert.equal(deleted.body.preferences.dashboardThemeAsset, null);
+      assert.equal(deleted.body.preferences.effectiveDashboardTheme, null);
+      assert.equal(deleted.body.preferences.revision, 4);
+      assert.equal(store.objects.size, 0);
+      assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(teacher))).status, 404);
+      const gone = await request("PATCH", personalPath, { expectedRevision: 4, dashboardTheme: { kind: "image", imageAssetId: second.id } }, auth(teacher));
+      assert.equal(gone.status, 409);
+      assert.equal(gone.body.code, "CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING");
+      const rows = (await state()).preferences;
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]!.dashboardThemeAsset, null);
+      assert.equal(rows[0]!.dashboardTheme, null);
+    });
+  });
+
+  it("rejects unsupported, oversized, malformed, unauthorized and disabled background uploads before any write", async () => {
+    const store = memoryStore();
+    setDashboardThemeAssetStore(store);
+    await withDashboardThemes(true, async () => {
+      const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#000000" } }).png().toBuffer();
+      const valid = { contentType: "image/png", size: png.length, sha256: sha256(png) };
+      const before = await state();
+      const off = await request("POST", assetPath, valid, auth(teacher));
+      assert.equal(off.status, 409);
+      assert.equal(off.body.code, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
+      assert.deepEqual(await state(), before);
+      await setAppearance({ teacherUploadsEnabled: true });
+      const enabled = await state();
+      const pdf = await request("POST", assetPath, { ...valid, contentType: "application/pdf" }, auth(teacher));
+      assert.equal(pdf.status, 415);
+      assert.equal(pdf.body.code, "CLASSPILOT_DASHBOARD_THEME_ASSET_UNSUPPORTED_TYPE");
+      const big = await request("POST", assetPath, { ...valid, size: 6 * 1024 * 1024 + 1 }, auth(teacher));
+      assert.equal(big.status, 413);
+      assert.equal(big.body.code, "CLASSPILOT_DASHBOARD_THEME_ASSET_TOO_LARGE");
+      for (const body of [null, {}, { ...valid, size: 0 }, { ...valid, size: "10" }, { ...valid, sha256: "short" }, { ...valid, teacherId: otherTeacher.id }]) {
+        assert.equal((await request("POST", assetPath, body, auth(teacher))).status, 400, JSON.stringify(body));
+      }
+      for (const actor of [office, outsider, platformAdmin]) {
+        assert.equal((await request("POST", assetPath, valid, auth(actor))).status, 403, actor.firstName);
+      }
+      assert.equal((await request("POST", assetPath, valid, auth(teacher, schoolB))).status, 409, "uploads are off at the other school");
+      assert.equal((await rawRequest("PUT", `${assetPath}/${randomUUID()}/content`, { ...auth(teacher), "content-type": "image/png" }, png)).status, 404);
+      assert.equal((await rawRequest("PUT", `${assetPath}/${randomUUID()}/content`, { ...auth(teacher), "content-type": "application/json" }, Buffer.from("{}"))).status, 400);
+      // The body cap is enforced by the parser; a server may also drop the socket.
+      const oversize = await rawRequest("PUT", `${assetPath}/${randomUUID()}/content`, { ...auth(teacher), "content-type": "image/png" }, Buffer.alloc(6 * 1024 * 1024 + 1))
+        .catch(() => ({ status: 413, json: () => ({ code: "CLASSPILOT_DASHBOARD_THEME_ASSET_TOO_LARGE" }) }));
+      assert.equal(oversize.status, 413);
+      assert.equal(oversize.json().code, "CLASSPILOT_DASHBOARD_THEME_ASSET_TOO_LARGE");
+      assert.deepEqual(await state(), enabled);
+      // Undecodable bytes release the lease and leave the reservation reusable.
+      const junk = Buffer.from("definitely not an image");
+      const reserved = await request("POST", assetPath, { contentType: "image/png", size: junk.length, sha256: sha256(junk) }, auth(teacher));
+      assert.equal(reserved.status, 201);
+      const invalid = await rawRequest("PUT", `${assetPath}/${reserved.body.asset.id}/content`, { ...auth(teacher), "content-type": "image/png" }, junk);
+      assert.equal(invalid.status, 422);
+      assert.equal(invalid.json().code, "CLASSPILOT_DASHBOARD_THEME_ASSET_INVALID");
+      assert.equal(store.objects.size, 0);
+      const row = (await state()).preferences.find(row => row.teacherId === teacher.id)!;
+      assert.equal(row.dashboardThemeAsset?.status, "reserved");
+      assert.equal(row.dashboardThemeAsset?.leaseId, null);
+      assert.equal((await request("GET", personalPath, undefined, auth(teacher))).body.dashboardThemeAsset, null);
+      assert.equal((await rawRequest("GET", `${assetPath}/${reserved.body.asset.id}/content`, auth(teacher))).status, 404, "a reservation has no bytes");
+      assert.deepEqual((await state()).preferences.filter(row => row.teacherId !== teacher.id), before.preferences);
     });
   });
 

@@ -15,13 +15,15 @@ import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch } from "../realtime/ws-redis.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
-import { dashboardThemeSchema, dashboardThemesEnabled } from "./classpilotThemes.js";
+import { appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled,
+  readSchoolAppearance } from "./classpilotThemes.js";
+import { themeAssetStoreConfigured } from "./classpilotThemeAssetStore.js";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Executor = Pick<typeof db, "select">;
 export type SettingsActor = { schoolId: string; actorId: string };
 const teacherRoles = ["teacher", "admin", "school_admin"];
-const adminRoles = ["admin", "school_admin"];
+export const adminRoles = ["admin", "school_admin"];
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 const tabLimit = z.number().int().min(1).max(100).nullable();
 const rules = z.array(z.string().trim().min(1).max(2048)).max(1000).transform(values => [...new Set(values)]);
@@ -39,6 +41,7 @@ const schemas = {
   email: z.object({ expectedVersion: version, centralEmailRecipientUserId: z.string().trim().min(1).nullable() }).strict(),
   rosterGrades: z.object({ expectedVersion: version, gradeLevels: z.array(z.string().trim().min(1).max(40)).max(50)
     .transform(values => [...new Set(values)]) }).strict(),
+  appearance: appearanceSectionSchema,
 };
 export type SchoolSettingsSection = keyof typeof schemas;
 // Teaching tools sends both personal fields; the dashboard quick switch sends
@@ -63,7 +66,7 @@ function readTabLimit(value: unknown): number | null {
   return Number.isInteger(number) && number >= 1 && number <= 100 ? number : null;
 }
 
-async function authorize(tx: Transaction, scope: SettingsActor, admin: boolean, write = false): Promise<string> {
+export async function authorize(tx: Transaction, scope: SettingsActor, admin: boolean, write = false): Promise<string> {
   if (write && !await lockStaffAssignmentLifecycleSchool(tx, scope.schoolId)) {
     throw new ClasspilotSettingsError("School is unavailable.", 403, "CLASSPILOT_NOT_ENTITLED");
   }
@@ -80,22 +83,33 @@ async function authorize(tx: Transaction, scope: SettingsActor, admin: boolean, 
   return actor.isSuperAdmin ? "super_admin" : memberships[0]!.role;
 }
 
-async function preferenceDto(executor: Executor, scope: SettingsActor) {
+export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   const [own] = await executor.select().from(classpilotTeacherPreferences).where(and(
     eq(classpilotTeacherPreferences.schoolId, scope.schoolId), eq(classpilotTeacherPreferences.teacherId, scope.actorId),
   ));
-  const [school] = await executor.select({ maxTabsPerStudent: settings.maxTabsPerStudent }).from(settings)
-    .where(eq(settings.schoolId, scope.schoolId));
+  const [school] = await executor.select({ maxTabsPerStudent: settings.maxTabsPerStudent, appearance: settings.appearance })
+    .from(settings).where(eq(settings.schoolId, scope.schoolId));
   const maxTabsPerStudent = own?.maxTabsPerStudent ?? null;
   const schoolMaxTabsPerStudent = readTabLimit(school?.maxTabsPerStudent);
-  // School default and lock arrive with admin governance; until then the
-  // effective theme is the teacher's own. Uploads are a later phase.
+  const appearance = readSchoolAppearance(school?.appearance);
+  const themesEnabled = dashboardThemesEnabled() && appearance.teacherThemesEnabled;
+  const uploadsEnabled = themesEnabled && appearance.teacherUploadsEnabled && themeAssetStoreConfigured();
   const dashboardTheme = own?.dashboardTheme ?? null;
+  const asset = own?.dashboardThemeAsset?.status === "ready" ? own.dashboardThemeAsset : null;
+  // The teacher's own theme counts only while teacher themes are allowed; an
+  // image additionally needs uploads allowed and its bytes ready. Otherwise the
+  // school default applies, and nothing applies while the launch gate is off.
+  const ownCounts = themesEnabled && dashboardTheme !== null
+    && (dashboardTheme.kind !== "image" || (uploadsEnabled && asset?.id === dashboardTheme.imageAssetId));
+  const effectiveDashboardTheme = !dashboardThemesEnabled() ? null
+    : appearance.lockToSchoolTheme || !ownCounts ? appearance.schoolDefaultTheme : dashboardTheme;
   return { schoolId: scope.schoolId, revision: own?.revision ?? 0, maxTabsPerStudent,
     schoolMaxTabsPerStudent, effectiveMaxTabsPerStudent: maxTabsPerStudent ?? schoolMaxTabsPerStudent,
-    dashboardTheme, effectiveDashboardTheme: dashboardTheme,
-    dashboardThemesEnabled: dashboardThemesEnabled(), dashboardThemeUploadsEnabled: false };
+    dashboardTheme, schoolDashboardTheme: appearance.schoolDefaultTheme, dashboardThemeLocked: appearance.lockToSchoolTheme,
+    effectiveDashboardTheme, dashboardThemesEnabled: themesEnabled, dashboardThemeUploadsEnabled: uploadsEnabled,
+    dashboardThemeAsset: asset ? dashboardThemeAssetSummary(asset) : null };
 }
+export type TeacherPreferencesDto = Awaited<ReturnType<typeof preferenceDto>>;
 export function getClasspilotTeacherPreferences(scope: SettingsActor) {
   return db.transaction(async tx => { await authorize(tx, scope, false); return preferenceDto(tx, scope); });
 }
@@ -106,13 +120,24 @@ export function updateClasspilotTeacherPreferences(scope: SettingsActor, body: u
     ...(input.dashboardTheme === undefined ? {} : { dashboardTheme: input.dashboardTheme }) };
   return db.transaction(async tx => {
     await authorize(tx, scope, false, true);
-    if (input.dashboardTheme !== undefined && !dashboardThemesEnabled()) {
-      throw new ClasspilotSettingsError("Dashboard themes are not available yet.", 409, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
-    }
-    if (input.dashboardTheme?.kind === "image") {
-      throw new ClasspilotSettingsError("Custom background uploads are not available yet.", 409, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
-    }
     const current = await preferenceDto(tx, scope);
+    // Governance refusals come before the revision check and never write.
+    if (input.dashboardTheme !== undefined) {
+      if (!current.dashboardThemesEnabled) {
+        throw new ClasspilotSettingsError("Dashboard themes are not available at this school.", 409, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
+      }
+      if (current.dashboardThemeLocked) {
+        throw new ClasspilotSettingsError("Your school uses one dashboard theme for everyone.", 409, "CLASSPILOT_DASHBOARD_THEME_LOCKED");
+      }
+      if (input.dashboardTheme?.kind === "image") {
+        if (!current.dashboardThemeUploadsEnabled) {
+          throw new ClasspilotSettingsError("Custom background uploads are not available at this school.", 409, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
+        }
+        if (current.dashboardThemeAsset?.id !== input.dashboardTheme.imageAssetId) {
+          throw new ClasspilotSettingsError("Upload a background image before choosing it.", 409, "CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING");
+        }
+      }
+    }
     if (current.revision !== input.expectedRevision) {
       throw new ClasspilotSettingsError("Your teaching defaults changed. Review the latest values before saving.", 409, "CLASSPILOT_PREFERENCES_CONFLICT", current);
     }
@@ -141,6 +166,7 @@ function valuesFor(section: SchoolSettingsSection, row: Settings) {
     case "signIn": return { sharedChromebookSignInEnabled: row.sharedChromebookSignInEnabled };
     case "email": return { centralEmailRecipientUserId: row.centralEmailRecipientUserId };
     case "rosterGrades": return { gradeLevels: row.gradeLevels ?? [] };
+    case "appearance": return { ...readSchoolAppearance(row.appearance) };
   }
 }
 function sectionDto(schoolId: string, section: SchoolSettingsSection, row: Settings) {
@@ -215,6 +241,7 @@ export async function updateClasspilotSchoolSettings(scope: SettingsActor, secti
       }
       case "email": { const value = parse(schemas.email, body); if (value.centralEmailRecipientUserId) await assertRecipient(tx, scope.schoolId, value.centralEmailRecipientUserId); patch = { centralEmailRecipientUserId: value.centralEmailRecipientUserId }; break; }
       case "rosterGrades": { const value = parse(schemas.rosterGrades, body); patch = { gradeLevels: value.gradeLevels }; break; }
+      case "appearance": { const { expectedVersion: _version, ...value } = parse(schemas.appearance, body); patch = { appearance: value }; break; }
     }
     const [next] = await tx.update(settings).set(patch).where(eq(settings.schoolId, scope.schoolId)).returning();
     await tx.insert(auditLogs).values({ schoolId: scope.schoolId, userId: scope.actorId, userRole: actorRole,

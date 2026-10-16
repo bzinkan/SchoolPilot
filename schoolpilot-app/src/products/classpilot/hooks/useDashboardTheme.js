@@ -19,7 +19,8 @@ export function useDashboardTheme({ schoolId, viewerId, enabled = true, timeZone
   });
   const preferences = query.data ?? null;
   const themesEnabled = preferences?.dashboardThemesEnabled === true;
-  const active = resolveDashboardTheme(preferences?.effectiveDashboardTheme ?? preferences?.dashboardTheme, { enabled: themesEnabled, timeZone });
+  const active = resolveDashboardTheme(preferences?.effectiveDashboardTheme ?? preferences?.dashboardTheme,
+    { enabled: themesEnabled, timeZone, schoolId, uploadsEnabled: preferences?.dashboardThemeUploadsEnabled === true });
   const { setDashboardThemeActive } = useTheme();
   const activeId = active?.id ?? null;
   // Child effects run before the provider's, so the provider's own effect

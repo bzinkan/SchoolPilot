@@ -208,6 +208,18 @@
 .tile-ornament-snowcap { top: -7px; left: -2px; width: calc(100% + 4px); height: 16px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18)); }
 .tile-ornament-snowcap .flake { position: absolute; top: 10px; right: 44px; width: 18px; height: 18px; color: #7dd3fc; }
 
+/* A teacher's own uploaded background: neutral charcoal glass that reads over
+   any picture, SchoolPilot amber kept for the mark and the active rail. */
+[data-theme="image"] {
+  --chrome-fg: #f1f5f9; --chrome-fg-soft: #e2e8f0; --chrome-subtle: #cbd5e1; --chrome-muted: #cbd5e1;
+  --sidetab-bg: #0f172a; --sidetab-hover: #1e293b;
+  --surface-glass: rgba(15, 23, 42, 0.66); --toolbar-glass: rgba(15, 23, 42, 0.5); --stat-glass: rgba(15, 23, 42, 0.55);
+  --rail-box-bg: rgba(255, 255, 255, 0.06); --rail-box-border: rgba(251, 191, 36, 0.45);
+  --rail-on-bg: #fbbf24; --rail-on-border: #f59e0b; --rail-on-hover: #fcd34d; --rail-on-fg: #0f172a;
+  --rail-off-bg: rgba(255, 255, 255, 0.1); --rail-off-border: rgba(255, 255, 255, 0.3); --rail-off-hover: rgba(255, 255, 255, 0.18); --rail-off-fg: #f1f5f9;
+  --rail-ring: #fbbf24; --rail-count-ring: rgba(0, 0, 0, 0.2);
+}
+
 /* ─── Phase 3 presets ────────────────────────────────────────────────── */
 [data-theme="valentines"] {
   --brand: #fb7185; --brand-strong: #e11d48; --brand-soft: #fecdd3; --brand-fg: #881337;

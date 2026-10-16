@@ -165,3 +165,18 @@ test('maintenance compatibility and real shell settings stay clear on desktop an
   await page.getByRole('button', { name: 'Admin menu', exact: true }).click(); await page.getByRole('dialog').getByRole('link', { name: 'Staff notifications', exact: true }).click();
   await page.getByRole('heading', { level: 1, name: 'Staff notifications' }).waitFor(); await page.screenshot({ path: path.join(artifacts, 'notifications-settings-mobile.png'), fullPage: true }); assert.deepEqual(state.errors, []);
 });
+
+test('Appearance saves the school theme governance as one versioned section', { timeout: 60000 }, async t => {
+  const { page, state } = await fixture(t, '/classpilot/settings?section=appearance');
+  await page.getByTestId('appearance-settings').waitFor();
+  await page.getByLabel('Lock everyone to the school theme', { exact: false }).check();
+  await page.getByLabel('School theme', { exact: true }).selectOption('halloween');
+  await page.getByLabel('Allow custom background uploads', { exact: false }).check();
+  await page.getByRole('button', { name: 'Save dashboard themes', exact: true }).click();
+  await page.getByText('Changes saved.', { exact: true }).waitFor();
+  assert.deepEqual(state.writes.at(-1), { pathname: '/api/classpilot/admin/settings/appearance', method: 'PATCH', schoolId: 'school-a', body: {
+    expectedVersion: 'appearance-1', teacherThemesEnabled: true, teacherUploadsEnabled: true, kioskCustomBackgrounds: false, lockToSchoolTheme: true,
+    schoolDefaultTheme: { kind: 'preset', preset: 'halloween' } } });
+  assert.equal(state.settings.sections.appearance.version, 'appearance-1-next');
+  assert.deepEqual(state.errors, []);
+});

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, describe, it } from "node:test";
-import { DASHBOARD_THEME_PRESET_IDS, dashboardThemeSchema, dashboardThemesEnabled } from "../src/services/classpilotThemes.js";
+import { DASHBOARD_THEME_ASSET_INPUT_TYPES, DASHBOARD_THEME_ASSET_MAX_BYTES, DASHBOARD_THEME_ASSET_MAX_EDGE,
+  DASHBOARD_THEME_PRESET_IDS, DEFAULT_SCHOOL_APPEARANCE, appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema,
+  dashboardThemesEnabled, presetThemeSchema, readSchoolAppearance, type DashboardThemeAsset } from "../src/services/classpilotThemes.js";
 
 const originalGate = process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED;
 afterEach(() => {
@@ -29,6 +31,16 @@ describe("ClassPilot dashboard theme model", () => {
   it("accepts a well-formed image theme at the model layer", () => {
     const imageAssetId = randomUUID();
     assert.deepEqual(dashboardThemeSchema.parse({ kind: "image", imageAssetId, name: "Mascot" }), { kind: "image", imageAssetId, name: "Mascot" });
+  });
+
+  it("stores the personal kiosk switch as-is on both variants and nowhere else", () => {
+    const imageAssetId = randomUUID();
+    assert.deepEqual(dashboardThemeSchema.parse({ kind: "preset", preset: "fall", kiosk: false }), { kind: "preset", preset: "fall", kiosk: false });
+    assert.deepEqual(dashboardThemeSchema.parse({ kind: "image", imageAssetId, kiosk: true }), { kind: "image", imageAssetId, kiosk: true });
+    assert.equal("kiosk" in dashboardThemeSchema.parse({ kind: "preset", preset: "fall" }), false, "absent stays absent (means true)");
+    assert.equal(dashboardThemeSchema.safeParse({ kind: "preset", preset: "fall", kiosk: "yes" }).success, false);
+    // A school default has no personal kiosk switch.
+    assert.equal(presetThemeSchema.safeParse({ kind: "preset", preset: "fall", kiosk: true }).success, false);
   });
 
   it("rejects unknown presets, bad labels, extra or reserved fields and malformed images", () => {
@@ -61,7 +73,67 @@ describe("ClassPilot dashboard theme model", () => {
   it("matches the frontend preset catalog when it is present", t => {
     const catalog = new URL("../schoolpilot-app/src/shared/themes/presets.js", import.meta.url);
     if (!existsSync(catalog)) return t.skip("frontend catalog not in this checkout");
-    const ids = [...readFileSync(catalog, "utf8").matchAll(/\bid:\s*["']([a-z-]+)["']/g)].map(match => match[1]);
+    // Only the preloaded catalog entries count: the frontend also describes the
+    // teacher-uploaded "image" look with an id, which is not a preset.
+    const source = readFileSync(catalog, "utf8");
+    const block = source.match(/const PRESETS = Object\.freeze\(\[([\s\S]*?)\n\]\);/)?.[1] ?? "";
+    assert.ok(block, "the frontend catalog keeps its PRESETS array");
+    const ids = [...block.matchAll(/\bid:\s*["']([a-z-]+)["']/g)].map(match => match[1]);
     assert.deepEqual(ids, [...DASHBOARD_THEME_PRESET_IDS]);
+    assert.match(source, /id: 'image'/, "the uploaded-image look keeps its own id outside the preset list");
+  });
+});
+
+describe("ClassPilot school appearance governance", () => {
+  const defaults = { teacherThemesEnabled: true, teacherUploadsEnabled: false, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null };
+
+  it("reads defaults from anything that is not a stored object", () => {
+    assert.deepEqual({ ...DEFAULT_SCHOOL_APPEARANCE }, defaults);
+    for (const stored of [null, undefined, {}, [], "appearance", 7, true]) assert.deepEqual(readSchoolAppearance(stored), defaults, JSON.stringify(stored) ?? "undefined");
+    assert.notEqual(readSchoolAppearance(null), DEFAULT_SCHOOL_APPEARANCE, "callers get their own copy");
+  });
+
+  it("keeps valid flags and a preset default, and drops anything else field by field", () => {
+    assert.deepEqual(readSchoolAppearance({ teacherThemesEnabled: false, teacherUploadsEnabled: true, kioskCustomBackgrounds: true,
+      lockToSchoolTheme: true, schoolDefaultTheme: { kind: "preset", preset: "winter", name: "School" } }),
+    { teacherThemesEnabled: false, teacherUploadsEnabled: true, kioskCustomBackgrounds: true, lockToSchoolTheme: true,
+      schoolDefaultTheme: { kind: "preset", preset: "winter", name: "School" } });
+    assert.deepEqual(readSchoolAppearance({ teacherThemesEnabled: "false", teacherUploadsEnabled: 1, lockToSchoolTheme: null, extra: true,
+      schoolDefaultTheme: { kind: "image", imageAssetId: randomUUID() } }), defaults, "garbage flags and an image default fall back");
+    assert.equal(readSchoolAppearance({ schoolDefaultTheme: { kind: "preset", preset: "retired-preset" } }).schoolDefaultTheme, null);
+    assert.equal(readSchoolAppearance({ schoolDefaultTheme: { kind: "preset", preset: "fall", kiosk: true } }).schoolDefaultTheme, null, "no personal switch on a school default");
+  });
+
+  it("validates the appearance section strictly with a preset-only default", () => {
+    const expectedVersion = "a".repeat(64);
+    const section = { expectedVersion, ...defaults, schoolDefaultTheme: { kind: "preset", preset: "spring" } };
+    assert.deepEqual(appearanceSectionSchema.parse(section), section);
+    assert.equal(appearanceSectionSchema.safeParse({ expectedVersion, ...defaults }).success, true);
+    const rejected: unknown[] = [
+      { ...section, schoolDefaultTheme: { kind: "image", imageAssetId: randomUUID() } },
+      { ...section, schoolDefaultTheme: { kind: "preset", preset: "bengals" } },
+      { ...section, schoolDefaultTheme: { kind: "preset", preset: "spring", kiosk: true } },
+      { ...section, expectedVersion: "stale" }, { ...section, teacherThemesEnabled: "true" }, { ...section, schoolId: randomUUID() },
+      { ...defaults }, { expectedVersion, teacherThemesEnabled: true },
+    ];
+    for (const body of rejected) assert.equal(appearanceSectionSchema.safeParse(body).success, false, JSON.stringify(body));
+  });
+});
+
+describe("ClassPilot dashboard theme asset model", () => {
+  it("fixes the upload limits and input types", () => {
+    assert.equal(DASHBOARD_THEME_ASSET_MAX_BYTES, 6 * 1024 * 1024);
+    assert.equal(DASHBOARD_THEME_ASSET_MAX_EDGE, 2560);
+    assert.deepEqual([...DASHBOARD_THEME_ASSET_INPUT_TYPES], ["image/png", "image/jpeg", "image/webp"]);
+  });
+
+  it("summarizes an asset without its storage key, lease or input hashes", () => {
+    const asset: DashboardThemeAsset = { id: randomUUID(), status: "ready", storageKey: "classpilot/themes/s/t/a", contentType: "image/webp",
+      byteSize: 1234, sha256: "b".repeat(64), width: 2560, height: 1440, inputSha256: "c".repeat(64), inputContentType: "image/png",
+      inputByteSize: 99999, leaseId: null, leaseUntil: null, createdAt: "2026-10-16T00:00:00.000Z", readyAt: "2026-10-16T00:00:01.000Z", replaces: null };
+    assert.deepEqual(dashboardThemeAssetSummary(asset), { id: asset.id, status: "ready", contentType: "image/webp", byteSize: 1234, width: 2560, height: 1440 });
+    assert.deepEqual(dashboardThemeAssetSummary({ ...asset, status: "reserved", width: undefined, height: undefined }),
+      { id: asset.id, status: "reserved", contentType: "image/webp", byteSize: 1234, width: null, height: null });
+    for (const secret of ["storageKey", "leaseId", "inputSha256", "sha256", "replaces"]) assert.equal(secret in dashboardThemeAssetSummary(asset), false, secret);
   });
 });

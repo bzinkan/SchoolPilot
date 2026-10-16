@@ -7608,6 +7608,7 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       dark: document.documentElement.classList.contains('dark'),
       theme: document.querySelector('[data-theme]')?.dataset.theme ?? null,
       ornaments: document.querySelectorAll('.tile-ornament').length,
+      pageImage: document.querySelector('[data-theme]')?.style.getPropertyValue('--page-image') ?? '',
       leaked: document.querySelectorAll('body > [data-theme], html[data-theme]').length,
     }));
     const toggleLocked = await page.getByTestId('button-theme-toggle').getAttribute('aria-disabled');
@@ -7632,4 +7633,10 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   const geometry = ({ text: _text, ...rest }) => rest;
   assert.deepEqual(themed.tiles.map(geometry), plain.tiles.map(geometry), 'tile geometry is identical with and without a theme');
   assert.deepEqual(themed.tiles.map(tile => tile.text), plain.tiles.map(tile => tile.text), 'tile copy, badges and status labels are identical');
+  const image = { kind: 'image', imageAssetId: '11111111-1111-4111-8111-aaaaaaaaaaaa' };
+  const uploaded = await measure({ schoolId: SCHOOL_ID, revision: 4, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
+    dashboardTheme: image, effectiveDashboardTheme: image, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: true });
+  assert.equal(uploaded.document.theme, 'image', 'an uploaded background uses the neutral image look');
+  assert.match(uploaded.document.pageImage, /\/api\/classpilot\/teacher\/theme-asset\/11111111-1111-4111-8111-aaaaaaaaaaaa\/content\?schoolId=/, 'the background is fetched through the authenticated asset route with the school in the query');
+  assert.deepEqual(uploaded.tiles.map(geometry), plain.tiles.map(geometry), 'an uploaded background changes no tile geometry either');
 });

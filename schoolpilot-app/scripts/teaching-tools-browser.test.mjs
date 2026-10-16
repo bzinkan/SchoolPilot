@@ -54,14 +54,15 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: null, effectiveDashboardTheme: null, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: false }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
+  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: null, effectiveDashboardTheme: null, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
   state.precise = precise;
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), schoolId = req.headers()['x-school-id'];
-    const body = req.method() === 'GET' ? null : req.postDataJSON();
+    let body = null;
+    if (req.method() !== 'GET') { try { body = req.postDataJSON(); } catch { body = null; } }
     state.requests.push({ method: req.method(), path: url.pathname, search: url.search, schoolId, body });
     if (url.pathname.endsWith('/preview-resources')) {
       if (state.holdPreview) await new Promise(resolve => { state.releasePreview = resolve; });
@@ -80,6 +81,13 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
         warnings: domains.map(hostname => ({ hostname, code: 'BROADER_WEBSITE', message: `${hostname} allows other pages. Specific entries alongside it do not narrow that broader access.` })),
         skipped: state.skipped || [], authoring: { allowedDomains: domains, resources: canonical, ...(body.purpose === 'classroom' ? { resourceLinks: body.boundary === 'website' ? domains.map(domain => `https://${domain}`) : canonical.map(item => item.url) } : {}) },
       } });
+    }
+    if (url.pathname.includes('/teacher/theme-asset')) {
+      if (req.method() === 'POST') { state.assetReserve = body; state.asset = { id: 'asset-1', status: 'reserved', contentType: body.contentType, byteSize: body.size }; return route.fulfill({ status: 201, json: { asset: state.asset } }); }
+      if (req.method() === 'PUT') { state.uploadContentType = req.headers()['content-type']; state.asset = { id: 'asset-1', status: 'ready', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 };
+        state.preference = { ...state.preference, dashboardThemeAsset: { id: 'asset-1', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 } }; return route.fulfill({ json: { asset: state.asset } }); }
+      if (req.method() === 'DELETE') { state.preference = { ...state.preference, dashboardThemeAsset: null, dashboardTheme: null, effectiveDashboardTheme: null, revision: state.preference.revision + 1 }; return route.fulfill({ json: { preferences: { schoolId, ...state.preference } } }); }
+      return route.fulfill({ status: 200, contentType: 'image/png', body: TINY_PNG });
     }
     if (url.pathname.endsWith('/teacher/preferences')) {
       if (req.method() === 'PATCH') {
@@ -557,4 +565,32 @@ test('Appearance saves a personal dashboard theme through the preference writer 
     assert.deepEqual(writes(off.state), []);
     assert.deepEqual(off.state.errors, []);
   } finally { await off.page.close(); }
+});
+
+const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+test('a teacher uploads one background through reserve and content, then saves it as the image theme; a school lock hides the editor', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=appearance', uploads: true });
+  try {
+    await page.getByTestId('card-dashboard-theme').waitFor();
+    await page.getByTestId('input-dashboard-theme-file').setInputFiles({ name: 'mascot.png', mimeType: 'image/png', buffer: TINY_PNG });
+    await page.getByText('Background ready. Save to use it.', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('dashboard-theme-choice-image').getAttribute('aria-checked'), 'true');
+    assert.ok(state.assetReserve && /^image\/(webp|jpeg)$/.test(state.assetReserve.contentType), 'the browser downsizes to WebP or JPEG before reserving');
+    assert.ok(/^image\/(webp|jpeg)/.test(state.uploadContentType || ''), 'the bytes are sent with the prepared image type');
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
+    assert.deepEqual(writes(state).filter(row => row.method === 'PATCH').map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'image', imageAssetId: 'asset-1' } }]);
+    await page.getByTestId('button-remove-dashboard-background').click();
+    await page.getByText('Background removed.', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('dashboard-theme-choice-image').count(), 0);
+    assert(!state.requests.some(row => row.path.includes('/commands')), 'themes never send a student command');
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+  const locked = await open({ route: '/classpilot/my-settings?section=appearance', locked: true });
+  try {
+    await locked.page.getByTestId('dashboard-theme-locked').waitFor();
+    assert.equal(await locked.page.getByTestId('dashboard-theme-choice-halloween').count(), 0);
+    assert.deepEqual(writes(locked.state), []);
+    assert.deepEqual(locked.state.errors, []);
+  } finally { await locked.page.close(); }
 });

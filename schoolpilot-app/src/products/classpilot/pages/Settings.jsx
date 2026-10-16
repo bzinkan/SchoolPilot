@@ -16,6 +16,7 @@ import MonitoringHoursSettings from '../components/MonitoringHoursSettings';
 import { MonitoringDigestSettings } from '../components/MonitoringInterruptionsPanel';
 import SchoolDataMaintenance from '../components/admin/SchoolDataMaintenance';
 import { SETTINGS_SECTIONS } from '../lib/adminNavigation';
+import { DASHBOARD_THEME_PRESETS } from '../../../shared/themes/presets';
 
 const API = '/classpilot/admin/settings';
 const fieldLabels = {
@@ -24,6 +25,7 @@ const fieldLabels = {
   signIn: { sharedChromebookSignInEnabled: 'Shared Chromebook sign-in' },
   email: { centralEmailRecipientUserId: 'Copy recipient' },
   retention: { retentionHours: 'Retention in hours' },
+  appearance: { teacherThemesEnabled: 'Teacher dashboard themes', teacherUploadsEnabled: 'Custom background uploads', kioskCustomBackgrounds: 'Custom backgrounds on kiosks', lockToSchoolTheme: 'Lock to the school theme', schoolDefaultThemePreset: 'School theme' },
 };
 const normalizeDomain = value => value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0].split(':')[0];
 
@@ -53,6 +55,45 @@ function SectionEditor({ section, settings, schoolId, queryKey, title, descripti
     && (!Number.isInteger(Number(editor.draft.maxTabsPerStudent)) || Number(editor.draft.maxTabsPerStudent) < 1 || Number(editor.draft.maxTabsPerStudent) > 100)
     || section === 'retention' && (!Number.isInteger(Number(editor.draft.retentionHours)) || Number(editor.draft.retentionHours) < 24 || Number(editor.draft.retentionHours) > 8760);
   return <SettingsCard title={title} description={description}><fieldset disabled={editor.busy} className="min-w-0 space-y-4">{children(editor)}</fieldset><SettingsSaveState editor={editor} labels={labels} saveLabel={saveLabel} version={version} invalid={invalid} formatValue={formatValue} /></SettingsCard>;
+}
+
+const APPEARANCE_FIELDS = ['teacherThemesEnabled', 'teacherUploadsEnabled', 'kioskCustomBackgrounds', 'lockToSchoolTheme', 'schoolDefaultThemePreset'];
+// The draft keeps the school theme as a preset id so the shared draft hook can compare plain values.
+const decorateAppearance = section => ({ ...section, schoolDefaultThemePreset: section?.schoolDefaultTheme?.kind === 'preset' ? section.schoolDefaultTheme.preset : '' });
+
+function AppearanceEditor({ settings, schoolId, queryKey }) {
+  const source = useMemo(() => decorateAppearance(settings.sections.appearance), [settings.sections.appearance]);
+  const editor = useSettingsDraft({ id: 'school-settings-appearance', source, fields: APPEARANCE_FIELDS,
+    save: async (draft, baseline) => {
+      const { schoolDefaultThemePreset, ...flags } = draft;
+      const saved = await apiRequest('PATCH', `${API}/appearance`, { ...flags, schoolDefaultTheme: schoolDefaultThemePreset ? { kind: 'preset', preset: schoolDefaultThemePreset } : null, expectedVersion: baseline.version }, { headers: { 'X-School-Id': schoolId } });
+      return decorateAppearance(saved);
+    },
+    refresh: async () => decorateAppearance((await apiRequest('GET', API, undefined, { headers: { 'X-School-Id': schoolId } })).sections.appearance),
+    onSaved: saved => {
+      const { schoolDefaultThemePreset: _preset, ...section } = saved;
+      queryClient.setQueryData(queryKey, current => current && ({ ...current, sections: { ...current.sections, appearance: section } }));
+      // Teachers' effective theme depends on these switches.
+      void queryClient.invalidateQueries({ queryKey: ['/api/classpilot/teacher/preferences', schoolId] });
+    },
+  });
+  const flag = (field, label, help) => <label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={editor.draft[field] === true} onChange={event => editor.update(field, event.target.checked)} /><span><span className="font-medium">{label}</span>{help && <span className="block text-muted-foreground">{help}</span>}</span></label>;
+  const presetLabel = id => DASHBOARD_THEME_PRESETS.find(preset => preset.id === id)?.label || 'Default';
+  return <SettingsCard title="Dashboard themes" description="Teachers may personalize their own ClassPilot dashboard. Student status colors, badges and layout never change.">
+    <fieldset disabled={editor.busy} className="min-w-0 space-y-4" data-testid="appearance-settings">
+      {flag('teacherThemesEnabled', 'Allow teacher dashboard themes', 'Preloaded holiday and seasonal looks, visible only to the teacher who picks one.')}
+      {flag('teacherUploadsEnabled', 'Allow custom background uploads', 'A teacher may upload one image for their own dashboard. Images are re-encoded and stripped of metadata.')}
+      {flag('kioskCustomBackgrounds', 'Show custom backgrounds on kiosks', 'Preloaded themes always follow a teacher onto their kiosk; uploaded images only when this is on.')}
+      <div className="max-w-sm space-y-2"><Label htmlFor="school-default-theme">School theme</Label>
+        <select id="school-default-theme" className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm" value={editor.draft.schoolDefaultThemePreset || ''} onChange={event => editor.update('schoolDefaultThemePreset', event.target.value)}>
+          <option value="">Default (none)</option>
+          {DASHBOARD_THEME_PRESETS.filter(preset => preset.ready).map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+        </select>
+        <p className="text-sm text-muted-foreground">Used by teachers who have not picked a theme, and by kiosks not bound to a teacher.</p></div>
+      {flag('lockToSchoolTheme', 'Lock everyone to the school theme', 'Overrides every teacher\'s choice on dashboards and kiosks, for spirit weeks or a uniform look.')}
+    </fieldset>
+    <SettingsSaveState editor={editor} labels={fieldLabels.appearance} saveLabel="Save dashboard themes" formatValue={(field, value) => field === 'schoolDefaultThemePreset' ? presetLabel(value) : value === true ? 'On' : value === false ? 'Off' : 'None'} />
+  </SettingsCard>;
 }
 
 function StaffSignIn({ school, schoolId, refetchUser }) {
@@ -153,6 +194,9 @@ function SettingsWorkspace({ currentUser, school, refetchUser }) {
       <SectionEditor {...common} section="signIn" title="Shared Chromebook sign-in" description="Identify students on shared Chromebooks using Grade, Name, and a four-digit PIN." saveLabel="Save shared Chromebook sign-in">{editor => <label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={editor.draft.sharedChromebookSignInEnabled} onChange={event => editor.update('sharedChromebookSignInEnabled', event.target.checked)} />Enable shared Chromebook sign-in</label>}</SectionEditor>
       <EnrollmentKey schoolId={schoolId} viewerId={currentUser.id} />
       <p className="text-sm text-muted-foreground">Configure the starting website and approved identity providers separately in <Link className="underline" to="/classpilot/admin?tab=student-portal">Student portal</Link>. Deployment checks are in <Link className="underline" to="/classpilot/admin/it-readiness">Integrations &amp; IT readiness</Link>.</p>
+    </section>
+    <section hidden={section !== 'appearance'} aria-label="Appearance" className="space-y-5">
+      <AppearanceEditor {...common} />
     </section>
     <section hidden={section !== 'data'} aria-label="Data and maintenance" className="space-y-5">
       <SectionEditor {...common} section="retention" title="Student activity-history retention" description="Choose how long ClassPilot keeps activity data before automatic deletion." saveLabel="Save activity-history retention">{editor => <><Label htmlFor="retention-days">Student activity-history retention (days)</Label><Input id="retention-days" type="number" min="1" max="365" value={editor.draft.retentionHours === '' ? '' : Number(editor.draft.retentionHours) / 24} onChange={event => editor.update('retentionHours', event.target.value === '' ? '' : String(Number(event.target.value) * 24))} /><p className="text-sm text-muted-foreground">Choose 1 to 365 days. This setting applies to activity retention, not private notebooks, school discipline records, or student contact history.</p></>}</SectionEditor>
