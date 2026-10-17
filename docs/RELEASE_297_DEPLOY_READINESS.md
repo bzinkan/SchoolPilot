@@ -10,7 +10,11 @@ does not replace or relabel any historical receipt.
 
 The [Linux acceptance runner proposal](USAGE_LINUX_ACCEPTANCE_RUNNER_PLAN.md)
 prepares costs, private evidence custody and exact artifact bindings for review.
-It preserves every gate below and does not authorize paid provisioning or execution.
+It preserves every gate below. The separately recorded
+[October 12 implementation successor](USAGE_LINUX_ACCEPTANCE_RUNNER_IMPLEMENTATION.md)
+records the owner's later one-attempt $15 pre-tax runner authorization, implemented
+controls and remaining authentication/native-admission holds. The proposal itself
+and historical failed campaigns remain unchanged; no production operation is authorized.
 
 ## October 4 merge and operator-tool follow-up
 
