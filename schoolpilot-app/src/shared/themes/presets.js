@@ -26,17 +26,17 @@ export const DASHBOARD_THEME_PRESET_IDS = Object.freeze([
 // retired without breaking stored values.
 // `clearance` is the extra room an ornament that rises above the tile needs.
 const PRESETS = Object.freeze([
-  Object.freeze({ id: 'halloween', label: 'Halloween', ready: true, artwork: '/themes/halloween.svg', ornament: 'cobweb', clearance: 'none' }),
-  Object.freeze({ id: 'thanksgiving', label: 'Thanksgiving', ready: true, artwork: '/themes/thanksgiving.svg', ornament: 'turkey', clearance: 'md' }),
-  Object.freeze({ id: 'christmas', label: 'Christmas', ready: true, artwork: '/themes/christmas.svg', ornament: 'lights', clearance: 'sm' }),
-  Object.freeze({ id: 'advent', label: 'Advent', ready: true, artwork: '/themes/advent.svg', ornament: 'none', clearance: 'none' }),
-  Object.freeze({ id: 'valentines', label: "Valentine's Day", ready: true, artwork: '/themes/valentines.svg', ornament: 'hearts', clearance: 'sm' }),
-  Object.freeze({ id: 'st-patricks', label: "St. Patrick's Day", ready: true, artwork: '/themes/st-patricks.svg', ornament: 'shamrock', clearance: 'sm' }),
-  Object.freeze({ id: 'easter', label: 'Easter', ready: true, artwork: '/themes/easter.svg', ornament: 'ears', clearance: 'md' }),
-  Object.freeze({ id: 'spring', label: 'Spring', ready: true, artwork: '/themes/spring.svg', ornament: 'daisy', clearance: 'sm' }),
-  Object.freeze({ id: 'summer', label: 'Summer', ready: true, artwork: '/themes/summer.svg', ornament: 'sun', clearance: 'sm' }),
-  Object.freeze({ id: 'fall', label: 'Fall', ready: true, artwork: '/themes/fall.svg', ornament: 'leaf', clearance: 'sm' }),
-  Object.freeze({ id: 'winter', label: 'Winter', ready: true, artwork: '/themes/winter.svg', ornament: 'snowcap', clearance: 'sm' }),
+  Object.freeze({ id: 'halloween', label: 'Halloween', ready: true, artwork: '/themes/halloween.webp', ornament: 'cobweb', clearance: 'none' }),
+  Object.freeze({ id: 'thanksgiving', label: 'Thanksgiving', ready: true, artwork: '/themes/thanksgiving.webp', ornament: 'turkey', clearance: 'md' }),
+  Object.freeze({ id: 'christmas', label: 'Christmas', ready: true, artwork: '/themes/christmas.webp', ornament: 'lights', clearance: 'sm' }),
+  Object.freeze({ id: 'advent', label: 'Advent', ready: true, artwork: '/themes/advent.webp', ornament: 'none', clearance: 'none' }),
+  Object.freeze({ id: 'valentines', label: "Valentine's Day", ready: true, artwork: '/themes/valentines.webp', ornament: 'hearts', clearance: 'sm' }),
+  Object.freeze({ id: 'st-patricks', label: "St. Patrick's Day", ready: true, artwork: '/themes/st-patricks.webp', ornament: 'shamrock', clearance: 'sm' }),
+  Object.freeze({ id: 'easter', label: 'Easter', ready: true, artwork: '/themes/easter.webp', ornament: 'ears', clearance: 'md' }),
+  Object.freeze({ id: 'spring', label: 'Spring', ready: true, artwork: '/themes/spring.webp', ornament: 'daisy', clearance: 'sm' }),
+  Object.freeze({ id: 'summer', label: 'Summer', ready: true, artwork: '/themes/summer.webp', ornament: 'sun', clearance: 'sm' }),
+  Object.freeze({ id: 'fall', label: 'Fall', ready: true, artwork: '/themes/fall.webp', ornament: 'leaf', clearance: 'sm' }),
+  Object.freeze({ id: 'winter', label: 'Winter', ready: true, artwork: '/themes/winter.webp', ornament: 'snowcap', clearance: 'sm' }),
 ]);
 
 export const DASHBOARD_THEME_PRESETS = PRESETS;

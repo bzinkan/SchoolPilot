@@ -48,6 +48,7 @@ import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, witho
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import DashboardThemeMenu from '../components/DashboardThemeMenu';
+import HeaderOrnament from '../components/HeaderOrnament';
 import { DashboardThemeContext } from '../contexts/DashboardThemeContext';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import '../dashboardThemes.css';
@@ -6830,13 +6831,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <path d="M24 28L26 34" stroke="var(--brand-fg)" strokeWidth="2.5" strokeLinecap="round"/>
               </svg>
               <div>
-                <h1 className="text-lg font-bold text-chrome-fg tracking-tight">ClassPilot</h1>
+                <h1 className="brand-wordmark text-lg font-bold text-chrome-fg tracking-tight">ClassPilot</h1>
                 <p className="text-xs text-chrome-muted">
                   {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
                   {currentUser?.schoolName && ' \u2022 '}
                   {isAdmin ? 'Admin Dashboard' : 'Teacher Dashboard'}
                 </p>
               </div>
+              <HeaderOrnament />
             </div>
             {/* Center: Status badges */}
             <div className="flex items-center gap-3">

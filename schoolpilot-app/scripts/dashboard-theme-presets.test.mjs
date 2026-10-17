@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -30,8 +30,10 @@ test('ready presets ship artwork under /themes/ and a known ornament and clearan
   const ready = readyDashboardThemePresets();
   assert.equal(ready.length, DASHBOARD_THEME_PRESET_IDS.length, 'every catalog preset ships');
   for (const preset of ready) {
-    assert.match(preset.artwork, /^\/themes\/[a-z-]+\.svg$/);
-    assert.ok(existsSync(path.join(appRoot, 'public', preset.artwork)), `${preset.artwork} must be shipped in public/`);
+    assert.match(preset.artwork, /^\/themes\/[a-z-]+\.webp$/);
+    const file = path.join(appRoot, 'public', preset.artwork);
+    assert.ok(existsSync(file), `${preset.artwork} must be shipped in public/`);
+    assert.ok(statSync(file).size <= 400 * 1024, `${preset.artwork} stays within the 400 KB artwork budget`);
     assert.ok(['none', 'cobweb', 'turkey', 'lights', 'hearts', 'shamrock', 'ears', 'daisy', 'sun', 'leaf', 'snowcap'].includes(preset.ornament));
     assert.ok(['none', 'sm', 'md'].includes(preset.clearance));
   }

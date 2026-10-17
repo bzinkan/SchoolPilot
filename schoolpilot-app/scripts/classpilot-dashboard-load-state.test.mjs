@@ -7610,6 +7610,9 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       ornaments: document.querySelectorAll('.tile-ornament').length,
       pageImage: document.querySelector('[data-theme]')?.style.getPropertyValue('--page-image') ?? '',
       leaked: document.querySelectorAll('body > [data-theme], html[data-theme]').length,
+      wordmarkFont: getComputedStyle(document.querySelector('.brand-wordmark')).fontFamily,
+      headerOrnaments: document.querySelectorAll('[data-testid="header-ornament"]').length,
+      headerHeight: Math.round(document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().height),
     }));
     const toggleLocked = await page.getByTestId('button-theme-toggle').getAttribute('aria-disabled');
     assert.deepEqual(harness.pageErrors, []);
@@ -7630,6 +7633,11 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   assert.equal(themed.document.leaked, 0, 'the theme attribute lives on the dashboard root, never on html or body');
   assert.ok(themed.tiles.length > 0);
   assert.equal(themed.document.ornaments, themed.tiles.length, 'one ornament per tile');
+  assert.equal(plain.document.headerOrnaments, 0);
+  assert.equal(themed.document.headerOrnaments, 1, 'the theme draws its mark beside the wordmark');
+  assert.match(themed.document.wordmarkFont, /Creepster/, 'the preset sets the wordmark in its display face');
+  assert.doesNotMatch(plain.document.wordmarkFont, /Creepster/);
+  assert.equal(themed.document.headerHeight, plain.document.headerHeight, 'the display face and the mark never change the header height');
   const geometry = ({ text: _text, ...rest }) => rest;
   assert.deepEqual(themed.tiles.map(geometry), plain.tiles.map(geometry), 'tile geometry is identical with and without a theme');
   assert.deepEqual(themed.tiles.map(tile => tile.text), plain.tiles.map(tile => tile.text), 'tile copy, badges and status labels are identical');
@@ -7637,6 +7645,7 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   const uploaded = await measure({ schoolId: SCHOOL_ID, revision: 4, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
     dashboardTheme: image, effectiveDashboardTheme: image, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: true });
   assert.equal(uploaded.document.theme, 'image', 'an uploaded background uses the neutral image look');
+  assert.equal(uploaded.document.headerOrnaments, 0, 'an uploaded background gets no preset mark');
   assert.match(uploaded.document.pageImage, /\/api\/classpilot\/teacher\/theme-asset\/11111111-1111-4111-8111-aaaaaaaaaaaa\/content\?schoolId=/, 'the background is fetched through the authenticated asset route with the school in the query');
   assert.deepEqual(uploaded.tiles.map(geometry), plain.tiles.map(geometry), 'an uploaded background changes no tile geometry either');
 });

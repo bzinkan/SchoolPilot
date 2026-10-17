@@ -139,6 +139,41 @@
   filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.75));
 }
 
+/* ─── Header: wordmark faces and the drawing beside the wordmark ─────────
+   Three presets set the wordmark in a display face, self-hosted under
+   /fonts (Creepster and Pacifico: SIL Open Font License; Mountains of
+   Christmas: Apache 2.0; license texts sit beside the files). The
+   line box stays at 28px so the header keeps its height and nothing below
+   it moves. The ornament is decorative, sized here, never a hit target. */
+@font-face {
+  font-family: "Creepster";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/fonts/creepster-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Mountains of Christmas";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url(/fonts/mountains-of-christmas-700-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Pacifico";
+  font-style: normal; font-weight: 400; font-display: swap;
+  src: url(/fonts/pacifico-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+[data-theme="halloween"] .brand-wordmark { font-family: "Creepster", "Segoe UI", system-ui, sans-serif; font-weight: 400; font-size: 1.5rem; line-height: 1.75rem; letter-spacing: 0.04em; }
+[data-theme="christmas"] .brand-wordmark { font-family: "Mountains of Christmas", "Segoe UI", system-ui, sans-serif; font-weight: 700; font-size: 1.625rem; line-height: 1.75rem; letter-spacing: 0; color: #fef3c7; }
+[data-theme="valentines"] .brand-wordmark { font-family: "Pacifico", "Segoe UI", system-ui, sans-serif; font-weight: 400; font-size: 1.375rem; line-height: 1.75rem; letter-spacing: 0; }
+.header-ornament { width: 36px; height: 36px; flex-shrink: 0; margin-left: 2px; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25)); }
+.header-ornament[data-ornament="halloween"], .header-ornament[data-ornament="thanksgiving"] { width: 40px; height: 40px; }
+.header-ornament[data-ornament="valentines"] { transform: rotate(-12deg); }
+.header-ornament[data-ornament="st-patricks"] { transform: rotate(10deg); }
+.header-ornament[data-ornament="easter"] { width: 30px; }
+.header-ornament[data-ornament="fall"] { transform: rotate(24deg); }
+@media print { .header-ornament { display: none; } }
+
 /* ─── Presets ────────────────────────────────────────────────────────── */
 [data-theme="halloween"] {
   --brand: #f97316; --brand-strong: #ea580c; --brand-soft: #fdba74; --brand-fg: #120a24;

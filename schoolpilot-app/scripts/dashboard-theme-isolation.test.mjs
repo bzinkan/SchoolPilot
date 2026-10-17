@@ -53,6 +53,7 @@ const ALLOW = {
   'theme context readers': {
     pattern: /DashboardThemeContext|useActiveDashboardTheme/,
     files: [
+      'products/classpilot/components/HeaderOrnament.jsx',
       'products/classpilot/components/TileOrnament.jsx',
       'products/classpilot/contexts/DashboardThemeContext.jsx',
       'products/classpilot/pages/Dashboard.jsx',
