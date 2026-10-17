@@ -3,6 +3,9 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { hash } from './contracts.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
+import { randomBytes } from 'node:crypto';
+import { compareNativeSchemas } from '../roles/restore-snapshot.mjs';
+import { assertUsageSourceIdentity } from './usage-source-binding.mjs';
 
 // The existing health monitor owns this operational table. It is not a new
 // migration or an addition to the governed tenant-table inventory.
@@ -84,7 +87,22 @@ export function verifyOperationalFixtureCustody(directory, metrics) {
   assert.equal(hash(before), receipt.beforeDumpSha256); assert.equal(hash(after), receipt.afterDumpSha256);
   assert.equal(canonicalSchemaFingerprint(before.toString('utf8')), receipt.beforeCanonicalSha256);
   assert.equal(canonicalSchemaFingerprint(after.toString('utf8')), receipt.afterCanonicalSha256);
-  assert.equal(receipt.beforeCanonicalSha256, receipt.canonicalSourceSchemaSha256);
+  if (receipt.nativeSchemaReference !== undefined) {
+    const reference = receipt.nativeSchemaReference;
+    const binding = assertUsageSourceIdentity(metrics.usageSourceBinding, { source: metrics.source,
+      schemaInputSha256: metrics.schemaInputSha256, canonicalSourceSchemaSha256: metrics.schemaSha256 });
+    assert.equal(reference.schemaVersion, 1); assert.equal(reference.kind, 'reviewed-source-native-schema-reference');
+    assert.equal(reference.bindingSha256, metrics.usageSourceBinding.bindingSha256);
+    assert.equal(reference.reviewSha256, metrics.usageSourceBinding.reviewSha256);
+    assert.equal(reference.source, binding.source);
+    assert.match(reference.database, /^usage_schema_reference_[a-f0-9]{12}$/);
+    assert.equal(reference.created, true); assert.equal(reference.dropped, true);
+    assert.equal(reference.inputFile, 'operational-schema-input.sql'); assert.equal(reference.renderedFile, 'operational-schema-reference.sql');
+    const input = readFileSync(contained(reference.inputFile)), rendered = readFileSync(contained(reference.renderedFile));
+    assert.equal(hash(input), metrics.schemaInputSha256); assert.equal(canonicalSchemaFingerprint(input.toString('utf8')), metrics.schemaSha256);
+    assert.deepEqual(reference.comparison, compareNativeSchemas(input.toString('utf8'), rendered.toString('utf8'), before.toString('utf8')));
+    assert.equal(receipt.beforeCanonicalSha256, reference.comparison.referenceCanonicalSha256);
+  } else assert.equal(receipt.beforeCanonicalSha256, receipt.canonicalSourceSchemaSha256);
   if (receipt.createdOperationalRelation) assert.notEqual(receipt.afterCanonicalSha256, receipt.beforeCanonicalSha256);
   else assert.equal(receipt.afterCanonicalSha256, receipt.beforeCanonicalSha256);
   if (metrics.snapshotManifestSha256) {
@@ -92,6 +110,36 @@ export function verifyOperationalFixtureCustody(directory, metrics) {
     assert.equal(receipt.originalSnapshotRestore?.snapshotManifestSha256, metrics.snapshotManifestSha256);
   } else assert.equal(receipt.originalSnapshotRestore, null);
   return receipt;
+}
+
+// pg_dump can render BETWEEN as nested ANDs which its own restore parser
+// flattens. Render the exact reviewed input in a separate fresh database, then
+// compare every native SQL statement, using the existing snapshot restore ABI.
+// This path cannot be selected by an unreviewed boolean or a new normalizer.
+async function renderReviewedSchemaReference(options, docker, before) {
+  const input = options.nativeSchemaSource;
+  assert.ok(Buffer.isBuffer(input), 'Reviewed native comparison requires exact source bytes');
+  assert.equal(hash(input), options.schemaInputSha256);
+  assert.equal(canonicalSchemaFingerprint(input.toString('utf8')), options.canonicalSourceSchemaSha256);
+  assertUsageSourceIdentity(options.usageSourceBinding, { source: options.source,
+    schemaInputSha256: options.schemaInputSha256, canonicalSourceSchemaSha256: options.canonicalSourceSchemaSha256 });
+  const { containerId, owner, outputDirectory } = options;
+  const database = 'usage_schema_reference_' + randomBytes(6).toString('hex');
+  assert.match(owner, /^[a-z][a-z0-9_]{1,62}$/);
+  let created = false, rendered, comparison;
+  try {
+    await docker(['exec', containerId, 'createdb', '-p', '5437', '-U', owner, database]); created = true;
+    await docker(['exec', '-i', containerId, 'psql', '-p', '5437', '-U', owner, '-d', database, '-v', 'ON_ERROR_STOP=1'], { input });
+    rendered = await docker(['exec', containerId, 'pg_dump', '-p', '5437', '-U', owner, '-d', database, '--schema-only', '--no-owner', '--no-privileges']);
+    writeFileSync(join(outputDirectory, 'operational-schema-input.sql'), input, { flag: 'wx' });
+    writeFileSync(join(outputDirectory, 'operational-schema-reference.sql'), rendered, { flag: 'wx' });
+    comparison = compareNativeSchemas(input.toString('utf8'), rendered, before);
+  } finally {
+    if (created) await docker(['exec', containerId, 'dropdb', '-p', '5437', '-U', owner, database]);
+  }
+  return { schemaVersion: 1, kind: 'reviewed-source-native-schema-reference', source: options.source,
+    bindingSha256: options.usageSourceBinding.bindingSha256, reviewSha256: options.usageSourceBinding.reviewSha256,
+    database, created: true, dropped: true, inputFile: 'operational-schema-input.sql', renderedFile: 'operational-schema-reference.sql', comparison };
 }
 
 export async function bootstrapHealthOperationalFixture(options, docker) {
@@ -105,7 +153,11 @@ export async function bootstrapHealthOperationalFixture(options, docker) {
   const sql = healthFixtureSql(appRole, owner);
   const dump = () => docker(['exec', containerId, 'pg_dump', '-p', '5437', '-U', owner, '-d', database, '--schema-only', '--no-owner', '--no-privileges']);
   const before = await dump();
-  assert.equal(canonicalSchemaFingerprint(before), options.canonicalSourceSchemaSha256, 'Actual pre-bootstrap schema differs from pinned source schema');
+  let nativeSchemaReference;
+  if (options.usageSourceBinding !== undefined || options.nativeSchemaSource !== undefined)
+    nativeSchemaReference = await renderReviewedSchemaReference(options, docker, before);
+  else assert.equal(canonicalSchemaFingerprint(before), options.canonicalSourceSchemaSha256, 'Actual pre-bootstrap schema differs from pinned source schema');
+  const beforeCanonical = canonicalSchemaFingerprint(before);
   const present = JSON.parse(await docker(['exec', containerId, 'psql', '-p', '5437', '-U', owner, '-d', database, '-q', '-t', '-A', '-v', 'ON_ERROR_STOP=1',
     '-c', "SELECT json_build_object('present',to_regclass('public._health_sentinel') IS NOT NULL)"]));
   assert.deepEqual(Object.keys(present), ['present']); assert.equal(typeof present.present, 'boolean');
@@ -113,8 +165,8 @@ export async function bootstrapHealthOperationalFixture(options, docker) {
   verifyHealthFixturePrivileges(proof);
   const after = await dump();
   const afterCanonical = canonicalSchemaFingerprint(after);
-  if (!present.present) assert.notEqual(afterCanonical, options.canonicalSourceSchemaSha256, 'Operational addition must remain visible in the fixture schema');
-  else assert.equal(afterCanonical, options.canonicalSourceSchemaSha256, 'Existing operational relation needs only privilege preparation');
+  if (!present.present) assert.notEqual(afterCanonical, beforeCanonical, 'Operational addition must remain visible in the fixture schema');
+  else assert.equal(afterCanonical, beforeCanonical, 'Existing operational relation needs only privilege preparation');
   writeFileSync(join(outputDirectory, 'operational-schema-before.sql'), before, { flag: 'wx' });
   writeFileSync(join(outputDirectory, 'operational-schema-after.sql'), after, { flag: 'wx' });
   const receipt = { schemaVersion: 1, kind: 'synthetic-existing-health-operational-bootstrap', source: options.source,
@@ -125,6 +177,7 @@ export async function bootstrapHealthOperationalFixture(options, docker) {
     afterDumpSha256: hash(after), afterCanonicalSha256: afterCanonical, createdOperationalRelation: !present.present,
     canonicalMigrationSchemaRelabeled: false, migrationInventoryChanged: false, tenantRlsInventoryChanged: false,
     originalSnapshotRestore: options.originalSnapshotRestore ?? null,
+    ...(nativeSchemaReference ? { nativeSchemaReference } : {}),
     runtimePrivileges: proof, healthMonitorExecuted: false, capacityAcceptance: false };
   writeFileSync(join(outputDirectory, 'operational-fixture-bootstrap.json'), JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
   return receipt;
