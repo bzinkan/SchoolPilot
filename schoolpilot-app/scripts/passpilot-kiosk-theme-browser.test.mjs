@@ -83,7 +83,7 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
   await page.goto(`${url}/passpilot/kiosk/simple?school=school-a`);
 
   await page.locator('[data-kiosk-theme="halloween"]').waitFor();
-  assert.equal(await themeImage(page), 'url("/themes/halloween.svg")');
+  assert.equal(await themeImage(page), 'url("/themes/halloween.webp")');
   await page.getByRole('button', { name: /Student, Ada/ }).waitFor();
   assert.equal(await page.getByTestId('kiosk-theme-tag').count(), 2, 'one tag per roster row');
   assert.ok(await page.locator('header.kiosk-glass').isVisible());

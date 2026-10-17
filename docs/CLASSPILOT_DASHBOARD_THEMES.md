@@ -300,6 +300,12 @@ Each phase is one PR, CI green, flag-off until Phase 6. Verification per `.codex
 - Spring: pick option A (illustrated garden) or B (photo meadow). Default to A unless Brian chooses B.
 - Ornaments are inline SVG in code, no files needed. Served from `schoolpilot-app/public/themes/` through the existing
   CloudFront frontend bucket.
+- **As shipped (2026-10-16).** Eleven backgrounds generated in the school's Canva account (Canva's terms for generated
+  content apply; no stock licence), reviewed on the mock canvas, exported at 1920 × 1280 and stored as WebP (28–175 KB)
+  at `schoolpilot-app/public/themes/<id>.webp`. The header also carries each preset's mark beside the wordmark
+  (`HeaderOrnament.jsx`) and three presets set the wordmark in a display face self-hosted under `public/fonts/`
+  (Creepster and Pacifico under the SIL Open Font License, Mountains of Christmas under Apache 2.0; license texts beside the files). The wordmark keeps its 28 px line box, so
+  the header height, and everything below it, is unchanged (asserted by the dashboard theme case).
 
 ## 7. Open questions
 

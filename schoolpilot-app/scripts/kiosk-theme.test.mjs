@@ -29,7 +29,7 @@ test('long first names are trimmed to the plate width and never leak beyond the 
 
 test('the kiosk resolves only concrete themes the server already decided on', () => {
   assert.deepEqual(resolveKioskTheme({ kind: 'preset', preset: 'halloween' }),
-    { id: 'halloween', label: 'Halloween', artwork: '/themes/halloween.svg', plate: KIOSK_PLATES.halloween, imageAssetId: null });
+    { id: 'halloween', label: 'Halloween', artwork: '/themes/halloween.webp', plate: KIOSK_PLATES.halloween, imageAssetId: null });
   const image = resolveKioskTheme({ kind: 'image', imageAssetId: 'asset-1' });
   assert.equal(image.id, 'image');
   assert.equal(image.artwork, null, 'uploaded bytes come through the kiosk client, never a public URL');
