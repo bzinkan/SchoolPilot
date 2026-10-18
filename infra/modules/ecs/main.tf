@@ -217,11 +217,19 @@ resource "aws_iam_role_policy" "mydesk_attachments" {
         Resource = "${var.mydesk_attachments_bucket_arn}/mydesk/*"
       },
       {
+        # ClassPilot teacher dashboard backgrounds share the private bucket
+        # under their own prefix (src/services/classpilotThemeAssets.ts).
+        Sid      = "DashboardThemeObjects"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+        Resource = "${var.mydesk_attachments_bucket_arn}/classpilot/themes/*"
+      },
+      {
         Sid       = "ReconcileNotebookObjects"
         Effect    = "Allow"
         Action    = ["s3:ListBucket"]
         Resource  = var.mydesk_attachments_bucket_arn
-        Condition = { StringLike = { "s3:prefix" = ["mydesk/", "mydesk/*"] } }
+        Condition = { StringLike = { "s3:prefix" = ["mydesk/", "mydesk/*", "classpilot/themes/", "classpilot/themes/*"] } }
       },
     ]
   })

@@ -84,6 +84,7 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
     }
     if (url.pathname.includes('/teacher/theme-asset')) {
       if (req.method() === 'POST') { state.assetReserve = body; state.asset = { id: 'asset-1', status: 'reserved', contentType: body.contentType, byteSize: body.size }; return route.fulfill({ status: 201, json: { asset: state.asset } }); }
+      if (req.method() === 'PUT' && state.uploadFailure) return route.fulfill(state.uploadFailure);
       if (req.method() === 'PUT') { state.uploadContentType = req.headers()['content-type']; state.asset = { id: 'asset-1', status: 'ready', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 };
         state.preference = { ...state.preference, dashboardThemeAsset: { id: 'asset-1', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 } }; return route.fulfill({ json: { asset: state.asset } }); }
       if (req.method() === 'DELETE') { state.preference = { ...state.preference, dashboardThemeAsset: null, dashboardTheme: null, effectiveDashboardTheme: null, revision: state.preference.revision + 1 }; return route.fulfill({ json: { preferences: { schoolId, ...state.preference } } }); }
@@ -594,6 +595,11 @@ test('a teacher uploads one background through reserve and content, then saves i
     assert.deepEqual(writes(state).filter(row => row.method === 'PATCH').map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'image', imageAssetId: 'asset-1' } }]);
     await page.getByTestId('button-remove-dashboard-background').click();
     await page.getByText('Background removed.', { exact: true }).waitFor();
+    // A refused upload shows the server's own sentence, not the generic line.
+    state.uploadFailure = { status: 503, json: { error: 'Background images are temporarily unavailable. Please retry.', code: 'CLASSPILOT_DASHBOARD_THEME_ASSET_UNAVAILABLE' } };
+    await page.getByTestId('input-dashboard-theme-file').setInputFiles({ name: 'mascot.png', mimeType: 'image/png', buffer: TINY_PNG });
+    await page.getByText('Background images are temporarily unavailable. Please retry.', { exact: true }).waitFor();
+    state.uploadFailure = null;
     assert.equal(await page.getByTestId('dashboard-theme-choice-image').count(), 0);
     assert(!state.requests.some(row => row.path.includes('/commands')), 'themes never send a student command');
     assert.deepEqual(state.errors, []);

@@ -142,7 +142,11 @@ function BackgroundUpload({ schoolId, queryKey, asset, busy, onReady, onRemove }
     if (!alive.current) return;
     setStatus('');
     const code = failure?.response?.data?.code || failure?.message;
-    setError(code === 'unsupported_type' ? 'Choose a PNG, JPG or WebP image.' : code === 'too_large' ? 'That image is too large even after resizing. Choose a smaller one.' : 'The background could not be uploaded. Try again.');
+    // The server's own sentence names the reason (storage unavailable, image
+    // unreadable, upload replaced); keep the generic line for network failures.
+    const serverMessage = typeof failure?.response?.data?.error === 'string' ? failure.response.data.error.trim() : '';
+    setError(code === 'unsupported_type' ? 'Choose a PNG, JPG or WebP image.' : code === 'too_large' ? 'That image is too large even after resizing. Choose a smaller one.'
+      : serverMessage || 'The background could not be uploaded. Try again.');
   } });
   const pending = busy || upload.isPending;
   return <div className="space-y-2 rounded-lg border p-3" data-testid="dashboard-theme-upload-slot">

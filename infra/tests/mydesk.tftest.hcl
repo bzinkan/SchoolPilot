@@ -223,10 +223,13 @@ run "disabled_features_retains_bucket_and_narrow_worker_cleanup_permissions" {
     condition = (
       jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[0].Resource == "arn:aws:s3:::schoolpilot-test-mydesk-attachments/mydesk/*" &&
       toset(jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[0].Action) == toset(["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]) &&
-      jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[1].Resource == "arn:aws:s3:::schoolpilot-test-mydesk-attachments" &&
-      toset(jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[1].Condition.StringLike["s3:prefix"]) == toset(["mydesk/", "mydesk/*"])
+      jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[1].Resource == "arn:aws:s3:::schoolpilot-test-mydesk-attachments/classpilot/themes/*" &&
+      toset(jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[1].Action) == toset(["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]) &&
+      jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[2].Resource == "arn:aws:s3:::schoolpilot-test-mydesk-attachments" &&
+      toset(jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement[2].Condition.StringLike["s3:prefix"]) == toset(["mydesk/", "mydesk/*", "classpilot/themes/", "classpilot/themes/*"]) &&
+      length(jsondecode(aws_iam_role_policy.mydesk_attachments[0].policy).Statement) == 3
     )
-    error_message = "The shared task role must only read/write/delete notebook objects and list the notebook prefix."
+    error_message = "The shared task role must only read/write/delete notebook and dashboard-background objects and list those two prefixes."
   }
 }
 
