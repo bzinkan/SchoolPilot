@@ -445,8 +445,8 @@ export class CloudController {
       await deleted('ec2', 'delete-volume', { VolumeId: volume.VolumeId });
     }
     for (const group of inventory.SecurityGroups) await deleted('ec2', 'delete-security-group', { GroupId: group.GroupId });
-    for (const subnet of inventory.Subnets) await deleted('ec2', 'delete-subnet', { SubnetId: subnet.SubnetId });
     for (const table of inventory.RouteTables) { for (const association of table.Associations ?? []) if (!association.Main) await this.aws('ec2', 'disassociate-route-table', { AssociationId: association.RouteTableAssociationId }, ['InvalidAssociationID.NotFound']); await deleted('ec2', 'delete-route-table', { RouteTableId: table.RouteTableId }); }
+    for (const subnet of inventory.Subnets) await deleted('ec2', 'delete-subnet', { SubnetId: subnet.SubnetId });
     for (const gateway of inventory.InternetGateways) { for (const attachment of gateway.Attachments) { assert.ok(inventory.Vpcs.some(x => x.VpcId === attachment.VpcId)); await this.aws('ec2', 'detach-internet-gateway', { InternetGatewayId: gateway.InternetGatewayId, VpcId: attachment.VpcId }); } await deleted('ec2', 'delete-internet-gateway', { InternetGatewayId: gateway.InternetGatewayId }); }
     for (const vpc of inventory.Vpcs) await deleted('ec2', 'delete-vpc', { VpcId: vpc.VpcId });
     const documents = RUNNER_DOCUMENT_SUFFIXES.map(suffix => `${this.p.runId}-${suffix}`);
