@@ -15,7 +15,13 @@ export const DASHBOARD_THEME_PRESET_LABELS: Readonly<Record<DashboardThemePreset
   "st-patricks": "St. Patrick's Day", easter: "Easter", spring: "Spring", summer: "Summer", fall: "Fall", winter: "Winter" });
 /** `kiosk`: "show my theme on the PassPilot kiosk"; absent means true. Stored as-is. */
 export type PresetDashboardTheme = { kind: "preset"; preset: DashboardThemePresetId; name?: string; calendar?: boolean; kiosk?: boolean };
-export type ImageDashboardTheme = { kind: "image"; imageAssetId: string; name?: string; kiosk?: boolean };
+/** How an uploaded image fills the dashboard; stored as sent, absent reads as "cover". */
+export const DASHBOARD_THEME_IMAGE_FITS = ["cover", "contain", "tile"] as const;
+export type DashboardThemeImageFit = typeof DASHBOARD_THEME_IMAGE_FITS[number];
+export type ImageDashboardTheme = { kind: "image"; imageAssetId: string; fit?: DashboardThemeImageFit; name?: string; kiosk?: boolean };
+export function imageThemeFit(theme: ImageDashboardTheme | { fit?: DashboardThemeImageFit | null }): DashboardThemeImageFit {
+  return theme.fit && (DASHBOARD_THEME_IMAGE_FITS as readonly string[]).includes(theme.fit) ? theme.fit : "cover";
+}
 /** The teacher's deliberate "plain dashboard": no theme anywhere, overridden only by the school lock. */
 export type NoneDashboardTheme = { kind: "none" };
 export type DashboardTheme = PresetDashboardTheme | ImageDashboardTheme | NoneDashboardTheme;
@@ -31,7 +37,7 @@ const presetTheme = z.object({ kind: z.literal("preset"), preset: z.enum(DASHBOA
 export const presetThemeSchema: z.ZodType<PresetDashboardTheme> = presetTheme;
 export const dashboardThemeSchema: z.ZodType<DashboardTheme> = z.discriminatedUnion("kind", [
   presetTheme.extend({ kiosk }).strict(),
-  z.object({ kind: z.literal("image"), imageAssetId: z.string().uuid(), name: themeName, kiosk }).strict(),
+  z.object({ kind: z.literal("image"), imageAssetId: z.string().uuid(), fit: z.enum(DASHBOARD_THEME_IMAGE_FITS).optional(), name: themeName, kiosk }).strict(),
   z.object({ kind: z.literal("none") }).strict(),
 ]);
 
@@ -186,10 +192,12 @@ export function signInGateThemeFor(appearanceValue: unknown, clock: SchoolThemeC
 }
 
 /**
- * One uploaded background image per teacher, recorded on the preferences row.
- * Bytes live in the private attachments bucket; the input is re-encoded to
- * WebP (<= 2560 px, metadata stripped) before it is marked ready.
+ * A teacher's background library: up to DASHBOARD_THEME_LIBRARY_LIMIT uploaded
+ * images, recorded as an array on the preferences row. Bytes live in the
+ * private attachments bucket; the input is re-encoded to WebP (<= 2560 px,
+ * metadata stripped) before it is marked ready.
  */
+export const DASHBOARD_THEME_LIBRARY_LIMIT = 5;
 export const DASHBOARD_THEME_ASSET_MAX_BYTES = 6 * 1024 * 1024;
 export const DASHBOARD_THEME_ASSET_MAX_EDGE = 2560;
 export const DASHBOARD_THEME_ASSET_INPUT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
@@ -211,7 +219,7 @@ export type DashboardThemeAsset = {
   leaseUntil: string | null;
   createdAt: string;
   readyAt: string | null;
-  /** Storage key of the previous ready image, deleted once this one is ready. */
+  /** Retired single-slot field (the key a new image replaced); always null in a library entry. */
   replaces?: string | null;
 };
 /** The client-visible summary: never the storage key, lease or input hashes. */

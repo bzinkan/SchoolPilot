@@ -31,51 +31,64 @@ protected caches, and late callbacks cannot populate a new editor.
   active-school preference. PATCH requires `expectedRevision` plus at least one
   of a nullable integer `maxTabsPerStudent` from 1 to 100 (null means school
   inheritance) and a nullable `dashboardTheme` object (`{ kind: "preset",
-  preset, name?, calendar?, kiosk? }` or `{ kind: "image", imageAssetId, name?,
-  kiosk? }`; null means the default look; `kiosk` means "show my theme on the
-  PassPilot kiosk", absent = true, stored as-is). Omitted fields keep their
-  stored value. Reads also return `schoolDashboardTheme` (the school default or
-  null), `dashboardThemeLocked`, `effectiveDashboardTheme`,
+  preset, name?, calendar?, kiosk? }` or `{ kind: "image", imageAssetId, fit?,
+  name?, kiosk? }`; null means the default look; `kiosk` means "show my theme on
+  the PassPilot kiosk", absent = true, stored as-is; `fit` is `"cover"`,
+  `"contain"` or `"tile"`, stored exactly as sent and read as `"cover"` when
+  absent). Omitted fields keep their stored value. Reads also return
+  `schoolDashboardTheme` (the school default or null), `dashboardThemeLocked`,
+  `effectiveDashboardTheme` (an `image` theme here always carries `fit`),
   `dashboardThemesEnabled` (launch gate AND the school's `teacherThemesEnabled`),
   `dashboardThemeUploadsEnabled` (themes enabled AND `teacherUploadsEnabled` AND
-  an attachments bucket is configured) and `dashboardThemeAsset` (`{ id, status,
-  contentType, byteSize, width, height }` for the teacher's ready image, else
-  null). The effective theme is the school default when locked or when the
-  teacher's own theme does not count; an own `image` theme counts only while
-  uploads are enabled and its asset is ready with the same id; it is null while
-  the launch gate is off.
+  an attachments bucket is configured), `dashboardThemeAssets` (the teacher's
+  background library: `{ id, status, contentType, byteSize, width, height }`
+  for every ready image, oldest ready first), `dashboardThemeLibraryLimit` (5)
+  and `dashboardThemeAsset` (compatibility field for clients that predate the
+  library: the ready image the saved `image` theme names, else the most
+  recently ready one, else null). The effective theme is the school default
+  when locked or when the teacher's own theme does not count; an own `image`
+  theme counts only while uploads are enabled and `imageAssetId` is a ready
+  image in the library; it is null while the launch gate is off.
 - Theme PATCH refusals, checked before the revision and never writing:
   `409 CLASSPILOT_DASHBOARD_THEMES_DISABLED` (gate off or teacher themes off),
   `409 CLASSPILOT_DASHBOARD_THEME_LOCKED` (`lockToSchoolTheme`),
   `409 CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED` (`kind: "image"` without
   uploads), `409 CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING` (`imageAssetId` is not
-  the teacher's ready asset).
-- Teacher background image, one per teacher, stored on the preferences row
-  (`dashboard_theme_asset` JSONB) with bytes in the private attachments bucket
-  under `classpilot/themes/<school>/<teacher>/<asset>`. Input is PNG, JPEG or
-  WebP up to 6 MiB and 24 megapixels; the server re-encodes to WebP at most
-  2560 px on the long edge with EXIF/XMP/ICC metadata stripped, so the served
-  bytes never equal the upload.
+  a ready image in the teacher's library). An unknown `fit` is `400`.
+- Teacher background library, up to 5 images per teacher, stored on the
+  preferences row (`dashboard_theme_assets` JSONB array; the earlier
+  single-image `dashboard_theme_asset` column stays in place but is no longer
+  read or written) with bytes in the private attachments bucket under
+  `classpilot/themes/<school>/<teacher>/<asset>`. Input is PNG, JPEG or WebP up
+  to 6 MiB and 24 megapixels; the server re-encodes to WebP at most 2560 px on
+  the long edge with EXIF/XMP/ICC metadata stripped, so the served bytes never
+  equal the upload.
   - `POST /api/classpilot/teacher/theme-asset` `{ contentType, size, sha256 }` →
-    `201 { asset, preferences }` (status `reserved`; a reservation replaces the
-    previous record, whose object is deleted once the new image is ready; a
-    teacher without a preference row gets one, revision 1).
+    `201 { asset, preferences }`. A ready image with the same input type, size
+    and SHA-256 is returned as-is (status `ready`) and takes no slot; otherwise
+    a new entry is appended (status `reserved`). Abandoned reservations and
+    expired leases are pruned on the way and their objects discarded. Refuses
+    `409 CLASSPILOT_DASHBOARD_THEME_UPLOAD_IN_PROGRESS` while any entry's lease
+    is live and `409 CLASSPILOT_DASHBOARD_THEME_LIBRARY_FULL` ("You can keep up
+    to 5 backgrounds. Remove one to add another.") when five images are ready,
+    writing nothing. A teacher without a preference row gets one, revision 1.
   - `PUT /api/classpilot/teacher/theme-asset/:id/content`: raw bytes with the
     image `Content-Type` → `200 { asset, preferences }` (status `ready`,
     `contentType: "image/webp"`). Bytes must match the reservation
     (`409 CLASSPILOT_DASHBOARD_THEME_UPLOAD_MISMATCH`); a live lease answers
     `409 CLASSPILOT_DASHBOARD_THEME_UPLOAD_IN_PROGRESS`; at most two uploads
-    decode per process (`429 CLASSPILOT_DASHBOARD_THEME_UPLOAD_BUSY`).
-    Uploading does not change `revision`; PATCH `dashboardTheme` with the new
-    `imageAssetId` afterwards.
+    decode per process (`429 CLASSPILOT_DASHBOARD_THEME_UPLOAD_BUSY`). Other
+    library entries are untouched. Uploading does not change `revision`; PATCH
+    `dashboardTheme` with the new `imageAssetId` (and a `fit`) afterwards.
   - `GET /api/classpilot/teacher/theme-asset/:id/content`: the owner or a
     same-school admin/school_admin; anyone else `404`. Also accepts
     `?schoolId=` for stylesheet `url()` use. Headers: `Cache-Control: private,
     max-age=86400`, `ETag: "<sha256>"`, `X-Content-Type-Options: nosniff`,
     `Content-Security-Policy: sandbox; default-src 'none'`; `If-None-Match` → `304`.
   - `DELETE /api/classpilot/teacher/theme-asset/:id`: owner only →
-    `200 { preferences }`; also clears an `image` theme pointing at it (then the
-    revision increments). Allowed even after uploads are disabled.
+    `200 { preferences }`; removes that one image from the library and deletes
+    its object; also clears an `image` theme pointing at it (then the revision
+    increments). Other images stay. Allowed even after uploads are disabled.
   - Reserve and upload refuse `409 CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED`
     when uploads are off for the teacher; other errors are
     `415 ..._ASSET_UNSUPPORTED_TYPE`, `413 ..._ASSET_TOO_LARGE`,
@@ -118,11 +131,14 @@ and the existing live command contract remain unchanged.
 
 `classpilot_teacher_preferences` has one row per school and teacher, a nullable
 tab limit, a nullable `dashboard_theme` JSONB object from its own additive ledger
-migration, a nullable `dashboard_theme_asset` JSONB record (one background image
-per teacher, re-encoded to WebP ≤ 2560 px with metadata stripped; added with
-`settings.appearance` by the `classpilot-dashboard-appearance-20261016` ledger
-migration), revision and timestamps, tenant RLS, and independent application
-ownership checks. Its immutable migration initializes currently eligible
+migration, a nullable `dashboard_theme_asset` JSONB record (the retired
+single-image slot, added with `settings.appearance` by the
+`classpilot-dashboard-appearance-20261016` ledger migration and kept for
+rollback), a `dashboard_theme_assets` JSONB array (the background library, up
+to five images re-encoded to WebP ≤ 2560 px with metadata stripped; added by
+the `classpilot-dashboard-theme-library-20261018` ledger migration, whose
+one-time backfill copies a ready single image into an empty library), revision
+and timestamps, tenant RLS, and independent application ownership checks. Its immutable migration initializes currently eligible
 ClassPilot memberships once from valid legacy account-level tab values. Invalid
 or unset values inherit. Later memberships start with inheritance; runtime
 never falls back to account-wide values. The legacy table and unrelated fields,

@@ -15,6 +15,7 @@ import { calendarPresetFor, localDateParts, type CalendarOptions } from "../dist
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "../src/db/classpilotTeacherPreferencesMigration.js";
 import { CLASSPILOT_DASHBOARD_THEME_SQL } from "../src/db/classpilotDashboardThemeMigration.js";
 import { CLASSPILOT_DASHBOARD_APPEARANCE_SQL } from "../src/db/classpilotDashboardAppearanceMigration.js";
+import { CLASSPILOT_DASHBOARD_THEME_LIBRARY_SQL } from "../src/db/classpilotDashboardThemeLibraryMigration.js";
 
 const tag = `settings_${Date.now()}`;
 let schoolA: schema.School;
@@ -140,6 +141,7 @@ before(async () => {
   await fixturePool.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
   await fixturePool.query(CLASSPILOT_DASHBOARD_THEME_SQL);
   await fixturePool.query(CLASSPILOT_DASHBOARD_APPEARANCE_SQL);
+  await fixturePool.query(CLASSPILOT_DASHBOARD_THEME_LIBRARY_SQL);
   await system(async () => {
     const schools = await db.insert(schema.schools).values([
       { name: "Canonical School A", slug: `${tag}_a`, schoolTimezone: "America/Chicago" },
@@ -223,7 +225,8 @@ describe("ClassPilot scoped settings saves", () => {
     assert.deepEqual(effectiveDashboardTheme, gate ? schoolTheme : null, "a teacher with no choice follows the school calendar");
     assert.deepEqual(rest, { schoolId: schoolA.id, revision: 0, maxTabsPerStudent: null,
       schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5, dashboardTheme: null, schoolDashboardTheme: null, schoolCalendar: schoolCalendarDefaults,
-      dashboardThemeLocked: false, dashboardThemesEnabled: gate, dashboardThemeUploadsEnabled: false, dashboardThemeAsset: null });
+      dashboardThemeLocked: false, dashboardThemesEnabled: gate, dashboardThemeUploadsEnabled: false, dashboardThemeAsset: null,
+      dashboardThemeAssets: [], dashboardThemeLibraryLimit: 5 });
     assert.deepEqual(await state(), before);
   });
 
@@ -566,7 +569,7 @@ describe("ClassPilot scoped settings saves", () => {
     assert.deepEqual(await state(), stable);
   });
 
-  it("uploads, normalizes, serves, scopes, applies, replaces and deletes a teacher background image", async () => {
+  it("uploads, normalizes, serves, scopes, applies, adds to and deletes from a teacher's background library", async () => {
     const store = memoryStore();
     setDashboardThemeAssetStore(store);
     await withDashboardThemes(true, async () => {
@@ -582,6 +585,8 @@ describe("ClassPilot scoped settings saves", () => {
       assert.deepEqual(asset, { id: asset.id, status: "reserved", contentType: "image/jpeg", byteSize: jpeg.length, width: null, height: null });
       assert.equal(reserved.body.preferences.revision, 1, "reserving creates the preference row");
       assert.equal(reserved.body.preferences.dashboardThemeAsset, null, "a reservation is not a ready image");
+      assert.deepEqual(reserved.body.preferences.dashboardThemeAssets, [], "a reservation is not in the library");
+      assert.equal(reserved.body.preferences.dashboardThemeLibraryLimit, 5);
       const contentPath = `${assetPath}/${asset.id}/content`;
       const mismatch = await rawRequest("PUT", contentPath, { ...auth(teacher), "content-type": "image/jpeg" }, Buffer.concat([jpeg, Buffer.from([0])]));
       assert.equal(mismatch.status, 409);
@@ -597,6 +602,8 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(ready.contentType, "image/webp");
       assert.equal(ready.width, 2560);
       assert.equal(ready.height, 1536);
+      assert.deepEqual(uploaded.json().preferences.dashboardThemeAssets, [ready]);
+      assert.deepEqual(uploaded.json().preferences.dashboardThemeAsset, ready, "the compatibility field names the newest ready image");
       assert.equal(store.objects.size, 1);
       const key = `classpilot/themes/${schoolA.id}/${teacher.id}/${asset.id}`;
       assert.deepEqual([...store.objects.keys()], [key]);
@@ -645,8 +652,8 @@ describe("ClassPilot scoped settings saves", () => {
       const image = { kind: "image", imageAssetId: asset.id, name: "Who Dey" };
       const applied = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: image }, auth(teacher));
       assert.equal(applied.status, 200, JSON.stringify(applied.body));
-      assert.deepEqual(applied.body.dashboardTheme, image);
-      assert.deepEqual(applied.body.effectiveDashboardTheme, image);
+      assert.deepEqual(applied.body.dashboardTheme, image, "stored as sent: no fit is invented");
+      assert.deepEqual(applied.body.effectiveDashboardTheme, { ...image, fit: "cover" }, "the effective theme always carries a fit");
       assert.deepEqual(applied.body.dashboardThemeAsset, ready);
       const stolen = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: { kind: "image", imageAssetId: asset.id } }, auth(otherTeacher));
       assert.equal(stolen.status, 409);
@@ -664,49 +671,146 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal((await rawRequest("GET", contentPath, auth(admin))).status, 200);
       assert.equal((await rawRequest("GET", contentPath, auth(teacher))).status, 200);
       await setAppearance({ teacherUploadsEnabled: true });
-      // Replacement: the old object survives until the new image is ready.
+      // A second image joins the library; the first stays ready and chosen.
       const png = await sharp({ create: { width: 2000, height: 1200, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.5 } } }).png().toBuffer();
       const second = (await request("POST", assetPath, { contentType: "image/png", size: png.length, sha256: sha256(png) }, auth(teacher))).body.asset;
       assert.notEqual(second.id, asset.id);
       assert.equal(store.objects.size, 1);
       assert.ok(store.objects.has(key));
       const between = await request("GET", personalPath, undefined, auth(teacher));
-      assert.equal(between.body.dashboardThemeAsset, null);
-      assert.deepEqual(between.body.effectiveDashboardTheme, between.body.schoolTheme);
+      assert.deepEqual(between.body.dashboardThemeAsset, ready, "the chosen image stays the compatibility field");
+      assert.deepEqual(between.body.dashboardThemeAssets, [ready]);
+      assert.deepEqual(between.body.effectiveDashboardTheme, { ...image, fit: "cover" });
       assert.equal(between.body.revision, 2, "asset work never bumps the preference revision");
-      const replaced = await rawRequest("PUT", `${assetPath}/${second.id}/content`, { ...auth(teacher), "content-type": "image/png" }, png);
-      assert.equal(replaced.status, 200, replaced.buffer.toString("utf8"));
-      assert.equal(replaced.json().asset.width, 2000);
-      assert.equal(replaced.json().asset.height, 1200);
-      assert.equal(replaced.json().asset.contentType, "image/webp");
-      assert.deepEqual([...store.objects.keys()], [`classpilot/themes/${schoolA.id}/${teacher.id}/${second.id}`], "the replaced object is deleted");
-      assert.equal((await rawRequest("GET", contentPath, auth(teacher))).status, 404);
+      const added = await rawRequest("PUT", `${assetPath}/${second.id}/content`, { ...auth(teacher), "content-type": "image/png" }, png);
+      assert.equal(added.status, 200, added.buffer.toString("utf8"));
+      const secondReady = added.json().asset;
+      assert.equal(secondReady.width, 2000);
+      assert.equal(secondReady.height, 1200);
+      assert.equal(secondReady.contentType, "image/webp");
+      const secondKey = `classpilot/themes/${schoolA.id}/${teacher.id}/${second.id}`;
+      assert.deepEqual([...store.objects.keys()].sort(), [key, secondKey].sort(), "both objects are kept");
+      assert.equal((await rawRequest("GET", contentPath, auth(teacher))).status, 200, "the first image still serves");
+      assert.equal((await rawRequest("GET", `${assetPath}/${second.id}/content`, auth(teacher))).status, 200);
       const pointing = await request("GET", personalPath, undefined, auth(teacher));
-      assert.equal(pointing.body.dashboardThemeAsset.id, second.id);
-      assert.deepEqual(pointing.body.dashboardTheme, image, "the stored theme still names the old asset");
-      assert.deepEqual(pointing.body.effectiveDashboardTheme, pointing.body.schoolTheme);
-      const repointed = await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: { kind: "image", imageAssetId: second.id } }, auth(teacher));
-      assert.equal(repointed.status, 200);
-      assert.equal(repointed.body.effectiveDashboardTheme.kind, "image");
-      assert.equal(repointed.body.effectiveDashboardTheme.imageAssetId, second.id);
-      // Delete clears the image and the theme that pointed at it.
+      assert.deepEqual(pointing.body.dashboardThemeAssets, [ready, secondReady], "oldest ready first");
+      assert.deepEqual(pointing.body.dashboardThemeAsset, ready, "the stored theme still names the first image");
+      assert.deepEqual(pointing.body.dashboardTheme, image);
+      assert.deepEqual(pointing.body.effectiveDashboardTheme, { ...image, fit: "cover" });
+      // Choosing the second image with a fit: stored as sent, carried on the effective theme.
+      const contained = { kind: "image", imageAssetId: second.id, fit: "contain" };
+      const repointed = await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: contained }, auth(teacher));
+      assert.equal(repointed.status, 200, JSON.stringify(repointed.body));
+      assert.deepEqual(repointed.body.dashboardTheme, contained);
+      assert.deepEqual(repointed.body.effectiveDashboardTheme, contained);
+      assert.deepEqual(repointed.body.dashboardThemeAsset, secondReady, "the compatibility field follows the chosen image");
+      assert.equal((await request("PATCH", personalPath, { expectedRevision: 3, dashboardTheme: { ...contained, fit: "stretch" } }, auth(teacher))).status, 400);
+      // Delete clears the theme that pointed at the image and leaves the rest of the library.
       assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(otherTeacher))).status, 404);
       assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(admin))).status, 404, "admins review, they do not delete");
       const deleted = await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(teacher));
       assert.equal(deleted.status, 200);
       assert.equal(deleted.body.preferences.dashboardTheme, null);
-      assert.equal(deleted.body.preferences.dashboardThemeAsset, null);
+      assert.deepEqual(deleted.body.preferences.dashboardThemeAssets, [ready]);
+      assert.deepEqual(deleted.body.preferences.dashboardThemeAsset, ready, "with no theme, the most recently ready image");
       assert.deepEqual(deleted.body.preferences.effectiveDashboardTheme, deleted.body.preferences.schoolTheme);
       assert.equal(deleted.body.preferences.revision, 4);
-      assert.equal(store.objects.size, 0);
+      assert.deepEqual([...store.objects.keys()], [key], "only the deleted object is removed");
+      assert.equal((await rawRequest("GET", `${assetPath}/${second.id}/content`, auth(teacher))).status, 404);
       assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(teacher))).status, 404);
       const gone = await request("PATCH", personalPath, { expectedRevision: 4, dashboardTheme: { kind: "image", imageAssetId: second.id } }, auth(teacher));
       assert.equal(gone.status, 409);
       assert.equal(gone.body.code, "CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING");
+      // Deleting an image the theme does not name leaves the theme and the revision alone.
+      const preset = { kind: "preset", preset: "fall" };
+      assert.equal((await request("PATCH", personalPath, { expectedRevision: 4, dashboardTheme: preset }, auth(teacher))).status, 200);
+      const last = await request("DELETE", `${assetPath}/${asset.id}`, undefined, auth(teacher));
+      assert.equal(last.status, 200);
+      assert.deepEqual(last.body.preferences.dashboardTheme, preset);
+      assert.equal(last.body.preferences.revision, 5);
+      assert.equal(last.body.preferences.dashboardThemeAsset, null);
+      assert.deepEqual(last.body.preferences.dashboardThemeAssets, []);
+      assert.equal(store.objects.size, 0);
       const rows = (await state()).preferences;
       assert.equal(rows.length, 1);
-      assert.equal(rows[0]!.dashboardThemeAsset, null);
-      assert.equal(rows[0]!.dashboardTheme, null);
+      assert.deepEqual(rows[0]!.dashboardThemeAssets, []);
+      assert.equal(rows[0]!.dashboardThemeAsset, null, "the retired single-image column is never written");
+      assert.deepEqual(rows[0]!.dashboardTheme, preset);
+    });
+  });
+
+  it("keeps up to five backgrounds per teacher, reuses an identical upload and prunes abandoned reservations", async () => {
+    const store = memoryStore();
+    setDashboardThemeAssetStore(store);
+    await withDashboardThemes(true, async () => {
+      await setAppearance({ teacherUploadsEnabled: true });
+      const colors = ["#fb4f14", "#000000", "#ffffff", "#1f6feb", "#2da44e", "#8250df", "#d1242f"];
+      const images = await Promise.all(colors.map(background => sharp({ create: { width: 48, height: 32, channels: 3, background } }).png().toBuffer()));
+      const describe = (bytes: Buffer) => ({ contentType: "image/png", size: bytes.length, sha256: sha256(bytes) });
+      async function upload(bytes: Buffer) {
+        const reserved = await request("POST", assetPath, describe(bytes), auth(teacher));
+        assert.equal(reserved.status, 201, JSON.stringify(reserved.body));
+        const put = await rawRequest("PUT", `${assetPath}/${reserved.body.asset.id}/content`, { ...auth(teacher), "content-type": "image/png" }, bytes);
+        assert.equal(put.status, 200, put.buffer.toString("utf8"));
+        return put.json().asset;
+      }
+      const first = await upload(images[0]!);
+      // An abandoned reservation is pruned by the next reserve and never counts as a slot.
+      const abandoned = (await request("POST", assetPath, describe(images[1]!), auth(teacher))).body.asset;
+      assert.equal(abandoned.status, "reserved");
+      const second = await upload(images[2]!);
+      let row = (await state()).preferences.find(candidate => candidate.teacherId === teacher.id)!;
+      assert.deepEqual(row.dashboardThemeAssets.map(entry => [entry.id, entry.status]), [[first.id, "ready"], [second.id, "ready"]]);
+      assert.equal((await rawRequest("PUT", `${assetPath}/${abandoned.id}/content`, { ...auth(teacher), "content-type": "image/png" }, images[1]!)).status, 404, "the pruned reservation is gone");
+      const third = await upload(images[3]!), fourth = await upload(images[4]!), fifth = await upload(images[5]!);
+      const full = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(full.body.dashboardThemeAssets, [first, second, third, fourth, fifth], "oldest ready first");
+      assert.equal(full.body.dashboardThemeLibraryLimit, 5);
+      assert.deepEqual(full.body.dashboardThemeAsset, fifth, "with no theme, the most recently ready image");
+      assert.equal(store.objects.size, 5);
+      const before = await state();
+      const sixth = await request("POST", assetPath, describe(images[6]!), auth(teacher));
+      assert.equal(sixth.status, 409);
+      assert.equal(sixth.body.code, "CLASSPILOT_DASHBOARD_THEME_LIBRARY_FULL");
+      assert.deepEqual(await state(), before, "a refused reservation writes nothing");
+      // The same bytes again: the existing image, already ready, consuming no slot.
+      const again = await request("POST", assetPath, describe(images[3]!), auth(teacher));
+      assert.equal(again.status, 201, JSON.stringify(again.body));
+      assert.deepEqual(again.body.asset, third);
+      assert.deepEqual(again.body.preferences.dashboardThemeAssets, [first, second, third, fourth, fifth]);
+      assert.equal((await rawRequest("PUT", `${assetPath}/${third.id}/content`, { ...auth(teacher), "content-type": "image/png" }, images[3]!)).status, 200);
+      assert.deepEqual(await state(), before);
+      // Choosing an image outside the library is refused; choosing one with a fit round-trips.
+      const unknown = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: { kind: "image", imageAssetId: randomUUID() } }, auth(teacher));
+      assert.equal(unknown.status, 409);
+      assert.equal(unknown.body.code, "CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING");
+      const tiled = { kind: "image", imageAssetId: second.id, fit: "tile", kiosk: false };
+      const chosen = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: tiled }, auth(teacher));
+      assert.equal(chosen.status, 200, JSON.stringify(chosen.body));
+      assert.deepEqual(chosen.body.dashboardTheme, tiled);
+      assert.deepEqual(chosen.body.effectiveDashboardTheme, tiled);
+      assert.deepEqual(chosen.body.dashboardThemeAsset, second, "the chosen image is the compatibility field");
+      for (const fit of ["stretch", "", 1, null]) {
+        assert.equal((await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: { ...tiled, fit } }, auth(teacher))).status, 400, String(fit));
+      }
+      // Removing another image leaves the chosen one, keeps the revision and frees a slot.
+      const removed = await request("DELETE", `${assetPath}/${fourth.id}`, undefined, auth(teacher));
+      assert.equal(removed.status, 200);
+      assert.deepEqual(removed.body.preferences.dashboardThemeAssets, [first, second, third, fifth]);
+      assert.deepEqual(removed.body.preferences.dashboardTheme, tiled);
+      assert.equal(removed.body.preferences.revision, 2);
+      assert.equal(store.objects.has(`classpilot/themes/${schoolA.id}/${teacher.id}/${fourth.id}`), false);
+      assert.equal(store.objects.size, 4);
+      const seventh = await request("POST", assetPath, describe(images[6]!), auth(teacher));
+      assert.equal(seventh.status, 201, JSON.stringify(seventh.body));
+      assert.equal(seventh.body.asset.status, "reserved");
+      // Another teacher's library is their own.
+      assert.deepEqual((await request("GET", personalPath, undefined, auth(otherTeacher))).body.dashboardThemeAssets, []);
+      assert.equal((await request("DELETE", `${assetPath}/${first.id}`, undefined, auth(otherTeacher))).status, 404);
+      assert.equal((await rawRequest("GET", `${assetPath}/${first.id}/content`, auth(otherTeacher))).status, 404);
+      row = (await state()).preferences.find(candidate => candidate.teacherId === teacher.id)!;
+      assert.equal(row.dashboardThemeAssets.length, 5, "four ready images and one reservation");
+      assert.equal(row.dashboardThemeAsset, null, "the retired single-image column is never written");
     });
   });
 
@@ -753,9 +857,13 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(invalid.json().code, "CLASSPILOT_DASHBOARD_THEME_ASSET_INVALID");
       assert.equal(store.objects.size, 0);
       const row = (await state()).preferences.find(row => row.teacherId === teacher.id)!;
-      assert.equal(row.dashboardThemeAsset?.status, "reserved");
-      assert.equal(row.dashboardThemeAsset?.leaseId, null);
-      assert.equal((await request("GET", personalPath, undefined, auth(teacher))).body.dashboardThemeAsset, null);
+      assert.equal(row.dashboardThemeAssets.length, 1);
+      assert.equal(row.dashboardThemeAssets[0]?.status, "reserved");
+      assert.equal(row.dashboardThemeAssets[0]?.leaseId, null);
+      assert.equal(row.dashboardThemeAsset, null, "the retired single-image column is never written");
+      const unready = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(unready.body.dashboardThemeAsset, null);
+      assert.deepEqual(unready.body.dashboardThemeAssets, []);
       assert.equal((await rawRequest("GET", `${assetPath}/${reserved.body.asset.id}/content`, auth(teacher))).status, 404, "a reservation has no bytes");
       assert.deepEqual((await state()).preferences.filter(row => row.teacherId !== teacher.id), before.preferences);
     });

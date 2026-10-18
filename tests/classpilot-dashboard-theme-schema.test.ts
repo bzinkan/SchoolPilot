@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, describe, it } from "node:test";
-import { DASHBOARD_THEME_ASSET_INPUT_TYPES, DASHBOARD_THEME_ASSET_MAX_BYTES, DASHBOARD_THEME_ASSET_MAX_EDGE,
-  DASHBOARD_THEME_PRESET_IDS, DASHBOARD_THEME_PRESET_LABELS, DEFAULT_SCHOOL_APPEARANCE, appearanceSectionSchema, concreteSchoolPreset,
-  dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled, mergeSchoolAppearance, presetThemeSchema, readSchoolAppearance,
-  schoolThemeFor, signInGateThemeFor, type DashboardThemeAsset, type SchoolAppearance } from "../src/services/classpilotThemes.js";
+import { DASHBOARD_THEME_ASSET_INPUT_TYPES, DASHBOARD_THEME_ASSET_MAX_BYTES, DASHBOARD_THEME_ASSET_MAX_EDGE, DASHBOARD_THEME_IMAGE_FITS,
+  DASHBOARD_THEME_LIBRARY_LIMIT, DASHBOARD_THEME_PRESET_IDS, DASHBOARD_THEME_PRESET_LABELS, DEFAULT_SCHOOL_APPEARANCE, appearanceSectionSchema,
+  concreteSchoolPreset, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled, imageThemeFit, mergeSchoolAppearance,
+  presetThemeSchema, readSchoolAppearance, schoolThemeFor, signInGateThemeFor, type DashboardThemeAsset,
+  type SchoolAppearance } from "../src/services/classpilotThemes.js";
 import { DEFAULT_CALENDAR_HOLIDAYS } from "../src/services/classpilotThemeCalendar.js";
 
 const originalEnv = { gate: process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED, base: process.env.PUBLIC_BASE_URL, client: process.env.CLIENT_URL };
@@ -44,9 +45,18 @@ describe("ClassPilot dashboard theme model", () => {
     for (const preset of DASHBOARD_THEME_PRESET_IDS) assert.equal(dashboardThemeSchema.safeParse({ kind: "preset", preset }).success, true, preset);
   });
 
-  it("accepts a well-formed image theme at the model layer", () => {
+  it("accepts a well-formed image theme at the model layer, with an optional fit stored as sent", () => {
     const imageAssetId = randomUUID();
     assert.deepEqual(dashboardThemeSchema.parse({ kind: "image", imageAssetId, name: "Mascot" }), { kind: "image", imageAssetId, name: "Mascot" });
+    assert.deepEqual([...DASHBOARD_THEME_IMAGE_FITS], ["cover", "contain", "tile"]);
+    for (const fit of DASHBOARD_THEME_IMAGE_FITS) {
+      assert.deepEqual(dashboardThemeSchema.parse({ kind: "image", imageAssetId, fit, kiosk: false }), { kind: "image", imageAssetId, fit, kiosk: false }, fit);
+    }
+    assert.equal("fit" in dashboardThemeSchema.parse({ kind: "image", imageAssetId }), false, "absent stays absent (reads as cover)");
+    assert.equal(imageThemeFit({ kind: "image", imageAssetId }), "cover");
+    assert.equal(imageThemeFit({ kind: "image", imageAssetId, fit: "contain" }), "contain");
+    assert.equal(imageThemeFit({ fit: null }), "cover");
+    assert.equal(imageThemeFit(JSON.parse("{\"fit\":\"stretch\"}")), "cover", "an unknown stored fit reads as cover");
   });
 
   it("accepts the teacher's plain choice as exactly { kind: none }", () => {
@@ -78,6 +88,9 @@ describe("ClassPilot dashboard theme model", () => {
       { kind: "preset", preset: "halloween", pattern: "stripes" },
       { kind: "image" }, { kind: "image", imageAssetId: "not-a-uuid" }, { kind: "image", imageAssetId: randomUUID(), calendar: true },
       { kind: "image", imageAssetId: randomUUID(), preset: "halloween" },
+      { kind: "image", imageAssetId: randomUUID(), fit: "stretch" }, { kind: "image", imageAssetId: randomUUID(), fit: "Cover" },
+      { kind: "image", imageAssetId: randomUUID(), fit: null }, { kind: "image", imageAssetId: randomUUID(), fit: "" },
+      { kind: "preset", preset: "halloween", fit: "cover" }, { kind: "none", fit: "cover" },
     ];
     for (const body of rejected) assert.equal(dashboardThemeSchema.safeParse(body).success, false, JSON.stringify(body) ?? "undefined");
   });
@@ -252,10 +265,11 @@ describe("ClassPilot school appearance governance", () => {
 });
 
 describe("ClassPilot dashboard theme asset model", () => {
-  it("fixes the upload limits and input types", () => {
+  it("fixes the upload limits, input types and the library size", () => {
     assert.equal(DASHBOARD_THEME_ASSET_MAX_BYTES, 6 * 1024 * 1024);
     assert.equal(DASHBOARD_THEME_ASSET_MAX_EDGE, 2560);
     assert.deepEqual([...DASHBOARD_THEME_ASSET_INPUT_TYPES], ["image/png", "image/jpeg", "image/webp"]);
+    assert.equal(DASHBOARD_THEME_LIBRARY_LIMIT, 5);
   });
 
   it("summarizes an asset without its storage key, lease or input hashes", () => {

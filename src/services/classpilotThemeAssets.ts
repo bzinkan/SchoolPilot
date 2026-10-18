@@ -8,7 +8,7 @@ import { MYDESK_UPLOAD_LEASE_MS } from "./mydeskFiles.js";
 import { privateNativeProcessing, PrivateNativeProcessingError } from "./privateNativeProcessing.js";
 import { adminRoles, authorize, ClasspilotSettingsError, preferenceDto, type SettingsActor, type TeacherPreferencesDto,
   type Transaction } from "./classpilotSettings.js";
-import { DASHBOARD_THEME_ASSET_INPUT_TYPES, DASHBOARD_THEME_ASSET_MAX_BYTES, DASHBOARD_THEME_ASSET_MAX_EDGE,
+import { DASHBOARD_THEME_ASSET_INPUT_TYPES, DASHBOARD_THEME_ASSET_MAX_BYTES, DASHBOARD_THEME_ASSET_MAX_EDGE, DASHBOARD_THEME_LIBRARY_LIMIT,
   dashboardThemeAssetSummary, type DashboardThemeAsset, type DashboardThemeAssetContentType } from "./classpilotThemes.js";
 import { dashboardThemeAssetStore, DashboardThemeAssetUnavailableError, findReadyDashboardThemeAsset, readDashboardThemeAssetContent,
   setDashboardThemeAssetStore, themeAssetStoreConfigured } from "./classpilotThemeAssetStore.js";
@@ -17,10 +17,11 @@ import { safeErrorMetadata } from "../util/safeLogging.js";
 export { readDashboardThemeAssetContent, setDashboardThemeAssetStore, themeAssetStoreConfigured };
 
 /**
- * One background image per teacher: reserve -> PUT bytes -> ready. The record
- * lives on the teacher's own preferences row, so RLS, membership and
- * entitlement checks are the same as for every other personal preference.
- * Reads are owner-or-same-school-admin; everything else is owner only.
+ * A teacher's background library: up to DASHBOARD_THEME_LIBRARY_LIMIT images,
+ * each reserve -> PUT bytes -> ready. The entries live as an array on the
+ * teacher's own preferences row, so RLS, membership and entitlement checks are
+ * the same as for every other personal preference. Reads are
+ * owner-or-same-school-admin; everything else is owner only.
  */
 const fail = (status: number, code: string, message: string) => new ClasspilotSettingsError(message, status, code);
 const missing = () => fail(404, "CLASSPILOT_DASHBOARD_THEME_ASSET_NOT_FOUND", "Background image not found.");
@@ -28,6 +29,7 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 const reserveSchema = z.object({ contentType: z.string().trim().min(1).max(100), size: z.number().int().positive(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 type AssetResult = { asset: ReturnType<typeof dashboardThemeAssetSummary>; preferences: TeacherPreferencesDto };
+type PreferenceRow = typeof preferences.$inferSelect;
 
 function validateInput(contentType: string, size: number): asserts contentType is DashboardThemeAssetContentType {
   if (!DASHBOARD_THEME_ASSET_INPUT_TYPES.includes(contentType as DashboardThemeAssetContentType)) {
@@ -44,14 +46,19 @@ function assertUploadsAllowed(current: TeacherPreferencesDto) {
 }
 const liveLease = (asset: DashboardThemeAsset) => asset.status === "uploading" && !!asset.leaseUntil && Date.parse(asset.leaseUntil) > Date.now();
 const inProgress = () => fail(409, "CLASSPILOT_DASHBOARD_THEME_UPLOAD_IN_PROGRESS", "Your background image is still uploading. Retry shortly.");
+const libraryFull = () => fail(409, "CLASSPILOT_DASHBOARD_THEME_LIBRARY_FULL",
+  `You can keep up to ${DASHBOARD_THEME_LIBRARY_LIMIT} backgrounds. Remove one to add another.`);
+/** The stored library; a row from before the array column reads as empty. */
+const libraryOf = (row: PreferenceRow | null): DashboardThemeAsset[] => Array.isArray(row?.dashboardThemeAssets) ? row.dashboardThemeAssets : [];
+const replaceEntry = (library: DashboardThemeAsset[], next: DashboardThemeAsset) => library.map(entry => entry.id === next.id ? next : entry);
 async function lockedOwnRow(tx: Transaction, scope: SettingsActor) {
   const [row] = await tx.select().from(preferences).where(and(
     eq(preferences.schoolId, scope.schoolId), eq(preferences.teacherId, scope.actorId))).for("update");
   return row ?? null;
 }
-async function writeAsset(tx: Transaction, scope: SettingsActor, row: typeof preferences.$inferSelect | null, asset: DashboardThemeAsset | null) {
-  if (row) await tx.update(preferences).set({ dashboardThemeAsset: asset, updatedAt: new Date() }).where(eq(preferences.id, row.id));
-  else await tx.insert(preferences).values({ schoolId: scope.schoolId, teacherId: scope.actorId, dashboardThemeAsset: asset, revision: 1 });
+async function writeLibrary(tx: Transaction, scope: SettingsActor, row: PreferenceRow | null, library: DashboardThemeAsset[]) {
+  if (row) await tx.update(preferences).set({ dashboardThemeAssets: library, updatedAt: new Date() }).where(eq(preferences.id, row.id));
+  else await tx.insert(preferences).values({ schoolId: scope.schoolId, teacherId: scope.actorId, dashboardThemeAssets: library, revision: 1 });
 }
 // Object I/O never surfaces bucket names, keys or provider errors to clients.
 const unavailable = () => fail(503, "CLASSPILOT_DASHBOARD_THEME_ASSET_UNAVAILABLE", "Background images are temporarily unavailable. Please retry.");
@@ -87,6 +94,12 @@ async function normalizeBackground(bytes: Buffer, contentType: DashboardThemeAss
   }
 }
 
+/**
+ * Reserve a library slot. An image already in the library with the same input
+ * (hash, type, size) is returned as-is, ready, consuming no slot. Abandoned
+ * reservations and expired leases are pruned on the way, their keys handed to
+ * cleanup; a live lease refuses, and a full library refuses before any write.
+ */
 export async function reserveDashboardThemeAsset(scope: SettingsActor, body: unknown): Promise<AssetResult> {
   const parsed = reserveSchema.safeParse(body);
   if (!parsed.success) throw fail(400, "CLASSPILOT_SETTINGS_INVALID", "Provide the image type, byte size and SHA-256.");
@@ -97,19 +110,24 @@ export async function reserveDashboardThemeAsset(scope: SettingsActor, body: unk
     await authorize(tx, scope, false, true);
     const row = await lockedOwnRow(tx, scope);
     assertUploadsAllowed(await preferenceDto(tx, scope));
-    const prior = row?.dashboardThemeAsset ?? null;
-    if (prior && liveLease(prior)) throw inProgress();
+    const library = libraryOf(row);
+    if (library.some(liveLease)) throw inProgress();
+    const orphans = library.filter(entry => entry.status !== "ready").map(entry => entry.storageKey);
+    const ready = library.filter(entry => entry.status === "ready");
+    const same = ready.find(entry => entry.inputSha256 === input.sha256 && entry.inputContentType === contentType && entry.inputByteSize === input.size);
+    if (same) {
+      if (orphans.length) await writeLibrary(tx, scope, row, ready);
+      return { asset: same, orphans, preferences: await preferenceDto(tx, scope) };
+    }
+    if (ready.length >= DASHBOARD_THEME_LIBRARY_LIMIT) throw libraryFull();
     const id = randomUUID();
-    // The previous ready image stays in the bucket until the new one is ready;
-    // an abandoned reservation's key is handed over for cleanup right away.
     const asset: DashboardThemeAsset = { id, status: "reserved", storageKey: `classpilot/themes/${scope.schoolId}/${scope.actorId}/${id}`,
       contentType, byteSize: input.size, sha256: input.sha256, inputSha256: input.sha256, inputContentType: contentType,
-      inputByteSize: input.size, leaseId: null, leaseUntil: null, createdAt: new Date().toISOString(), readyAt: null,
-      replaces: prior?.status === "ready" ? prior.storageKey : prior?.replaces ?? null };
-    await writeAsset(tx, scope, row, asset);
-    return { asset, orphan: prior && prior.status !== "ready" ? prior.storageKey : null, preferences: await preferenceDto(tx, scope) };
+      inputByteSize: input.size, leaseId: null, leaseUntil: null, createdAt: new Date().toISOString(), readyAt: null, replaces: null };
+    await writeLibrary(tx, scope, row, [...ready, asset]);
+    return { asset, orphans, preferences: await preferenceDto(tx, scope) };
   });
-  await discard(result.orphan);
+  for (const key of result.orphans) await discard(key);
   return { asset: dashboardThemeAssetSummary(result.asset), preferences: result.preferences };
 }
 
@@ -119,8 +137,9 @@ export async function uploadDashboardThemeAsset(scope: SettingsActor, assetId: s
   const claimed = await db.transaction(async tx => {
     await authorize(tx, scope, false, true);
     const row = await lockedOwnRow(tx, scope);
-    const asset = row?.dashboardThemeAsset;
-    if (!row || !asset || asset.id !== assetId) throw missing();
+    const library = libraryOf(row);
+    const asset = library.find(entry => entry.id === assetId);
+    if (!row || !asset) throw missing();
     if (asset.inputSha256 !== inputHash || asset.inputByteSize !== bytes.length || asset.inputContentType !== contentType) {
       throw fail(409, "CLASSPILOT_DASHBOARD_THEME_UPLOAD_MISMATCH", "Upload the image you selected when reserving.");
     }
@@ -129,7 +148,7 @@ export async function uploadDashboardThemeAsset(scope: SettingsActor, assetId: s
     assertUploadsAllowed(current);
     if (liveLease(asset)) throw inProgress();
     const leased: DashboardThemeAsset = { ...asset, status: "uploading", leaseId, leaseUntil: new Date(Date.now() + MYDESK_UPLOAD_LEASE_MS).toISOString() };
-    await writeAsset(tx, scope, row, leased);
+    await writeLibrary(tx, scope, row, replaceEntry(library, leased));
     return { ready: false as const, asset: leased };
   });
   if (claimed.ready) return { asset: dashboardThemeAssetSummary(claimed.asset), preferences: claimed.preferences };
@@ -140,17 +159,17 @@ export async function uploadDashboardThemeAsset(scope: SettingsActor, assetId: s
     const result = await db.transaction(async tx => {
       await authorize(tx, scope, false, true);
       const row = await lockedOwnRow(tx, scope);
-      const asset = row?.dashboardThemeAsset;
-      if (!row || !asset || asset.id !== assetId || asset.status !== "uploading" || asset.leaseId !== leaseId || !liveLease(asset)) {
+      const library = libraryOf(row);
+      const asset = library.find(entry => entry.id === assetId);
+      if (!row || !asset || asset.status !== "uploading" || asset.leaseId !== leaseId || !liveLease(asset)) {
         throw fail(409, "CLASSPILOT_DASHBOARD_THEME_UPLOAD_CONFLICT", "This upload was replaced or expired. Start again.");
       }
       const ready: DashboardThemeAsset = { ...asset, status: "ready", contentType: "image/webp", byteSize: normalized.bytes.length,
         sha256: normalized.sha256, width: normalized.width, height: normalized.height, leaseId: null, leaseUntil: null,
         readyAt: new Date().toISOString(), replaces: null };
-      await writeAsset(tx, scope, row, ready);
-      return { asset: ready, replaced: asset.replaces ?? null, preferences: await preferenceDto(tx, scope) };
+      await writeLibrary(tx, scope, row, replaceEntry(library, ready));
+      return { asset: ready, preferences: await preferenceDto(tx, scope) };
     });
-    if (result.replaced !== result.asset.storageKey) await discard(result.replaced);
     return { asset: dashboardThemeAssetSummary(result.asset), preferences: result.preferences };
   } catch (error) {
     // Expiry cleanup does not depend on this release succeeding.
@@ -161,9 +180,10 @@ export async function uploadDashboardThemeAsset(scope: SettingsActor, assetId: s
 async function releaseLease(scope: SettingsActor, assetId: string, leaseId: string) {
   await db.transaction(async tx => {
     const row = await lockedOwnRow(tx, scope);
-    const asset = row?.dashboardThemeAsset;
-    if (!row || !asset || asset.id !== assetId || asset.status !== "uploading" || asset.leaseId !== leaseId) return;
-    await writeAsset(tx, scope, row, { ...asset, status: "reserved", leaseId: null, leaseUntil: null });
+    const library = libraryOf(row);
+    const asset = library.find(entry => entry.id === assetId);
+    if (!row || !asset || asset.status !== "uploading" || asset.leaseId !== leaseId) return;
+    await writeLibrary(tx, scope, row, replaceEntry(library, { ...asset, status: "reserved", leaseId: null, leaseUntil: null }));
   });
 }
 
@@ -194,19 +214,20 @@ export async function readDashboardThemeAsset(scope: SettingsActor, assetId: str
   return { unchanged: false, bytes: content.body, contentType: content.contentType, sha256: content.sha256, byteSize: content.byteSize };
 }
 
-/** Owner only. Also clears an image theme that pointed at this asset. */
+/** Owner only. Removes one library entry; also clears an image theme that pointed at it. Other entries stay. */
 export async function deleteDashboardThemeAsset(scope: SettingsActor, assetId: string): Promise<TeacherPreferencesDto> {
   const result = await db.transaction(async tx => {
     await authorize(tx, scope, false, true);
     const row = await lockedOwnRow(tx, scope);
-    const asset = row?.dashboardThemeAsset;
-    if (!row || !asset || asset.id !== assetId) throw missing();
+    const library = libraryOf(row);
+    const asset = library.find(entry => entry.id === assetId);
+    if (!row || !asset) throw missing();
     if (liveLease(asset)) throw inProgress();
     const clearsTheme = row.dashboardTheme?.kind === "image" && row.dashboardTheme.imageAssetId === assetId;
-    await tx.update(preferences).set({ dashboardThemeAsset: null, updatedAt: new Date(),
+    await tx.update(preferences).set({ dashboardThemeAssets: library.filter(entry => entry.id !== assetId), updatedAt: new Date(),
       ...(clearsTheme ? { dashboardTheme: null, revision: row.revision + 1 } : {}) }).where(eq(preferences.id, row.id));
-    return { keys: [asset.storageKey, asset.replaces ?? null], preferences: await preferenceDto(tx, scope) };
+    return { key: asset.storageKey, preferences: await preferenceDto(tx, scope) };
   });
-  for (const key of result.keys) await discard(key);
+  await discard(result.key);
   return result.preferences;
 }

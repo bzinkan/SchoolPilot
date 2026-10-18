@@ -7,6 +7,7 @@ import { classpilotTeacherPreferences } from "../src/schema/classpilotTeacherPre
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL, CLASSPILOT_TEACHER_PREFERENCES_SQL, classpilotTeacherPreferencesMigration } from "../src/db/classpilotTeacherPreferencesMigration.js";
 import { CLASSPILOT_DASHBOARD_THEME_SQL, classpilotDashboardThemeMigration } from "../src/db/classpilotDashboardThemeMigration.js";
 import { CLASSPILOT_DASHBOARD_APPEARANCE_SQL, classpilotDashboardAppearanceMigration } from "../src/db/classpilotDashboardAppearanceMigration.js";
+import { CLASSPILOT_DASHBOARD_THEME_LIBRARY_SQL, classpilotDashboardThemeLibraryMigration } from "../src/db/classpilotDashboardThemeLibraryMigration.js";
 import { runSchoolPilotMigrationLedger } from "../src/db/migrationLedger.js";
 import { schoolPilot27ExpandMigrations, schoolPilot27Migrations } from "../src/db/migrations27.js";
 
@@ -66,16 +67,41 @@ test("ledger copies valid preferences once into eligible memberships and leaves 
   for (const teacher of [authors.invalid, authors.empty, authors.missing, authors.huge]) assert.equal(rows.find(row => row.teacher_id === teacher)?.max_tabs_per_student, null);
   assert.ok(rows.every(row => [schools.a, schools.b].includes(row.school_id)));
   assert.equal((await pool.query("SELECT current_setting('app.is_super',true) AS scope")).rows[0].scope, "off");
+  // The library migration seeds an empty library from a READY single-image
+  // record, abandons a reservation, and leaves the retired column in place.
+  const legacyAsset = { id: "00000000-0000-4000-8000-000000000001", status: "ready", storageKey: "classpilot/themes/legacy/key", contentType: "image/webp",
+    byteSize: 10, sha256: "a".repeat(64), width: 16, height: 9, inputSha256: "b".repeat(64), inputContentType: "image/png", inputByteSize: 12,
+    leaseId: null, leaseUntil: null, createdAt: "2026-10-16T00:00:00.000Z", readyAt: "2026-10-16T00:00:01.000Z", replaces: null };
+  await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_asset=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [schools.a, authors.valid, JSON.stringify(legacyAsset)]);
+  await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_asset=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [schools.b, authors.valid, JSON.stringify({ ...legacyAsset, status: "reserved", readyAt: null })]);
+  const withLibrary = [...migrations, classpilotDashboardThemeLibraryMigration];
+  const library = await runSchoolPilotMigrationLedger({ pool, migrations: withLibrary, applicationSha: "library" });
+  assert.deepEqual(library.map(entry => entry.status), ["skipped", "skipped", "skipped", "applied"]);
+  async function libraryRows() {
+    const found = (await admin.query("SELECT school_id,dashboard_theme_asset,dashboard_theme_assets FROM classpilot_teacher_preferences WHERE teacher_id=$1", [authors.valid])).rows;
+    return { a: found.find(row => row.school_id === schools.a), b: found.find(row => row.school_id === schools.b) };
+  }
+  const backfilled = await libraryRows();
+  assert.deepEqual(backfilled.a.dashboard_theme_assets, [legacyAsset], "a ready single image seeds the library");
+  assert.deepEqual(backfilled.a.dashboard_theme_asset, legacyAsset, "the retired column is neither dropped nor nulled");
+  assert.deepEqual(backfilled.b.dashboard_theme_assets, [], "a reservation is abandoned");
+  assert.deepEqual(backfilled.b.dashboard_theme_asset, { ...legacyAsset, status: "reserved", readyAt: null });
+  assert.equal((await admin.query("SELECT count(*)::int AS n FROM classpilot_teacher_preferences WHERE dashboard_theme_assets <> '[]'::jsonb")).rows[0].n, 1);
+  await admin.query(CLASSPILOT_DASHBOARD_THEME_LIBRARY_SQL);
+  assert.deepEqual(await libraryRows(), backfilled, "running the SQL again neither duplicates the seed nor touches a filled library");
   await admin.query("UPDATE classpilot_teacher_preferences SET max_tabs_per_student=12 WHERE school_id=$1 AND teacher_id=$2", [schools.a, authors.valid]);
   await admin.query("INSERT INTO school_memberships(school_id,user_id,role) VALUES($1,$2,'teacher')", [schools.future, authors.valid]);
-  const retry = await runSchoolPilotMigrationLedger({ pool, migrations, applicationSha: "later" });
-  assert.deepEqual(retry.map(entry => entry.status), ["skipped", "skipped", "skipped"]);
+  const retry = await runSchoolPilotMigrationLedger({ pool, migrations: withLibrary, applicationSha: "later" });
+  assert.deepEqual(retry.map(entry => entry.status), ["skipped", "skipped", "skipped", "skipped"]);
   await admin.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
   await admin.query(CLASSPILOT_DASHBOARD_THEME_SQL);
   await admin.query(CLASSPILOT_DASHBOARD_APPEARANCE_SQL);
+  await admin.query(CLASSPILOT_DASHBOARD_THEME_LIBRARY_SQL);
   assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='classpilot_teacher_preferences_dashboard_theme_object' AND conrelid='classpilot_teacher_preferences'::regclass")).rows[0].n, 1);
   assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='classpilot_teacher_preferences_dashboard_theme_asset_object' AND conrelid='classpilot_teacher_preferences'::regclass")).rows[0].n, 1);
+  assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='classpilot_teacher_preferences_dashboard_theme_assets_array' AND conrelid='classpilot_teacher_preferences'::regclass")).rows[0].n, 1);
   assert.equal((await admin.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conname='settings_cp_appearance_object_check' AND conrelid='settings'::regclass")).rows[0].n, 1);
+  assert.deepEqual(await libraryRows(), backfilled);
   assert.equal((await admin.query("SELECT appearance FROM settings WHERE school_id=$1", [schools.a])).rows[0].appearance, null, "existing settings rows read as defaults");
   assert.equal((await admin.query("SELECT 1 FROM classpilot_teacher_preferences WHERE school_id=$1", [schools.future])).rowCount, 0);
   assert.equal((await admin.query("SELECT max_tabs_per_student FROM classpilot_teacher_preferences WHERE school_id=$1 AND teacher_id=$2", [schools.a, authors.valid])).rows[0].max_tabs_per_student, 12);
@@ -95,6 +121,11 @@ test("schema bounds, one-owner uniqueness, and same-school membership hold indep
   for (const value of ["{}", "{\"kind\":\"preset\",\"preset\":\"halloween\",\"name\":\"Who Dey\"}", null]) await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]);
   for (const value of ["[]", "\"ready\"", "1", "false"]) await assert.rejects(admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_asset=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]), { code: "23514" });
   for (const value of ["{}", "{\"id\":\"00000000-0000-4000-8000-000000000000\",\"status\":\"reserved\"}", null]) await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_asset=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]);
+  for (const value of ["{}", "\"ready\"", "1", "false", "null"]) await assert.rejects(admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_assets=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]), { code: "23514" });
+  await assert.rejects(admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_assets=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, null]), { code: "23502" });
+  for (const value of ["[{\"id\":\"00000000-0000-4000-8000-000000000000\",\"status\":\"ready\"}]", "[{}]", "[]"]) await admin.query("UPDATE classpilot_teacher_preferences SET dashboard_theme_assets=$3::jsonb WHERE school_id=$1 AND teacher_id=$2", [...parameters, value]);
+  assert.deepEqual((await admin.query("INSERT INTO classpilot_teacher_preferences(school_id,teacher_id) VALUES($1,$2) RETURNING dashboard_theme_assets", [schools.future, authors.valid])).rows[0].dashboard_theme_assets, [], "a new row starts with an empty library");
+  await admin.query("DELETE FROM classpilot_teacher_preferences WHERE school_id=$1 AND teacher_id=$2", [schools.future, authors.valid]);
   for (const value of ["[]", "\"locked\"", "1", "true"]) await assert.rejects(admin.query("UPDATE settings SET appearance=$2::jsonb WHERE school_id=$1", [schools.a, value]), { code: "23514" });
   for (const value of ["{}", "{\"lockToSchoolTheme\":true,\"schoolDefaultTheme\":{\"kind\":\"preset\",\"preset\":\"winter\"}}", null]) await admin.query("UPDATE settings SET appearance=$2::jsonb WHERE school_id=$1", [schools.a, value]);
 });
@@ -117,7 +148,14 @@ test("typed schema, immutable ledger contract, and forced tenant RLS match", asy
   assert.equal(classpilotDashboardAppearanceMigration.mode, "transactional");
   assert.ok(schoolPilot27ExpandMigrations.some(migration => migration.id === classpilotDashboardAppearanceMigration.id));
   assert.equal(schoolPilot27Migrations.filter(migration => migration.id === classpilotDashboardAppearanceMigration.id).length, 1);
-  assert.equal(schoolPilot27Migrations.at(-1)?.id, classpilotDashboardAppearanceMigration.id, "appended to the end of the manifest");
+  assert.ok(columns.includes("dashboard_theme_assets"));
+  assert.equal(classpilotDashboardThemeLibraryMigration.id, "classpilot-dashboard-theme-library-20261018");
+  assert.equal(classpilotDashboardThemeLibraryMigration.checksum, createHash("sha256").update(CLASSPILOT_DASHBOARD_THEME_LIBRARY_SQL).digest("hex"));
+  assert.equal(classpilotDashboardThemeLibraryMigration.mode, "transactional");
+  assert.ok(schoolPilot27ExpandMigrations.some(migration => migration.id === classpilotDashboardThemeLibraryMigration.id));
+  assert.equal(schoolPilot27Migrations.filter(migration => migration.id === classpilotDashboardThemeLibraryMigration.id).length, 1);
+  assert.equal(schoolPilot27Migrations.at(-2)?.id, classpilotDashboardAppearanceMigration.id, "the library migration follows the appearance one");
+  assert.equal(schoolPilot27Migrations.at(-1)?.id, classpilotDashboardThemeLibraryMigration.id, "appended to the end of the manifest");
   const policy = (await admin.query(`SELECT c.relrowsecurity enabled,c.relforcerowsecurity forced,p.polname,pg_get_expr(p.polqual,p.polrelid) AS using,pg_get_expr(p.polwithcheck,p.polrelid) AS check
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_policy p ON p.polrelid=c.oid WHERE n.nspname=$1 AND c.relname='classpilot_teacher_preferences'`, [schema])).rows[0];
   assert.equal(policy.enabled, true); assert.equal(policy.forced, true); assert.equal(policy.polname, "tenant_isolation"); assert.equal(policy.using, policy.check);
