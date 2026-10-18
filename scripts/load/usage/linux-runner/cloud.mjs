@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { validatePlan, launchRequest, instancePolicy, tags, assertOwnedResource, launchDocument, sftpDocument, stopUserData, RUNNER_DOCUMENT_SUFFIXES } from './cloud-plan.mjs';
@@ -18,6 +20,115 @@ async function pinned(ref) {
 }
 async function privateBytes(file, bytes) {
   await writePrivateBytesExclusive(file, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
+}
+// Create and verify both private captures before an API can mutate a resource.
+// Writing captured strings only after spawnSync returns loses the native result
+// if a later file/ACL operation fails, even when AWS completed the mutation.
+const MAX_AWS_OUTPUT = 16 * 1024 * 1024;
+export async function streamCapturedOutput(source, handle, fail) {
+  let pendingWrite = Promise.resolve();
+  try { await pipeline(source, async function* (chunks) {
+    let bytes = 0;
+    for await (const chunk of chunks) {
+      bytes += chunk.length;
+      if (bytes > MAX_AWS_OUTPUT) throw Object.assign(new Error('AWS output limit'), { code: 'ENOBUFS' });
+      yield chunk;
+    }
+  }, new Writable({ write(chunk, _encoding, done) {
+    // This sink does not own/close the FileHandle. Pipeline destruction after a
+    // timeout/output limit must leave it readable for the retained outcome.
+    pendingWrite = (async () => {
+      let offset = 0;
+      while (offset < chunk.length) {
+        const written = await handle.write(chunk, offset, chunk.length - offset);
+        assert.ok(written.bytesWritten > 0, 'AWS capture write stalled'); offset += written.bytesWritten;
+      }
+    })();
+    pendingWrite.then(() => done(), done);
+  } })); }
+  catch (failure) { fail(failure); }
+  finally {
+    // Destroying a pipeline may finish before its active asynchronous write.
+    // Drain that write before the caller syncs, reads or closes the capture.
+    try { await pendingWrite; } catch (failure) { fail(failure); }
+  }
+}
+async function runCapturedNative(executable, args, options) {
+  const child = spawn(executable, args, { env: options.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let error;
+  const fail = failure => { error ??= failure; child.kill(); };
+  const completion = new Promise(resolve => {
+    child.once('error', failure => { error ??= failure; });
+    child.once('close', (status, signal) => resolve({ status, signal }));
+  });
+  const timer = setTimeout(() => fail(Object.assign(new Error('AWS process timeout'), { code: 'ETIMEDOUT' })), options.timeout);
+  try {
+    const streams = [streamCapturedOutput(child.stdout, options.handles[0], fail), streamCapturedOutput(child.stderr, options.handles[1], fail)];
+    const result = await completion; await Promise.all(streams);
+    return { ...result, error };
+  } finally { clearTimeout(timer); }
+}
+async function readCapturedBytes(handle, target) {
+  const before = await handle.stat();
+  assert.ok(before.size <= MAX_AWS_OUTPUT, 'AWS capture exceeds the response limit');
+  const bytes = Buffer.alloc(before.size);
+  let position = 0;
+  while (position < bytes.length) {
+    const read = await handle.read(bytes, position, bytes.length - position, position);
+    assert.ok(read.bytesRead > 0, 'AWS capture truncated'); position += read.bytesRead;
+  }
+  const after = await handle.stat(), named = await assertPrivatePath(target);
+  assert.ok(after.dev === before.dev && after.ino === before.ino && after.size === before.size && after.mtimeMs === before.mtimeMs && after.ctimeMs === before.ctimeMs, 'AWS capture changed while reading');
+  assert.ok(named.dev === after.dev && named.ino === after.ino, 'AWS capture path changed');
+  return { content: bytes.toString('utf8'), ref: { path: target, bytes: bytes.length, sha256: digest(bytes) } };
+}
+export async function captureAwsProcess(executable, args, { env, stdoutPath, stderrPath, timeout = 90000 }, dependencies = {}) {
+  const write = dependencies.write ?? writePrivateBytesExclusive;
+  const open = dependencies.open ?? fs.open;
+  const check = dependencies.check ?? assertPrivatePath;
+  const run = dependencies.run ?? runCapturedNative;
+  const snapshot = dependencies.snapshot ?? readCapturedBytes;
+  const handles = [];
+  let nativeResult, stage = 'prepare';
+  try {
+    for (const target of [stdoutPath, stderrPath]) {
+      await write(target, Buffer.alloc(0));
+      const before = await check(target);
+      const handle = await open(target, 'r+'); handles.push(handle);
+      const actual = await handle.stat();
+      assert.ok(actual.isFile() && actual.nlink === 1 && actual.dev === before.dev && actual.ino === before.ino, 'private capture changed before AWS invocation');
+    }
+    stage = 'invoke';
+    nativeResult = await run(executable, args, { env, windowsHide: true, stdio: ['ignore', handles[0].fd, handles[1].fd], handles, timeout });
+    stage = 'flush';
+    const flushed = await Promise.allSettled(handles.map(handle => handle.sync()));
+    const failed = flushed.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
+    stage = 'snapshot';
+    const [stdout, stderr] = await Promise.all([snapshot(handles[0], stdoutPath), snapshot(handles[1], stderrPath)]);
+    return { ...nativeResult, stdout, stderr };
+  } catch (error) {
+    error.captureStage = stage;
+    error.nativeResult = nativeResult ? { status: nativeResult.status, signal: nativeResult.signal, errorCode: nativeResult.error?.code ?? null } : null;
+    throw error;
+  } finally {
+    const results = await Promise.allSettled(handles.map(handle => handle.close()));
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) {
+      failed.reason.captureStage = 'close';
+      failed.reason.nativeResult = nativeResult ? { status: nativeResult.status, signal: nativeResult.signal, errorCode: nativeResult.error?.code ?? null } : null;
+      throw failed.reason;
+    }
+  }
+}
+export function decodeAwsResult(result, stdout, stderr, missingCodes = []) {
+  // Timeout/termination never proves absence, even if a partial stderr contains
+  // a normally accepted missing-resource code.
+  if (result.status !== 0 || result.error || result.signal) {
+    const code = /An error occurred \(([A-Za-z0-9._]+)\)/.exec(stderr)?.[1];
+    if (!result.error && !result.signal && Number.isInteger(result.status) && missingCodes.includes(code)) return { absent: true, absenceCode: code };
+    throw new Error('AWS operation failed; private receipt retained');
+  }
+  return stdout.trim() ? JSON.parse(stdout) : {};
 }
 export async function pinnedExecutable(ref) {
   assert.ok(ref && path.isAbsolute(ref.path) && /^[a-f0-9]{64}$/.test(ref.sha256));
@@ -176,16 +287,15 @@ export class CloudController {
     const env = { ...process.env, AWS_ACCESS_KEY_ID: this.credentials.AccessKeyId, AWS_SECRET_ACCESS_KEY: this.credentials.SecretAccessKey, AWS_SESSION_TOKEN: this.credentials.SessionToken, AWS_EC2_METADATA_DISABLED: 'true', AWS_PAGER: '', AWS_CONFIG_FILE: path.join(this.root, 'no-global-config'), AWS_SHARED_CREDENTIALS_FILE: path.join(this.root, 'no-global-credentials') };
     delete env.AWS_PROFILE; delete env.AWS_DEFAULT_PROFILE; delete env.AWS_ENDPOINT_URL;
     for (const key of Object.keys(env)) if (key.startsWith('AWS_ENDPOINT_URL_')) delete env[key];
-    const result = spawnSync(this.p.aws.path, args, { env, windowsHide: true, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 90000 });
-    await privateBytes(path.join(this.root, `${token}-stdout.json`), result.stdout ?? '');
-    await privateBytes(path.join(this.root, `${token}-stderr.txt`), result.stderr ?? '');
-    await this.seal('aws-result', { service, operation, request: inputPath, exitCode: result.status, signal: result.signal, failed: !!result.error });
-    if (result.status !== 0) {
-      const code = /An error occurred \(([A-Za-z0-9._]+)\)/.exec(result.stderr ?? '')?.[1];
-      if (missingCodes.includes(code)) return { absent: true, absenceCode: code };
-      throw new Error(`AWS ${service}/${operation} failed; private receipt retained`);
+    const stdoutPath = path.join(this.root, `${token}-stdout.json`), stderrPath = path.join(this.root, `${token}-stderr.txt`);
+    let result;
+    try { result = await captureAwsProcess(this.p.aws.path, args, { env, stdoutPath, stderrPath }); }
+    catch (error) {
+      await this.seal('aws-capture-failure', { service, operation, request: inputPath, stdoutPath, stderrPath, stage: error.captureStage ?? 'unknown', nativeResult: error.nativeResult ?? null, captureErrorCode: error.code ?? null });
+      throw error;
     }
-    return result.stdout?.trim() ? JSON.parse(result.stdout) : {};
+    await this.seal('aws-result', { service, operation, request: inputPath, stdout: result.stdout.ref, stderr: result.stderr.ref, exitCode: result.status, signal: result.signal, failed: !!result.error, errorCode: result.error?.code ?? null });
+    return decodeAwsResult(result, result.stdout.content, result.stderr.content, missingCodes);
   }
   async authenticate() {
     const caller = await this.aws('sts', 'get-caller-identity'); assert.equal(caller.Account, this.p.accountId);
