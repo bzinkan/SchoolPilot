@@ -30,7 +30,7 @@ export default function DashboardThemeMenu({ theme, schoolId, viewerId }) {
   });
   if (!themesEnabled || !preferences) return null;
   const stored = preferences.dashboardTheme;
-  const currentId = stored?.kind === 'preset' ? stored.preset : null;
+  const currentId = stored?.kind === 'preset' ? stored.preset : stored?.kind === 'none' ? 'none' : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -48,7 +48,7 @@ export default function DashboardThemeMenu({ theme, schoolId, viewerId }) {
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>Dashboard theme</DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => { if (currentId !== null) save.mutate(null); }} data-testid="dashboard-theme-option-default">
-          <span className="flex-1">Default</span>
+          <span className="flex-1">Follow the school calendar</span>
           {currentId === null ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
         </DropdownMenuItem>
         {readyDashboardThemePresets().map(preset => (
@@ -58,6 +58,10 @@ export default function DashboardThemeMenu({ theme, schoolId, viewerId }) {
             {currentId === preset.id ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
           </DropdownMenuItem>
         ))}
+        <DropdownMenuItem onSelect={() => { if (currentId !== 'none') save.mutate({ kind: 'none' }); }} data-testid="dashboard-theme-option-none">
+          <span className="flex-1">Plain, no theme</span>
+          {currentId === 'none' ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate('/classpilot/my-settings?section=appearance')} data-testid="dashboard-theme-customize">
           Customize…

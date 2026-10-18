@@ -7595,10 +7595,14 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] }, teacherPreferences });
     await page.goto(`${baseURL}/classpilot`);
     await page.getByTestId('card-student-offline-test-22').waitFor();
-    if (teacherPreferences?.dashboardThemesEnabled) {
+    if (teacherPreferences?.dashboardThemesEnabled && teacherPreferences.effectiveDashboardTheme) {
       await page.locator('[data-theme]').waitFor();
       // The override lands on the provider's next commit; wait for that end state rather than a timer.
       await page.waitForFunction(() => !document.documentElement.classList.contains('dark'), null, { timeout: 10_000 });
+    } else if (teacherPreferences?.dashboardThemesEnabled) {
+      // A plain choice: the preference has loaded and nothing themed appears.
+      await page.getByTestId('button-dashboard-theme').waitFor({ state: 'attached' });
+      await page.waitForFunction(() => document.documentElement.classList.contains('dark') && !document.querySelector('[data-theme]'), null, { timeout: 10_000 });
     }
     const tiles = await page.locator('[data-testid^="card-student-"]').evaluateAll(nodes => nodes.map(node => {
       const box = node.getBoundingClientRect();
@@ -7613,6 +7617,7 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       wordmarkFont: getComputedStyle(document.querySelector('.brand-wordmark')).fontFamily,
       headerOrnaments: document.querySelectorAll('[data-testid="header-ornament"]').length,
       headerHeight: Math.round(document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().height),
+      notice: document.querySelectorAll('[data-testid="dashboard-theme-notice"]').length,
     }));
     const toggleLocked = await page.getByTestId('button-theme-toggle').getAttribute('aria-disabled');
     assert.deepEqual(harness.pageErrors, []);
@@ -7648,4 +7653,23 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   assert.equal(uploaded.document.headerOrnaments, 0, 'an uploaded background gets no preset mark');
   assert.match(uploaded.document.pageImage, /\/api\/classpilot\/teacher\/theme-asset\/11111111-1111-4111-8111-aaaaaaaaaaaa\/content\?schoolId=/, 'the background is fetched through the authenticated asset route with the school in the query');
   assert.deepEqual(uploaded.tiles.map(geometry), plain.tiles.map(geometry), 'an uploaded background changes no tile geometry either');
+  assert.equal(themed.document.notice, 0, 'a teacher\'s own choice draws no notice');
+  // The school calendar chose the theme: the one-time notice shows, fixed to the viewport, and nothing moves.
+  const schoolTheme = { kind: 'preset', preset: 'halloween', source: 'school' };
+  const calendar = { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true };
+  const automatic = await measure({ schoolId: SCHOOL_ID, revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
+    dashboardTheme: null, effectiveDashboardTheme: schoolTheme, schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
+  assert.equal(automatic.document.theme, 'halloween');
+  assert.equal(automatic.document.notice, 1, 'the first automatic theme announces itself');
+  assert.equal(automatic.toggleLocked, 'true');
+  assert.deepEqual(automatic.tiles.map(geometry), plain.tiles.map(geometry), 'the notice is fixed to the viewport and moves nothing');
+  assert.equal(automatic.document.headerHeight, plain.document.headerHeight);
+  // Plain is the teacher's deliberate nothing: no theme, dark mode back, toggle live, no notice.
+  const none = await measure({ schoolId: SCHOOL_ID, revision: 5, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
+    dashboardTheme: { kind: 'none' }, effectiveDashboardTheme: null, schoolTheme, schoolCalendar: calendar, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: false });
+  assert.equal(none.document.theme, null);
+  assert.equal(none.document.dark, true);
+  assert.equal(none.toggleLocked, null);
+  assert.equal(none.document.notice, 0);
+  assert.deepEqual(none.tiles.map(geometry), plain.tiles.map(geometry));
 });

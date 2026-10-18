@@ -31,13 +31,14 @@ Check the roster, choose a class, and set up the tools you expect to use before 
 
 **Who can use this:** Teacher or administrator; your school decides which options are available
 
-Give your own ClassPilot dashboard a holiday, season or custom-background look without changing how anything works.
+Your dashboard follows the school calendar by default; pick a theme of your own, upload a background, or turn it off, without changing how anything works.
 
-1. **Pick a preloaded theme.** In Teaching tools, Appearance lists the holiday and season themes. Choose one and Save. Only your dashboard changes; co-teachers, substitutes and administrators keep their own look, and students never see it on their devices.
-2. **Follow the calendar.** Turn on Follow the calendar to switch themes automatically by holiday and season. Catholic schools can include Advent.
-3. **Upload your own background.** When your school allows it, Your own background accepts a PNG, JPG or WebP image: your team, your college, your mascot, anything you have the right to use. The picture fills the page behind your dashboard and is private to you.
-4. **Know what never changes.** Student status colors, badges, tile layout, alerts and every control behave exactly as they do on the Default look. A theme replaces light or dark mode while it is on; the toggle returns when you switch back to Default.
-5. **Decide about the kiosk.** If your school uses the PassPilot kiosk, it shows your theme while it is bound to your class, with each student’s first name on a themed plate at sign-out. Turn off Show my theme on the PassPilot kiosk to keep the kiosk plain.
+1. **Follow the school calendar, or not.** Until you choose otherwise, your dashboard follows the school calendar: a holiday theme appears a few days before each holiday your school lists and the season comes back the day after. A one-time note on the dashboard tells you when it first happens. Choose Plain, no theme to turn it off for yourself, or pick any theme below.
+2. **Pick a preloaded theme.** In Teaching tools, Appearance lists the holiday and season themes. Choose one and Save. Only your dashboard changes; co-teachers, substitutes and administrators keep their own look, and students never see it on their devices.
+3. **Run your own calendar.** Turn on Follow the calendar under a theme to switch by holiday and season with every holiday available to you, whatever your school lists; Catholic schools can include Advent.
+4. **Upload your own background.** When your school allows it, Your own background accepts a PNG, JPG or WebP image: your team, your college, your mascot, anything you have the right to use. The picture fills the page behind your dashboard and is private to you.
+5. **Know what never changes.** Student status colors, badges, tile layout, alerts and every control behave exactly as they do on the Default look. A theme replaces light or dark mode while it is on; the toggle returns when you switch back to Default.
+6. **Decide about the kiosk.** If your school uses the PassPilot kiosk, it shows your theme while it is bound to your class, with each student’s first name on a themed plate at sign-out. Turn off Show my theme on the PassPilot kiosk to keep the kiosk plain.
 
 > **Flight note:** The palette button in the dashboard header switches themes without leaving class; Customize opens Appearance for names, calendar mode and uploads.
 

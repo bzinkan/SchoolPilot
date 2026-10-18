@@ -3,15 +3,7 @@ import test from 'node:test';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  DASHBOARD_THEME_PRESET_IDS,
-  DASHBOARD_THEME_PRESETS,
-  describeDashboardTheme,
-  findDashboardThemePreset,
-  isUnavailableDashboardTheme,
-  readyDashboardThemePresets,
-  resolveDashboardTheme,
-} from '../src/shared/themes/presets.js';
+import { DASHBOARD_THEME_PRESETS, DASHBOARD_THEME_PRESET_IDS, describeDashboardTheme, findDashboardThemePreset, isUnavailableDashboardTheme, readyDashboardThemePresets, resolveDashboardTheme, resolveSchoolTheme } from '../src/shared/themes/presets.js';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -51,18 +43,36 @@ test('resolve returns a ready preset for a stored preset and null for everything
   assert.equal(uploaded?.ornament, 'none');
   assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000' }, { uploadsEnabled: false }), null, 'the school upload switch wins');
   assert.equal(resolveDashboardTheme({ kind: 'image' }), null, 'an image theme without an asset is Default');
-  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-10-16T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'halloween', 'calendar mode follows the date, not the stored hint');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-10-16T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'fall', 'calendar mode follows the date, not the stored hint');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'advent', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'advent', 'the Advent hint opts into the liturgical variant');
-  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'christmas', 'without the hint December is Christmas');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-12-10T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'winter', 'without the hint December is Christmas');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'halloween', name: 'Spooky' }), findDashboardThemePreset('halloween'));
 });
 
 test('describe and unavailable follow the stored value', () => {
-  assert.equal(describeDashboardTheme(null), 'Default');
+  assert.equal(describeDashboardTheme(null), 'Follow the school');
   assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'christmas' }), 'Christmas');
   assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'christmas', name: '  Ho ho ho ' }), 'Ho ho ho');
   assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'gone' }), 'Unavailable theme');
   assert.equal(isUnavailableDashboardTheme(null), false);
   assert.equal(isUnavailableDashboardTheme({ kind: 'preset', preset: 'halloween' }), false);
   assert.equal(isUnavailableDashboardTheme({ kind: 'preset', preset: 'gone' }), true);
+});
+
+test('plain and school-calendar themes resolve as the picker and dashboard expect', () => {
+  assert.equal(resolveDashboardTheme({ kind: 'none' }), null, 'Plain is a deliberate nothing');
+  const now = new Date('2026-12-20T16:00:00Z');
+  const school = { kind: 'preset', preset: 'fall', calendar: true, source: 'school' };
+  assert.equal(resolveDashboardTheme(school, { now, calendar: { holidays: ['halloween'], leadDays: 10, starts: {} } })?.id, 'winter', 'a school without Christmas listed sees Winter in December');
+  assert.equal(resolveDashboardTheme(school, { now, calendar: { holidays: ['christmas'], leadDays: 10, starts: {} } })?.id, 'christmas');
+  assert.equal(resolveDashboardTheme(school, { now: new Date('2026-12-12T16:00:00Z'), calendar: { holidays: ['christmas'], leadDays: 10, starts: { christmas: '2026-12-11' } } })?.id, 'christmas', 'an early start opens the window');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now })?.id, 'christmas', "a teacher's own calendar may show Christmas");
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-12-10T16:00:00Z') })?.id, 'winter', 'without the Advent hint');
+  assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'advent', calendar: true }, { now: new Date('2026-12-10T16:00:00Z') })?.id, 'advent');
+  assert.equal(resolveSchoolTheme({ schoolTheme: school, schoolCalendar: { holidays: [], leadDays: 10, starts: {} } }, { now })?.id, 'winter');
+  assert.equal(resolveSchoolTheme({ schoolTheme: { kind: 'preset', preset: 'summer', source: 'school' } }, { now })?.id, 'summer', 'a fixed school theme is itself');
+  assert.equal(resolveSchoolTheme({ schoolTheme: null }), null);
+  assert.equal(describeDashboardTheme({ kind: 'none' }), 'Plain, no theme');
+  assert.equal(describeDashboardTheme(null), 'Follow the school');
+  assert.equal(describeDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }), 'Calendar: Fall');
 });

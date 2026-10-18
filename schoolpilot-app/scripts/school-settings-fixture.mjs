@@ -7,6 +7,7 @@ export function schoolSettingsFixture(recipient = null, schoolId = 'school-a') {
     email: { version: 'email-1', centralEmailRecipientUserId: recipient },
     blockedWebsites: { policyRevision: 1, blockedDomains: ['games.example'] },
     rosterGrades: { version: 'grades-1', gradeLevels: ['6', '7', '8'] },
-    appearance: { version: 'appearance-1', teacherThemesEnabled: true, teacherUploadsEnabled: false, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null },
+    appearance: { version: 'appearance-1', teacherThemesEnabled: true, teacherUploadsEnabled: false, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null,
+      autoCalendar: true, calendarHolidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], calendarLeadDays: 10, calendarStarts: {}, signInGateTheme: true },
   } };
 }
