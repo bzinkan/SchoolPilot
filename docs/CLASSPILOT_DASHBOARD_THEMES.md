@@ -327,3 +327,156 @@ Each phase is one PR, CI green, flag-off until Phase 6. Verification per `.codex
 - **Trademark exposure through marketing.** Mitigation: §3 rules; screenshots use the SchoolPilot mark.
 - **Teachers uploading inappropriate images.** Mitigation: private to the teacher only; admins can disable uploads and can
   view an asset for review; uploads are logged with teacher id and sha256.
+
+---
+
+# Part 2 — Automatic calendar themes, school calendars, and the student sign-in gate
+
+Written 2026-10-17 after Part 1 (phases 1–6 plus the approved artwork) shipped. Three asks from Brian:
+
+1. The student sign-in gate (the ClassPilot extension's auth gate on shared Chromebooks) follows the **school** theme, with
+   the production artwork inside the sign-in panel behind a frosted form card (canvas row 13, approved).
+2. Holiday and season themes come up **automatically** unless a teacher or an admin turns them off.
+3. Public schools must not get Christmas or Easter by default. The default for them is Spring and Winter; an admin (or a
+   teacher, for their own dashboard) can change that.
+
+## 9. Model changes
+
+### 9.1 Three teacher states instead of two
+Today a teacher's `dashboardTheme` is `null` (no choice, inherit the school) or a theme. Automatic themes need "I inherit"
+and "I want nothing" to be different, so the stored value gains a third shape:
+
+| Stored value | Meaning | Picker label |
+|---|---|---|
+| `null` | Follow the school (automatic calendar, or the admin's default) | **Follow the school calendar** (default) |
+| `{ kind: "none" }` | Plain dashboard, no theme, honours light/dark mode | **Plain, no theme** |
+| `{ kind: "preset", … }` / `{ kind: "image", … }` | The teacher's own choice | as today |
+
+`{ kind: "none" }` is accepted by `dashboardThemeSchema`, resolves to no theme everywhere (dashboard, kiosk when that
+teacher is bound), and is never overridden except by the admin lock. Existing rows need no migration: `null` already means
+"inherit".
+
+### 9.2 School appearance gains a calendar
+`settings.appearance` (jsonb, Phase 4) gains:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `autoCalendar` | `true` | When no `schoolDefaultTheme` is set, the school theme is today's calendar preset. Off = plain unless a default is set. |
+| `calendarHolidays` | `["halloween","thanksgiving","valentines","st-patricks"]` | Holidays the calendar may pick. Anything not listed falls through to the season: December → Winter, the Easter window → Spring. |
+| `signInGateTheme` | `true` | The student sign-in gate shows the school theme. |
+| `calendarLeadDays` | `10` | How many days before a holiday its theme appears (0–30). The day after the holiday the season returns. |
+| `calendarStarts` | `{}` | Per-holiday early start for the current school year, e.g. `{ "halloween": "2026-10-19", "christmas": "2026-12-11" }`. The holiday opens on that date instead of the lead-time date; it still closes automatically the day after the holiday. Cleared by the admin or ignored once the date is a year old. |
+
+The **faith-calendar** holidays (`christmas`, `easter`, `advent`) are therefore **off for every school by default** and an
+admin turns them on. St. Francis de Sales turns all three on in Admin › Settings › Appearance (no migration, no code).
+`advent` implies `christmas` (Advent runs to Dec 24, Christmas from Dec 25). `schoolDefaultTheme` keeps its meaning as an
+explicit fixed override; `lockToSchoolTheme` keeps forcing the school theme on everyone.
+
+Why an allowlist rather than a "public school" switch: there is no reliable school-type field, districts differ about
+Halloween too, and a checkbox per holiday is what an admin actually asks for. The default set is the one most US public
+schools already decorate for.
+
+### 9.3 Holiday windows: lead time, then the season comes back
+Every holiday opens `calendarLeadDays` before its date (default 10) and closes the day after it, when the season preset
+returns. The windows in Part 1 (Halloween from Oct 15, a two-week Easter run-up, Christmas for all of December) are
+replaced by one rule:
+
+| Holiday | Date | Window at the default lead of 10 days | Then |
+|---|---|---|---|
+| Halloween | Oct 31 | Oct 21 – Oct 31 | Fall |
+| Thanksgiving | 4th Thursday of November | 10 days before – Thanksgiving Day | Fall |
+| Christmas | Dec 25 | Dec 15 – Dec 25 | Winter |
+| Valentine's Day | Feb 14 | Feb 4 – Feb 14 | Winter |
+| St. Patrick's Day | Mar 17 | Mar 7 – Mar 17 | Spring |
+| Easter | Easter Sunday | 10 days before – Easter Sunday | Spring |
+| Advent (when listed) | Advent Sunday – Dec 24 | Its real liturgical dates, yielding to the Christmas window from Dec 15 | Christmas, then Winter |
+
+The lead time is one number for the whole school (Admin › Appearance); a teacher who wants something else picks a theme
+or Plain for their own dashboard.
+
+**Starting a holiday early.** An admin who wants Halloween from Monday Oct 19 (two days before the 10-day window) or
+Christmas from Friday Dec 11 does not set a fixed default; the Holidays list has a **Start now** button and an editable
+start date per holiday, which writes `calendarStarts`. The window simply opens on that date and still closes by itself
+the day after the holiday, so the automatic trigger on Oct 21 or Dec 15 changes nothing (the theme is already on) and the
+automatic end still happens (Fall on Nov 1, Winter on Dec 26). Nothing has to be remembered or turned off. A fixed
+`schoolDefaultTheme` stays what it is today: a deliberate, permanent override that the calendar never touches, with the
+admin page saying so next to it. For a Catholic school with Advent listed: Advent from Advent Sunday (Nov 29, 2026),
+Christmas from the start date (Dec 11) or the lead date (Dec 15), Winter from Dec 26. The resolver is still a pure function of the date, so the leap-year test keeps covering
+every day; two new tests pin the window edges (the 10th day before shows the holiday, the day after shows the season) and
+that Advent hands over to Christmas on Dec 15.
+
+### 9.4 One resolver, three consumers
+`calendarPresetFor(today, { allowed, leadDays })` replaces the `liturgical` flag in both copies (`shared/themes/calendar.js` and
+`src/services/classpilotThemeCalendar.ts`; the parity test keeps them identical). Resolution for a **school theme**:
+
+```
+schoolTheme = schoolDefaultTheme
+  ?? (autoCalendar ? { kind: "preset", preset: calendarPresetFor(today, { allowed: calendarHolidays, leadDays: calendarLeadDays }), calendar: true } : null)
+```
+
+- Dashboard: the viewer's own choice (`preset`/`image`), else `none` → nothing, else the school theme; the admin lock beats
+  all of it. The teacher's own `calendar: true` with an `advent` hint keeps working (a public-school teacher may still choose
+  Christmas for her own dashboard).
+- Kiosk: unchanged order (lock → bound teacher → school theme), the school theme now computed as above.
+- Sign-in gate: the school theme only (`signInGateTheme` on, launch flag on); never a teacher's.
+
+### 9.5 Student sign-in gate (extension)
+- `GET /api/classpilot/extension/login-config` gains `theme: { preset, label, artwork, mark, brandFace } | null`.
+  `artwork` is the absolute production URL (`https://school-pilot.net/themes/<id>.webp`), `brandFace` one of
+  `creepster | mountains-of-christmas | pacifico | null` with its font URL. Absent field = plain gate, so older extensions
+  change nothing. Public with the enrollment key as today; no student or teacher data.
+- The gate (`extension/auth-gate-frame.*`) paints the artwork inside the sign-in panel behind a frosted form card, tints the
+  side column, draws the mark beside the brand and sets the brand face; fields, button, copy and contrast unchanged
+  (row 13 on the canvas). The last theme is cached in extension storage so the gate does not flash plain on a slow network;
+  any failed image or font falls back to the plain gate. Requires an extension release: 3.0.1 (3.0.0 is live), in
+  coordination with its owner.
+- Isolation rule update (§4.10): the extension receives **one school-level, pre-sign-in, presentation-only** theme object
+  through login-config and nothing else; no theme data on the device channel, no per-teacher data.
+
+### 9.6 Teacher and admin surfaces
+- Teaching tools › Appearance: first option becomes **Follow the school calendar** (selected by default, shows "Today:
+  Halloween"), then the presets, then **Plain, no theme**, then the upload slot. The per-teacher "Follow the calendar"
+  checkbox stays for teachers who want their own calendar with a different holiday set (the Advent checkbox remains there).
+- Header quick switch: the same three groups.
+- Admin › Settings › Appearance: **Automatic calendar themes** (on), **Holidays shown automatically** checkboxes (secular set
+  checked; Christmas, Easter, Advent unchecked), **Days before a holiday** (10), **Show the school theme on the student
+  sign-in gate** (on), plus the existing switches. Saving stays a single versioned section write.
+- First-run notice: the first time a dashboard renders an automatic theme, a one-line dismissible banner says "Your
+  dashboard follows the school calendar. Change it in Appearance." with a Plain link. Stored per teacher in the browser.
+
+## 10. Phases
+
+### Phase 7 — Automatic calendar themes and school calendars (web + API, flag-safe)
+- Schema: `{ kind: "none" }`; `appearance.autoCalendar`, `calendarHolidays`, `calendarLeadDays`, `signInGateTheme`; zod and
+  `readSchoolAppearance` defaults; `calendarPresetFor(today, { allowed, leadDays })` in both copies with the window table above.
+- Resolvers: `preferenceDto` (`effectiveDashboardTheme`), `passpilotKioskThemeRules`, and a new `schoolThemeFor(schoolId, now)`
+  shared by the kiosk and login-config.
+- UI: picker three groups + first-run banner; admin checkboxes; guides.
+- Tests: every day of the year resolves for the secular set with no faith preset; Christmas, Easter and Advent appear only
+  when listed; an early start opens the window on its date and the window still closes the day after the holiday; `none` beats the school theme and loses only to the lock; kiosk and dashboard parity; admin section save.
+- Rollout: deploy; the St. Francis admin ticks Christmas, Easter and Advent. From then on teachers who never chose a theme see
+  Halloween this month automatically.
+
+### Phase 8 — Student sign-in gate
+- API: `theme` on login-config (ships with Phase 7 or right after; harmless until the extension reads it).
+- Extension: gate rendering, cache, fallback, a browser test against the fixture gate; ships as 3.0.1.
+- Docs: IT tutorial note that the sign-in gate shows the school theme and how an admin turns it off.
+
+## 11. Feedback and decisions to confirm
+1. **Default-on is a product change teachers will notice on day one.** The banner in §9.6 is the mitigation; without it
+   expect "my dashboard changed" messages. Recommendation: ship the banner with Phase 7.
+2. **Dark mode.** A theme overrides dark mode (§4.9). With automatic themes, dark-mode users lose dark mode for the length
+   of a holiday window unless they pick Plain. Recommendation: keep the rule and make the banner's Plain link one click.
+3. **Faith holidays stay reachable for teachers.** A public-school teacher can still pick Christmas for her own dashboard;
+   only the automatic school calendar is filtered. If a district needs presets hidden outright, that is a later
+   `hiddenPresets` admin list, not in this plan.
+4. **Halloween is in the default secular set.** Some districts avoid it; the admin checkbox covers them. Confirm the default.
+5. **Student-facing surfaces.** With Phase 8, students see the school theme on the sign-in gate and on the kiosk. Both are
+   school-level and admin-controllable (`signInGateTheme`, `kioskCustomBackgrounds`); uploaded teacher images never reach the
+   gate.
+6. **Christmas versus Advent.** With the 10-day rule a Catholic school that lists Advent sees Advent from Advent Sunday,
+   Christmas from Dec 15 (or an earlier start date), Winter from Dec 26.
+7. **Extension timing.** The gate ships as extension 3.0.1; everything else lands with a web deploy.
+8. **Before Phase 7 lands.** Today's admin page only has the fixed school default. Setting it to Halloween on Monday works
+   (every teacher without a personal choice sees Halloween) but it will not end by itself; part of the Phase 7 rollout for
+   St. Francis is to replace that fixed default with a Halloween start date so the automatic end applies.
