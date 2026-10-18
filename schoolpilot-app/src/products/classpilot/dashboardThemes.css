@@ -33,6 +33,14 @@
 }
 
 /* Header and toolbar: transparent element, glass on the layer behind it. */
+/* Native select popups. Every theme sets a near-white header text token and
+   Chrome paints the option list on its own canvas, so without this the
+   options inherit white text on a white popup (seen on Windows, Halloween,
+   class selector). Options get explicit dark-on-white colors and the select
+   a light scheme so the popup chrome matches them. */
+[data-theme] select { color-scheme: light; }
+[data-theme] select option { color: #0f172a; background-color: #ffffff; }
+
 [data-theme] .chrome-surface {
   position: relative;
   isolation: isolate;
