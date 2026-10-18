@@ -197,7 +197,7 @@ export async function verifyFrozenInputs(request, { platform = process.platform,
   canonical.assertUsageSourceCheckout(envelope, freeze.sourceDirectory);
   canonical.assertUsageSourceCheckout(baselineEnvelope, freeze.baselineSourceDirectory);
   for(const selected of [envelope,baselineEnvelope])
-    guard(selected.binding.migrationStage === 'expand' && selected.binding.expectedMigrations.length === 53 && selected.binding.rlsTables.length === 129, 'FROZEN_EXPAND_ADMISSION');
+    guard(selected.binding.migrationStage === 'expand' && selected.binding.expectedMigrations.length === freeze.expectedLedgerEntries && selected.binding.rlsTables.length === 129, 'FROZEN_EXPAND_ADMISSION');
   const schemas = [
     [freeze.schemaFile, freeze.references['schema/lineage/schema-receipt.json'], SOURCES.candidate, envelope],
     [freeze.baselineSchema.file, freeze.baselineSchema.receipt, SOURCES.baseline, baselineEnvelope],
