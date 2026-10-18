@@ -480,3 +480,12 @@ schoolTheme = schoolDefaultTheme
 8. **Before Phase 7 lands.** Today's admin page only has the fixed school default. Setting it to Halloween on Monday works
    (every teacher without a personal choice sees Halloween) but it will not end by itself; part of the Phase 7 rollout for
    St. Francis is to replace that fixed default with a Halloween start date so the automatic end applies.
+
+## 12. Background library and fit (decided 2026-10-18)
+
+Brian's first upload (a portrait poster) looked cropped and enormous: the page draws an uploaded image with `cover`. Two changes, one PR each half:
+
+- **Fit.** The image theme gains `fit: "cover" | "contain" | "tile"` (absent reads as `cover`). `cover` fills the page and crops the edges; `contain` keeps the whole picture, letterboxed over a blurred and dimmed copy of itself on a fixed layer behind the page; `tile` repeats a small image at 320 px. The dashboard root carries `data-image-fit`, the kiosk root `data-kiosk-image-fit`, and the stylesheet does the rest. No layout changes: the root only gains a stacking context for the blurred layer, and the tile-geometry test covers the `contain` case.
+- **Library.** A teacher keeps up to five ready backgrounds (`DASHBOARD_THEME_LIBRARY_LIMIT`) in `classpilot_teacher_preferences.dashboard_theme_assets` (jsonb array, startup migration `classpilot-dashboard-theme-library-20261018` backfills the single `dashboard_theme_asset` and leaves that column in place). Reserve appends; a sixth reserve is `409 CLASSPILOT_DASHBOARD_THEME_LIBRARY_FULL`; uploading bytes already in the library reuses that entry; abandoned reservations are pruned on the next reserve. Delete removes one entry and clears a theme that pointed at it. The DTO exposes `dashboardThemeAssets` (ready, oldest first), `dashboardThemeLibraryLimit`, and keeps `dashboardThemeAsset` (the chosen or newest image) so a frontend from before this change keeps working during rollout.
+- **Appearance.** "Your backgrounds" is its own row of tiles under the preloaded themes, each with a Remove button; Upload image shows "n of 5" and disables when full. The fit choice appears while an uploaded image is selected and is saved with the theme.
+- **Storage.** Objects stay under `classpilot/themes/<school>/<teacher>/<asset>` in the private attachments bucket; the task role policy gained that prefix on 2026-10-18 (PR #667) after the first production upload failed on an implicit deny.

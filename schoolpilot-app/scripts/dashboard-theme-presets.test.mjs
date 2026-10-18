@@ -41,6 +41,10 @@ test('resolve returns a ready preset for a stored preset and null for everything
   assert.equal(uploaded?.id, 'image', 'an uploaded background resolves to the neutral image look');
   assert.equal(uploaded?.artwork, '/api/classpilot/teacher/theme-asset/00000000-0000-4000-8000-000000000000/content?schoolId=school-a');
   assert.equal(uploaded?.ornament, 'none');
+  assert.equal(uploaded?.fit, 'cover', 'an uploaded background fills the page unless told otherwise');
+  assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000', fit: 'contain' }, { schoolId: 'school-a' })?.fit, 'contain');
+  assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000', fit: 'tile' }, { schoolId: 'school-a' })?.fit, 'tile');
+  assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000', fit: 'stretch' }, { schoolId: 'school-a' })?.fit, 'cover', 'an unknown fit reads as cover');
   assert.equal(resolveDashboardTheme({ kind: 'image', imageAssetId: '00000000-0000-4000-8000-000000000000' }, { uploadsEnabled: false }), null, 'the school upload switch wins');
   assert.equal(resolveDashboardTheme({ kind: 'image' }), null, 'an image theme without an asset is Default');
   assert.equal(resolveDashboardTheme({ kind: 'preset', preset: 'fall', calendar: true }, { now: new Date('2026-10-16T18:00:00Z'), timeZone: 'America/New_York' })?.id, 'fall', 'calendar mode follows the date, not the stored hint');

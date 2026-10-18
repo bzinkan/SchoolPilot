@@ -61,8 +61,17 @@ export function dashboardThemeAssetUrl(assetId, schoolId) {
   return `/api/classpilot/teacher/theme-asset/${encodeURIComponent(assetId)}/content${query ? `?${query}` : ''}`;
 }
 
-export function imageDashboardTheme(assetId, schoolId) {
-  return Object.freeze({ id: 'image', label: 'Your background', ready: true, artwork: dashboardThemeAssetUrl(assetId, schoolId), ornament: 'none', clearance: 'none' });
+// How an uploaded picture is drawn behind the dashboard: `cover` fills the
+// page and crops the edges, `contain` shows the whole picture over a blurred
+// copy of itself, `tile` repeats a small image. Anything else reads as cover.
+export const DASHBOARD_THEME_IMAGE_FITS = Object.freeze(['cover', 'contain', 'tile']);
+export const DASHBOARD_THEME_IMAGE_FIT_LABELS = Object.freeze({ cover: 'Fill the page', contain: 'Fit the whole picture', tile: 'Tile' });
+export function normalizeImageFit(value) {
+  return DASHBOARD_THEME_IMAGE_FITS.includes(value) ? value : 'cover';
+}
+
+export function imageDashboardTheme(assetId, schoolId, fit = 'cover') {
+  return Object.freeze({ id: 'image', label: 'Your background', ready: true, artwork: dashboardThemeAssetUrl(assetId, schoolId), ornament: 'none', clearance: 'none', fit: normalizeImageFit(fit) });
 }
 
 // With `calendar: true` the date picks the preset to draw. A theme the server
@@ -73,7 +82,7 @@ export function imageDashboardTheme(assetId, schoolId) {
 // uploaded image resolves to a neutral-glass "image" look over the asset.
 export function resolveDashboardTheme(theme, { enabled = true, now = new Date(), timeZone = 'America/New_York', schoolId = null, uploadsEnabled = true, calendar = null } = {}) {
   if (!enabled || !theme || typeof theme !== 'object') return null;
-  if (theme.kind === 'image') return uploadsEnabled && typeof theme.imageAssetId === 'string' && theme.imageAssetId ? imageDashboardTheme(theme.imageAssetId, schoolId) : null;
+  if (theme.kind === 'image') return uploadsEnabled && typeof theme.imageAssetId === 'string' && theme.imageAssetId ? imageDashboardTheme(theme.imageAssetId, schoolId, theme.fit) : null;
   if (theme.kind !== 'preset') return null;
   const id = theme.calendar === true
     ? calendarPresetFor(localDateParts(now, timeZone || 'America/New_York'), {

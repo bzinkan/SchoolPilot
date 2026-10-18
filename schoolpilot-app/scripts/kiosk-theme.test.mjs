@@ -35,6 +35,9 @@ test('the kiosk resolves only concrete themes the server already decided on', ()
   assert.equal(image.artwork, null, 'uploaded bytes come through the kiosk client, never a public URL');
   assert.equal(image.imageAssetId, 'asset-1');
   assert.equal(image.plate, KIOSK_PLATES.image);
+  assert.equal(image.fit, 'cover', 'an uploaded background fills the kiosk unless told otherwise');
+  assert.equal(resolveKioskTheme({ kind: 'image', imageAssetId: 'asset-1', fit: 'contain' }).fit, 'contain');
+  assert.equal(resolveKioskTheme({ kind: 'image', imageAssetId: 'asset-1', fit: 'bogus' }).fit, 'cover');
   assert.equal(resolveKioskTheme({ kind: 'preset', preset: 'retired-look' }), null);
   assert.equal(resolveKioskTheme({ kind: 'image' }), null);
   assert.equal(resolveKioskTheme(null), null);

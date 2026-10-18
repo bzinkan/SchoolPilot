@@ -7618,6 +7618,8 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       headerOrnaments: document.querySelectorAll('[data-testid="header-ornament"]').length,
       headerHeight: Math.round(document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().height),
       notice: document.querySelectorAll('[data-testid="dashboard-theme-notice"]').length,
+      imageFit: document.querySelector('[data-theme]')?.dataset.imageFit ?? null,
+      underlay: (() => { const root = document.querySelector('[data-theme]'); return root ? getComputedStyle(root, '::before').position : null; })(),
       // Native select options must stay readable on the popup canvas under a theme.
       classOption: (() => {
         // Probe with a throwaway select inside the themed root: the header's
@@ -7658,13 +7660,16 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   const geometry = ({ text: _text, ...rest }) => rest;
   assert.deepEqual(themed.tiles.map(geometry), plain.tiles.map(geometry), 'tile geometry is identical with and without a theme');
   assert.deepEqual(themed.tiles.map(tile => tile.text), plain.tiles.map(tile => tile.text), 'tile copy, badges and status labels are identical');
-  const image = { kind: 'image', imageAssetId: '11111111-1111-4111-8111-aaaaaaaaaaaa' };
+  const image = { kind: 'image', imageAssetId: '11111111-1111-4111-8111-aaaaaaaaaaaa', fit: 'contain' };
   const uploaded = await measure({ schoolId: SCHOOL_ID, revision: 4, maxTabsPerStudent: null, schoolMaxTabsPerStudent: null, effectiveMaxTabsPerStudent: null,
     dashboardTheme: image, effectiveDashboardTheme: image, dashboardThemesEnabled: true, dashboardThemeUploadsEnabled: true });
   assert.equal(uploaded.document.theme, 'image', 'an uploaded background uses the neutral image look');
   assert.equal(uploaded.document.headerOrnaments, 0, 'an uploaded background gets no preset mark');
   assert.match(uploaded.document.pageImage, /\/api\/classpilot\/teacher\/theme-asset\/11111111-1111-4111-8111-aaaaaaaaaaaa\/content\?schoolId=/, 'the background is fetched through the authenticated asset route with the school in the query');
   assert.deepEqual(uploaded.tiles.map(geometry), plain.tiles.map(geometry), 'an uploaded background changes no tile geometry either');
+  assert.equal(uploaded.document.imageFit, 'contain', 'the fit choice rides on the themed root');
+  assert.equal(uploaded.document.underlay, 'fixed', 'fit draws the blurred copy on a fixed layer behind the page');
+  assert.equal(uploaded.document.headerHeight, plain.document.headerHeight);
   assert.equal(themed.document.notice, 0, 'a teacher\'s own choice draws no notice');
   // The school calendar chose the theme: the one-time notice shows, fixed to the viewport, and nothing moves.
   const schoolTheme = { kind: 'preset', preset: 'halloween', source: 'school' };
