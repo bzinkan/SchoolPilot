@@ -7618,6 +7618,17 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
       headerOrnaments: document.querySelectorAll('[data-testid="header-ornament"]').length,
       headerHeight: Math.round(document.querySelector('[data-class-tools-navigation]').getBoundingClientRect().height),
       notice: document.querySelectorAll('[data-testid="dashboard-theme-notice"]').length,
+      // Native select options must stay readable on the popup canvas under a theme.
+      classOption: (() => {
+        // Probe with a throwaway select inside the themed root: the header's
+        // class selector is not mounted in every fixture state.
+        const root = document.querySelector('[data-theme]');
+        if (!root) return null;
+        const select = document.createElement('select'); const option = document.createElement('option'); select.append(option); root.append(select);
+        const result = { color: getComputedStyle(option).color, background: getComputedStyle(option).backgroundColor, scheme: getComputedStyle(select).colorScheme };
+        select.remove();
+        return result;
+      })(),
     }));
     const toggleLocked = await page.getByTestId('button-theme-toggle').getAttribute('aria-disabled');
     assert.deepEqual(harness.pageErrors, []);
@@ -7643,6 +7654,7 @@ test('a dashboard theme repaints only the chrome, pauses dark mode and leaves ev
   assert.match(themed.document.wordmarkFont, /Creepster/, 'the preset sets the wordmark in its display face');
   assert.doesNotMatch(plain.document.wordmarkFont, /Creepster/);
   assert.equal(themed.document.headerHeight, plain.document.headerHeight, 'the display face and the mark never change the header height');
+  assert.deepEqual(themed.document.classOption, { color: 'rgb(15, 23, 42)', background: 'rgb(255, 255, 255)', scheme: 'light' }, 'select options stay dark on white under a theme');
   const geometry = ({ text: _text, ...rest }) => rest;
   assert.deepEqual(themed.tiles.map(geometry), plain.tiles.map(geometry), 'tile geometry is identical with and without a theme');
   assert.deepEqual(themed.tiles.map(tile => tile.text), plain.tiles.map(tile => tile.text), 'tile copy, badges and status labels are identical');
