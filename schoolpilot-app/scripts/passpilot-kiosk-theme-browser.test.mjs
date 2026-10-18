@@ -128,8 +128,13 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
   assert.equal(state.assetHeaders[0]['x-kiosk-session'], 'session');
   assert.equal(state.assetHeaders[0]['x-kiosk-pin'], undefined);
 
-  // A blocked image leaves the flat theme color; nothing breaks.
+  // A blocked image leaves the flat theme color; nothing breaks. The refusal
+  // is awaited before the style check: the kiosk clears the old blob as soon
+  // as the asset id changes, so on a slow runner the empty var can be seen
+  // before the second request has even reached the server.
+  const refused = page.waitForResponse(response => response.url().includes('/theme-asset/asset-2/'));
   state.assetStatus = 404; state.theme = { kind: 'image', imageAssetId: 'asset-2' }; state.revision += 1;
+  await refused;
   await page.waitForFunction(() => {
     const element = document.querySelector('[data-kiosk-theme="image"]');
     return element && element.style.getPropertyValue('--kiosk-image') === '';
