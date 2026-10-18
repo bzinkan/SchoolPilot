@@ -225,13 +225,16 @@ Choose the portal students open after ClassPilot sign-in while their Waypoint or
 
 **Who can use this:** Administrator or school administrator
 
-Decide whether teachers may theme their dashboards, whether they may upload images, what the kiosk may show, and whether the whole school shares one look.
+Decide whether teachers may theme their dashboards, which holidays the school calendar shows and when, what the kiosk and the student sign-in gate may show, and whether the whole school shares one look.
 
 1. **Allow or pause teacher themes.** Teachers may use the preloaded themes is on by default. Turning it off returns every dashboard to the school default or the plain look; nothing else about ClassPilot changes.
 2. **Decide about uploads.** Teachers may upload a background image is off by default. Uploaded pictures are private to the teacher who uploaded them, are re-encoded with metadata removed, and are never shown to students on their own devices.
 3. **Decide what the kiosk may show.** The PassPilot kiosk follows the theme of the teacher it is bound to. Preloaded themes are always allowed there; Custom backgrounds may appear on kiosks is off by default because the kiosk is a shared screen students look at.
-4. **Set a school default or lock.** A school default theme applies to teachers who have not chosen one and to kiosks bound to no teacher. Lock everyone to the school theme overrides every personal choice until it is turned off.
-5. **Save deliberately.** Save dashboard themes writes only the Appearance section with a version check. Themes are presentation only: student status colors, alerts, commands and monitoring never read them.
+4. **Choose the automatic calendar.** Automatic calendar themes is on by default: teachers who follow the school, kiosks bound to no teacher and the student sign-in gate show today’s holiday or season. Holidays shown automatically lists what may appear; Christmas, Easter and Advent are off until you turn them on, so a public school sees Winter in December and Spring at Easter. Days before a holiday sets how early a holiday appears; it ends by itself the day after.
+5. **Start a holiday early.** Press Start now beside a holiday, or type a date, to open it ahead of the usual lead time this year. The end stays automatic, so there is nothing to turn off afterwards.
+6. **Set a school default or lock.** A fixed school theme replaces the calendar for teachers who have not chosen one and for kiosks bound to no teacher, and stays until you clear it. Lock everyone to the school theme overrides every personal choice until it is turned off.
+7. **Decide about the student sign-in gate.** Show the school theme on the student sign-in gate puts the school theme behind the shared-Chromebook sign-in panel. Students see the same picture teachers see; the form itself does not change. This needs ClassPilot extension 3.0.1 or later.
+8. **Save deliberately.** Save dashboard themes writes only the Appearance section with a version check. Themes are presentation only: student status colors, alerts, commands and monitoring never read them.
 
 > **Flight note:** Launch themes with the default switches, then enable uploads once staff know the rule: upload only images you have the right to use.
 

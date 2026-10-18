@@ -92,7 +92,18 @@ protected caches, and late callbacks cannot populate a new editor.
   values read as defaults): `teacherThemesEnabled` (default true),
   `teacherUploadsEnabled` (false), `kioskCustomBackgrounds` (false),
   `lockToSchoolTheme` (false) and `schoolDefaultTheme` (a `kind: "preset"` theme
-  or null; an image is rejected with `400`).
+  or null; an image is rejected with `400`), plus the school calendar
+  (`docs/CLASSPILOT_DASHBOARD_THEMES.md` §9.2): `autoCalendar` (true; with no
+  fixed default the school theme is today's calendar preset), `calendarHolidays`
+  (`["halloween", "thanksgiving", "valentines", "st-patricks"]`; Christmas,
+  Easter and Advent are opt-in, Advent implies Christmas), `calendarLeadDays`
+  (10; integer 0–30), `calendarStarts` (`{}`; per-holiday `YYYY-MM-DD` early
+  start for the current year) and `signInGateTheme` (true; the student sign-in
+  gate shows the school theme). The GET section always carries every key,
+  normalized (unknown holidays and malformed starts dropped, the lead clamped).
+  On PATCH the five calendar keys are optional and the save merges over the live
+  values, so a client that omits a key keeps it; `calendarStarts` merges per
+  holiday, and a `null` entry clears that holiday's start.
 - `blockedWebsites` preserves the existing policy-revision contract. Student
   portal, schedule-change policy, staff sign-in policy, interruption digest,
   and setup-key operations retain their independent endpoints.

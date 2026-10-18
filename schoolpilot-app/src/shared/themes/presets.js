@@ -6,7 +6,7 @@
 // page background and adds a small ornament to each tile. Student status
 // colors, badges and layout never come from here.
 
-import { calendarPresetFor, localDateParts } from './calendar.js';
+import { DEFAULT_CALENDAR_HOLIDAYS, calendarPresetFor, localDateParts, teacherCalendarHolidays } from './calendar.js';
 
 export const DASHBOARD_THEME_PRESET_IDS = Object.freeze([
   'halloween',
@@ -65,18 +65,31 @@ export function imageDashboardTheme(assetId, schoolId) {
   return Object.freeze({ id: 'image', label: 'Your background', ready: true, artwork: dashboardThemeAssetUrl(assetId, schoolId), ornament: 'none', clearance: 'none' });
 }
 
-// With `calendar: true` the stored preset is only a hint (Advent opts the
-// school into the liturgical variant); the date picks the preset to draw.
-// An uploaded image resolves to a neutral-glass "image" look over the asset.
-export function resolveDashboardTheme(theme, { enabled = true, now = new Date(), timeZone = 'America/New_York', schoolId = null, uploadsEnabled = true } = {}) {
+// With `calendar: true` the date picks the preset to draw. A theme the server
+// derived from the school (`source: 'school'`) uses the school's own holiday
+// list, lead time and early starts (`calendar`); a teacher's own calendar may
+// show every holiday, with the stored preset only an Advent hint. `none` is
+// the teacher's deliberate "plain dashboard" and resolves to nothing. An
+// uploaded image resolves to a neutral-glass "image" look over the asset.
+export function resolveDashboardTheme(theme, { enabled = true, now = new Date(), timeZone = 'America/New_York', schoolId = null, uploadsEnabled = true, calendar = null } = {}) {
   if (!enabled || !theme || typeof theme !== 'object') return null;
   if (theme.kind === 'image') return uploadsEnabled && typeof theme.imageAssetId === 'string' && theme.imageAssetId ? imageDashboardTheme(theme.imageAssetId, schoolId) : null;
   if (theme.kind !== 'preset') return null;
   const id = theme.calendar === true
-    ? calendarPresetFor(localDateParts(now, timeZone || 'America/New_York'), { liturgical: theme.preset === 'advent' })
+    ? calendarPresetFor(localDateParts(now, timeZone || 'America/New_York'), {
+      allowed: theme.source === 'school' ? (calendar?.holidays ?? DEFAULT_CALENDAR_HOLIDAYS) : teacherCalendarHolidays(theme.preset),
+      leadDays: calendar?.leadDays, starts: calendar?.starts ?? {},
+    })
     : theme.preset;
   const preset = findDashboardThemePreset(id);
   return preset && preset.ready ? preset : null;
+}
+
+// The theme a teacher who follows the school sees today, from the preferences
+// DTO (`schoolTheme` plus `schoolCalendar`), or null when the school has none.
+export function resolveSchoolTheme(preferences, { now = new Date(), timeZone } = {}) {
+  if (!preferences || typeof preferences !== 'object') return null;
+  return resolveDashboardTheme(preferences.schoolTheme ?? null, { now, timeZone, calendar: preferences.schoolCalendar ?? null, uploadsEnabled: false });
 }
 
 // A stored preset the catalog no longer ships (or never shipped yet).
@@ -85,8 +98,9 @@ export function isUnavailableDashboardTheme(theme) {
 }
 
 export function describeDashboardTheme(theme) {
-  if (!theme || typeof theme !== 'object') return 'Default';
+  if (!theme || typeof theme !== 'object') return 'Follow the school';
+  if (theme.kind === 'none') return 'Plain, no theme';
   if (typeof theme.name === 'string' && theme.name.trim()) return theme.name.trim();
-  if (theme.kind === 'preset') return findDashboardThemePreset(theme.preset)?.label || 'Unavailable theme';
+  if (theme.kind === 'preset') return (theme.calendar === true ? 'Calendar: ' : '') + (findDashboardThemePreset(theme.preset)?.label || 'Unavailable theme');
   return 'Your background';
 }

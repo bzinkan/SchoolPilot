@@ -172,11 +172,22 @@ test('Appearance saves the school theme governance as one versioned section', { 
   await page.getByLabel('Lock everyone to the school theme', { exact: false }).check();
   await page.getByLabel('School theme', { exact: true }).selectOption('halloween');
   await page.getByLabel('Allow custom background uploads', { exact: false }).check();
+  // The automatic calendar: faith holidays start unchecked, an admin ticks one, sets the lead time and starts Halloween early.
+  assert.equal(await page.getByLabel('Automatic calendar themes', { exact: false }).isChecked(), true);
+  assert.equal(await page.getByLabel('Christmas', { exact: true }).isChecked(), false);
+  assert.equal(await page.getByLabel('Halloween', { exact: true }).isChecked(), true);
+  await page.getByLabel('Christmas', { exact: true }).check();
+  await page.getByLabel('Days before a holiday', { exact: true }).fill('14');
+  await page.getByRole('button', { name: 'Start now', exact: true }).first().click();
+  const todayInNewYork = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  assert.equal(await page.getByLabel('Halloween start date', { exact: true }).inputValue(), todayInNewYork);
   await page.getByRole('button', { name: 'Save dashboard themes', exact: true }).click();
   await page.getByText('Changes saved.', { exact: true }).waitFor();
   assert.deepEqual(state.writes.at(-1), { pathname: '/api/classpilot/admin/settings/appearance', method: 'PATCH', schoolId: 'school-a', body: {
     expectedVersion: 'appearance-1', teacherThemesEnabled: true, teacherUploadsEnabled: true, kioskCustomBackgrounds: false, lockToSchoolTheme: true,
-    schoolDefaultTheme: { kind: 'preset', preset: 'halloween' } } });
+    schoolDefaultTheme: { kind: 'preset', preset: 'halloween' },
+    autoCalendar: true, calendarLeadDays: 14, signInGateTheme: true, calendarHolidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks', 'christmas'],
+    calendarStarts: { halloween: todayInNewYork, thanksgiving: null, valentines: null, 'st-patricks': null, christmas: null, easter: null, advent: null } } });
   assert.equal(state.settings.sections.appearance.version, 'appearance-1-next');
   assert.deepEqual(state.errors, []);
 });

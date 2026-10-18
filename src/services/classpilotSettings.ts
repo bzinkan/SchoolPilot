@@ -16,7 +16,8 @@ import { publishWSBatch } from "../realtime/ws-redis.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled,
-  readSchoolAppearance } from "./classpilotThemes.js";
+  mergeSchoolAppearance, readSchoolAppearance, schoolThemeFor, type ImageDashboardTheme, type PresetDashboardTheme,
+  type SchoolTheme } from "./classpilotThemes.js";
 import { themeAssetStoreConfigured } from "./classpilotThemeAssetStore.js";
 
 export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -89,6 +90,7 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   ));
   const [school] = await executor.select({ maxTabsPerStudent: settings.maxTabsPerStudent, appearance: settings.appearance })
     .from(settings).where(eq(settings.schoolId, scope.schoolId));
+  const [zone] = await executor.select({ schoolTimezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, scope.schoolId));
   const maxTabsPerStudent = own?.maxTabsPerStudent ?? null;
   const schoolMaxTabsPerStudent = readTabLimit(school?.maxTabsPerStudent);
   const appearance = readSchoolAppearance(school?.appearance);
@@ -96,16 +98,24 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   const uploadsEnabled = themesEnabled && appearance.teacherUploadsEnabled && themeAssetStoreConfigured();
   const dashboardTheme = own?.dashboardTheme ?? null;
   const asset = own?.dashboardThemeAsset?.status === "ready" ? own.dashboardThemeAsset : null;
-  // The teacher's own theme counts only while teacher themes are allowed; an
-  // image additionally needs uploads allowed and its bytes ready. Otherwise the
-  // school default applies, and nothing applies while the launch gate is off.
+  // The school theme today: the fixed default, else the calendar in the
+  // school's zone while the automatic calendar is on.
+  const schoolTheme = schoolThemeFor(appearance, { now: new Date(), timeZone: zone?.schoolTimezone || "America/New_York" });
+  // The teacher's own choice counts only while teacher themes are allowed
+  // ("plain, no theme" is a choice too); an image additionally needs uploads
+  // allowed and its bytes ready. Otherwise the school theme applies, and
+  // nothing applies while the launch gate is off.
   const ownCounts = themesEnabled && dashboardTheme !== null
     && (dashboardTheme.kind !== "image" || (uploadsEnabled && asset?.id === dashboardTheme.imageAssetId));
-  const effectiveDashboardTheme = !dashboardThemesEnabled() ? null
-    : appearance.lockToSchoolTheme || !ownCounts ? appearance.schoolDefaultTheme : dashboardTheme;
+  const effectiveDashboardTheme: PresetDashboardTheme | ImageDashboardTheme | SchoolTheme | null = !dashboardThemesEnabled() ? null
+    : appearance.lockToSchoolTheme || !ownCounts || dashboardTheme === null ? schoolTheme
+      : dashboardTheme.kind === "none" ? null : dashboardTheme;
   return { schoolId: scope.schoolId, revision: own?.revision ?? 0, maxTabsPerStudent,
     schoolMaxTabsPerStudent, effectiveMaxTabsPerStudent: maxTabsPerStudent ?? schoolMaxTabsPerStudent,
-    dashboardTheme, schoolDashboardTheme: appearance.schoolDefaultTheme, dashboardThemeLocked: appearance.lockToSchoolTheme,
+    dashboardTheme, schoolDashboardTheme: appearance.schoolDefaultTheme, schoolTheme,
+    schoolCalendar: { autoCalendar: appearance.autoCalendar, holidays: appearance.calendarHolidays, leadDays: appearance.calendarLeadDays,
+      starts: appearance.calendarStarts, signInGateTheme: appearance.signInGateTheme },
+    dashboardThemeLocked: appearance.lockToSchoolTheme,
     effectiveDashboardTheme, dashboardThemesEnabled: themesEnabled, dashboardThemeUploadsEnabled: uploadsEnabled,
     dashboardThemeAsset: asset ? dashboardThemeAssetSummary(asset) : null };
 }
@@ -241,7 +251,8 @@ export async function updateClasspilotSchoolSettings(scope: SettingsActor, secti
       }
       case "email": { const value = parse(schemas.email, body); if (value.centralEmailRecipientUserId) await assertRecipient(tx, scope.schoolId, value.centralEmailRecipientUserId); patch = { centralEmailRecipientUserId: value.centralEmailRecipientUserId }; break; }
       case "rosterGrades": { const value = parse(schemas.rosterGrades, body); patch = { gradeLevels: value.gradeLevels }; break; }
-      case "appearance": { const { expectedVersion: _version, ...value } = parse(schemas.appearance, body); patch = { appearance: value }; break; }
+      // Omitted calendar keys keep their live values; see mergeSchoolAppearance.
+      case "appearance": { const { expectedVersion: _version, ...value } = parse(schemas.appearance, body); patch = { appearance: mergeSchoolAppearance(row.appearance, value) }; break; }
     }
     const [next] = await tx.update(settings).set(patch).where(eq(settings.schoolId, scope.schoolId)).returning();
     await tx.insert(auditLogs).values({ schoolId: scope.schoolId, userId: scope.actorId, userRole: actorRole,

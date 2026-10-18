@@ -56,7 +56,7 @@ const PRECISE_VIDEO = {
 
 async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: null, effectiveDashboardTheme: null, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
+  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: null, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
   state.precise = precise;
   await page.route('**/api/**', async route => {
@@ -557,6 +557,15 @@ test('Appearance saves a personal dashboard theme through the preference writer 
     await page.getByTestId('button-save-dashboard-theme').click();
     await page.getByText('Unsaved theme', { exact: true }).waitFor({ state: 'detached' });
     assert.deepEqual(writes(state).at(-1).body, { expectedRevision: 1, dashboardTheme: null });
+    assert.equal(await page.getByTestId('dashboard-theme-hint-default').textContent(), 'No school theme today');
+    // Plain is its own saved choice, distinct from following the school.
+    await page.getByTestId('dashboard-theme-choice-none').click();
+    assert.equal(await page.getByTestId('input-dashboard-theme-name').isDisabled(), true, 'a plain dashboard has no name or kiosk switch');
+    assert.equal(await page.getByTestId('checkbox-dashboard-theme-kiosk').count(), 0);
+    await page.getByTestId('button-save-dashboard-theme').click();
+    await page.getByText('Unsaved theme', { exact: true }).waitFor({ state: 'detached' });
+    assert.deepEqual(writes(state).at(-1).body, { expectedRevision: 2, dashboardTheme: { kind: 'none' } });
+    assert.equal(await page.getByTestId('dashboard-theme-choice-none').getAttribute('aria-checked'), 'true');
     assert(writes(state).every(row => row.path === '/api/classpilot/teacher/preferences' && row.schoolId === 'school-a'));
     assert(!state.requests.some(row => row.path.includes('/commands')), 'saving a theme never sends a student command');
     assert.deepEqual(state.errors, []);

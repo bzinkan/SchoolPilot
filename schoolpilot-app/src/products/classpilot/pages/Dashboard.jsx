@@ -49,6 +49,7 @@ import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import DashboardThemeMenu from '../components/DashboardThemeMenu';
 import HeaderOrnament from '../components/HeaderOrnament';
+import DashboardThemeNotice from '../components/DashboardThemeNotice';
 import { DashboardThemeContext } from '../contexts/DashboardThemeContext';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import '../dashboardThemes.css';
@@ -6803,6 +6804,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     <DashboardThemeContext.Provider value={dashboardTheme.active}>
     <div className="min-h-screen" data-theme={dashboardTheme.active?.id} data-theme-ornament={dashboardTheme.active?.ornament} data-theme-clearance={dashboardTheme.active?.clearance}
       style={dashboardTheme.active ? { '--page-image': `url("${dashboardTheme.active.artwork}")` } : undefined}>
+      <DashboardThemeNotice theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
       {/* One observation lease per claimed supervision group. Rendered rather
           than looped in a hook, because a hook cannot be called in a map. */}
       {claimedPreviewContexts.map(context => (

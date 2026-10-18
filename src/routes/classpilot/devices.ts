@@ -309,6 +309,7 @@ import {
   isClasspilotLiveViewNegotiationActive,
 } from "../../services/classpilotLiveViewNegotiation.js";
 import { createClasspilotIceConfiguration } from "../../services/classpilotIceServers.js";
+import { signInGateThemeFor } from "../../services/classpilotThemes.js";
 import {
   completeClasspilotEvidenceCaptureRequest,
   createClasspilotEvidenceCaptureRequest,
@@ -2396,6 +2397,15 @@ router.get("/extension/login-config", extensionConfigLimiter, async (req, res, n
       const passpilotKioskAvailable =
         passpilotActive && school.kioskEnabled !== false && Boolean(school.kioskPinHash);
 
+      // The school theme for the sign-in gate (docs/CLASSPILOT_DASHBOARD_THEMES.md
+      // §9.5): school-level, pre-sign-in, presentation only, never a teacher's.
+      // The key is absent whenever there is nothing to paint, so older
+      // extensions see exactly the response they always did.
+      const theme = signInGateThemeFor(regSettings.appearance, {
+        now: new Date(),
+        timeZone: school.schoolTimezone || "America/New_York",
+      });
+
       return res.json({
         sharedSignInEnabled: true,
         loginMethod,
@@ -2403,6 +2413,7 @@ router.get("/extension/login-config", extensionConfigLimiter, async (req, res, n
         schoolName: regSettings.schoolName || school.name,
         schoolId: school.id,
         passpilotKioskAvailable,
+        ...(theme ? { theme } : {}),
       });
     });
   } catch (err) {

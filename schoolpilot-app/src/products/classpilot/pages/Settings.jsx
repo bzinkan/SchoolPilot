@@ -17,6 +17,7 @@ import { MonitoringDigestSettings } from '../components/MonitoringInterruptionsP
 import SchoolDataMaintenance from '../components/admin/SchoolDataMaintenance';
 import { SETTINGS_SECTIONS } from '../lib/adminNavigation';
 import { DASHBOARD_THEME_PRESETS } from '../../../shared/themes/presets';
+import { DEFAULT_CALENDAR_HOLIDAYS, localDateString } from '../../../shared/themes/calendar';
 
 const API = '/classpilot/admin/settings';
 const fieldLabels = {
@@ -25,7 +26,12 @@ const fieldLabels = {
   signIn: { sharedChromebookSignInEnabled: 'Shared Chromebook sign-in' },
   email: { centralEmailRecipientUserId: 'Copy recipient' },
   retention: { retentionHours: 'Retention in hours' },
-  appearance: { teacherThemesEnabled: 'Teacher dashboard themes', teacherUploadsEnabled: 'Custom background uploads', kioskCustomBackgrounds: 'Custom backgrounds on kiosks', lockToSchoolTheme: 'Lock to the school theme', schoolDefaultThemePreset: 'School theme' },
+  appearance: { teacherThemesEnabled: 'Teacher dashboard themes', teacherUploadsEnabled: 'Custom background uploads', kioskCustomBackgrounds: 'Custom backgrounds on kiosks', lockToSchoolTheme: 'Lock to the school theme', schoolDefaultThemePreset: 'School theme',
+    autoCalendar: 'Automatic calendar themes', calendarLeadDays: 'Days before a holiday', signInGateTheme: 'School theme on the sign-in gate',
+    holiday_halloween: 'Halloween shown automatically', holiday_thanksgiving: 'Thanksgiving shown automatically', holiday_valentines: "Valentine's Day shown automatically", 'holiday_st-patricks': "St. Patrick's Day shown automatically",
+    holiday_christmas: 'Christmas shown automatically', holiday_easter: 'Easter shown automatically', holiday_advent: 'Advent shown automatically',
+    start_halloween: 'Halloween start date', start_thanksgiving: 'Thanksgiving start date', start_valentines: "Valentine's Day start date", 'start_st-patricks': "St. Patrick's Day start date",
+    start_christmas: 'Christmas start date', start_easter: 'Easter start date', start_advent: 'Advent start date' },
 };
 const normalizeDomain = value => value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0].split(':')[0];
 
@@ -57,21 +63,46 @@ function SectionEditor({ section, settings, schoolId, queryKey, title, descripti
   return <SettingsCard title={title} description={description}><fieldset disabled={editor.busy} className="min-w-0 space-y-4">{children(editor)}</fieldset><SettingsSaveState editor={editor} labels={labels} saveLabel={saveLabel} version={version} invalid={invalid} formatValue={formatValue} /></SettingsCard>;
 }
 
-const APPEARANCE_FIELDS = ['teacherThemesEnabled', 'teacherUploadsEnabled', 'kioskCustomBackgrounds', 'lockToSchoolTheme', 'schoolDefaultThemePreset'];
-// The draft keeps the school theme as a preset id so the shared draft hook can compare plain values.
-const decorateAppearance = section => ({ ...section, schoolDefaultThemePreset: section?.schoolDefaultTheme?.kind === 'preset' ? section.schoolDefaultTheme.preset : '' });
+// Holidays the automatic school calendar may show, in the order the admin page lists them.
+// The faith-calendar three are off for every school until an administrator turns them on.
+const APPEARANCE_HOLIDAYS = [
+  ['halloween', 'Halloween'], ['thanksgiving', 'Thanksgiving'], ['valentines', "Valentine's Day"], ['st-patricks', "St. Patrick's Day"],
+  ['christmas', 'Christmas'], ['easter', 'Easter'], ['advent', 'Advent (Catholic calendar)'],
+];
+const APPEARANCE_FIELDS = ['teacherThemesEnabled', 'teacherUploadsEnabled', 'kioskCustomBackgrounds', 'lockToSchoolTheme', 'schoolDefaultThemePreset',
+  'autoCalendar', 'calendarLeadDays', 'signInGateTheme',
+  ...APPEARANCE_HOLIDAYS.map(([id]) => `holiday_${id}`), ...APPEARANCE_HOLIDAYS.map(([id]) => `start_${id}`)];
+// The draft keeps the school theme as a preset id and the calendar as flat
+// per-holiday values so the shared draft hook can compare plain values.
+const decorateAppearance = section => ({
+  ...section,
+  schoolDefaultThemePreset: section?.schoolDefaultTheme?.kind === 'preset' ? section.schoolDefaultTheme.preset : '',
+  autoCalendar: section?.autoCalendar !== false,
+  calendarLeadDays: String(Number.isFinite(Number(section?.calendarLeadDays)) ? Number(section.calendarLeadDays) : 10),
+  signInGateTheme: section?.signInGateTheme !== false,
+  ...Object.fromEntries(APPEARANCE_HOLIDAYS.map(([id]) => [`holiday_${id}`, (Array.isArray(section?.calendarHolidays) ? section.calendarHolidays : DEFAULT_CALENDAR_HOLIDAYS).includes(id)])),
+  ...Object.fromEntries(APPEARANCE_HOLIDAYS.map(([id]) => [`start_${id}`, typeof section?.calendarStarts?.[id] === 'string' ? section.calendarStarts[id] : ''])),
+});
+// The section as the server stores it, rebuilt from a decorated draft.
+const undecorateAppearance = draft => {
+  const section = Object.fromEntries(Object.entries(draft).filter(([key]) => key !== 'schoolDefaultThemePreset' && !key.startsWith('holiday_') && !key.startsWith('start_')));
+  return { ...section, schoolDefaultTheme: draft.schoolDefaultThemePreset ? { kind: 'preset', preset: draft.schoolDefaultThemePreset } : null,
+    autoCalendar: draft.autoCalendar === true, calendarLeadDays: Number(draft.calendarLeadDays), signInGateTheme: draft.signInGateTheme === true,
+    calendarHolidays: APPEARANCE_HOLIDAYS.map(([id]) => id).filter(id => draft[`holiday_${id}`] === true),
+    calendarStarts: Object.fromEntries(APPEARANCE_HOLIDAYS.map(([id]) => [id, draft[`start_${id}`] || null])) };
+};
 
 function AppearanceEditor({ settings, schoolId, queryKey }) {
   const source = useMemo(() => decorateAppearance(settings.sections.appearance), [settings.sections.appearance]);
   const editor = useSettingsDraft({ id: 'school-settings-appearance', source, fields: APPEARANCE_FIELDS,
     save: async (draft, baseline) => {
-      const { schoolDefaultThemePreset, ...flags } = draft;
-      const saved = await apiRequest('PATCH', `${API}/appearance`, { ...flags, schoolDefaultTheme: schoolDefaultThemePreset ? { kind: 'preset', preset: schoolDefaultThemePreset } : null, expectedVersion: baseline.version }, { headers: { 'X-School-Id': schoolId } });
+      const { version: _version, ...body } = undecorateAppearance(draft);
+      const saved = await apiRequest('PATCH', `${API}/appearance`, { ...body, expectedVersion: baseline.version }, { headers: { 'X-School-Id': schoolId } });
       return decorateAppearance(saved);
     },
     refresh: async () => decorateAppearance((await apiRequest('GET', API, undefined, { headers: { 'X-School-Id': schoolId } })).sections.appearance),
     onSaved: saved => {
-      const { schoolDefaultThemePreset: _preset, ...section } = saved;
+      const section = { ...undecorateAppearance(saved), version: saved.version };
       queryClient.setQueryData(queryKey, current => current && ({ ...current, sections: { ...current.sections, appearance: section } }));
       // Teachers' effective theme depends on these switches.
       void queryClient.invalidateQueries({ queryKey: ['/api/classpilot/teacher/preferences', schoolId] });
@@ -91,6 +122,22 @@ function AppearanceEditor({ settings, schoolId, queryKey }) {
         </select>
         <p className="text-sm text-muted-foreground">Used by teachers who have not picked a theme, and by kiosks not bound to a teacher.</p></div>
       {flag('lockToSchoolTheme', 'Lock everyone to the school theme', 'Overrides every teacher\'s choice on dashboards and kiosks, for spirit weeks or a uniform look.')}
+      {flag('autoCalendar', 'Automatic calendar themes', 'When no school theme is set, teachers who follow the school see today\'s holiday or season. Each holiday opens a few days ahead and ends the day after.')}
+      <fieldset className="space-y-2 rounded-lg border p-3" data-testid="appearance-holidays"><legend className="px-1 text-sm font-medium">Holidays shown automatically</legend>
+        <p className="text-sm text-muted-foreground">Unchecked holidays fall back to the season: Winter in December, Spring at Easter. Christmas, Easter and Advent stay off until you turn them on.</p>
+        {APPEARANCE_HOLIDAYS.map(([id, label]) => <div key={id} className="flex flex-wrap items-center gap-2 text-sm">
+          <label className="flex min-w-56 items-center gap-2"><input type="checkbox" checked={editor.draft[`holiday_${id}`] === true} onChange={event => editor.update(`holiday_${id}`, event.target.checked)} />{label}</label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">Starts
+            <input type="date" aria-label={`${label} start date`} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground" value={editor.draft[`start_${id}`] || ''} onChange={event => editor.update(`start_${id}`, event.target.value)} /></label>
+          <Button type="button" size="sm" variant="outline" onClick={() => editor.update(`start_${id}`, localDateString(new Date(), settings.schoolTimezone))}>Start now</Button>
+          {editor.draft[`start_${id}`] ? <Button type="button" size="sm" variant="ghost" onClick={() => editor.update(`start_${id}`, '')}>Clear</Button> : null}
+        </div>)}
+        <p className="text-sm text-muted-foreground">A start date opens that holiday early this year. It still ends by itself the day after the holiday.</p>
+      </fieldset>
+      <div className="max-w-xs space-y-2"><Label htmlFor="calendar-lead-days">Days before a holiday</Label>
+        <input id="calendar-lead-days" type="number" min={0} max={30} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm" value={editor.draft.calendarLeadDays ?? '10'} onChange={event => editor.update('calendarLeadDays', event.target.value)} />
+        <p className="text-sm text-muted-foreground">The theme appears this many days ahead and goes back to the season the day after the holiday.</p></div>
+      {flag('signInGateTheme', 'Show the school theme on the student sign-in gate', 'Shared Chromebooks show the school theme behind the sign-in panel (ClassPilot extension 3.0.1 or later).')}
     </fieldset>
     <SettingsSaveState editor={editor} labels={fieldLabels.appearance} saveLabel="Save dashboard themes" formatValue={(field, value) => field === 'schoolDefaultThemePreset' ? presetLabel(value) : value === true ? 'On' : value === false ? 'Off' : 'None'} />
   </SettingsCard>;

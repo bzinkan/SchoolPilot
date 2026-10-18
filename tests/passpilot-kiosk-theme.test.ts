@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import { DEFAULT_SCHOOL_APPEARANCE, type DashboardThemeAsset, type SchoolAppearance } from "../src/services/classpilotThemes.js";
 import { kioskMayServeImage, resolveKioskTheme, type KioskTeacherThemeRow } from "../src/services/passpilotKioskThemeRules.js";
 
-const NOW = new Date("2026-10-16T16:00:00Z"); // Oct 16 in New York: Halloween window
+const NOW = new Date("2026-10-26T16:00:00Z"); // Oct 26 in New York: inside the ten-day Halloween window
+const OCT_16 = new Date("2026-10-16T16:00:00Z"); // five days before the window opens
+const DEC_10 = new Date("2026-12-10T16:00:00Z"); // Advent, before the Christmas window
+const DEC_20 = new Date("2026-12-20T16:00:00Z"); // the Christmas window
 const appearance = (overrides: Partial<SchoolAppearance> = {}): SchoolAppearance => ({ ...DEFAULT_SCHOOL_APPEARANCE, ...overrides });
 const readyAsset = (id: string): DashboardThemeAsset => ({
   id, status: "ready", storageKey: `classpilot/themes/school/teacher/${id}`, contentType: "image/webp", byteSize: 1234, sha256: "a".repeat(64),
@@ -20,18 +23,54 @@ describe("PassPilot kiosk theme resolution", () => {
       appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "fall" } }) }), null);
   });
 
-  it("follows the bound teacher's preset and resolves calendar mode in the school zone", () => {
+  it("follows the bound teacher's preset and resolves the teacher's own calendar in the school zone", () => {
     assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "christmas" } }) }), { kind: "preset", preset: "christmas" });
     assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "fall", calendar: true } }) }), { kind: "preset", preset: "halloween" });
-    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "advent", calendar: true } }), now: new Date("2026-12-10T16:00:00Z") }),
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "fall", calendar: true } }), now: DEC_20 }),
+      { kind: "preset", preset: "christmas" }, "a teacher's own calendar may show every holiday, whatever the school lists");
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "advent", calendar: true } }), now: DEC_10 }),
       { kind: "preset", preset: "advent" });
-    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "fall", calendar: true } }), now: new Date("2026-12-10T16:00:00Z") }),
-      { kind: "preset", preset: "christmas" }, "Advent is only offered when the teacher asked for it");
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "fall", calendar: true } }), now: DEC_10 }),
+      { kind: "preset", preset: "winter" }, "Advent is only offered when the teacher asked for it");
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "preset", preset: "fall", calendar: true } }), now: OCT_16,
+      appearance: appearance({ calendarStarts: { halloween: "2026-10-16" } }) }), { kind: "preset", preset: "halloween" },
+    "the school's early start applies to a teacher's own calendar too");
   });
 
-  it("lets the teacher keep a theme off the kiosk and falls back to the school default", () => {
-    const own = teacher({ dashboardTheme: { kind: "preset", preset: "halloween", kiosk: false } });
-    assert.equal(resolve({ teacher: own }), null);
+  it("resolves the school calendar for kiosks with no teacher theme, with the school's holidays, lead time and starts", () => {
+    assert.deepEqual(resolve({}), { kind: "preset", preset: "halloween" }, "the default calendar on Oct 26");
+    assert.deepEqual(resolve({ now: OCT_16 }), { kind: "preset", preset: "fall" }, "five days before the window opens");
+    assert.deepEqual(resolve({ now: OCT_16, appearance: appearance({ calendarLeadDays: 20 }) }), { kind: "preset", preset: "halloween" });
+    assert.deepEqual(resolve({ now: OCT_16, appearance: appearance({ calendarStarts: { halloween: "2026-10-16" } }) }), { kind: "preset", preset: "halloween" }, "an early start");
+    assert.deepEqual(resolve({ now: OCT_16, appearance: appearance({ calendarStarts: { halloween: "2026-10-17" } }) }), { kind: "preset", preset: "fall" }, "the day before an early start");
+    assert.deepEqual(resolve({ now: DEC_20 }), { kind: "preset", preset: "winter" }, "no Christmas unless the school lists it");
+    assert.deepEqual(resolve({ now: DEC_20, appearance: appearance({ calendarHolidays: ["christmas"] }) }), { kind: "preset", preset: "christmas" });
+    assert.deepEqual(resolve({ now: DEC_10, appearance: appearance({ calendarHolidays: ["advent"] }) }), { kind: "preset", preset: "advent" });
+    assert.deepEqual(resolve({ appearance: appearance({ calendarHolidays: [] }) }), { kind: "preset", preset: "fall" }, "seasons only");
+    assert.equal(resolve({ appearance: appearance({ autoCalendar: false }) }), null, "no calendar and no default: the plain kiosk");
+    assert.deepEqual(resolve({ appearance: appearance({ autoCalendar: false, schoolDefaultTheme: { kind: "preset", preset: "spring" } }) }), { kind: "preset", preset: "spring" });
+    assert.deepEqual(resolve({ appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "winter" } }) }), { kind: "preset", preset: "winter" },
+      "a fixed default beats the calendar");
+    assert.deepEqual(resolve({ now: DEC_20, appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "advent", calendar: true } }) }),
+      { kind: "preset", preset: "winter" }, "a fixed calendar default follows the school's own holiday list");
+  });
+
+  it("gives a teacher who chose plain a plain kiosk, unless the school lock is on", () => {
+    const plain = teacher({ dashboardTheme: { kind: "none" } });
+    assert.equal(resolve({ teacher: plain }), null, "not the school calendar");
+    assert.equal(resolve({ teacher: plain, appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "fall" } }) }), null, "not the school default");
+    assert.deepEqual(resolve({ teacher: plain, appearance: appearance({ lockToSchoolTheme: true, schoolDefaultTheme: { kind: "preset", preset: "winter" } }) }),
+      { kind: "preset", preset: "winter" });
+    assert.deepEqual(resolve({ teacher: plain, appearance: appearance({ lockToSchoolTheme: true }) }), { kind: "preset", preset: "halloween" }, "a lock with the calendar");
+    assert.deepEqual(resolve({ teacher: plain, appearance: appearance({ teacherThemesEnabled: false }) }), { kind: "preset", preset: "halloween" },
+      "with teacher themes off the choice does not count");
+    assert.equal(kioskMayServeImage(appearance({ teacherUploadsEnabled: true, kioskCustomBackgrounds: true }), plain, "asset-1"), false);
+  });
+
+  it("lets the teacher keep a theme off the kiosk and falls back to the school theme", () => {
+    const own = teacher({ dashboardTheme: { kind: "preset", preset: "christmas", kiosk: false } });
+    assert.deepEqual(resolve({ teacher: own }), { kind: "preset", preset: "halloween" }, "the school calendar");
+    assert.equal(resolve({ teacher: own, appearance: appearance({ autoCalendar: false }) }), null);
     assert.deepEqual(resolve({ teacher: own, appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "fall" } }) }), { kind: "preset", preset: "fall" });
   });
 
@@ -39,8 +78,8 @@ describe("PassPilot kiosk theme resolution", () => {
     const locked = appearance({ lockToSchoolTheme: true, schoolDefaultTheme: { kind: "preset", preset: "winter" } });
     assert.deepEqual(resolve({ appearance: locked, teacher: teacher({ dashboardTheme: { kind: "preset", preset: "halloween" } }) }), { kind: "preset", preset: "winter" });
     assert.deepEqual(resolve({ appearance: appearance({ schoolDefaultTheme: { kind: "preset", preset: "spring" } }) }), { kind: "preset", preset: "spring" });
-    assert.equal(resolve({ appearance: appearance({ lockToSchoolTheme: true }) }), null, "a lock with no school theme means the plain kiosk");
-    assert.equal(resolve({ appearance: appearance({ teacherThemesEnabled: false }), teacher: teacher({ dashboardTheme: { kind: "preset", preset: "halloween" } }) }), null);
+    assert.equal(resolve({ appearance: appearance({ lockToSchoolTheme: true, autoCalendar: false }) }), null, "a lock with no school theme means the plain kiosk");
+    assert.deepEqual(resolve({ appearance: appearance({ teacherThemesEnabled: false, autoCalendar: false }), teacher: teacher({ dashboardTheme: { kind: "preset", preset: "halloween" } }) }), null);
   });
 
   it("serves image bytes to a kiosk only for the bound teacher's current, ready, kiosk-enabled image", () => {
