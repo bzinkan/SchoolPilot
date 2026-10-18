@@ -34,6 +34,8 @@ import { resolveGoPilotIdentity } from "../dist/services/gopilotAccess.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { verifyStudentToken } from "../dist/services/deviceJwt.js";
 import { hashPassword } from "../dist/util/password.js";
+import { DASHBOARD_THEME_PRESET_LABELS } from "../dist/services/classpilotThemes.js";
+import { calendarPresetFor, localDateParts } from "../dist/services/classpilotThemeCalendar.js";
 
 const TAG = `msready${Date.now()}`;
 const schoolAEnrollmentKey = `${TAG}-school-a-setup-key`;
@@ -1506,6 +1508,77 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(emailConfig.status, 200);
     assert.equal(emailConfig.body.loginMethod, "email_id");
     assert.equal(emailConfig.body.pinLoginEnabled, false);
+  });
+
+  it("extension login-config carries the school theme for the sign-in gate only while the flag, the gate switch and a school theme apply", async () => {
+    const previousGate = process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED;
+    const timeZone: string = schoolA.schoolTimezone || "America/New_York";
+    const base = (process.env.PUBLIC_BASE_URL || process.env.CLIENT_URL || "https://school-pilot.net").replace(/\/$/, "");
+    const setAppearance = (appearance: Record<string, unknown> | null) => asSystem(() => db.execute(
+      sql`UPDATE settings SET appearance = ${appearance === null ? null : JSON.stringify(appearance)}::jsonb WHERE school_id = ${schoolA.id}`
+    ));
+    const fetchConfig = () =>
+      requestJson(
+        "GET",
+        `/classpilot/extension/login-config?schoolSlug=${schoolA.slug}`,
+        undefined,
+        { "x-classpilot-enrollment-key": schoolAEnrollmentKey }
+      );
+    await inSchool(schoolA.id, () => upsertSettings(schoolA.id, { sharedChromebookSignInEnabled: true }));
+    try {
+      process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED = "true";
+      await setAppearance({ schoolDefaultTheme: { kind: "preset", preset: "halloween" } });
+      const fixed = await fetchConfig();
+      assert.equal(fixed.status, 200);
+      assert.equal(fixed.body.sharedSignInEnabled, true);
+      assert.deepEqual(fixed.body.theme, { preset: "halloween", label: "Halloween", artwork: `${base}/themes/halloween.webp`, mark: "halloween",
+        brandFace: { family: "Creepster", weight: 400, url: `${base}/fonts/creepster-latin.woff2` } });
+      await setAppearance({ schoolDefaultTheme: { kind: "preset", preset: "fall" } });
+      assert.deepEqual((await fetchConfig()).body.theme, { preset: "fall", label: "Fall", artwork: `${base}/themes/fall.webp`, mark: "fall", brandFace: null });
+
+      // The automatic calendar: today's preset in the school's zone from the
+      // school's own holiday list and lead time (read twice around the request
+      // so a midnight crossing cannot fail the comparison).
+      await setAppearance({ calendarHolidays: ["christmas", "halloween"], calendarLeadDays: 30 });
+      const options = { allowed: ["christmas", "halloween"], leadDays: 30 };
+      const before = calendarPresetFor(localDateParts(new Date(), timeZone), options);
+      const calendar = await fetchConfig();
+      const after = calendarPresetFor(localDateParts(new Date(), timeZone), options);
+      assert.equal(calendar.status, 200);
+      const preset = [before, after].find((candidate) => candidate === calendar.body.theme?.preset);
+      assert.ok(preset, JSON.stringify(calendar.body.theme));
+      assert.equal(calendar.body.theme.label, DASHBOARD_THEME_PRESET_LABELS[preset]);
+      assert.equal(calendar.body.theme.artwork, `${base}/themes/${preset}.webp`);
+      assert.equal(calendar.body.theme.mark, preset);
+
+      // Absent, never null: the admin's gate switch, no calendar and no default, and the launch flag.
+      await setAppearance({ schoolDefaultTheme: { kind: "preset", preset: "halloween" }, signInGateTheme: false });
+      const switchOff = await fetchConfig();
+      assert.equal(switchOff.status, 200);
+      assert.equal("theme" in switchOff.body, false);
+      await setAppearance({ autoCalendar: false });
+      const nothing = await fetchConfig();
+      assert.equal(nothing.status, 200);
+      assert.equal("theme" in nothing.body, false);
+      process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED = "false";
+      await setAppearance({ schoolDefaultTheme: { kind: "preset", preset: "halloween" } });
+      const flagOff = await fetchConfig();
+      assert.equal(flagOff.status, 200);
+      assert.equal(flagOff.body.sharedSignInEnabled, true);
+      assert.equal("theme" in flagOff.body, false);
+
+      // The refusal branch is unchanged.
+      process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED = "true";
+      await inSchool(schoolA.id, () => upsertSettings(schoolA.id, { sharedChromebookSignInEnabled: false }));
+      const disabled = await fetchConfig();
+      assert.equal(disabled.status, 403);
+      assert.equal("theme" in disabled.body, false);
+    } finally {
+      if (previousGate === undefined) delete process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED;
+      else process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED = previousGate;
+      await setAppearance(null);
+      await inSchool(schoolA.id, () => upsertSettings(schoolA.id, { sharedChromebookSignInEnabled: true }));
+    }
   });
 
   it("extension login-config reports PassPilot kiosk availability only when the kiosk would work", async () => {

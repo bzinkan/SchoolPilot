@@ -1,5 +1,6 @@
 import { after, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { and, eq, inArray } from "drizzle-orm";
@@ -10,6 +11,7 @@ import * as schema from "../dist/schema/index.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { setDashboardThemeAssetStore } from "../dist/services/classpilotThemeAssets.js";
+import { calendarPresetFor, localDateParts, type CalendarOptions } from "../dist/services/classpilotThemeCalendar.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "../src/db/classpilotTeacherPreferencesMigration.js";
 import { CLASSPILOT_DASHBOARD_THEME_SQL } from "../src/db/classpilotDashboardThemeMigration.js";
 import { CLASSPILOT_DASHBOARD_APPEARANCE_SQL } from "../src/db/classpilotDashboardAppearanceMigration.js";
@@ -33,7 +35,23 @@ const fixturePool = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_U
 const personalPath = "/classpilot/teacher/preferences";
 const schoolPath = "/classpilot/admin/settings";
 const assetPath = "/classpilot/teacher/theme-asset";
-const appearanceDefaults = { teacherThemesEnabled: true, teacherUploadsEnabled: false, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null };
+const appearanceDefaults = { teacherThemesEnabled: true, teacherUploadsEnabled: false, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null,
+  autoCalendar: true, calendarHolidays: ["halloween", "thanksgiving", "valentines", "st-patricks"], calendarLeadDays: 10, calendarStarts: {}, signInGateTheme: true };
+const schoolCalendarDefaults = { autoCalendar: true, holidays: appearanceDefaults.calendarHolidays, leadDays: 10, starts: {}, signInGateTheme: true };
+// School A keeps Chicago time, school B New York (see before()).
+const CHICAGO = "America/Chicago";
+const NEW_YORK = "America/New_York";
+// The school theme the API derives from the calendar for today in a zone.
+function calendarThemeNow(timeZone: string, options: CalendarOptions = {}) {
+  return { kind: "preset", preset: calendarPresetFor(localDateParts(new Date(), timeZone), options), calendar: true, source: "school" };
+}
+// The test and the API read the clock milliseconds apart, so a reading taken
+// before the request and one taken after bracket the API's; either may match.
+function assertCalendarTheme(actual: unknown, before: unknown, timeZone: string, options: CalendarOptions = {}) {
+  const after = calendarThemeNow(timeZone, options);
+  assert.ok(isDeepStrictEqual(actual, before) || isDeepStrictEqual(actual, after),
+    `${JSON.stringify(actual)} is neither ${JSON.stringify(before)} nor ${JSON.stringify(after)}`);
+}
 const originalSettings = {
   schoolName: "Legacy settings name",
   schoolTimezone: "America/Los_Angeles",
@@ -196,12 +214,16 @@ after(async () => {
 describe("ClassPilot scoped settings saves", () => {
   it("reads absent preferences without writing or reusing legacy account defaults", async () => {
     const before = await state();
+    const gate = process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED === "true";
+    const expectedTheme = calendarThemeNow(CHICAGO);
     const response = await request("GET", personalPath, undefined, auth(teacher));
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body, { schoolId: schoolA.id, revision: 0, maxTabsPerStudent: null,
-      schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5, dashboardTheme: null, schoolDashboardTheme: null, dashboardThemeLocked: false,
-      effectiveDashboardTheme: null, dashboardThemesEnabled: process.env.CLASSPILOT_DASHBOARD_THEMES_ENABLED === "true",
-      dashboardThemeUploadsEnabled: false, dashboardThemeAsset: null });
+    const { schoolTheme, effectiveDashboardTheme, ...rest } = response.body;
+    assertCalendarTheme(schoolTheme, expectedTheme, CHICAGO);
+    assert.deepEqual(effectiveDashboardTheme, gate ? schoolTheme : null, "a teacher with no choice follows the school calendar");
+    assert.deepEqual(rest, { schoolId: schoolA.id, revision: 0, maxTabsPerStudent: null,
+      schoolMaxTabsPerStudent: 5, effectiveMaxTabsPerStudent: 5, dashboardTheme: null, schoolDashboardTheme: null, schoolCalendar: schoolCalendarDefaults,
+      dashboardThemeLocked: false, dashboardThemesEnabled: gate, dashboardThemeUploadsEnabled: false, dashboardThemeAsset: null });
     assert.deepEqual(await state(), before);
   });
 
@@ -280,7 +302,8 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(cleared.status, 200);
       assert.equal(cleared.body.revision, 4);
       assert.equal(cleared.body.dashboardTheme, null);
-      assert.equal(cleared.body.effectiveDashboardTheme, null);
+      assert.deepEqual(cleared.body.effectiveDashboardTheme, cleared.body.schoolTheme, "cleared means follow the school again");
+      assert.equal(cleared.body.schoolTheme.calendar, true);
       assert.equal(cleared.body.maxTabsPerStudent, 4);
       const stale = await request("PATCH", personalPath, { expectedRevision: 3, dashboardTheme: theme }, auth(teacher));
       assert.equal(stale.status, 409);
@@ -381,11 +404,13 @@ describe("ClassPilot scoped settings saves", () => {
 
   it("applies the school default, the lock and the teacher-themes switch to personal reads and writes", async () => {
     const winter = { kind: "preset", preset: "winter" }, halloween = { kind: "preset", preset: "halloween" };
+    const schoolWinter = { ...winter, source: "school" };
     await withDashboardThemes(true, async () => {
       await setAppearance({ schoolDefaultTheme: winter });
       let prefs = await request("GET", personalPath, undefined, auth(teacher));
-      assert.deepEqual(prefs.body.schoolDashboardTheme, winter);
-      assert.deepEqual(prefs.body.effectiveDashboardTheme, winter);
+      assert.deepEqual(prefs.body.schoolDashboardTheme, winter, "the fixed default is reported as stored");
+      assert.deepEqual(prefs.body.schoolTheme, schoolWinter, "the resolved school theme carries its source");
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, schoolWinter);
       assert.equal(prefs.body.dashboardTheme, null);
       assert.equal(prefs.body.dashboardThemeLocked, false);
       assert.equal(prefs.body.dashboardThemesEnabled, true);
@@ -396,7 +421,7 @@ describe("ClassPilot scoped settings saves", () => {
       await setAppearance({ schoolDefaultTheme: winter, lockToSchoolTheme: true });
       prefs = await request("GET", personalPath, undefined, auth(teacher));
       assert.equal(prefs.body.dashboardThemeLocked, true);
-      assert.deepEqual(prefs.body.effectiveDashboardTheme, winter);
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, schoolWinter);
       assert.deepEqual(prefs.body.dashboardTheme, halloween, "the stored personal theme is kept for when the lock lifts");
       const locked = await state();
       for (const dashboardTheme of [{ kind: "preset", preset: "fall" }, null]) {
@@ -407,12 +432,12 @@ describe("ClassPilot scoped settings saves", () => {
       assert.deepEqual((await state()).preferences, locked.preferences);
       const tabs = await request("PATCH", personalPath, { expectedRevision: 1, maxTabsPerStudent: 6 }, auth(teacher));
       assert.equal(tabs.status, 200, "the tab limit stays editable under a theme lock");
-      assert.deepEqual(tabs.body.effectiveDashboardTheme, winter);
+      assert.deepEqual(tabs.body.effectiveDashboardTheme, schoolWinter);
       await setAppearance({ schoolDefaultTheme: winter, lockToSchoolTheme: false, teacherThemesEnabled: false });
       prefs = await request("GET", personalPath, undefined, auth(teacher));
       assert.equal(prefs.body.dashboardThemesEnabled, false);
       assert.equal(prefs.body.dashboardThemeLocked, false);
-      assert.deepEqual(prefs.body.effectiveDashboardTheme, winter, "a personal theme does not count while teacher themes are off");
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, schoolWinter, "a personal theme does not count while teacher themes are off");
       const off = await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: halloween }, auth(teacher));
       assert.equal(off.status, 409);
       assert.equal(off.body.code, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
@@ -427,6 +452,118 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(prefs.body.effectiveDashboardTheme, null);
       assert.equal(prefs.body.dashboardThemesEnabled, false);
     });
+  });
+
+  it("accepts the teacher's plain choice, resolves it to nothing and lets only the lock override it", async () => {
+    const none = { kind: "none" }, winter = { kind: "preset", preset: "winter" }, schoolWinter = { ...winter, source: "school" };
+    await withDashboardThemes(true, async () => {
+      const plain = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: none }, auth(teacher));
+      assert.equal(plain.status, 200, JSON.stringify(plain.body));
+      assert.deepEqual(plain.body.dashboardTheme, none);
+      assert.equal(plain.body.effectiveDashboardTheme, null, "plain beats the school calendar");
+      assert.equal(plain.body.schoolTheme.calendar, true, "the school calendar is still reported");
+      const [stored] = (await state()).preferences;
+      assert.deepEqual(stored?.dashboardTheme, none);
+      await setAppearance({ schoolDefaultTheme: winter });
+      let prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(prefs.body.effectiveDashboardTheme, null, "plain beats the school default");
+      assert.deepEqual(prefs.body.schoolTheme, schoolWinter);
+      await setAppearance({ schoolDefaultTheme: winter, lockToSchoolTheme: true });
+      prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, schoolWinter, "only the lock overrides plain");
+      assert.deepEqual(prefs.body.dashboardTheme, none);
+      const locked = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: none }, auth(teacher));
+      assert.equal(locked.status, 409);
+      assert.equal(locked.body.code, "CLASSPILOT_DASHBOARD_THEME_LOCKED");
+      await setAppearance({ schoolDefaultTheme: winter, lockToSchoolTheme: false, teacherThemesEnabled: false });
+      prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, schoolWinter, "plain does not count while teacher themes are off");
+      const off = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: none }, auth(teacher));
+      assert.equal(off.status, 409);
+      assert.equal(off.body.code, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
+      // Only the stored shape is accepted: never the response-only source marker.
+      for (const dashboardTheme of [{ kind: "none", source: "school" }, { kind: "preset", preset: "fall", source: "school" }, { kind: "none", kiosk: false }]) {
+        assert.equal((await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme }, auth(teacher))).status, 400, JSON.stringify(dashboardTheme));
+      }
+    });
+    await withDashboardThemes(false, async () => {
+      const gated = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: none }, auth(teacher));
+      assert.equal(gated.status, 409);
+      assert.equal(gated.body.code, "CLASSPILOT_DASHBOARD_THEMES_DISABLED");
+      const prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.dashboardTheme, none);
+      assert.equal(prefs.body.effectiveDashboardTheme, null);
+    });
+    const [row] = (await state()).preferences;
+    assert.equal(row?.revision, 1, "refusals never wrote");
+  });
+
+  it("reports the school calendar and resolves the school theme for today in the school's zone", async () => {
+    await withDashboardThemes(true, async () => {
+      let expected = calendarThemeNow(CHICAGO);
+      let prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.schoolCalendar, schoolCalendarDefaults);
+      assertCalendarTheme(prefs.body.schoolTheme, expected, CHICAGO);
+      assert.deepEqual(prefs.body.effectiveDashboardTheme, prefs.body.schoolTheme, "a teacher with no choice follows the school");
+      assert.equal(prefs.body.schoolDashboardTheme, null, "the fixed default stays what it is");
+      const calendar = { calendarHolidays: ["christmas", "halloween"], calendarLeadDays: 25, calendarStarts: { halloween: "2026-10-01", christmas: "2026-12-11" }, signInGateTheme: false };
+      const options = { allowed: calendar.calendarHolidays, leadDays: 25, starts: calendar.calendarStarts };
+      await setAppearance(calendar);
+      expected = calendarThemeNow(CHICAGO, options);
+      prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.deepEqual(prefs.body.schoolCalendar, { autoCalendar: true, holidays: calendar.calendarHolidays, leadDays: 25, starts: calendar.calendarStarts, signInGateTheme: false });
+      assertCalendarTheme(prefs.body.schoolTheme, expected, CHICAGO, options);
+      expected = calendarThemeNow(CHICAGO, options);
+      const own = await request("PATCH", personalPath, { expectedRevision: 0, dashboardTheme: { kind: "preset", preset: "summer" } }, auth(teacher));
+      assert.equal(own.status, 200);
+      assert.deepEqual(own.body.effectiveDashboardTheme, { kind: "preset", preset: "summer" }, "an own choice beats the calendar");
+      assertCalendarTheme(own.body.schoolTheme, expected, CHICAGO, options);
+      await setAppearance({ ...calendar, autoCalendar: false });
+      prefs = await request("GET", personalPath, undefined, auth(teacher));
+      assert.equal(prefs.body.schoolTheme, null, "no calendar and no default");
+      assert.equal(prefs.body.schoolCalendar.autoCalendar, false);
+      const follow = await request("PATCH", personalPath, { expectedRevision: 1, dashboardTheme: null }, auth(teacher));
+      assert.equal(follow.status, 200);
+      assert.equal(follow.body.effectiveDashboardTheme, null);
+      expected = calendarThemeNow(NEW_YORK);
+      const other = await request("GET", personalPath, undefined, auth(teacher, schoolB));
+      assert.deepEqual(other.body.schoolCalendar, schoolCalendarDefaults, "another school keeps its own calendar");
+      assertCalendarTheme(other.body.schoolTheme, expected, NEW_YORK);
+    });
+  });
+
+  it("merges an appearance save over the live calendar keys, clears a start with null and validates the calendar", async () => {
+    const before = await state();
+    const calendar = { autoCalendar: false, calendarHolidays: ["advent", "easter"], calendarLeadDays: 3,
+      calendarStarts: { halloween: "2026-10-19", christmas: "2026-12-11" }, signInGateTheme: false };
+    const saved = await setAppearance(calendar);
+    assert.deepEqual(saved, { schoolId: schoolA.id, version: saved.version, ...appearanceDefaults, ...calendar });
+    const required = { teacherThemesEnabled: true, teacherUploadsEnabled: true, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null };
+    // A client that predates the calendar keys sends only the original switches.
+    const legacy = await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: saved.version, ...required });
+    assert.equal(legacy.status, 200, JSON.stringify(legacy.body));
+    assert.deepEqual(legacy.body, { schoolId: schoolA.id, version: legacy.body.version, ...appearanceDefaults, ...calendar, teacherUploadsEnabled: true });
+    const cleared = await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: legacy.body.version, ...required, calendarStarts: { halloween: null, easter: "2026-03-30" } });
+    assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+    const starts = { christmas: "2026-12-11", easter: "2026-03-30" };
+    assert.deepEqual(cleared.body.calendarStarts, starts, "starts merge per holiday");
+    const current = (await schoolDto()).sections.appearance;
+    assert.deepEqual(current, { version: cleared.body.version, ...appearanceDefaults, ...calendar, teacherUploadsEnabled: true, calendarStarts: starts });
+    const stable = await state();
+    assert.deepEqual(stable.settings.find(row => row.schoolId === schoolA.id)?.appearance,
+      { ...appearanceDefaults, ...calendar, teacherUploadsEnabled: true, calendarStarts: starts }, "the stored object is the whole normalized section");
+    assert.equal(stable.audit.length, before.audit.length + 3);
+    const invalid = [
+      { calendarHolidays: ["halloween", "halloween"] }, { calendarHolidays: ["bengals"] }, { calendarHolidays: "halloween" },
+      { calendarLeadDays: 31 }, { calendarLeadDays: -1 }, { calendarLeadDays: 2.5 }, { calendarLeadDays: "10" },
+      { calendarStarts: { halloween: "2026-02-30" } }, { calendarStarts: { bengals: "2026-10-01" } }, { calendarStarts: [] },
+      { autoCalendar: "yes" }, { signInGateTheme: 1 },
+    ];
+    for (const patch of invalid) {
+      const response = await request("PATCH", `${schoolPath}/appearance`, { expectedVersion: current.version, ...required, ...patch });
+      assert.equal(response.status, 400, JSON.stringify(patch));
+    }
+    assert.deepEqual(await state(), stable);
   });
 
   it("uploads, normalizes, serves, scopes, applies, replaces and deletes a teacher background image", async () => {
@@ -519,7 +656,7 @@ describe("ClassPilot scoped settings saves", () => {
       const disabled = await request("GET", personalPath, undefined, auth(teacher));
       assert.equal(disabled.body.dashboardThemeUploadsEnabled, false);
       assert.deepEqual(disabled.body.dashboardTheme, image);
-      assert.equal(disabled.body.effectiveDashboardTheme, null);
+      assert.deepEqual(disabled.body.effectiveDashboardTheme, disabled.body.schoolTheme, "an image that no longer counts gives way to the school calendar");
       assert.deepEqual(disabled.body.dashboardThemeAsset, ready);
       const refused = await request("POST", assetPath, { contentType: "image/jpeg", size: jpeg.length, sha256: sha256(jpeg) }, auth(teacher));
       assert.equal(refused.status, 409);
@@ -535,7 +672,7 @@ describe("ClassPilot scoped settings saves", () => {
       assert.ok(store.objects.has(key));
       const between = await request("GET", personalPath, undefined, auth(teacher));
       assert.equal(between.body.dashboardThemeAsset, null);
-      assert.equal(between.body.effectiveDashboardTheme, null);
+      assert.deepEqual(between.body.effectiveDashboardTheme, between.body.schoolTheme);
       assert.equal(between.body.revision, 2, "asset work never bumps the preference revision");
       const replaced = await rawRequest("PUT", `${assetPath}/${second.id}/content`, { ...auth(teacher), "content-type": "image/png" }, png);
       assert.equal(replaced.status, 200, replaced.buffer.toString("utf8"));
@@ -547,7 +684,7 @@ describe("ClassPilot scoped settings saves", () => {
       const pointing = await request("GET", personalPath, undefined, auth(teacher));
       assert.equal(pointing.body.dashboardThemeAsset.id, second.id);
       assert.deepEqual(pointing.body.dashboardTheme, image, "the stored theme still names the old asset");
-      assert.equal(pointing.body.effectiveDashboardTheme, null);
+      assert.deepEqual(pointing.body.effectiveDashboardTheme, pointing.body.schoolTheme);
       const repointed = await request("PATCH", personalPath, { expectedRevision: 2, dashboardTheme: { kind: "image", imageAssetId: second.id } }, auth(teacher));
       assert.equal(repointed.status, 200);
       assert.equal(repointed.body.effectiveDashboardTheme.kind, "image");
@@ -559,7 +696,7 @@ describe("ClassPilot scoped settings saves", () => {
       assert.equal(deleted.status, 200);
       assert.equal(deleted.body.preferences.dashboardTheme, null);
       assert.equal(deleted.body.preferences.dashboardThemeAsset, null);
-      assert.equal(deleted.body.preferences.effectiveDashboardTheme, null);
+      assert.deepEqual(deleted.body.preferences.effectiveDashboardTheme, deleted.body.preferences.schoolTheme);
       assert.equal(deleted.body.preferences.revision, 4);
       assert.equal(store.objects.size, 0);
       assert.equal((await request("DELETE", `${assetPath}/${second.id}`, undefined, auth(teacher))).status, 404);
