@@ -365,6 +365,7 @@ teacher is bound), and is never overridden except by the admin lock. Existing ro
 | `calendarHolidays` | `["halloween","thanksgiving","valentines","st-patricks"]` | Holidays the calendar may pick. Anything not listed falls through to the season: December → Winter, the Easter window → Spring. |
 | `signInGateTheme` | `true` | The student sign-in gate shows the school theme. |
 | `calendarLeadDays` | `10` | How many days before a holiday its theme appears (0–30). The day after the holiday the season returns. |
+| `calendarStarts` | `{}` | Per-holiday early start for the current school year, e.g. `{ "halloween": "2026-10-19", "christmas": "2026-12-11" }`. The holiday opens on that date instead of the lead-time date; it still closes automatically the day after the holiday. Cleared by the admin or ignored once the date is a year old. |
 
 The **faith-calendar** holidays (`christmas`, `easter`, `advent`) are therefore **off for every school by default** and an
 admin turns them on. St. Francis de Sales turns all three on in Admin › Settings › Appearance (no migration, no code).
@@ -391,7 +392,16 @@ replaced by one rule:
 | Advent (when listed) | Advent Sunday – Dec 24 | Its real liturgical dates, yielding to the Christmas window from Dec 15 | Christmas, then Winter |
 
 The lead time is one number for the whole school (Admin › Appearance); a teacher who wants something else picks a theme
-or Plain for their own dashboard. The resolver is still a pure function of the date, so the leap-year test keeps covering
+or Plain for their own dashboard.
+
+**Starting a holiday early.** An admin who wants Halloween from Monday Oct 19 (two days before the 10-day window) or
+Christmas from Friday Dec 11 does not set a fixed default; the Holidays list has a **Start now** button and an editable
+start date per holiday, which writes `calendarStarts`. The window simply opens on that date and still closes by itself
+the day after the holiday, so the automatic trigger on Oct 21 or Dec 15 changes nothing (the theme is already on) and the
+automatic end still happens (Fall on Nov 1, Winter on Dec 26). Nothing has to be remembered or turned off. A fixed
+`schoolDefaultTheme` stays what it is today: a deliberate, permanent override that the calendar never touches, with the
+admin page saying so next to it. For a Catholic school with Advent listed: Advent from Advent Sunday (Nov 29, 2026),
+Christmas from the start date (Dec 11) or the lead date (Dec 15), Winter from Dec 26. The resolver is still a pure function of the date, so the leap-year test keeps covering
 every day; two new tests pin the window edges (the 10th day before shows the holiday, the day after shows the season) and
 that Advent hands over to Christmas on Dec 15.
 
@@ -418,7 +428,7 @@ schoolTheme = schoolDefaultTheme
 - The gate (`extension/auth-gate-frame.*`) paints the artwork inside the sign-in panel behind a frosted form card, tints the
   side column, draws the mark beside the brand and sets the brand face; fields, button, copy and contrast unchanged
   (row 13 on the canvas). The last theme is cached in extension storage so the gate does not flash plain on a slow network;
-  any failed image or font falls back to the plain gate. Requires an extension release; it rides the 3.0.0 train in
+  any failed image or font falls back to the plain gate. Requires an extension release: 3.0.1 (3.0.0 is live), in
   coordination with its owner.
 - Isolation rule update (§4.10): the extension receives **one school-level, pre-sign-in, presentation-only** theme object
   through login-config and nothing else; no theme data on the device channel, no per-teacher data.
@@ -443,13 +453,13 @@ schoolTheme = schoolDefaultTheme
   shared by the kiosk and login-config.
 - UI: picker three groups + first-run banner; admin checkboxes; guides.
 - Tests: every day of the year resolves for the secular set with no faith preset; Christmas, Easter and Advent appear only
-  when listed; `none` beats the school theme and loses only to the lock; kiosk and dashboard parity; admin section save.
+  when listed; an early start opens the window on its date and the window still closes the day after the holiday; `none` beats the school theme and loses only to the lock; kiosk and dashboard parity; admin section save.
 - Rollout: deploy; the St. Francis admin ticks Christmas, Easter and Advent. From then on teachers who never chose a theme see
   Halloween this month automatically.
 
 ### Phase 8 — Student sign-in gate
 - API: `theme` on login-config (ships with Phase 7 or right after; harmless until the extension reads it).
-- Extension: gate rendering, cache, fallback, a browser test against the fixture gate; ride the 3.0.0 release.
+- Extension: gate rendering, cache, fallback, a browser test against the fixture gate; ships as 3.0.1.
 - Docs: IT tutorial note that the sign-in gate shows the school theme and how an admin turns it off.
 
 ## 11. Feedback and decisions to confirm
@@ -465,6 +475,8 @@ schoolTheme = schoolDefaultTheme
    school-level and admin-controllable (`signInGateTheme`, `kioskCustomBackgrounds`); uploaded teacher images never reach the
    gate.
 6. **Christmas versus Advent.** With the 10-day rule a Catholic school that lists Advent sees Advent from Advent Sunday,
-   Christmas from Dec 15, Winter from Dec 26. Confirm Dec 15 is the right hand-over; it is one constant.
-7. **Extension timing.** The gate waits for an extension release; everything else lands with a web deploy. If 3.0.0 is far
-   off, a 2.9.10 with only the gate change is the alternative.
+   Christmas from Dec 15 (or an earlier start date), Winter from Dec 26.
+7. **Extension timing.** The gate ships as extension 3.0.1; everything else lands with a web deploy.
+8. **Before Phase 7 lands.** Today's admin page only has the fixed school default. Setting it to Halloween on Monday works
+   (every teacher without a personal choice sees Halloween) but it will not end by itself; part of the Phase 7 rollout for
+   St. Francis is to replace that fixed default with a Halloween start date so the automatic end applies.
