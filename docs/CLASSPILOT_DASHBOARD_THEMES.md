@@ -141,7 +141,7 @@ Ornaments that rise above the tile need `overflow: visible` on the card and a la
 Reuse the MyDesk object-store pattern (`src/services/mydeskFiles.ts`): reserve → PUT raw bytes → finalize.
 
 - New table `classpilot_theme_assets` (id, school_id, teacher_id, content_type, bytes, sha256, object_key, status,
-  created_at). RLS on school_id. One finalized asset per teacher; a new upload replaces and deletes the old object.
+  created_at). RLS on school_id. Up to five finalized assets per teacher since §12 (2026-10-18); a removed tile deletes its object.
 - Routes in `src/routes/classpilot/settings.ts`: `POST /teacher/theme-assets` (reserve), `PUT /teacher/theme-assets/:id/content`
   (raw body, ≤6 MiB, `image/png|jpeg|webp` only, normalized through `normalizeMyDeskFile` so EXIF is stripped and the
   image is re-encoded), `GET /teacher/theme-assets/:id/content` (owner or school admin only, `Content-Security-Policy:
