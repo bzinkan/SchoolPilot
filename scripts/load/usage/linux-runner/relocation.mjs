@@ -5,8 +5,8 @@ import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const FREEZE_SHA256 = 'd0be7ff1cbf2cbfc67fec01e23cb2fa6d8c2f69892ab9afaa451c715472e4d5f';
-export const SOURCES = Object.freeze({ candidate: '94d522cd78fbc5c36400b6f4d0f9230921c4d5dd', baseline: 'c265a3ab5ffc9fceb3e91e151f5cdee48a63ea5e', harness: 'd9c45a6ed21ff508045fd6c137e9535f6f8a46ae' });
+export const FREEZE_SHA256 = '1db9e79a6343f9f4371d9817a96adc2ffee3d7cf389552215c56f92020583bd6';
+export const SOURCES = Object.freeze({ candidate: 'f4d5e7188b672c5673744298e81fa54174c728ea', baseline: '8dec7482c6516d37d426f86e613c8f4b32e9ed0b', harness: 'd9c45a6ed21ff508045fd6c137e9535f6f8a46ae' });
 export function guard(condition, code) { if (!condition) { const error = new Error(code); error.code = code; throw error; } }
 export function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 export function assertSha(value) { guard(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value), 'INVALID_SHA256'); return value; }
