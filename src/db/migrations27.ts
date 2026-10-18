@@ -12,6 +12,7 @@ import { classpilotPrivateChatLifecycleMigration } from "./classpilotPrivateChat
 import { passpilotAppointmentsMigration } from "./passpilotAppointmentsMigration.js";
 import { classpilotDashboardThemeMigration } from "./classpilotDashboardThemeMigration.js";
 import { classpilotDashboardAppearanceMigration } from "./classpilotDashboardAppearanceMigration.js";
+import { classpilotDashboardThemeLibraryMigration } from "./classpilotDashboardThemeLibraryMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -543,6 +544,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotHeartbeatScreenshotEvidenceMigration,
   classpilotDashboardThemeMigration,
   classpilotDashboardAppearanceMigration,
+  classpilotDashboardThemeLibraryMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

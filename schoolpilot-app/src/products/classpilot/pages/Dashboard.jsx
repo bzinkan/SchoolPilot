@@ -6803,6 +6803,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   return (
     <DashboardThemeContext.Provider value={dashboardTheme.active}>
     <div className="min-h-screen" data-theme={dashboardTheme.active?.id} data-theme-ornament={dashboardTheme.active?.ornament} data-theme-clearance={dashboardTheme.active?.clearance}
+      data-image-fit={dashboardTheme.active?.fit}
       style={dashboardTheme.active ? { '--page-image': `url("${dashboardTheme.active.artwork}")` } : undefined}>
       <DashboardThemeNotice theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
       {/* One observation lease per claimed supervision group. Rendered rather

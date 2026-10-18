@@ -27,14 +27,16 @@ export class DashboardThemeAssetUnavailableError extends Error {
 export type DashboardThemeAssetContent = { teacherId: string; contentType: DashboardThemeAssetContentType; sha256: string; byteSize: number; body: Buffer };
 
 /**
- * The school's READY image with this id, or null. Callers establish tenant
- * context and decide who may see it (owner, same-school admin, bound kiosk).
+ * The school's READY image with this id, or null: the library entry with that
+ * id on whichever teacher's row holds it. Callers establish tenant context and
+ * decide who may see it (owner, same-school admin, bound kiosk).
  */
 export async function findReadyDashboardThemeAsset(schoolId: string, assetId: string): Promise<{ teacherId: string; asset: DashboardThemeAsset } | null> {
-  const [row] = await db.select({ teacherId: preferences.teacherId, asset: preferences.dashboardThemeAsset }).from(preferences)
-    .where(and(eq(preferences.schoolId, schoolId), sql`${preferences.dashboardThemeAsset}->>'id' = ${assetId}`));
-  const asset = row?.asset;
-  return row && asset && asset.id === assetId && asset.status === "ready" ? { teacherId: row.teacherId, asset } : null;
+  const [row] = await db.select({ teacherId: preferences.teacherId, assets: preferences.dashboardThemeAssets }).from(preferences)
+    .where(and(eq(preferences.schoolId, schoolId),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements(${preferences.dashboardThemeAssets}) entry WHERE entry->>'id' = ${assetId})`));
+  const asset = Array.isArray(row?.assets) ? row.assets.find(entry => entry.id === assetId) : undefined;
+  return row && asset && asset.status === "ready" ? { teacherId: row.teacherId, asset } : null;
 }
 
 /**

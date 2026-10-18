@@ -21,7 +21,7 @@ async function loadAppearance(schoolId: string): Promise<SchoolAppearance> {
 
 async function loadTeacher(schoolId: string, teacherId: string): Promise<KioskTeacherThemeRow | null> {
   const [own] = await db
-    .select({ dashboardTheme: classpilotTeacherPreferences.dashboardTheme, dashboardThemeAsset: classpilotTeacherPreferences.dashboardThemeAsset })
+    .select({ dashboardTheme: classpilotTeacherPreferences.dashboardTheme, dashboardThemeAssets: classpilotTeacherPreferences.dashboardThemeAssets })
     .from(classpilotTeacherPreferences)
     .where(and(eq(classpilotTeacherPreferences.schoolId, schoolId), eq(classpilotTeacherPreferences.teacherId, teacherId)));
   return own ?? null;

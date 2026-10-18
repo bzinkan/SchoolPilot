@@ -120,8 +120,9 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
   await page.getByRole('button', { name: /Student, Ada/ }).waitFor();
 
   // An uploaded background arrives through the kiosk credential, never a public URL.
-  state.theme = { kind: 'image', imageAssetId: 'asset-1' }; state.revision += 1;
+  state.theme = { kind: 'image', imageAssetId: 'asset-1', fit: 'contain' }; state.revision += 1;
   await page.locator('[data-kiosk-theme="image"]').waitFor();
+  assert.equal(await page.locator('[data-kiosk-theme="image"]').getAttribute('data-kiosk-image-fit'), 'contain', 'the teacher\'s fit choice reaches the kiosk root');
   await page.waitForFunction(() => document.querySelector('[data-kiosk-theme]')?.style.getPropertyValue('--kiosk-image').startsWith('url("blob:'));
   assert.equal(state.assetHeaders.length, 1);
   assert.equal(state.assetHeaders[0]['x-kiosk-token'], 'fixture-token');
@@ -140,6 +141,7 @@ test('the simple kiosk shows the bound teacher\'s theme, names on plates, drops 
     return element && element.style.getPropertyValue('--kiosk-image') === '';
   });
   assert.equal(state.assetHeaders.length, 2, 'the second asset was requested and refused');
+  assert.equal(await page.locator('[data-kiosk-theme="image"]').getAttribute('data-kiosk-image-fit'), 'cover', 'no fit on the theme means fill');
   await page.getByRole('button', { name: /Student, Ada/ }).waitFor();
 
   assert.ok(!state.requests.some(row => row.pathname.includes('/commands')), 'themes never send a student command');

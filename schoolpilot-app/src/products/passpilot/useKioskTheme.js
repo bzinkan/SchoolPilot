@@ -10,8 +10,9 @@ export function useKioskTheme(theme, kioskClient) {
   const kind = theme?.kind ?? null;
   const preset = kind === 'preset' ? theme.preset : null;
   const assetId = kind === 'image' ? theme.imageAssetId : null;
-  const active = useMemo(() => resolveKioskTheme(kind === 'preset' ? { kind, preset } : kind === 'image' ? { kind, imageAssetId: assetId } : null),
-    [kind, preset, assetId]);
+  const fit = kind === 'image' ? theme.fit : null;
+  const active = useMemo(() => resolveKioskTheme(kind === 'preset' ? { kind, preset } : kind === 'image' ? { kind, imageAssetId: assetId, fit } : null),
+    [kind, preset, assetId, fit]);
   const [image, setImage] = useState(null); // { assetId, url | null }
   const wantedAsset = active?.imageAssetId ?? null;
 
@@ -39,7 +40,7 @@ export function useKioskTheme(theme, kioskClient) {
 
   const artwork = !active ? null : active.imageAssetId ? (image?.assetId === active.imageAssetId ? image.url : null) : active.artwork;
   const rootProps = active
-    ? { 'data-kiosk-theme': active.id, style: artwork ? { '--kiosk-image': `url("${artwork}")` } : undefined }
+    ? { 'data-kiosk-theme': active.id, 'data-kiosk-image-fit': active.imageAssetId ? active.fit : undefined, style: artwork ? { '--kiosk-image': `url("${artwork}")` } : undefined }
     : {};
   return { active, artwork, rootProps };
 }

@@ -6,7 +6,7 @@
 // greeting and the shape the student's first name sits in. Presentation only:
 // the kiosk ticket, checkout and check-in flows never read any of this.
 
-import { findDashboardThemePreset } from './presets.js';
+import { findDashboardThemePreset, normalizeImageFit } from './presets.js';
 
 // One name plate per preset: the SVG shape (KioskNamePlate) and how a screen
 // reader hears it ("Ada, carved on a jack-o-lantern").
@@ -49,7 +49,7 @@ export function resolveKioskTheme(theme) {
     return { id: preset.id, label: preset.label, artwork: preset.artwork, plate: KIOSK_PLATES[preset.id] ?? null, imageAssetId: null };
   }
   if (theme.kind === 'image' && typeof theme.imageAssetId === 'string' && theme.imageAssetId) {
-    return { id: 'image', label: 'Custom background', artwork: null, plate: KIOSK_PLATES.image, imageAssetId: theme.imageAssetId };
+    return { id: 'image', label: 'Custom background', artwork: null, plate: KIOSK_PLATES.image, imageAssetId: theme.imageAssetId, fit: normalizeImageFit(theme.fit) };
   }
   return null;
 }

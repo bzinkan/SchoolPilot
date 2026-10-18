@@ -23,6 +23,27 @@
   background-repeat: no-repeat;
 }
 
+/* Uploaded picture fit on the kiosk, mirroring the dashboard: "contain" keeps
+   the whole picture over a blurred copy on a second fixed layer, "tile"
+   repeats a small image. The scrim and glass are unchanged. */
+[data-kiosk-theme="image"][data-kiosk-image-fit="contain"]::before {
+  background-size: contain;
+}
+[data-kiosk-theme="image"][data-kiosk-image-fit="contain"]::after {
+  content: "";
+  position: fixed;
+  inset: -40px;
+  z-index: -2;
+  background: #0b1220 var(--kiosk-image, none) center / cover no-repeat;
+  filter: blur(28px) brightness(0.55);
+  pointer-events: none;
+}
+[data-kiosk-theme="image"][data-kiosk-image-fit="tile"]::before {
+  background-size: auto, 320px auto;
+  background-repeat: no-repeat, repeat;
+  background-position: center, top left;
+}
+
 [data-kiosk-theme] .kiosk-glass {
   background-color: rgba(10, 14, 26, 0.78);
   border-color: rgba(255, 255, 255, 0.14);

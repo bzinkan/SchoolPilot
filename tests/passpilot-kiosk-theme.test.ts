@@ -13,7 +13,9 @@ const readyAsset = (id: string): DashboardThemeAsset => ({
   width: 1600, height: 900, inputSha256: "b".repeat(64), inputContentType: "image/png", inputByteSize: 4321,
   leaseId: null, leaseUntil: null, createdAt: NOW.toISOString(), readyAt: NOW.toISOString(),
 });
-const teacher = (row: Partial<KioskTeacherThemeRow>): KioskTeacherThemeRow => ({ dashboardTheme: null, dashboardThemeAsset: null, ...row });
+const teacher = (row: Partial<KioskTeacherThemeRow>): KioskTeacherThemeRow => ({ dashboardTheme: null, dashboardThemeAssets: [], ...row });
+// A library of three: two ready images and one abandoned reservation.
+const library = (): DashboardThemeAsset[] => [readyAsset("asset-0"), readyAsset("asset-1"), { ...readyAsset("asset-2"), status: "reserved", readyAt: null }];
 const resolve = (inputs: Partial<Parameters<typeof resolveKioskTheme>[0]>) =>
   resolveKioskTheme({ appearance: appearance(), teacher: null, timeZone: "America/New_York", now: NOW, enabled: true, storeConfigured: true, ...inputs });
 
@@ -82,30 +84,40 @@ describe("PassPilot kiosk theme resolution", () => {
     assert.deepEqual(resolve({ appearance: appearance({ teacherThemesEnabled: false, autoCalendar: false }), teacher: teacher({ dashboardTheme: { kind: "preset", preset: "halloween" } }) }), null);
   });
 
-  it("serves image bytes to a kiosk only for the bound teacher's current, ready, kiosk-enabled image", () => {
+  it("serves image bytes to a kiosk only for the bound teacher's chosen, ready, kiosk-enabled image, from anywhere in the library", () => {
     const allowed = appearance({ teacherUploadsEnabled: true, kioskCustomBackgrounds: true });
-    const image = teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" }, dashboardThemeAsset: readyAsset("asset-1") });
+    const image = teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" }, dashboardThemeAssets: library() });
     assert.equal(kioskMayServeImage(allowed, image, "asset-1"), true);
+    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-0" }, dashboardThemeAssets: library() }), "asset-0"), true, "any ready library entry can be the chosen one");
+    assert.equal(kioskMayServeImage(allowed, image, "asset-0"), false, "a ready library image that is not the chosen theme");
+    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-2" }, dashboardThemeAssets: library() }), "asset-2"), false, "chosen but not ready");
     assert.equal(kioskMayServeImage(allowed, image, "asset-9"), false, "another id, even for the same teacher");
     assert.equal(kioskMayServeImage(appearance({ teacherUploadsEnabled: true }), image, "asset-1"), false, "kiosk custom backgrounds off");
     assert.equal(kioskMayServeImage(appearance({ kioskCustomBackgrounds: true }), image, "asset-1"), false, "uploads off");
     assert.equal(kioskMayServeImage({ ...allowed, lockToSchoolTheme: true }, image, "asset-1"), false, "locked school");
-    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1", kiosk: false }, dashboardThemeAsset: readyAsset("asset-1") }), "asset-1"), false, "teacher keeps it off the kiosk");
-    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "preset", preset: "fall" }, dashboardThemeAsset: readyAsset("asset-1") }), "asset-1"), false, "an image that is not the active theme");
+    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1", kiosk: false }, dashboardThemeAssets: library() }), "asset-1"), false, "teacher keeps it off the kiosk");
+    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "preset", preset: "fall" }, dashboardThemeAssets: library() }), "asset-1"), false, "an image that is not the active theme");
+    assert.equal(kioskMayServeImage(allowed, teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" } }), "asset-1"), false, "an empty library");
     assert.equal(kioskMayServeImage(allowed, null, "asset-1"), false);
   });
 
-  it("shows an uploaded image only when the school allows it on kiosks and the bytes are ready", () => {
-    const image = teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" }, dashboardThemeAsset: readyAsset("asset-1") });
+  it("shows an uploaded image, with its fit, only when the school allows it on kiosks and the bytes are ready", () => {
+    const image = teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" }, dashboardThemeAssets: library() });
     const allowed = appearance({ teacherUploadsEnabled: true, kioskCustomBackgrounds: true, schoolDefaultTheme: { kind: "preset", preset: "fall" } });
-    assert.deepEqual(resolve({ teacher: image, appearance: allowed }), { kind: "image", imageAssetId: "asset-1" });
+    assert.deepEqual(resolve({ teacher: image, appearance: allowed }), { kind: "image", imageAssetId: "asset-1", fit: "cover" }, "an absent fit reads as cover");
+    for (const fit of ["cover", "contain", "tile"] as const) {
+      assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-0", fit, name: "Who Dey" }, dashboardThemeAssets: library() }), appearance: allowed }),
+        { kind: "image", imageAssetId: "asset-0", fit }, fit);
+    }
     assert.deepEqual(resolve({ teacher: image, appearance: appearance({ teacherUploadsEnabled: true, schoolDefaultTheme: { kind: "preset", preset: "fall" } }) }),
       { kind: "preset", preset: "fall" }, "kioskCustomBackgrounds off: the school default, not the picture");
     assert.deepEqual(resolve({ teacher: image, appearance: appearance({ kioskCustomBackgrounds: true, schoolDefaultTheme: { kind: "preset", preset: "fall" } }) }),
       { kind: "preset", preset: "fall" }, "uploads off: the school default");
     assert.equal(resolve({ teacher: image, appearance: allowed, storeConfigured: false })?.kind, "preset", "no object store: never promise bytes");
-    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" }, dashboardThemeAsset: readyAsset("asset-2") }), appearance: allowed }),
-      { kind: "preset", preset: "fall" }, "a stale asset id is not served");
-    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" } }), appearance: allowed }), { kind: "preset", preset: "fall" });
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-9" }, dashboardThemeAssets: library() }), appearance: allowed }),
+      { kind: "preset", preset: "fall" }, "an id that is not in the library is not served");
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-2", fit: "tile" }, dashboardThemeAssets: library() }), appearance: allowed }),
+      { kind: "preset", preset: "fall" }, "a reservation has no bytes");
+    assert.deepEqual(resolve({ teacher: teacher({ dashboardTheme: { kind: "image", imageAssetId: "asset-1" } }), appearance: allowed }), { kind: "preset", preset: "fall" }, "an empty library");
   });
 });

@@ -251,6 +251,33 @@
 .tile-ornament-snowcap { top: -7px; left: -2px; width: calc(100% + 4px); height: 16px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18)); }
 .tile-ornament-snowcap .flake { position: absolute; top: 10px; right: 44px; width: 18px; height: 18px; color: #7dd3fc; }
 
+/* Uploaded picture fit. The default (cover) is the shared rule above: fill
+   the page, crop the edges. "contain" keeps the whole picture, letterboxed
+   over a blurred, dimmed copy of itself on a fixed layer behind the page;
+   "tile" repeats a small image at a fixed width. Nothing here touches layout:
+   the root only gains a stacking context so the blurred layer stays behind
+   every child. */
+[data-theme="image"][data-image-fit="contain"] {
+  position: relative;
+  isolation: isolate;
+  background-color: #0b1220;
+  background-size: contain;
+}
+[data-theme="image"][data-image-fit="contain"]::before {
+  content: "";
+  position: fixed;
+  inset: -40px;
+  z-index: -1;
+  background: #0b1220 var(--page-image) center / cover no-repeat;
+  filter: blur(28px) brightness(0.55);
+  pointer-events: none;
+}
+[data-theme="image"][data-image-fit="tile"] {
+  background-size: 320px auto;
+  background-repeat: repeat;
+  background-position: top left;
+}
+
 /* A teacher's own uploaded background: neutral charcoal glass that reads over
    any picture, SchoolPilot amber kept for the mark and the active rail. */
 [data-theme="image"] {

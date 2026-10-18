@@ -15,18 +15,25 @@
 // Calendar mode is resolved here, in the school's time zone, so the kiosk only
 // ever receives a concrete preset.
 
-import { concreteSchoolPreset, schoolThemeFor, type DashboardTheme, type DashboardThemeAsset, type DashboardThemePresetId,
-  type PresetDashboardTheme, type SchoolAppearance } from "./classpilotThemes.js";
+import { concreteSchoolPreset, imageThemeFit, schoolThemeFor, type DashboardTheme, type DashboardThemeAsset, type DashboardThemeImageFit,
+  type DashboardThemePresetId, type PresetDashboardTheme, type SchoolAppearance } from "./classpilotThemes.js";
 import { calendarPresetFor, localDateParts, teacherCalendarHolidays } from "./classpilotThemeCalendar.js";
 
 export type KioskTheme =
   | { kind: "preset"; preset: DashboardThemePresetId }
-  | { kind: "image"; imageAssetId: string };
+  | { kind: "image"; imageAssetId: string; fit: DashboardThemeImageFit };
 
 export type KioskTeacherThemeRow = {
   dashboardTheme: DashboardTheme | null;
-  dashboardThemeAsset: DashboardThemeAsset | null;
+  /** The teacher's background library (the `dashboard_theme_assets` column). */
+  dashboardThemeAssets: DashboardThemeAsset[];
 };
+
+/** The READY library entry with this id, if the teacher has one. */
+function readyEntry(teacher: KioskTeacherThemeRow | null, assetId: string): DashboardThemeAsset | null {
+  const library = Array.isArray(teacher?.dashboardThemeAssets) ? teacher.dashboardThemeAssets : [];
+  return library.find(entry => entry.id === assetId && entry.status === "ready") ?? null;
+}
 
 export type KioskThemeInputs = {
   /** The launch gate (CLASSPILOT_DASHBOARD_THEMES_ENABLED). */
@@ -60,10 +67,9 @@ export function resolveKioskTheme(inputs: KioskThemeInputs): KioskTheme | null {
     if (own.kind === "none") return null;
     if (own.kiosk !== false) {
       if (own.kind === "preset") return concreteTeacherPreset(own, appearance, timeZone, now);
-      const asset = teacher?.dashboardThemeAsset ?? null;
       if (appearance.teacherUploadsEnabled && appearance.kioskCustomBackgrounds && inputs.storeConfigured
-        && asset?.status === "ready" && asset.id === own.imageAssetId) {
-        return { kind: "image", imageAssetId: own.imageAssetId };
+        && readyEntry(teacher, own.imageAssetId)) {
+        return { kind: "image", imageAssetId: own.imageAssetId, fit: imageThemeFit(own) };
       }
     }
   }
@@ -75,5 +81,5 @@ export function kioskMayServeImage(appearance: SchoolAppearance, teacher: KioskT
   if (appearance.lockToSchoolTheme || !appearance.teacherThemesEnabled || !appearance.teacherUploadsEnabled || !appearance.kioskCustomBackgrounds) return false;
   const theme = teacher?.dashboardTheme ?? null;
   if (!theme || theme.kind !== "image" || theme.kiosk === false || theme.imageAssetId !== assetId) return false;
-  return teacher?.dashboardThemeAsset?.id === assetId && teacher.dashboardThemeAsset.status === "ready";
+  return readyEntry(teacher, assetId) !== null;
 }

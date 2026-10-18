@@ -15,9 +15,9 @@ import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch } from "../realtime/ws-redis.js";
 import { classpilotSchoolPolicyAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
-import { appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled,
-  mergeSchoolAppearance, readSchoolAppearance, schoolThemeFor, type ImageDashboardTheme, type PresetDashboardTheme,
-  type SchoolTheme } from "./classpilotThemes.js";
+import { DASHBOARD_THEME_LIBRARY_LIMIT, appearanceSectionSchema, dashboardThemeAssetSummary, dashboardThemeSchema, dashboardThemesEnabled,
+  imageThemeFit, mergeSchoolAppearance, readSchoolAppearance, schoolThemeFor, type DashboardThemeAsset, type ImageDashboardTheme,
+  type PresetDashboardTheme, type SchoolTheme } from "./classpilotThemes.js";
 import { themeAssetStoreConfigured } from "./classpilotThemeAssetStore.js";
 
 export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -66,6 +66,13 @@ function readTabLimit(value: unknown): number | null {
   const number = Number(value);
   return Number.isInteger(number) && number >= 1 && number <= 100 ? number : null;
 }
+/** The ready images of a stored library, oldest ready first (then oldest created). */
+function readyLibrary(value: unknown): DashboardThemeAsset[] {
+  const stamp = (iso: string | null | undefined) => { const time = iso ? Date.parse(iso) : NaN; return Number.isNaN(time) ? 0 : time; };
+  const entries: DashboardThemeAsset[] = Array.isArray(value) ? value : [];
+  return entries.filter(entry => entry?.status === "ready")
+    .sort((a, b) => stamp(a.readyAt) - stamp(b.readyAt) || stamp(a.createdAt) - stamp(b.createdAt));
+}
 
 export async function authorize(tx: Transaction, scope: SettingsActor, admin: boolean, write = false): Promise<string> {
   if (write && !await lockStaffAssignmentLifecycleSchool(tx, scope.schoolId)) {
@@ -97,19 +104,23 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
   const themesEnabled = dashboardThemesEnabled() && appearance.teacherThemesEnabled;
   const uploadsEnabled = themesEnabled && appearance.teacherUploadsEnabled && themeAssetStoreConfigured();
   const dashboardTheme = own?.dashboardTheme ?? null;
-  const asset = own?.dashboardThemeAsset?.status === "ready" ? own.dashboardThemeAsset : null;
+  const library = readyLibrary(own?.dashboardThemeAssets);
+  const chosen = dashboardTheme?.kind === "image" ? library.find(entry => entry.id === dashboardTheme.imageAssetId) ?? null : null;
   // The school theme today: the fixed default, else the calendar in the
   // school's zone while the automatic calendar is on.
   const schoolTheme = schoolThemeFor(appearance, { now: new Date(), timeZone: zone?.schoolTimezone || "America/New_York" });
   // The teacher's own choice counts only while teacher themes are allowed
   // ("plain, no theme" is a choice too); an image additionally needs uploads
-  // allowed and its bytes ready. Otherwise the school theme applies, and
-  // nothing applies while the launch gate is off.
-  const ownCounts = themesEnabled && dashboardTheme !== null
-    && (dashboardTheme.kind !== "image" || (uploadsEnabled && asset?.id === dashboardTheme.imageAssetId));
+  // allowed and its bytes ready in the library. Otherwise the school theme
+  // applies, and nothing applies while the launch gate is off.
+  const ownCounts = themesEnabled && dashboardTheme !== null && (dashboardTheme.kind !== "image" || (uploadsEnabled && chosen !== null));
   const effectiveDashboardTheme: PresetDashboardTheme | ImageDashboardTheme | SchoolTheme | null = !dashboardThemesEnabled() ? null
     : appearance.lockToSchoolTheme || !ownCounts || dashboardTheme === null ? schoolTheme
-      : dashboardTheme.kind === "none" ? null : dashboardTheme;
+      : dashboardTheme.kind === "none" ? null
+        : dashboardTheme.kind === "image" ? { ...dashboardTheme, fit: imageThemeFit(dashboardTheme) } : dashboardTheme;
+  // `dashboardThemeAsset` is the single-image field a client from before the
+  // library still reads: the chosen image, else the most recently ready one.
+  const compat = chosen ?? library.at(-1) ?? null;
   return { schoolId: scope.schoolId, revision: own?.revision ?? 0, maxTabsPerStudent,
     schoolMaxTabsPerStudent, effectiveMaxTabsPerStudent: maxTabsPerStudent ?? schoolMaxTabsPerStudent,
     dashboardTheme, schoolDashboardTheme: appearance.schoolDefaultTheme, schoolTheme,
@@ -117,7 +128,8 @@ export async function preferenceDto(executor: Executor, scope: SettingsActor) {
       starts: appearance.calendarStarts, signInGateTheme: appearance.signInGateTheme },
     dashboardThemeLocked: appearance.lockToSchoolTheme,
     effectiveDashboardTheme, dashboardThemesEnabled: themesEnabled, dashboardThemeUploadsEnabled: uploadsEnabled,
-    dashboardThemeAsset: asset ? dashboardThemeAssetSummary(asset) : null };
+    dashboardThemeAsset: compat ? dashboardThemeAssetSummary(compat) : null,
+    dashboardThemeAssets: library.map(dashboardThemeAssetSummary), dashboardThemeLibraryLimit: DASHBOARD_THEME_LIBRARY_LIMIT };
 }
 export type TeacherPreferencesDto = Awaited<ReturnType<typeof preferenceDto>>;
 export function getClasspilotTeacherPreferences(scope: SettingsActor) {
@@ -143,7 +155,8 @@ export function updateClasspilotTeacherPreferences(scope: SettingsActor, body: u
         if (!current.dashboardThemeUploadsEnabled) {
           throw new ClasspilotSettingsError("Custom background uploads are not available at this school.", 409, "CLASSPILOT_DASHBOARD_THEME_UPLOADS_DISABLED");
         }
-        if (current.dashboardThemeAsset?.id !== input.dashboardTheme.imageAssetId) {
+        const imageAssetId = input.dashboardTheme.imageAssetId;
+        if (!current.dashboardThemeAssets.some(entry => entry.id === imageAssetId)) {
           throw new ClasspilotSettingsError("Upload a background image before choosing it.", 409, "CLASSPILOT_DASHBOARD_THEME_ASSET_MISSING");
         }
       }

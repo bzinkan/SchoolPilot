@@ -54,9 +54,9 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false, library = [], theme = null } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: null, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
+  const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: theme, dashboardThemeAssets: library, dashboardThemeLibraryLimit: 5, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
   state.precise = precise;
   await page.route('**/api/**', async route => {
@@ -86,8 +86,10 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
       if (req.method() === 'POST') { state.assetReserve = body; state.asset = { id: 'asset-1', status: 'reserved', contentType: body.contentType, byteSize: body.size }; return route.fulfill({ status: 201, json: { asset: state.asset } }); }
       if (req.method() === 'PUT' && state.uploadFailure) return route.fulfill(state.uploadFailure);
       if (req.method() === 'PUT') { state.uploadContentType = req.headers()['content-type']; state.asset = { id: 'asset-1', status: 'ready', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 };
-        state.preference = { ...state.preference, dashboardThemeAsset: { id: 'asset-1', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 } }; return route.fulfill({ json: { asset: state.asset } }); }
-      if (req.method() === 'DELETE') { state.preference = { ...state.preference, dashboardThemeAsset: null, dashboardTheme: null, effectiveDashboardTheme: null, revision: state.preference.revision + 1 }; return route.fulfill({ json: { preferences: { schoolId, ...state.preference } } }); }
+        const summary = { id: 'asset-1', contentType: 'image/webp', byteSize: 1234, width: 1600, height: 900 };
+        state.preference = { ...state.preference, dashboardThemeAsset: summary, dashboardThemeAssets: [...(state.preference.dashboardThemeAssets || []).filter(entry => entry.id !== 'asset-1'), summary] }; return route.fulfill({ json: { asset: state.asset } }); }
+      if (req.method() === 'DELETE') { const removed = url.pathname.split('/').pop(); state.removed = [...(state.removed || []), removed];
+        state.preference = { ...state.preference, dashboardThemeAsset: null, dashboardThemeAssets: (state.preference.dashboardThemeAssets || []).filter(entry => entry.id !== removed), dashboardTheme: null, effectiveDashboardTheme: null, revision: state.preference.revision + 1 }; return route.fulfill({ json: { preferences: { schoolId, ...state.preference } } }); }
       return route.fulfill({ status: 200, contentType: 'image/png', body: TINY_PNG });
     }
     if (url.pathname.endsWith('/teacher/preferences')) {
@@ -587,23 +589,40 @@ test('a teacher uploads one background through reserve and content, then saves i
     await page.getByTestId('card-dashboard-theme').waitFor();
     await page.getByTestId('input-dashboard-theme-file').setInputFiles({ name: 'mascot.png', mimeType: 'image/png', buffer: TINY_PNG });
     await page.getByText('Background ready. Save to use it.', { exact: true }).waitFor();
-    assert.equal(await page.getByTestId('dashboard-theme-choice-image').getAttribute('aria-checked'), 'true');
+    assert.equal(await page.getByTestId('dashboard-theme-choice-image-asset-1').getAttribute('aria-checked'), 'true', 'the new upload is picked as a library tile');
+    assert.equal(await page.getByTestId('dashboard-theme-library-count').innerText(), '1 of 5');
+    await page.getByTestId('radio-dashboard-theme-fit-contain').check();
     assert.ok(state.assetReserve && /^image\/(webp|jpeg)$/.test(state.assetReserve.contentType), 'the browser downsizes to WebP or JPEG before reserving');
     assert.ok(/^image\/(webp|jpeg)/.test(state.uploadContentType || ''), 'the bytes are sent with the prepared image type');
     await page.getByTestId('button-save-dashboard-theme').click();
     await page.getByText('Dashboard theme saved.', { exact: true }).waitFor();
-    assert.deepEqual(writes(state).filter(row => row.method === 'PATCH').map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'image', imageAssetId: 'asset-1' } }]);
-    await page.getByTestId('button-remove-dashboard-background').click();
+    assert.deepEqual(writes(state).filter(row => row.method === 'PATCH').map(row => row.body), [{ expectedRevision: 0, dashboardTheme: { kind: 'image', imageAssetId: 'asset-1', fit: 'contain' } }]);
+    await page.getByTestId('button-remove-dashboard-background-asset-1').click();
     await page.getByText('Background removed.', { exact: true }).waitFor();
     // A refused upload shows the server's own sentence, not the generic line.
     state.uploadFailure = { status: 503, json: { error: 'Background images are temporarily unavailable. Please retry.', code: 'CLASSPILOT_DASHBOARD_THEME_ASSET_UNAVAILABLE' } };
     await page.getByTestId('input-dashboard-theme-file').setInputFiles({ name: 'mascot.png', mimeType: 'image/png', buffer: TINY_PNG });
     await page.getByText('Background images are temporarily unavailable. Please retry.', { exact: true }).waitFor();
     state.uploadFailure = null;
-    assert.equal(await page.getByTestId('dashboard-theme-choice-image').count(), 0);
+    assert.equal(await page.getByTestId('dashboard-theme-choice-image-asset-1').count(), 0);
+    assert.deepEqual(state.removed, ['asset-1'], 'remove names the tile\'s own asset');
     assert(!state.requests.some(row => row.path.includes('/commands')), 'themes never send a student command');
     assert.deepEqual(state.errors, []);
   } finally { await page.close(); }
+  // A full library: five tiles, the picked one restored with its fit, and the upload control closed until one is removed.
+  const five = ['a', 'b', 'c', 'd', 'e'].map(letter => ({ id: `asset-${letter}`, contentType: 'image/webp', byteSize: 1000, width: 1600, height: 900 }));
+  const fullLibrary = await open({ route: '/classpilot/my-settings?section=appearance', uploads: true, library: five, theme: { kind: 'image', imageAssetId: 'asset-c', fit: 'tile' } });
+  try {
+    await fullLibrary.page.getByTestId('card-dashboard-theme').waitFor();
+    assert.equal(await fullLibrary.page.locator('[data-testid^="dashboard-theme-choice-image-"]').count(), 5);
+    assert.equal(await fullLibrary.page.getByTestId('dashboard-theme-choice-image-asset-c').getAttribute('aria-checked'), 'true');
+    assert.equal(await fullLibrary.page.getByTestId('radio-dashboard-theme-fit-tile').isChecked(), true, 'the saved fit is restored');
+    assert.equal(await fullLibrary.page.getByTestId('dashboard-theme-library-count').innerText(), '5 of 5');
+    await fullLibrary.page.getByTestId('dashboard-theme-library-full').waitFor();
+    assert.equal(await fullLibrary.page.getByTestId('input-dashboard-theme-file').isDisabled(), true, 'a sixth upload is refused in the browser');
+    assert.deepEqual(writes(fullLibrary.state), []);
+    assert.deepEqual(fullLibrary.state.errors, []);
+  } finally { await fullLibrary.page.close(); }
   const locked = await open({ route: '/classpilot/my-settings?section=appearance', locked: true });
   try {
     await locked.page.getByTestId('dashboard-theme-locked').waitFor();
