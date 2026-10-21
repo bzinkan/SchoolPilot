@@ -119,7 +119,7 @@ describe("PassPilot rule enforcement placement", () => {
     assert.match(appointments, /await recordPasspilotRuleDenial\(error.passpilotRule\)/);
     assert.match(appointments, /res.status\(409\).json\(passpilotRuleTeacherResponse\(error, await getRequestPassPilotRole\(req, res\)\)\)/);
 
-    const teacher = between(source("src/routes/passpilot/passes.ts"), 'router.post("/", async', 'router.patch("/:id/return"');
+    const teacher = between(source("src/routes/passpilot/passes.ts"), 'router.post("/", async', 'router.patch("/:id/cancel"');
     inOrder(teacher, [
       'readPasspilotRulesMode() === "on" && body.overrideRuleCode !== undefined',
       "PASSPILOT_RULE_OVERRIDE_INVALID",

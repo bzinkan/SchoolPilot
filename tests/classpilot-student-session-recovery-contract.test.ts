@@ -184,7 +184,6 @@ test("school lifecycle rows precede the shared class-configuration lock", () => 
   const slices = [
     ["createLegacyPass", "returnPass"],
     ["getKioskStudentState", "returnKioskPassForStudent"],
-    ["returnKioskPassForStudent", "getAllActivePasses"],
     ["createCanonicalPass", "updateCanonicalKioskClass"],
     ["updateCanonicalKioskClass", "updateLegacyKioskClass"],
     ["updateLegacyKioskClass", "getPasspilotClassMigrationInventory"],
@@ -211,6 +210,40 @@ test("school lifecycle rows precede the shared class-configuration lock", () => 
         < transition.indexOf("passpilot-class-source:"),
     "staff assignment transitions must retain the repo-wide school-row -> class-config order"
   );
+
+  const kioskAssignments = source("../src/services/passpilotKioskAssignments.ts");
+  const kioskLockStart = kioskAssignments.indexOf("export async function lockKioskSchool");
+  const kioskLock = kioskAssignments.slice(kioskLockStart, kioskAssignments.indexOf("export async function setKioskOverride", kioskLockStart));
+  assert.ok(
+    kioskLockStart >= 0
+      && kioskLock.indexOf("lockStaffAssignmentLifecycleSchool(") >= 0
+      && kioskLock.indexOf("lockStaffAssignmentLifecycleSchool(") < kioskLock.indexOf("pg_advisory_xact_lock("),
+    "the shared kiosk school lock must acquire staff lifecycle authority before the class-config lock"
+  );
+  const lifecycleLock = source("../src/services/staffAssignmentLifecycleLock.ts");
+  assert.ok(
+    lifecycleLock.indexOf(".from(schools)") >= 0
+      && lifecycleLock.indexOf(".from(schools)") < lifecycleLock.indexOf('.for("update")')
+      && lifecycleLock.indexOf('.for("update")') < lifecycleLock.indexOf("pg_advisory_xact_lock("),
+    "the staff lifecycle authority lock must acquire the school row before its advisory lock"
+  );
+  const returnStart = kioskAssignments.indexOf("export async function returnTeacherKioskPass");
+  const returnPass = kioskAssignments.slice(returnStart);
+  const returnMarkers = ["db.transaction(", "await lockKioskSchool(", "await assertKioskWriteAccess(", "if (sessionId)", '.for("update")', "assertLiveSession(session)", "await kioskTeacher(", "tx.update(passes)"];
+  let previousReturnMarker = -1;
+  for (const marker of returnMarkers) {
+    const index = returnPass.indexOf(marker, previousReturnMarker + 1);
+    assert.ok(index > previousReturnMarker, `kiosk return authority must validate ${marker} before mutating a pass`);
+    previousReturnMarker = index;
+  }
+  const sessionGuard = kioskAssignments.slice(kioskAssignments.indexOf("function assertLiveSession"), kioskAssignments.indexOf("async function recordKioskPassTimeline"));
+  assert.match(sessionGuard, /session\.status !== "active"/);
+  assert.match(sessionGuard, /session\.lastSeenAt\.getTime\(\) <= Date\.now\(\) - 20 \* 60 \* 60_000/);
+  const kioskRoutes = source("../src/routes/passpilot/kiosk.ts");
+  const checkinStart = kioskRoutes.indexOf('router.post("/checkin"');
+  const checkin = kioskRoutes.slice(checkinStart, kioskRoutes.indexOf('router.get("/grades"', checkinStart));
+  assert.ok(checkin.indexOf("requireActiveKioskSession(") >= 0 && checkin.indexOf("requireActiveKioskSession(") < checkin.indexOf("returnTeacherKioskPass("));
+  assert.doesNotMatch(checkin, /returnKioskPassForStudent\(/, "public returns must use the helper that revalidates kiosk credentials and session authority under lock");
 });
 
 test("heartbeat authority expires atomically and renews only an accepted manual session", () => {
