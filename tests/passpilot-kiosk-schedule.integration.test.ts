@@ -348,7 +348,7 @@ for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${so
     if (source === "legacy_grades") await pool.query("INSERT INTO passpilot_grade_students(school_id,grade_id,student_id) VALUES($1,$2,$3)", [f.schoolId, f.classId, studentId]);
     else await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [f.classId, studentId]);
   }
-  let receivingClassId = f.nextClassId;
+  let receivingClassId: string = f.nextClassId;
   if (source === "legacy_grades") {
     await pool.query("DELETE FROM teacher_grades WHERE grade_id=$1 AND teacher_id=$2", [f.nextClassId, f.teacherId]);
     await pool.query("INSERT INTO teacher_grades(teacher_id,grade_id) VALUES($1,$2)", [f.otherTeacherId, f.nextClassId]);
