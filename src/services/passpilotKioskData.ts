@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import db from "../db.js";
 import { groups, groupStudents } from "../schema/classpilot.js";
 import { schoolMemberships, users } from "../schema/core.js";
@@ -176,11 +176,12 @@ async function getCanonicalRoster(
   return rows.map((row) => row.student);
 }
 
-async function getLegacyActivePasses(
+async function getRosterActivePasses(
   schoolId: string,
-  classId: string,
+  studentIds: string[],
   operation: PasspilotKioskQueryOperation
 ): Promise<Pass[]> {
+  if (studentIds.length === 0) return [];
   recordPasspilotKioskQueryStatements(operation);
   const rows = await db
     .select({ pass: passes })
@@ -196,51 +197,7 @@ async function getLegacyActivePasses(
     .where(
       and(
         eq(passes.schoolId, schoolId),
-        eq(passes.gradeId, classId),
-        eq(passes.status, "active")
-      )
-    )
-    .orderBy(asc(passes.studentId), asc(passes.id));
-  return rows.map((row) => row.pass);
-}
-
-async function getCanonicalActivePasses(
-  schoolId: string,
-  classId: string,
-  operation: PasspilotKioskQueryOperation
-): Promise<Pass[]> {
-  // Compatibility: passes created before canonical cutover may still carry a
-  // mapped legacy grade. Resolve all mappings in one bounded statement, then
-  // fetch the pass set in one statement regardless of roster size.
-  recordPasspilotKioskQueryStatements(operation);
-  const mappedGrades = await db
-    .select({ id: grades.id })
-    .from(grades)
-    .where(and(eq(grades.schoolId, schoolId), eq(grades.classpilotGroupId, classId)));
-
-  const classCondition = mappedGrades.length
-    ? or(
-        eq(passes.classpilotGroupId, classId),
-        inArray(passes.gradeId, mappedGrades.map((grade) => grade.id))
-      )!
-    : eq(passes.classpilotGroupId, classId);
-
-  recordPasspilotKioskQueryStatements(operation);
-  const rows = await db
-    .select({ pass: passes })
-    .from(passes)
-    .innerJoin(
-      students,
-      and(
-        eq(students.id, passes.studentId),
-        eq(students.schoolId, passes.schoolId),
-        eq(students.status, "active")
-      )
-    )
-    .where(
-      and(
-        eq(passes.schoolId, schoolId),
-        classCondition,
+        inArray(passes.studentId, studentIds),
         eq(passes.status, "active")
       )
     )
@@ -254,13 +211,11 @@ export async function getPasspilotKioskRosterState(
   classId: string,
   operation: PasspilotKioskQueryOperation
 ): Promise<PasspilotKioskRosterState> {
-  const [studentRows, activePasses] = await Promise.all([
-    source === "classpilot_groups"
+  const studentRows = await (source === "classpilot_groups"
       ? getCanonicalRoster(schoolId, classId, operation)
-      : getLegacyRoster(schoolId, classId, operation),
-    source === "classpilot_groups"
-      ? getCanonicalActivePasses(schoolId, classId, operation)
-      : getLegacyActivePasses(schoolId, classId, operation),
-  ]);
+      : getLegacyRoster(schoolId, classId, operation));
+  // A roster student's current pass may have been issued in another class or
+  // activity. Its origin does not prevent that student returning at this kiosk.
+  const activePasses = await getRosterActivePasses(schoolId, studentRows.map(student => student.id), operation);
   return { students: studentRows, activePasses };
 }

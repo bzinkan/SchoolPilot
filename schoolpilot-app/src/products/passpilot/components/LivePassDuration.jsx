@@ -5,20 +5,26 @@ const listeners = new Set();
 let currentTimeMs = Date.now();
 let ticker = null;
 
+function updateTime() {
+  currentTimeMs = Date.now();
+  for (const notify of listeners) notify();
+}
+
 function subscribe(listener) {
   listeners.add(listener);
   if (listeners.size === 1) {
     currentTimeMs = Date.now();
-    ticker = window.setInterval(() => {
-      currentTimeMs = Date.now();
-      for (const notify of listeners) notify();
-    }, 3_000);
+    ticker = window.setInterval(updateTime, 1_000);
+    window.addEventListener('focus', updateTime);
+    document.addEventListener('visibilitychange', updateTime);
   }
   return () => {
     listeners.delete(listener);
     if (listeners.size === 0 && ticker !== null) {
       window.clearInterval(ticker);
       ticker = null;
+      window.removeEventListener('focus', updateTime);
+      document.removeEventListener('visibilitychange', updateTime);
     }
   };
 }

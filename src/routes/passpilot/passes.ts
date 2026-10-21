@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -34,6 +34,7 @@ import {
   canAccessCanonicalPassHistory,
   canAccessLegacyPassHistory,
   canAccessPass,
+  canReturnPass,
   canAccessStudent,
   filterPassesForRole,
   getGradeForSchool,
@@ -47,6 +48,7 @@ import {
 } from "../../services/passpilotAccess.js";
 import { isDatabaseErrorCode } from "../../util/databaseError.js";
 import { readPasspilotRulesMode } from "../../config/passpilotRulesMode.js";
+import { findPasspilotReturnMatches, passpilotReturnLookupSchema } from "../../services/passpilotReturns.js";
 import { logAuditStrict } from "../../services/audit.js";
 import {
   canOverridePasspilotRules,
@@ -102,6 +104,19 @@ router.use(
   requireProductLicense("PASSPILOT"),
   requirePassPilotRole("admin", "school_admin", "office_staff", "teacher")
 );
+// Returns need no class-model negotiation: a changed class or older checkout
+// client must not prevent an authorized staff member from returning a student.
+router.post("/returns/lookup", async (req, res, next) => {
+  try {
+    const parsed = passpilotReturnLookupSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Enter 2 to 100 characters of a student name or ID." });
+    return res.json(await findPasspilotReturnMatches(res.locals.schoolId!, parsed.data.search));
+  } catch (err) {
+    next(err);
+  }
+});
+router.patch("/:id/return", handlePassReturn);
+router.put("/:id/return", handlePassReturn);
 router.use(requirePasspilotClassModel);
 
 // Enrich passes with student/teacher/grade data
@@ -550,49 +565,30 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-// PATCH /api/passpilot/passes/:id/return - Return a pass
-router.patch("/:id/return", async (req, res, next) => {
+// PATCH/PUT /api/passpilot/passes/:id/return - Return one exact same-school pass.
+async function handlePassReturn(req: Request, res: Response, next: NextFunction) {
   try {
     const schoolId = res.locals.schoolId!;
     const id = param(req, "id");
     const role = await getRequestPassPilotRole(req, res);
     const existing = await getPassForSchool(id, schoolId);
-    if (!existing || !(await canAccessPass(req.authUser!, schoolId, existing, role))) {
+    if (!existing || !canReturnPass(schoolId, existing, role)) {
       return res.status(404).json({ error: "Active pass not found" });
     }
 
+    const mayReadPass = await canAccessPass(req.authUser!, schoolId, existing, role);
     const pass = await returnPass(id, schoolId);
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "returned", req.authUser!.id);
-    return res.json({ pass: await normalizePasspilotPass(pass, schoolId, role) });
+    return res.json({ pass: mayReadPass
+      ? await normalizePasspilotPass(pass, schoolId, role)
+      : { id: pass.id, studentId: pass.studentId, status: pass.status, returnedAt: pass.returnedAt } });
   } catch (err) {
     next(err);
   }
-});
-
-// PUT /api/passpilot/passes/:id/return - Alias
-router.put("/:id/return", async (req, res, next) => {
-  try {
-    const schoolId = res.locals.schoolId!;
-    const id = param(req, "id");
-    const role = await getRequestPassPilotRole(req, res);
-    const existing = await getPassForSchool(id, schoolId);
-    if (!existing || !(await canAccessPass(req.authUser!, schoolId, existing, role))) {
-      return res.status(404).json({ error: "Active pass not found" });
-    }
-
-    const pass = await returnPass(id, schoolId);
-    if (!pass) {
-      return res.status(400).json({ error: "Active pass not found" });
-    }
-    await recordPassTimeline(pass, "returned", req.authUser!.id);
-    return res.json({ pass: await normalizePasspilotPass(pass, schoolId, role) });
-  } catch (err) {
-    next(err);
-  }
-});
+}
 
 // PATCH /api/passpilot/passes/:id/cancel - Cancel a pass
 router.patch("/:id/cancel", async (req, res, next) => {

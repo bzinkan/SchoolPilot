@@ -31,6 +31,8 @@ async function fixture(t) {
   t.after(async () => { await browser.close(); await vite.close(); });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(10_000);
+  // Cold Vite compilation of the full app can outlast an action assertion.
+  page.setDefaultNavigationTimeout(30_000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   return { page, errors, url: `http://127.0.0.1:${vite.httpServer.address().port}` };
 }

@@ -127,6 +127,11 @@ Shows students currently in class:
 2. Click **Mark Returned**
 3. The pass is ended and the student moves back to **Available**
 
+You can return a student's active pass regardless of which teacher or kiosk
+issued it. If the student is outside the selected class, use **Return a pass**,
+search their name or student ID, and confirm the matching student. This also
+works when you have no class selected.
+
 ### Multiple Classes
 
 If you teach multiple classes, switch between them using the **grade tabs** at the top of the My Class view.
@@ -166,10 +171,15 @@ Best for schools where students have ID badges or know their student ID numbers.
 3. Click **Check In** to end the pass
 4. Student is marked as returned
 
+Students can check in at any authorized kiosk in their school, even if someone
+else issued the pass or the kiosk has switched classes. **Return a pass** also
+supports searching by name or student ID when a student is outside the displayed
+class or the kiosk is between scheduled classes.
+
 #### Setup
 
 - Access via URL: `your-school-url/passpilot/kiosk?school=SCHOOL_ID`
-- No authentication required (public endpoint)
+- Staff unlock the device with the school's kiosk PIN before students use it
 - Requires school ID parameter
 
 ### Simple Kiosk
@@ -185,6 +195,10 @@ Best for classroom-based setups where students select from a class list.
 3. **Tap to Check Out** - Tap an available student's name, then select destination
 4. **Tap to Check In** - Tap a currently-out student to mark them returned
 
+If the student is missing from the displayed class, choose **Return a pass** and
+search their name or student ID. A pass can be returned at any authorized kiosk
+in the same school, regardless of who issued it.
+
 #### Remote Grade Control
 
 Teachers can push a specific grade to the Simple Kiosk from their dashboard:
@@ -196,7 +210,7 @@ Teachers can push a specific grade to the Simple Kiosk from their dashboard:
 
 - Access via URL: `your-school-url/passpilot/kiosk-simple?school=SCHOOL_ID`
 - Real-time polling keeps the display current
-- No authentication required
+- Staff unlock the device with the school's kiosk PIN before students use it
 
 ### Kiosk Configuration
 

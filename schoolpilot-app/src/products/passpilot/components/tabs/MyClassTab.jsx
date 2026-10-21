@@ -7,7 +7,7 @@ import { useToast } from "../../../../hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
-import { formatTimeFull, startOfTodayInTimezone } from "../../../../lib/date-utils";
+import { formatTime, formatTimeFull, startOfTodayInTimezone } from "../../../../lib/date-utils";
 import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, BarChart3, Download } from "lucide-react";
 import {
   DropdownMenu,
@@ -65,6 +65,7 @@ import { encodePassPilotCsv } from "../../passCsv";
 import { useKioskSessions } from "../../useKioskSessions";
 import ClaimKioskDialog from "../ClaimKioskDialog";
 import { usePassNow } from "../LivePassDuration";
+import ReturnPassLookup from "../ReturnPassLookup";
 const AppointmentReminders = React.lazy(() => import('../AppointmentReminders'));
 
 const DESTINATION_LABELS = {
@@ -178,6 +179,7 @@ function MyClassTab() {
   const { canLinkToClassPilot } = useStudentImportHome();
   const userId = user?.id || '';
   const schoolId = school?.id || '';
+  const returnLookup = <ReturnPassLookup key={JSON.stringify([schoolId, userId, user?.authVersion, user?.roles])} />;
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
   const { absentIds } = useAbsentStudents();
@@ -818,6 +820,7 @@ function MyClassTab() {
   if (isLoading) {
     return (
       <div className="p-4" aria-live="polite">
+        {returnLookup}
         <div className="animate-pulse space-y-4 motion-reduce:animate-none">
           <div className="h-4 bg-muted rounded w-1/4"></div>
           <div className="h-20 bg-muted rounded"></div>
@@ -830,6 +833,7 @@ function MyClassTab() {
   if (classInventoryQuery.isError) {
     return (
       <div className="p-4">
+        {returnLookup}
         <Card className="border-destructive/40">
           <CardContent className="p-8 text-center">
             <h2 className="text-lg font-semibold">Classes couldn’t be loaded</h2>
@@ -846,6 +850,7 @@ function MyClassTab() {
   if (studentsError || passesError) {
     return (
       <div className="p-4">
+        {returnLookup}
         <Card className="border-destructive/40">
           <CardContent className="p-8 text-center" aria-live="polite">
             <h2 className="text-lg font-semibold">Class roster couldn’t be loaded</h2>
@@ -872,6 +877,7 @@ function MyClassTab() {
   if (myClasses.length === 0) {
     return (
       <div className="p-4">
+        {returnLookup}
         <div className="mb-6">
           <h2 className="text-xl font-semibold text-foreground mb-2">My Class</h2>
           <p className="text-sm text-muted-foreground">Manage student passes and track who's out of class</p>
@@ -959,6 +965,7 @@ function MyClassTab() {
 
   return (
     <div className="p-4">
+      {returnLookup}
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold text-foreground">My Class</h2>
@@ -1510,7 +1517,9 @@ function MyClassTab() {
                               ) : null}
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {pass.customDestination || <>Out for {formatLivePassDuration(pass.issuedAt, nowMs)}</>} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
+                              Out for <span className="tabular-nums" data-testid={`pass-duration-${pass.id}`}>{formatLivePassDuration(pass.issuedAt, nowMs)}</span>
+                              {pass.customDestination ? <> • {pass.customDestination}</> : null}
+                              {' • Since '}{pass.issuedAt ? formatTime(pass.issuedAt, tz) : 'Unknown time'}
                             </p>
                           </div>
                         </div>

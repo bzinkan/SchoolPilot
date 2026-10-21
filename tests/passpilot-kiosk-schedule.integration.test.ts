@@ -11,7 +11,7 @@ import { getPasspilotClasses, normalizePasspilotPass } from "../src/services/pas
 import db, { pool, sessionPool } from "../src/db.js";
 import { runWithTenantContext } from "../src/middleware/tenantContext.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "../src/db/passpilotKioskScheduleMigration.js";
-import { passpilotKioskSessions } from "../src/schema/passpilot.js";
+import { passes, passpilotKioskSessions } from "../src/schema/passpilot.js";
 import { emptySchoolSchedulingConfig, defaultClassScheduleRule } from "../src/services/classpilotSchedulingRules.js";
 import { emptyKioskSchedule, type KioskMode } from "../src/services/passpilotKioskSchedule.js";
 import * as service from "../src/services/passpilotKioskAssignments.js";
@@ -19,6 +19,7 @@ import { createGroup, createSelfClaimedKioskSession, createResumedKioskSession, 
 import { hashPassword } from "../src/util/password.js";
 import { signUserToken } from "../src/services/jwt.js";
 import kioskRouter from "../src/routes/passpilot/kiosk.js";
+import passesRouter from "../src/routes/passpilot/passes.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import type { ScheduleProfileApplication } from "../src/services/classpilotScheduleProfileModel.js";
 
@@ -30,7 +31,7 @@ before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname), "Only a local fixture database is permitted");
   await pool.query(PASSPILOT_KIOSK_SCHEDULE_SQL);
   pinHash = await hashPassword("4321");
-  const app = express(); app.use(express.json()); app.use("/api/passpilot/kiosk", kioskRouter); app.use(errorHandler);
+  const app = express(); app.use(express.json()); app.use("/api/passpilot/kiosk", kioskRouter); app.use("/api/passpilot/passes", passesRouter); app.use(errorHandler);
   server = createServer(app); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/passpilot/kiosk`;
 });
@@ -88,6 +89,26 @@ async function checkout(f: Fixture, revision: string, studentId = f.studentId) {
   return scoped(f.schoolId, () => service.createActivityKioskPass({ schoolId: f.schoolId, sessionId: f.session.id, studentId, expectedRevision: revision, expectedPinHash: pinHash, destination: "bathroom" }));
 }
 const kioskHeaders = (f: Fixture) => ({ "x-school-id": f.schoolId, "x-kiosk-session": f.session.id, "x-kiosk-pin": "4321", "x-passpilot-class-model": "classpilot-groups-v1", "x-passpilot-kiosk-activity": "scheduled-activities-v1", "content-type": "application/json" });
+
+const staffHeaders = (f: Fixture, teacherId = f.otherTeacherId) => ({
+  "x-school-id": f.schoolId,
+  "x-passpilot-class-model": "classpilot-groups-v1",
+  "content-type": "application/json",
+  authorization: `Bearer ${signUserToken({ userId: teacherId, email: `${teacherId}@example.test`, isSuperAdmin: false })}`,
+});
+async function seedReturnPass(f: Fixture, options: { studentId?: string; teacherId?: string; issuedVia?: "teacher" | "kiosk"; gradeId?: string | null; classId?: string | null } = {}) {
+  const id = randomUUID();
+  await pool.query(`INSERT INTO passes(id,school_id,student_id,teacher_id,grade_id,classpilot_group_id,destination,custom_destination,status,duration,expires_at,issued_via,notes)
+    VALUES($1,$2,$3,$4,$5,$6,'custom','Private destination','active',5,now()-interval '1 minute',$7,'Private pass note')`,
+  [id, f.schoolId, options.studentId ?? f.studentId, options.teacherId ?? f.teacherId,
+    options.gradeId === undefined ? (f.source === "legacy_grades" ? f.classId : null) : options.gradeId,
+    options.classId === undefined ? (f.source === "classpilot_groups" ? f.classId : null) : options.classId,
+    options.issuedVia ?? "teacher"]);
+  return id;
+}
+type ReturnMatch = { passId: string; studentId: string; firstName: string; lastName: string; studentIdNumber: string | null };
+type ReturnLookup = { matches: ReturnMatch[]; hasMore: boolean };
+const kioskPost = (path: string, headers: Record<string, string>, body: unknown) => fetch(baseUrl + path, { method: "POST", headers, body: JSON.stringify(body) });
 
 async function teacherTimetable(actual = false) {
   const f = await fixture();
@@ -256,10 +277,214 @@ test("snapshot/lookup/checkout contract fails closed for old clients and stale a
   const lookup = await fetch(baseUrl + "/lookup", { method: "POST", headers, body: JSON.stringify({ studentIdNumber: f.studentId }) });
   assert.equal(lookup.status, 200);
   const other = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null, { actorUserId: f.otherTeacherId, manager: false }));
-  assert.equal(await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, other.id, f.studentId, pinHash)), null);
-  const returned = await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash));
+  const returned = await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, other.id, f.studentId, pinHash));
   assert.equal(returned?.status, "returned"); assert.equal(returned?.gradeId, f.classId);
+  assert.equal(await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)), null);
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM student_timeline_events WHERE school_id=$1", [f.schoolId])).rows[0].count, 2);
+});
+
+for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${source}: another teacher's unassigned kiosk can return an overdue custom pass issued by staff`, async () => {
+  const f = await fixture(source);
+  const passId = await seedReturnPass(f);
+  const other = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null, { actorUserId: f.otherTeacherId, manager: false }));
+  const headers: Record<string, string> = kioskHeaders({ ...f, session: other });
+  delete headers["x-passpilot-class-model"];
+  delete headers["x-passpilot-kiosk-activity"];
+  const found = await kioskPost("/returns/lookup", headers, { search: f.studentId });
+  assert.equal(found.status, 200);
+  const result = await found.json() as ReturnLookup;
+  assert.equal(result.hasMore, false);
+  assert.deepEqual(result.matches, [{ passId, studentId: f.studentId, firstName: "First", lastName: "Student", studentIdNumber: f.studentId }]);
+  assert.deepEqual(Object.keys(result.matches[0]!).sort(), ["firstName", "lastName", "passId", "studentId", "studentIdNumber"].sort());
+
+  const badge = await kioskPost("/lookup", headers, { studentIdNumber: f.studentId });
+  assert.equal(badge.status, 200);
+  const badgeBody = await badge.json() as { student: { id: string; returnOnly: boolean }; activePass: { id: string } };
+  assert.equal(badgeBody.student.id, f.studentId);
+  assert.equal(badgeBody.student.returnOnly, true);
+  assert.equal(badgeBody.activePass.id, passId);
+  assert.deepEqual(Object.keys(badgeBody.activePass).sort(), ["expiresAt", "id", "issuedAt", "status", "studentId"].sort(), "universal return lookup does not reveal destination, notes, issuer or activity metadata");
+  const checkoutResponse = await kioskPost("/checkout", headers, { studentId: f.nextStudentId, destination: "bathroom" });
+  assert.ok(checkoutResponse.status >= 400, "a return lookup must not grant checkout authority to an unassigned kiosk");
+
+  const returned = await kioskPost("/checkin", headers, { studentId: f.studentId, passId });
+  assert.equal(returned.status, 200);
+  const receipt = await returned.json() as { pass: { id: string; status: string } };
+  assert.deepEqual(Object.keys(receipt.pass).sort(), ["id", "returnedAt", "status", "studentId"].sort(), "the return receipt contains no private pass details");
+  const stored = (await pool.query("SELECT status,teacher_id,issued_via,grade_id,classpilot_group_id,custom_destination FROM passes WHERE id=$1", [passId])).rows[0];
+  assert.equal(stored.status, "returned");
+  assert.equal(stored.teacher_id, f.teacherId);
+  assert.equal(stored.issued_via, "teacher");
+  assert.equal(stored.grade_id, source === "legacy_grades" ? f.classId : null);
+  assert.equal(stored.classpilot_group_id, source === "classpilot_groups" ? f.classId : null);
+  assert.equal(stored.custom_destination, "Private destination");
+  const timeline = (await pool.query("SELECT actor_user_id,metadata FROM student_timeline_events WHERE school_id=$1 AND source_id=$2", [f.schoolId, passId])).rows[0];
+  assert.equal(timeline.actor_user_id, f.otherTeacherId, "the return event identifies the returning kiosk's teacher");
+  assert.equal(timeline.metadata.issuedVia, "teacher", "returning at a kiosk does not rewrite how the pass was issued");
+});
+
+test("current kiosk rosters can return any issuer's pass without listing the school's other outstanding students", async () => {
+  const f = await fixture();
+  const [targeted] = await scoped(f.schoolId, () => retargetKioskSessionsForTeacher(f.schoolId, f.teacherId, { source: f.source, classId: f.classId }, { actorUserId: f.teacherId, manager: false }));
+  assert.ok(targeted);
+  const passId = await seedReturnPass(f, { teacherId: f.otherTeacherId, gradeId: f.nextClassId });
+  await seedReturnPass(f, { studentId: f.nextStudentId, teacherId: f.otherTeacherId, gradeId: f.nextClassId });
+  const response = await fetch(baseUrl + "/snapshot", { headers: kioskHeaders({ ...f, session: targeted }) });
+  assert.equal(response.status, 200);
+  const snapshot = await response.json() as { students: { id: string; canReturn: boolean; activePass: { id: string } | null }[] };
+  assert.deepEqual(snapshot.students.map(student => student.id), [f.studentId]);
+  assert.equal(snapshot.students[0]?.canReturn, true);
+  assert.equal(snapshot.students[0]?.activePass?.id, passId);
+  const returned = await kioskPost("/checkin", kioskHeaders(f), { studentId: f.studentId, passId });
+  assert.equal(returned.status, 200);
+});
+
+for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${source}: four custom sign-outs can all check in with their receiving teacher`, async () => {
+  const f = await fixture(source);
+  const studentIds = [f.studentId];
+  for (let index = 1; index < 4; index++) {
+    const studentId = randomUUID(); studentIds.push(studentId);
+    await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,student_id_number) VALUES($1::text,$2,'Returning',$3,'active',$1::text)", [studentId, f.schoolId, `Student ${index}`]);
+    if (source === "legacy_grades") await pool.query("INSERT INTO passpilot_grade_students(school_id,grade_id,student_id) VALUES($1,$2,$3)", [f.schoolId, f.classId, studentId]);
+    else await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [f.classId, studentId]);
+  }
+  let receivingClassId = f.nextClassId;
+  if (source === "legacy_grades") {
+    await pool.query("DELETE FROM teacher_grades WHERE grade_id=$1 AND teacher_id=$2", [f.nextClassId, f.teacherId]);
+    await pool.query("INSERT INTO teacher_grades(teacher_id,grade_id) VALUES($1,$2)", [f.otherTeacherId, f.nextClassId]);
+    for (const studentId of studentIds) await pool.query("INSERT INTO passpilot_grade_students(school_id,grade_id,student_id) VALUES($1,$2,$3)", [f.schoolId, f.nextClassId, studentId]);
+  } else {
+    const receivingClass = await scoped(f.schoolId, () => createGroup({ schoolId: f.schoolId, teacherId: f.otherTeacherId, name: "Receiving teacher's class", groupType: "admin_class", status: "active" }));
+    receivingClassId = receivingClass.id;
+    for (const studentId of studentIds) await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [receivingClassId, studentId]);
+  }
+  const issued = [];
+  for (const studentId of studentIds) {
+    const passId = await seedReturnPass(f, { studentId });
+    const original = (await pool.query("SELECT issued_at,custom_destination FROM passes WHERE id=$1", [passId])).rows[0];
+    issued.push({ studentId, passId, issuedAt: original.issued_at.getTime(), customDestination: original.custom_destination });
+  }
+  const receivingSession = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null, { actorUserId: f.otherTeacherId, manager: false }));
+  const [targeted] = await scoped(f.schoolId, () => retargetKioskSessionsForTeacher(f.schoolId, f.otherTeacherId, { source, classId: receivingClassId }, { actorUserId: f.otherTeacherId, manager: false }));
+  assert.equal(targeted?.id, receivingSession.id);
+  const headers = kioskHeaders({ ...f, session: receivingSession });
+  const response = await fetch(baseUrl + "/snapshot", { headers });
+  assert.equal(response.status, 200);
+  const snapshot = await response.json() as { students: { id: string; canReturn: boolean; activePass: { id: string } | null }[] };
+  for (const expected of issued) {
+    const student = snapshot.students.find(row => row.id === expected.studentId);
+    assert.equal(student?.canReturn, true);
+    assert.equal(student?.activePass?.id, expected.passId);
+    const returned = await kioskPost("/checkin", headers, { studentId: expected.studentId, passId: expected.passId });
+    assert.equal(returned.status, 200, "the receiving teacher must not need the issuing teacher to return the student");
+    const stored = (await pool.query("SELECT status,teacher_id,issued_at,returned_at,issued_via,grade_id,classpilot_group_id,custom_destination FROM passes WHERE id=$1", [expected.passId])).rows[0];
+    assert.equal(stored.status, "returned");
+    assert.equal(stored.teacher_id, f.teacherId);
+    assert.equal(stored.issued_via, "teacher");
+    assert.equal(stored.issued_at.getTime(), expected.issuedAt);
+    assert.ok(stored.returned_at instanceof Date);
+    assert.equal(stored.custom_destination, expected.customDestination);
+    assert.equal(stored.grade_id, source === "legacy_grades" ? f.classId : null);
+    assert.equal(stored.classpilot_group_id, source === "classpilot_groups" ? f.classId : null);
+  }
+});
+
+test("return lookup is bounded, literal, active-pass-only, and isolated to its school", async () => {
+  const f = await fixture(), foreign = await fixture();
+  const inactivePassId = await seedReturnPass(f);
+  await pool.query("UPDATE passes SET status='returned',returned_at=now() WHERE id=$1", [inactivePassId]);
+  const foreignPassId = await seedReturnPass(foreign);
+  const headers = kioskHeaders(f);
+  assert.equal((await kioskPost("/returns/lookup", headers, { search: "F" })).status, 400);
+  const noActive = await (await kioskPost("/returns/lookup", headers, { search: f.studentId })).json() as ReturnLookup;
+  assert.deepEqual(noActive.matches, []);
+  const foreignLookup = await (await kioskPost("/returns/lookup", headers, { search: foreign.studentId })).json() as ReturnLookup;
+  assert.deepEqual(foreignLookup.matches, []);
+  const foreignReturn = await kioskPost("/checkin", headers, { studentId: foreign.studentId, passId: foreignPassId });
+  assert.ok(foreignReturn.status >= 400);
+  assert.equal((await pool.query("SELECT status FROM passes WHERE id=$1", [foreignPassId])).rows[0].status, "active");
+
+  for (let index = 0; index < 21; index++) {
+    const studentId = randomUUID();
+    await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,student_id_number) VALUES($1::text,$2,'ReturnLookup',$3,'active',$1::text)", [studentId, f.schoolId, `Student ${String(index).padStart(2, "0")}`]);
+    await seedReturnPass(f, { studentId, gradeId: null });
+  }
+  const many = await (await kioskPost("/returns/lookup", headers, { search: "ReturnLookup" })).json() as ReturnLookup;
+  assert.equal(many.matches.length, 20);
+  assert.equal(many.hasMore, true);
+  for (const match of many.matches) assert.deepEqual(Object.keys(match).sort(), ["firstName", "lastName", "passId", "studentId", "studentIdNumber"].sort());
+  const wildcard = await (await kioskPost("/returns/lookup", headers, { search: "%%" })).json() as ReturnLookup;
+  assert.deepEqual(wildcard.matches, [], "wildcards are literal student-search text, not a whole-school browse");
+});
+
+test("an explicit return selection cannot close a newly issued pass and concurrent returns write one outcome", async () => {
+  const f = await fixture();
+  const headers = kioskHeaders(f);
+  const originalId = await seedReturnPass(f);
+  assert.equal((await kioskPost("/checkin", headers, { studentId: f.studentId, passId: originalId })).status, 200);
+  const replacementId = await seedReturnPass(f);
+  const stale = await kioskPost("/checkin", headers, { studentId: f.studentId, passId: originalId });
+  assert.ok(stale.status >= 400);
+  assert.equal((await pool.query("SELECT status FROM passes WHERE id=$1", [replacementId])).rows[0].status, "active");
+  const concurrent = await Promise.all([
+    kioskPost("/checkin", headers, { studentId: f.studentId, passId: replacementId }),
+    kioskPost("/checkin", headers, { studentId: f.studentId, passId: replacementId }),
+  ]);
+  assert.equal(concurrent.filter(response => response.status === 200).length, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM student_timeline_events WHERE school_id=$1 AND source_id=$2", [f.schoolId, replacementId])).rows[0].count, 1);
+});
+
+test("return access still requires current kiosk credentials, a live same-school session and school entitlement", async () => {
+  const f = await fixture();
+  const passId = await seedReturnPass(f);
+  const body = { studentId: f.studentId, passId };
+  const headers = kioskHeaders(f);
+  assert.ok((await kioskPost("/checkin", { ...headers, "x-kiosk-pin": "0000" }, body)).status >= 400);
+  assert.ok((await kioskPost("/returns/lookup", { ...headers, "x-kiosk-pin": "0000" }, { search: "First" })).status >= 400);
+  await pool.query("UPDATE schools SET kiosk_pin_hash='rotated' WHERE id=$1", [f.schoolId]);
+  assert.ok((await kioskPost("/checkin", headers, body)).status >= 400);
+  await pool.query("UPDATE schools SET kiosk_pin_hash=$2 WHERE id=$1", [f.schoolId, pinHash]);
+  await pool.query("UPDATE passpilot_kiosk_sessions SET last_seen_at=now()-interval '21 hours' WHERE id=$1", [f.session.id]);
+  assert.ok((await kioskPost("/checkin", headers, body)).status >= 400);
+  await pool.query("UPDATE passpilot_kiosk_sessions SET last_seen_at=now() WHERE id=$1", [f.session.id]);
+  await pool.query("UPDATE schools SET kiosk_enabled=false WHERE id=$1", [f.schoolId]);
+  assert.ok((await kioskPost("/checkin", headers, body)).status >= 400);
+  await pool.query("UPDATE schools SET kiosk_enabled=true WHERE id=$1", [f.schoolId]);
+  await pool.query("UPDATE product_licenses SET status='inactive' WHERE school_id=$1 AND product='PASSPILOT'", [f.schoolId]);
+  assert.ok((await kioskPost("/checkin", headers, body)).status >= 400);
+  assert.equal((await pool.query("SELECT status,returned_at FROM passes WHERE id=$1", [passId])).rows[0].status, "active");
+  assert.equal((await pool.query("SELECT returned_at FROM passes WHERE id=$1", [passId])).rows[0].returned_at, null);
+});
+
+test("teachers can locate and return another teacher's active pass without acquiring pass history or cancel authority", async () => {
+  const f = await fixture();
+  const passId = await seedReturnPass(f);
+  const headers = staffHeaders(f);
+  const staffBase = baseUrl.replace(/\/kiosk$/, "/passes");
+  const lookup = await fetch(staffBase + "/returns/lookup", { method: "POST", headers, body: JSON.stringify({ search: "First" }) });
+  assert.equal(lookup.status, 200);
+  const found = await lookup.json() as ReturnLookup;
+  assert.deepEqual(found.matches.map(match => match.passId), [passId]);
+  assert.deepEqual(Object.keys(found.matches[0]!).sort(), ["firstName", "lastName", "passId", "studentId", "studentIdNumber"].sort());
+  assert.equal((await fetch(staffBase + `/${passId}/cancel`, { method: "PATCH", headers })).status, 404);
+  const [otherTeacher] = await db.select().from(users).where(eq(users.id, f.otherTeacherId));
+  const [pass] = await scoped(f.schoolId, () => db.select().from(passes).where(eq(passes.id, passId)));
+  assert.ok(pass);
+  assert.equal(await scoped(f.schoolId, () => canAccessPass(otherTeacher!, f.schoolId, pass, "teacher")), false);
+  assert.deepEqual(await scoped(f.schoolId, () => filterPassesForRole([pass], otherTeacher!, f.schoolId, "teacher")), []);
+  const response = await fetch(staffBase + `/${passId}/return`, { method: "PATCH", headers });
+  assert.equal(response.status, 200);
+  const returned = await response.json() as { pass: { id: string; status: string } };
+  assert.equal(returned.pass.id, passId);
+  assert.equal(returned.pass.status, "returned");
+  assert.deepEqual(Object.keys(returned.pass).sort(), ["id", "returnedAt", "status", "studentId"].sort(), "return permission does not reveal private pass details");
+  const secondId = await seedReturnPass(f);
+  const alias = await fetch(staffBase + `/${secondId}/return`, { method: "PUT", headers });
+  assert.equal(alias.status, 200);
+  const foreign = await fixture();
+  const protectedId = await seedReturnPass(f);
+  assert.equal((await fetch(staffBase + `/${protectedId}/return`, { method: "PATCH", headers: staffHeaders(foreign) })).status, 404);
+  assert.equal((await pool.query("SELECT status FROM passes WHERE id=$1", [protectedId])).rows[0].status, "active");
 });
 
 test("ClassPilot classes resolve without sessions or devices, follow co-teachers, calendar and skipped occurrences", async () => {
@@ -333,7 +558,20 @@ for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${so
     "a legacy student fallback must never re-add an unrelated testing pass");
   await pool.query("UPDATE product_licenses SET status='inactive' WHERE school_id=$1 AND product='CLASSPILOT'", [f.schoolId]);
   assert.equal((await scoped(f.schoolId, () => service.resolveKioskDisplayAssignment(f.schoolId, f.session))).status, "unavailable");
-  assert.equal((await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)))?.id, pass.id);
+  const otherSession = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null, { actorUserId: f.otherTeacherId, manager: false }));
+  const returningHeaders = kioskHeaders({ ...f, session: otherSession });
+  const lookup = await kioskPost("/returns/lookup", returningHeaders, { search: f.studentId });
+  assert.equal(lookup.status, 200);
+  assert.deepEqual((await lookup.json() as ReturnLookup).matches.map(match => match.passId), [pass.id]);
+  const returned = await kioskPost("/checkin", returningHeaders, { studentId: f.studentId, passId: pass.id });
+  assert.equal(returned.status, 200);
+  const originalAttribution = (await pool.query("SELECT supervision_context_id,activity_kind,activity_name_snapshot,issuing_kiosk_session_id,teacher_id FROM passes WHERE id=$1", [pass.id])).rows[0];
+  assert.equal(originalAttribution.supervision_context_id, t.contextId);
+  assert.equal(originalAttribution.activity_kind, "testing");
+  assert.equal(originalAttribution.activity_name_snapshot, "MAP testing");
+  assert.equal(originalAttribution.issuing_kiosk_session_id, f.session.id);
+  assert.equal(originalAttribution.teacher_id, f.teacherId);
+  assert.equal(await scoped(f.schoolId, () => canAccessPass(otherTeacher!, f.schoolId, pass, "teacher")), false, "return authority does not grant testing pass history");
 });
 
 test("checkout waiting for the school lock revalidates a schedule change; PIN rotation and reassignment revoke writes", async () => {

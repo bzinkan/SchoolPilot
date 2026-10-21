@@ -4,10 +4,58 @@ import test from 'node:test';
 
 import { formatLivePassDuration } from '../src/products/passpilot/passDuration.js';
 
-test('live pass duration preserves the existing minute label behavior', () => {
-  const now = Date.parse('2026-08-22T12:05:30.000Z');
-  assert.equal(formatLivePassDuration('2026-08-22T12:00:00.000Z', now), '5 min');
-  assert.equal(formatLivePassDuration('invalid', now), '0 min');
+test('live pass duration hides seconds while counting only completed minutes', () => {
+  const issuedAt = '2026-10-21T15:17:25.000Z';
+  const issuedMs = Date.parse(issuedAt);
+  for (const [elapsedMs, expected] of [
+    [0, '<1 min'],
+    [999, '<1 min'],
+    [35_999, '<1 min'],
+    [59_999, '<1 min'],
+    [60_000, '1 min'],
+    [60_999, '1 min'],
+    [275_999, '4 min'],
+    [299_999, '4 min'],
+    [300_000, '5 min'],
+    [310_999, '5 min'],
+    [3_661_000, '61 min'],
+  ]) {
+    assert.equal(formatLivePassDuration(issuedAt, issuedMs + elapsedMs), expected);
+  }
+});
+
+test('live pass duration reconciles the screenshot start time with the current clock', () => {
+  const issuedAt = '2026-10-21T15:17:25.000Z';
+  assert.equal(
+    formatLivePassDuration(issuedAt, Date.parse('2026-10-21T15:22:00.000Z')),
+    '4 min',
+  );
+  assert.equal(
+    formatLivePassDuration(issuedAt, Date.parse('2026-10-21T15:22:35.000Z')),
+    '5 min',
+  );
+});
+
+test('live pass duration distinguishes unknown times from a new pass and clamps clock skew', () => {
+  const now = Date.parse('2026-10-21T15:22:00.000Z');
+  for (const issuedAt of [undefined, null, '', 'invalid', new Date('invalid')]) {
+    assert.equal(formatLivePassDuration(issuedAt, now), '—');
+  }
+  for (const invalidNow of [Number.NaN, Infinity, -Infinity, null, 'invalid']) {
+    assert.equal(formatLivePassDuration('2026-10-21T15:17:25.000Z', invalidNow), '—');
+  }
+  assert.equal(formatLivePassDuration('2026-10-21T15:22:01.000Z', now), '<1 min');
+});
+
+test('live pass duration measures absolute elapsed time across timezone offsets and DST', () => {
+  assert.equal(
+    formatLivePassDuration('2026-10-21T11:17:25-04:00', Date.parse('2026-10-21T15:22:00.000Z')),
+    '4 min',
+  );
+  assert.equal(
+    formatLivePassDuration('2026-11-01T01:59:30-04:00', Date.parse('2026-11-01T01:00:30-05:00')),
+    '1 min',
+  );
 });
 
 test('PassPilot staff surfaces share one external-store clock and retain data polling', async () => {

@@ -324,13 +324,15 @@ function assertLiveSession(session: KioskSession | undefined): asserts session i
   }
 }
 
-async function recordKioskPassTimeline(database: Database, pass: Pass, action: "issued" | "returned") {
+async function recordKioskPassTimeline(database: Database, pass: Pass, action: "issued" | "returned",
+  returnActor?: { userId: string | null; sessionId: string | null }) {
   await database.insert(studentTimelineEvents).values({ schoolId: pass.schoolId, studentId: pass.studentId,
     eventType: "pass", sourceType: "passpilot", sourceId: pass.id, title: `Hall pass ${action}: ${pass.destination}`,
-    summary: pass.activityNameSnapshot || pass.customDestination, actorUserId: pass.teacherId,
-    metadata: { status: pass.status, destination: pass.destination, issuedVia: "kiosk", activityKind: pass.activityKind,
+    summary: pass.activityNameSnapshot || pass.customDestination, actorUserId: returnActor ? returnActor.userId : pass.teacherId,
+    metadata: { status: pass.status, destination: pass.destination, issuedVia: pass.issuedVia, activityKind: pass.activityKind,
       activityName: pass.activityNameSnapshot, classId: pass.classpilotGroupId || pass.gradeId,
-      className: pass.classNameSnapshot, supervisionContextId: pass.supervisionContextId, issuingKioskSessionId: pass.issuingKioskSessionId } });
+      className: pass.classNameSnapshot, supervisionContextId: pass.supervisionContextId, issuingKioskSessionId: pass.issuingKioskSessionId,
+      ...(returnActor ? { returnedVia: "kiosk", returningKioskSessionId: returnActor.sessionId, issuerTeacherId: pass.teacherId } : {}) } });
 }
 
 export async function createActivityKioskPass(options: { schoolId: string; sessionId: string; studentId: string; expectedRevision: unknown;
@@ -388,19 +390,24 @@ export async function createActivityKioskPass(options: { schoolId: string; sessi
   });
 }
 
-export async function returnTeacherKioskPass(schoolId: string, sessionId: string, studentId: string, expectedPinHash: string | null): Promise<Pass | null> {
+export async function returnTeacherKioskPass(schoolId: string, sessionId: string | null, studentId: string,
+  expectedPinHash: string | null, expectedPassId?: string): Promise<Pass | null> {
   return db.transaction(async tx => {
     const database = tx as unknown as Database;
     await lockKioskSchool(database, schoolId);
     await assertKioskWriteAccess(database, schoolId, expectedPinHash);
-    const [session] = await tx.select().from(passpilotKioskSessions).where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.id, sessionId))).limit(1).for("update");
-    assertLiveSession(session);
-    await kioskTeacher(schoolId, session.teacherId, database);
+    let returningTeacherId: string | null = null;
+    if (sessionId) {
+      const [session] = await tx.select().from(passpilotKioskSessions).where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.id, sessionId))).limit(1).for("update");
+      assertLiveSession(session);
+      await kioskTeacher(schoolId, session.teacherId, database);
+      returningTeacherId = session.teacherId;
+    }
     const [pass] = await tx.update(passes).set({ status: "returned", returnedAt: new Date() }).where(and(eq(passes.schoolId, schoolId),
-      eq(passes.studentId, studentId), eq(passes.teacherId, session.teacherId), eq(passes.issuedVia, "kiosk"), eq(passes.status, "active"))).returning();
+      eq(passes.studentId, studentId), eq(passes.status, "active"), expectedPassId ? eq(passes.id, expectedPassId) : undefined)).returning();
     if (pass) {
-      await recordKioskPassTimeline(database, pass, "returned");
-      await tx.update(passpilotKioskSessions).set({ lastSeenAt: new Date() }).where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.id, sessionId)));
+      await recordKioskPassTimeline(database, pass, "returned", { userId: returningTeacherId, sessionId });
+      if (sessionId) await tx.update(passpilotKioskSessions).set({ lastSeenAt: new Date() }).where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.id, sessionId)));
     } else recordPasspilotKioskCounter("returnFailures");
     return pass ?? null;
   });
