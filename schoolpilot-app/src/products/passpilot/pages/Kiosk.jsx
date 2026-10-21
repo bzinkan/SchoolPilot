@@ -823,7 +823,7 @@ export default function KioskPage() {
 
             {activePass ? (
               <div className="space-y-4">
-                {student.returnOnly ? <p className="text-amber-200">Return only — pass from an earlier assignment</p> : null}
+                {student.returnOnly ? <p className="text-amber-200">You can return this pass here.</p> : null}
                 <Badge variant="default" className="text-lg px-4 py-2">
                   Currently out: {activePass.destination || 'Hall pass'}
                 </Badge>
