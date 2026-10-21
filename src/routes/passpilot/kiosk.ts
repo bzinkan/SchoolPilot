@@ -5,6 +5,7 @@ import { passes as passTable } from "../../schema/passpilot.js";
 import kioskPreferencesRouter from "./kioskPreferences.js";
 import { KIOSK_ACTIVITY_CAPABILITY, kioskError } from "../../services/passpilotKioskSchedule.js";
 import { getKioskPreferences, resolveKioskDisplayAssignment, kioskReturnablePasses, createActivityKioskPass, returnTeacherKioskPass } from "../../services/passpilotKioskAssignments.js";
+import { findPasspilotReturnMatches, passpilotReturnLookupSchema } from "../../services/passpilotReturns.js";
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { authenticate } from "../../middleware/authenticate.js";
@@ -39,7 +40,6 @@ import {
   createLegacyPass,
   createCanonicalPass,
   getKioskStudentState,
-  returnKioskPassForStudent,
   getGradesBySchool,
   updateCanonicalKioskClass,
   updateLegacyKioskClass,
@@ -138,7 +138,6 @@ async function activitySnapshot(schoolId: string, session: KioskSession, kioskNa
   const currentPasses = rosterIds.length ? await db.select().from(passTable).where(and(eq(passTable.schoolId, schoolId),
     inArray(passTable.studentId, rosterIds), eq(passTable.status, "active"))) : [];
   const passMap = new Map([...currentPasses, ...returnable.map(r => r.pass)].map(p => [p.studentId, p]));
-  const returnIds = new Set(returnable.map(r => r.student.id));
   const roster = new Map(assignment.roster.map(student => [student.id, { ...student, returnOnly: false }]));
   for (const row of returnable) if (!roster.has(row.student.id)) roster.set(row.student.id, { ...row.student, returnOnly: true });
   const { roster: _roster, ...activity } = assignment;
@@ -148,7 +147,7 @@ async function activitySnapshot(schoolId: string, session: KioskSession, kioskNa
     kioskEnabled: school.kioskEnabled, kioskRequiresApproval: school.kioskRequiresApproval, defaultPassDuration: school.defaultPassDuration, kioskStyle: school.kioskStyle, theme };
   return { ...config, config, activity, assignmentRevision: assignment.revision,
     session: { id: session.id, status: session.status, ...config, revision: session.revision },
-    students: [...roster.values()].map(student => ({ ...student, classId, canReturn: returnIds.has(student.id),
+    students: [...roster.values()].map(student => ({ ...student, classId, canReturn: passMap.has(student.id),
       activePass: passMap.has(student.id) ? kioskSnapshotPass(passMap.get(student.id)!) : null })),
     activePasses: [...passMap.values()].map(kioskSnapshotPass) };
 }
@@ -303,7 +302,8 @@ async function requireActiveKioskSession(
   req: { headers: Record<string, unknown> },
   res: any,
   schoolId: string,
-  operation?: PasspilotKioskQueryOperation
+  operation?: PasspilotKioskQueryOperation,
+  returnOnly = false
 ): Promise<{ session: KioskSession; kioskName: string | null } | null | undefined> {
   const sessionId = getKioskSessionId(req);
   if (!sessionId) return undefined;
@@ -325,7 +325,7 @@ async function requireActiveKioskSession(
     respondKioskSessionExpired(res);
     return null;
   }
-  await guardKioskActivityCapability(req, schoolId, session);
+  if (!returnOnly) await guardKioskActivityCapability(req, schoolId, session);
   return { session, kioskName: identity.kioskName };
 }
 
@@ -461,6 +461,13 @@ function kioskSnapshotPass(pass: Pass) {
     className: pass.classNameSnapshot,
     notes: pass.notes,
   };
+}
+
+// Return authority permits closing an outstanding pass, not reading its origin
+// or destination. Badge lookup outside the roster uses this narrow summary.
+function kioskReturnPassSummary(pass: Pass) {
+  return { id: pass.id, studentId: pass.studentId, status: pass.status,
+    issuedAt: pass.issuedAt, expiresAt: pass.expiresAt };
 }
 
 function kioskSnapshotEtag(payload: unknown): { etag: string; revision: string } {
@@ -881,6 +888,28 @@ router.post("/session/resume", kioskLimiter, async (req, res, next) => {
 // Public kiosk endpoints (no auth required, school ID from header)
 // ============================================================================
 
+// Return discovery is independent of the kiosk's checkout roster and assignment.
+// It exposes only bounded exact pass/student identities needed to mark a return.
+router.post("/returns/lookup", kioskLimiter, async (req, res, next) => {
+  try {
+    const schoolId = getKioskSchoolId(req);
+    if (!schoolId) return res.status(400).json({ error: "School ID required (x-school-id header)" });
+    const kioskAuthorization = await validateKiosk(schoolId, req.headers);
+    if (!kioskAuthorization.school) return respondKioskAuthorizationError(res, kioskAuthorization);
+    const parsed = passpilotReturnLookupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Search must contain 2 to 100 characters" });
+    }
+    return await runWithKioskTenantContext(schoolId, async () => {
+      const resolved = await requireActiveKioskSession(req, res, schoolId, undefined, true);
+      if (resolved === null) return;
+      return res.json(await findPasspilotReturnMatches(schoolId, parsed.data.search));
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/passpilot/kiosk/lookup - Student lookup by badge ID
 router.post("/lookup", kioskLimiter, async (req, res, next) => {
   try {
@@ -900,8 +929,19 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     }
 
     await runWithKioskTenantContext(schoolId, async () => {
-    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    const resolved = await requireActiveKioskSession(req, res, schoolId, undefined, true);
     if (resolved === null) return;
+    const returningStudent = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
+    const returningPass = returningStudent ? await getActivePassForStudent(returningStudent.id, schoolId) : undefined;
+    if (returningStudent && returningPass) {
+      const activePass = kioskReturnPassSummary(returningPass);
+      return res.json({
+        student: { id: returningStudent.id, firstName: returningStudent.firstName, lastName: returningStudent.lastName,
+          studentIdNumber: returningStudent.studentIdNumber, returnOnly: true, canReturn: true, activePass },
+        activePass,
+      });
+    }
+    if (resolved) await guardKioskActivityCapability(req, schoolId, resolved.session);
     if (resolved && hasActivityCapability(req)) {
       const state = await activitySnapshot(schoolId, resolved.session, resolved.kioskName, kioskAuthorization.school!);
       const student = state.students.find(s => s.studentIdNumber === parsed.data.studentIdNumber);
@@ -1158,40 +1198,23 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
       return respondKioskAuthorizationError(res, kioskAuthorization);
     }
 
-    const { studentId } = req.body;
-    if (!studentId) {
+    const { studentId, passId } = req.body;
+    if (typeof studentId !== "string" || !studentId.trim()) {
       return res.status(400).json({ error: "studentId required" });
+    }
+    if (passId !== undefined && (typeof passId !== "string" || !passId.trim() || passId.length > 200)) {
+      return res.status(400).json({ error: "passId must be a nonempty string" });
     }
 
     await runWithKioskTenantContext(schoolId, async () => {
-    const resolved = await requireActiveKioskSession(req, res, schoolId);
+    const resolved = await requireActiveKioskSession(req, res, schoolId, undefined, true);
     if (resolved === null) return;
-    if (resolved && hasActivityCapability(req)) {
-        const pass = await returnTeacherKioskPass(schoolId, resolved.session.id, String(studentId), kioskAuthorization.school!.kioskPinHash);
-      if (!pass) return res.status(403).json({ error: "This pass cannot be returned at this teacher's kiosk." });
-      return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
-    }
-    let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
-    if (resolved) {
-      const sessionClassId = kioskSessionClassId(resolved.session);
-      if (!resolved.session.classSource || !sessionClassId) {
-        return res.status(409).json({
-          error: "A class must be sent to this kiosk before returning passes.",
-          code: "PASSPILOT_KIOSK_CLASS_REQUIRED",
-        });
-      }
-      sessionOverride = { source: resolved.session.classSource, configuredClassId: sessionClassId };
-    }
-    const pass = await returnKioskPassForStudent(
-      schoolId,
-      studentId,
-      hasPasspilotCanonicalClassCapability(req),
-      sessionOverride
-    );
+    const pass = await returnTeacherKioskPass(schoolId, resolved?.session.id ?? null, studentId.trim(),
+      kioskAuthorization.school!.kioskPinHash, passId?.trim());
     if (!pass) {
       return res.status(400).json({ error: "No active pass found" });
     }
-    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
+    return res.json({ pass: { id: pass.id, studentId: pass.studentId, status: pass.status, returnedAt: pass.returnedAt } });
     });
   } catch (err) {
     next(err);

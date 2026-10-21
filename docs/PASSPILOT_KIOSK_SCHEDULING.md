@@ -48,11 +48,23 @@ Older clients retain manual behavior and receive HTTP 426 for automatic mode.
 The class-model capability is required for ClassPilot automatic mode even when
 the school continues using legacy PassPilot grades.
 
-Kiosk-issued outstanding passes can be returned at any active kiosk owned by the
-issuing teacher in the same school. Reassigning the kiosk revokes the previous
-teacher's return access. Device continuity IDs never establish this authority.
-Schedule failures and ClassPilot entitlement loss stop new checkouts while
-preserving eligible returns. PassPilot/kiosk authorization is still required.
+Any outstanding pass can be returned at an authorized kiosk in the same school,
+regardless of its issuing teacher, kiosk, class, activity, or issuance channel.
+Reassigning a kiosk, a class transition, an overdue deadline, and a missing or
+failed schedule do not prevent check-in. Current-roster passes remain returnable;
+the **Return a pass** lookup also finds an outstanding pass by student name or ID
+without requiring the student to appear on the kiosk's current roster. Results
+contain only the identity needed to select and return the exact pass, are capped
+at 20, and require a narrower search when more matches exist. Checkout eligibility
+and history permissions are unchanged. Device continuity IDs never authorize a
+return; current PassPilot/kiosk authorization, school isolation, and valid kiosk
+sessions still apply.
+
+Authenticated teachers and school managers can also find and return an exact
+same-school active pass regardless of who issued it. This return-only authority
+does not grant access to another teacher's pass history, notes, or cancellation
+actions. New kiosk clients include the selected pass ID when checking in so a
+stale selection cannot return a newly issued replacement pass.
 
 Testing/coverage passes retain their supervision context, immutable activity name,
 activity kind and issuing kiosk origin. They have no fabricated class ID. History,

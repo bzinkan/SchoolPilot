@@ -26,14 +26,9 @@ import {
   useCanonicalPassPilotClasses,
 } from "../../classData";
 import { formatPassOverdueDuration, isPassOverdue } from "../../passData";
+import { formatLivePassDuration } from "../../passDuration";
 import { usePassNow } from "../LivePassDuration";
-
-function formatLiveDuration(issuedAt, nowMs) {
-  if (!issuedAt) return "Unknown";
-  const issuedAtMs = new Date(issuedAt).getTime();
-  if (!Number.isFinite(issuedAtMs) || !Number.isFinite(nowMs)) return "Unknown";
-  return `${Math.max(0, Math.floor((nowMs - issuedAtMs) / 60_000))} min`;
-}
+import ReturnPassLookup from "../ReturnPassLookup";
 
 function getOverdueLabel(pass, nowMs) {
   const duration = formatPassOverdueDuration(pass, nowMs);
@@ -42,7 +37,7 @@ function getOverdueLabel(pass, nowMs) {
 }
 
 function PassesTab() {
-  const { school, isSchoolwideManager } = usePassPilotAuth();
+  const { school, user, isSchoolwideManager } = usePassPilotAuth();
   const { toast } = useToast();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const schoolId = school?.id || '';
@@ -71,10 +66,12 @@ function PassesTab() {
   const [updatingPassId, setUpdatingPassId] = useState(null);
   const passActionInFlightRef = useRef(false);
   const nowMs = usePassNow();
+  const returnLookup = <ReturnPassLookup key={JSON.stringify([schoolId, user?.id, user?.authVersion, user?.roles])} />;
 
   if (isLoading || classInventoryQuery.isLoading) {
     return (
       <div className="p-4">
+        {returnLookup}
         <div className="animate-pulse space-y-4">
           <div className="h-4 bg-muted rounded w-1/4"></div>
           <div className="h-20 bg-muted rounded"></div>
@@ -87,6 +84,7 @@ function PassesTab() {
   if (error || classInventoryQuery.isError) {
     return (
       <div className="p-4">
+        {returnLookup}
         <Card>
           <CardContent className="p-6 text-center">
             <p className="text-sm text-destructive mb-2">Could not load passes</p>
@@ -193,6 +191,7 @@ function PassesTab() {
 
   return (
     <div className="p-4">
+      {returnLookup}
       <div className="mb-6">
         <h2 className="text-xl font-semibold text-foreground mb-2">Current Passes</h2>
         <p className="text-sm text-muted-foreground">Students currently checked out</p>
@@ -300,7 +299,7 @@ function PassesTab() {
                         </div>
                         <p className="text-sm text-muted-foreground">
                           {pass.activityKind === "testing" ? "Testing" : pass.activityKind === "coverage" ? "Coverage" : "Class"} <span data-testid={`student-grade-${pass.id}`}>{pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown"}</span> •
-                          Out for <span data-testid={`pass-duration-${pass.id}`}>{formatLiveDuration(pass.issuedAt, nowMs)}</span>
+                          Out for <span className="tabular-nums" data-testid={`pass-duration-${pass.id}`}>{formatLivePassDuration(pass.issuedAt, nowMs)}</span>
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Issued by: <span className="font-medium">{pass.teacher ? `${pass.teacher.firstName} ${pass.teacher.lastName}`.trim() + (pass.issuedVia === "kiosk" && pass.notes ? ` (${pass.notes} Kiosk)` : '') : (pass.issuedVia === "kiosk" ? (pass.notes ? `${pass.notes} Kiosk` : "Kiosk") : "Unknown")}</span>

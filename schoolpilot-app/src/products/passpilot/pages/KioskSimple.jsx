@@ -31,7 +31,9 @@ import {
   takeKioskLaunchTicket,
 } from "../kioskDeviceId";
 import { formatPassOverdueDuration, isPassOverdue } from "../passData";
+import { formatLivePassDuration } from "../passDuration";
 import { useKioskPollingController } from "../useKioskPollingController";
+import ReturnPassLookup from "../components/ReturnPassLookup";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "General/Restroom", icon: Bath, color: "text-blue-400" },
@@ -40,16 +42,6 @@ const DESTINATIONS = [
 ];
 
 const DESTINATION_PICKER_TIMEOUT = 10000; // 10 seconds - auto-close destination picker
-
-function getTimeSince(dateStr, nowMs) {
-  const issuedAtMs = new Date(dateStr).getTime();
-  if (!Number.isFinite(issuedAtMs)) return "";
-  const diff = Math.max(0, nowMs - issuedAtMs);
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins === 1) return "1 min";
-  return `${mins} min`;
-}
 
 function getDestinationLabel(dest, custom) {
   if (custom) return custom;
@@ -676,12 +668,12 @@ export default function KioskSimplePage() {
     setLoading(false);
   };
 
-  const handleCheckin = async (studentId) => {
+  const handleCheckin = async (studentId, passId) => {
     setLoading(true);
     try {
       const res = await kioskClient.request("/api/passpilot/kiosk/checkin", {
         method: "POST",
-        body: JSON.stringify({ studentId }),
+        body: JSON.stringify({ studentId, ...(passId ? { passId } : {}) }),
       });
       checkPinRejected(res);
       if (!res.ok) {
@@ -703,6 +695,14 @@ export default function KioskSimplePage() {
     }
     setLoading(false);
   };
+
+  const returnLookup = <div className="flex w-full justify-center p-4">
+    <ReturnPassLookup key={JSON.stringify([schoolId, kioskPin, session?.id])} kiosk kioskClient={kioskClient}
+      onReturned={refreshKiosk} onAuthorizationError={(response, body) => {
+        if (body.code === 'PASSPILOT_KIOSK_SESSION_EXPIRED') handleSessionExpired();
+        else checkPinRejected(response);
+      }} />
+  </div>;
 
   if (!schoolId) {
     return (
@@ -819,8 +819,9 @@ export default function KioskSimplePage() {
   // archived): wait for the teacher's next Send to Kiosk.
   if (sessionMode === true && (!selectedGradeId || configError) && !activity) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
+        {returnLookup}
         <div className="max-w-lg text-center space-y-4" role={configError ? "alert" : undefined}>
           <h1 className="text-3xl font-bold text-blue-400">
             {session?.kioskName ? `${session.kioskName} — PassPilot Kiosk` : "PassPilot Kiosk"}
@@ -837,8 +838,9 @@ export default function KioskSimplePage() {
 
   if (sessionMode === false && configLoaded && isCanonicalPassPilotSource(classSource) && (configError || !selectedGradeId)) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
+        {returnLookup}
         <div className="max-w-lg text-center" role={configError ? "alert" : undefined}>
           <h1 className="text-3xl font-bold text-blue-400">Kiosk Class Required</h1>
           <p className="mt-4 text-gray-300">
@@ -856,6 +858,7 @@ export default function KioskSimplePage() {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
+        {returnLookup}
         <h1 className="text-4xl font-bold mb-2 text-blue-400">PassPilot</h1>
         <p className="text-xl text-gray-400 mb-10">Select your class</p>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-2xl w-full">
@@ -883,6 +886,7 @@ export default function KioskSimplePage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col" {...kioskTheme.rootProps}>
       <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
+      {returnLookup}
       {/* Header */}
       <header className="kiosk-glass bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between shrink-0">
         {sessionMode === true || isCanonicalPassPilotSource(classSource) ? (
@@ -944,8 +948,8 @@ export default function KioskSimplePage() {
                 return (
                   <button
                     key={student.id}
-                    onClick={() => handleCheckin(student.id)}
-                    disabled={loading || isOffline || student.canReturn === false}
+                    onClick={() => handleCheckin(student.id, student.activePass?.id)}
+                    disabled={loading || student.canReturn === false}
                     className={`w-full text-left px-4 py-4 rounded-lg flex items-center justify-between transition-colors ${overdue
                       ? "bg-amber-900/30 border border-amber-600/60 hover:bg-amber-900/50"
                       : "bg-orange-900/30 border border-orange-700/50 hover:bg-orange-900/50"
@@ -966,14 +970,14 @@ export default function KioskSimplePage() {
                         {getDestinationLabel(student.activePass.destination, student.activePass.customDestination)}
                       </span>
                       <span className="text-sm text-gray-400">
-                        {getTimeSince(student.activePass.issuedAt, nowMs)}
+                        {formatLivePassDuration(student.activePass.issuedAt, nowMs)}
                       </span>
                       {overdueLabel ? (
                         <span className="rounded-full border border-amber-500/70 bg-amber-500/20 px-3 py-1 text-sm font-semibold text-amber-200">
                           {overdueLabel}
                         </span>
                       ) : null}
-                      <span className="text-xs text-orange-400">{student.canReturn === false ? 'Return at issuing teacher’s kiosk' : 'Tap to return'}</span>
+                      <span className="text-xs text-orange-400">{student.canReturn === false ? 'Return unavailable' : 'Tap to return'}</span>
                     </div>
                   </button>
                 );

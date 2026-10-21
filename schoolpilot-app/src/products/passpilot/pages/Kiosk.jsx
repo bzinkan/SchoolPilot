@@ -35,6 +35,7 @@ import {
 } from "../kioskDeviceId";
 import { formatPassOverdueDuration, isPassOverdue } from "../passData";
 import { useKioskPollingController } from "../useKioskPollingController";
+import ReturnPassLookup from "../components/ReturnPassLookup";
 
 const DESTINATIONS = [
   { value: "bathroom", label: "Bathroom", emoji: "\u{1F6BB}" },
@@ -62,6 +63,7 @@ export default function KioskPage() {
   const [idInput, setIdInput] = useState("");
   const [student, setStudent] = useState(null);
   const [activePass, setActivePass] = useState(null);
+  const returningPassRef = useRef(false);
   const [message, setMessage] = useState("");
   // Theme of the teacher this kiosk is bound to, as the server resolved it,
   // and the first name shown on the confirmation plate.
@@ -134,6 +136,7 @@ export default function KioskPage() {
   // 401 = wrong PIN (clear and re-prompt); returns true if it handled the response
   const handlePinRejection = useCallback((res, errMsg) => {
     if (res.status === 401) {
+      returningPassRef.current = false;
       clearPin();
       setState("scan");
       setMessage("");
@@ -145,6 +148,7 @@ export default function KioskPage() {
   }, [clearPin]);
 
   const resetToScan = useCallback(() => {
+    returningPassRef.current = false;
     setState("scan");
     setIdInput("");
     setStudent(null);
@@ -156,6 +160,7 @@ export default function KioskPage() {
   // Session died (TTL, release, teacher removed): drop it and re-bootstrap,
   // which mints a fresh claim code.
   const handleSessionExpired = useCallback(() => {
+    returningPassRef.current = false;
     kioskPinStore().removeItem(KIOSK_SESSION_KEY);
     sessionIdRef.current = null;
     resetSnapshotValidation();
@@ -386,7 +391,7 @@ export default function KioskPage() {
     }
     if (result.kind === "snapshot") {
       const data = result.data;
-      if (data.assignmentRevision !== activityRevisionRef.current) { resetToScan(); }
+      if (data.assignmentRevision !== activityRevisionRef.current && !returningPassRef.current) { resetToScan(); }
       activityRevisionRef.current = data.assignmentRevision;
       setActivity(data.activity);
       if (redirectForKioskStyle(data.kioskStyle)) return;
@@ -549,7 +554,7 @@ export default function KioskPage() {
         setMessage(data.error || "Student not found");
         return;
       }
-      if (displayedRevision !== activityRevisionRef.current || (data.assignmentRevision && data.assignmentRevision !== activityRevisionRef.current)) {
+      if (!data.activePass && (displayedRevision !== activityRevisionRef.current || (data.assignmentRevision && data.assignmentRevision !== activityRevisionRef.current))) {
         resetToScan();
         refreshKiosk();
         return;
@@ -560,6 +565,7 @@ export default function KioskPage() {
         classId: data.classId || data.student.classId || data.student.classpilotGroupId || null,
       });
       setActivePass(data.activePass);
+      returningPassRef.current = Boolean(data.activePass);
       setState("found");
     } catch {
       setState("error");
@@ -609,7 +615,7 @@ export default function KioskPage() {
     try {
       const res = await kioskClient.request("/api/passpilot/kiosk/checkin", {
         method: "POST",
-        body: JSON.stringify({ studentId: student.id }),
+        body: JSON.stringify({ studentId: student.id, ...(activePass?.id ? { passId: activePass.id } : {}) }),
       });
 
       if (!res.ok) {
@@ -642,6 +648,14 @@ export default function KioskPage() {
     : overdueDuration
       ? `Overdue by ${overdueDuration}`
       : null;
+
+  const returnLookup = <div className="flex w-full justify-center p-4">
+    <ReturnPassLookup key={JSON.stringify([schoolId, kioskPin, session?.id])} kiosk kioskClient={kioskClient}
+      onReturned={refreshKiosk} onAuthorizationError={(response, body) => {
+        if (body.code === 'PASSPILOT_KIOSK_SESSION_EXPIRED') handleSessionExpired();
+        else if (response.status === 401) clearPin();
+      }} />
+  </div>;
 
   if (!schoolId) {
     return (
@@ -748,8 +762,9 @@ export default function KioskPage() {
   // 409 on every badge, so wait for the teacher's Send to Kiosk instead.
   if (sessionMode === true && session?.status === "active" && !session?.classId && !activity) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
+        {returnLookup}
         <div className="max-w-lg text-center space-y-4">
           <h1 className="text-3xl font-bold text-blue-400">
             {session?.kioskName ? `${session.kioskName} — PassPilot Kiosk` : "PassPilot Kiosk"}
@@ -765,6 +780,7 @@ export default function KioskPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white flex flex-col items-center justify-center p-8" {...kioskTheme.rootProps}>
       <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
+      {returnLookup}
       <h1 className="text-3xl font-bold mb-8 text-blue-400">
         PassPilot Kiosk
         {sessionMode === true && (session?.className || session?.kioskName) ? (
@@ -807,9 +823,9 @@ export default function KioskPage() {
 
             {activePass ? (
               <div className="space-y-4">
-                {student.returnOnly ? <p className="text-amber-200">Return only — pass from an earlier assignment</p> : null}
+                {student.returnOnly ? <p className="text-amber-200">You can return this pass here.</p> : null}
                 <Badge variant="default" className="text-lg px-4 py-2">
-                  Currently out: {activePass.destination}
+                  Currently out: {activePass.destination || 'Hall pass'}
                 </Badge>
                 {overdueLabel ? (
                   <div>

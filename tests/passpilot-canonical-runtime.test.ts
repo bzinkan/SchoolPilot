@@ -755,14 +755,12 @@ describe("PassPilot canonical ClassPilot classes", () => {
       await updateCanonicalKioskClass(schoolA.id, secondaryClass.id, teacher.id, true);
       const mismatchedKioskState = await getKioskStudentState(schoolA.id, studentA.id, true);
       assert.equal(mismatchedKioskState.enrolled, true);
-      assert.equal(mismatchedKioskState.activePass, null);
-      assert.equal(mismatchedKioskState.hasActivePassInAnotherClass, true);
-      await assert.rejects(
-        returnKioskPassForStudent(schoolA.id, studentA.id, true),
-        (error: any) => error?.code === "PASSPILOT_KIOSK_PASS_CLASS_MISMATCH"
-      );
+      assert.equal(mismatchedKioskState.activePass?.id, kioskPass.id);
+      assert.equal(mismatchedKioskState.hasActivePassInAnotherClass, false);
+      assert.equal((await returnKioskPassForStudent(schoolA.id, studentA.id, true))?.id, kioskPass.id,
+        "returning a pass does not require the kiosk to retain its original class");
       await updateCanonicalKioskClass(schoolA.id, primaryClass.id, teacher.id, true);
-      assert.equal((await returnKioskPassForStudent(schoolA.id, studentA.id, true))?.id, kioskPass.id);
+      assert.equal(await returnKioskPassForStudent(schoolA.id, studentA.id, true), undefined);
 
       const afterLegacyState = await db.execute(sql`
         SELECT

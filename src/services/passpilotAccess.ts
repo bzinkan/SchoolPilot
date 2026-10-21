@@ -528,6 +528,17 @@ export async function canAccessPass(
   )).has(pass.studentId);
 }
 
+/** Returning a student is independent of the pass's issuer and history scope. */
+export function canReturnPass(
+  schoolId: string,
+  pass: Pass,
+  role: PassPilotRole | null
+): boolean {
+  return pass.schoolId === schoolId
+    && pass.status === "active"
+    && (role === "teacher" || isPassPilotManager(role));
+}
+
 export type PassHistoryQueryAccessScope = {
   issuerTeacherId: string;
   classIds: string[];
