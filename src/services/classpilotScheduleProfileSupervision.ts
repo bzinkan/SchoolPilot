@@ -1,4 +1,5 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { schools, schoolMemberships } from "../schema/core.js";
 import { students } from "../schema/students.js";
@@ -19,6 +20,7 @@ import { classpilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
 import { publishClasspilotCoverageSummaryUpdated } from "./classpilotCoverageSummary.js";
+import { projectAvailableTestingGroups, type AvailableTestingContext, type AvailableTestingProjection } from "./classpilotAvailableTestingGroups.js";
 
 export type ProfileSupervisionOutcome = {
   applicationId: string; date: string; blockId: string;
@@ -39,6 +41,46 @@ export function profileSupervisionOutcomeKey(applicationId: string, date: string
 
 function applications(config: { profileApplications?: unknown }) {
   return normalizeScheduleProfileCollections([], config.profileApplications ?? []).profileApplications;
+}
+
+/** One tenant-scoped bulk read; never widen saved membership or claim permissions. */
+export async function getAvailableTestingGroups(options: {
+  schoolId: string;
+  visibleStudentGroups: ReadonlyMap<string, ReadonlySet<string>>;
+  now?: Date;
+  database?: typeof db;
+}): Promise<AvailableTestingProjection> {
+  const now = options.now ?? new Date();
+  const empty = (): AvailableTestingProjection => ({ activeTestingGroups: new Map(),
+    testingNextBoundaryAt: null, serverTime: now.toISOString() });
+  if (!options.visibleStudentGroups.size) return empty();
+  const database = options.database ?? db;
+  const context = alias(classpilotSupervisionContexts, "available_testing_context");
+  const participant = alias(classpilotSupervisionStudents, "available_testing_participant");
+  const [schedule] = await database.select({ config: classpilotSchoolSchedules.config,
+    outcomes: classpilotSchoolSchedules.profileActivationOutcomes, timeZone: schools.schoolTimezone,
+    contexts: sql<AvailableTestingContext[]>`coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'applicationId', ${context.scheduleProfileApplicationId},
+        'date', ${context.scheduleProfileDate}, 'blockId', ${context.scheduleProfileBlockId},
+        'status', ${context.status},
+        'inWindow', ${context.startsAt} <= ${now.toISOString()}::timestamp and ${context.endsAt} > ${now.toISOString()}::timestamp,
+        'studentIds', (select coalesce(jsonb_agg(${participant.studentId}), '[]'::jsonb)
+          from ${classpilotSupervisionStudents} as ${sql.identifier("available_testing_participant")}
+          where ${participant.schoolId} = ${options.schoolId}
+          and ${participant.contextId} = ${context.id} and ${participant.releasedAt} is null
+          and ${inArray(participant.studentId, [...options.visibleStudentGroups.keys()])})
+      )) from ${classpilotSupervisionContexts} as ${sql.identifier("available_testing_context")}
+      where ${context.schoolId} = ${options.schoolId}
+      and ${context.scheduleProfileApplicationId} is not null
+      and ${context.scheduleProfileDate} = to_char(${now.toISOString()}::timestamptz
+        at time zone coalesce(${schools.schoolTimezone}, 'America/New_York'), 'YYYY-MM-DD')
+    ), '[]'::jsonb)`,
+  }).from(classpilotSchoolSchedules).innerJoin(schools, eq(schools.id, classpilotSchoolSchedules.schoolId))
+    .where(eq(classpilotSchoolSchedules.schoolId, options.schoolId)).limit(1);
+  if (!schedule) return empty();
+  return projectAvailableTestingGroups({ applications: applications(schedule.config), outcomes: schedule.outcomes,
+    contexts: schedule.contexts, visibleStudentGroups: options.visibleStudentGroups, timeZone: schedule.timeZone, now });
 }
 
 function pushControls(schoolId: string, studentIds: string[]) {

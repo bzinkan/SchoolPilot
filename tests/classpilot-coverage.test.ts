@@ -126,6 +126,8 @@ import {
 import { getAuditLogs } from "../dist/services/audit.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
 import { localDateInTimeZone } from "../dist/util/schoolTime.js";
+import { emptySchoolSchedulingConfig } from "../dist/services/classpilotSchedulingRules.js";
+import { getAvailableTestingGroups } from "../dist/services/classpilotScheduleProfileSupervision.js";
 
 const TAG = `cpcoverage_${Date.now()}`;
 
@@ -3664,10 +3666,73 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(staffQueue.body.students.every((student: any) =>
       student.matchingGroups.some((group: any) => group.id === groupRes.body.group.id)
     ));
+    assert.ok(staffQueue.body.students.every((student: any) => student.activeTestingGroup === null));
+    assert.equal(staffQueue.body.testingNextBoundaryAt, null);
+    assert.ok(Number.isFinite(Date.parse(staffQueue.body.serverTime)));
     expectNoDeviceIds(staffQueue.body);
     const hydrationMetrics = snapshotClasspilotCoverageHydrationMetrics();
     assert.ok(hydrationMetrics.sessionSqlStatements <= 1);
     assert.ok(hydrationMetrics.realtimeRedisCommands <= 2);
+
+    // The real SQL projection reads applied snapshots; a saved group by itself
+    // remains a permission/roster fact and ordinary claims below stay available.
+    await inSchool(school.id, async () => {
+      const [previous] = await db.select().from(schema.classpilotSchoolSchedules)
+        .where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
+      const alternate = await createCoverageScopeGroup({ group: { schoolId: school.id, name: "Saved reading test B",
+        createdBy: admin.id }, studentIds: [studentUnassigned.id] });
+      await createCoverageAssignment({ schoolId: school.id, staffId: scopedCoverageStaff.id, scopeType: "coverage_group",
+        scopeValue: alternate.id, permissions: { claim: true }, active: true, createdBy: admin.id });
+      const block = { id: "available-reading", name: "Applied reading test", coverageGroupId: groupRes.body.group.id,
+        assignedStaffId: scopedCoverageStaff.id, startTime: "10:00", endTime: "11:00" };
+      const definition = { name: "Available testing", grades: [], classIds: [], classRules: [], testingBlocks: [block] };
+      const application = { id: "available-application", profileId: "available-profile", profileName: definition.name,
+        profileRevision: 1, dates: ["2026-10-22"], definition, classWindows: {},
+        testingWindows: [{ date: "2026-10-22", blockId: block.id, name: block.name, coverageGroupId: block.coverageGroupId,
+          assignedStaffId: block.assignedStaffId, startTime: block.startTime, endTime: block.endTime, studentIds: [studentUnassigned.id] }],
+        status: "scheduled" as const, createdBy: admin.id, createdAt: "2026-10-01T12:00:00.000Z" };
+      const config = { ...emptySchoolSchedulingConfig(), profileApplications: [application] };
+      try {
+        await db.insert(schema.classpilotSchoolSchedules).values({ schoolId: school.id, config })
+          .onConflictDoUpdate({ target: schema.classpilotSchoolSchedules.schoolId, set: { config, profileActivationOutcomes: {} } });
+        const projection = await getAvailableTestingGroups({ schoolId: school.id, now: new Date("2026-10-22T14:30:00.000Z"),
+          visibleStudentGroups: new Map([[studentUnassigned.id, new Set([block.coverageGroupId])]]) });
+        assert.equal(projection.activeTestingGroups.get(studentUnassigned.id)?.name, block.name);
+        assert.equal(projection.activeTestingGroups.get(studentUnassigned.id)?.applicationId, application.id);
+        assert.equal(projection.testingNextBoundaryAt, "2026-10-22T15:00:00.000Z");
+        const today = localDateInTimeZone(new Date(), school.schoolTimezone);
+        const todayBlock = { ...block, startTime: "00:00", endTime: "23:59" };
+        const todayApplication = { ...application, dates: [today],
+          definition: { ...definition, testingBlocks: [todayBlock] }, testingWindows: [{ ...application.testingWindows[0]!,
+            date: today, startTime: todayBlock.startTime, endTime: todayBlock.endTime }] };
+        await db.update(schema.classpilotSchoolSchedules).set({ config: { ...emptySchoolSchedulingConfig(),
+          profileApplications: [todayApplication] } }).where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
+        const currentQueue = await requestJson("GET", "/coverage/available-students", undefined, staffAuth);
+        assert.equal(currentQueue.status, 200);
+        const currentStudent = currentQueue.body.students.find((student: any) => student.studentId === studentUnassigned.id);
+        assert.ok(currentStudent.matchingGroups.some((group: any) => group.id === alternate.id));
+        const currentProjection = await getAvailableTestingGroups({ schoolId: school.id,
+          now: new Date(currentQueue.body.serverTime), visibleStudentGroups: new Map([
+            [studentUnassigned.id, new Set([block.coverageGroupId, alternate.id])],
+          ]) });
+        assert.deepEqual(currentStudent.activeTestingGroup, currentProjection.activeTestingGroups.get(studentUnassigned.id) ?? null);
+        if (currentStudent.activeTestingGroup) assert.equal(currentStudent.activeTestingGroup.groupId, block.coverageGroupId);
+        expectNoDeviceIds(currentQueue.body);
+        await db.update(schema.classpilotSchoolSchedules).set({ config }).where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
+        await db.update(schema.classpilotSchoolSchedules).set({ profileActivationOutcomes: {
+          [`${application.id}:2026-10-22:${block.id}`]: { applicationId: application.id, date: "2026-10-22", blockId: block.id,
+            status: "failed", code: "ACTIVATION_FAILED", updatedAt: "2026-10-22T14:00:00.000Z" },
+        } }).where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
+        const failed = await getAvailableTestingGroups({ schoolId: school.id, now: new Date("2026-10-22T14:30:00.000Z"),
+          visibleStudentGroups: new Map([[studentUnassigned.id, new Set([block.coverageGroupId])]]) });
+        assert.equal(failed.activeTestingGroups.size, 0);
+      } finally {
+        if (previous) await db.update(schema.classpilotSchoolSchedules).set({ config: previous.config,
+          profileActivationOutcomes: previous.profileActivationOutcomes }).where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
+        else await db.delete(schema.classpilotSchoolSchedules).where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
+        await updateCoverageScopeGroup({ schoolId: school.id, groupId: alternate.id, active: false });
+      }
+    });
 
     const teacherQueue = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
     assert.equal(teacherQueue.status, 200);
