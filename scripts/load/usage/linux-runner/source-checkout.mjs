@@ -73,7 +73,7 @@ export function assertSourceRestorationMetadata(receipt, review, request, plan) 
     guard(expected.source === source && actual.source === source && actual.tree === expected.tree && actual.files === expected.files && actual.membersSha256 === expected.membersSha256, 'SOURCE_RESTORATION_ROLE');
     guard(actual.path === path.posix.join(request.destination, role) && actual.coreFileMode === false && actual.privateWorkingFiles0600 === true && actual.cleanDetachedGit === true && actual.parentHistoryIncluded === false, 'SOURCE_RESTORATION_CUSTODY');
     assert.deepEqual(actual.shallowHeads, plan.shallowHeads);
-    guard(expected.archivePrefix === (role === 'baseline' ? 'baseline-source/' : ''), 'SOURCE_ARCHIVE_PREFIX');
+    guard(expected.archivePrefix === (role === 'baseline' ? 'baseline-source/' : role === 'candidate' ? 'candidate-source/' : ''), 'SOURCE_ARCHIVE_PREFIX');
     guard(Array.isArray(expected.members) && expected.members.length === expected.files, 'SOURCE_MEMBER_COUNT');
     assert.deepEqual(expected.members.map(row => row.path), [...new Set(expected.members.map(row => row.path))].sort());
     for (const row of expected.members) {
