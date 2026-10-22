@@ -244,12 +244,14 @@ export default function ClassPilotLanding() {
         zIndex: 100,
       }}>
         <a href="/" style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}>
-          <svg width="36" height="36" viewBox="0 0 48 48" fill="none">
-            <rect width="48" height="48" rx="12" fill="#fbbf24"/>
-            <path d="M12 24L36 14L30 36L24 28L36 14" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M24 28L26 34" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round"/>
+          {/* The SchoolPilot plane is the only symbol; the product is its name and its color. */}
+          <svg width="36" height="36" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <rect width="64" height="64" rx="14" fill="#1e3a5f"/>
+            <path d="M16 24 L48 32 L16 40 L22 32 Z" fill="#fff"/>
+            <path d="M22 32 L48 32 L16 40 Z" fill="#eab308"/>
           </svg>
           <span style={{ fontSize: '20px', fontWeight: 600, letterSpacing: '-0.5px' }}>ClassPilot</span>
+          <span aria-hidden="true" style={{ width: '9px', height: '9px', borderRadius: '50%', background: '#eab308', display: 'inline-block' }} />
         </a>
 
         <div className="cp-nav-links-desktop" style={{ display: 'flex', alignItems: 'center', gap: '40px' }}>
@@ -981,12 +983,13 @@ export default function ClassPilotLanding() {
       <footer style={{ background: '#111827', color: 'white', padding: '48px 16px' }}>
         <div style={{ maxWidth: '1200px', margin: '0 auto', textAlign: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '24px' }}>
-            <div style={{ width: '32px', height: '32px', background: '#fbbf24', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 12L18 7L15 18L12 14L18 7" />
-              </svg>
-            </div>
+            <svg width="32" height="32" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <rect width="64" height="64" rx="14" fill="#1e3a5f"/>
+              <path d="M16 24 L48 32 L16 40 L22 32 Z" fill="#fff"/>
+              <path d="M22 32 L48 32 L16 40 Z" fill="#eab308"/>
+            </svg>
             <span style={{ fontSize: '20px', fontWeight: 700 }}>ClassPilot</span>
+            <span aria-hidden="true" style={{ width: '9px', height: '9px', borderRadius: '50%', background: '#eab308', display: 'inline-block' }} />
           </div>
 
           <p style={{ fontSize: '14px', color: '#9ca3af', marginBottom: '24px' }}>

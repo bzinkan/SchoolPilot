@@ -183,6 +183,29 @@ function PlaneCanvas() {
 // to restore the full landing page after the first batch of test schools.
 const SHOW_MARKETING = false;
 
+// The three products as the landing page presents them. Color is the product's
+// own; the role color is a darker step of it so the line passes contrast on white.
+const PRODUCTS = [
+  {
+    name: "ClassPilot", href: "/products/classpilot", color: "#eab308", roleColor: "#a16207",
+    role: "Chromebook monitoring",
+    description: "See every student screen, lock devices, and apply site allow-lists during class, all from one dashboard.",
+    features: ["Live screen thumbnails", "AI off-task detection", "Teacher site allow-lists", "Teacher messaging"],
+  },
+  {
+    name: "PassPilot", href: "/products/passpilot", color: "#3b5bdb", roleColor: "#3b5bdb",
+    role: "Digital hall passes",
+    description: "Replace paper passes with a digital system. Set limits, monitor durations, and see who is where, instantly.",
+    features: ["One-tap pass creation", "Destination limits", "Duration tracking", "Kiosk mode"],
+  },
+  {
+    name: "GoPilot", href: "/products/gopilot", color: "#6366f1", roleColor: "#4f46e5",
+    role: "Dismissal management",
+    description: "Coordinate car riders, buses, and walkers with a live dashboard, from arrival intake to release.",
+    features: ["Staff arrival intake", "Direct student search", "Teacher release flow", "Multi-zone pickup"],
+  },
+];
+
 export default function SchoolpilotLanding() {
   const { user } = useAuth();
   const { roleBasedDefaultPath } = useLicenses();
@@ -208,9 +231,6 @@ export default function SchoolpilotLanding() {
         .delay-1 { animation-delay: 0.1s; opacity: 0; }
         .delay-2 { animation-delay: 0.2s; opacity: 0; }
         .delay-3 { animation-delay: 0.3s; opacity: 0; }
-
-        .product-card:hover { transform: translateY(-8px); box-shadow: 0 20px 60px rgba(0,0,0,0.12); }
-        .product-card { transition: all 0.3s ease; }
 
         .cta-btn:hover { transform: translateY(-2px); opacity: 0.9; }
         .cta-btn { transition: all 0.2s ease; }
@@ -259,7 +279,7 @@ export default function SchoolpilotLanding() {
 
       {/* Hero Section */}
       <section style={{
-        padding: "100px 24px",
+        padding: "100px 24px 130px",
         background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
         textAlign: "center",
         position: "relative",
@@ -305,8 +325,8 @@ export default function SchoolpilotLanding() {
           schools can see which products are involved. Only the marketing wrapper
           (the "Our Products" header + the "Better together" banner) stays gated
           behind SHOW_MARKETING. */}
-      <section id="products" style={{ padding: "100px 24px", background: "#fff" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <section id="products" style={{ padding: "0 24px 72px", background: "#fafbfc" }}>
+        <div style={{ maxWidth: 1100, margin: "-72px auto 0", position: "relative" }}>
           {SHOW_MARKETING && (
           <div style={{ textAlign: "center", marginBottom: 64 }}>
             <h2 style={{
@@ -321,91 +341,33 @@ export default function SchoolpilotLanding() {
           </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
-
-            {/* ClassPilot */}
-            <a href="/products/classpilot" className="product-card" style={{
-              background: "#fff", borderRadius: 20, padding: 36,
-              border: "1px solid #e2e8f0", textDecoration: "none",
-              transition: "all 0.3s ease",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
-                <ClassPilotLogo size={52} />
+          {/* The plane is the only symbol: each product is carried by its name,
+              its color and one sentence, never by an icon of its own. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }}>
+            {PRODUCTS.map(product => (
+              <article key={product.name} className="product-panel" style={{
+                background: "#fff", border: "1px solid #e2e8f0", borderTop: `4px solid ${product.color}`,
+                borderRadius: 8, padding: "22px 22px 18px", boxShadow: "0 1px 2px rgba(15,23,42,0.06)",
+                display: "flex", flexDirection: "column", gap: 12,
+              }}>
                 <div>
-                  <h3 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 }}>ClassPilot</h3>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "#eab308", textTransform: "uppercase", letterSpacing: 1 }}>Monitoring</span>
+                  <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 700, color: "#0f172a", margin: 0, lineHeight: 1.1 }}>{product.name}</h3>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: product.roleColor, marginTop: 4 }}>{product.role}</div>
                 </div>
-              </div>
-              <p style={{ fontSize: 15, color: "#64748b", lineHeight: 1.7, marginBottom: 20 }}>
-                See every student screen, lock devices, and apply site allow-lists during class — all from one dashboard.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {["Live screen thumbnails", "AI off-task detection", "Teacher site allow-lists", "Teacher messaging"].map(f => (
-                  <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#64748b" }}>
-                    <div style={{ width: 22, height: 22, borderRadius: 6, background: "#fef9c3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <span style={{ color: "#eab308", fontSize: 13, fontWeight: 700 }}>✓</span>
-                    </div>
-                    {f}
-                  </div>
-                ))}
-              </div>
-            </a>
-
-            {/* PassPilot */}
-            <a href="/products/passpilot" className="product-card" style={{
-              background: "#fff", borderRadius: 20, padding: 36,
-              border: "1px solid #e2e8f0", textDecoration: "none",
-              transition: "all 0.3s ease",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
-                <PassPilotLogo size={52} />
-                <div>
-                  <h3 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 }}>PassPilot</h3>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "#3b5bdb", textTransform: "uppercase", letterSpacing: 1 }}>Hall Passes</span>
-                </div>
-              </div>
-              <p style={{ fontSize: 15, color: "#64748b", lineHeight: 1.7, marginBottom: 20 }}>
-                Replace paper passes with a digital system. Set limits, monitor durations, and see who is where — instantly.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {["One-tap pass creation", "Destination limits", "Duration tracking", "Kiosk mode"].map(f => (
-                  <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#64748b" }}>
-                    <div style={{ width: 22, height: 22, borderRadius: 6, background: "#ede9fe", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <span style={{ color: "#3b5bdb", fontSize: 13, fontWeight: 700 }}>✓</span>
-                    </div>
-                    {f}
-                  </div>
-                ))}
-              </div>
-            </a>
-
-            {/* GoPilot */}
-            <a href="/products/gopilot" className="product-card" style={{
-              background: "#fff", borderRadius: 20, padding: 36,
-              border: "1px solid #e2e8f0", textDecoration: "none",
-              transition: "all 0.3s ease",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
-                <GoPilotLogo size={52} />
-                <div>
-                  <h3 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", margin: 0 }}>GoPilot</h3>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "#6366f1", textTransform: "uppercase", letterSpacing: 1 }}>Dismissal</span>
-                </div>
-              </div>
-              <p style={{ fontSize: 15, color: "#64748b", lineHeight: 1.7, marginBottom: 20 }}>
-                Dismissal management made simple. Coordinate car riders, buses, and walkers with a live dashboard.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {["Staff arrival intake", "Direct student search", "Teacher release flow", "Multi-zone pickup"].map(f => (
-                  <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#64748b" }}>
-                    <div style={{ width: 22, height: 22, borderRadius: 6, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <span style={{ color: "#6366f1", fontSize: 13, fontWeight: 700 }}>✓</span>
-                    </div>
-                    {f}
-                  </div>
-                ))}
-              </div>
-            </a>
+                <p style={{ fontSize: 14, color: "#475569", lineHeight: 1.6, margin: 0 }}>{product.description}</p>
+                <ul style={{ listStyle: "none", margin: "2px 0 0", padding: 0, fontSize: 14, color: "#1a1a2e", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {product.features.map(feature => (
+                    <li key={feature} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: product.color, display: "inline-block", flexShrink: 0 }} />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <a href={product.href} style={{ fontSize: 14, fontWeight: 600, color: "#1e3a5f", textDecoration: "underline", textUnderlineOffset: 3, marginTop: 4 }}>
+                  About {product.name}
+                </a>
+              </article>
+            ))}
           </div>
 
           {SHOW_MARKETING && (
@@ -556,48 +518,6 @@ function SchoolpilotLogo({ size = 64 }) {
   );
 }
 
-function ClassPilotLogo({ size = 64 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none">
-      <rect width="48" height="48" rx="12" fill="#fbbf24"/>
-      <path d="M12 24L36 14L30 36L24 28L36 14" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M24 28L26 34" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round"/>
-    </svg>
-  );
-}
-
-function PassPilotLogo({ size = 64 }) {
-  // eslint-disable-next-line react-hooks/purity
-  const id = `pp-${Math.random()}`;
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      <defs>
-        <linearGradient id={id} x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#60a5fa" />
-          <stop offset="100%" stopColor="#3b5bdb" />
-        </linearGradient>
-      </defs>
-      <rect width="64" height="64" rx="12" fill={`url(#${id})`} />
-      <rect x="20" y="18" width="24" height="32" rx="3" fill="#fff" />
-      <rect x="26" y="14" width="12" height="8" rx="2" fill="#fff" />
-      <rect x="28" y="16" width="8" height="4" rx="1" fill="#3b5bdb" />
-      <path d="M26 34 L30 38 L38 28" stroke="#3b5bdb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
-}
-
-function GoPilotLogo({ size = 64 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      <rect width="64" height="64" rx="12" fill="#6366f1" />
-      <rect x="16" y="20" width="32" height="24" rx="6" fill="#fff" />
-      <path d="M24 32 L26 26 L38 26 L40 32" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" fill="none" />
-      <path d="M22 32 L42 32 L42 36 L22 36 Z" fill="none" stroke="#6366f1" strokeWidth="2.5" />
-      <circle cx="27" cy="36" r="2.5" fill="#6366f1" />
-      <circle cx="37" cy="36" r="2.5" fill="#6366f1" />
-    </svg>
-  );
-}
 
 // ============================================================
 // ICONS
