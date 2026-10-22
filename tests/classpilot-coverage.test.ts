@@ -3679,8 +3679,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, async () => {
       const [previous] = await db.select().from(schema.classpilotSchoolSchedules)
         .where(sql`${schema.classpilotSchoolSchedules.schoolId} = ${school.id}`);
-      const alternate = await createCoverageScopeGroup({ schoolId: school.id, name: "Saved reading test B",
-        createdBy: admin.id, studentIds: [studentUnassigned.id] });
+      const alternate = await createCoverageScopeGroup({ group: { schoolId: school.id, name: "Saved reading test B",
+        createdBy: admin.id }, studentIds: [studentUnassigned.id] });
       await createCoverageAssignment({ schoolId: school.id, staffId: scopedCoverageStaff.id, scopeType: "coverage_group",
         scopeValue: alternate.id, permissions: { claim: true }, active: true, createdBy: admin.id });
       const block = { id: "available-reading", name: "Applied reading test", coverageGroupId: groupRes.body.group.id,
