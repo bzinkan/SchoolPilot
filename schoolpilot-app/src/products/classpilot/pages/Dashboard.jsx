@@ -44,6 +44,7 @@ import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
+import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
@@ -998,7 +999,7 @@ export default function Dashboard() {
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id,
   });
 
-  const { data: availablePickupData = EMPTY_PICKUP_DATA } = useQuery({
+  const { data: availablePickupData = EMPTY_PICKUP_DATA, dataUpdatedAt: availablePickupUpdatedAt, refetch: refetchAvailableStudents } = useQuery({
     queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest('GET', '/coverage/available-students', undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
@@ -1007,12 +1008,33 @@ export default function Dashboard() {
       students: data?.students || [],
       scheduledCoverageGroups: data?.scheduledCoverageGroups || [],
       claim: data?.claim || null,
+      serverTime: data?.serverTime || null,
+      testingNextBoundaryAt: data?.testingNextBoundaryAt || null,
     }),
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'available',
     refetchInterval: coverageFallbackInterval,
   });
   const availablePickupStudents = availablePickupData.students;
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
+  const availableServerTime = Date.parse(availablePickupData.serverTime);
+  const availableServerOffset = Number.isFinite(availableServerTime)
+    ? availableServerTime - availablePickupUpdatedAt : 0;
+  const availableTestingNowMs = freshnessNowMs + availableServerOffset;
+  useEffect(() => {
+    if (studentView !== 'available') return;
+    const now = Date.now();
+    const deadlines = [availablePickupData.testingNextBoundaryAt,
+      ...availablePickupStudents.map(student => student.activeTestingGroup?.endsAt)]
+      .map(value => Date.parse(value) - availableServerOffset)
+      .filter(value => Number.isFinite(value) && value > now);
+    if (!deadlines.length) return;
+    const timer = setTimeout(() => {
+      // Expire cached labels even if the boundary refresh fails or an event is lost.
+      setFreshnessVersion(version => version + 1);
+      void refetchAvailableStudents({ cancelRefetch: true });
+    }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) - now + 5)));
+    return () => clearTimeout(timer);
+  }, [studentView, availablePickupData.testingNextBoundaryAt, availablePickupStudents, availableServerOffset, refetchAvailableStudents]);
 
   const {
     data: allClaimedPickupStudents = EMPTY_LIST,
@@ -4927,15 +4949,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const availableGroupSections = (() => {
     const sections = new Map();
     filteredAvailableStudents.forEach((student) => {
-      const group = student.matchingGroups?.[0] || null;
-      const scope = group ? null : student.matchingScopes?.[0] || null;
-      const key = group ? `group:${group.id}` : scope ? `scope:${scope.id}` : "scope:available";
+      const group = activeAvailableTestingGroup(student, availableTestingNowMs);
+      const key = group ? `testing:${group.applicationId}:${group.date}:${group.blockId}` : "scope:available";
       if (!sections.has(key)) {
         sections.set(key, {
           id: key,
           kind: group ? "group" : "scope",
-          label: group?.name || scope?.name || "Available students",
-          description: group?.description || (scope?.scopeType ? "Direct supervision permission" : "Eligible online students"),
+          label: group?.name || "Available students",
+          description: group ? "Scheduled testing · eligible online students" : "Eligible online students",
+          testingGroup: group,
           students: [],
         });
       }
@@ -7671,7 +7693,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         className="bg-amber-400 text-slate-950 hover:bg-amber-300"
                       >
                         <Users className="h-4 w-4 mr-2" />
-                        {section.kind === "group" ? "Claim Group" : "Claim Scope"}
+                        {section.kind === "group" ? "Claim Group" : "Claim students"}
                       </Button>
                     </div>
                     <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 p-4">
@@ -7695,14 +7717,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                               </div>
                               <p className="text-sm text-muted-foreground">{student.gradeLevel ? `Grade ${student.gradeLevel}` : "No grade"}</p>
                               <AvailableStudentActivity student={student} nowMs={freshnessNowMs} />
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {(student.matchingGroups || []).map((group) => (
-                                  <Badge key={group.id} variant="outline">{group.name}</Badge>
-                                ))}
-                                {(student.matchingScopes || []).map((scope) => (
-                                  <Badge key={scope.id} variant="outline">{scope.name}</Badge>
-                                ))}
-                              </div>
+                              {section.testingGroup && (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <Badge variant="outline" data-testid={`badge-available-testing-${student.studentId}`}>{section.testingGroup.name}</Badge>
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="mt-4 flex justify-end">

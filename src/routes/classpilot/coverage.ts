@@ -94,6 +94,8 @@ import { classpilotCommandDeliveryPolicy } from "../../services/classpilotComman
 import { CoverageDeletionError, deleteCoverageStaffAssignments, deleteCoverageSupervisionGroup, type CoverageAssignmentReview } from "../../services/classpilotCoverageDeletion.js";
 import { browseCoverageGroups, getCoverageGroupDetail, listCoverageCategories, mutateCoverageCategory, saveCoverageDirectoryGroup } from "../../services/classpilotCoverageDirectory.js";
 import { commitSupervisionReview, isAdHocSupervisionDestination, previewSupervision, releaseTemporaryRoomStudents, returnSupervisionStudentsToOwnClass, supervisionSessionOptions } from "../../services/classpilotSupervisionReview.js";
+import { getAvailableTestingGroups } from "../../services/classpilotScheduleProfileSupervision.js";
+import type { ActiveTestingGroup } from "../../services/classpilotAvailableTestingGroups.js";
 
 const router = Router();
 
@@ -862,7 +864,8 @@ function availableStudentPayload(
   matchingGroups: any[],
   matchingAssignments: any[],
   status: ClasspilotCoverageStatus,
-  assignmentLabels: Map<string, string>
+  assignmentLabels: Map<string, string>,
+  activeTestingGroup: ActiveTestingGroup | null
 ) {
   const matchingScopes = matchingAssignments.map((assignment) => ({
     id: assignment.id,
@@ -883,6 +886,7 @@ function availableStudentPayload(
       description: group.description || undefined,
     })),
     matchingScopes,
+    activeTestingGroup,
   };
 }
 
@@ -1817,18 +1821,26 @@ router.get("/coverage/available-students", ...auth, requireClasspilotFullMonitor
     const candidateRows = rows.filter(
       (row) => !scheduledCoverageStudentIds.has(row.student.id)
     );
-    const [assignmentLabels, statuses] = await Promise.all([
+    const matchingGroupsByStudent = new Map<string, typeof visibleGroups>(
+      candidateRows.map(row => [row.student.id, []])
+    );
+    for (const group of visibleGroups) {
+      for (const member of group.members || []) matchingGroupsByStudent.get(member.studentId)?.push(group);
+    }
+    const visibleStudentGroups = new Map([...matchingGroupsByStudent].flatMap(([studentId, groups]) =>
+      groups.length ? [[studentId, new Set(groups.map(group => group.id))] as const] : []
+    ));
+    const [assignmentLabels, statuses, testing] = await Promise.all([
       assignmentScopeLabels(schoolId, activeAssignments, visibleGroups),
       hydrateClasspilotCoverageStatuses({
         schoolId,
         studentIds: candidateRows.map((row) => row.student.id),
         knownSessions: candidateRows.map((row) => row.studentSession),
       }),
+      getAvailableTestingGroups({ schoolId, visibleStudentGroups }),
     ]);
     const students = candidateRows.flatMap((row) => {
-      const matchingGroups = visibleGroups.filter((group) =>
-        groupContainsStudent(group, row.student.id)
-      );
+      const matchingGroups = matchingGroupsByStudent.get(row.student.id) || [];
       const matchingAssignments = matchingDirectAssignmentsForStudentFromIndex(
         activeAssignments,
         row.student,
@@ -1844,12 +1856,14 @@ router.get("/coverage/available-students", ...auth, requireClasspilotFullMonitor
         matchingGroups,
         matchingAssignments,
         statuses.get(row.student.id)!,
-        assignmentLabels
+        assignmentLabels,
+        testing.activeTestingGroups.get(row.student.id) ?? null
       )];
     });
     const existingClaim = await getActiveDirectSupervisionContextForStaff(schoolId, req.authUser!.id);
     const claimEndsAt = existingClaim?.endsAt || await defaultClaimEndsAt(schoolId);
-    return res.json({ students, scheduledCoverageGroups, claim: { contextId: existingClaim?.id || null,
+    return res.json({ students, scheduledCoverageGroups, serverTime: testing.serverTime,
+      testingNextBoundaryAt: testing.testingNextBoundaryAt, claim: { contextId: existingClaim?.id || null,
       assignedStaffId: req.authUser!.id, supervisorName: req.authUser!.displayName || req.authUser!.email,
       endsAt: claimEndsAt.toISOString() } });
   } catch (err) {
