@@ -1012,7 +1012,15 @@ export default function Dashboard() {
       testingNextBoundaryAt: data?.testingNextBoundaryAt || null,
     }),
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'available',
-    refetchInterval: coverageFallbackInterval,
+    refetchInterval: query => {
+      const serverTime = Date.parse(query.state.data?.serverTime);
+      const offset = Number.isFinite(serverTime) ? serverTime - query.state.dataUpdatedAt : 0;
+      // A failed activation may produce no student-ownership event. Reconcile
+      // current labels while the socket is healthy as well as at boundaries.
+      return (query.state.data?.students || EMPTY_LIST).some(student => (
+        activeAvailableTestingGroup(student, Date.now() + offset)
+      )) ? 10000 : coverageFallbackInterval;
+    },
   });
   const availablePickupStudents = availablePickupData.students;
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
