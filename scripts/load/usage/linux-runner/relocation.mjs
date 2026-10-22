@@ -5,7 +5,7 @@ import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const FREEZE_SHA256 = '5a758e19ebf4962be77f8de062cfd77823e966c7e8894d19bd9d1121a0410101';
+export const FREEZE_SHA256 = '2695d7d3e099b631c806b6c55d9f3c1cabce085d06eb9f920acc0086d0b58dd5';
 export const SOURCES = Object.freeze({ candidate: '2f171d982a7e4176f99a86b3bc838d02f5507a6c', baseline: 'b918b294524d1c1e1855409774a54eace89415c6', harness: 'd9c45a6ed21ff508045fd6c137e9535f6f8a46ae' });
 export function guard(condition, code) { if (!condition) { const error = new Error(code); error.code = code; throw error; } }
 export function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }

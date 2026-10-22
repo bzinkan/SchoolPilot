@@ -6,7 +6,7 @@ import { assertSourceRestorationMetadata, assertCanonicalGitEnvironment, sourceG
 function metadata() {
   const destination = '/srv/usage/work/sources-123456abcdef';
   const members = ['schoolpilot-app/android-gopilot/gradlew', 'schoolpilot-app/android-passpilot/gradlew'].map(name => ({ path: name, sha256: sha256(name), gitMode: '100755', gitBlobOid: 'd'.repeat(40) }));
-  const roles = Object.fromEntries(Object.entries(SOURCES).map(([role, source]) => [role, { source, tree: 'c'.repeat(40), files: 2, members, membersSha256: sha256(JSON.stringify(members.map(r => [r.path, r.sha256]))), archivePrefix: role === 'baseline' ? 'baseline-source/' : '' }]));
+  const roles = Object.fromEntries(Object.entries(SOURCES).map(([role, source]) => [role, { source, tree: 'c'.repeat(40), files: 2, members, membersSha256: sha256(JSON.stringify(members.map(r => [r.path, r.sha256]))), archivePrefix: role === 'baseline' ? 'baseline-source/' : role === 'candidate' ? 'candidate-source/' : '' }]));
   const shallowHeads = Object.values(SOURCES).sort();
   const plan = { schemaVersion: 1, kind: 'usage_current_exact_head_git_transfer', parentHistoryIncluded: false, coreFileMode: false, workingFileMode: '0600', gitObjectModesPreserved: true, roles, shallowHeads, objects: [...shallowHeads.map(oid => ({ oid, type: 'commit', bytes: 123, payloadSha256: 'f'.repeat(64) })), { oid: '1'.repeat(40), type: 'tree', bytes: 100, payloadSha256: 'f'.repeat(64) }].sort((a,b) => a.oid.localeCompare(b.oid)) };
   const request = { schemaVersion: 1, kind: 'usage_linux_exact_source_restore_request', destination };
@@ -60,3 +60,25 @@ for (const [name, mutate] of [
   ['user-owned resolved ancestor', x => { const row = x.entries['/usr']; x.entries['/home'] = row; x.entries['/home/user'] = { ...row, uid: 1000 }; x.entries['/home/user/bin'] = row; x.options.real = name => name === '/usr/local/bin' ? '/home/user/bin' : name; }],
   ['symlink executable', x => { x.entries['/usr/bin/git'] = { ...x.entries['/usr/bin/git'], isSymbolicLink: () => true }; }],
 ]) test(`canonical H Git admission refuses ${name}`, () => { const x = ambientFixture(); mutate(x); assert.throws(() => assertCanonicalGitEnvironment(x.env, '/usr/bin/git', x.options)); });
+
+test('source restoration admits the three original captured archive envelopes', () => {
+  const value = metadata();
+  assert.equal(value.plan.roles.baseline.archivePrefix, 'baseline-source/');
+  assert.equal(value.plan.roles.candidate.archivePrefix, 'candidate-source/');
+  assert.equal(value.plan.roles.harness.archivePrefix, '');
+  check(value);
+});
+for (const [role, archivePrefix] of [
+  ['candidate', ''],
+  ['candidate', 'baseline-source/'],
+  ['candidate', 'Candidate-source/'],
+  ['candidate', '../candidate-source/'],
+  ['candidate', 'candidate-source//'],
+  ['baseline', 'candidate-source/'],
+  ['harness', 'candidate-source/'],
+  ['harness', 'harness-source/'],
+]) test('source restoration rejects a foreign ' + role + ' archive envelope ' + JSON.stringify(archivePrefix), () => {
+  const value = metadata();
+  value.plan.roles[role].archivePrefix = archivePrefix;
+  assert.throws(() => check(value), /SOURCE_ARCHIVE_PREFIX/);
+});
