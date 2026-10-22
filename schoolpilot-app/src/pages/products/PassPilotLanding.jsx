@@ -5,16 +5,16 @@ export default function PassPilotLanding() {
       <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <a href="/" className="flex items-center gap-3 no-underline">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-md">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
-                <rect x="9" y="3" width="6" height="4" rx="1"/>
-                <path d="M9 14l2 2 4-4"/>
-              </svg>
-            </div>
-            <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">
+            {/* The SchoolPilot plane is the only symbol; the product is its name and its color. */}
+            <svg width="40" height="40" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <rect width="64" height="64" rx="14" fill="#1e3a5f"/>
+              <path d="M16 24 L48 32 L16 40 L22 32 Z" fill="#fff"/>
+              <path d="M22 32 L48 32 L16 40 Z" fill="#eab308"/>
+            </svg>
+            <span className="text-xl font-bold text-slate-900">
               PassPilot
             </span>
+            <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full bg-[#3b5bdb]" />
           </a>
           <a
             href="/login"
@@ -147,13 +147,13 @@ export default function PassPilotLanding() {
         <div className="container mx-auto px-4">
           <div className="text-center">
             <div className="flex items-center justify-center gap-2 mb-6">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 11l3 3L22 4"/>
-                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-                </svg>
-              </div>
+              <svg width="32" height="32" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <rect width="64" height="64" rx="14" fill="#1e3a5f"/>
+                <path d="M16 24 L48 32 L16 40 L22 32 Z" fill="#fff"/>
+                <path d="M22 32 L48 32 L16 40 Z" fill="#eab308"/>
+              </svg>
               <span className="text-xl font-bold">PassPilot</span>
+              <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full bg-[#3b5bdb]" />
             </div>
 
             <p className="text-gray-400 text-sm mb-6">

@@ -228,14 +228,14 @@ export default function GoPilotLanding() {
         <div className="container mx-auto px-4">
           <div className="text-center">
             <div className="flex items-center justify-center gap-2 mb-6">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a1 1 0 0 0-.8-.4H5.24a2 2 0 0 0-1.8 1.1l-.8 1.63A6 6 0 0 0 2 12.42V16h2"/>
-                  <circle cx="6.5" cy="16.5" r="2.5"/>
-                  <circle cx="16.5" cy="16.5" r="2.5"/>
-                </svg>
-              </div>
+              {/* The SchoolPilot plane is the only symbol; the product is its name and its color. */}
+              <svg width="32" height="32" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <rect width="64" height="64" rx="14" fill="#1e3a5f"/>
+                <path d="M16 24 L48 32 L16 40 L22 32 Z" fill="#fff"/>
+                <path d="M22 32 L48 32 L16 40 Z" fill="#eab308"/>
+              </svg>
               <span className="text-xl font-bold">GoPilot</span>
+              <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-500" />
             </div>
 
             <p className="text-gray-400 text-sm mb-6">
