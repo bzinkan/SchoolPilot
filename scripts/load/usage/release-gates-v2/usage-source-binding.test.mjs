@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -9,7 +9,7 @@ import {hash,PROFILES,profileHash} from './contracts.mjs';
 import {prepareUsageSourceBinding,assertUsageSourceBinding,assertReviewedUsageSource,assertUsageSourceCheckout,
   assertUsageSourceDatabase,assertUsageSourceIdentity,assertUsageSourceReceipt,loadUsageSourceBinding,loadFixtureUsageSourceBinding} from './usage-source-binding.mjs';
 import {verifyHelperUsageSourceBinding} from './build-helper.mjs';
-import {declareCampaign,reserveAttempt} from './campaign.mjs';
+import {declareCampaign,reserveAttempt,sourceBindingForArm,assertCampaignSourceBinding} from './campaign.mjs';
 import {usagePostVerificationHash} from './usage-post-verification.mjs';
 import {loadSnapshot} from '../roles/snapshot-contract.mjs';
 import {loadReceipt} from './receipts.mjs';
@@ -48,6 +48,49 @@ function envelopeFiles(root,envelope){
   writeFileSync(usageSourceBindingFile,envelope.bindingRaw);writeFileSync(usageSourceReviewFile,envelope.reviewRaw);
   return {usageSourceBindingFile,usageSourceBindingSha256:envelope.bindingSha256,usageSourceReviewFile,usageSourceReviewSha256:envelope.reviewSha256};
 }
+
+function baselineOptions(files){return Object.fromEntries(Object.entries(files).map(([key,value])=>['baseline'+key[0].toUpperCase()+key.slice(1),value]));}
+test('paired current-production baseline reserves its own independently reviewed source and ledger',()=>{
+  const f=fixture();try{
+    const binding=prepareUsageSourceBinding(f.options),baseline=reviewed(binding);
+    const candidate=reviewed({...binding,source:'e'.repeat(40),applicationImage:'sha256:'+'f'.repeat(64)});
+    const baselineRoot=join(f.root,'baseline'),candidateRoot=join(f.root,'candidate');mkdirSync(baselineRoot);mkdirSync(candidateRoot);
+    const directory=join(f.root,'paired'),contract=declareCampaign({directory,kind:'paired',profile:PROFILES.normal.name,
+      candidateSource:candidate.binding.source,baselineSource:baseline.binding.source,observedFlagsSha256:'1'.repeat(64),
+      ...envelopeFiles(candidateRoot,candidate),...baselineOptions(envelopeFiles(baselineRoot,baseline))});
+    assert.deepEqual(contract.order,['A','A','A','B','B','A','A','B']);
+    assert.deepEqual(sourceBindingForArm(contract,'A'),baseline);assert.deepEqual(sourceBindingForArm(contract,'B'),candidate);
+    const reserved=reserveAttempt({directory,run:'123456abcdef',receiptDirectory:join(f.root,'receipt'),privateDirectory:join(f.root,'private')});
+    const reservation=JSON.parse(readFileSync(reserved.reservationFile));
+    assert.equal(reservation.source,baseline.binding.source);assert.equal(reservation.usageSourceBindingSha256,baseline.bindingSha256);
+    assert.equal(reservation.usageSourceReviewSha256,baseline.reviewSha256);
+    assertCampaignSourceBinding(contract,{arm:'A',usageSourceBinding:baseline});
+    assert.throws(()=>assertCampaignSourceBinding(contract,{arm:'A',usageSourceBinding:candidate}));
+    assert.throws(()=>assertCampaignSourceBinding(contract,{arm:'A'}));
+    assert.throws(()=>assertCampaignSourceBinding(contract,{arm:'B',usageSourceBinding:baseline}));
+  }finally{f.dispose();}
+});
+test('baseline binding refuses wrong source, incomplete hashes and use outside a paired campaign before declaration',()=>{
+  const f=fixture();try{
+    const binding=prepareUsageSourceBinding(f.options),files=baselineOptions(envelopeFiles(f.root,reviewed(binding)));
+    const base={directory:join(f.root,'must-not-exist'),kind:'paired',profile:PROFILES.normal.name,candidateSource:'e'.repeat(40),baselineSource:binding.source,observedFlagsSha256:'1'.repeat(64),...files};
+    assert.throws(()=>declareCampaign({...base,baselineSource:'f'.repeat(40)}));
+    assert.throws(()=>declareCampaign({...base,baselineUsageSourceReviewSha256:undefined}));
+    assert.throws(()=>declareCampaign({...base,kind:'mixed',profile:PROFILES.mixed.name}));
+    assert.equal(existsSync(base.directory),false);
+  }finally{f.dispose();}
+});
+test('historical paired campaigns retain absent baseline envelopes and reservation fields',()=>{
+  const f=fixture();try{
+    const directory=join(f.root,'historical'),contract=declareCampaign({directory,kind:'paired',profile:PROFILES.normal.name,
+      candidateSource:'e'.repeat(40),baselineSource:'f'.repeat(40),observedFlagsSha256:'1'.repeat(64)});
+    assert.equal(Object.hasOwn(contract,'baselineUsageSourceBinding'),false);
+    const reserved=reserveAttempt({directory,run:'123456abcdef',receiptDirectory:join(f.root,'receipt'),privateDirectory:join(f.root,'private')});
+    const reservation=JSON.parse(readFileSync(reserved.reservationFile));
+    assert.equal(Object.hasOwn(reservation,'usageSourceBindingSha256'),false);
+    assert.equal(Object.hasOwn(reservation,'usageSourceReviewSha256'),false);
+  }finally{f.dispose();}
+});
 
 test('deterministic preparation derives the exact source-selected full ledger without calling migrations',()=>{
   const f=fixture();try{
