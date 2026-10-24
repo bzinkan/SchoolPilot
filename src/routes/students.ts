@@ -414,7 +414,7 @@ router.post(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       // Guardrail: email required for ClassPilot schools; any email must match domain.
@@ -563,7 +563,7 @@ router.post(
         if (!parsed.success) {
           errors.push({
             index: i,
-            error: parsed.error.errors[0]?.message || "Invalid input",
+            error: parsed.error.issues[0]?.message || "Invalid input",
           });
           continue;
         }
@@ -1198,7 +1198,7 @@ router.put(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       // Guardrail: only validate when the email actually changes (not on resubmit),
@@ -1286,7 +1286,7 @@ router.patch(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       // Guardrail: only validate when the email actually changes (not on resubmit),

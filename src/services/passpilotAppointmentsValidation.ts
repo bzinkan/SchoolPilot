@@ -24,8 +24,9 @@ export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 export const editAppointmentSchema = z.object({
   expectedRevision: z.number().int().positive(),
   studentId: fields.studentId.optional(), destination: fields.destination.optional(),
-  customDestination: fields.customDestination.optional(), staffNotes: fields.staffNotes.optional(),
-  startsAt: fields.startsAt.optional(), endsAt: fields.endsAt.optional(), duration: fields.duration.optional(),
+  // Creation defaults must not turn omitted edit fields into stored changes.
+  customDestination: fields.customDestination.unwrap().optional(), staffNotes: fields.staffNotes.unwrap().optional(),
+  startsAt: fields.startsAt.optional(), endsAt: fields.endsAt.optional(), duration: fields.duration.unwrap().optional(),
 }).strict().refine((body) => Object.keys(body).some((key) => key !== "expectedRevision"), "Choose an appointment field to update.");
 export type EditAppointmentInput = z.infer<typeof editAppointmentSchema>;
 export const cancelAppointmentSchema = z.object({ expectedRevision: z.number().int().positive() }).strict();

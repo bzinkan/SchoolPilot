@@ -77,7 +77,7 @@ const encounterPatchSchema = z.object({ enabled: z.boolean() }).strict();
 
 function invalid(res: Response, error: z.ZodError | string) {
   return res.status(400).json({
-    error: typeof error === "string" ? error : error.errors[0]?.message || "Invalid rule",
+    error: typeof error === "string" ? error : error.issues[0]?.message || "Invalid rule",
     code: "PASSPILOT_RULES_INVALID",
   });
 }

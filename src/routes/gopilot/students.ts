@@ -260,7 +260,7 @@ router.post("/", ...managerAuth, async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const { normalized, externalId } = managerStudentFields(req.body ?? {});
     const parsed = createStudentSchema.safeParse(normalized);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
     if (parsed.data.dismissalType && !DISMISSAL_TYPES.has(parsed.data.dismissalType)) {
       return res.status(400).json({ error: "Invalid dismissalType" });
     }
@@ -337,7 +337,7 @@ async function updateHandler(req: Request, res: any, next: any) {
     const { normalized, externalId, externalIdProvided } = managerStudentFields(req.body ?? {});
     delete normalized.status;
     const parsed = updateStudentSchema.safeParse(normalized);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
     if (parsed.data.dismissalType && !DISMISSAL_TYPES.has(parsed.data.dismissalType)) {
       return res.status(400).json({ error: "Invalid dismissalType" });
     }
@@ -444,7 +444,7 @@ async function bulkUpdateHandler(req: Request, res: any, next: any) {
       delete normalized.status;
       const parsed = updateStudentSchema.safeParse(normalized);
       if (!parsed.success || (parsed.data.dismissalType && !DISMISSAL_TYPES.has(parsed.data.dismissalType))) {
-        skipped.push({ id, error: parsed.success ? "Invalid dismissalType" : (parsed.error.errors[0]?.message ?? "Invalid input") });
+        skipped.push({ id, error: parsed.success ? "Invalid dismissalType" : (parsed.error.issues[0]?.message ?? "Invalid input") });
         continue;
       }
       if (!(await validateHomeroom(schoolId, parsed.data.homeroomId))) {
@@ -504,7 +504,7 @@ async function importHandler(req: Request, res: any, next: any) {
       delete normalized.externalId;
       const parsed = createStudentSchema.safeParse(normalized);
       if (!parsed.success || (parsed.data.dismissalType && !DISMISSAL_TYPES.has(parsed.data.dismissalType))) {
-        errors.push({ row: index + 1, error: parsed.success ? "Invalid dismissalType" : (parsed.error.errors[0]?.message ?? "Invalid input") });
+        errors.push({ row: index + 1, error: parsed.success ? "Invalid dismissalType" : (parsed.error.issues[0]?.message ?? "Invalid input") });
         continue;
       }
       if (!(await validateHomeroom(schoolId, parsed.data.homeroomId))) {

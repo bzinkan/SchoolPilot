@@ -369,7 +369,7 @@ test("personal grade groups and revisioned defaults stay separate from administr
   assert.equal((await request(f, "/preferences", "PATCH", { revision: 0, preferredClasses: { '5': f.groupId } }, f.adminId)).status, 404);
   const updates = await Promise.all([request(f, "/preferences", "PATCH", { revision: 0, preferredClasses: { '5': f.groupId } }), request(f, "/preferences", "PATCH", { revision: 0, preferredClasses: { '5': otherGroup } })]);
   assert.deepEqual(updates.map(row => row.status).sort(), [200, 409]);
-  const saved = z.object({ revision: z.number(), preferredClasses: z.record(z.string()) }).parse((await request(f, "/preferences")).data);
+  const saved = z.object({ revision: z.number(), preferredClasses: z.record(z.string(), z.string()) }).parse((await request(f, "/preferences")).data);
   assert.equal(saved.revision, 1);
   assert.deepEqual((await request(f, "/preferences", "GET", undefined, f.colleagueId)).data, { revision: 0, preferredClasses: {}, viewBy: "grades" });
   assert.equal((await request(f, "/preferences", "PATCH", { revision: 1, preferredClasses: { '6': otherGroup } })).status, 409);

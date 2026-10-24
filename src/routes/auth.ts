@@ -151,7 +151,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
     if (!parsed.success) {
       return res
         .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+        .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
 
     const { email, password } = parsed.data;

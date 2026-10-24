@@ -10,6 +10,8 @@ process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:5432/test";
 
 const realtime = await import("../src/services/classpilotRealtimeStatus.ts");
 const { focusStatusSchema } = await import("../src/services/classpilotFocus.ts");
+// Materialize Zod's lazy public method binding before spying on the instance.
+void focusStatusSchema.safeParse;
 const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", import.meta.url), "utf8");
 const start = source.indexOf("function publicRealtimeFields(");
 const end = source.indexOf("\ntype ClasspilotRealtimeControlAuthority", start);

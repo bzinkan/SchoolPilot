@@ -155,7 +155,7 @@ router.get("/", async (req, res, next) => {
 router.put("/:legacyGradeId", async (req, res, next) => {
   try {
     const parsed = singleMappingSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid mapping" });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid mapping" });
     const legacyGradeId = String(req.params.legacyGradeId ?? "");
     const input = parsed.data.action === "link"
       ? {
@@ -184,7 +184,7 @@ router.put("/:legacyGradeId", async (req, res, next) => {
 router.put("/", async (req, res, next) => {
   try {
     const parsed = updateSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid mapping" });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid mapping" });
     const inventory = await updatePasspilotClassMappings(
       res.locals.schoolId!,
       req.authUser!.id,
@@ -201,7 +201,7 @@ router.put("/", async (req, res, next) => {
 router.post("/complete", async (req, res, next) => {
   try {
     const parsed = completeSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid migration request" });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid migration request" });
     const inventory = await completePasspilotClassMigration(
       res.locals.schoolId!,
       req.authUser!.id,

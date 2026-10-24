@@ -16,7 +16,7 @@ const router=Router();
 router.use(authenticate,requireSchoolContext,requireClasspilotEntitlement,requireRole("admin","school_admin"));
 const mutationLimit=rateLimit({windowMs:15*60_000,limit:100,standardHeaders:true,legacyHeaders:false});
 const id=z.string().trim().min(1).max(256);
-const mapping=z.object({organizationIds:z.array(id).min(1).max(100),people:z.record(id).optional(),classes:z.record(id).optional(),adoptPeople:z.array(id).max(10000).optional(),adoptClasses:z.array(id).max(10000).optional()}).strict();
+const mapping=z.object({organizationIds:z.array(id).min(1).max(100),people:z.record(z.string(),id).optional(),classes:z.record(z.string(),id).optional(),adoptPeople:z.array(id).max(10000).optional(),adoptClasses:z.array(id).max(10000).optional()}).strict();
 // Busboy emits partsLimit at the terminating boundary when parts is 1.
 // Leave room for that boundary; files:1 and fields:0 reject extra content.
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:ROSTER_LIMITS.compressedBytes,files:1,fields:0,parts:2}});

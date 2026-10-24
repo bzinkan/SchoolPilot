@@ -32,6 +32,21 @@ describe("appointment time and validation contract", () => {
       assert.throws(() => validateAppointmentWindow({ ...parsed, ...patch }), /appointment|destination/i);
     }
   });
+  it("keeps creation defaults out of partial edits and retains explicit clears", () => {
+    const created = createAppointmentSchema.parse(input);
+    assert.equal(created.duration, 5);
+    assert.equal(created.staffNotes, null);
+    assert.equal(created.customDestination, null);
+    assert.deepEqual(editAppointmentSchema.parse({ expectedRevision: 3, staffNotes: " updated note " }),
+      { expectedRevision: 3, staffNotes: "updated note" });
+    assert.deepEqual(editAppointmentSchema.parse({ expectedRevision: 3, duration: 20 }),
+      { expectedRevision: 3, duration: 20 });
+    assert.deepEqual(editAppointmentSchema.parse({ expectedRevision: 3, staffNotes: null, customDestination: null }),
+      { expectedRevision: 3, staffNotes: null, customDestination: null });
+    for (const duration of [0, 121, 1.5, null]) {
+      assert.equal(editAppointmentSchema.safeParse({ expectedRevision: 3, duration }).success, false);
+    }
+  });
   it("requires configured school-year boundaries and derives the exclusive local cutoff", () => {
     const parsed = createAppointmentSchema.parse(input);
     assert.throws(() => appointmentSchoolYearCutoff({ yearStart: null, yearEnd: null }, "America/New_York", parsed.startsAt, parsed.endsAt),

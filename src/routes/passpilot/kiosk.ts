@@ -1017,7 +1017,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
 
     const parsed = kioskCheckoutSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
 
     await runWithKioskTenantContext(schoolId, async () => {
@@ -1685,7 +1685,7 @@ router.post(
       const schoolId = res.locals.schoolId!;
       const parsed = kioskClaimSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+        return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
       const role = await getRequestPassPilotRole(req, res);
       let target: KioskClassTarget | null = null;
@@ -1715,7 +1715,7 @@ router.post("/sessions/self", ...kioskSessionTeacherAuth, async (req, res, next)
     const schoolId = res.locals.schoolId!;
     const parsed = kioskSelfSessionSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
     const role = await getRequestPassPilotRole(req, res);
     let target: KioskClassTarget | null = null;
@@ -1758,7 +1758,7 @@ router.post("/sessions/retarget", ...kioskSessionTeacherAuth, async (req, res, n
     const schoolId = res.locals.schoolId!;
     const parsed = kioskRetargetSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
     const role = await getRequestPassPilotRole(req, res);
     const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);
@@ -1787,7 +1787,7 @@ router.put("/sessions/:id", ...kioskSessionTeacherAuth, async (req, res, next) =
     const schoolId = res.locals.schoolId!;
     const parsed = kioskRetargetSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
     const role = await getRequestPassPilotRole(req, res);
     const target = await resolveKioskClassTarget(req, res, schoolId, parsed.data.classId);

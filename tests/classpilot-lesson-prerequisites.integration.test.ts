@@ -314,8 +314,8 @@ test("exact status and reviewed reuse HTTP enforce current actor/context and pub
 test("the real Classroom UI lesson orchestrator follows canonical HTTP receipts under restricted RLS", async () => {
   const frontendUrl = new URL("../schoolpilot-app/src/products/classpilot/lib/classroomActions.js", import.meta.url).href;
   const frontend = z.object({
-    runClassroomAction: z.function().args(z.unknown()).returns(z.promise(z.unknown())),
-    reviewedFlightPathMatches: z.function().args(z.unknown(), z.unknown()).returns(z.boolean()),
+    runClassroomAction: z.function().input([z.unknown()], z.unknown()).output(z.promise(z.unknown())),
+    reviewedFlightPathMatches: z.function().input([z.unknown(), z.unknown()], z.unknown()).output(z.boolean()),
   }).parse(await import(frontendUrl));
   const express = (await import("express")).default;
   const commandsRouter = (await import("../src/routes/classpilot/commands.js")).default;

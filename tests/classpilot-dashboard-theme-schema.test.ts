@@ -202,6 +202,16 @@ describe("ClassPilot school appearance governance", () => {
     for (const body of rejected) assert.equal(appearanceSectionSchema.safeParse(body).success, false, JSON.stringify(body));
   });
 
+  it("accepts empty and single-holiday start edits without replacing other stored starts", () => {
+    const stored = { ...defaults, calendarStarts: { halloween: "2026-10-19", christmas: "2026-12-11" } };
+    const empty = appearanceSectionSchema.parse({ ...section, calendarStarts: {} });
+    assert.deepEqual(empty.calendarStarts, {});
+    assert.deepEqual(mergeSchoolAppearance(stored, empty).calendarStarts, stored.calendarStarts);
+    const clear = appearanceSectionSchema.parse({ ...section, calendarStarts: { halloween: null } });
+    assert.deepEqual(clear.calendarStarts, { halloween: null });
+    assert.deepEqual(mergeSchoolAppearance(stored, clear).calendarStarts, { christmas: "2026-12-11" });
+  });
+
   it("merges a section save over the live values: omitted keys keep theirs, starts merge per holiday and null clears one", () => {
     const stored = { ...defaults, autoCalendar: false, calendarHolidays: ["christmas"], calendarLeadDays: 20, calendarStarts: { halloween: "2026-10-19", christmas: "2026-12-11" }, signInGateTheme: false };
     const required = { teacherThemesEnabled: true, teacherUploadsEnabled: true, kioskCustomBackgrounds: false, lockToSchoolTheme: false, schoolDefaultTheme: null };
