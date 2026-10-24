@@ -1,10 +1,55 @@
 # Monitored Browser Time activation
 
-This is the selected Usage operating policy, adopted on October 11, 2026. It
-authorizes implementation and preparation. It does not authorize production
-activation, database changes, a Terraform apply, extension publication or an
-operational window. Each activation needs approval of its exact plan and window.
-There is no activation date until the gates below pass.
+This Usage operating policy was adopted on October 11, 2026. The dated October 24
+owner decision below supersedes its synthetic capacity prerequisite for one
+attended rollout. The other release, evidence and runtime safeguards remain in
+force. Implementation or preparation alone does not authorize production changes;
+each activation must have owner authority for its plan and window.
+
+## October 24 owner decision: attended weekend rollout
+
+On October 24, 2026, the owner rejected further Linux/campaign capacity testing as
+an option and explicitly chose **"Turn ON this weekend"**, with attended monitoring
+on Monday, October 26. This authorizes a reports-only normal Plan/review/Apply
+during October 24–25: set `CLASSPILOT_DIGITAL_USAGE_MODE=on`, retain
+`CLASSPILOT_USAGE_ROLLUP_MODE=on`, and preserve every other setting. It records
+authority to perform that guarded operation, not proof that it has run.
+
+For this rollout, completing the synthetic Linux/campaign path below is no longer
+a prerequisite. Preserve its original failed and canceled outcomes and keep
+`capacityAccepted: false`; this decision supplies no synthetic pass, capacity
+certification or acceptance for a different rollout. Do not restart that campaign
+to clear this prerequisite. The October 11 synthetic requirements below remain
+historical policy except for this specific owner change.
+
+The owner confirmed that Friday, October 23 classes ran from 09:15 to 15:45
+America/New_York. Usage ON completed at 09:05:34.0668367, before instruction began.
+That complete instructional window is accepted as the observation basis. Its
+schema-2 evidence contains the 15 actual normal hourly outcomes from 14:00Z through
+October 24 at 04:00Z, full-calendar finalized ledger proof, valid following-day
+live coverage and the retained-input numerical recount with independent replay.
+The rollout startup is separate history. Preserve the earlier calendar-schema
+refusal and never fill its missing pre-class hours with invented outcomes. Refresh
+the actual required inputs and revalidate with the real clock before Plan/Apply;
+the two-hour freshness limit is unchanged.
+
+Keep clean-main/origin identity, reviewed tooling and final-main CI, exact serving
+source/image compatibility, caller and RLS checks, private evidence, health and
+service stability, the existing capacity/scaling contract, protected clocks,
+leases/fences, drift checks and exact convergence/recovery. The existing aggregate
+USD 30 cap and frozen USD 15 runtime guard remain unchanged; estimates are not a
+bill or a hard AWS quota. This operation requires no source/image, schema,
+Terraform or extension deployment.
+
+Retain the measured guarded both-off completion and its original receipts; do not
+infer that recovery was never proven from an older pending status record. Maintain
+a fresh, reviewed both-off contingency for the actual serving pair through the
+attended period. Recheck inconclusive telemetry before action. The existing app
+error/slowness definitions and alarm thresholds are unchanged; missing telemetry,
+authentication or coverage alone does not authorize OFF. Keep the confirmed-error
+containment and notification rules below, the report walkthrough and daily
+finalization checks. Record the attended operator, owner-reachable route, Monday
+monitoring window and governed off authority in the private sitting record.
 
 The switches are global. Inventory every eligible active, ClassPilot-licensed
 production school, including its fleet/load, timezone, tracking policy and actual
@@ -55,7 +100,7 @@ summaries. Preserve every failed invocation and its original outcome. Performanc
 remediation requires its own reviewed change and refreshed affected acceptance;
 limits remain fixed.
 
-## Full synthetic gate
+## Historical October 11 synthetic gate
 
 Use the canonical profiles, ordering and closure rules in
 [release readiness](RELEASE_297_DEPLOY_READINESS.md). Run serially in declared quiet
@@ -256,7 +301,9 @@ finalized ledger proof, with its unavailable recount reason recorded separately.
 ## Switch 2 and completion
 
 Obtain mandatory ledger proof for every eligible school and an independent replay.
-Approve reporting-on separately. Pass the fresh schema-1 or schema-2 file using
+Reporting-on needs separate owner authority; the October 24 decision above supplies
+that authority for the stated weekend rollout. Review its exact normal plan and
+pass the fresh schema-1 or schema-2 file using
 `-UsageObservationEvidencePath` to normal Plan and Apply. Continue attended
 monitoring and governed off authority through the next normal school day at 17:00
 Eastern. Any incident invalidating evidence must be resolved before proceeding.

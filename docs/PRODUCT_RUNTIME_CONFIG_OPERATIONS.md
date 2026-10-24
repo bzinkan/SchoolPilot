@@ -268,10 +268,22 @@ arbitrary older appointment writers after first appointment activation.
 **Digital usage needs the rollup.** In every plan's resulting state,
 `CLASSPILOT_DIGITAL_USAGE_MODE=on` requires `CLASSPILOT_USAGE_ROLLUP_MODE=on`. The
 selected activation policy requires two separately approved operations: rollup on
-with reporting off, followed by reporting on only after full school-day observation
-and actual ledger proof for every eligible school. Simultaneous activation is not
-an approved rollout. Incident containment sets both modes explicitly off. See
-[Usage activation](CLASSPILOT_USAGE_ACTIVATION.md) for the full capacity and live gates.
+with reporting off, followed by reporting on after the complete confirmed school
+instructional day, required hourly outcomes, actual ledger proof and independent
+replay for every eligible school. Simultaneous activation is not an approved
+rollout. Incident containment sets both modes explicitly off.
+
+The [October 24 owner decision](CLASSPILOT_USAGE_ACTIVATION.md#october-24-owner-decision-attended-weekend-rollout)
+authorizes a reports-only normal Plan/review/Apply that weekend with attended
+monitoring on Monday, October 26. It accepts the confirmed October 23
+09:15–15:45 Eastern instructional observation and removes the synthetic
+Linux/campaign path as a prerequisite for this rollout. Preserve canceled/failed
+history and `capacityAccepted: false`; no capacity pass is inferred. All other
+runtime guards, two-hour evidence/plan freshness, error/slowness triggers, budget
+limits, exact plan review and actual completion verification remain unchanged.
+The decision is authority to execute the operation, not an applied receipt. See
+[Usage activation](CLASSPILOT_USAGE_ACTIVATION.md) for its limited scope and the
+remaining evidence, monitoring and follow-up requirements.
 
 **Daily rollup promotion.** Moving `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` from shadow
 (unset or `shadow`) to `set_based` or `on` requires an evidence file. Promotion from
