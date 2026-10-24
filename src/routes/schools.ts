@@ -129,7 +129,7 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
     if (!parsed.success) {
       return res
         .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+        .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
 
     const {
@@ -256,7 +256,7 @@ router.put(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       const school = await updateSchool(scopedSchoolId(req, res), await toSchoolUpdate(parsed.data));
@@ -285,7 +285,7 @@ router.patch(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       const school = await updateSchool(scopedSchoolId(req, res), await toSchoolUpdate(parsed.data));
@@ -314,7 +314,7 @@ router.put(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       const schoolId = scopedSchoolId(req, res);
@@ -502,7 +502,7 @@ router.post(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       const grade = await createGrade({

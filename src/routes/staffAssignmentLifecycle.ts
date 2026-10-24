@@ -243,7 +243,7 @@ router.get(
       const target = transitionTargetSchema.safeParse(targetPayload);
       if (!target.success) {
         return res.status(422).json({
-          error: target.error.errors[0]?.message ?? "Invalid staff impact target.",
+          error: target.error.issues[0]?.message ?? "Invalid staff impact target.",
           code: "STAFF_TRANSITION_INVALID",
         });
       }
@@ -271,7 +271,7 @@ router.post(
       const parsed = transitionSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(422).json({
-          error: parsed.error.errors[0]?.message ?? "Invalid staff transition request.",
+          error: parsed.error.issues[0]?.message ?? "Invalid staff transition request.",
           code: "STAFF_TRANSITION_INVALID",
         });
       }

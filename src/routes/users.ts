@@ -144,7 +144,7 @@ router.put("/me", async (req, res, next) => {
     if (!parsed.success) {
       return res
         .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+        .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
 
     const user = await updateUser(req.authUser!.id, {
@@ -300,7 +300,7 @@ router.post(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       const result = await createStaffIdentityForSchool({
@@ -349,7 +349,7 @@ router.patch(
       const parsed = updateStaffEmailSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(422).json({
-          error: parsed.error.errors[0]?.message || "Invalid input",
+          error: parsed.error.issues[0]?.message || "Invalid input",
           code: "STAFF_EMAIL_INVALID",
         });
       }
@@ -423,7 +423,7 @@ router.put(
       if (!parsed.success) {
         return res
           .status(400)
-          .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+          .json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       }
 
       const rawPassword = req.body?.password;

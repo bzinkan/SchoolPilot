@@ -319,7 +319,7 @@ router.post("/grades", ...legacyPassPilotClassAuth, requirePassPilotRole("admin"
   try {
     const parsed = createGradeSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
     }
     const grade = await createGrade({ schoolId: res.locals.schoolId!, ...parsed.data });
     return res.status(201).json({ grade });

@@ -1,10 +1,55 @@
 # Monitored Browser Time activation
 
-This is the selected Usage operating policy, adopted on October 11, 2026. It
-authorizes implementation and preparation. It does not authorize production
-activation, database changes, a Terraform apply, extension publication or an
-operational window. Each activation needs approval of its exact plan and window.
-There is no activation date until the gates below pass.
+This Usage operating policy was adopted on October 11, 2026. The dated October 24
+owner decision below supersedes its synthetic capacity prerequisite for one
+attended rollout. The other release, evidence and runtime safeguards remain in
+force. Implementation or preparation alone does not authorize production changes;
+each activation must have owner authority for its plan and window.
+
+## October 24 owner decision: attended weekend rollout
+
+On October 24, 2026, the owner rejected further Linux/campaign capacity testing as
+an option and explicitly chose **"Turn ON this weekend"**, with attended monitoring
+on Monday, October 26. This authorizes a reports-only normal Plan/review/Apply
+during October 24–25: set `CLASSPILOT_DIGITAL_USAGE_MODE=on`, retain
+`CLASSPILOT_USAGE_ROLLUP_MODE=on`, and preserve every other setting. It records
+authority to perform that guarded operation, not proof that it has run.
+
+For this rollout, completing the synthetic Linux/campaign path below is no longer
+a prerequisite. Preserve its original failed and canceled outcomes and keep
+`capacityAccepted: false`; this decision supplies no synthetic pass, capacity
+certification or acceptance for a different rollout. Do not restart that campaign
+to clear this prerequisite. The October 11 synthetic requirements below remain
+historical policy except for this specific owner change.
+
+The owner confirmed that Friday, October 23 classes ran from 09:15 to 15:45
+America/New_York. Usage ON completed at 09:05:34.0668367, before instruction began.
+That complete instructional window is accepted as the observation basis. Its
+schema-2 evidence contains the 15 actual normal hourly outcomes from 14:00Z through
+October 24 at 04:00Z, full-calendar finalized ledger proof, valid following-day
+live coverage and the retained-input numerical recount with independent replay.
+The rollout startup is separate history. Preserve the earlier calendar-schema
+refusal and never fill its missing pre-class hours with invented outcomes. Refresh
+the actual required inputs and revalidate with the real clock before Plan/Apply;
+the two-hour freshness limit is unchanged.
+
+Keep clean-main/origin identity, reviewed tooling and final-main CI, exact serving
+source/image compatibility, caller and RLS checks, private evidence, health and
+service stability, the existing capacity/scaling contract, protected clocks,
+leases/fences, drift checks and exact convergence/recovery. The existing aggregate
+USD 30 cap and frozen USD 15 runtime guard remain unchanged; estimates are not a
+bill or a hard AWS quota. This operation requires no source/image, schema,
+Terraform or extension deployment.
+
+Retain the measured guarded both-off completion and its original receipts; do not
+infer that recovery was never proven from an older pending status record. Maintain
+a fresh, reviewed both-off contingency for the actual serving pair through the
+attended period. Recheck inconclusive telemetry before action. The existing app
+error/slowness definitions and alarm thresholds are unchanged; missing telemetry,
+authentication or coverage alone does not authorize OFF. Keep the confirmed-error
+containment and notification rules below, the report walkthrough and daily
+finalization checks. Record the attended operator, owner-reachable route, Monday
+monitoring window and governed off authority in the private sitting record.
 
 The switches are global. Inventory every eligible active, ClassPilot-licensed
 production school, including its fleet/load, timezone, tracking policy and actual
@@ -55,7 +100,7 @@ summaries. Preserve every failed invocation and its original outcome. Performanc
 remediation requires its own reviewed change and refreshed affected acceptance;
 limits remain fixed.
 
-## Full synthetic gate
+## Historical October 11 synthetic gate
 
 Use the canonical profiles, ordering and closure rules in
 [release readiness](RELEASE_297_DEPLOY_READINESS.md). Run serially in declared quiet
@@ -112,7 +157,9 @@ After hours, approve the exact normal runtime manifest setting rollup `on` with
 reporting `off`, then Apply through
 [product runtime operations](PRODUCT_RUNTIME_CONFIG_OPERATIONS.md). Run each Apply
 in a durable logged process; verify exact API/worker task convergence and an actual
-successful worker computation. Finish before the watched day starts.
+successful worker computation. Finish before the watched observation starts:
+local midnight for calendar-day evidence, or the confirmed instructional start
+for instructional-day evidence.
 
 Rehearse the separately reviewed `-UsageOffContainment` both-off plan and measure
 its recovery duration. Preserve any initial failure even if recovery proves off.
@@ -123,13 +170,38 @@ after serving or capacity drift.
 
 ## Observation and incident response
 
-Watch at least one complete normal school day for every eligible school, every
-required hourly worker sample and the following-day finalization/live computation.
-Sample classroom and pool health every five minutes during 07:45–17:00 Eastern;
-inspect every hourly worker result, including overnight finalization. School-local
-day boundaries govern ledger evidence even when schools have different timezones.
+Watch at least one complete normal instructional day for every eligible school,
+every required hourly worker sample and the following-day finalization/live
+computation. Record the actual school-confirmed class start and end, successful
+Usage ON completion, attended observation bounds and confirmation reference.
+Usage must be ON before classes start and the attended observation must cover the
+entire class window. Sample classroom and pool health every five minutes throughout
+that window; inspect every hourly worker result, including overnight finalization.
+The existing calendar-day contract retains its 07:45–17:00 Eastern monitoring
+schedule. School-local day boundaries still govern the full ledger and numerical
+recount, even when the observation basis is instructional and schools have
+different timezones.
 An idle live hour need not advance the stored processed cutoff. Restart duplicates
 cannot replace a missing scheduler hour.
+
+Schema 1 remains the existing calendar-day contract. Schema 2 explicitly records
+an `instructionalWindow` for each watched school/date with `startedAt`, `endedAt`,
+`usageOnCompletedAt`, `observedFrom`, `observedThrough` and `confirmationReference`.
+All times are exact UTC instants within the stated school-local day, except Usage
+ON may precede that day. The recorded order must be Usage ON, observation start,
+class start, class end, observation end. The start and end must describe the whole
+normal instructional day confirmed by the school; an arbitrary short subset is
+not a complete day.
+
+For schema 2, require every UTC scheduler bucket from the first top-of-hour tick
+at or after class start through the first top-of-hour tick at or after the next
+local midnight, inclusive. Derive the exact bucket IDs in both the collector and
+activation guard and record them as `requiredHourlyBuckets`; `observedRuns` must
+equal their count. For a 09:15 Eastern start on October 23, 2026, these are the 15
+normal ticks from 14:00Z through October 24 at 04:00Z. A 09:01 rollout startup
+remains reviewed history and cannot fill one of those required buckets. Missing
+pre-class buckets do not invalidate instructional hourly coverage. Do not relabel
+15 actual ticks as 25 or synthesize absent outcomes.
 
 During the recorded authority window, apply guarded **both-off** and immediately
 notify the owner for any of these measured conditions:
@@ -139,7 +211,7 @@ notify the owner for any of these measured conditions:
 - Any pool-acquisition failure or pool-stalled transition.
 - Confirmed simultaneous monitoring loss across multiple students.
 
-Worker failures, missing hours, cleanup, exhausted/deferred work or an
+Worker failures, missing required hours, cleanup, exhausted/deferred work or an
 unrepresentative school day invalidate the observation. Resolve the cause and
 repeat it. A protected-window or unhealthy/unstable-service refusal enters
 incident response; it never permits an unlocked task-definition change. Unproven
@@ -181,9 +253,17 @@ not satisfy the existing input contract. The collector protects its own new
 outputs and refuses overwrite, without changing inputs or parent ACLs.
 
 The collector derives UTC hourly buckets from school-local days, including DST,
-and requires actual finalized watched-day ledger rows and valid following-day
-live rows. It hashes both input exports and binds them into the setter's existing
-schema-1 evidence, with a separate replay receipt. Missing/invalidated coverage,
+and the explicit instructional window for schema 2. It still reads the full
+calendar-day worker export through the following finalization hour and examines
+every returned record, including pre-class startups, raw failures, EMF failures
+and unsupported Usage events. Changing the qualifying bucket set never hides an
+actual error. Both contracts require actual finalized full-calendar watched-day
+ledger rows and valid following-day live rows. The full retained raw day and its
+tracking exclusions remain the numerical recount scope.
+
+The collector hashes the original exports and binds them into schema-1 calendar
+or schema-2 instructional evidence, with a separate replay receipt.
+Missing/invalidated coverage,
 failures, deferrals, exhausted budgets, malformed ledgers and stale evidence refuse
 collection. The second reviewer re-reads the original bytes and re-derives the
 evidence; a manually asserted `finalDayComplete` is insufficient. Repeat verification
@@ -221,7 +301,9 @@ finalized ledger proof, with its unavailable recount reason recorded separately.
 ## Switch 2 and completion
 
 Obtain mandatory ledger proof for every eligible school and an independent replay.
-Approve reporting-on separately. Pass the fresh schema-1 file using
+Reporting-on needs separate owner authority; the October 24 decision above supplies
+that authority for the stated weekend rollout. Review its exact normal plan and
+pass the fresh schema-1 or schema-2 file using
 `-UsageObservationEvidencePath` to normal Plan and Apply. Continue attended
 monitoring and governed off authority through the next normal school day at 17:00
 Eastern. Any incident invalidating evidence must be resolved before proceeding.

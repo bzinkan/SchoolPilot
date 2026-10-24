@@ -113,7 +113,7 @@ router.patch("/", ...adminAuth, async (req, res, next) => {
     const parsed = patchSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
-        error: parsed.error.errors[0]?.message || "Invalid settings",
+        error: parsed.error.issues[0]?.message || "Invalid settings",
         code: "GOPILOT_SETTINGS_INVALID",
       });
     }

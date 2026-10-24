@@ -95,7 +95,7 @@ router.get("/class-tools/history/:kind/:id", ...staffAuth, endpoint(async (req, 
 router.post("/class-tools/follow-up", ...staffAuth, endpoint(async (req, res) => {
   const scope = staffScope(req, res);
   const input = z.object({ kind: z.enum(["work_status", "answer"]), resourceId: toolId, targetStudentIds: z.array(toolId).min(1).max(500),
-    commandType: z.enum(["teacher-message", "open-tab"]), commandPayload: z.record(z.unknown()) }).strict().parse(req.body.data);
+    commandType: z.enum(["teacher-message", "open-tab"]), commandPayload: z.record(z.string(), z.unknown()) }).strict().parse(req.body.data);
   res.json(await sendToolsFollowUp(scope, input));
 }));
 router.post("/class-tools/routines", ...staffAuth, endpoint(async (req, res) => {

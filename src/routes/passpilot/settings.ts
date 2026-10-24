@@ -187,7 +187,7 @@ passpilotLegacySettingsCompatibilityRouter.patch("/", async (req, res, next) => 
     const parsed = legacyPatchSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
-        error: parsed.error.errors[0]?.message || "Invalid settings",
+        error: parsed.error.issues[0]?.message || "Invalid settings",
         code: "PASSPILOT_LEGACY_SETTINGS_INVALID",
       });
     }
@@ -252,7 +252,7 @@ router.patch("/", async (req, res, next) => {
     const parsed = patchSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
-        error: parsed.error.errors[0]?.message || "Invalid settings",
+        error: parsed.error.issues[0]?.message || "Invalid settings",
         code: "PASSPILOT_SETTINGS_INVALID",
       });
     }

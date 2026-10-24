@@ -87,7 +87,7 @@ const calendarHolidays = z.array(holidayId).max(CALENDAR_HOLIDAY_IDS.length)
   .refine(ids => new Set(ids).size === ids.length, "List each holiday once");
 const calendarLeadDays = z.number().int().min(0).max(MAX_CALENDAR_LEAD_DAYS);
 /** A start per holiday; null clears that holiday's start on a merge. */
-const calendarStarts = z.record(holidayId, calendarDate.nullable());
+const calendarStarts = z.partialRecord(holidayId, calendarDate.nullable());
 
 function isCalendarHolidayId(value: unknown): value is CalendarHolidayId {
   return typeof value === "string" && (CALENDAR_HOLIDAY_IDS as readonly string[]).includes(value);
