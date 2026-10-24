@@ -112,7 +112,9 @@ After hours, approve the exact normal runtime manifest setting rollup `on` with
 reporting `off`, then Apply through
 [product runtime operations](PRODUCT_RUNTIME_CONFIG_OPERATIONS.md). Run each Apply
 in a durable logged process; verify exact API/worker task convergence and an actual
-successful worker computation. Finish before the watched day starts.
+successful worker computation. Finish before the watched observation starts:
+local midnight for calendar-day evidence, or the confirmed instructional start
+for instructional-day evidence.
 
 Rehearse the separately reviewed `-UsageOffContainment` both-off plan and measure
 its recovery duration. Preserve any initial failure even if recovery proves off.
@@ -123,13 +125,38 @@ after serving or capacity drift.
 
 ## Observation and incident response
 
-Watch at least one complete normal school day for every eligible school, every
-required hourly worker sample and the following-day finalization/live computation.
-Sample classroom and pool health every five minutes during 07:45–17:00 Eastern;
-inspect every hourly worker result, including overnight finalization. School-local
-day boundaries govern ledger evidence even when schools have different timezones.
+Watch at least one complete normal instructional day for every eligible school,
+every required hourly worker sample and the following-day finalization/live
+computation. Record the actual school-confirmed class start and end, successful
+Usage ON completion, attended observation bounds and confirmation reference.
+Usage must be ON before classes start and the attended observation must cover the
+entire class window. Sample classroom and pool health every five minutes throughout
+that window; inspect every hourly worker result, including overnight finalization.
+The existing calendar-day contract retains its 07:45–17:00 Eastern monitoring
+schedule. School-local day boundaries still govern the full ledger and numerical
+recount, even when the observation basis is instructional and schools have
+different timezones.
 An idle live hour need not advance the stored processed cutoff. Restart duplicates
 cannot replace a missing scheduler hour.
+
+Schema 1 remains the existing calendar-day contract. Schema 2 explicitly records
+an `instructionalWindow` for each watched school/date with `startedAt`, `endedAt`,
+`usageOnCompletedAt`, `observedFrom`, `observedThrough` and `confirmationReference`.
+All times are exact UTC instants within the stated school-local day, except Usage
+ON may precede that day. The recorded order must be Usage ON, observation start,
+class start, class end, observation end. The start and end must describe the whole
+normal instructional day confirmed by the school; an arbitrary short subset is
+not a complete day.
+
+For schema 2, require every UTC scheduler bucket from the first top-of-hour tick
+at or after class start through the first top-of-hour tick at or after the next
+local midnight, inclusive. Derive the exact bucket IDs in both the collector and
+activation guard and record them as `requiredHourlyBuckets`; `observedRuns` must
+equal their count. For a 09:15 Eastern start on October 23, 2026, these are the 15
+normal ticks from 14:00Z through October 24 at 04:00Z. A 09:01 rollout startup
+remains reviewed history and cannot fill one of those required buckets. Missing
+pre-class buckets do not invalidate instructional hourly coverage. Do not relabel
+15 actual ticks as 25 or synthesize absent outcomes.
 
 During the recorded authority window, apply guarded **both-off** and immediately
 notify the owner for any of these measured conditions:
@@ -139,7 +166,7 @@ notify the owner for any of these measured conditions:
 - Any pool-acquisition failure or pool-stalled transition.
 - Confirmed simultaneous monitoring loss across multiple students.
 
-Worker failures, missing hours, cleanup, exhausted/deferred work or an
+Worker failures, missing required hours, cleanup, exhausted/deferred work or an
 unrepresentative school day invalidate the observation. Resolve the cause and
 repeat it. A protected-window or unhealthy/unstable-service refusal enters
 incident response; it never permits an unlocked task-definition change. Unproven
@@ -181,9 +208,17 @@ not satisfy the existing input contract. The collector protects its own new
 outputs and refuses overwrite, without changing inputs or parent ACLs.
 
 The collector derives UTC hourly buckets from school-local days, including DST,
-and requires actual finalized watched-day ledger rows and valid following-day
-live rows. It hashes both input exports and binds them into the setter's existing
-schema-1 evidence, with a separate replay receipt. Missing/invalidated coverage,
+and the explicit instructional window for schema 2. It still reads the full
+calendar-day worker export through the following finalization hour and examines
+every returned record, including pre-class startups, raw failures, EMF failures
+and unsupported Usage events. Changing the qualifying bucket set never hides an
+actual error. Both contracts require actual finalized full-calendar watched-day
+ledger rows and valid following-day live rows. The full retained raw day and its
+tracking exclusions remain the numerical recount scope.
+
+The collector hashes the original exports and binds them into schema-1 calendar
+or schema-2 instructional evidence, with a separate replay receipt.
+Missing/invalidated coverage,
 failures, deferrals, exhausted budgets, malformed ledgers and stale evidence refuse
 collection. The second reviewer re-reads the original bytes and re-derives the
 evidence; a manually asserted `finalDayComplete` is insufficient. Repeat verification
@@ -221,7 +256,7 @@ finalized ledger proof, with its unavailable recount reason recorded separately.
 ## Switch 2 and completion
 
 Obtain mandatory ledger proof for every eligible school and an independent replay.
-Approve reporting-on separately. Pass the fresh schema-1 file using
+Approve reporting-on separately. Pass the fresh schema-1 or schema-2 file using
 `-UsageObservationEvidencePath` to normal Plan and Apply. Continue attended
 monitoring and governed off authority through the next normal school day at 17:00
 Eastern. Any incident invalidating evidence must be resolved before proceeding.

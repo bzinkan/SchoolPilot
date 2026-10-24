@@ -347,6 +347,39 @@ function Assert-ProductPreconditions {
     return Assert-DailyUsagePromotionEvidence -EvidencePath $EvidencePath -Digest $Digest -RepositoryRoot $RepositoryRoot
 }
 
+function Get-UsageInstructionalHourlyBuckets {
+    param([DateTimeOffset]$DayStart, [DateTimeOffset]$DayEnd, $Window)
+    Assert-ProductExactProperties $Window @('startedAt', 'endedAt', 'usageOnCompletedAt', 'observedFrom', 'observedThrough', 'confirmationReference') 'Usage instructional window'
+    $times = @{}
+    foreach ($name in @('startedAt', 'endedAt', 'usageOnCompletedAt', 'observedFrom', 'observedThrough')) {
+        if ($Window.$name -isnot [string] -or $Window.$name -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$') {
+            throw 'Usage instructional window times must be exact UTC timestamp strings.'
+        }
+        try { $times[$name] = [DateTimeOffset]::Parse($Window.$name, [Globalization.CultureInfo]::InvariantCulture) }
+        catch { throw 'Usage instructional window times must be valid UTC timestamps.' }
+    }
+    if ($Window.confirmationReference -isnot [string] -or $Window.confirmationReference -cnotmatch '^[a-zA-Z0-9_./:-]{1,160}$' -or
+        $times.observedFrom -lt $DayStart -or $times.usageOnCompletedAt -gt $times.observedFrom -or
+        $times.observedFrom -gt $times.startedAt -or $times.startedAt -ge $times.endedAt -or
+        $times.endedAt -gt $times.observedThrough -or $times.observedThrough -gt $DayEnd) {
+        throw 'Usage instructional window must bind confirmed classes, prior Usage activation and complete attended observation within the local day.'
+    }
+    # Integer ticks preserve sub-millisecond boundaries: a start one tick after
+    # a UTC hour requires the next scheduler hour, just as the collector does.
+    $hours = @()
+    foreach ($time in @($times.startedAt, $DayEnd)) {
+        $remainder = [long]0
+        $hour = [Math]::DivRem([long]($time.UtcTicks - [DateTimeOffset]::UnixEpoch.UtcTicks), [TimeSpan]::TicksPerHour, [ref]$remainder)
+        if ($remainder -gt 0) { $hour++ }
+        $hours += $hour
+    }
+    $buckets = [Collections.Generic.List[string]]::new()
+    for ($hour = $hours[0]; $hour -le $hours[1]; $hour++) {
+        $buckets.Add([DateTimeOffset]::FromUnixTimeSeconds($hour * 3600).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture))
+    }
+    return ,$buckets.ToArray()
+}
+
 function Assert-UsageObservationEvidence {
     param([string]$EvidencePath, [string]$Digest, [string]$AppSha, [string]$RepositoryRoot)
     if (-not $EvidencePath) { throw 'Activating Digital Usage requires -UsageObservationEvidencePath recording a complete clean school day.' }
@@ -354,7 +387,7 @@ function Assert-UsageObservationEvidence {
     $snapshot = Read-StrictJsonSnapshot -Path $path
     $e = $snapshot.Value
     Assert-ProductExactProperties $e @('schemaVersion', 'reviewedAt', 'reviewReference', 'appSha', 'imageDigest', 'schoolDays') 'Usage observation evidence'
-    if (-not (Test-IsJsonInteger $e.schemaVersion) -or $e.schemaVersion -ne 1) { throw 'Usage observation evidence must use schemaVersion 1.' }
+    if (-not (Test-IsJsonInteger $e.schemaVersion) -or $e.schemaVersion -notin @(1, 2)) { throw 'Usage observation evidence must use schemaVersion 1 or 2.' }
     $now = [DateTimeOffset]::UtcNow
     if ($e.reviewedAt -isnot [string]) { throw 'Usage observation review time must be an exact timestamp.' }
     [void](Get-FreshEvidenceTimestamp -Value $e.reviewedAt -Label 'Usage observation evidence' -Now $now)
@@ -365,8 +398,10 @@ function Assert-UsageObservationEvidence {
     if ($e.schoolDays -isnot [array] -or @($e.schoolDays).Count -lt 1) { throw 'Usage observation evidence needs at least one complete school day.' }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($day in @($e.schoolDays)) {
-        Assert-ProductExactProperties $day @('schoolId', 'date', 'timeZone', 'startedAt', 'endedAt', 'coverageCheckedAt', 'observedRuns',
-            'failedSchools', 'deferredDays', 'budgetExhausted', 'maxRunDurationMs', 'finalDayComplete', 'currentDayComplete', 'logSha256', 'coverageSha256') 'Usage observation school day'
+        $dayFields = @('schoolId', 'date', 'timeZone', 'startedAt', 'endedAt', 'coverageCheckedAt', 'observedRuns',
+            'failedSchools', 'deferredDays', 'budgetExhausted', 'maxRunDurationMs', 'finalDayComplete', 'currentDayComplete', 'logSha256', 'coverageSha256')
+        if ($e.schemaVersion -eq 2) { $dayFields += @('instructionalWindow', 'requiredHourlyBuckets') }
+        Assert-ProductExactProperties $day $dayFields 'Usage observation school day'
         $date = [DateTime]::MinValue
         if ($day.schoolId -isnot [string] -or $day.schoolId -cnotmatch $script:ProductSchoolIdPattern -or
             $day.date -isnot [string] -or $day.date -cnotmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' -or
@@ -390,7 +425,23 @@ function Assert-UsageObservationEvidence {
             throw 'Usage observation must cover the full recent school-local day and its following hourly finalization.'
         }
         $requiredRuns = [int][Math]::Ceiling(($end - $start).TotalHours) + 1
-        if (-not (Test-IsJsonInteger $day.observedRuns) -or $day.observedRuns -lt $requiredRuns -or
+        if ($e.schemaVersion -eq 2) {
+            $requiredBuckets = Get-UsageInstructionalHourlyBuckets $start $end $day.instructionalWindow
+            if ($day.requiredHourlyBuckets -isnot [array] -or $day.requiredHourlyBuckets.Count -ne $requiredBuckets.Count) {
+                throw 'Usage instructional hourly buckets must exactly match the derived UTC scheduler hours.'
+            }
+            for ($index = 0; $index -lt $requiredBuckets.Count; $index++) {
+                if ($day.requiredHourlyBuckets[$index] -isnot [string] -or $day.requiredHourlyBuckets[$index] -cne $requiredBuckets[$index]) {
+                    throw 'Usage instructional hourly buckets must exactly match the ordered canonical UTC scheduler hours.'
+                }
+            }
+            $requiredRuns = $requiredBuckets.Count
+        }
+        $runCountInvalid = -not (Test-IsJsonInteger $day.observedRuns)
+        if (-not $runCountInvalid) {
+            $runCountInvalid = if ($e.schemaVersion -eq 2) { $day.observedRuns -ne $requiredRuns } else { $day.observedRuns -lt $requiredRuns }
+        }
+        if ($runCountInvalid -or
             -not (Test-IsJsonInteger $day.failedSchools) -or $day.failedSchools -ne 0 -or
             -not (Test-IsJsonInteger $day.deferredDays) -or $day.deferredDays -ne 0 -or
             $day.budgetExhausted -isnot [bool] -or $day.budgetExhausted -or

@@ -19,6 +19,8 @@ const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$/;
 const COUNTERS = ['schools', 'finalizedDays', 'recomputedDays', 'unchangedDays', 'retentionSkippedDays', 'deferredDays', 'failedSchools', 'rowCount', 'durationMs'];
 const IDENTITY_KEYS = ['appSha', 'imageDigest', 'apiArn', 'workerArn'];
 const SPEC_KEYS = ['schemaVersion', 'serving', 'workerLogStreams', 'startedAt', 'endedAt', 'reviewedAt', 'reviewReference', 'schoolDays'];
+const INSTRUCTIONAL_WINDOW_KEYS = ['startedAt', 'endedAt', 'usageOnCompletedAt', 'observedFrom', 'observedThrough', 'confirmationReference'];
+const REVIEW_REFERENCE = /^[a-zA-Z0-9_./:-]{1,160}$/;
 const ROW_KEYS = ['schoolId', 'date', 'dayStartAt', 'dayEndAt', 'processedThrough', 'isFinal', 'computedAt'];
 const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 
@@ -84,6 +86,41 @@ export function requiredHourlyBuckets(date, zone) {
   return buckets;
 }
 
+// Preserve the supplied UTC precision for ordering and the first required tick.
+// Date.parse truncates fractions beyond milliseconds, including just after :00.
+function utcTicks(value, label) {
+  timestamp(value, label);
+  const fraction = value.slice(19, -1).replace(/^\./, '').padEnd(7, '0');
+  return BigInt(Date.parse(`${value.slice(0, 19)}Z`)) * 10_000n + BigInt(fraction);
+}
+
+/** Explicit human-confirmed class window and actual Usage/observation boundaries. */
+export function validateInstructionalWindow(date, zone, window) {
+  exact(window, INSTRUCTIONAL_WINDOW_KEYS, 'instructionalWindow');
+  const { start, end } = localDayBounds(date, zone);
+  const values = Object.fromEntries(INSTRUCTIONAL_WINDOW_KEYS.slice(0, -1).map(key => [key, utcTicks(window[key], `instructionalWindow.${key}`)]));
+  assert(typeof window.confirmationReference === 'string' && REVIEW_REFERENCE.test(window.confirmationReference), 'Invalid instructionalWindow.confirmationReference');
+  assert(BigInt(start) * 10_000n <= values.observedFrom
+    && values.usageOnCompletedAt <= values.observedFrom
+    && values.observedFrom <= values.startedAt
+    && values.startedAt < values.endedAt
+    && values.endedAt <= values.observedThrough
+    && values.observedThrough <= BigInt(end) * 10_000n,
+  'Instructional window requires Usage ON and observation before all classes, observation through class end, and school-local day bounds');
+  return values;
+}
+
+/** Normal UTC ticks from class start through local midnight, including finalization. */
+export function requiredInstructionalHourlyBuckets(date, zone, window) {
+  const values = validateInstructionalWindow(date, zone, window);
+  const hourTicks = BigInt(HOUR) * 10_000n;
+  const first = Number(values.startedAt / hourTicks + (values.startedAt % hourTicks > 0n ? 1n : 0n)) * HOUR;
+  const final = Math.ceil(localDayBounds(date, zone).end / HOUR) * HOUR;
+  const buckets = [];
+  for (let bucket = first; bucket <= final; bucket += HOUR) buckets.push(bucket);
+  return buckets;
+}
+
 /** Include any leading UTC tick needed by the setter's ceil(dayHours)+1 count. */
 export function requiredObservationExportWindow(schoolDays) {
   array(schoolDays, 'Export-window school days', MAX_SCHOOLS);
@@ -141,22 +178,23 @@ function sameIdentity(actual, expected, label) {
   assert(IDENTITY_KEYS.every(key => actual[key] === expected[key]), `${label} does not match the exact serving identity`);
 }
 function validateSpec(spec) {
-  exact(spec, SPEC_KEYS, 'spec'); assert(spec.schemaVersion === 1, 'spec schemaVersion must be 1'); identity(spec.serving, 'spec.serving');
+  exact(spec, SPEC_KEYS, 'spec'); assert(spec.schemaVersion === 1 || spec.schemaVersion === 2, 'spec schemaVersion must be 1 or 2'); identity(spec.serving, 'spec.serving');
   array(spec.workerLogStreams, 'workerLogStreams', 128);
   assert(new Set(spec.workerLogStreams).size === spec.workerLogStreams.length && spec.workerLogStreams.every(stream => typeof stream === 'string' && /^scheduler-worker\/scheduler-worker\/[0-9a-f]{32}$/.test(stream)), 'workerLogStreams must be distinct exact scheduler-worker task streams');
   timestamp(spec.startedAt, 'startedAt'); timestamp(spec.endedAt, 'endedAt');
   assert(Date.parse(spec.endedAt) > Date.parse(spec.startedAt) && Date.parse(spec.endedAt) - Date.parse(spec.startedAt) <= 32 * DAY, 'Observation export window must be ordered and bounded to 32 days');
   assert(typeof spec.reviewedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/.test(spec.reviewedAt), 'reviewedAt must use the setter .NET roundtrip UTC format with seven fractional digits');
   timestamp(spec.reviewedAt, 'reviewedAt');
-  assert(typeof spec.reviewReference === 'string' && /^[a-zA-Z0-9_./:-]{1,160}$/.test(spec.reviewReference), 'Invalid reviewReference');
+  assert(typeof spec.reviewReference === 'string' && REVIEW_REFERENCE.test(spec.reviewReference), 'Invalid reviewReference');
   array(spec.schoolDays, 'schoolDays', MAX_SCHOOLS);
   const schools = new Set();
   for (const day of spec.schoolDays) {
-    exact(day, ['schoolId', 'date', 'timeZone'], 'schoolDays entry');
+    exact(day, ['schoolId', 'date', 'timeZone', ...(spec.schemaVersion === 2 ? ['instructionalWindow'] : [])], 'schoolDays entry');
     assert(typeof day.schoolId === 'string' && UUID.test(day.schoolId), 'schoolId must be a canonical UUID');
     assert(!schools.has(day.schoolId), 'Provide exactly one watched school day per eligible school'); schools.add(day.schoolId);
     canonicalDate(day.date, 'Watched date'); timeZone(day.timeZone);
     assert(![0, 6].includes(new Date(`${day.date}T00:00:00Z`).getUTCDay()), 'Watched school dates must be weekdays');
+    if (spec.schemaVersion === 2) validateInstructionalWindow(day.date, day.timeZone, day.instructionalWindow);
   }
   const exportWindow = requiredObservationExportWindow(spec.schoolDays);
   assert(Date.parse(spec.startedAt) <= Date.parse(exportWindow.startedAt), `Export must start before the whole school-local day and its first required UTC scheduler bucket: ${exportWindow.startedAt}`);
@@ -253,7 +291,7 @@ function readRuns(logExport, spec, eligibleCount) {
 }
 
 /**
- * Exact-byte inputs -> the existing setter's schema 1 plus a replay receipt.
+ * Exact-byte inputs -> versioned calendar/instructional evidence plus a replay receipt.
  * The caller supplies now only for deterministic testing/replay; CLI defaults to UTC now.
  */
 export function collectUsageObservation({ specBytes, logBytes, ledgerBytes, recounts = [], recountIndexBytes, now = new Date() }) {
@@ -304,7 +342,9 @@ export function collectUsageObservation({ specBytes, logBytes, ledgerBytes, reco
     const rawDayWhollyRetained = start >= rawCutoff;
     assert(day.date >= aggregateRetainedFrom, 'Watched aggregate ledger day is expired under the actual school-local retention cutoff');
     assert(!rawDayWhollyRetained || numerical.has(`${day.schoolId}/${day.date}`), `Wholly retained watched raw day requires an actual passed recount: ${day.schoolId}/${day.date}; acquire the bounded retained-input context and result exports`);
-    const buckets = requiredHourlyBuckets(day.date, day.timeZone);
+    const buckets = spec.schemaVersion === 2
+      ? requiredInstructionalHourlyBuckets(day.date, day.timeZone, day.instructionalWindow)
+      : requiredHourlyBuckets(day.date, day.timeZone);
     const samples = [];
     for (const bucket of buckets) {
       assert(runs.has(bucket), `Missing hourly bucket ${new Date(bucket).toISOString()} for ${day.schoolId}/${day.date}`);
@@ -335,9 +375,13 @@ export function collectUsageObservation({ specBytes, logBytes, ledgerBytes, reco
       // These are derived from the actual school/day ledger predicates above,
       // never from fleet log counts or the existence of aggregate rows.
       finalDayComplete: true, currentDayComplete: true, logSha256, coverageSha256,
+      ...(spec.schemaVersion === 2 ? {
+        instructionalWindow: { ...day.instructionalWindow },
+        requiredHourlyBuckets: buckets.map(bucket => new Date(bucket).toISOString()),
+      } : {}),
     };
   });
-  const evidence = { schemaVersion: 1, reviewedAt: spec.reviewedAt, reviewReference: spec.reviewReference, appSha: spec.serving.appSha, imageDigest: spec.serving.imageDigest, schoolDays };
+  const evidence = { schemaVersion: spec.schemaVersion, reviewedAt: spec.reviewedAt, reviewReference: spec.reviewReference, appSha: spec.serving.appSha, imageDigest: spec.serving.imageDigest, schoolDays };
   const evidenceBytes = jsonBytes(evidence);
   const receipt = {
     schemaVersion: 1, tool: 'collect-classpilot-usage-observation', generatedAt: new Date(nowMs).toISOString(), serving: spec.serving,
@@ -415,8 +459,10 @@ const HELP = `Offline ClassPilot usage observation collector (no production/netw
 
 const OPTIONAL_HELP = `\nRetained-input numerical checks (REQUIRED while the whole raw watched day remains retained):\n  node scripts/classpilot-usage-retained-recount.mjs --help\n Generate recount-input-sql for one watched school; capture actual private context JSON. Generate recount-sql using that original context and exact serving source; separately capture its actual private result JSON. A generated query alone is unavailable evidence. Neither script executes SQL.\n recount-index = {schemaVersion:1,entries:[{contextPath:<absolute private original context JSON path>,resultPath:<absolute private original result JSON path>}]}. Add --recount-index to BOTH collect and verify. Exact context/result/index bytes are hashed; identities, school/date/timezone, context/policy/exclusion hashes, actual raw-retention completeness, bounded row count and equal seconds/heartbeat totals are revalidated. A wholly retained raw watched day REQUIRES its actual passed recount; missing exports block collection. Only genuinely partly purged raw days keep explicit unavailable reasons. Mismatches refuse collection. These results reread retained inputs using the canonical attribution algorithm and do not establish independent reference-algorithm proof or recover deleted/expired history.\n`;
 
+const INSTRUCTIONAL_HELP = `\nSchema 2 instructional-day readiness (explicit opt-in; schema 1 calendar behavior is unchanged):\n Use schemaVersion:2 with the same top-level spec keys. EVERY schoolDays entry additionally requires instructionalWindow:{startedAt,endedAt,usageOnCompletedAt,observedFrom,observedThrough,confirmationReference}. All five timestamps are exact UTC; confirmationReference uses the same safe provenance-id syntax as reviewReference and records the human-confirmed class window. Require local midnight <= observedFrom, Usage ON completed <= observedFrom <= class start < class end <= observedThrough <= next midnight. The collector does not infer classes or observation boundaries from logs.\n Required clean UTC scheduler ticks run from ceil(class start/hour) through ceil(next local midnight/hour), inclusive; exported requiredInstructionalHourlyBuckets(date,timeZone,instructionalWindow) derives them. A 09:15 EDT (13:15UTC) class start requires the 14UTC tick, not the earlier rollout startup. All returned records, including preclass/startup records, retain every counter/error check. Full calendar log export, finalization-hour export end, final and next-day live ledger, retained numerical recount, source identity, freshness, private paths and exact-byte replay remain required. Evidence schema 2 adds the exact instructionalWindow and derived ISO requiredHourlyBuckets to each school day; observedRuns is the exact derived count. This readiness evidence never activates reports.\n`;
+
 async function main(args) {
-  if (args.length === 0 || args.includes('--help') || args.includes('-h')) { process.stdout.write(HELP + OPTIONAL_HELP); return; }
+  if (args.length === 0 || args.includes('--help') || args.includes('-h')) { process.stdout.write(HELP + INSTRUCTIONAL_HELP + OPTIONAL_HELP); return; }
   const [command, ...rest] = args, options = {};
   assert(['collect', 'verify', 'ledger-sql'].includes(command), 'Unknown command; use --help');
   for (let index = 0; index < rest.length; index += 2) {

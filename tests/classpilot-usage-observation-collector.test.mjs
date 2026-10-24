@@ -12,6 +12,7 @@ import {
   collectUsageObservation,
   localDayBounds,
   requiredHourlyBuckets,
+  requiredInstructionalHourlyBuckets,
   requiredObservationExportWindow,
   sha256,
   verifyUsageObservation,
@@ -92,6 +93,129 @@ function refused(change, pattern, options) {
   const f = fixture(options); change(f);
   assert.throws(() => collect(f), pattern);
 }
+
+function instructionalFixture(options) {
+  const f = fixture(options), day = f.spec.schoolDays[0];
+  f.spec.schemaVersion = 2;
+  day.instructionalWindow = {
+    startedAt: `${day.date}T13:15:00.000Z`, endedAt: `${day.date}T19:45:00.000Z`,
+    usageOnCompletedAt: `${day.date}T13:05:34.0668367Z`,
+    observedFrom: `${day.date}T13:06:00.000Z`, observedThrough: `${day.date}T20:33:00.000Z`,
+    confirmationReference: 'human/confirmed-class-start-and-dismissal',
+  };
+  // Keep the real rollout-hour record for review, but it cannot fill 14UTC.
+  f.logs.events = f.logs.events.filter(event => event.timestamp >= Date.parse(`${day.date}T13:00:00Z`));
+  f.logs.events[0].timestamp = Date.parse(`${day.date}T13:01:32.352Z`);
+  return f;
+}
+
+test('schema2 derives instructional ticks while schema1 retains its complete calendar requirement', () => {
+  const f = instructionalFixture(), raw = input(f), result = collect(f), day = result.evidence.schoolDays[0];
+  assert.equal(result.evidence.schemaVersion, 2);
+  assert.equal(day.observedRuns, 15);
+  assert.equal(f.logs.events.length, 16);
+  assert.deepEqual(day.instructionalWindow, f.spec.schoolDays[0].instructionalWindow);
+  assert.equal(day.requiredHourlyBuckets[0], '2026-10-09T14:00:00.000Z');
+  assert.equal(day.requiredHourlyBuckets.at(-1), '2026-10-10T04:00:00.000Z');
+  assert.equal(day.requiredHourlyBuckets.length, day.observedRuns);
+  assert.equal(result.receipt.checks[0].exportedSamples, 15);
+  assert.equal(verifyUsageObservation({ ...raw, ...result }).verified, true);
+  assert.deepEqual(result.evidenceBytes, collect(f).evidenceBytes);
+  f.spec.schemaVersion = 1; delete f.spec.schoolDays[0].instructionalWindow;
+  assert.throws(() => collect(f), /Missing hourly bucket 2026-10-09T04:00:00/);
+  const calendar = collect(fixture()).evidence.schoolDays[0];
+  assert.equal(calendar.observedRuns, 25);
+  assert.equal(Object.hasOwn(calendar, 'instructionalWindow'), false);
+  assert.equal(Object.hasOwn(calendar, 'requiredHourlyBuckets'), false);
+});
+
+test('schema2 refuses late activation, partial class observation and unconfirmed or ambiguous windows', () => {
+  const changes = [
+    window => { window.usageOnCompletedAt = '2026-10-09T13:15:00.0000001Z'; },
+    window => { window.observedFrom = '2026-10-09T13:15:00.0000001Z'; },
+    window => { window.observedThrough = '2026-10-09T19:44:59.9999999Z'; },
+    window => { window.observedFrom = '2026-10-09T03:59:59.999Z'; },
+    window => { window.observedThrough = '2026-10-10T04:00:00.0000001Z'; },
+    window => { window.endedAt = window.startedAt; },
+  ];
+  for (const change of changes) {
+    const f = instructionalFixture(); change(f.spec.schoolDays[0].instructionalWindow);
+    assert.throws(() => collect(f), /Instructional window requires/);
+  }
+  const invalid = [
+    window => { delete window.confirmationReference; },
+    window => { window.confirmationReference = 'unreviewed class window'; },
+    window => { window.startedAt = '2026-10-09T09:15:00-04:00'; },
+    window => { window.startedAt = '2026-02-30T13:15:00Z'; },
+    window => { window.inferred = true; },
+  ];
+  for (const change of invalid) {
+    const f = instructionalFixture(); change(f.spec.schoolDays[0].instructionalWindow);
+    assert.throws(() => collect(f), /exactly|confirmationReference|exact UTC|real UTC/);
+  }
+  const missing = instructionalFixture(); delete missing.spec.schoolDays[0].instructionalWindow;
+  assert.throws(() => collect(missing), /exactly/);
+});
+
+test('schema2 cannot fill a missing instructional tick with startup or duplicates and checks dirty preclass records', () => {
+  for (const bucket of ['2026-10-09T14:00:00.000Z', '2026-10-09T23:00:00.000Z', '2026-10-10T04:00:00.000Z']) {
+    const missing = instructionalFixture(), deadline = new Date(Date.parse(bucket) + 25 * 60_000).toISOString();
+    missing.logs.events = missing.logs.events.filter(event => JSON.parse(event.message).deadline !== deadline);
+    missing.logs.events.push({ ...missing.logs.events[0], eventId: 'another-clean-startup' });
+    assert.throws(() => collect(missing), error => error.message.includes(`Missing hourly bucket ${bucket}`));
+  }
+  for (const message of [null, '[ClassPilot] Monitored Browser Time rollup failed', JSON.stringify({ UsageRollupFailedSchools: 1 })]) {
+    const dirty = instructionalFixture();
+    if (message) dirty.logs.events[0].message = message;
+    else mutateSample(dirty, 0, sample => { sample.failedSchools = 1; });
+    assert.throws(() => collect(dirty), /failures|Worker failure/);
+  }
+});
+
+test('instructional bucket derivation preserves UTC DST ticks and fractions smaller than a millisecond', () => {
+  const window = (startedAt, endedAt, observedFrom = startedAt, observedThrough = endedAt) => ({
+    startedAt, endedAt, usageOnCompletedAt: observedFrom, observedFrom, observedThrough, confirmationReference: 'human/class-window',
+  });
+  const fall = requiredInstructionalHourlyBuckets('2026-11-01', 'America/New_York', window('2026-11-01T04:15:00Z', '2026-11-01T20:45:00Z'));
+  assert.equal(fall.length, 25);
+  assert.equal(new Set(fall).size, fall.length);
+  assert.ok(fall.includes(Date.parse('2026-11-01T05:00:00Z')) && fall.includes(Date.parse('2026-11-01T06:00:00Z')));
+  const spring = requiredInstructionalHourlyBuckets('2026-03-08', 'America/New_York', window('2026-03-08T06:15:00Z', '2026-03-08T19:45:00Z'));
+  assert.equal(spring.length, 22);
+  assert.equal(spring[0], Date.parse('2026-03-08T07:00:00Z'));
+  const fractional = localDayBounds('2026-10-04', 'Australia/Lord_Howe');
+  const lordHowe = requiredInstructionalHourlyBuckets('2026-10-04', 'Australia/Lord_Howe', window(new Date(fractional.start + HOUR / 4).toISOString(), new Date(fractional.end - HOUR).toISOString()));
+  assert.equal(lordHowe[0], Math.ceil((fractional.start + HOUR / 4) / HOUR) * HOUR);
+  assert.equal(lordHowe.at(-1), Math.ceil(fractional.end / HOUR) * HOUR);
+  const exact = window('2026-10-09T14:00:00Z', '2026-10-09T19:45:00Z');
+  assert.equal(requiredInstructionalHourlyBuckets('2026-10-09', 'America/New_York', exact)[0], Date.parse('2026-10-09T14:00:00Z'));
+  exact.startedAt = '2026-10-09T14:00:00.0000001Z';
+  assert.equal(requiredInstructionalHourlyBuckets('2026-10-09', 'America/New_York', exact)[0], Date.parse('2026-10-09T15:00:00Z'));
+});
+
+test('schema2 retains full calendar export, final/live ledger, numerical, source, freshness and replay guards', () => {
+  const cases = [
+    [f => { f.spec.startedAt = '2026-10-09T13:00:00Z'; }, /whole school-local day/],
+    [f => { f.spec.endedAt = '2026-10-10T04:59:59.999Z'; }, /following finalization hour/],
+    [f => { f.ledger.days[0].isFinal = false; }, /final\/live state/],
+    [f => { f.ledger.days.pop(); }, /Missing or invalidated/],
+    [f => { f.ledger.serving.appSha = 'c'.repeat(40); }, /exact serving identity/],
+    [f => { f.now = new Date(f.now.getTime() + 3 * HOUR); }, /Review timestamp is stale/],
+    [f => { f.ledger.capturedAt = '2026-10-10T04:59:59.999Z'; }, /predates the observation/],
+    [f => { f.ledger.schools[0].retentionHours = 720; }, /requires an actual passed recount/],
+  ];
+  for (const [change, pattern] of cases) { const f = instructionalFixture(); change(f); assert.throws(() => collect(f), pattern); }
+  const f = instructionalFixture(), recount = recountFixture(f);
+  const raw = { ...input(f), recounts: [{ contextBytes: recount.contextBytes, resultBytes: recount.resultBytes }] };
+  const result = collectUsageObservation(raw);
+  assert.equal(result.receipt.numericRecount.status, 'retained_input_checks_passed');
+  assert.equal(verifyUsageObservation({ ...raw, ...result }).verified, true);
+  recount.result.persistedSeconds++;
+  assert.throws(() => collectUsageObservation({ ...raw, recounts: [{ contextBytes: recount.contextBytes, resultBytes: bytes(recount.result) }] }), /does not match persisted totals/);
+  assert.throws(() => verifyUsageObservation({ ...raw, ...result, now: new Date(f.now.getTime() + 3 * HOUR) }), /Review timestamp is stale/);
+  const changed = structuredClone(f.spec); changed.schoolDays[0].instructionalWindow.confirmationReference = 'human/different-confirmation';
+  assert.throws(() => verifyUsageObservation({ ...raw, ...result, specBytes: bytes(changed) }), /Evidence bytes|input bytes changed/);
+});
 
 test('actual zero-row samples + successful ledger produce deterministic setter schema 1', () => {
   const f = fixture(), result = collect(f);

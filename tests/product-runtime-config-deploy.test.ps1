@@ -291,6 +291,29 @@ function New-TestUsageObservation {
             finalDayComplete = $true; currentDayComplete = $true; logSha256 = ('c' * 64); coverageSha256 = ('d' * 64)
         }) }
 }
+function New-TestInstructionalUsageObservation {
+    $evidence = New-TestUsageObservation
+    $evidence.schemaVersion = 2
+    $day = $evidence.schoolDays[0]
+    $date = [DateTime]::ParseExact($day.date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    $zone = [TimeZoneInfo]::FindSystemTimeZoneById($day.timeZone)
+    $classesStart = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date.AddHours(9).AddMinutes(15), [DateTimeKind]::Unspecified), $zone)
+    $classesEnd = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date.AddHours(15).AddMinutes(45), [DateTimeKind]::Unspecified), $zone)
+    $window = [pscustomobject]@{
+        startedAt = $classesStart.ToString('o'); endedAt = $classesEnd.ToString('o')
+        usageOnCompletedAt = $classesStart.AddMinutes(-10).ToString('o')
+        observedFrom = $classesStart.ToString('o'); observedThrough = $classesEnd.ToString('o')
+        confirmationReference = 'human/confirmed-full-class-day'
+    }
+    # New York's whole-hour offset means 10:00 local is the first scheduled
+    # tick after 09:15 classes; include all 15 normal ticks through midnight.
+    $firstTick = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date.AddHours(10), [DateTimeKind]::Unspecified), $zone)
+    $buckets = @(0..14 | ForEach-Object { $firstTick.AddHours($_).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture) })
+    $day | Add-Member instructionalWindow $window
+    $day | Add-Member requiredHourlyBuckets $buckets
+    $day.observedRuns = 15
+    return $evidence
+}
 function Write-TestEvidence($Evidence) {
     $path = Join-Path $script:TestDirectory ('evidence-' + [Guid]::NewGuid().ToString('N') + '.json')
     Write-SanitizedJson $path $Evidence
@@ -594,6 +617,73 @@ try {
     Assert-Condition ($null -eq (Get-ServingState 'Api')['CLASSPILOT_DIGITAL_USAGE_MODE']) 'Observation-gated activation rollback must restore reporting off.'
     Reset-ProductMock
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ PASSPILOT_RULES_MODE = 'off' }) $null $usageObservationPath } 'only to Digital Usage' 'Unrelated plans must refuse observation evidence.'
+
+    # Schema 2 changes only the qualifying scheduler window. Full calendar-day
+    # exports, source/freshness, all error counters and final/live proof remain.
+    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'
+    $instructional = New-TestInstructionalUsageObservation
+    $instructionalPath = Write-TestEvidence $instructional
+    $instructionalPlan = New-TestProductPlan $usageConfig $null $instructionalPath
+    Assert-Condition ($instructionalPlan.plan.usageObservationEvidence.sha256 -ceq (Get-FileSha256 $instructionalPath)) 'Instructional acceptance must bind the exact schema-2 evidence bytes.'
+    Assert-NoMutation 'Instructional evidence planning remains read-only.'
+    $legacy = New-TestUsageObservation; $legacy.schoolDays[0].observedRuns = 15
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $legacy) } 'hourly samples' 'Schema 1 must still require every calendar-day tick.'
+    $legacy = New-TestInstructionalUsageObservation; $legacy.schemaVersion = 1
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $legacy) } 'must contain exactly' 'Schema 1 must not silently accept instructional fields.'
+    foreach ($change in @(
+            { param($w) $w.PSObject.Properties.Remove('observedFrom') },
+            { param($w) $w | Add-Member optionalOverride $true },
+            { param($w) $w.startedAt = $w.startedAt.Replace('Z', '+00:00') },
+            { param($w) $w.usageOnCompletedAt = ([DateTimeOffset]::Parse($w.observedFrom).AddTicks(1)).ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'") },
+            { param($w) $w.observedFrom = $w.endedAt },
+            { param($w) $w.startedAt = $w.endedAt },
+            { param($w) $w.observedThrough = $w.startedAt },
+            { param($w) $w.confirmationReference = 'unconfirmed class day' })) {
+        $invalid = New-TestInstructionalUsageObservation; & $change $invalid.schoolDays[0].instructionalWindow
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'instructional window' 'Unconfirmed, partial, late-activation or malformed class windows must refuse.'
+    }
+    $invalid = New-TestInstructionalUsageObservation
+    $invalid.schoolDays[0].instructionalWindow.observedFrom = ([DateTimeOffset]::Parse($invalid.schoolDays[0].startedAt).AddTicks(-1)).ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'")
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'instructional window' 'Attended observation cannot start outside the watched local date.'
+    $invalid = New-TestInstructionalUsageObservation
+    $invalid.schoolDays[0].instructionalWindow.observedThrough = ([DateTimeOffset]::Parse($invalid.schoolDays[0].endedAt)).ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'")
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'instructional window' 'Class observation cannot extend into the following local date.'
+    foreach ($change in @(
+            { param($d) $d.requiredHourlyBuckets = @($d.requiredHourlyBuckets | Select-Object -Skip 1) },
+            { param($d) $d.requiredHourlyBuckets[1] = $d.requiredHourlyBuckets[0] },
+            { param($d) [array]::Reverse($d.requiredHourlyBuckets) },
+            { param($d) $d.requiredHourlyBuckets[0] = $d.requiredHourlyBuckets[0].Replace('.000Z', '.0000000Z') },
+            { param($d) $d.requiredHourlyBuckets[0] = $d.requiredHourlyBuckets[0].Replace('Z', '+00:00') },
+            { param($d) $d.requiredHourlyBuckets = 'not-an-array' })) {
+        $invalid = New-TestInstructionalUsageObservation; & $change $invalid.schoolDays[0]
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'instructional hourly buckets' 'Omitted, duplicate, reordered or noncanonical scheduler bucket IDs must refuse.'
+    }
+    foreach ($case in @(
+            @{ Property = 'observedRuns'; Value = 14 }, @{ Property = 'observedRuns'; Value = 25 }, @{ Property = 'observedRuns'; Value = '15' },
+            @{ Property = 'failedSchools'; Value = 1 }, @{ Property = 'deferredDays'; Value = 1 }, @{ Property = 'budgetExhausted'; Value = $true },
+            @{ Property = 'maxRunDurationMs'; Value = 1500000 }, @{ Property = 'finalDayComplete'; Value = $false }, @{ Property = 'currentDayComplete'; Value = $false })) {
+        $invalid = New-TestInstructionalUsageObservation; $invalid.schoolDays[0].($case.Property) = $case.Value
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'hourly samples' 'Schema 2 must preserve counters, duration and ledger guards and require the exact derived run count.'
+    }
+    $invalid = New-TestInstructionalUsageObservation; $invalid.schoolDays[0].startedAt = $invalid.schoolDays[0].instructionalWindow.observedFrom
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'full recent' 'Instructional acceptance must still export the full calendar day.'
+    $invalid = New-TestInstructionalUsageObservation; $invalid.appSha = 'f' * 40
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'exact serving' 'Schema 2 must preserve serving source binding.'
+    $invalid = New-TestInstructionalUsageObservation; $invalid.reviewedAt = [DateTimeOffset]::UtcNow.AddHours(-3).ToString('o')
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'hours old' 'Schema 2 must preserve fresh reviews.'
+    Assert-NoMutation 'Every refused instructional observation must precede runtime mutation.'
+    $instructional.schoolDays[0].instructionalWindow.confirmationReference = 'human/review-reference-changed'
+    Write-SanitizedJson $instructionalPath $instructional
+    Assert-ThrowsMatch { Invoke-ProductApply $instructionalPlan.plan $instructionalPlan.sha256 $script:TestDirectory } 'changed after planning' 'Apply must rehash schema-2 window evidence before mutation.'
+    Assert-NoMutation 'Changed instructional evidence must not register or update services.'
+
+    # UTC scheduler ceilings must survive fractional ticks and half-hour DST.
+    $window = [pscustomobject]@{ startedAt = '2026-10-23T14:00:00.0000001Z'; endedAt = '2026-10-23T19:45:00Z'; usageOnCompletedAt = '2026-10-23T13:05:34Z'; observedFrom = '2026-10-23T13:15:00Z'; observedThrough = '2026-10-23T19:45:00Z'; confirmationReference = 'human/submillisecond-start' }
+    $buckets = Get-UsageInstructionalHourlyBuckets ([DateTimeOffset]'2026-10-23T04:00:00Z') ([DateTimeOffset]'2026-10-24T04:00:00Z') $window
+    Assert-Condition ($buckets.Count -eq 14 -and $buckets[0] -ceq '2026-10-23T15:00:00.000Z' -and $buckets[-1] -ceq '2026-10-24T04:00:00.000Z') 'Sub-millisecond starts must not round down to an earlier scheduler hour.'
+    $window.startedAt = '2026-10-03T22:15:00Z'; $window.endedAt = '2026-10-04T04:45:00Z'; $window.usageOnCompletedAt = '2026-10-03T22:05:34Z'; $window.observedFrom = $window.startedAt; $window.observedThrough = $window.endedAt
+    $buckets = Get-UsageInstructionalHourlyBuckets ([DateTimeOffset]'2026-10-03T13:30:00Z') ([DateTimeOffset]'2026-10-04T13:00:00Z') $window
+    Assert-Condition ($buckets.Count -eq 15 -and $buckets[0] -ceq '2026-10-03T23:00:00.000Z' -and $buckets[-1] -ceq '2026-10-04T13:00:00.000Z') 'A 23.5-hour Lord Howe day must derive actual UTC scheduler IDs.'
 
     # --- Daily usage rollup promotion requires clean shadow evidence ---
     Reset-ProductMock
