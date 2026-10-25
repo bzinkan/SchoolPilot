@@ -6,12 +6,16 @@ import { randomBytes } from 'node:crypto';
 import { hash } from './contracts.mjs';
 import { canonicalSchemaFingerprint } from '../release-schema-fingerprint.mjs';
 import { bootstrapHealthOperationalFixture } from './operational-fixture.mjs';
+import { loadUsageSourceBinding, assertUsageSourceIdentity } from './usage-source-binding.mjs';
 
 export async function withCommonDatabase(options, docker, use) {
   const { run, outputDirectory, privateDirectory } = options;
   const schema = readFileSync(options.schemaFile), schemaReceipt = JSON.parse(readFileSync(options.schemaReceiptFile));
   assert.equal(hash(schema), options.schemaSha256); assert.equal(hash(readFileSync(options.schemaReceiptFile)), options.schemaReceiptSha256);
   assert.equal(schemaReceipt.source, options.source); assert.equal(schemaReceipt.schemaSha256, options.schemaSha256); assert.equal(schemaReceipt.verified, true);
+  const usageSourceBinding = loadUsageSourceBinding(options);
+  if (usageSourceBinding) assertUsageSourceIdentity(usageSourceBinding, { source: options.source, schemaInputSha256: options.schemaSha256,
+    canonicalSourceSchemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')) });
   const database = `schoolpilot_redesign_usage_scale_${run}`, owner = `v2_owner_${run}`, app = `v2_app_${run}`;
   const password = randomBytes(24).toString('hex'), appPassword = randomBytes(24).toString('hex');
   const envFile = join(privateDirectory, 'postgres-environment.private');
@@ -51,7 +55,8 @@ REVOKE EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(te
 GRANT EXECUTE ON FUNCTION public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text) TO ${app}; END IF; END $owned_fixture$;` });
     await bootstrapHealthOperationalFixture({ containerId: id, owner, database, appRole: app, outputDirectory,
       source: options.source, schemaInputSha256: options.schemaSha256,
-      canonicalSourceSchemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')) }, docker);
+      canonicalSourceSchemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')),
+      ...(usageSourceBinding ? { usageSourceBinding, nativeSchemaSource: schema } : {}) }, docker);
     const configuration = { pgContainerId: id, schemaInputSha256: options.schemaSha256, schemaSha256: canonicalSchemaFingerprint(schema.toString('utf8')),
       adminUrl: `postgresql://${owner}:${password}@127.0.0.1:5437/${database}`, appUrl: `postgresql://${app}:${appPassword}@127.0.0.1:5437/${database}` };
     return await use(configuration, async () => {

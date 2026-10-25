@@ -359,6 +359,7 @@ export async function runV2(options) {
         configuration.schemaInputSha256=options.schemaSha256;
         await bootstrapHealthOperationalFixture({ ...restoredOperationalIdentities(configuration, context.ready), outputDirectory: output,
           source: options.source, schemaInputSha256: options.schemaSha256, canonicalSourceSchemaSha256: configuration.schemaSha256,
+          ...(usageSourceBinding ? { usageSourceBinding, nativeSchemaSource: readFileSync(options.schemaFile) } : {}),
           originalSnapshotRestore: { restorationPassed: context.ready.restorationPassed, snapshotManifestSha256: options.snapshotManifestSha256 } }, dockerInput);
         await measure(configuration, () => context.restartAfterRelease({ run, source: options.source, releasedAt: new Date().toISOString() }), fixture);
       });

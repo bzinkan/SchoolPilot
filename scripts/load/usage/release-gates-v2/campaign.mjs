@@ -9,10 +9,24 @@ import {assertUsagePostVerificationBinding,assertUsagePostVerificationReceiptBin
 import {verifyOriginalUsagePrerequisites} from './distinct-report-run.mjs';
 import {loadUsageSourceBinding,assertUsageSourceIdentity,HISTORICAL_USAGE_SOURCE} from './usage-source-binding.mjs';
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
+// A current-production baseline may carry its own reviewed ledger. Historical
+// campaigns keep their original absence of an arm-A envelope.
+export function sourceBindingForArm(contract,arm){
+  assert.ok(['A','B','C'].includes(arm));
+  return arm==='A'?contract.baselineUsageSourceBinding:contract.usageSourceBinding;
+}
+export function assertCampaignSourceBinding(contract,receipt){
+  if(receipt.arm!=='A'||contract.baselineUsageSourceBinding)
+    assert.deepEqual(receipt.usageSourceBinding,sourceBindingForArm(contract,receipt.arm));
+}
 export function declareCampaign(options) {
   const profile=profileFor(options.profile), directory=resolve(options.directory);
   const usageSourceBinding=loadUsageSourceBinding(options,{required:profile.usage&&options.candidateSource!==HISTORICAL_USAGE_SOURCE});
   if(usageSourceBinding)assertUsageSourceIdentity(usageSourceBinding,{source:options.candidateSource});
+  const baselineUsageSourceBinding=loadUsageSourceBinding({
+    usageSourceBindingFile:options.baselineUsageSourceBindingFile,usageSourceBindingSha256:options.baselineUsageSourceBindingSha256,
+    usageSourceReviewFile:options.baselineUsageSourceReviewFile,usageSourceReviewSha256:options.baselineUsageSourceReviewSha256});
+  if(baselineUsageSourceBinding){assert.equal(options.kind,'paired');assertUsageSourceIdentity(baselineUsageSourceBinding,{source:options.baselineSource});}
   assert.equal(existsSync(directory),false);assert.ok(['paired','mixed','usage','classroom','preparation','distinct'].includes(options.kind));
   assert.equal(options.kind==='distinct',profile.distinctReports===true,'Distinct endpoints require their separate campaign');
   if(profile.distinctReports){
@@ -35,6 +49,7 @@ export function declareCampaign(options) {
     originalFailedContractSha256:OLD_CONTRACT_SHA256,order:options.kind==='preparation'?[options.arm||'C']:options.kind==='paired'?['A','A','A','B','B','A','A','B']:['C','C','C'].slice(0,['classroom','distinct'].includes(options.kind)?1:3),
     pairedReleaseComparisonRequired:options.kind==='usage',historicalSingleTaskDiagnosticOnly:true,capacityAccepted:false,productionReadiness:false,...postVerification,
     ...(usageSourceBinding?{usageSourceBinding}:{}),
+    ...(baselineUsageSourceBinding?{baselineUsageSourceBinding}:{}),
     ...(profile.distinctReports?{originalUsageReceiptManifestSha256s:[...options.originalUsageReceiptManifestSha256s],
       originalUsageCampaignContractSha256:options.originalUsageCampaignContractSha256,originalUsageCampaignJournalSha256:options.originalUsageCampaignJournalSha256}:{})};
   writeFileSync(join(directory,'contract.json'),JSON.stringify(contract,null,2)+'\n',{flag:'wx'});
@@ -53,7 +68,7 @@ export function registerAttempt(options) {
   assert.equal(receipt.arm,contract.order[index]);assert.equal(receipt.source,receipt.arm==='A'?contract.baselineSource:contract.candidateSource);
   assert.equal(receipt.observedFlagsSha256,contract.observedFlagsSha256);
   assert.equal(receipt.run,reservation.run);assert.equal(receipt.reservationSha256,reservation.reservationSha256);
-  if(receipt.arm!=='A')assert.deepEqual(receipt.usageSourceBinding,contract.usageSourceBinding);
+  assertCampaignSourceBinding(contract,receipt);
   assertUsagePostVerificationReceiptBinding(contract,receipt);
   if(contract.kind==='distinct')assert.deepEqual(receipt.originalColdRunPrerequisites?.map(row=>row.receiptManifestSha256),contract.originalUsageReceiptManifestSha256s);
   if(contract.kind==='distinct')assert.deepEqual(receipt.originalUsageCampaignBinding,{contractSha256:contract.originalUsageCampaignContractSha256,journalSha256:contract.originalUsageCampaignJournalSha256});
@@ -71,11 +86,11 @@ export function reserveAttempt(options) {
   assert.ok(journal.attempts.every(row=>row.state==='recorded'));const index=journal.attempts.length;assert.ok(index<contract.order.length);
   assert.match(options.run,/^[a-f0-9]{12}$/);assert.ok(!journal.attempts.some(row=>row.run===options.run));
   assert.equal(existsSync(options.receiptDirectory),false);assert.equal(existsSync(options.privateDirectory),false);
-  const arm=contract.order[index],reservation={index,run:options.run,arm,source:arm==='A'?contract.baselineSource:contract.candidateSource,
+  const arm=contract.order[index],sourceBinding=sourceBindingForArm(contract,arm),reservation={index,run:options.run,arm,source:arm==='A'?contract.baselineSource:contract.candidateSource,
     profile:contract.profile,contractSha256:contract.contractSha256,campaignContractSha256:journal.contractSha256,preparationSmoke:contract.kind==='preparation',
     observedFlagsSha256:contract.observedFlagsSha256,receiptDirectory:resolve(options.receiptDirectory),privateDirectory:resolve(options.privateDirectory),reservedAt:new Date().toISOString(),
     ...(contract.usagePostVerificationContractSha256?{usagePostVerificationContractSha256:contract.usagePostVerificationContractSha256,hostHarnessSource:contract.hostHarnessSource}:{}),
-    ...(contract.usageSourceBinding&&arm!=='A'?{usageSourceBindingSha256:contract.usageSourceBinding.bindingSha256,usageSourceReviewSha256:contract.usageSourceBinding.reviewSha256}:{}),
+    ...(sourceBinding?{usageSourceBindingSha256:sourceBinding.bindingSha256,usageSourceReviewSha256:sourceBinding.reviewSha256}:{}),
     ...(contract.kind==='distinct'?{originalUsageReceiptManifestSha256s:contract.originalUsageReceiptManifestSha256s,
       originalUsageCampaignContractSha256:contract.originalUsageCampaignContractSha256,originalUsageCampaignJournalSha256:contract.originalUsageCampaignJournalSha256}:{})};
   const file=join(directory,`reservation-${index+1}.json`);writeFileSync(file,JSON.stringify(reservation,null,2)+'\n',{flag:'wx'});
@@ -104,6 +119,7 @@ export function verifyPairedClosure(input,{profile,candidateSource,observedFlags
   assert.equal(journal.attempts.length,8);assert.equal(input.privateDirectories?.length,8);
   const records=journal.attempts.map((attempt,index)=>{assert.equal(attempt.state,'recorded');assert.ok(!attempt.receipt.verificationFailure);
     return loadReceipt(attempt.receiptDirectory,attempt.receiptManifestSha256,input.privateDirectories[index]);});
+  for(const record of records)assertCampaignSourceBinding(contract,record);
   const result=validatePairs(records,{profile,baselineSource:contract.baselineSource,candidateSource,observedFlagsSha256});assert.equal(result.passed,true);
   assertCandidateBinding(records,candidateBinding);
   if(candidateBinding.usageSourceBinding)assert.deepEqual(contract.usageSourceBinding,candidateBinding.usageSourceBinding);
@@ -130,7 +146,7 @@ export function closeCampaign(options) {
   const records=journal.attempts.map((attempt,index)=>{assert.equal(attempt.state,'recorded');assert.deepEqual(attempt,read(join(directory,`attempt-${index+1}.json`)));
     if(attempt.receipt.verificationFailure)return attempt.receipt;
     const receipt=loadReceipt(attempt.receiptDirectory,attempt.receiptManifestSha256,options.privateDirectories[index]);
-    if(receipt.arm!=='A')assert.deepEqual(receipt.usageSourceBinding,contract.usageSourceBinding);
+    assertCampaignSourceBinding(contract,receipt);
     assertUsagePostVerificationReceiptBinding(contract,receipt);return receipt;});
   let result;
   if(records.some(row=>row.verificationFailure)) result={passed:false,disposition:'failed-attempts-preserved',capacityAccepted:false};

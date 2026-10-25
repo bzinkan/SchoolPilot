@@ -94,6 +94,16 @@ executes migrations. A bound local fixture uses the selected compiled manifest
 and the original checksum-ledger executor; ordinary test-mode bootstrap cannot
 silently add a contract-stage migration to an expand fixture.
 
+If the production-source arm of a paired comparison also needs a reviewed ledger,
+its campaign declaration takes the parallel `baselineUsageSourceBindingFile`,
+`baselineUsageSourceBindingSha256`, `baselineUsageSourceReviewFile` and
+`baselineUsageSourceReviewSha256` settings. That independently reviewed envelope
+must name `baselineSource`; arm-A reservations and receipt replays bind its exact
+hashes. Each run and helper still receives the ordinary four consumer settings
+for its own source. Historical campaigns without a baseline envelope retain their
+original contract. This binding does not change paired ordering, workloads,
+limits or closure requirements.
+
 Keep private bindings, exported logs, database responses, receipts, inventory and
 approval records outside Git. Public records contain hashes and content-free
 summaries. Preserve every failed invocation and its original outcome. Performance
