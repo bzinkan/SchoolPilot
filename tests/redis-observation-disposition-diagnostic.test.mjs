@@ -18,8 +18,11 @@ function between(source, start, end) {
 }
 const diagnosticSource = between(redisSource, "const OBSERVATION_NOT_ADMITTED_LABELS", "type HotPathActivity");
 const recorderSource = between(redisSource, "function recordObservationStatusOutcome(", "const coordinationRuntime");
-const wrapperSource = between(redisSource, "export async function realtimeRedisCommand(", "export async function subscribeWS(")
-    .replace("export async function", "async function");
+// The compatibility wrapper now delegates to the typed outcome helper. Evaluate
+// both actual functions so this harness still exercises the original transport
+// call and observation diagnostic instead of supplying a mock replacement.
+const wrapperSource = between(redisSource, "export async function realtimeRedisCommandOutcome(", "export async function subscribeWS(")
+    .replaceAll("export async function", "async function");
 const statusSource = between(observationSource, "async function observationStatusForSubject(", "export async function classpilotObservationStatus(");
 const luaSource = between(observationSource, "const OBSERVATION_STATUS_SCRIPT", "async function observationStatusForSubject(");
 const compile = (source) => ts.transpileModule(source, {
