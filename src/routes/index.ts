@@ -29,6 +29,7 @@ import gopilotSettingsRoutes from "./gopilot/settings.js";
 import gopilotStudentRoutes from "./gopilot/students.js";
 import gopilotInstructionalCalendarRoutes from "./gopilot/instructionalCalendar.js";
 import deviceRoutes from "./classpilot/devices.js";
+import nativeRoutes from "./classpilot/native.js";
 import monitoringRoutes from "./classpilot/monitoring.js";
 import clientHealthRoutes from "./classpilot/clientHealth.js";
 import teachingSessionRoutes from "./classpilot/sessions.js";
@@ -413,6 +414,7 @@ router.use("/", dismissalRoutes);
 router.use("/", changeRoutes);
 
 // ClassPilot - Classroom monitoring & management
+router.use("/classpilot/native", nativeRoutes);
 router.use("/classpilot", deviceRoutes);
 router.use("/classpilot", liveViewTelemetryRoutes);
 router.use("/classpilot", monitoringRoutes);

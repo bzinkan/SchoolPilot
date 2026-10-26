@@ -12,6 +12,7 @@
     "test:api-routing": "node scripts/assert-api-routing.mjs",
     "test:classpilot-tile-batching": "node scripts/assert-classpilot-tile-batching.mjs && npm run test:classpilot-dashboard-isolation",
     "test:classpilot-student-tile": "node scripts/classpilot-student-tile-browser.mjs",
+    "test:classpilot-native-desktop": "node --test --test-concurrency=1 scripts/native-desktop-browser.test.mjs && node --test --test-name-pattern=\"native desktop:\" scripts/classpilot-dashboard-load-state.test.mjs",
     "test:classpilot-dashboard-theme": "node --test scripts/dashboard-theme-presets.test.mjs scripts/dashboard-theme-calendar.test.mjs scripts/dashboard-theme-isolation.test.mjs",
     "test:passpilot-kiosk-theme": "node --test scripts/kiosk-theme.test.mjs scripts/passpilot-kiosk-theme-browser.test.mjs",
     "test:classpilot-session-lifecycle": "node --test scripts/classpilot-session-monitoring-report.test.mjs && node --test scripts/classpilot-session-lifecycle.test.mjs",
@@ -98,7 +99,7 @@
     "test:classpilot-dashboard-load-state:part-1": "cross-env CLASSPILOT_DASHBOARD_TEST_PARTITION=1 node --test scripts/classpilot-dashboard-load-state.test.mjs",
     "test:classpilot-dashboard-load-state:part-2": "cross-env CLASSPILOT_DASHBOARD_TEST_PARTITION=2 node --test scripts/classpilot-dashboard-load-state.test.mjs",
     "test:dashboard-partition-inventory": "node --test scripts/dashboard-partition-inventory.test.mjs",
-    "test:release-focused:shard-4": "npm run test:classpilot-dashboard-load-state:part-2 && npm run test:classroom-actions-browser && npm run test:passpilot-reports-v2 && npm run test:passpilot-kiosk-theme"
+    "test:release-focused:shard-4": "npm run test:classpilot-dashboard-load-state:part-2 && npm run test:classroom-actions-browser && npm run test:passpilot-reports-v2 && npm run test:passpilot-kiosk-theme && npm run test:classpilot-native-desktop"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

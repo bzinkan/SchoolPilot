@@ -19,6 +19,7 @@ import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigrati
 import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL } from "./db/classpilotUsageRollupDaysMigration.js";
 import { assertClasspilotHeartbeatScreenshotEvidence, installClasspilotHeartbeatScreenshotEvidence } from "./db/classpilotHeartbeatScreenshotEvidenceInstallation.js";
 import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "./db/classpilotPrivateChatLifecycleMigration.js";
+import { CLASSPILOT_NATIVE_VISIBILITY_SQL } from "./db/classpilotNativeVisibilityMigration.js";
 import { PASSPILOT_APPOINTMENTS_SQL } from "./db/passpilotAppointmentsMigration.js";
 import { FLIGHT_PATH_RESOURCES_EXPAND_SQL } from "./db/flightPathResourcesMigration.js";
 import { FLIGHT_PATH_CONTENT_REVISION_SQL } from "./db/flightPathContentRevisionMigration.js";
@@ -4994,6 +4995,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
   await pool.query(PASSPILOT_APPOINTMENTS_SQL);
   await pool.query(CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL);
+  await pool.query(CLASSPILOT_NATIVE_VISIBILITY_SQL);
   await pool.query(FLIGHT_PATH_RESOURCES_EXPAND_SQL);
   await pool.query(FLIGHT_PATH_CONTENT_REVISION_SQL);
   const screenshotInstaller = await pool.connect();

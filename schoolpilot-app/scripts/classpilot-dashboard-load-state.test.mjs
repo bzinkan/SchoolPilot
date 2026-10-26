@@ -7693,6 +7693,110 @@ test('reliability: online and authenticated recovery bypass two held old lease P
   } finally { releases.forEach(release => release()); }
 });
 
+test('native desktop: a browser-signed-out student uses the existing Dashboard tile and exact native authority', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-08-25T13:01:00Z');
+  await page.clock.install({ time: fixedTime });
+  const live = teachingSession();
+  const nativeStudent = student({ isLoggedIn: false, loginState: 'not_logged_in', status: 'offline',
+    monitoringState: 'signed_out', commandable: false, realtimeBinding: '', extensionVersion: null,
+    activeTabTitle: null, activeTabUrl: null, lastSeenAt: null, realtimeObservedAt: null });
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: live, allSessions: [live],
+    aggregate: aggregateController({ scoped: success([nativeStudent]) }), acknowledgeSessionSubscriptions: true });
+  const sharp = (await import('sharp')).default;
+  const screenshot = `data:image/jpeg;base64,${(await sharp({ create: { width: 240, height: 135, channels: 3, background: '#194c63' } }).jpeg().toBuffer()).toString('base64')}`;
+  const nativeRequests = [];
+  await page.route('**/api/classpilot/native/**', async route => {
+    const request = route.request(), url = new URL(request.url()), body = request.postDataJSON();
+    nativeRequests.push({ path: url.pathname, method: request.method(), body });
+    const now = fixedTime.getTime();
+    if (request.method() === 'DELETE') return route.fulfill({ status: 204 });
+    if (request.method() === 'PUT') return route.fulfill({ json: { serverTime: fixedTime.toISOString(), expiresAt: new Date(now + 45_000).toISOString(), renewAfterSeconds: 15 } });
+    return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+      sourceRef: 'native-source-a', bindingRevision: 1, platform: 'windows', sourceLabel: 'One selected display', state: 'available',
+      ...(body.selectedSources ? { screenshot, sequence: 1, observedAt: fixedTime.toISOString(), expiresAt: new Date(now + 30_000).toISOString(),
+        foregroundApplication: { id: 'synthetic-editor', displayName: 'Synthetic Editor', observedAt: fixedTime.toISOString() } } : {}),
+    }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 1);
+  assert.equal(await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
+  await page.getByText('Browser signed out', { exact: true }).waitFor();
+  await page.getByText('Browser online', { exact: true }).waitFor();
+  assert.equal(nativeRequests.some(request => request.method === 'PUT'), false);
+  await page.getByTestId(`view-desktop-${STUDENT_ID}`).click();
+  await page.getByTestId(`desktop-image-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).count(), 0);
+  const grant = nativeRequests.find(request => request.method === 'PUT');
+  assert.equal(grant.body.teachingSessionId, OWN_SESSION_ID);
+  assert.deepEqual(grant.body.targets, [{ studentId: STUDENT_ID, sourceRef: 'native-source-a', bindingRevision: 1 }]);
+  assert.equal(JSON.stringify(nativeRequests).includes('deviceId'), false);
+  assert.equal(harness.tileRequests.some(request => request.pathname.endsWith('/screenshots') && request.body.studentIds.includes(STUDENT_ID)), false);
+  await page.getByTestId(`preview-source-browser-${STUDENT_ID}`).click();
+  assert.equal(await page.getByTestId(`desktop-image-${STUDENT_ID}`).count(), 0);
+  await waitUntil(() => nativeRequests.some(request => request.method === 'DELETE'), 'Changing source must retire the native viewer');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('native desktop: both enlarged previews switch exact source and native close releases the tile viewer', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-08-25T13:01:00Z');
+  await page.clock.install({ time: fixedTime });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: live, allSessions: [live],
+    aggregate: aggregateController({ scoped: success([student()]) }), acknowledgeSessionSubscriptions: true,
+    screenshotTiles: () => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:source-switch-browser', screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: fixedTime.toISOString(), tabTitle: 'Synthetic browser',
+      tabUrl: 'https://classroom.example.edu/', bindingVersion: 'v2:source-switch-browser',
+    } }] }),
+  });
+  const sharp = (await import('sharp')).default;
+  const jpeg = `data:image/jpeg;base64,${(await sharp({ create: { width: 240, height: 135, channels: 3, background: '#194c63' } }).jpeg().toBuffer()).toString('base64')}`;
+  const requests = [];
+  await page.route('**/api/classpilot/native/**', async route => {
+    const request = route.request(), body = request.postDataJSON();
+    requests.push({ method: request.method(), path: new URL(request.url()).pathname, body });
+    if (request.method() === 'DELETE') return route.fulfill({ status: 204 });
+    if (request.method() === 'PUT') return route.fulfill({ json: { serverTime: fixedTime.toISOString(),
+      expiresAt: new Date(fixedTime.getTime() + 45_000).toISOString(), renewAfterSeconds: 15 } });
+    return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+      sourceRef: 'native-source-a', bindingRevision: 1, platform: 'windows', sourceLabel: 'Selected source', state: 'available',
+      ...(body.selectedSources ? { screenshot: jpeg, sequence: 1, observedAt: fixedTime.toISOString(),
+        expiresAt: new Date(fixedTime.getTime() + 30_000).toISOString(),
+        foregroundApplication: { id: 'synthetic-editor', displayName: 'Synthetic Editor', observedAt: fixedTime.toISOString() } } : {}),
+    }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`preview-source-browser-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
+  assert.equal(requests.some(request => request.method === 'PUT'), false);
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-browser-source-desktop').click();
+  await page.getByTestId('expanded-desktop-dialog').waitFor();
+  await page.getByTestId('expanded-desktop-preview').locator('img').waitFor();
+  assert.equal(await page.getByTestId('expanded-screenshot-dialog').count(), 0);
+  assert.equal(requests.filter(request => request.method === 'PUT').length, 1);
+  await page.getByTestId('expanded-native-source-browser').click();
+  await page.getByTestId('expanded-screenshot-dialog').waitFor();
+  assert.equal(await page.getByTestId(`desktop-image-${STUDENT_ID}`).count(), 0);
+  await waitUntil(() => requests.some(request => request.method === 'DELETE'), 'Native handoff releases its viewer');
+  await page.getByTestId('expanded-browser-source-desktop').click();
+  await page.getByTestId('expanded-desktop-preview').locator('img').waitFor();
+  assert.equal(requests.filter(request => request.method === 'PUT').length, 2);
+  await page.keyboard.press('Escape');
+  await page.getByTestId('expanded-desktop-dialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId(`desktop-image-${STUDENT_ID}`).count(), 0);
+  assert.equal(await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
+  await page.getByTestId(`view-desktop-${STUDENT_ID}`).waitFor();
+  await waitUntil(() => requests.filter(request => request.method === 'DELETE').length >= 2, 'Native close releases its shared viewer');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));
 
 test('a dashboard theme repaints only the chrome, pauses dark mode and leaves every tile identical', { timeout: 120_000 }, async context => {

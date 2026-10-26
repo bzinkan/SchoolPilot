@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getBrowsingActivityTitle } from "../../../lib/browsing-activity";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
@@ -25,6 +25,8 @@ import {
 import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
 import TileOrnament from "./TileOrnament";
 import { useDecodedScreenshot } from "../hooks/useDecodedScreenshot";
+import NativeDesktopPreview from './NativeDesktopPreview';
+import { desktopSourceKey, hasBrowserSource } from '../lib/nativeDesktop';
 import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
 import { normalizedTileControlRevision } from "../lib/tileBatchPolling";
 import { deriveTileLockControl } from "../lib/focusControls";
@@ -123,6 +125,9 @@ function StudentTile({
   returnToClassPending = false,
   recentHeartbeats = EMPTY_LIST,
   screenshotData = null,
+  desktop = null,
+  previewSourceSelection = null,
+  onPreviewSourceSelection,
   onOpenScreenshot,
   flightPaths = EMPTY_LIST,
   monitoringDisplay,
@@ -142,6 +147,40 @@ function StudentTile({
 }) {
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
+  const browserSourceButtonRef = useRef(null);
+  const sourceSelectionKey = desktop ? `${desktop.contextKey}:${student.studentId}` : '';
+  const browserAvailable = hasBrowserSource(student);
+  const defaultSource = desktop && desktopSourceKey(desktop.source) && !browserAvailable ? 'desktop' : 'browser';
+  const [sourceSelection, setSourceSelection] = useState({ key: '', source: 'browser' });
+  const selectedSource = previewSourceSelection?.key === sourceSelectionKey ? previewSourceSelection : sourceSelection;
+  const previewSource = selectedSource.key === sourceSelectionKey ? selectedSource.source : defaultSource;
+  // Record the first source choice for this classroom view. Later health or
+  // binding changes never select a different source or start native capture.
+  useEffect(() => {
+    if (!sourceSelectionKey || sourceSelection.key === sourceSelectionKey
+      || (!browserAvailable && !desktopSourceKey(desktop.source))) return undefined;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setSourceSelection({ key: sourceSelectionKey, source: defaultSource });
+    });
+    return () => { cancelled = true; };
+  }, [sourceSelectionKey, sourceSelection.key, defaultSource, browserAvailable, desktop]);
+  const updateSourceSelection = update => {
+    if (onPreviewSourceSelection) onPreviewSourceSelection(update);
+    else setSourceSelection(update);
+  };
+  const selectPreviewSource = (source, expanded = false) => {
+    updateSourceSelection(current => ({ key: sourceSelectionKey, source,
+      activationId: (current?.activationId || 0) + 1,
+      activationKey: source === 'desktop' ? desktopSourceKey(desktop?.source) : '', expanded }));
+    if (source === 'browser' && expanded) onOpenScreenshot?.(screenshotButtonRef.current || browserSourceButtonRef.current);
+  };
+  const activationMatches = selectedSource.key === sourceSelectionKey
+    && selectedSource.activationKey === desktopSourceKey(desktop?.source);
+  const consumeSourceActivation = () => updateSourceSelection(current => current?.key === sourceSelectionKey
+    && current.activationId === selectedSource.activationId
+    ? { ...current, activationKey: null, expanded: false } : current);
+  const desktopSelected = Boolean(desktop && previewSource === 'desktop' && !monitoringSuppressed);
   // A wall that actively observes repaints about every 5 seconds, so a preview
   // reads as behind long before the 75-second background threshold. The caller
   // opts in per tile; an unknown observation state keeps the default window.
@@ -223,7 +262,7 @@ function StudentTile({
     releasePreviousFrame,
     expired: screenshotFrameExpired,
   } = useDecodedScreenshot(
-    screenshotPreviewMode ? screenshotData : null,
+    !desktopSelected && screenshotPreviewMode ? screenshotData : null,
     screenshotPrivacyKey,
     { crossfade: true },
   );
@@ -282,6 +321,7 @@ function StudentTile({
   const screenshotHealthOverlay = screenshotHealth?.tone === 'warn' ? screenshotHealth : null;
   const screenshotInteractionAvailable = Boolean(
     !monitoringSuppressed
+    && !desktopSelected
     && displayableScreenshotPreviewMode
     && onOpenScreenshot,
   );
@@ -437,6 +477,7 @@ function StudentTile({
 
   const getOpacity = (status) => {
     if (monitoringSuppressed) return 'opacity-90';
+    if (desktopSelected) return 'opacity-100';
     if (effectiveIsAbsent) return 'opacity-50';
     switch (status) {
       case 'online':
@@ -568,7 +609,7 @@ function StudentTile({
                         ? 'text-amber-600 dark:text-amber-400'
                         : 'text-muted-foreground'
                   }`}>
-                    {getStatusLabel(displayStatus)}
+                    {desktop ? 'Browser: ' : ''}{getStatusLabel(displayStatus)}
                   </span>
                 </div>
               )}
@@ -823,7 +864,23 @@ function StudentTile({
           </div>
         )}
 
-        {/* Preview Zone - Live View, Screenshot Thumbnail, or Website Preview Card */}
+        {desktop && !monitoringSuppressed ? (
+          <div className="space-y-1" onClick={event => event.stopPropagation()}>
+            <div className="flex gap-1 rounded-md bg-muted/50 p-1" role="group" aria-label={`Preview source for ${student.studentName || 'student'}`}>
+              {['browser', 'desktop'].map(source => <Button key={source} size="sm"
+                ref={source === 'browser' ? browserSourceButtonRef : undefined}
+                variant={previewSource === source ? 'secondary' : 'ghost'} className="h-7 flex-1 text-xs"
+                aria-pressed={previewSource === source}
+                data-testid={`preview-source-${source}-${student.studentId}`}
+                onClick={() => selectPreviewSource(source)}>
+                {source === 'browser' ? 'Browser' : 'Desktop'}
+              </Button>)}
+            </div>
+            <p className="text-[11px] text-muted-foreground">{browserAvailable
+              ? 'Class tools control the browser only.' : 'Browser monitoring and controls unavailable.'}</p>
+          </div>
+        ) : null}
+        {/* Native pixels never use browser login, freshness, or cached frames. */}
         {monitoringSuppressed ? (
           <div className="flex aspect-video items-center justify-center rounded-lg border border-slate-200 bg-slate-100/80 text-center dark:border-slate-800 dark:bg-slate-900/80">
             <div className="px-4">
@@ -832,6 +889,12 @@ function StudentTile({
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Return the student to class to monitor again.</p>
             </div>
           </div>
+        ) : desktopSelected ? (
+          <NativeDesktopPreview key={`${sourceSelectionKey}:${desktopSourceKey(desktop.source)}:${selectedSource.activationId || 0}`}
+            student={student} desktop={desktop} autoStart={activationMatches && Boolean(selectedSource.activationKey)}
+            initiallyExpanded={activationMatches && selectedSource.expanded === true}
+            onActivationConsumed={consumeSourceActivation}
+            onOpenBrowser={onOpenScreenshot ? () => selectPreviewSource('browser', true) : undefined} />
         ) : activeLiveStream ? (
           <div className="aspect-video rounded-lg bg-black relative overflow-hidden">
             <video
@@ -1257,6 +1320,7 @@ const CALLBACK_PROPS = new Set([
   'onAllowDomain',
   'onManageTabs',
   'onOpenScreenshot',
+  'onPreviewSourceSelection',
   'onCommand',
   'onLockAction',
   'onReturnToClass',

@@ -11,7 +11,9 @@ import { focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssign
   readFocusRestriction, withoutClasspilotFocus } from "./classpilotFocus.js";
 import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
+import { classpilotNativeEnrollmentTokens, classpilotNativeInstallations, classpilotNativeSessions, type ClasspilotNativeSession } from "../schema/classpilotNative.js";
+import { ClasspilotNativeError, NATIVE_LIMITS, nativeHashMatches, nativeSecretHash, requireNativeEnabled, type NativeCredential, type NativeContext } from "./classpilotNativeProtocol.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
@@ -9430,7 +9432,8 @@ function noLiveClassOwnerSql(schoolId: string, studentId: SQL): SQL {
 export function buildClassPilotTileAuthorizationQuery(
   options: ClassPilotTileScopeOptions,
   accessMode: "live" | "history",
-  studentIds?: readonly string[]
+  studentIds?: readonly string[],
+  authorityOnly = false,
 ): SQL {
   const requestedStudents = requestedTileStudentsSql(options.schoolId, studentIds);
   const schoolWide = hasSchoolWideTileRead(options);
@@ -9726,7 +9729,10 @@ export function buildClassPilotTileAuthorizationQuery(
     resolved_students AS MATERIALIZED (
       ${resolvedStudents}
     )
-    SELECT
+    ${authorityOnly ? sql`SELECT authorized.student_id FROM authorized_students authorized
+      INNER JOIN ${students} native_student ON native_student.id=authorized.student_id
+        AND native_student.school_id=${options.schoolId} AND native_student.status='active'
+      ORDER BY authorized.student_id` : sql`SELECT
       resolved.student_id,
       resolved.ordinal,
       resolved.student_session_id,
@@ -9757,7 +9763,7 @@ export function buildClassPilotTileAuthorizationQuery(
     INNER JOIN ${devices} AS device
       ON device.device_id = resolved.device_id
      AND device.school_id = ${options.schoolId}
-    ORDER BY resolved.ordinal
+    ORDER BY resolved.ordinal`}
   `;
 }
 
@@ -34998,4 +35004,246 @@ export async function getActivePassReturnMatches(schoolId: string, search: strin
     .orderBy(sql`CASE WHEN ${students.studentIdNumber} = ${query} THEN 0 ELSE 1 END`,
       asc(students.lastName), asc(students.firstName), asc(students.id), asc(passes.id))
     .limit(21);
+}
+
+// Native desktop pilot. These records never create browser device identities,
+// heartbeat/attendance rows, or browser command authority.
+export type NativeStorageDb = typeof db;
+export type NativeCurrentAuthority = NativeContext & { controlRevision: number; expiresAt: number; contextAuthorityRevision?: string };
+
+/** Share the operational school/student lock order with staff/class transitions. */
+export async function withClasspilotNativeAuthority<T>(schoolId: string, studentIds: string[],
+  action: (database: NativeStorageDb) => Promise<T>): Promise<T> {
+  requireNativeEnabled(schoolId);
+  return db.transaction(async tx => {
+    const database = tx as unknown as typeof db;
+    if (!await lockStaffAssignmentLifecycleSchool(tx, schoolId)) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+    await assertClasspilotEntitled(schoolId, database, { lock: true });
+    await database.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`classpilot:native:${schoolId}`}, 0::bigint))`);
+    await lockClasspilotStudentControlAuthorities(schoolId, studentIds, database);
+    requireNativeEnabled(schoolId);
+    return action(database);
+  });
+}
+
+export async function classpilotNativeStaffRole(schoolId: string, actorId: string, database: NativeStorageDb): Promise<ClassPilotTileReadRole> {
+  const memberships = await database.select({ role: schoolMemberships.role }).from(schoolMemberships)
+    .where(and(eq(schoolMemberships.schoolId, schoolId), eq(schoolMemberships.userId, actorId), eq(schoolMemberships.status, "active")))
+    .for("share");
+  const role = ["admin", "school_admin", "teacher", "office_staff"].find(candidate => memberships.some(row => row.role === candidate));
+  if (!role) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+  return role as ClassPilotTileReadRole;
+}
+
+export async function classpilotNativeStaffCredentialVersion(actorId: string, database: NativeStorageDb): Promise<number> {
+  const [actor] = await database.select({ version: users.authVersion }).from(users)
+    .where(eq(users.id, actorId)).limit(1).for("share");
+  if (!actor) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+  return actor.version;
+}
+
+/** A row lock cannot prevent a known school/license deadline from advancing. */
+export async function classpilotNativeEntitlementDeadline(schoolId: string, database: NativeStorageDb): Promise<number> {
+  const [entitlement] = await database.select({ schoolEnd: schools.activeUntil, licenseEnd: productLicenses.expiresAt })
+    .from(schools).innerJoin(productLicenses, and(eq(productLicenses.schoolId, schools.id),
+      eq(productLicenses.product, "CLASSPILOT"), eq(productLicenses.status, "active")))
+    .where(eq(schools.id, schoolId)).limit(1).for("share");
+  if (!entitlement) return Date.now();
+  return Math.min(entitlement.schoolEnd?.getTime() ?? Infinity, entitlement.licenseEnd?.getTime() ?? Infinity);
+}
+
+export async function createClasspilotNativeEnrollment(options: { schoolId: string; actorId: string; id: string; tokenHash: string }, database: NativeStorageDb) {
+  const role = await classpilotNativeStaffRole(options.schoolId, options.actorId, database);
+  if (role !== "admin" && role !== "school_admin") throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+  const expiresAt = new Date(Date.now() + NATIVE_LIMITS.enrollmentMs);
+  await database.insert(classpilotNativeEnrollmentTokens).values({ id: options.id, schoolId: options.schoolId,
+    issuedBy: options.actorId, tokenHash: options.tokenHash, expiresAt });
+  await database.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
+    action: "classpilot.native.enrollment_issued", entityType: "native_enrollment", entityId: options.id, changes: { expiresAt: expiresAt.toISOString() } });
+  return { expiresAt };
+}
+
+export async function redeemClasspilotNativeEnrollment(credential: NativeCredential,
+  installation: { id: string; tokenHash: string; clientVersion: string }, database: NativeStorageDb) {
+  const [enrollment] = await database.select().from(classpilotNativeEnrollmentTokens)
+    .where(and(eq(classpilotNativeEnrollmentTokens.id, credential.id), eq(classpilotNativeEnrollmentTokens.schoolId, credential.schoolId)))
+    .limit(1).for("update");
+  if (!enrollment || enrollment.consumedAt || enrollment.expiresAt.getTime() <= Date.now()
+    || !nativeHashMatches(enrollment.tokenHash, credential.tokenHash)) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  const issuerRole = await classpilotNativeStaffRole(credential.schoolId, enrollment.issuedBy, database);
+  if (issuerRole !== "admin" && issuerRole !== "school_admin") throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  await database.update(classpilotNativeEnrollmentTokens).set({ consumedAt: new Date() })
+    .where(and(eq(classpilotNativeEnrollmentTokens.id, enrollment.id), eq(classpilotNativeEnrollmentTokens.schoolId, credential.schoolId)));
+  await database.insert(classpilotNativeInstallations).values({ id: installation.id, schoolId: credential.schoolId,
+    credentialHash: installation.tokenHash, enrollmentTokenId: enrollment.id, clientVersion: installation.clientVersion });
+  await database.insert(auditLogs).values({ schoolId: credential.schoolId, userId: enrollment.issuedBy,
+    action: "classpilot.native.enrolled", entityType: "native_installation", entityId: installation.id });
+}
+
+export async function readClasspilotNativeInstallation(credential: NativeCredential, database: NativeStorageDb) {
+  if (credential.kind !== "install") throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  const [installation] = await database.select().from(classpilotNativeInstallations)
+    .where(and(eq(classpilotNativeInstallations.id, credential.id), eq(classpilotNativeInstallations.schoolId, credential.schoolId)))
+    .limit(1).for("update");
+  if (!installation || installation.revokedAt || !nativeHashMatches(installation.credentialHash, credential.tokenHash)) {
+    throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  }
+  return installation;
+}
+
+export async function findClasspilotNativeStudent(schoolId: string, identifier: string, database: NativeStorageDb) {
+  const rows = await database.select().from(students).where(and(eq(students.schoolId, schoolId), eq(students.status, "active"),
+    or(eq(students.id, identifier), eq(students.emailLc, identifier.toLowerCase()), eq(students.studentIdNumber, identifier))))
+    .limit(2).for("share");
+  if (rows.length !== 1) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401, "Invalid student credentials");
+  return rows[0]!;
+}
+
+export async function bindClasspilotNativeStudent(options: { credential: NativeCredential; studentId: string; osSessionNonce: string;
+  id: string; tokenHash: string; studentCredentialFingerprint: string }, database: NativeStorageDb) {
+  const installation = await readClasspilotNativeInstallation(options.credential, database);
+  const now = new Date();
+  // Serialize under the school native lock; retire expired rows before the partial unique indexes apply.
+  await database.update(classpilotNativeSessions).set({ endedAt: now, endReason: "expired" }).where(and(
+    eq(classpilotNativeSessions.schoolId, options.credential.schoolId), isNull(classpilotNativeSessions.endedAt),
+    or(lte(classpilotNativeSessions.expiresAt, now), lte(classpilotNativeSessions.absoluteExpiresAt, now))));
+  const [conflict] = await database.select({ installationId: classpilotNativeSessions.installationId }).from(classpilotNativeSessions)
+    .where(and(eq(classpilotNativeSessions.schoolId, options.credential.schoolId), eq(classpilotNativeSessions.studentId, options.studentId),
+      isNull(classpilotNativeSessions.endedAt))).limit(1);
+  if (conflict && conflict.installationId !== installation.id) throw new ClasspilotNativeError("NATIVE_SESSION_CONFLICT", 409,
+    "This student has another active native session. End or revoke it before signing in here.");
+  await database.update(classpilotNativeSessions).set({ endedAt: now, endReason: "rebound", sourceGeneration: null }).where(and(
+    eq(classpilotNativeSessions.schoolId, options.credential.schoolId), eq(classpilotNativeSessions.installationId, installation.id),
+    isNull(classpilotNativeSessions.endedAt)));
+  const revision = installation.bindingRevision + 1;
+  if (!Number.isSafeInteger(revision) || revision > 2_147_483_647) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  await database.update(classpilotNativeInstallations).set({ bindingRevision: revision }).where(and(
+    eq(classpilotNativeInstallations.schoolId, options.credential.schoolId), eq(classpilotNativeInstallations.id, installation.id)));
+  const [session] = await database.insert(classpilotNativeSessions).values({ id: options.id, schoolId: options.credential.schoolId,
+    installationId: installation.id, studentId: options.studentId, credentialHash: options.tokenHash, osSessionNonce: options.osSessionNonce,
+    studentCredentialFingerprint: options.studentCredentialFingerprint,
+    bindingRevision: revision, sourceRef: randomUUID(), expiresAt: new Date(now.getTime() + NATIVE_LIMITS.sessionMs),
+    absoluteExpiresAt: new Date(now.getTime() + NATIVE_LIMITS.absoluteSessionMs) }).returning();
+  await database.insert(auditLogs).values({ schoolId: options.credential.schoolId,
+    action: "classpilot.native.session_bound", entityType: "native_session", entityId: options.id, changes: { bindingRevision: revision } });
+  return session!;
+}
+
+export async function readClasspilotNativeSession(credential: NativeCredential, database: NativeStorageDb): Promise<ClasspilotNativeSession> {
+  if (credential.kind !== "session") throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  const [row] = await database.select({ session: classpilotNativeSessions, installation: classpilotNativeInstallations,
+    studentStatus: students.status, pinHash: students.classpilotPinHash, pinEncrypted: students.classpilotPinEncrypted }).from(classpilotNativeSessions)
+    .innerJoin(classpilotNativeInstallations, and(eq(classpilotNativeInstallations.schoolId, classpilotNativeSessions.schoolId),
+      eq(classpilotNativeInstallations.id, classpilotNativeSessions.installationId)))
+    .innerJoin(students, and(eq(students.schoolId, classpilotNativeSessions.schoolId), eq(students.id, classpilotNativeSessions.studentId)))
+    .where(and(eq(classpilotNativeSessions.schoolId, credential.schoolId), eq(classpilotNativeSessions.id, credential.id)))
+    .limit(1).for("update");
+  const now = Date.now();
+  if (!row || row.studentStatus !== "active" || row.session.endedAt || row.installation.revokedAt
+    || row.session.studentCredentialFingerprint !== nativeSecretHash(JSON.stringify([row.pinHash, row.pinEncrypted]))
+    || row.session.expiresAt.getTime() <= now || row.session.absoluteExpiresAt.getTime() <= now
+    || row.installation.bindingRevision !== row.session.bindingRevision
+    || !nativeHashMatches(row.session.credentialHash, credential.tokenHash)) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  return row.session;
+}
+
+export async function renewClasspilotNativeSession(credential: NativeCredential, nonce: string, database: NativeStorageDb) {
+  const session = await readClasspilotNativeSession(credential, database);
+  if (session.osSessionNonce !== nonce) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  const expiresAt = new Date(Math.min(session.absoluteExpiresAt.getTime(), Date.now() + NATIVE_LIMITS.sessionMs));
+  const [updated] = await database.update(classpilotNativeSessions).set({ expiresAt, lastSeenAt: new Date() }).where(and(
+    eq(classpilotNativeSessions.schoolId, credential.schoolId), eq(classpilotNativeSessions.id, session.id))).returning();
+  return updated!;
+}
+
+export async function updateClasspilotNativeSource(session: ClasspilotNativeSession, generation: string | null, database: NativeStorageDb) {
+  const revision = session.bindingRevision + (session.sourceGeneration !== generation ? 1 : 0);
+  if (revision > 2_147_483_647) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  if (revision !== session.bindingRevision) await database.update(classpilotNativeInstallations).set({ bindingRevision: revision }).where(and(
+    eq(classpilotNativeInstallations.schoolId, session.schoolId), eq(classpilotNativeInstallations.id, session.installationId)));
+  const [updated] = await database.update(classpilotNativeSessions).set({ sourceGeneration: generation, bindingRevision: revision, lastSeenAt: new Date() }).where(and(
+    eq(classpilotNativeSessions.schoolId, session.schoolId), eq(classpilotNativeSessions.id, session.id), isNull(classpilotNativeSessions.endedAt))).returning();
+  if (!updated) throw new ClasspilotNativeError("NATIVE_CREDENTIAL_INVALID", 401);
+  return updated;
+}
+
+export async function endClasspilotNativeSession(session: ClasspilotNativeSession, database: NativeStorageDb) {
+  await database.update(classpilotNativeSessions).set({ endedAt: new Date(), endReason: "local_sign_out", sourceGeneration: null }).where(and(
+    eq(classpilotNativeSessions.schoolId, session.schoolId), eq(classpilotNativeSessions.id, session.id)));
+  await database.insert(auditLogs).values({ schoolId: session.schoolId, action: "classpilot.native.session_ended",
+    entityType: "native_session", entityId: session.id, changes: { reason: "local_sign_out" } });
+}
+
+export async function revokeClasspilotNativeInstallation(schoolId: string, actorId: string, installationId: string, database: NativeStorageDb) {
+  const role = await classpilotNativeStaffRole(schoolId, actorId, database);
+  if (role !== "admin" && role !== "school_admin") throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+  const [installation] = await database.update(classpilotNativeInstallations).set({ revokedAt: new Date() })
+    .where(and(eq(classpilotNativeInstallations.schoolId, schoolId), eq(classpilotNativeInstallations.id, installationId))).returning();
+  if (!installation) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED", 404);
+  await database.insert(auditLogs).values({ schoolId, userId: actorId, action: "classpilot.native.installation_revoked",
+    entityType: "native_installation", entityId: installationId });
+  return database.update(classpilotNativeSessions).set({ endedAt: new Date(), endReason: "installation_revoked", sourceGeneration: null })
+    .where(and(eq(classpilotNativeSessions.schoolId, schoolId), eq(classpilotNativeSessions.installationId, installationId),
+      isNull(classpilotNativeSessions.endedAt))).returning();
+}
+
+export async function readClasspilotNativeSessions(schoolId: string, studentIds: string[], database: NativeStorageDb) {
+  if (!studentIds.length) return [];
+  const rows = await database.select({ session: classpilotNativeSessions, pinHash: students.classpilotPinHash,
+    pinEncrypted: students.classpilotPinEncrypted }).from(classpilotNativeSessions)
+    .innerJoin(classpilotNativeInstallations, and(eq(classpilotNativeInstallations.id, classpilotNativeSessions.installationId),
+      eq(classpilotNativeInstallations.schoolId, schoolId), isNull(classpilotNativeInstallations.revokedAt),
+      eq(classpilotNativeInstallations.bindingRevision, classpilotNativeSessions.bindingRevision)))
+    .innerJoin(students, and(eq(students.id, classpilotNativeSessions.studentId), eq(students.schoolId, schoolId), eq(students.status, "active")))
+    .where(and(eq(classpilotNativeSessions.schoolId, schoolId), inArray(classpilotNativeSessions.studentId, studentIds),
+      isNull(classpilotNativeSessions.endedAt), gt(classpilotNativeSessions.expiresAt, new Date()),
+      gt(classpilotNativeSessions.absoluteExpiresAt, new Date()))).for("share");
+  return rows.filter(row => row.session.studentCredentialFingerprint === nativeSecretHash(JSON.stringify([row.pinHash, row.pinEncrypted])))
+    .map(row => ({ session: row.session }));
+}
+
+/** Reuse the exact existing staff/roster predicate BEFORE browser-session/device resolution. */
+export async function authorizeClasspilotNativeStudents(options: NativeContext & { schoolId: string; actorId: string;
+  studentIds: string[]; contextAuthorityRevision?: string; authVersion?: number }, database: NativeStorageDb) {
+  const role = await classpilotNativeStaffRole(options.schoolId, options.actorId, database);
+  const version = await classpilotNativeStaffCredentialVersion(options.actorId, database);
+  if (options.authVersion !== undefined && options.authVersion !== version) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+  if (Boolean(options.teachingSessionId) === Boolean(options.supervisionContextId)) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+  const result = await database.execute<{ student_id: string }>(buildClassPilotTileAuthorizationQuery({
+    schoolId: options.schoolId, staffId: options.actorId, role, teachingSessionId: options.teachingSessionId,
+    supervisionContextId: options.supervisionContextId, contextAuthorityRevision: options.contextAuthorityRevision,
+  }, "live", options.studentIds, true));
+  return new Set(result.rows.map(row => row.student_id));
+}
+
+/** Native observation requires a current live owner, even for an authorized administrator observer. */
+export async function classpilotNativeCurrentAuthority(schoolId: string, studentId: string, database: NativeStorageDb): Promise<NativeCurrentAuthority | null> {
+  const control = await getClasspilotStudentControlState(schoolId, studentId, database);
+  const now = Date.now();
+  if (!control || !control.hardExpiresAt || control.hardExpiresAt.getTime() <= now
+    || (control.scheduledEndAt && control.scheduledEndAt.getTime() <= now)) return null;
+  if (!await hasCurrentClasspilotStudentControlAuthority({ schoolId, studentId, teachingSessionId: control.teachingSessionId,
+    supervisionContextId: control.supervisionContextId, ownershipRevision: control.revision }, database)) return null;
+  let expiresAt = Math.min(control.hardExpiresAt.getTime(), control.scheduledEndAt?.getTime() ?? Infinity);
+  if (control.teachingSessionId) {
+    const [session] = await database.select().from(teachingSessions).innerJoin(classpilotSessionStudents,
+      and(eq(classpilotSessionStudents.teachingSessionId, teachingSessions.id), eq(classpilotSessionStudents.schoolId, schoolId),
+        eq(classpilotSessionStudents.studentId, studentId)))
+      .where(and(eq(teachingSessions.id, control.teachingSessionId), eq(teachingSessions.schoolId, schoolId),
+        eq(teachingSessions.sessionMode, "live"), isNull(teachingSessions.endTime), isNotNull(teachingSessions.rosterSnapshotCompletedAt)))
+      .limit(1).for("share");
+    if (!session || session.teaching_sessions.startTime.getTime() > now) return null;
+    expiresAt = Math.min(expiresAt, session.teaching_sessions.scheduledEndAt?.getTime() ?? Infinity);
+    return expiresAt > now ? { teachingSessionId: control.teachingSessionId, controlRevision: control.revision, expiresAt } : null;
+  }
+  if (control.supervisionContextId) {
+    const claims = await getActiveSupervisionForStudents(schoolId, [studentId], database);
+    const claim = claims.length === 1 ? claims[0] : null;
+    if (!claim || claim.context.id !== control.supervisionContextId
+      || !scheduledContextHasClassroomTools(claim.context)) return null;
+    expiresAt = Math.min(expiresAt, claim.context.endsAt.getTime());
+    return { supervisionContextId: control.supervisionContextId, controlRevision: control.revision, expiresAt,
+      contextAuthorityRevision: String(claim.context.classroomAuthorityRevision) };
+  }
+  return null;
 }

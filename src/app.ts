@@ -42,6 +42,14 @@ export function skipsWebSession(
     method === "POST" && /^\/classpilot\/kiosk\/launch-ticket(?:\/preflight)?\/?$/.test(path);
   if (path.startsWith("/classpilot/")) path = path.slice("/classpilot".length);
 
+  // Only native client endpoints bypass staff cookies. Enrollment carries its
+  // one-use secret; all later operations require a purpose-specific bearer.
+  // Native teacher leases, reads, and administrator issuance retain web CSRF.
+  const nativeClientRequest =
+    (method === "POST" && ["/native/enroll", "/native/sessions", "/native/session/renew", "/native/observations"].includes(path.replace(/\/$/, "")))
+    || (method === "GET" && path.replace(/\/$/, "") === "/native/policy")
+    || (method === "DELETE" && ["/native/session", "/native/observations"].includes(path.replace(/\/$/, "")));
+
   const devicePath = path.startsWith("/device/");
   const staffScreenshotRead =
     method === "GET" && /^\/device\/screenshot\/[^/]+\/?$/.test(path);
@@ -71,6 +79,7 @@ export function skipsWebSession(
   );
 
   return (
+    nativeClientRequest ||
     (devicePath && !staffScreenshotRead) ||
     path.startsWith("/extension/") ||
     path.startsWith("/student/") ||
