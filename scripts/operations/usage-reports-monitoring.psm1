@@ -216,7 +216,7 @@ function Invoke-UsageMonitoringReader {
     )
     if (-not [IO.Path]::IsPathRooted($EvidenceDirectory)) { throw 'MONITORING_ABSOLUTE_EVIDENCE_DIRECTORY_REQUIRED' }
     $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-    if ([IO.Path]::GetFullPath($EvidenceDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar) -ceq $repository -or
+    if ([string]::Equals([IO.Path]::GetFullPath($EvidenceDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar), $repository, [StringComparison]::OrdinalIgnoreCase) -or
         (Test-IsPathWithin -Candidate $EvidenceDirectory -Parent $repository)) { throw 'MONITORING_EVIDENCE_MUST_STAY_OUTSIDE_REPOSITORY' }
     $reader = Assert-UsageMonitoringFileBinding -Binding $ReaderBinding -Private
     if ($reader.sha256 -cnotin $script:UsageReaderHashes) { throw 'MONITORING_READER_NOT_APPROVED' }
@@ -245,7 +245,9 @@ function Read-UsageMonitoringCapture {
     if ($stderr.bytes -ne 0) { throw 'MONITORING_CAPTURE_STDERR_NOT_EMPTY' }
     $data = Read-UsageMonitoringJson -Binding $native.stdout -Private
     foreach ($key in @('nextToken', 'NextToken')) {
-        if ($data.Contains($key) -and $null -ne $data[$key] -and $data[$key] -cne '') { throw 'MONITORING_PAGINATION_INCOMPLETE' }
+        if ($data.Contains($key) -and $null -ne $data[$key]) {
+            if ($data[$key] -isnot [string] -or $data[$key].Length -ne 0) { throw 'MONITORING_PAGINATION_INCOMPLETE' }
+        }
     }
     return @{ native = $native; data = $data }
 }

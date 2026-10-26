@@ -75,6 +75,12 @@ try {
     $pagination = $native.Clone(); $pagination.stdout = $page
     $pageRef = Write-JsonFixture 'page.native.json' $pagination
     Assert-Rejected { Read-UsageMonitoringCapture $pageRef } 'PAGINATION_INCOMPLETE'
+    foreach ($token in @(0, $false, @{})) {
+        $badPage = Write-JsonFixture (([Guid]::NewGuid().ToString('N')) + '.stdout.json') @{ events = @(); nextToken = $token }
+        $badPagination = $native.Clone(); $badPagination.stdout = $badPage
+        $badPageNative = Write-JsonFixture (([Guid]::NewGuid().ToString('N')) + '.native.json') $badPagination
+        Assert-Rejected { Read-UsageMonitoringCapture $badPageNative } 'PAGINATION_INCOMPLETE'
+    }
     $errorRef = Write-Fixture 'nonempty.stderr.txt' 'reader failed'
     $withError = $native.Clone(); $withError.stderr = $errorRef
     $errorNative = Write-JsonFixture 'stderr.native.json' $withError
@@ -137,6 +143,7 @@ try {
     Assert-Rejected { & $module { param($directory,$reader,$executable) Invoke-UsageMonitoringCaptureInternal $directory 'success' $reader $executable 5 } $temp $ok $exe } 'already exists|exists'
     Assert-Rejected { Invoke-UsageMonitoringReader -ReaderBinding $ok -PowerShellBinding $exe -EvidenceDirectory $temp -Label 'not-approved' } 'READER_NOT_APPROVED'
     Assert-Rejected { Invoke-UsageMonitoringReader -ReaderBinding $ok -PowerShellBinding $exe -EvidenceDirectory $root -Label 'inside-repo' } 'OUTSIDE_REPOSITORY'
+    Assert-Rejected { Invoke-UsageMonitoringReader -ReaderBinding $ok -PowerShellBinding $exe -EvidenceDirectory $root.ToUpperInvariant() -Label 'mixed-case-root' } 'OUTSIDE_REPOSITORY'
     [void](Write-JsonFixture 'orphan-native.native.json' @{ historical = $true })
     Assert-Rejected { & $module { param($directory,$reader,$executable) Invoke-UsageMonitoringCaptureInternal $directory 'orphan-native' $reader $executable 5 } $temp $ok $exe } 'LABEL_ALREADY_EXISTS'
     Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $temp 'orphan-native.intent.json'))) 'An existing native without an intent must refuse before any new claim or child.'
