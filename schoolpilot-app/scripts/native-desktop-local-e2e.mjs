@@ -28,11 +28,15 @@ const metrics = {
   requestedDurationSeconds: durationSeconds, processId: process.pid, status: 'starting',
   frames: [], events: [], http: {}, ui: { decodedImages: 0, missingImageSamples: 0, foregroundObserved: false,
     browserControlsUnavailable: false, sourceLabelObserved: false, expiryGaps: [] }, pageErrorCount: 0,
+  lifecycle: { navigations: 0, documentLoads: 0, reloads: 0, requestFailures: 0, browserTimerGaps: 0,
+    harnessTimerGaps: 0, visibility: 'unknown', maxRequestMs: 0 },
 };
 const event = (type, extra = {}) => metrics.events.push({ elapsedMs: Math.round(performance.now() - started), type, ...extra });
 const started = performance.now();
 let browser, context, page, stopping = false, firstFrameAt = null;
 const frameKeys = new Set();
+const activeViewers = new Set();
+const requestStarts = new WeakMap();
 let lastSequence = null;
 let lastMetadata = '';
 const save = async () => writeFile(metricsPath, JSON.stringify(metrics, null, 2));
@@ -55,15 +59,65 @@ try {
   page = await context.newPage();
   page.setDefaultTimeout(15_000);
   page.on('pageerror', () => { metrics.pageErrorCount += 1; });
+  await page.exposeBinding('nativeE2EReportLifecycle', (_source, sample) => {
+    if (!['visibility', 'pageshow', 'pagehide', 'browser_timer_gap'].includes(sample?.type)) return;
+    const visibility = ['visible', 'hidden', 'prerender'].includes(sample.visibility) ? sample.visibility : 'unknown';
+    metrics.lifecycle.visibility = visibility;
+    if (sample.type === 'browser_timer_gap') metrics.lifecycle.browserTimerGaps += 1;
+    event(sample.type, { visibility, ...(Number.isFinite(sample.gapMs) ? { gapMs: Math.round(sample.gapMs) } : {}) });
+  });
+  await page.addInitScript(() => {
+    const report = (type, extra = {}) => void window.nativeE2EReportLifecycle({ type, visibility: document.visibilityState, ...extra }).catch(() => {});
+    document.addEventListener('visibilitychange', () => report('visibility'));
+    window.addEventListener('pageshow', () => report('pageshow'));
+    window.addEventListener('pagehide', () => report('pagehide'));
+    let previous = performance.now();
+    setInterval(() => {
+      const now = performance.now(), gapMs = now - previous;
+      previous = now;
+      if (gapMs > 3_500) report('browser_timer_gap', { gapMs });
+    }, 1_000);
+  });
+  page.on('framenavigated', frame => {
+    if (frame === page.mainFrame()) { metrics.lifecycle.navigations += 1; event('main_frame_navigation'); }
+  });
+  page.on('domcontentloaded', async () => {
+    try {
+      const raw = await page.evaluate(() => performance.getEntriesByType('navigation')[0]?.type);
+      const navigationType = ['navigate', 'reload', 'back_forward', 'prerender'].includes(raw) ? raw : 'unknown';
+      metrics.lifecycle.documentLoads += 1;
+      if (navigationType === 'reload') metrics.lifecycle.reloads += 1;
+      event('document_loaded', { navigationType });
+    } catch { event('document_load_observation_failed'); }
+  });
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/api/classpilot/native/')) requestStarts.set(request, performance.now());
+  });
+  page.on('requestfailed', request => {
+    const pathname = new URL(request.url()).pathname;
+    if (!pathname.startsWith('/api/classpilot/native/')) return;
+    const raw = request.failure()?.errorText || '';
+    const code = /^net::ERR_[A-Z_]+$/.test(raw) ? raw : 'unclassified';
+    metrics.lifecycle.requestFailures += 1;
+    event('native_request_failed', { kind: pathname.includes('/observation-leases/') ? 'lease' : 'tiles', method: request.method(), code });
+  });
   page.on('response', async response => {
     try {
       const url = new URL(response.url());
       if (!url.pathname.startsWith('/api/classpilot/native/')) return;
       const kind = url.pathname.includes('/observation-leases/') ? 'lease' : url.pathname.endsWith('/tiles/desktop') ? 'tiles' : 'other';
       const request = response.request();
+      const requestStart = requestStarts.get(request);
+      if (Number.isFinite(requestStart)) {
+        const requestMs = Math.round(performance.now() - requestStart);
+        metrics.lifecycle.maxRequestMs = Math.max(metrics.lifecycle.maxRequestMs, requestMs);
+        if (requestMs > 2_000) event('native_request_slow', { kind, method: request.method(), requestMs });
+      }
       const key = `${kind}:${request.method()}:${response.status()}`;
       metrics.http[key] = (metrics.http[key] || 0) + 1;
       if (kind === 'lease') {
+        if (request.method() === 'PUT' && response.ok()) activeViewers.add(url.pathname);
+        if (request.method() === 'DELETE' && response.ok()) activeViewers.delete(url.pathname);
         event(request.method() === 'PUT' ? 'lease_response' : 'lease_release', { status: response.status() });
         if (!firstFrameAt) announce('lease_response', { method: request.method(), status: response.status() });
         return;
@@ -148,9 +202,16 @@ try {
   announce('first_image_decoded', { processId: process.pid, metricsPath, screenshotPath, ...summarize() });
 
   let lastReport = firstFrameAt;
+  let lastSample = firstFrameAt;
   let gap = null;
   while (!stopping && performance.now() - firstFrameAt < durationSeconds * 1000) {
     await page.waitForTimeout(2_000);
+    const sampleAt = performance.now();
+    if (sampleAt - lastSample > 5_000) {
+      metrics.lifecycle.harnessTimerGaps += 1;
+      event('harness_timer_gap', { gapMs: Math.round(sampleAt - lastSample) });
+    }
+    lastSample = sampleAt;
     const visible = await image.isVisible();
     if (visible) {
       metrics.ui.decodedImages += 1;
@@ -164,6 +225,7 @@ try {
       gap ||= { startedAfterMs: Math.round(performance.now() - firstFrameAt), samples: 0 };
       gap.samples += 1;
     }
+    metrics.ui.openGap = gap ? { ...gap } : null;
     assert.equal(await desktopSelector.getAttribute('aria-pressed'), 'true', 'Desktop must remain the selected source');
     if (performance.now() - lastReport >= 30_000) {
       await save();
@@ -174,7 +236,11 @@ try {
   if (gap) metrics.ui.expiryGaps.push({ ...gap, recoveredAfterMs: null,
     sampledDurationMs: Math.round(performance.now() - firstFrameAt - gap.startedAfterMs) });
   const stop = page.getByRole('button', { name: 'Stop viewing', exact: true });
+  const release = activeViewers.size ? page.waitForResponse(response => response.request().method() === 'DELETE'
+    && response.url().includes('/api/classpilot/native/observation-leases/') && response.status() === 204,
+  { timeout: 8_000 }).catch(() => null) : null;
   if (await stop.isVisible()) await stop.click();
+  if (release) event('stop_release_acknowledged', { acknowledged: Boolean(await release) });
   assert.equal(await image.count(), 0, 'Stopping must remove desktop pixels');
   event('stop_verified');
   metrics.status = stopping ? 'stopped' : 'completed';
