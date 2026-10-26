@@ -13,7 +13,8 @@ import { issueNativeEnrollment, enrollNativeInstallation, signInNativeStudent, r
   releaseNativeViewer, readNativeTiles, checkNativeSessionCredential } from "../../services/classpilotNative.js";
 import { normalizeClasspilotNativeJpeg } from "../../services/classpilotNativeImage.js";
 import { runWithoutTenantContext } from "../../db/tenantContext.js";
-import { nativePhase, nativeRequestDiagnostics, nativeRequestFailure } from "../../services/classpilotNativeDiagnostics.js";
+import { nativePhase, nativeRequestDiagnostics, nativeRequestFailure, nativeRequestRemainingMs } from "../../services/classpilotNativeDiagnostics.js";
+import { createNativeUploadAdmission } from "../../services/classpilotNativeUploadAdmission.js";
 
 const router = Router();
 const releaseStaffContext: RequestHandler = (req, res, next) => {
@@ -81,17 +82,13 @@ router.delete("/observations", handle(async (req, res) => {
   await stopNativeObservation(bearer(req), body.bindingRevision, body.sourceGeneration); res.status(204).end();
 }));
 
-const uploads = new Set<string>();
+const uploads = createNativeUploadAdmission();
 const admitUpload = handle(async (req, res, next) => {
   const token = bearer(req);
   const credential = parseNativeCredential(token, "session");
   const key = `${credential.schoolId}:${credential.id}`;
-  if (uploads.size >= 2 || uploads.has(key)) throw new ClasspilotNativeError("NATIVE_UPLOAD_BUSY", 429);
   await checkNativeSessionCredential(token);
-  if (uploads.size >= 2 || uploads.has(key)) throw new ClasspilotNativeError("NATIVE_UPLOAD_BUSY", 429);
-  uploads.add(key);
-  const release = () => uploads.delete(key);
-  res.once("finish", release); res.once("close", release);
+  uploads.admit(req, res, key, nativeRequestRemainingMs());
   next();
 });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: NATIVE_LIMITS.maxBytes,
@@ -100,13 +97,15 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: NAT
     if (file.mimetype !== "image/jpeg") callback(new ClasspilotNativeError("NATIVE_INVALID_OBSERVATION", 400));
     else callback(null, true);
   } });
-const parseUpload: RequestHandler = (req, res, next) => upload.single("image")(req, res, error => {
+const guardedUpload = uploads.guardParser(upload.single("image"));
+const parseUpload: RequestHandler = (req, res, next) => guardedUpload(req, res, error => {
   if (error) { res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ code: "NATIVE_INVALID_OBSERVATION", error: "Upload one bounded JPEG and metadata field" }); return; }
   next();
 });
 router.post("/observations", admitUpload, parseUpload, handle(async (req, res) => {
   let normalized: Buffer | undefined;
   try {
+    uploads.assertActive(req);
     if (!req.file || !req.body || Object.keys(req.body).length !== 1 || typeof req.body.metadata !== "string") {
       throw new ClasspilotNativeError("NATIVE_INVALID_OBSERVATION", 400);
     }
@@ -114,7 +113,10 @@ router.post("/observations", admitUpload, parseUpload, handle(async (req, res) =
     try { raw = JSON.parse(req.body.metadata); } catch { throw new ClasspilotNativeError("NATIVE_INVALID_OBSERVATION", 400); }
     const metadata = nativeObservationSchema.parse(raw);
     normalized = await nativePhase("image_decode", () => normalizeClasspilotNativeJpeg(req.file!.buffer));
-    res.json(await acceptNativeObservation(bearer(req), metadata, normalized));
+    uploads.assertActive(req);
+    const accepted = await acceptNativeObservation(bearer(req), metadata, normalized);
+    uploads.assertActive(req);
+    res.json(accepted);
   } finally { req.file?.buffer.fill(0); normalized?.fill(0); }
 }));
 router.put("/observation-leases/:viewerInstanceId", ...staff, handle(async (req, res) => {

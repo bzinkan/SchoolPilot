@@ -97,22 +97,35 @@ export class ClasspilotNativeStore {
       && lease.targets.some(item => item.studentId === target.studentId && item.sourceRef === target.sourceRef && item.bindingRevision === target.bindingRevision)));
   }
 
-  async saveGrant(grant: NativeCaptureGrant, viewers: NativeViewerLease[]): Promise<void> {
+  async saveGrant(grant: NativeCaptureGrant, viewers: NativeViewerLease[]): Promise<number> {
     const ttl = Math.min(NATIVE_LIMITS.leaseMs, grant.expiresAt - Date.now());
     if (ttl <= 0 || !viewers.length) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
-    // DELETE does not need a database lock. Fence its race with issuance in the
-    // same Redis command, using the exact descriptors whose DB authority was checked.
+    // DELETE does not need a database lock. Keep any surviving exact descriptor
+    // whose DB authority was checked, and narrow the committed deadline to it.
     const result = await this.command(["EVAL", `
       local clock=redis.call('TIME'); local now=tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000);
       if tonumber(ARGV[2])<=now then return -1 end
       local expected=cjson.decode(ARGV[3]);
-      for i=2,#KEYS do if redis.call('GET',KEYS[i])~=expected[i-1] then return -1 end end
-      redis.call('SET',KEYS[1],ARGV[1],'PXAT',ARGV[2]); return 1`, String(viewers.length + 1),
+      local viewerEnd=0;
+      for i=2,#KEYS do
+        if redis.call('GET',KEYS[i])==expected[i-1] then
+          local lease=cjson.decode(expected[i-1]);
+          if tonumber(lease.expiresAt)>now then viewerEnd=math.max(viewerEnd,tonumber(lease.expiresAt)) end
+        end
+      end
+      local expiresAt=math.min(tonumber(ARGV[2]),viewerEnd);
+      if expiresAt<=now then return -1 end
+      local stored=string.sub(ARGV[1],1,-2)..',"expiresAt":'..string.format('%.0f',expiresAt)..'}';
+      redis.call('SET',KEYS[1],stored,'PXAT',expiresAt); return expiresAt`, String(viewers.length + 1),
       this.grantKey(grant.schoolId, grant.nativeSessionId, grant.id),
       ...viewers.map(viewer => this.viewerKey(viewer.schoolId, viewer.actorId, viewer.viewerInstanceId)),
-      JSON.stringify(grant), String(grant.expiresAt), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer)))]);
+      JSON.stringify({ ...grant, expiresAt: undefined }), String(grant.expiresAt), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer)))]);
     if (result === -1) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
-    if (result !== 1) throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
+    if (typeof result !== "number" || !Number.isSafeInteger(result) || result > grant.expiresAt || result <= 0) {
+      throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
+    }
+    if (result <= Date.now()) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
+    return result;
   }
   async getGrant(schoolId: string, sessionId: string, id: string): Promise<NativeCaptureGrant | null> {
     return decode<NativeCaptureGrant>(await this.command(["GET", this.grantKey(schoolId, sessionId, id)]));
@@ -128,7 +141,7 @@ export class ClasspilotNativeStore {
   async readImage(schoolId: string, sourceRef: string): Promise<NativeStoredImage | null> {
     return decode<NativeStoredImage>(await this.command(["GET", this.imageKey(schoolId, sourceRef)]));
   }
-  async saveImage(image: NativeStoredImage, sessionEnd: number, viewers: NativeViewerLease[]): Promise<void> {
+  async saveImage(image: NativeStoredImage, sessionEnd: number, viewers: NativeViewerLease[]): Promise<number> {
     if (!viewers.length) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
     const now = Date.now();
     const result = await this.command(["EVAL", `
@@ -136,7 +149,15 @@ export class ClasspilotNativeStore {
       local grant=redis.call('GET',KEYS[1]); if not grant then return -1 end
       local g=cjson.decode(grant); if tonumber(g.expiresAt)<=now or tonumber(ARGV[4])<=now or tonumber(ARGV[7])<now then return -1 end
       local expected=cjson.decode(ARGV[6]);
-      for i=4,#KEYS do if redis.call('GET',KEYS[i])~=expected[i-3] then return -1 end end
+      local viewerEnd=0;
+      for i=4,#KEYS do
+        if redis.call('GET',KEYS[i])==expected[i-3] then
+          local lease=cjson.decode(expected[i-3]);
+          if tonumber(lease.expiresAt)>now then viewerEnd=math.max(viewerEnd,tonumber(lease.expiresAt)) end
+        end
+      end
+      local expiresAt=math.min(tonumber(ARGV[4]),tonumber(g.expiresAt),tonumber(ARGV[5]),viewerEnd);
+      if expiresAt<=now then return -1 end
       local previous=redis.call('GET',KEYS[3]); if previous and tonumber(previous)>=tonumber(ARGV[2]) then return -2 end
       local current=redis.call('GET',KEYS[2]);
       if current then
@@ -145,14 +166,21 @@ export class ClasspilotNativeStore {
         if tonumber(stored.bindingRevision)==tonumber(candidate.bindingRevision) and tonumber(stored.sequence)>=tonumber(candidate.sequence) then return -2 end
       end
       if tonumber(ARGV[5])<=now then return -1 end
-      redis.call('SET',KEYS[3],ARGV[2],'PXAT',ARGV[5]); redis.call('SET',KEYS[2],ARGV[3],'PXAT',ARGV[4]); return 1`, String(viewers.length + 3),
+      local stored=string.sub(ARGV[3],1,-2)..',"imageExpiresAt":'..string.format('%.0f',expiresAt)..'}';
+      redis.call('SET',KEYS[3],ARGV[2],'PXAT',ARGV[5]); redis.call('SET',KEYS[2],stored,'PXAT',expiresAt); return expiresAt`, String(viewers.length + 3),
       this.grantKey(image.schoolId, image.nativeSessionId, image.id), this.imageKey(image.schoolId, image.sourceRef),
       this.key("sequence", image.schoolId, image.nativeSessionId, image.sourceGeneration),
       ...viewers.map(viewer => this.viewerKey(viewer.schoolId, viewer.actorId, viewer.viewerInstanceId)),
-      String(now), String(image.sequence), JSON.stringify(image), String(image.imageExpiresAt),
+      // Append only the accepted deadline in Lua; re-encoding the whole image
+      // with Redis cjson would round large, valid JavaScript sequence integers.
+      String(now), String(image.sequence), JSON.stringify({ ...image, imageExpiresAt: undefined }), String(image.imageExpiresAt),
       String(sessionEnd), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer))), String(Date.parse(image.capturedAt) + NATIVE_LIMITS.uploadAgeMs)]);
     if (result === -1 || result === -2) throw new ClasspilotNativeError(result === -2 ? "NATIVE_SEQUENCE_REPLAY" : "NATIVE_GRANT_STALE", 409);
-    if (result !== 1) throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
+    if (typeof result !== "number" || !Number.isSafeInteger(result) || result > image.imageExpiresAt || result <= 0) {
+      throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
+    }
+    if (result <= Date.now()) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
+    return result;
   }
 }
 export const classpilotNativeStore = new ClasspilotNativeStore();

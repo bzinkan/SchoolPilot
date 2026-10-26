@@ -174,9 +174,9 @@ export async function nativeCapturePolicy(token: string, generation: string, bin
       studentId: session.studentId, sourceRef: session.sourceRef, sourceGeneration: generation, bindingRevision: session.bindingRevision,
       controlRevision: authority.controlRevision, teachingSessionId: authority.teachingSessionId,
       supervisionContextId: authority.supervisionContextId, contextAuthorityRevision: authority.contextAuthorityRevision, issuedAt, expiresAt };
-    await store.saveGrant(grant, viewers);
-    return { ...base, captureAllowed: true, reason: "observed", grantId: grant.id, expiresAt: new Date(expiresAt).toISOString(),
-      expiresInSeconds: Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)), serverTime: new Date().toISOString() };
+    const acceptedExpiresAt = await store.saveGrant(grant, viewers);
+    return { ...base, captureAllowed: true, reason: "observed", grantId: grant.id, expiresAt: new Date(acceptedExpiresAt).toISOString(),
+      expiresInSeconds: Math.max(0, Math.floor((acceptedExpiresAt - Date.now()) / 1000)), serverTime: new Date().toISOString() };
   });
 }
 
@@ -206,8 +206,8 @@ export async function acceptNativeObservation(token: string, metadata: NativeObs
     const stored: NativeStoredImage = { ...grant, sequence: metadata.sequence, capturedAt: metadata.capturedAt,
       receivedAt: new Date().toISOString(), foregroundApplication: metadata.foregroundApplication,
       screenshot: `data:image/jpeg;base64,${image.toString("base64")}`, imageExpiresAt };
-    await store.saveImage(stored, session.absoluteExpiresAt.getTime(), viewers);
-    return { accepted: true, expiresAt: new Date(imageExpiresAt).toISOString() };
+    const acceptedExpiresAt = await store.saveImage(stored, session.absoluteExpiresAt.getTime(), viewers);
+    return { accepted: true, expiresAt: new Date(acceptedExpiresAt).toISOString() };
   });
 }
 

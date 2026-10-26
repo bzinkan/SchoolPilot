@@ -380,6 +380,60 @@ test("native coexistence, independent observers, returning identity and supervis
     assert.deepEqual((await fixture.query("SELECT teaching_session_id,supervision_context_id,revision FROM classpilot_student_control_states WHERE school_id=$1 AND student_id=$2", [schoolId, secondStudentId])).rows[0], owner);
   });
 
+  await t.test("policy and upload responses use the surviving viewer deadline when another viewer leaves during publication", async () => {
+    const remainingViewer = randomUUID(), departingViewer = randomUUID(), uploadDepartingViewer = randomUUID();
+    const originalGrant = classpilotNativeStore.saveGrant.bind(classpilotNativeStore);
+    const originalImage = classpilotNativeStore.saveImage.bind(classpilotNativeStore);
+    let grantHook: ReturnType<typeof mock.method> | undefined, imageHook: ReturnType<typeof mock.method> | undefined;
+    try {
+      assert.equal((await observe(teacherToken, remainingViewer)).status, 200);
+      assert.equal((await observe(adminToken, departingViewer)).status, 200);
+      const remaining = await classpilotNativeStore.getViewer(schoolId, teacherId, remainingViewer);
+      assert.ok(remaining);
+      const policyEnd = Date.now() + 8_000;
+      await classpilotNativeStore.setViewer({ ...remaining, expiresAt: policyEnd });
+      grantHook = mock.method(classpilotNativeStore, "saveGrant", async (capture: NativeCaptureGrant, viewers: NativeViewerLease[]) => {
+        assert.equal(viewers.length, 2, "Both viewers were authorized before publication");
+        assert.equal((await request(`/observation-leases/${departingViewer}`, "DELETE", undefined, adminToken, staffHeaders())).status, 204);
+        return originalGrant(capture, viewers);
+      });
+      const policyReply = await policy();
+      assert.equal(policyReply.status, 200, JSON.stringify(policyReply.body));
+      assert.equal(policyReply.body.captureAllowed, true);
+      assert.equal(Date.parse(policyReply.body.expiresAt), policyEnd);
+      const remainingSeconds = Math.max(0, Math.floor((policyEnd - Date.parse(policyReply.body.serverTime)) / 1000));
+      assert.ok(policyReply.body.expiresInSeconds >= remainingSeconds && policyReply.body.expiresInSeconds <= remainingSeconds + 1);
+      const nativeSessionId = session.sessionCredential.split(".")[3];
+      assert.equal((await classpilotNativeStore.getGrant(schoolId, nativeSessionId, policyReply.body.grantId))?.expiresAt, policyEnd);
+      grantHook.mock.restore(); grantHook = undefined;
+
+      // Obtain a longer grant, then let the longer-lived observer depart at the
+      // distinct upload publication boundary, after upload DB authorization.
+      assert.equal((await observe(teacherToken, remainingViewer)).status, 200);
+      assert.equal((await observe(adminToken, uploadDepartingViewer)).status, 200);
+      grant = (await policy()).body; assert.equal(grant.captureAllowed, true);
+      const imageEnd = Date.now() + 8_000;
+      await classpilotNativeStore.setViewer({ ...remaining, expiresAt: imageEnd });
+      imageHook = mock.method(classpilotNativeStore, "saveImage", async (frame: NativeStoredImage, end: number, viewers: NativeViewerLease[]) => {
+        assert.equal(viewers.length, 2);
+        assert.equal((await request(`/observation-leases/${uploadDepartingViewer}`, "DELETE", undefined, adminToken, staffHeaders())).status, 204);
+        return originalImage(frame, end, viewers);
+      });
+      const accepted = await upload(session.sessionCredential, { grantId: grant.grantId, sourceGeneration: generation,
+        sequence: 2, capturedAt: new Date().toISOString(), foregroundApplication: null }, jpeg);
+      assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.equal(Date.parse(accepted.body.expiresAt), imageEnd);
+      assert.equal((await classpilotNativeStore.readImage(schoolId, target.sourceRef))?.imageExpiresAt, imageEnd);
+      const selected = (await readTile(teacherToken, { viewerInstanceId: remainingViewer, selectedSources: [target] })).body.tiles[0];
+      assert.match(selected.screenshot, /^data:image\/jpeg/); assert.equal(Date.parse(selected.expiresAt), imageEnd);
+    } finally {
+      grantHook?.mock.restore(); imageHook?.mock.restore();
+      await request(`/observation-leases/${remainingViewer}`, "DELETE", undefined, teacherToken, staffHeaders());
+      await request(`/observation-leases/${departingViewer}`, "DELETE", undefined, adminToken, staffHeaders());
+      await request(`/observation-leases/${uploadDepartingViewer}`, "DELETE", undefined, adminToken, staffHeaders());
+    }
+  });
+
   await t.test("A to B to A cannot revive old credentials, sources or grants and preserves an active browser binding", async () => {
     const third = await inSchool(() => storage.createStudent({ schoolId, firstName: "Synthetic", lastName: "Alternate", status: "active" }));
     await fixture.query("UPDATE students SET classpilot_pin_hash=$2 WHERE id=$1", [third.id, await hashClassPilotPin("1234")]);
@@ -516,7 +570,7 @@ test("Redis execution-time fences preserve absolute expiry and reject delayed ol
       assert.equal(await immediate.getViewer(stale.schoolId, stale.actorId, stale.viewerInstanceId), null);
     });
     await t.test("grant, image and sequence retention use absolute deadlines after delayed execution", async () => {
-      const lease = viewer(), capture = grant(); await immediate.setViewer(lease);
+      const capture = grant(), lease = viewer(capture.expiresAt); await immediate.setViewer(lease);
       hold(); const pendingGrant = store.saveGrant(capture, [lease]); await pause(150); resume(); await pendingGrant;
       const grantCommand = commands.at(-1)!;
       assert.equal(await redis.sendCommand(["PEXPIRETIME", grantCommand[3]!]), capture.expiresAt);
@@ -526,6 +580,63 @@ test("Redis execution-time fences preserve absolute expiry and reject delayed ol
       assert.equal(await redis.sendCommand(["PEXPIRETIME", imageCommand[4]!]), frame.imageExpiresAt);
       assert.equal(await redis.sendCommand(["PEXPIRETIME", imageCommand[5]!]), sessionEnd);
     });
+    for (const departing of ["longer", "shorter"] as const) {
+      await t.test(`grant publication survives the ${departing}-lived viewer leaving and commits the remaining deadline`, async () => {
+        const capture = grant(), short = viewer(Date.now() + 4_000), long = viewer(Date.now() + 20_000);
+        await immediate.setViewer(short); await immediate.setViewer(long);
+        const leaving = departing === "longer" ? long : short;
+        const remaining = departing === "longer" ? short : long;
+        hold(); const pending = store.saveGrant(capture, [short, long]);
+        await immediate.releaseViewer(leaving.schoolId, leaving.actorId, leaving.viewerInstanceId);
+        resume();
+        const acceptedEnd = await pending, expectedEnd = Math.min(capture.expiresAt, remaining.expiresAt);
+        assert.equal(acceptedEnd, expectedEnd);
+        assert.equal((await immediate.getGrant(base.schoolId, base.nativeSessionId, capture.id))?.expiresAt, expectedEnd);
+        assert.equal(await redis.sendCommand(["PEXPIRETIME", commands.at(-1)![3]!]), expectedEnd);
+      });
+      await t.test(`image publication survives the ${departing}-lived viewer leaving without extending other bounds`, async () => {
+        await immediate.clearImage(base.schoolId, base.sourceRef, base.bindingRevision);
+        const capture = grant(), short = viewer(Date.now() + 4_000), long = viewer(Date.now() + 20_000);
+        await immediate.setViewer(short); await immediate.setViewer(long); await immediate.saveGrant(capture, [short, long]);
+        const leaving = departing === "longer" ? long : short;
+        const remaining = departing === "longer" ? short : long;
+        // The maximum valid sequence also detects accidental cjson re-encoding
+        // rounding when only the image deadline changes in Redis.
+        const frame = { ...image(capture), sequence: Number.MAX_SAFE_INTEGER }, sessionEnd = Date.now() + 6_000;
+        hold(); const pending = store.saveImage(frame, sessionEnd, [short, long]);
+        await immediate.releaseViewer(leaving.schoolId, leaving.actorId, leaving.viewerInstanceId);
+        resume();
+        const acceptedEnd = await pending;
+        const expectedEnd = Math.min(frame.imageExpiresAt, capture.expiresAt, remaining.expiresAt, sessionEnd);
+        assert.equal(acceptedEnd, expectedEnd);
+        const stored = await immediate.readImage(base.schoolId, base.sourceRef);
+        assert.equal(stored?.imageExpiresAt, expectedEnd); assert.equal(stored?.sequence, frame.sequence);
+        assert.equal(await redis.sendCommand(["PEXPIRETIME", commands.at(-1)![4]!]), expectedEnd);
+        await assert.rejects(immediate.saveImage(frame, sessionEnd, [remaining]), { code: "NATIVE_SEQUENCE_REPLAY" });
+        await immediate.clearImage(base.schoolId, base.sourceRef, base.bindingRevision);
+      });
+    }
+    for (const disposition of ["released", "changed"] as const) {
+      await t.test(`no grant or image publishes when every authorized viewer descriptor was ${disposition}`, async () => {
+        await immediate.clearImage(base.schoolId, base.sourceRef, base.bindingRevision);
+        const capture = grant(), leases = [viewer(), viewer()];
+        for (const lease of leases) await immediate.setViewer(lease);
+        await immediate.saveGrant(capture, leases);
+        const frame = image(capture), replacementGrant = grant();
+        hold();
+        const grantDenied = assert.rejects(store.saveGrant(replacementGrant, leases), { code: "NATIVE_GRANT_STALE" });
+        const imageDenied = assert.rejects(store.saveImage(frame, Date.now() + 20_000, leases), { code: "NATIVE_GRANT_STALE" });
+        for (const lease of leases) {
+          if (disposition === "released") await immediate.releaseViewer(lease.schoolId, lease.actorId, lease.viewerInstanceId);
+          else await immediate.setViewer({ ...lease, authVersion: lease.authVersion + 1, expiresAt: lease.expiresAt + 1_000 });
+        }
+        resume(); await grantDenied; await imageDenied;
+        assert.equal(await immediate.getGrant(base.schoolId, base.nativeSessionId, replacementGrant.id), null);
+        assert.equal(await immediate.readImage(base.schoolId, base.sourceRef), null);
+        const sequenceKey = commands.at(-1)![5]!;
+        assert.equal(await redis.get(sequenceKey), null, "A denied image does not consume its sequence");
+      });
+    }
     await t.test("a queued expired grant or image never becomes readable", async () => {
       const lease = viewer(); await immediate.setViewer(lease);
       const expiredGrant = { ...grant(), expiresAt: Date.now() + 100 };
