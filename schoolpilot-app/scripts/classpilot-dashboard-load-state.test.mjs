@@ -712,7 +712,11 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
 // Share the Vite server and browser across these independent load states.
 // Close each completed scenario's context so its reconciliation and recovery
 // timers do not keep running while later scenarios make their assertions.
-test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 240_000 }, async (t) => {
+// A passing CI run took 219.8s for all thirteen scenarios, leaving only 9%
+// headroom under 240s. Keep a bounded 300s aggregate budget, 30s UI waits and
+// per-scenario timings so cold-runner variance cannot hide a stalled assertion.
+test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 300_000 }, async (t) => {
+  const testStartedAt = performance.now();
   const dashboardSource = readFileSync(
     path.join(APP_ROOT, "src/products/classpilot/pages/Dashboard.jsx"),
     "utf8",
@@ -740,14 +744,47 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   const baseURL = `http://127.0.0.1:${address.port}`;
 
   let browser;
+  let releaseFirstPaintScreenshots;
   const pages = [];
+  let scenario;
+  const bounded = async (operation, timeoutMs, description) => {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(operation),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${description} exceeded ${timeoutMs}ms`)), timeoutMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  };
+  const reportScenario = phase => {
+    t.diagnostic(`Dashboard load-state ${scenario?.name || 'startup'}: ${phase}; scenario ${Math.round(performance.now() - (scenario?.startedAt ?? testStartedAt))}ms; total ${Math.round(performance.now() - testStartedAt)}ms`);
+  };
+  const closePage = async page => {
+    if (page && !page.isClosed()) await bounded(() => page.close(), 5_000, 'Scenario context cleanup');
+  };
+  const onAbort = () => {
+    releaseFirstPaintScreenshots?.();
+    // Closing interrupts an in-flight locator/evaluation, allowing finally to
+    // run even when the parent test's wall-clock budget is exhausted.
+    void browser?.close().catch(() => {});
+  };
+  t.signal.addEventListener('abort', onAbort, { once: true });
   const openScenarioPage = async (name) => {
     // Completed scenarios have independent browser contexts. Release their
     // timers, recovery reads and retained screen state before starting another.
     // Keep the shared browser/Vite startup and every existing UI assertion.
-    await pages.at(-1)?.close();
-    t.diagnostic(`Dashboard load-state scenario: ${name}`);
+    await closePage(pages.at(-1));
+    if (scenario) reportScenario('completed and context closed');
+    scenario = { name, startedAt: performance.now(), pageErrors: [], failedResponses: [] };
+    reportScenario('starting');
     const page = await browser.newPage();
+    page.setDefaultTimeout(30_000);
+    page.setDefaultNavigationTimeout(30_000);
+    const currentScenario = scenario;
+    page.on('pageerror', error => currentScenario.pageErrors.push(error.message.slice(0, 300)));
+    page.on('response', response => {
+      if (response.status() >= 400) currentScenario.failedResponses.push({ status: response.status(), pathname: new URL(response.url()).pathname });
+    });
     pages.push(page);
     return page;
   };
@@ -2189,7 +2226,6 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       school: success([]),
       scoped: success({ students: [firstPaintStudent] }),
     });
-    let releaseFirstPaintScreenshots;
     const firstPaintScreenshotGate = new Promise((resolve) => {
       releaseFirstPaintScreenshots = resolve;
     });
@@ -2213,6 +2249,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       },
     });
     await firstPaintPage.goto(`${baseURL}/classpilot`);
+    reportScenario('dashboard loaded; waiting for unresolved cohort stand-in');
 
     const firstPaintSkeleton = firstPaintPage.getByTestId(`student-tile-skeleton-${STUDENT_ID}`);
     await firstPaintSkeleton.waitFor();
@@ -2239,6 +2276,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
 
     releaseFirstPaintScreenshots();
+    reportScenario('first screenshot response released');
     const firstPaintCard = firstPaintPage.getByTestId(`card-student-${STUDENT_ID}`);
     await firstPaintCard.waitFor();
     await firstPaintCard.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
@@ -2266,10 +2304,28 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       "offscreen tiles must stay mounted instead of collapsing to a gray box",
     );
     assert.deepEqual(firstPaintHarness.pageErrors, []);
+    reportScenario('all assertions completed');
+  } catch (error) {
+    reportScenario(`failed: ${error.message.split('\n')[0]}`);
+    const page = pages.at(-1);
+    const ui = page && !page.isClosed() ? await bounded(() => page.evaluate(studentId => ({
+      readyState: document.readyState,
+      skeleton: Boolean(document.querySelector(`[data-testid="student-tile-skeleton-${studentId}"]`)),
+      card: Boolean(document.querySelector(`[data-testid="card-student-${studentId}"]`)),
+      preview: Boolean(document.querySelector(`[data-testid="screenshot-${studentId}"]`)),
+      queryError: Boolean(document.querySelector('[data-testid="students-query-error"]')),
+    }), STUDENT_ID), 2_000, 'Scenario failure diagnostics').catch(() => ({ unavailable: true })) : { closed: true };
+    t.diagnostic(JSON.stringify({ scenario: scenario?.name, ui,
+      pageErrors: scenario?.pageErrors.slice(-5), failedResponses: scenario?.failedResponses.slice(-5) }));
+    throw error;
   } finally {
-    for (const page of pages) await page.close().catch(() => {});
-    await browser?.close().catch(() => {});
-    await vite.close().catch(() => {});
+    // Resolve the held route on both assertion failure and cancellation before
+    // closing its context. Keep cleanup bounded and preserve the original error.
+    releaseFirstPaintScreenshots?.();
+    for (const page of pages) await closePage(page).catch(error => t.diagnostic(error.message));
+    await bounded(() => browser?.close(), 5_000, 'Browser cleanup').catch(error => t.diagnostic(error.message));
+    await bounded(() => vite.close(), 5_000, 'Vite cleanup').catch(error => t.diagnostic(error.message));
+    t.signal.removeEventListener('abort', onAbort);
   }
 });
 
