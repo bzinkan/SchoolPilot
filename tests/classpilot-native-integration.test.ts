@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test } from "node:test";
-import { randomUUID, createHmac } from "node:crypto";
+import { randomUUID, randomBytes, createHmac } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import express, { type Response } from "express";
@@ -13,6 +13,7 @@ import type { NativeCaptureGrant, NativeStoredImage, NativeViewerLease } from ".
 process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "false";
 process.env.COOKIE_NAME = "schoolpilot.sid";
+process.env.SESSION_SECRET = randomBytes(32).toString("hex");
 assert.ok(process.env.ADMIN_DATABASE_URL && process.env.TEST_REDIS_URL, "Explicit isolated Postgres and Redis fixtures required");
 for (const connection of [process.env.ADMIN_DATABASE_URL, process.env.TEST_REDIS_URL]) {
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(new URL(connection).hostname), "Native integration refuses remote services");

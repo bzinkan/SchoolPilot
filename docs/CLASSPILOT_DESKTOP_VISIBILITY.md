@@ -92,6 +92,8 @@ The follow-up passed **41/41 native tests** (29 API/reliability, seven protocol/
 
 The existing worker/private-chat suites passed **73/73** with a restricted runtime role and the canonical heartbeat-function installation plus its exact scoped EXECUTE grant. A first fixture attempt passed 69 and failed four because that disposable role lacked EXECUTE; no application or SQL-definition change was required. The initial PR backend CI unit lane exposed one stale total-migration-count assertion (57 versus the newly appended 58). The historical index and immutable checksum guards are preserved while allowing append-only additions; all **31** installation-contract tests pass after that correction.
 
+The native HTTP fixture creates its own random synthetic cookie-signing secret before importing the application. CI exposed the earlier dependency on an inherited `SESSION_SECRET`; the exact hook failure was reproduced, then all 41 native checks passed with the inherited key explicitly deleted. This correction changes test setup only.
+
 ### Windows reliability follow-up
 
 The Windows client at `1caea17143bfb3bc6118cfba7d7ab13509a85aff` passed 120 assertions in both Debug and Release. Production lifecycle components received controlled WTS, power, session and source-race inputs; these are simulated results. The operator confirmed this PC remains unlocked and does not sleep. Physical lock/unlock, sleep/wake and user switching were not triggered during this pass. A headed Chromium minimize command did not produce a hidden document, so actual page hiding remains unverified; controlled visibility and expired/failed-view tests passed.
