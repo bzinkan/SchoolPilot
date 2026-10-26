@@ -50,6 +50,36 @@ describe("student chat fan-out diagnostics", () => {
     }
   });
 
+  it("reproduces M2/D1 for ordinary three-task fan-out with one local socket write", () => {
+    snapshotRuntimePerformanceMetrics({ reset: true });
+    const lines: { level: "log" | "warn"; line: string }[] = [];
+    const sink = {
+      log: (line: string) => lines.push({ level: "log", line }),
+      warn: (line: string) => lines.push({ level: "warn", line }),
+    };
+    // The writer has no matching staff socket. One relay task owns that socket;
+    // the other relay task has none. These are reports for one synthetic message,
+    // not three failed messages or a client acknowledgement.
+    const taskReports = [
+      { source: "local", delivered: 0, relayAccepted: true },
+      { source: "relay", delivered: 1 },
+      { source: "relay", delivered: 0 },
+    ] as const;
+    for (const report of taskReports) {
+      reportStudentChatFanOut({
+        ...base, authority: { kind: "teaching-session", id: "session-1" }, ...report,
+      }, sink);
+    }
+
+    const { counters } = snapshotRuntimePerformanceMetrics({ reset: true });
+    assert.equal(counters.studentChatFanOutMissed, 2);
+    assert.equal(counters.studentChatFanOutDelivered, 1);
+    assert.equal(lines.filter(({ level }) => level === "warn").length, 2);
+    assert.equal(lines.filter(({ level }) => level === "log").length, 1);
+    assert.match(lines[0]!.line, /source=local delivered=0 relay=accepted$/);
+    assert.match(lines[1]!.line, /source=relay delivered=1$/);
+  });
+
   it("never throws into the delivery path when the sink fails", () => {
     const broken = { log: () => { throw new Error("sink down"); }, warn: () => { throw new Error("sink down"); } };
     assert.doesNotThrow(() => reportStudentChatFanOut({
