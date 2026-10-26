@@ -5,6 +5,7 @@ import {
   recordRuntimePerformanceTiming,
   RuntimePerformanceMetrics,
   snapshotRuntimePerformanceMetrics,
+  type RuntimePerformanceCounter,
 } from "../src/services/runtimePerformanceMetrics.js";
 import { STUDENT_SIGN_IN_COUNTER_NAMES, STUDENT_SIGN_IN_REASON_COUNTERS } from "../src/services/classpilotStudentSignInDiagnosticsContract.js";
 
@@ -120,6 +121,108 @@ function declarationHarness() {
 }
 
 describe("runtime performance CloudWatch metric declarations", () => {
+  it("splits all active fixed counters into bounded metric-only events with one canonical summary", () => {
+    const { metrics, records, advance } = declarationHarness();
+    advance(60_000);
+    metrics.flush();
+    const names = Object.keys(records[0]!.counters) as RuntimePerformanceCounter[];
+    assert.ok(names.length > 100, "Exercise the real registered schema beyond one EMF directive");
+    metrics.recordCounters(Object.fromEntries(names.map(name => [name, 1])));
+    advance(60_000);
+    metrics.flush();
+    const emitted = records.slice(1);
+    const summaries = emitted.filter(record => record.event === "schoolpilot_runtime_performance_summary");
+    const metricRecords = emitted.filter(record => record.event === "schoolpilot_runtime_performance_metrics");
+    assert.equal(summaries.length, 1);
+    const record = summaries[0]!;
+    assert.equal(record._aws, undefined);
+    assert.equal(metricRecords.length, Math.ceil(names.length / 100));
+    const directives = metricRecords.flatMap(row => row._aws!.CloudWatchMetrics);
+    assert.ok(records.every(row => (row._aws?.CloudWatchMetrics.reduce((sum, directive) => sum + directive.Metrics.length, 0) ?? 0) <= 100));
+    for (const directive of directives) {
+      assert.equal(directive.Namespace, "SchoolPilot/RuntimePerformance");
+      assert.deepEqual(directive.Dimensions, [["Environment", "Service"]]);
+    }
+    for (const row of metricRecords) {
+      assert.equal(row._aws!.Timestamp, 180_000);
+      assert.equal(Object.hasOwn(row, "counters"), false);
+      assert.equal(Object.hasOwn(row, "timings"), false);
+      assert.equal(Object.hasOwn(row, "InstanceId"), false);
+      assert.equal(Object.hasOwn(row, "Release"), false);
+      const targets = row._aws!.CloudWatchMetrics.flatMap(directive => directive.Metrics.map(metric => metric.Name));
+      assert.deepEqual(Object.keys(row).sort(), ["_aws", "event", "Environment", "Service", ...targets].sort());
+      assert.ok(targets.every(name => row[name] === 1));
+    }
+    const declared = directives.flatMap(directive => directive.Metrics.map(metric => metric.Name));
+    const expected = names.map(name => `Runtime${name[0]!.toUpperCase()}${name.slice(1)}`);
+    assert.equal(new Set(declared).size, names.length);
+    assert.deepEqual([...declared].sort(), expected.sort());
+    for (const name of names) {
+      assert.equal(record.counters[name], 1);
+      assert.equal(record[`Runtime${name[0]!.toUpperCase()}${name.slice(1)}`], 1);
+    }
+    advance(60_000);
+    metrics.flush();
+    assert.equal(records.at(-1)!._aws, undefined);
+    assert.equal(records.at(-1)!.event, "schoolpilot_runtime_performance_summary");
+    assert.ok(Object.values(records.at(-1)!.counters).every(value => value === 0));
+  });
+
+  it("keeps exactly 100 metrics inline but preserves quiet counters when 101 active metrics require separate events", () => {
+    for (const activeCount of [100, 101]) {
+      const { metrics, records, advance } = declarationHarness();
+      advance(60_000);
+      metrics.flush();
+      const names = Object.keys(records[0]!.counters) as RuntimePerformanceCounter[];
+      const active = names.slice(0, activeCount);
+      metrics.recordCounters(Object.fromEntries(active.map(name => [name, 1])));
+      advance(60_000);
+      metrics.flush();
+      const emitted = records.slice(1);
+      const summary = emitted.filter(row => row.event === "schoolpilot_runtime_performance_summary");
+      assert.equal(summary.length, 1);
+      assert.equal(Object.keys(summary[0]!.counters).length, names.length);
+      assert.ok(names.slice(activeCount).every(name => summary[0]!.counters[name] === 0));
+      if (activeCount === 100) {
+        assert.equal(emitted.length, 1);
+        assert.equal(summary[0]!._aws!.CloudWatchMetrics[0]!.Metrics.length, 100);
+      } else {
+        assert.equal(summary[0]!._aws, undefined);
+        assert.equal(emitted.length, 3);
+        assert.deepEqual(emitted.filter(row => row._aws).map(row => row._aws!.CloudWatchMetrics[0]!.Metrics.length), [100, 1]);
+      }
+    }
+  });
+
+  it("does not replay a committed canonical summary if supplementary metric emission throws", () => {
+    let now = 0, metricAttempts = 0;
+    const records: SummaryRecord[] = [];
+    const metrics = new RuntimePerformanceMetrics(() => now, line => {
+      const row = JSON.parse(line) as SummaryRecord;
+      if (row.event === "schoolpilot_runtime_performance_metrics") {
+        metricAttempts++;
+        throw new Error("supplementary sink unavailable");
+      }
+      records.push(row);
+    });
+    now = 60_000;
+    metrics.flush();
+    const names = Object.keys(records[0]!.counters) as RuntimePerformanceCounter[];
+    metrics.recordCounters(Object.fromEntries(names.map(name => [name, 1])));
+    now = 120_000;
+    assert.doesNotThrow(() => metrics.flush());
+    metrics.flush();
+    assert.equal(metricAttempts, Math.ceil(names.length / 100));
+    assert.equal(records.length, 2);
+    assert.deepEqual(metrics.snapshot().counters, {});
+    now = 180_000;
+    metrics.flush();
+    assert.equal(records.length, 3);
+    assert.equal(records.filter(row => row.counters.fabSyncPendingTakeUnavailable === 1).length, 1);
+    assert.equal(records.at(-1)!._aws, undefined);
+    assert.ok(Object.values(records.at(-1)!.counters).every(value => value === 0));
+  });
+
   it("declares only counters that moved and keeps every counter in the log record", () => {
     const { metrics, records, advance } = declarationHarness();
     metrics.recordCounter("studentSignInReasonPinMismatch", 2);

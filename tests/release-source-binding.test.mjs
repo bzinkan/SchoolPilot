@@ -74,7 +74,13 @@ async function fixture() {
   };
   return { directory, profile, source, git, write, json, commit, reseal,
     options: { root: directory, run, fallback: FALLBACK, sourceDirectory: directory, source },
-    clean() { const resolved = path.resolve(directory); assert.ok(resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(resolved).startsWith('sp-release-binding-')); rmSync(resolved, { recursive: true }); } };
+    clean() {
+      const resolved = path.resolve(directory);
+      assert.ok(resolved.startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(resolved).startsWith('sp-release-binding-'));
+      // Briefly retry transient ENOTEMPTY/EBUSY in this owned disposable fixture;
+      // persistent cleanup errors still fail the test.
+      rmSync(resolved, { recursive: true, maxRetries: 3, retryDelay: 25 });
+    } };
 }
 
 test('shipped binding is pending, source-specific and cannot be activated by caller receipts', async () => {

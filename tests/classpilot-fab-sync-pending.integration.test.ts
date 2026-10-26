@@ -106,6 +106,12 @@ describe("class-start FAB delivery misses", () => {
     const counters = runtime.snapshotRuntimePerformanceMetrics({ reset: true }).counters as Record<string, number>;
     assert.equal(counters.fabSyncLocalDeliveryMissed, students.length);
     assert.equal(counters.fabSyncPendingMarkFallback, students.length);
+    assert.equal(counters.fabSyncPendingRedisMarkNotAdmittedNotConfigured, students.length);
+    assert.equal(counters.fabSyncPendingRedisTakeNotAdmittedNotConfigured, students.length * 2);
+    assert.equal(counters.fabSyncPendingTakeLocalHit, students.length);
+    assert.equal(counters.fabSyncPendingTakeLocalMiss, students.length);
+    assert.equal(counters.fabSyncPendingTakeUnavailableLocalHit, students.length);
+    assert.equal(counters.fabSyncPendingTakeUnavailableLocalMiss, students.length);
   });
 
   it("does not flag a device whose socket received the frame, and clears a stale flag for it", async () => {

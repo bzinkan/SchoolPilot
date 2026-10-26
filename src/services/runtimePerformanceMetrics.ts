@@ -1,5 +1,6 @@
 import { getRuntimeMetadata } from "./runtimeMetadata.js";
 import { STUDENT_SIGN_IN_COUNTER_NAMES } from "./classpilotStudentSignInDiagnosticsContract.js";
+import { FAB_SYNC_PENDING_COUNTER_NAMES } from "./classpilotFabSyncDiagnosticsContract.js";
 
 const INTERVAL_MS = 60_000;
 const COUNTER_NAMES = [
@@ -29,6 +30,7 @@ const COUNTER_NAMES = [
   "transientCommandTargetExpired", "transientCommandTargetSuperseded", "transientCommandReplayedOnAuth",
   "transientCommandReplayFailed",
   ...STUDENT_SIGN_IN_COUNTER_NAMES,
+  ...FAB_SYNC_PENDING_COUNTER_NAMES,
 ] as const;
 
 export type RuntimePerformanceCounter = typeof COUNTER_NAMES[number];
@@ -126,15 +128,25 @@ export class RuntimePerformanceMetrics {
     // interval are declared as CloudWatch metrics: an all-zero series is billed like an
     // active one, and the alarm on this namespace treats missing data as not breaching.
     const activeMetricNames = Object.keys(metricValues).filter((name) => (metricValues[name] ?? 0) > 0);
+    // EMF allows 100 definitions total per log event, across all directives.
+    // https://docs.aws.amazon.com/en_en/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html
+    // An overflowing interval keeps one canonical zero-inclusive summary and
+    // uses separately named metric-only records, never duplicate summaries.
+    const intervalStartedAt = this.intervalStartedAt;
+    const splitMetrics = activeMetricNames.length > 100;
+    const metricDirectives = [];
+    for (let offset = 0; offset < activeMetricNames.length; offset += 100) {
+      metricDirectives.push({
+        Namespace: "SchoolPilot/RuntimePerformance",
+        Dimensions: [["Environment", "Service"]],
+        Metrics: activeMetricNames.slice(offset, offset + 100).map((Name) => ({ Name, Unit: "Count" })),
+      });
+    }
     this.sink(JSON.stringify({
-      ...(activeMetricNames.length > 0 ? {
+      ...(activeMetricNames.length > 0 && !splitMetrics ? {
         _aws: {
-          Timestamp: this.intervalStartedAt,
-          CloudWatchMetrics: [{
-            Namespace: "SchoolPilot/RuntimePerformance",
-            Dimensions: [["Environment", "Service"]],
-            Metrics: activeMetricNames.map((Name) => ({ Name, Unit: "Count" })),
-          }],
+          Timestamp: intervalStartedAt,
+          CloudWatchMetrics: metricDirectives,
         },
       } : {}),
       event: "schoolpilot_runtime_performance_summary",
@@ -151,6 +163,23 @@ export class RuntimePerformanceMetrics {
     }));
     this.snapshot({ reset: true });
     this.intervalStartedAt = endedAt;
+    if (splitMetrics) {
+      for (const directive of metricDirectives) {
+        try {
+          this.sink(JSON.stringify({
+            _aws: { Timestamp: intervalStartedAt, CloudWatchMetrics: [directive] },
+            event: "schoolpilot_runtime_performance_metrics",
+            Environment: runtime.environment,
+            Service: runtime.service,
+            ...Object.fromEntries(directive.Metrics.map(({ Name }) => [Name, metricValues[Name]])),
+          }));
+        } catch {
+          // The canonical interval already succeeded and is committed above.
+          // A supplementary metric failure cannot replay its summary or any
+          // product effect. Do not recursively log or retry this metric batch.
+        }
+      }
+    }
   }
 }
 

@@ -9,6 +9,8 @@ import {
   type ClasspilotFabSyncMissReport,
 } from "../src/services/classpilotFabSyncPending.js";
 import { snapshotRuntimePerformanceMetrics } from "../src/services/runtimePerformanceMetrics.js";
+import { BoundedRedisPublication, type RedisPublicationOutcome } from "../src/realtime/boundedRedisPublication.js";
+import { setTimeout as pause } from "node:timers/promises";
 
 const binding = {
   schoolId: "school-1",
@@ -26,10 +28,13 @@ function fakeRedis(behaviour: (args: string[]) => unknown | undefined | Promise<
   const calls: string[][] = [];
   const command = async (args: string[]) => {
     calls.push(args);
-    return behaviour(args);
+    return { status: "accepted" as const, value: await behaviour(args) };
   };
   return { calls, command };
 }
+
+const unavailable = async (): Promise<RedisPublicationOutcome<unknown>> =>
+  ({ status: "not_admitted", reason: "not_configured" });
 
 describe("classpilot fab sync pending", () => {
   it("never puts raw ids in the key and versions the namespace", () => {
@@ -61,7 +66,7 @@ describe("classpilot fab sync pending", () => {
 
   it("falls back to a bounded local map when Redis is absent or failing", async () => {
     counters();
-    const absent = createClasspilotFabSyncPendingStore(async () => undefined, () => 5_000);
+    const absent = createClasspilotFabSyncPendingStore(unavailable, () => 5_000);
     assert.equal(await absent.mark(binding), "local");
     assert.equal(await absent.take(binding), true);
     assert.equal(await absent.take(binding), false);
@@ -72,11 +77,13 @@ describe("classpilot fab sync pending", () => {
     const seen = counters();
     assert.equal(seen.fabSyncPendingMarkFallback, 2);
     assert.ok((seen.fabSyncPendingTakeUnavailable ?? 0) >= 3);
+    assert.equal(seen.fabSyncPendingRedisMarkException, 1);
+    assert.equal(seen.fabSyncPendingRedisTakeException, 1);
   });
 
   it("expires local marks and evicts the oldest beyond the bound", async () => {
     let clock = 10_000;
-    const local = createClasspilotFabSyncPendingStore(async () => undefined, () => clock);
+    const local = createClasspilotFabSyncPendingStore(unavailable, () => clock);
     await local.mark(binding);
     clock += CLASSPILOT_FAB_SYNC_PENDING_TTL_SECONDS * 1_000 + 1;
     assert.equal(await local.take(binding), false, "an expired local mark is not served");
@@ -100,6 +107,148 @@ describe("classpilot fab sync pending", () => {
     await pending.mark(binding);
     await pending.clear(binding);
     assert.equal(await pending.take(binding), false);
+  });
+
+  it("preserves accepted empty takes and their local hint without calling them Redis failures", async () => {
+    counters();
+    let reply: RedisPublicationOutcome<unknown> = { status: "not_admitted", reason: "not_ready" };
+    const pending = createClasspilotFabSyncPendingStore(async () => reply, () => 1_000);
+    assert.equal(await pending.mark(binding), "local");
+    counters();
+    reply = { status: "accepted", value: null };
+    assert.equal(await pending.take(binding), true, "the existing local hint still supplies the take");
+    assert.equal(await pending.take(binding), false);
+    const seen = counters();
+    assert.equal(seen.fabSyncPendingTakeUnavailable ?? 0, 0);
+    assert.equal(seen.fabSyncPendingTakeLocalHit, 1);
+    assert.equal(seen.fabSyncPendingTakeLocalMiss, 1);
+    assert.equal(seen.fabSyncPendingTakeUnavailableLocalHit ?? 0, 0);
+  });
+
+  it("distinguishes unavailable local hit, expired hint, and absent hint without retrying", async () => {
+    counters();
+    let at = 1_000;
+    const calls: string[][] = [];
+    const pending = createClasspilotFabSyncPendingStore(async (args, options) => {
+      calls.push(args);
+      assert.equal(options?.readyTimeoutMs, 200);
+      assert.equal(options?.signal?.aborted, false);
+      return { status: "unknown", reason: "transport_lost" };
+    }, () => at);
+    await pending.mark(binding);
+    assert.equal(await pending.take(binding), true);
+    await pending.mark(binding);
+    at += CLASSPILOT_FAB_SYNC_PENDING_TTL_SECONDS * 1_000;
+    assert.equal(await pending.take(binding), false);
+    assert.equal(await pending.take(binding), false);
+    assert.deepEqual(calls.map(args => args[0]), ["SET", "GETDEL", "SET", "GETDEL", "GETDEL"]);
+    const seen = counters();
+    assert.equal(seen.fabSyncPendingTakeUnavailable, 3);
+    assert.equal(seen.fabSyncPendingTakeLocalHit, 1);
+    assert.equal(seen.fabSyncPendingTakeLocalExpired, 1);
+    assert.equal(seen.fabSyncPendingTakeLocalMiss, 1);
+    assert.equal(seen.fabSyncPendingTakeUnavailableLocalHit, 1);
+    assert.equal(seen.fabSyncPendingTakeUnavailableLocalExpired, 1);
+    assert.equal(seen.fabSyncPendingTakeUnavailableLocalMiss, 1);
+  });
+
+  it("retains an unexpected accepted reply's original fallback result", async () => {
+    counters();
+    let value: unknown = 0;
+    let calls = 0;
+    const pending = createClasspilotFabSyncPendingStore(async () => {
+      calls++;
+      return { status: "accepted", value };
+    }, () => 1_000);
+    assert.equal(await pending.mark(binding), "local");
+    assert.equal(await pending.take(binding), true);
+    value = undefined;
+    assert.equal(await pending.take(binding), false);
+    assert.equal(calls, 3);
+    assert.equal(counters().fabSyncPendingTakeUnavailable, 1, "accepted undefined retains compatibility semantics");
+  });
+
+  it("preserves empty-string shared hits and does not attempt the local fallback", async () => {
+    counters();
+    let value: unknown = false;
+    const pending = createClasspilotFabSyncPendingStore(async () => ({ status: "accepted", value }));
+    assert.equal(await pending.mark(binding), "local");
+    counters();
+    value = "";
+    assert.equal(await pending.take(binding), true);
+    const seen = counters();
+    assert.equal(seen.fabSyncPendingTakeUnavailable ?? 0, 0);
+    assert.equal(seen.fabSyncPendingTakeLocalHit ?? 0, 0);
+    assert.equal(seen.fabSyncPendingTakeLocalMiss ?? 0, 0);
+    assert.equal(seen.fabSyncPendingTakeLocalExpired ?? 0, 0);
+    value = null;
+    assert.equal(await pending.take(binding), false, "a shared string hit cleared the older local hint");
+    counters();
+  });
+
+  it("keeps accepted non-string replies on the local path without treating them as unavailable", async () => {
+    for (const value of [0, false, {}, [], null]) {
+      counters();
+      const pending = createClasspilotFabSyncPendingStore(async () => ({ status: "accepted", value }));
+      assert.equal(await pending.mark(binding), "local", "only literal OK stores the shared mark");
+      assert.equal(await pending.take(binding), true);
+      assert.equal(await pending.take(binding), false);
+      const seen = counters();
+      assert.equal(seen.fabSyncPendingMarked ?? 0, 0);
+      assert.equal(seen.fabSyncPendingMarkFallback, 1);
+      assert.equal(seen.fabSyncPendingTakeUnavailable ?? 0, 0);
+      assert.equal(seen.fabSyncPendingTakeUnavailableLocalHit ?? 0, 0);
+      assert.equal(seen.fabSyncPendingTakeLocalHit, 1);
+      assert.equal(seen.fabSyncPendingTakeLocalMiss, 1);
+    }
+  });
+
+  it("counts an uncertain destructive take once even if its raw operation completes later", async () => {
+    counters();
+    let complete!: (value: string) => void;
+    const raw = new Promise<string>(resolve => { complete = resolve; });
+    let calls = 0;
+    const runtime = new BoundedRedisPublication({
+      create: () => ({ isReady: true, connect: async () => {}, destroy() {} }),
+      limits: { ordinaryMs: 10 },
+    });
+    const pending = createClasspilotFabSyncPendingStore(args => {
+      assert.equal(args[0], "GETDEL");
+      return runtime.publish(() => { calls++; return raw; });
+    }, () => 1_000);
+    const keepAlive = setTimeout(() => {}, 1_000);
+    try {
+      assert.equal(await pending.take(binding), false);
+      const initial = snapshotRuntimePerformanceMetrics().counters;
+      assert.equal(initial.fabSyncPendingTakeUnavailable, 1);
+      assert.equal(initial.fabSyncPendingTakeUnavailableLocalMiss, 1);
+      complete("late-pending-hint");
+      await pause(5);
+      assert.deepEqual(snapshotRuntimePerformanceMetrics().counters, initial);
+      assert.equal(calls, 1, "neither diagnostics nor late completion repeats GETDEL");
+    } finally {
+      clearTimeout(keepAlive);
+      complete("late-pending-hint");
+      await runtime.dispose();
+      counters();
+    }
+  });
+
+  it("keeps the existing caller abort bound and records one unavailable local fallback", async () => {
+    counters();
+    let calls = 0;
+    const pending = createClasspilotFabSyncPendingStore((_args, options) => {
+      calls++;
+      return new Promise(resolve => {
+        options?.signal?.addEventListener("abort", () => resolve({ status: "unknown", reason: "aborted" }), { once: true });
+      });
+    });
+    const keepAlive = setTimeout(() => {}, 1_000);
+    try {
+      assert.equal(await pending.take(binding), false);
+      assert.equal(calls, 1);
+      assert.equal(counters().fabSyncPendingTakeUnavailableLocalMiss, 1);
+    } finally { clearTimeout(keepAlive); }
   });
 
   it("describes a miss with ids only, on one line, in a fixed shape", () => {

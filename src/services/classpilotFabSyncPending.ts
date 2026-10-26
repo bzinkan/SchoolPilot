@@ -1,5 +1,7 @@
 import { createHmac } from "node:crypto";
-import { realtimeRedisCommand as redisCommand } from "../realtime/ws-redis.js";
+import { realtimeRedisCommandOutcome as redisCommand } from "../realtime/ws-redis.js";
+import type { RedisPublicationOutcome } from "../realtime/boundedRedisPublication.js";
+import { recordFabSyncPendingLocalTake, recordFabSyncPendingRedisOutcome } from "./classpilotFabSyncDiagnostics.js";
 import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
 
 /**
@@ -56,7 +58,7 @@ export function classpilotFabSyncPendingKey(binding: ClasspilotFabSyncPendingBin
 type RedisCommandFn = (
   args: string[],
   options?: { readyTimeoutMs?: number; signal?: AbortSignal }
-) => Promise<unknown | undefined>;
+) => Promise<RedisPublicationOutcome<unknown>>;
 
 export type ClasspilotFabSyncPendingStore = {
   mark: (binding: ClasspilotFabSyncPendingBinding) => Promise<ClasspilotFabSyncPendingMark>;
@@ -71,7 +73,7 @@ export function createClasspilotFabSyncPendingStore(
 ): ClasspilotFabSyncPendingStore {
   const local = new Map<string, number>();
 
-  const bounded = async (args: string[]): Promise<unknown | undefined> => {
+  const bounded = async (args: string[]): Promise<RedisPublicationOutcome<unknown>> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REDIS_COMMAND_TIMEOUT_MS);
     timeout.unref?.();
@@ -100,11 +102,11 @@ export function createClasspilotFabSyncPendingStore(
     local.set(key, at + CLASSPILOT_FAB_SYNC_PENDING_TTL_SECONDS * 1_000);
   };
 
-  const takeLocally = (key: string): boolean => {
+  const takeLocally = (key: string): "hit" | "miss" | "expired" => {
     const expiresAt = local.get(key);
-    if (expiresAt === undefined) return false;
+    if (expiresAt === undefined) return "miss";
     local.delete(key);
-    return expiresAt > now();
+    return expiresAt > now() ? "hit" : "expired";
   };
 
   return {
@@ -118,11 +120,13 @@ export function createClasspilotFabSyncPendingStore(
           "EX",
           String(CLASSPILOT_FAB_SYNC_PENDING_TTL_SECONDS),
         ]);
-        if (result === "OK") {
+        recordFabSyncPendingRedisOutcome("mark", result);
+        if (result.status === "accepted" && result.value === "OK") {
           recordRuntimePerformanceCounter("fabSyncPendingMarked");
           return "stored";
         }
       } catch {
+        recordFabSyncPendingRedisOutcome("mark", { status: "exception" });
         // Fall through to the bounded local map.
       }
       markLocally(key);
@@ -133,8 +137,11 @@ export function createClasspilotFabSyncPendingStore(
       const key = classpilotFabSyncPendingKey(binding);
       let shared: unknown;
       try {
-        shared = await bounded(["GETDEL", key]);
+        const result = await bounded(["GETDEL", key]);
+        recordFabSyncPendingRedisOutcome("take", result);
+        shared = result.status === "accepted" ? result.value : undefined;
       } catch {
+        recordFabSyncPendingRedisOutcome("take", { status: "exception" });
         shared = undefined;
       }
       if (typeof shared === "string") {
@@ -142,7 +149,9 @@ export function createClasspilotFabSyncPendingStore(
         return true;
       }
       if (shared === undefined) recordRuntimePerformanceCounter("fabSyncPendingTakeUnavailable");
-      return takeLocally(key);
+      const localOutcome = takeLocally(key);
+      recordFabSyncPendingLocalTake(localOutcome, shared === undefined);
+      return localOutcome === "hit";
     },
     async clear(binding) {
       const key = classpilotFabSyncPendingKey(binding);
