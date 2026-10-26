@@ -94,6 +94,8 @@ The existing worker/private-chat suites passed **73/73** with a restricted runti
 
 The native HTTP fixture creates its own random synthetic cookie-signing secret before importing the application. CI exposed the earlier dependency on an inherited `SESSION_SECRET`; the exact hook failure was reproduced, then all 41 native checks passed with the inherited key explicitly deleted. This correction changes test setup only.
 
+The fixture also installs the unchanged canonical staff-identity integrity SQL before creating its synthetic actors. Assigned-teacher deactivation must remain rejected until assignments are reassigned. Membership-revocation coverage uses an unassigned administrator as the sole Observe viewer, preserving the teacher's live classroom while verifying that the administrator's lost membership invalidates observation. This exercises the production guard instead of bypassing it.
+
 The separate serial reliability `npm test` run completed **4,461 tests: 4,375 passed, 78 failed and eight skipped** in 3,319 seconds. It began before the final response-handler fix and used a misconfigured broad fixture: a bootstrap connection where restricted runtime roles were required, the literal string `false` as `RLS_TEST_ROLE`, and a schema-only restore missing canonical schema permissions and staff-integrity triggers. It is not a clean final-source full-suite result. Each failed category subsequently passed its correctly configured focused run:
 
 | Failed category | Broad failures | Corrected focused result |

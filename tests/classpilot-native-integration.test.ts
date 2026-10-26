@@ -42,6 +42,7 @@ const { default: errorMonitor } = await import("../dist/services/errorMonitor.js
 const { CLASSPILOT_NATIVE_VISIBILITY_SQL } = await import("../dist/db/classpilotNativeVisibilityMigration.js");
 const { CLASSPILOT_DASHBOARD_APPEARANCE_SQL } = await import("../dist/db/classpilotDashboardAppearanceMigration.js");
 const { CLASSPILOT_TEACHER_PREFERENCES_SQL } = await import("../dist/db/classpilotTeacherPreferencesMigration.js");
+const { STAFF_IDENTITY_INTEGRITY_SQL } = await import("../dist/db/staffIdentityIntegrityMigration.js");
 const fixture = new Pool({ connectionString: process.env.ADMIN_DATABASE_URL });
 let server: Server | undefined;
 let base = "", schoolId = "", otherSchoolId = "", studentId = "", secondStudentId = "", teachingSessionId = "";
@@ -85,6 +86,7 @@ before(async () => {
   await fixture.query(`BEGIN; ${CLASSPILOT_TEACHER_PREFERENCES_SQL} COMMIT;`);
   await fixture.query(`BEGIN; ${CLASSPILOT_DASHBOARD_APPEARANCE_SQL} COMMIT;`);
   await fixture.query(`BEGIN; ${CLASSPILOT_NATIVE_VISIBILITY_SQL} COMMIT;`);
+  await fixture.query(`BEGIN; ${STAFF_IDENTITY_INTEGRITY_SQL} COMMIT;`);
   const school = await storage.createSchool({ name: tag, slug: tag, domain: `${tag}.example.edu`, status: "active", planStatus: "active", schoolTimezone: "UTC" });
   schoolId = school.id;
   const other = await storage.createSchool({ name: `${tag}-other`, slug: `${tag}-other`, domain: `${tag}-other.example.edu`, status: "active", planStatus: "active" });
@@ -229,15 +231,29 @@ test("real native routes preserve browser isolation and enforce lifecycle, viewe
   });
   await t.test("current monitoring hours, staff membership and credential version gate existing grants", async () => {
     const row = (await tiles()).body.tiles[0];
+    await assert.rejects(fixture.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, teacherId]),
+      error => error instanceof Error && "code" in error && error.code === "23514" && error.message.includes("STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT"));
+    assert.equal((await request(`/observation-leases/${viewer}`, "DELETE", undefined, teacherToken, staffHeaders())).status, 204);
     target = { studentId, sourceRef: row.sourceRef, bindingRevision: row.bindingRevision }; viewer = randomUUID();
-    assert.equal((await request(`/observation-leases/${viewer}`, "PUT", { teachingSessionId, targets: [target] }, teacherToken, staffHeaders())).status, 200);
+    // This unassigned administrator can Observe without owning the live class.
+    assert.equal((await request(`/observation-leases/${viewer}`, "PUT", { teachingSessionId, targets: [target] }, adminToken, staffHeaders())).status, 200);
     assert.equal((await request(`/policy?sourceGeneration=${generation}`, "GET", undefined, session.sessionCredential)).body.captureAllowed, true);
     await fixture.query("UPDATE settings SET enable_tracking_hours=false WHERE school_id=$1", [schoolId]);
     assert.equal((await request(`/policy?sourceGeneration=${generation}`, "GET", undefined, session.sessionCredential)).body.captureAllowed, false);
     await fixture.query("UPDATE settings SET enable_tracking_hours=true WHERE school_id=$1", [schoolId]);
-    await fixture.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, teacherId]);
-    assert.equal((await request(`/policy?sourceGeneration=${generation}`, "GET", undefined, session.sessionCredential)).body.captureAllowed, false);
-    await fixture.query("UPDATE school_memberships SET status='active' WHERE school_id=$1 AND user_id=$2", [schoolId, teacherId]);
+    const owner = (await fixture.query("SELECT teaching_session_id,supervision_context_id,revision FROM classpilot_student_control_states WHERE school_id=$1 AND student_id=$2", [schoolId, studentId])).rows[0];
+    try {
+      await fixture.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, adminId]);
+      assert.equal((await request(`/policy?sourceGeneration=${generation}`, "GET", undefined, session.sessionCredential)).body.captureAllowed, false);
+      assert.deepEqual((await fixture.query("SELECT teaching_session_id,supervision_context_id,revision FROM classpilot_student_control_states WHERE school_id=$1 AND student_id=$2", [schoolId, studentId])).rows[0], owner);
+      assert.equal((await fixture.query("SELECT end_time FROM teaching_sessions WHERE id=$1", [teachingSessionId])).rows[0].end_time, null);
+    } finally {
+      await fixture.query("UPDATE school_memberships SET status='active' WHERE school_id=$1 AND user_id=$2", [schoolId, adminId]);
+      await request(`/observation-leases/${viewer}`, "DELETE", undefined, adminToken, staffHeaders());
+    }
+    viewer = randomUUID();
+    assert.equal((await request(`/observation-leases/${viewer}`, "PUT", { teachingSessionId, targets: [target] }, teacherToken, staffHeaders())).status, 200);
+    assert.equal((await request(`/policy?sourceGeneration=${generation}`, "GET", undefined, session.sessionCredential)).body.captureAllowed, true);
     await fixture.query("UPDATE users SET auth_version=auth_version+1 WHERE id=$1", [teacherId]);
     assert.equal((await request(`/policy?sourceGeneration=${generation}`, "GET", undefined, session.sessionCredential)).body.captureAllowed, false);
     assert.equal((await tiles()).status, 401);
