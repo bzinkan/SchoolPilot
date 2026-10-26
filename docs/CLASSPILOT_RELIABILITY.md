@@ -110,6 +110,34 @@ clients; averages of client percentiles are not fleet percentiles. These
 client-reported metrics are diagnostic, not authority or independent release
 acceptance evidence.
 
+### FAB pending coordination diagnostics
+
+The FAB pending follow-up retains the typed disposition from the existing single
+250 ms coordination call while preserving the compatibility value API and all
+delivery behavior. Its 37 fixed aggregate names distinguish mark/take admission
+and unknown reasons, accepted take string/null/unexpected replies, and local
+hit/miss/expiry. `fabSyncPendingTakeUnavailableLocal*` counters are subsets, not
+extra attempts;
+accepted mark does not by itself mean `SET` returned `OK`. Exceptions make no
+transport-phase claim, and late completion does not establish recovery or permit
+a retry of destructive `GETDEL`.
+
+The counters contain no keys, values, errors, identifiers, or free-form labels.
+Related increments share an interval. EMF permits 100 definitions total per log
+event across all directives. At most 100 active metrics retain inline EMF in the
+canonical zero-inclusive summary. Above 100, one
+`schoolpilot_runtime_performance_summary` carries counters/timings without EMF,
+followed by distinct `schoolpilot_runtime_performance_metrics` records of at most
+100 definitions each, with matching metric roots and unchanged
+`Environment`/`Service` dimensions but no counters/timings. These are not extra
+summary observations. Their best-effort failures do not replay a committed
+canonical summary or retry a product effect. These diagnostics do not establish
+client receipt, report correctness, historical warning cause, or capacity
+acceptance.
+Implementation does not prove production deployment or restart monitoring. See
+`CLASSPILOT_COORDINATION_DELIVERY_REVIEW.md` for evidence limits and the next
+bounded diagnostic decision.
+
 ## Local candidate validation (2026-10-13)
 
 The final full restricted-role RLS lane passed **533/533** on a second fresh

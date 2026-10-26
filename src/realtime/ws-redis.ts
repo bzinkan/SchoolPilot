@@ -435,22 +435,26 @@ export async function executeRealtimeRedisCommand<T = unknown>(
   return outcome.status === "accepted" ? outcome.value : undefined;
 }
 
-/** Compatibility signature for operational caches/leases. Unlike the legacy
- * rate-limit client this bounds replies after socket write, and an AbortSignal
+/** Bounded coordination reply plus its transport disposition. An AbortSignal
  * bounds only the caller, never corrupts the Redis delayed-reply queue. */
+export async function realtimeRedisCommandOutcome(
+  args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal; diagnosticOperation?: "observation_status" } = {},
+): Promise<RedisPublicationOutcome<unknown>> {
+  const outcome: RedisPublicationOutcome<unknown> = !redisUrl
+    ? { status: "not_admitted", reason: "not_configured" }
+    : await coordinationRuntime.publish(client => client.sendCommand(args), {
+      budgetMs: 250, signal: options.signal,
+    });
+  if (options.diagnosticOperation === "observation_status") recordObservationStatusOutcome(outcome);
+  return outcome;
+}
+
+/** Preserve the compatibility value contract; callers needing diagnostics can
+ * retain the bounded disposition without repeating the command. */
 export async function realtimeRedisCommand(
   args: string[], options: { readyTimeoutMs?: number; signal?: AbortSignal; diagnosticOperation?: "observation_status" } = {},
 ): Promise<unknown | undefined> {
-  if (!redisUrl) {
-    if (options.diagnosticOperation === "observation_status") {
-      recordObservationStatusOutcome({ status: "not_admitted", reason: "not_configured" });
-    }
-    return undefined;
-  }
-  const outcome = await coordinationRuntime.publish(client => client.sendCommand(args), {
-    budgetMs: 250, signal: options.signal,
-  });
-  if (options.diagnosticOperation === "observation_status") recordObservationStatusOutcome(outcome);
+  const outcome = await realtimeRedisCommandOutcome(args, options);
   return outcome.status === "accepted" ? outcome.value : undefined;
 }
 
