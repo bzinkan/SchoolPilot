@@ -94,6 +94,19 @@ The existing worker/private-chat suites passed **73/73** with a restricted runti
 
 The native HTTP fixture creates its own random synthetic cookie-signing secret before importing the application. CI exposed the earlier dependency on an inherited `SESSION_SECRET`; the exact hook failure was reproduced, then all 41 native checks passed with the inherited key explicitly deleted. This correction changes test setup only.
 
+The separate serial reliability `npm test` run completed **4,461 tests: 4,375 passed, 78 failed and eight skipped** in 3,319 seconds. It began before the final response-handler fix and used a misconfigured broad fixture: a bootstrap connection where restricted runtime roles were required, the literal string `false` as `RLS_TEST_ROLE`, and a schema-only restore missing canonical schema permissions and staff-integrity triggers. It is not a clean final-source full-suite result. Each failed category subsequently passed its correctly configured focused run:
+
+| Failed category | Broad failures | Corrected focused result |
+| --- | ---: | --- |
+| Private-chat and bell-worker restricted-runtime guards | 58 | 73/73 |
+| Native late-response regression observed before its fix | 1 | 41/41 final native checks |
+| Transactional tile-plan role and canonical-trigger prerequisites | 3 | 3/3 |
+| Kiosk non-owner schema visibility | 1 | 28/28 |
+| Hermetic RLS probe schema visibility | 4 | 5/5 |
+| Student-information fixture role | 11 | 11/11 |
+
+These reruns preserved application behavior and immutable SQL definitions, used existing provider fakes, and did not reactivate shelved product surfaces. The tile-plan server was isolated for its settings checks; both disposable test containers and all temporary roles were removed. Content-free reconciliation is in the private `reliability/completion-summary.json` and `validation/backend-reliability-summary.json`. PR checks run the final commit in their designated fixture lanes; their status must be evaluated separately from these local results.
+
 ### Windows reliability follow-up
 
 The Windows client at `1caea17143bfb3bc6118cfba7d7ab13509a85aff` passed 120 assertions in both Debug and Release. Production lifecycle components received controlled WTS, power, session and source-race inputs; these are simulated results. The operator confirmed this PC remains unlocked and does not sleep. Physical lock/unlock, sleep/wake and user switching were not triggered during this pass. A headed Chromium minimize command did not produce a hidden document, so actual page hiding remains unverified; controlled visibility and expired/failed-view tests passed.
