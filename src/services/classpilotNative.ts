@@ -275,6 +275,19 @@ export async function readNativeTiles<T>(scope: NativeStaffScope, input: TileReq
     }
     // Serialize while the database authority locks still protect this response.
     assertNativeRequestActive();
-    return send({ enabled: true, serverTime: new Date().toISOString(), tiles });
+    const serverTime = Date.now();
+    // Later rows can await database/Redis reads after an earlier image was
+    // accepted. Recheck its combined authority deadline at final publication.
+    for (const tile of tiles) {
+      if (typeof tile.expiresAt === "string" && Date.parse(tile.expiresAt) <= serverTime) {
+        tile.state = "stale";
+        delete tile.screenshot;
+        delete tile.foregroundApplication;
+        delete tile.observedAt;
+        delete tile.sequence;
+        delete tile.expiresAt;
+      }
+    }
+    return send({ enabled: true, serverTime: new Date(serverTime).toISOString(), tiles });
   });
 }

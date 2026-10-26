@@ -597,3 +597,62 @@ test("a late failure after a native response is delegated without a second write
   } finally { observed.mock.restore(); errors.mock.restore(); consoleError.mock.restore(); }
   assert.equal((await tiles()).status, 200, "The server and pool remain usable after the already-sent response failure");
 });
+
+test("batch read removes an earlier image that expires while a later tile is awaited", async () => {
+  const pinHash = await hashClassPilotPin("1234");
+  const students = await inSchool(() => db.insert(schema.students).values([1, 2].map(index => ({ schoolId,
+    firstName: "Synthetic", lastName: `Batch deadline ${index}`, classpilotPinHash: pinHash, status: "active" }))).returning());
+  const activity = await inSchool(async () => {
+    const group = await storage.createGroup({ schoolId, teacherId, name: "Batch deadline", groupType: "admin_class", status: "active" });
+    await db.insert(schema.groupStudents).values(students.map(student => ({ groupId: group.id, studentId: student.id })));
+    return storage.createTeachingSession({ groupId: group.id, teacherId, sessionMode: "live" });
+  });
+  const installed = [], sessions = [], generations = [randomUUID(), randomUUID()];
+  const viewer = randomUUID();
+  const jpeg = await sharp({ create: { width: 320, height: 180, channels: 3, background: "#1976d2" } }).jpeg().toBuffer();
+  try {
+    for (const [index, student] of students.entries()) {
+      const enrollment = await installation(); installed.push(enrollment);
+      const session = await bind(enrollment.installationCredential, student.id); assert.equal(session.status, 201);
+      sessions.push(session.body);
+      assert.equal((await request(`/policy?sourceGeneration=${generations[index]}`, "GET", undefined, session.body.sessionCredential)).status, 200);
+    }
+    const body = { teachingSessionId: activity.id, studentIds: students.map(student => student.id) };
+    const metadata = await tiles(body); assert.equal(metadata.status, 200);
+    const targets = metadata.body.tiles.map((tile: { studentId: string; sourceRef: string; bindingRevision: number }) =>
+      ({ studentId: tile.studentId, sourceRef: tile.sourceRef, bindingRevision: tile.bindingRevision }));
+    assert.equal((await request(`/observation-leases/${viewer}`, "PUT", { teachingSessionId: activity.id, targets }, teacherToken, staffHeaders())).status, 200);
+    for (const [index, session] of sessions.entries()) {
+      const grant = await request(`/policy?sourceGeneration=${generations[index]}`, "GET", undefined, session.sessionCredential);
+      assert.equal(grant.body.captureAllowed, true);
+      assert.equal((await upload(session.sessionCredential, { grantId: grant.body.grantId, sourceGeneration: generations[index], sequence: 1,
+        capturedAt: new Date().toISOString(), foregroundApplication: { id: "win32.syntheticcontent", displayName: "Synthetic content",
+          observedAt: new Date().toISOString() } }, jpeg)).status, 200);
+    }
+    const originalRead = classpilotNativeStore.readImage.bind(classpilotNativeStore);
+    let firstDeadline = 0, secondDelayed = false;
+    const observed = mock.method(classpilotNativeStore, "readImage", async (school: string, sourceRef: string) => {
+      const image = await originalRead(school, sourceRef); assert.ok(image);
+      if (sourceRef === targets[0].sourceRef) {
+        firstDeadline = Date.now() + 150;
+        return { ...image, imageExpiresAt: firstDeadline };
+      }
+      await pause(250); secondDelayed = true;
+      return image;
+    });
+    try {
+      const response = await tiles({ ...body, viewerInstanceId: viewer, selectedSources: targets });
+      assert.equal(response.status, 200); assert.equal(secondDelayed, true);
+      assert.ok(Date.parse(response.body.serverTime) >= firstDeadline);
+      const [expired, current] = response.body.tiles;
+      assert.equal(expired.state, "stale");
+      assert.deepEqual({ studentId: expired.studentId, sourceRef: expired.sourceRef, bindingRevision: expired.bindingRevision }, targets[0]);
+      for (const field of ["screenshot", "foregroundApplication", "observedAt", "sequence", "expiresAt"]) assert.equal(expired[field], undefined, field);
+      assert.equal(current.state, "available"); assert.match(current.screenshot, /^data:image\/jpeg;base64,/);
+      assert.equal(current.foregroundApplication.id, "win32.syntheticcontent");
+    } finally { observed.mock.restore(); }
+  } finally {
+    await request(`/observation-leases/${viewer}`, "DELETE", undefined, teacherToken, staffHeaders());
+    for (const enrollment of installed) await request(`/installations/${enrollment.installationCredential.split('.')[3]}`, "DELETE", undefined, adminToken, staffHeaders());
+  }
+});

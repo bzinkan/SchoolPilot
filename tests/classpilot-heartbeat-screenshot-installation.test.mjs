@@ -14,7 +14,7 @@ const client=row=>({query:async()=>({rows:row?[row]:[]})});
 test('immutable CREATE bytes and append-only migration bind the explicit PUBLIC revoke',()=>{
   assert.equal(hash(sql),'10a2bf7377afc98c1d4a9f9a54afba740a97ab408dcb3df7bbb5dd019c964e76');
   assert.equal(migration.checksum,hash(contract));assert.match(contract,/REVOKE ALL ON FUNCTION public\.classpilot_heartbeat_screenshot_evidence_v1\(text,text,text,text\) FROM PUBLIC;/);
-  assert.equal(schoolPilot27Migrations.length,57);assert.equal(schoolPilot27Migrations[53],migration);
+  assert.ok(schoolPilot27Migrations.length>=57,'Preserve the historical migration prefix while allowing append-only additions');assert.equal(schoolPilot27Migrations[53],migration);
 });
 test('actual runtime catalog assertion is read only and accepts the exact invoker contract',async()=>{await verify(client(good()));});
 for(const [field,value] of Object.entries({body:body+' ',language:'sql',volatility:'s',securityDefiner:true,parallel:'s',kind:'p',returnsSet:true,strict:true,leakproof:true,defaultArguments:1,resultType:'text',configuration:['search_path=public'],argumentNames:['wrong'],executable:false,publicExecute:true})){
