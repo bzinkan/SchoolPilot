@@ -42,9 +42,9 @@ const { default: errorMonitor } = await import("../dist/services/errorMonitor.js
 const { CLASSPILOT_NATIVE_VISIBILITY_SQL } = await import("../dist/db/classpilotNativeVisibilityMigration.js");
 const { CLASSPILOT_DASHBOARD_APPEARANCE_SQL } = await import("../dist/db/classpilotDashboardAppearanceMigration.js");
 const { CLASSPILOT_TEACHER_PREFERENCES_SQL } = await import("../dist/db/classpilotTeacherPreferencesMigration.js");
-const { STAFF_IDENTITY_INTEGRITY_SQL } = await import("../dist/db/staffIdentityIntegrityMigration.js");
 const fixture = new Pool({ connectionString: process.env.ADMIN_DATABASE_URL });
 let server: Server | undefined;
+let staffAssignmentGuardsInstalled = false;
 let base = "", schoolId = "", otherSchoolId = "", studentId = "", secondStudentId = "", teachingSessionId = "";
 let adminToken = "", teacherToken = "", otherTeacherToken = "", adminCookie = "", adminId = "", teacherId = "", teacherEmail = "";
 const inSchool = <T>(action: () => Promise<T>) => runWithTenantContext({ schoolId }, action);
@@ -86,7 +86,23 @@ before(async () => {
   await fixture.query(`BEGIN; ${CLASSPILOT_TEACHER_PREFERENCES_SQL} COMMIT;`);
   await fixture.query(`BEGIN; ${CLASSPILOT_DASHBOARD_APPEARANCE_SQL} COMMIT;`);
   await fixture.query(`BEGIN; ${CLASSPILOT_NATIVE_VISIBILITY_SQL} COMMIT;`);
-  await fixture.query(`BEGIN; ${STAFF_IDENTITY_INTEGRITY_SQL} COMMIT;`);
+  // The ordinary lane shares legacy fixtures; the RLS lane converges the
+  // canonical staff contract before tests. Never migrate unrelated rows here.
+  const staffGuards = await fixture.query(`SELECT t.tgname AS name,
+    t.tgenabled IN ('O','A') AS enabled,
+    t.tgconstraint <> 0 AND t.tgdeferrable AND t.tginitdeferred AS deferred_constraint,
+    p.proname = 'schoolpilot_check_departing_staff_assignments' AND n.nspname = 'public' AS canonical_function
+    FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE t.tgrelid='public.school_memberships'::regclass AND NOT t.tgisinternal
+      AND t.tgname IN ('classpilot_staff_assignment_membership_delete','classpilot_staff_assignment_membership_update')
+    ORDER BY t.tgname`);
+  if (process.env.RLS_GUC_ENABLED === "true" || staffGuards.rows.length > 0) {
+    assert.deepEqual(staffGuards.rows, ["delete", "update"].map(operation => ({
+      name: `classpilot_staff_assignment_membership_${operation}`, enabled: true,
+      deferred_constraint: true, canonical_function: true,
+    })), "The RLS fixture requires both canonical staff membership guards; partial or disabled guards are never accepted");
+    staffAssignmentGuardsInstalled = true;
+  }
   const school = await storage.createSchool({ name: tag, slug: tag, domain: `${tag}.example.edu`, status: "active", planStatus: "active", schoolTimezone: "UTC" });
   schoolId = school.id;
   const other = await storage.createSchool({ name: `${tag}-other`, slug: `${tag}-other`, domain: `${tag}-other.example.edu`, status: "active", planStatus: "active" });
@@ -231,8 +247,10 @@ test("real native routes preserve browser isolation and enforce lifecycle, viewe
   });
   await t.test("current monitoring hours, staff membership and credential version gate existing grants", async () => {
     const row = (await tiles()).body.tiles[0];
-    await assert.rejects(fixture.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, teacherId]),
-      error => error instanceof Error && "code" in error && error.code === "23514" && error.message.includes("STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT"));
+    if (staffAssignmentGuardsInstalled) {
+      await assert.rejects(fixture.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [schoolId, teacherId]),
+        error => error instanceof Error && "code" in error && error.code === "23514" && error.message.includes("STAFF_ASSIGNMENTS_REQUIRE_REASSIGNMENT"));
+    }
     assert.equal((await request(`/observation-leases/${viewer}`, "DELETE", undefined, teacherToken, staffHeaders())).status, 204);
     target = { studentId, sourceRef: row.sourceRef, bindingRevision: row.bindingRevision }; viewer = randomUUID();
     // This unassigned administrator can Observe without owning the live class.
