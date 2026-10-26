@@ -104,6 +104,15 @@ async function open({ browserSource = true, enabled = true, imageTtl = 30_000, h
 }
 const imageReads = requests => requests.filter(request => request.body?.selectedSources);
 const leases = requests => requests.filter(request => request.method === 'PUT');
+const waitForLeaseRelease = (page, leasePath) => {
+  assert.ok(leasePath, 'The retiring viewer must have an exact lease path');
+  const released = page.waitForResponse(response => response.request().method() === 'DELETE'
+    && new URL(response.url()).pathname === leasePath && response.status() === 204, { timeout: 5_000 });
+  // Keep an earlier UI assertion failure primary if teardown closes the page.
+  // Awaiting the original promise below still rejects a missing release.
+  void released.catch(() => {});
+  return released;
+};
 
 test('desktop metadata batches exact contexts and lease clock is monotonic and conservative', () => {
   const requests = createDesktopMetadataRequests(Array.from({ length: 51 }, (_, i) => ({ studentId: `s${i}` })), {
@@ -126,9 +135,11 @@ test('both sources default Browser; explicitly selecting Desktop starts its exac
     await page.getByText(/Synthetic Editor/).waitFor();
     assert.equal(leases(requests).length, 1);
     assert.ok(imageReads(requests)[0].body.viewerInstanceId);
+    const released = waitForLeaseRelease(page, leases(requests)[0].path);
     await page.getByTestId('preview-source-browser-student-a').click();
     assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
     assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
+    await released;
     await page.waitForFunction(() => document.querySelector('[data-testid="preview-source-browser-student-a"]').getAttribute('aria-pressed') === 'true');
     await page.getByTestId('preview-source-desktop-student-a').click();
     await page.getByTestId('desktop-image-student-a').waitFor();
@@ -242,9 +253,12 @@ test('a late grant response after source deselection is released and never reque
     await page.getByTestId('desktop-state-student-a').filter({ hasText: 'Authorizing' }).waitFor();
     await page.waitForTimeout(50);
     assert.equal(heldGrants.length, 1);
+    const released = waitForLeaseRelease(page, leases(requests)[0].path);
     await page.getByTestId('preview-source-browser-student-a').click();
+    await released;
+    const lateRelease = waitForLeaseRelease(page, leases(requests)[0].path);
     await heldGrants.shift()();
-    await page.waitForTimeout(50);
+    await lateRelease;
     assert.equal(imageReads(requests).length, 0);
     assert.ok(requests.filter(request => request.method === 'DELETE').length >= 2);
     assert.deepEqual(errors, []);
@@ -297,11 +311,13 @@ test('selected-read 503 retires intent across hide/show; explicit Retry creates 
     await page.getByTestId('view-desktop-student-a').click();
     await page.getByTestId('desktop-image-student-a').waitFor();
     await page.getByRole('button', { name: 'Enlarge desktop for Synthetic Student' }).click();
+    const released = waitForLeaseRelease(page, leases(requests)[0].path);
     setImageStatus(503);
     await page.clock.fastForward(5_100);
     await page.getByTestId('expanded-view-desktop').filter({ hasText: 'Retry desktop' }).waitFor();
     assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
     assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
+    await released;
     assert.ok(requests.some(request => request.method === 'DELETE'));
     const originalViewer = leases(requests)[0].path;
     const readCount = imageReads(requests).length;
@@ -326,11 +342,13 @@ test('metadata 503 immediately clears all desktop surfaces and recovery requires
     await page.getByTestId('view-desktop-student-a').click();
     await page.getByTestId('desktop-image-student-a').waitFor();
     await page.getByRole('button', { name: 'Enlarge desktop for Synthetic Student' }).click();
+    const released = waitForLeaseRelease(page, leases(requests)[0].path);
     setMetadataStatus(503);
     await page.evaluate(() => window.nativeFixture.refresh());
     await page.getByTestId('desktop-state-student-a').filter({ hasText: 'unavailable' }).waitFor();
     assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
     assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
+    await released;
     assert.ok(requests.some(request => request.method === 'DELETE'));
     setMetadataStatus(200);
     await page.evaluate(() => window.nativeFixture.refresh());
@@ -350,10 +368,12 @@ test('selected-read health denial releases immediately before the next metadata 
     try {
       await page.getByTestId('view-desktop-student-a').click();
       await page.getByTestId('desktop-image-student-a').waitFor();
+      const released = waitForLeaseRelease(page, leases(requests)[0].path);
       setImageState(health);
       await page.clock.fastForward(5_100);
-      await page.waitForTimeout(50);
+      await page.getByTestId('desktop-state-student-a').filter({ hasText: 'unavailable' }).waitFor();
       assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+      await released;
       assert.ok(requests.some(request => request.method === 'DELETE'), `${health} must release without waiting for metadata`);
       const readCount = imageReads(requests).length;
       setImageState('available');
@@ -407,12 +427,15 @@ test('late successful renewal after read 503 is released without reviving conten
     await page.clock.fastForward(15_100);
     await page.waitForTimeout(50);
     assert.equal(heldGrants.length, 1);
+    const released = waitForLeaseRelease(page, leases(requests)[0].path);
     setImageStatus(503);
     await page.clock.fastForward(5_100);
     await page.getByTestId('view-desktop-student-a').filter({ hasText: 'Retry desktop' }).waitFor();
     const readCount = imageReads(requests).length;
+    await released;
+    const lateRelease = waitForLeaseRelease(page, leases(requests)[0].path);
     await heldGrants.shift()();
-    await page.waitForTimeout(50);
+    await lateRelease;
     assert.ok(requests.filter(request => request.method === 'DELETE').length >= 2);
     assert.equal(imageReads(requests).length, readCount);
     assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
@@ -487,11 +510,13 @@ test('unhealthy same-binding metadata immediately clears pixels and lease; recov
     try {
       await page.getByTestId('view-desktop-student-a').click();
       await page.getByTestId('desktop-image-student-a').waitFor();
+      const released = waitForLeaseRelease(page, leases(requests)[0].path);
       setMetadata(state);
       await page.evaluate(() => window.nativeFixture.refresh());
       assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
       assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
       assert.equal(await page.getByTestId('preview-source-desktop-student-a').getAttribute('aria-pressed'), 'true');
+      await released;
       assert.ok(requests.some(request => request.method === 'DELETE'));
       setMetadata('available');
       await page.evaluate(() => window.nativeFixture.refresh());
@@ -510,11 +535,13 @@ test('an omitted metadata row preserves the selected Desktop as unavailable', as
   try {
     await page.getByTestId('view-desktop-student-a').click();
     await page.getByTestId('desktop-image-student-a').waitFor();
+    const released = waitForLeaseRelease(page, leases(requests)[0].path);
     omitMetadata();
     await page.evaluate(() => window.nativeFixture.refresh());
     await page.getByTestId('desktop-state-student-a').filter({ hasText: 'unavailable' }).waitFor();
     assert.equal(await page.getByTestId('preview-source-desktop-student-a').getAttribute('aria-pressed'), 'true');
     assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+    await released;
     assert.ok(requests.some(request => request.method === 'DELETE'));
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
@@ -522,20 +549,34 @@ test('an omitted metadata row preserves the selected Desktop as unavailable', as
 
 test('closing the native enlarged preview releases its shared viewer and clears tile pixels', async () => {
   const { page, requests, errors } = await open({ browserSource: false });
+  let acknowledgeRelease;
+  const releaseGate = new Promise(resolve => { acknowledgeRelease = resolve; });
   try {
     await page.getByTestId('view-desktop-student-a').click();
     await page.getByTestId('desktop-image-student-a').waitFor();
     await page.getByRole('button', { name: 'Enlarge desktop for Synthetic Student' }).click();
     await page.getByTestId('expanded-desktop-dialog').waitFor();
     assert.equal(await page.getByTestId('expanded-native-source-desktop').getAttribute('aria-pressed'), 'true');
+    const leasePath = leases(requests)[0].path;
+    // Hold delivery to the fixture until the UI has cleared. DOM removal and
+    // the asynchronous lease request/acknowledgement are separate guarantees.
+    await page.route('**/api/classpilot/native/observation-leases/*', async route => {
+      if (route.request().method() === 'DELETE' && new URL(route.request().url()).pathname === leasePath) await releaseGate;
+      await route.fallback();
+    });
+    const released = waitForLeaseRelease(page, leasePath);
     await page.keyboard.press('Escape');
     await page.getByTestId('expanded-desktop-dialog').waitFor({ state: 'hidden' });
     assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
     assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
+    assert.equal(requests.some(request => request.method === 'DELETE' && request.path === leasePath), false,
+      'Pixels must clear before the held release acknowledgement');
+    acknowledgeRelease();
+    await released;
     assert.ok(requests.some(request => request.method === 'DELETE' && request.path === leases(requests)[0].path));
     await page.clock.fastForward(16_000);
     assert.equal(leases(requests).length, 1);
     await page.getByTestId('view-desktop-student-a').waitFor();
     assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { acknowledgeRelease(); await page.close(); }
 });
