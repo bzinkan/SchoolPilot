@@ -18,6 +18,8 @@ on:
       - 'Dockerfile'
       - 'package*.json'
       - '.github/workflows/trivy.yml'
+      - 'scripts/security/scan-container.mjs'
+      - 'tests/trivy-container-scan.test.mjs'
   schedule:
     - cron: '0 7 * * 1' # Mondays 07:00 UTC
 
@@ -25,11 +27,15 @@ jobs:
   scan:
     name: Scan Docker image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Test scan failure and database fallback contracts
+        run: node --test tests/trivy-container-scan.test.mjs
 
       - name: Build image
         # Use the verified official mirror digest for both Dockerfile FROM references.
@@ -38,11 +44,14 @@ jobs:
           --build-context node:22-alpine=docker-image://docker.io/library/node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
           -t schoolpilot-production-api:scan .
 
-      - name: Run Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Install Trivy
+        # Same installer commit and scanner version used by trivy-action v0.36.0.
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
         with:
-          image-ref: 'schoolpilot-production-api:scan'
-          format: 'table' # results go to the job log — there is no Security tab on this plan
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true # only flag CVEs with available fixes
-          exit-code: '1' # fail the job on findings
+          version: v0.70.0
+          cache: true # binary only; databases must be downloaded in this run
+
+      - name: Run Trivy with bounded database fallback
+        # Download errors (including a mirror's terminal 404) are not scan verdicts.
+        # The wrapper requires fresh vulnerability + Java databases, then scans once.
+        run: node scripts/security/scan-container.mjs --image schoolpilot-production-api:scan

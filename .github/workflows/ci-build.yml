@@ -58,6 +58,7 @@ jobs:
               - 'scripts/classpilot-roadmap-release-evidence.ps1'
               - 'scripts/classpilot-transient-replay-runtime.ps1'
               - 'scripts/private-permissions.ps1'
+              - 'scripts/operations/**'
               - 'scripts/enforce-private-chat-release-floor.mjs'
               - 'scripts/deploy-mydesk-runtime-config.ps1'
               - 'scripts/deploy-product-runtime-config.ps1'
@@ -486,6 +487,10 @@ jobs:
             throw "PowerShell 7.5 or newer is required; found $($PSVersionTable.PSVersion)."
           }
           pwsh -NoProfile -File tests/powershell-json-datekind-conformance.test.ps1
+
+      - name: Usage Reports capture and evidence validation
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/usage-reports-monitoring.test.ps1
 
       - name: Capacity-acceptance tooling-only boundary
         shell: pwsh

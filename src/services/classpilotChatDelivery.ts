@@ -14,9 +14,10 @@ export type StudentChatFanOutReport = {
 
 /**
  * One line per API task per student message, so an incident can be settled from
- * CloudWatch: if every task reports delivered=0 the server never had an eligible
- * teacher socket (subscription, assignment or authority-revision mismatch); if any
- * task reports delivered>=1 the event reached a socket and the gap is client-side.
+ * CloudWatch. A task with no eligible local staff socket can report zero while
+ * another task writes the same event. Positive counts record local socket writes,
+ * not client receipt, rendering, or acknowledgement. Aggregate task reports alone
+ * cannot establish a global delivery failure or locate its cause.
  * Only opaque ids are logged, never message content.
  */
 export function describeStudentChatFanOut(report: StudentChatFanOutReport): { level: "log" | "warn"; line: string } {
