@@ -14,6 +14,7 @@ import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inA
 import { randomInt, randomUUID } from "node:crypto";
 import { classpilotNativeEnrollmentTokens, classpilotNativeInstallations, classpilotNativeSessions, type ClasspilotNativeSession } from "../schema/classpilotNative.js";
 import { ClasspilotNativeError, NATIVE_LIMITS, nativeHashMatches, nativeSecretHash, requireNativeEnabled, type NativeCredential, type NativeContext } from "./classpilotNativeProtocol.js";
+import { assertNativeRequestActive, nativePhase, nativeResponseEnded } from "./classpilotNativeDiagnostics.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
@@ -35015,14 +35016,34 @@ export type NativeCurrentAuthority = NativeContext & { controlRevision: number; 
 export async function withClasspilotNativeAuthority<T>(schoolId: string, studentIds: string[],
   action: (database: NativeStorageDb) => Promise<T>): Promise<T> {
   requireNativeEnabled(schoolId);
+  assertNativeRequestActive();
   return db.transaction(async tx => {
     const database = tx as unknown as typeof db;
-    if (!await lockStaffAssignmentLifecycleSchool(tx, schoolId)) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
-    await assertClasspilotEntitled(schoolId, database, { lock: true });
+    // Keep a blocked authority writer inside the native client's 5s deadline.
+    // These settings are transaction-local and never alter the shared pool.
+    await database.execute(sql`SELECT set_config('lock_timeout','1000ms',true), set_config('statement_timeout','2000ms',true)`);
+    if (!await nativePhase("school_lock", () => lockStaffAssignmentLifecycleSchool(tx, schoolId))) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED");
+    assertNativeRequestActive();
+    await nativePhase("entitlement", () => assertClasspilotEntitled(schoolId, database, { lock: true }));
     await database.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`classpilot:native:${schoolId}`}, 0::bigint))`);
-    await lockClasspilotStudentControlAuthorities(schoolId, studentIds, database);
+    await nativePhase("student_control", () => lockClasspilotStudentControlAuthorities(schoolId, studentIds, database));
+    assertNativeRequestActive();
     requireNativeEnabled(schoolId);
-    return action(database);
+    const result = await action(database);
+    // Pixel reads serialize under these locks and enforce their deadline before
+    // sending. Do not retroactively deny an already-ended response if JSON
+    // serialization crosses the deadline; mutation actions still check here.
+    if (!nativeResponseEnded()) assertNativeRequestActive();
+    return result;
+  }).catch((error: unknown) => {
+    // Drizzle wraps pg errors. Classify only fixed SQLSTATEs, never SQL/text.
+    let cause = error;
+    for (let depth = 0; depth < 5 && cause && typeof cause === "object"; depth++) {
+      if ("code" in cause && cause.code === "55P03") throw new ClasspilotNativeError("NATIVE_AUTHORITY_BUSY", 503);
+      if ("code" in cause && cause.code === "57014") throw new ClasspilotNativeError("NATIVE_AUTHORITY_TIMEOUT", 503);
+      cause = "cause" in cause ? cause.cause : undefined;
+    }
+    throw error;
   });
 }
 

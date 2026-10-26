@@ -1,4 +1,5 @@
-import { realtimeRedisCommand } from "../realtime/ws-redis.js";
+import { executeRealtimeRedisCommandOutcome } from "../realtime/ws-redis.js";
+import { assertNativeRequestActive, nativePhase, nativeRedisOutcome, nativeRequestRemainingMs, NATIVE_REDIS_BUDGET_MS } from "./classpilotNativeDiagnostics.js";
 import { ClasspilotNativeError, nativeSecretHash, NATIVE_LIMITS, type NativeTarget, type NativeContext,
   type NativeApplication } from "./classpilotNativeProtocol.js";
 
@@ -20,9 +21,15 @@ function decode<T>(raw: unknown): T | null {
 /** No in-process fallback: an uncertain shared store never grants collection. */
 export class ClasspilotNativeStore {
   constructor(private readonly command: Command = async args => {
-    const result = await realtimeRedisCommand(args);
-    if (result === undefined) throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
-    return result;
+    assertNativeRequestActive();
+    // JPEG reads/writes are larger than advisory presence commands. Allow a
+    // bounded 750ms reply, still inside the 4s request/5s client upload budget.
+    // An uncertain write is never retried or replaced with local authority.
+    const outcome = await nativePhase("redis", () => executeRealtimeRedisCommandOutcome(args,
+      { timeoutMs: Math.min(NATIVE_REDIS_BUDGET_MS, nativeRequestRemainingMs()) }));
+    nativeRedisOutcome(outcome.status, outcome.status === "accepted" ? undefined : outcome.reason);
+    if (outcome.status !== "accepted") throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
+    return outcome.value;
   }, private readonly prefix = `${process.env.REDIS_PREFIX ?? "schoolpilot"}:native:v1`) {}
   private key(kind: string, ...parts: string[]) { return `${this.prefix}:${kind}:${nativeSecretHash(parts.join("\u001f"))}`; }
   viewerKey(schoolId: string, actorId: string, instanceId: string) { return this.key("viewer", schoolId, actorId, instanceId); }
@@ -51,16 +58,19 @@ export class ClasspilotNativeStore {
     if (ttl <= 0) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
     const result = await this.command(["EVAL", `
       if redis.call('EXISTS',KEYS[2])==1 then return -1 end
+      local clock=redis.call('TIME'); local now=tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000);
+      if tonumber(ARGV[2])<=now then return -3 end
       for i=3,#KEYS do
-        redis.call('ZREMRANGEBYSCORE',KEYS[i],'-inf',ARGV[1]);
+        redis.call('ZREMRANGEBYSCORE',KEYS[i],'-inf',now);
         if redis.call('ZCARD',KEYS[i])>=128 and not redis.call('ZSCORE',KEYS[i],KEYS[1]) then return -2 end
       end
-      redis.call('SET',KEYS[1],ARGV[3],'PX',ARGV[4]);
-      for i=3,#KEYS do redis.call('ZADD',KEYS[i],ARGV[2],KEYS[1]); redis.call('PEXPIRE',KEYS[i],90000) end
+      redis.call('SET',KEYS[1],ARGV[3],'PXAT',ARGV[2]);
+      for i=3,#KEYS do redis.call('ZADD',KEYS[i],ARGV[2],KEYS[1]); redis.call('PEXPIREAT',KEYS[i],tonumber(ARGV[2])+45000) end
       return 1`, String(indexes.length + 2), key, `${key}:released`, ...indexes,
       String(now), String(lease.expiresAt), JSON.stringify(lease), String(ttl)]);
     if (result === -1) throw new ClasspilotNativeError("NATIVE_VIEWER_RELEASED", 409);
     if (result === -2) throw new ClasspilotNativeError("NATIVE_VIEWER_LIMIT", 429);
+    if (result === -3) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
     if (result !== 1) throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
   }
 
@@ -93,20 +103,26 @@ export class ClasspilotNativeStore {
     // DELETE does not need a database lock. Fence its race with issuance in the
     // same Redis command, using the exact descriptors whose DB authority was checked.
     const result = await this.command(["EVAL", `
+      local clock=redis.call('TIME'); local now=tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000);
+      if tonumber(ARGV[2])<=now then return -1 end
       local expected=cjson.decode(ARGV[3]);
       for i=2,#KEYS do if redis.call('GET',KEYS[i])~=expected[i-1] then return -1 end end
-      redis.call('SET',KEYS[1],ARGV[1],'PX',ARGV[2]); return 1`, String(viewers.length + 1),
+      redis.call('SET',KEYS[1],ARGV[1],'PXAT',ARGV[2]); return 1`, String(viewers.length + 1),
       this.grantKey(grant.schoolId, grant.nativeSessionId, grant.id),
       ...viewers.map(viewer => this.viewerKey(viewer.schoolId, viewer.actorId, viewer.viewerInstanceId)),
-      JSON.stringify(grant), String(ttl), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer)))]);
+      JSON.stringify(grant), String(grant.expiresAt), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer)))]);
     if (result === -1) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
     if (result !== 1) throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
   }
   async getGrant(schoolId: string, sessionId: string, id: string): Promise<NativeCaptureGrant | null> {
     return decode<NativeCaptureGrant>(await this.command(["GET", this.grantKey(schoolId, sessionId, id)]));
   }
-  async clearImage(schoolId: string, sourceRef: string): Promise<void> {
-    const result = await this.command(["DEL", this.imageKey(schoolId, sourceRef)]);
+  async clearImage(schoolId: string, sourceRef: string, throughBindingRevision: number): Promise<void> {
+    // An old cleanup can arrive after a new source already published. Delete
+    // only images covered by the binding revision that authorized this stop.
+    const result = await this.command(["EVAL", `local raw=redis.call('GET',KEYS[1]); if not raw then return 0 end
+      local image=cjson.decode(raw); if tonumber(image.bindingRevision)>tonumber(ARGV[1]) then return 0 end
+      return redis.call('DEL',KEYS[1])`, "1", this.imageKey(schoolId, sourceRef), String(throughBindingRevision)]);
     if (typeof result !== "number") throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
   }
   async readImage(schoolId: string, sourceRef: string): Promise<NativeStoredImage | null> {
@@ -116,18 +132,25 @@ export class ClasspilotNativeStore {
     if (!viewers.length) throw new ClasspilotNativeError("NATIVE_GRANT_STALE", 409);
     const now = Date.now();
     const result = await this.command(["EVAL", `
+      local clock=redis.call('TIME'); local now=tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000);
       local grant=redis.call('GET',KEYS[1]); if not grant then return -1 end
-      local g=cjson.decode(grant); if tonumber(g.expiresAt)<=tonumber(ARGV[1]) then return -1 end
+      local g=cjson.decode(grant); if tonumber(g.expiresAt)<=now or tonumber(ARGV[4])<=now or tonumber(ARGV[7])<now then return -1 end
       local expected=cjson.decode(ARGV[6]);
       for i=4,#KEYS do if redis.call('GET',KEYS[i])~=expected[i-3] then return -1 end end
       local previous=redis.call('GET',KEYS[3]); if previous and tonumber(previous)>=tonumber(ARGV[2]) then return -2 end
-      local ttl=tonumber(ARGV[4]); if ttl<=0 then return -1 end
-      redis.call('SET',KEYS[3],ARGV[2],'PX',ARGV[5]); redis.call('SET',KEYS[2],ARGV[3],'PX',ttl); return 1`, String(viewers.length + 3),
+      local current=redis.call('GET',KEYS[2]);
+      if current then
+        local stored=cjson.decode(current); local candidate=cjson.decode(ARGV[3]);
+        if tonumber(stored.bindingRevision)>tonumber(candidate.bindingRevision) then return -1 end
+        if tonumber(stored.bindingRevision)==tonumber(candidate.bindingRevision) and tonumber(stored.sequence)>=tonumber(candidate.sequence) then return -2 end
+      end
+      if tonumber(ARGV[5])<=now then return -1 end
+      redis.call('SET',KEYS[3],ARGV[2],'PXAT',ARGV[5]); redis.call('SET',KEYS[2],ARGV[3],'PXAT',ARGV[4]); return 1`, String(viewers.length + 3),
       this.grantKey(image.schoolId, image.nativeSessionId, image.id), this.imageKey(image.schoolId, image.sourceRef),
       this.key("sequence", image.schoolId, image.nativeSessionId, image.sourceGeneration),
       ...viewers.map(viewer => this.viewerKey(viewer.schoolId, viewer.actorId, viewer.viewerInstanceId)),
-      String(now), String(image.sequence), JSON.stringify(image), String(Math.max(0, image.imageExpiresAt - now)),
-      String(Math.max(1, sessionEnd - now)), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer)))]);
+      String(now), String(image.sequence), JSON.stringify(image), String(image.imageExpiresAt),
+      String(sessionEnd), JSON.stringify(viewers.map(viewer => JSON.stringify(viewer))), String(Date.parse(image.capturedAt) + NATIVE_LIMITS.uploadAgeMs)]);
     if (result === -1 || result === -2) throw new ClasspilotNativeError(result === -2 ? "NATIVE_SEQUENCE_REPLAY" : "NATIVE_GRANT_STALE", 409);
     if (result !== 1) throw new ClasspilotNativeError("NATIVE_STORE_UNAVAILABLE", 503);
   }

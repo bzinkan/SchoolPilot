@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { attachNativeRequestDiagnostics } from './native-desktop-diagnostics.mjs';
 
 const apiOrigin = process.env.CLASSPILOT_NATIVE_E2E_API || 'http://127.0.0.1:4100';
 const webOrigin = process.env.CLASSPILOT_NATIVE_E2E_WEB || 'http://127.0.0.1:5179';
@@ -24,7 +25,7 @@ const metricsPath = path.join(outputDirectory, 'desktop-metrics.json');
 const screenshotPath = path.join(outputDirectory, 'synthetic-teacher-desktop.png');
 const studentId = fixture.students[0].id;
 const metrics = {
-  schema: 1, kind: 'real-local-synthetic-native-desktop', startedAt: new Date().toISOString(),
+  schema: 2, kind: 'real-local-synthetic-native-desktop', startedAt: new Date().toISOString(),
   requestedDurationSeconds: durationSeconds, processId: process.pid, status: 'starting',
   frames: [], events: [], http: {}, ui: { decodedImages: 0, missingImageSamples: 0, foregroundObserved: false,
     browserControlsUnavailable: false, sourceLabelObserved: false, expiryGaps: [] }, pageErrorCount: 0,
@@ -57,6 +58,7 @@ try {
   assert.ok(auth.memberships?.some(member => member.schoolId === fixture.schoolId), 'Teacher must be admitted to synthetic school');
   await context.addInitScript(({ schoolId }) => { localStorage.setItem('sp_activeSchoolId', schoolId); }, { schoolId: fixture.schoolId });
   page = await context.newPage();
+  attachNativeRequestDiagnostics(page, { metrics, event, elapsed: () => Math.round(performance.now() - started) });
   page.setDefaultTimeout(15_000);
   page.on('pageerror', () => { metrics.pageErrorCount += 1; });
   await page.exposeBinding('nativeE2EReportLifecycle', (_source, sample) => {
@@ -136,7 +138,7 @@ try {
         return;
       }
       if (!row?.screenshot) { event('selected_read_without_image', { state: row?.state || 'unavailable' }); return; }
-      const frameKey = `${row.bindingRevision}:${row.sequence}`;
+      const frameKey = `${row.sourceRef}:${row.bindingRevision}:${row.sequence}`;
       if (frameKeys.has(frameKey)) return;
       frameKeys.add(frameKey);
       const data = row.screenshot.slice(row.screenshot.indexOf(',') + 1);

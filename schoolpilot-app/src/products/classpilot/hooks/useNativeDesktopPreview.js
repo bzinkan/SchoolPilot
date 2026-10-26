@@ -26,6 +26,7 @@ export function useNativeDesktopPreview({ requested, attempt = 0, studentId, sou
     const requestHeaders = JSON.parse(headersJson);
     let stopped = false;
     let current = null;
+    let resumeAllowed = true;
     const publish = (status, row = null, deadline = 0, viewerInstanceId = '') => {
       if (!stopped) setState({ key, status, row, deadline, viewerInstanceId });
     };
@@ -41,13 +42,20 @@ export function useNativeDesktopPreview({ requested, attempt = 0, studentId, sou
         { headers: requestHeaders, timeout: 10_000 }).catch(() => {});
     };
     const active = cycle => !stopped && !cycle.stopped && current === cycle && document.visibilityState === 'visible';
+    const retire = (cycle, status = 'unavailable') => {
+      // A denied, failed, or expired grant retires this explicit View intent.
+      // Tab visibility may revalidate healthy observation, but cannot retry a
+      // retired grant. Only a new attempt from View/Retry creates another one.
+      resumeAllowed = false;
+      publish(status);
+      release(cycle);
+      current = null;
+    };
     const scheduleExpiry = cycle => {
       clearTimeout(cycle.expiryTimer);
       cycle.expiryTimer = setTimeout(() => {
         if (!active(cycle)) return;
-        publish('stale');
-        release(cycle);
-        current = null;
+        retire(cycle, 'stale');
       }, Math.max(0, cycle.grantDeadline - performance.now()));
     };
     const read = async cycle => {
@@ -62,8 +70,10 @@ export function useNativeDesktopPreview({ requested, attempt = 0, studentId, sou
         }, { headers: requestHeaders, signal: controller.signal, timeout: 8_000 });
         if (!active(cycle) || performance.now() >= cycle.grantDeadline) return;
         const row = selectedDesktopRow(response, target);
-        if (!row) {
-          publish('unavailable'); release(cycle); current = null; return;
+        // The selected read can observe a policy/source failure before the
+        // metadata poll. A missing thumbnail alone (stale) keeps its viewer.
+        if (!row || !['available', 'stale'].includes(row.state)) {
+          retire(cycle); return;
         }
         const deadline = Math.min(cycle.grantDeadline,
           desktopDeadline(row.expiresAt, response.serverTime, started, performance.now()));
@@ -81,8 +91,7 @@ export function useNativeDesktopPreview({ requested, attempt = 0, studentId, sou
           contentValid ? row : null, contentValid ? deadline : 0, cycle.id);
       } catch {
         if (!active(cycle)) return;
-        publish('unavailable');
-        release(cycle); current = null;
+        retire(cycle);
       } finally {
         cycle.reading = false;
         if (active(cycle)) cycle.pollTimer = setTimeout(() => { void read(cycle); }, DESKTOP_POLL_MS);
@@ -97,22 +106,21 @@ export function useNativeDesktopPreview({ requested, attempt = 0, studentId, sou
         if (!active(cycle)) { release(cycle); return; }
         cycle.grantDeadline = desktopDeadline(response.expiresAt, response.serverTime, started, performance.now());
         if (cycle.grantDeadline <= performance.now()) {
-          publish('stale'); release(cycle); current = null; return;
+          retire(cycle, 'stale'); return;
         }
         scheduleExpiry(cycle);
         if (!cycle.reading && !cycle.pollTimer) void read(cycle);
         cycle.renewTimer = setTimeout(() => { void renew(cycle); }, DESKTOP_RENEW_MS);
       } catch {
         if (!active(cycle)) { release(cycle); return; }
-        // A renewal failure removes content and ends this viewer. Only a fresh
-        // user action or visibility revalidation can create another grant.
-        publish('unavailable'); release(cycle); current = null;
+        retire(cycle);
       }
     };
     const onVisibility = () => {
       release(current);
       current = null;
-      publish('paused');
+      publish(resumeAllowed ? 'paused' : 'unavailable');
+      if (!resumeAllowed) return;
       if (document.visibilityState !== 'visible' || navigator.onLine === false || stopped) return;
       const cycle = { id: crypto.randomUUID(), stopped: false, grantDeadline: 0, sequence: -1, reading: false };
       current = cycle;
@@ -120,9 +128,7 @@ export function useNativeDesktopPreview({ requested, attempt = 0, studentId, sou
       void renew(cycle);
     };
     const onOffline = () => {
-      release(current);
-      current = null;
-      publish('unavailable');
+      retire(current);
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('offline', onOffline);

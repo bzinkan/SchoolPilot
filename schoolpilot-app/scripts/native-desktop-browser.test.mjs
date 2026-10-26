@@ -35,6 +35,10 @@ async function open({ browserSource = true, enabled = true, imageTtl = 30_000, h
   let revision = 1;
   let delayImages = holdImage;
   let imageStatus = 200;
+  let imageState = 'available';
+  let metadataStatus = 200;
+  let grantStatus = 200;
+  let delayGrants = holdGrant;
   let featureEnabled = enabled;
   let metadataState = initialMetadataState;
   let metadataBound = initialBound;
@@ -61,14 +65,16 @@ async function open({ browserSource = true, enabled = true, imageTtl = 30_000, h
     const now = Date.now();
     if (url.pathname.includes('/native/observation-leases/')) {
       if (request.method() === 'DELETE') return route.fulfill({ status: 204 });
+      if (grantStatus !== 200) return route.fulfill({ status: grantStatus, json: { code: 'NATIVE_UNAVAILABLE' } });
       const reply = () => route.fulfill({ json: { serverTime: new Date(now).toISOString(), expiresAt: new Date(now + 45_000).toISOString(), renewAfterSeconds: 15 } }).catch(() => {});
-      if (holdGrant) { heldGrants.push(reply); return; }
+      if (delayGrants) { heldGrants.push(reply); return; }
       return reply();
     }
     if (url.pathname.endsWith('/native/tiles/desktop')) {
+      if (!body.selectedSources && metadataStatus !== 200) return route.fulfill({ status: metadataStatus, json: { code: 'NATIVE_UNAVAILABLE' } });
       const row = studentId => ({ studentId,
         ...(body.selectedSources || metadataBound ? { sourceRef: `source-${revision}`, bindingRevision: revision } : {}),
-        state: body.selectedSources ? 'available' : metadataState, sourceLabel: 'Selected source', platform: 'windows' });
+        state: body.selectedSources ? imageState : metadataState, sourceLabel: 'Selected source', platform: 'windows' });
       if (body.selectedSources && imageStatus !== 200) return route.fulfill({ status: imageStatus, json: { error: 'Observation unavailable' } });
       const response = { enabled: featureEnabled, serverTime: new Date(now).toISOString(), tiles: featureEnabled && (!missingMetadata || body.selectedSources) ? body.studentIds.map(studentId => ({ ...row(studentId),
         ...(body.selectedSources ? { screenshot: jpeg, sequence: 1, observedAt: new Date(now).toISOString(), expiresAt: new Date(now + imageTtl).toISOString(),
@@ -86,6 +92,11 @@ async function open({ browserSource = true, enabled = true, imageTtl = 30_000, h
     allowImages: () => { delayImages = false; },
     replaceBinding: () => { revision += 1; },
     denyImages: () => { imageStatus = 403; },
+    setImageStatus: status => { imageStatus = status; },
+    setImageState: state => { imageState = state; },
+    setMetadataStatus: status => { metadataStatus = status; },
+    setGrantStatus: status => { grantStatus = status; },
+    delayGrants: value => { delayGrants = value; },
     disableFeature: () => { featureEnabled = false; },
     setMetadata: (state, bound = true) => { metadataState = state; metadataBound = bound; },
     omitMetadata: () => { missingMetadata = true; },
@@ -278,6 +289,140 @@ test('two viewers have independent grants; stopping one preserves the other view
     assert.equal(second.requests.some(request => request.method === 'DELETE'), false);
     assert.deepEqual([...first.errors, ...second.errors], []);
   } finally { await first.page.close(); await second.page.close(); }
+});
+
+test('selected-read 503 retires intent across hide/show; explicit Retry creates a fresh viewer', async () => {
+  const { page, requests, errors, setImageStatus } = await open({ browserSource: false });
+  try {
+    await page.getByTestId('view-desktop-student-a').click();
+    await page.getByTestId('desktop-image-student-a').waitFor();
+    await page.getByRole('button', { name: 'Enlarge desktop for Synthetic Student' }).click();
+    setImageStatus(503);
+    await page.clock.fastForward(5_100);
+    await page.getByTestId('expanded-view-desktop').filter({ hasText: 'Retry desktop' }).waitFor();
+    assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+    assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
+    assert.ok(requests.some(request => request.method === 'DELETE'));
+    const originalViewer = leases(requests)[0].path;
+    const readCount = imageReads(requests).length;
+    setImageStatus(200);
+    await page.evaluate(() => window.setFixtureVisibility('hidden'));
+    await page.evaluate(() => window.setFixtureVisibility('visible'));
+    await page.clock.fastForward(60_000);
+    await page.waitForTimeout(50);
+    assert.equal(leases(requests).length, 1, 'Tab visibility must not restore failed observation intent');
+    assert.equal(imageReads(requests).length, readCount);
+    assert.equal(await page.getByTestId('preview-source-desktop-student-a').getAttribute('aria-pressed'), 'true');
+    await page.getByTestId('expanded-view-desktop').click();
+    await page.getByTestId('desktop-image-student-a').first().waitFor();
+    assert.notEqual(leases(requests).at(-1).path, originalViewer);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('metadata 503 immediately clears all desktop surfaces and recovery requires explicit View', async () => {
+  const { page, requests, errors, setMetadataStatus } = await open({ browserSource: false });
+  try {
+    await page.getByTestId('view-desktop-student-a').click();
+    await page.getByTestId('desktop-image-student-a').waitFor();
+    await page.getByRole('button', { name: 'Enlarge desktop for Synthetic Student' }).click();
+    setMetadataStatus(503);
+    await page.evaluate(() => window.nativeFixture.refresh());
+    await page.getByTestId('desktop-state-student-a').filter({ hasText: 'unavailable' }).waitFor();
+    assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+    assert.equal(await page.getByText(/Synthetic Editor/).count(), 0);
+    assert.ok(requests.some(request => request.method === 'DELETE'));
+    setMetadataStatus(200);
+    await page.evaluate(() => window.nativeFixture.refresh());
+    await page.getByTestId('expanded-view-desktop').filter({ hasText: 'View desktop' }).waitFor();
+    await page.clock.fastForward(60_000);
+    assert.equal(leases(requests).length, 1);
+    await page.getByTestId('expanded-view-desktop').click();
+    await page.getByTestId('desktop-image-student-a').first().waitFor();
+    assert.notEqual(leases(requests)[0].path, leases(requests)[1].path);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('selected-read health denial releases immediately before the next metadata poll', async () => {
+  for (const health of ['offline', 'policy_paused', 'permission_required']) {
+    const { page, requests, errors, setImageState } = await open({ browserSource: false });
+    try {
+      await page.getByTestId('view-desktop-student-a').click();
+      await page.getByTestId('desktop-image-student-a').waitFor();
+      setImageState(health);
+      await page.clock.fastForward(5_100);
+      await page.waitForTimeout(50);
+      assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+      assert.ok(requests.some(request => request.method === 'DELETE'), `${health} must release without waiting for metadata`);
+      const readCount = imageReads(requests).length;
+      setImageState('available');
+      await page.evaluate(() => {
+        window.setFixtureVisibility('hidden'); window.setFixtureVisibility('visible');
+      });
+      await page.clock.fastForward(30_000);
+      assert.equal(imageReads(requests).length, readCount);
+      assert.equal(leases(requests).length, 1);
+      assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  }
+});
+
+test('renewal 503 and offline retire intent until Retry, including visibility recovery', async () => {
+  for (const failure of ['renewal', 'offline']) {
+    const { page, requests, errors, setGrantStatus } = await open({ browserSource: false });
+    try {
+      await page.getByTestId('view-desktop-student-a').click();
+      await page.getByTestId('desktop-image-student-a').waitFor();
+      if (failure === 'renewal') {
+        setGrantStatus(503);
+        await page.clock.fastForward(15_100);
+      } else await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+      await page.getByTestId('view-desktop-student-a').filter({ hasText: 'Retry desktop' }).waitFor();
+      assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+      const grantCount = leases(requests).length;
+      setGrantStatus(200);
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event('online'));
+        window.setFixtureVisibility('hidden');
+        window.setFixtureVisibility('visible');
+      });
+      await page.clock.fastForward(60_000);
+      await page.waitForTimeout(50);
+      assert.equal(leases(requests).length, grantCount, `${failure} must not silently regrant`);
+      await page.getByTestId('view-desktop-student-a').click();
+      await page.getByTestId('desktop-image-student-a').waitFor();
+      assert.notEqual(leases(requests)[0].path, leases(requests).at(-1).path);
+      assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  }
+});
+
+test('late successful renewal after read 503 is released without reviving content or the retired viewer', async () => {
+  const { page, requests, errors, setImageStatus, delayGrants, heldGrants } = await open({ browserSource: false });
+  try {
+    await page.getByTestId('view-desktop-student-a').click();
+    await page.getByTestId('desktop-image-student-a').waitFor();
+    delayGrants(true);
+    await page.clock.fastForward(15_100);
+    await page.waitForTimeout(50);
+    assert.equal(heldGrants.length, 1);
+    setImageStatus(503);
+    await page.clock.fastForward(5_100);
+    await page.getByTestId('view-desktop-student-a').filter({ hasText: 'Retry desktop' }).waitFor();
+    const readCount = imageReads(requests).length;
+    await heldGrants.shift()();
+    await page.waitForTimeout(50);
+    assert.ok(requests.filter(request => request.method === 'DELETE').length >= 2);
+    assert.equal(imageReads(requests).length, readCount);
+    assert.equal(await page.getByTestId('desktop-image-student-a').count(), 0);
+    delayGrants(false);
+    setImageStatus(200);
+    await page.getByTestId('view-desktop-student-a').click();
+    await page.getByTestId('desktop-image-student-a').waitFor();
+    assert.notEqual(leases(requests)[0].path, leases(requests).at(-1).path);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });
 
 test('changing classroom context retires native work and requires a new View action', async () => {

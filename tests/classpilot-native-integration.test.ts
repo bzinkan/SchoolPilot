@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { after, before, mock, test } from "node:test";
 import { randomUUID, createHmac } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import express, { type Response } from "express";
 import { Pool } from "pg";
 import sharp from "sharp";
+import { createClient } from "redis";
+import { setTimeout as pause } from "node:timers/promises";
+import type { NativeCaptureGrant, NativeStoredImage, NativeViewerLease } from "../src/services/classpilotNativeStore.js";
 
 process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "false";
@@ -25,12 +29,13 @@ process.env.REDIS_URL = process.env.TEST_REDIS_URL;
 const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const storage = await import("../dist/services/storage.js");
 const schema = await import("../dist/schema/index.js");
-const { runWithTenantContext } = await import("../dist/middleware/tenantContext.js");
+const { runWithTenantContext, getOwnedTenantStore } = await import("../dist/middleware/tenantContext.js");
 const { createApp } = await import("../dist/app.js");
 const { signUserToken } = await import("../dist/services/jwt.js");
 const { hashClassPilotPin } = await import("../dist/services/classpilotPins.js");
 const { subscribeWS, disposeWSRedis } = await import("../dist/realtime/ws-redis.js");
 const { classpilotNativeStore, ClasspilotNativeStore } = await import("../dist/services/classpilotNativeStore.js");
+const { ClasspilotNativeError } = await import("../dist/services/classpilotNativeProtocol.js");
 const { schedulerPool, schedulerLockPool } = await import("../dist/services/schedulerDb.js");
 const { default: errorMonitor } = await import("../dist/services/errorMonitor.js");
 const { CLASSPILOT_NATIVE_VISIBILITY_SQL } = await import("../dist/db/classpilotNativeVisibilityMigration.js");
@@ -401,4 +406,194 @@ test("native coexistence, independent observers, returning identity and supervis
     assert.equal(stale.status, 409, "Prior classroom grant cannot publish under the new supervision control revision");
     assert.deepEqual((await fixture.query("SELECT * FROM student_sessions WHERE id=$1", [browser.id])).rows[0], browserSnapshot);
   });
+});
+
+test("staff native requests never wait for a second pool client while holding the authentication lease", async () => {
+  let nestedCheckouts = 0;
+  const originalConnect = pool.connect;
+  const observed = mock.method(pool, "connect", function (this: typeof pool, ...args: unknown[]) {
+    if (getOwnedTenantStore()) nestedCheckouts++;
+    return Reflect.apply(originalConnect, this, args);
+  });
+  try {
+    const response = await request("/enrollment-tokens", "POST", {}, adminToken, staffHeaders());
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(nestedCheckouts, 0, "Native work must hand off the completed staff-authentication lease before its own tenant transaction");
+  } finally { observed.mock.restore(); }
+});
+
+test("native authority contention returns a fixed bounded denial with content-free phase evidence", async () => {
+  const installed = await installation();
+  const installationId = installed.installationCredential.split('.')[3];
+  const blocker = await fixture.connect();
+  const logs: string[] = [];
+  const observed = mock.method(console, "info", (value: unknown) => { if (typeof value === "string") logs.push(value); });
+  try {
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM schools WHERE id=$1 FOR UPDATE", [schoolId]);
+    const started = performance.now();
+    const denied = await bind(installed.installationCredential, secondStudentId);
+    assert.equal(denied.status, 503); assert.equal(denied.body.code, "NATIVE_AUTHORITY_BUSY");
+    assert.ok(performance.now() - started < 4_500, "Authority contention must settle before the native client's 5s timeout");
+    assert.equal((await blocker.query("SELECT count(*)::int AS count FROM classpilot_native_sessions WHERE installation_id=$1", [installationId])).rows[0].count, 0);
+    const event = logs.map(value => JSON.parse(value)).find(value => value.event === "classpilot_native_request");
+    assert.equal(event.operation, "student_sign_in"); assert.equal(event.code, "NATIVE_AUTHORITY_BUSY");
+    assert.ok(event.phases.school_lock.milliseconds >= 900);
+    assert.ok(!JSON.stringify(event).includes(schoolId) && !JSON.stringify(event).includes(installed.installationCredential));
+  } finally {
+    await blocker.query("ROLLBACK"); blocker.release(); observed.mock.restore();
+  }
+  assert.equal((await bind(installed.installationCredential, secondStudentId)).status, 409, "The database connection recovers; the actual active identity conflict still applies");
+  assert.equal((await request(`/installations/${installationId}`, "DELETE", undefined, adminToken, staffHeaders())).status, 204);
+});
+
+test("Redis execution-time fences preserve absolute expiry and reject delayed old image writes", async t => {
+  const redis = createClient({ url: process.env.TEST_REDIS_URL, disableOfflineQueue: true });
+  redis.on("error", () => {}); await redis.connect();
+  const prefix = `${tag}:late-execution`;
+  let release: (() => void) | undefined;
+  let gate: Promise<void> | undefined;
+  const commands: string[][] = [];
+  const store = new ClasspilotNativeStore(async args => {
+    commands.push(args); if (gate) await gate; return redis.sendCommand(args);
+  }, prefix);
+  const immediate = new ClasspilotNativeStore(args => redis.sendCommand(args), prefix);
+  const hold = () => { gate = new Promise<void>(resolve => { release = resolve; }); };
+  const resume = () => { release?.(); gate = undefined; release = undefined; };
+  const base = { schoolId: "synthetic-school", studentId: "synthetic-student", nativeSessionId: randomUUID(), sourceRef: randomUUID(),
+    teachingSessionId: "synthetic-class", bindingRevision: 1 };
+  const viewer = (expiresAt = Date.now() + 10_000): NativeViewerLease => ({ schoolId: base.schoolId, actorId: "synthetic-teacher",
+    viewerInstanceId: randomUUID(), authVersion: 1, teachingSessionId: base.teachingSessionId,
+    targets: [{ studentId: base.studentId, sourceRef: base.sourceRef, bindingRevision: base.bindingRevision }], expiresAt });
+  const grant = (): NativeCaptureGrant => ({ ...base, id: randomUUID(), sourceGeneration: randomUUID(), controlRevision: 1,
+    issuedAt: Date.now(), expiresAt: Date.now() + 10_000 });
+  const image = (capture: NativeCaptureGrant, imageExpiresAt = Date.now() + 8_000): NativeStoredImage => ({ ...capture,
+    sequence: 1, capturedAt: new Date().toISOString(), receivedAt: new Date().toISOString(), foregroundApplication: null,
+    screenshot: "synthetic-only-pixels", imageExpiresAt });
+  try {
+    await t.test("a delayed viewer creation expires at its original absolute deadline", async () => {
+      const lease = viewer(Date.now() + 3_000);
+      hold(); const pending = store.setViewer(lease); await pause(150); resume(); await pending;
+      assert.equal(await redis.sendCommand(["PEXPIRETIME", store.viewerKey(lease.schoolId, lease.actorId, lease.viewerInstanceId)]), lease.expiresAt);
+      const stale = viewer(Date.now() + 100);
+      hold(); const rejected = assert.rejects(store.setViewer(stale), { code: "NATIVE_GRANT_STALE" });
+      await pause(180); resume(); await rejected;
+      assert.equal(await immediate.getViewer(stale.schoolId, stale.actorId, stale.viewerInstanceId), null);
+    });
+    await t.test("grant, image and sequence retention use absolute deadlines after delayed execution", async () => {
+      const lease = viewer(), capture = grant(); await immediate.setViewer(lease);
+      hold(); const pendingGrant = store.saveGrant(capture, [lease]); await pause(150); resume(); await pendingGrant;
+      const grantCommand = commands.at(-1)!;
+      assert.equal(await redis.sendCommand(["PEXPIRETIME", grantCommand[3]!]), capture.expiresAt);
+      const frame = image(capture), sessionEnd = Date.now() + 20_000;
+      hold(); const pendingImage = store.saveImage(frame, sessionEnd, [lease]); await pause(150); resume(); await pendingImage;
+      const imageCommand = commands.at(-1)!;
+      assert.equal(await redis.sendCommand(["PEXPIRETIME", imageCommand[4]!]), frame.imageExpiresAt);
+      assert.equal(await redis.sendCommand(["PEXPIRETIME", imageCommand[5]!]), sessionEnd);
+    });
+    await t.test("a queued expired grant or image never becomes readable", async () => {
+      const lease = viewer(); await immediate.setViewer(lease);
+      const expiredGrant = { ...grant(), expiresAt: Date.now() + 100 };
+      hold(); const grantDenied = assert.rejects(store.saveGrant(expiredGrant, [lease]), { code: "NATIVE_GRANT_STALE" });
+      await pause(180); resume(); await grantDenied;
+      assert.equal(await immediate.getGrant(base.schoolId, base.nativeSessionId, expiredGrant.id), null);
+      const capture = grant(); await immediate.saveGrant(capture, [lease]);
+      const expiredImage = image(capture, Date.now() + 100);
+      hold(); const imageDenied = assert.rejects(store.saveImage(expiredImage, Date.now() + 20_000, [lease]), { code: "NATIVE_GRANT_STALE" });
+      await pause(180); resume(); await imageDenied;
+      const oldCapture = { ...image(capture), capturedAt: new Date(Date.now() - 4_900).toISOString() };
+      hold(); const arrivalDenied = assert.rejects(store.saveImage(oldCapture, Date.now() + 20_000, [lease]), { code: "NATIVE_GRANT_STALE" });
+      await pause(180); resume(); await arrivalDenied;
+    });
+    await t.test("late image from an earlier binding cannot replace a newer binding image", async () => {
+      const oldViewer = viewer(), oldGrant = grant();
+      await immediate.setViewer(oldViewer); await immediate.saveGrant(oldGrant, [oldViewer]);
+      const lateImage = { ...image(oldGrant), sequence: 99 };
+      hold(); const oldDenied = assert.rejects(store.saveImage(lateImage, Date.now() + 20_000, [oldViewer]), { code: "NATIVE_GRANT_STALE" });
+      const newViewer = { ...viewer(), targets: [{ ...oldViewer.targets[0]!, bindingRevision: 2 }] };
+      const newGrant = { ...grant(), bindingRevision: 2 };
+      await immediate.setViewer(newViewer); await immediate.saveGrant(newGrant, [newViewer]);
+      await immediate.saveImage(image(newGrant), Date.now() + 20_000, [newViewer]);
+      resume(); await oldDenied;
+      assert.equal((await immediate.readImage(base.schoolId, base.sourceRef))?.bindingRevision, 2);
+      assert.equal((await immediate.readImage(base.schoolId, base.sourceRef))?.sequence, 1);
+      await immediate.clearImage(base.schoolId, base.sourceRef, 1);
+      assert.equal((await immediate.readImage(base.schoolId, base.sourceRef))?.bindingRevision, 2,
+        "Late cleanup authorized by an older binding must also preserve the replacement image");
+    });
+    await t.test("a released viewer cannot be recreated by a delayed command", async () => {
+      const lease = viewer();
+      hold(); const denied = assert.rejects(store.setViewer(lease), { code: "NATIVE_VIEWER_RELEASED" });
+      await immediate.releaseViewer(lease.schoolId, lease.actorId, lease.viewerInstanceId);
+      resume(); await denied;
+      assert.equal(await immediate.getViewer(lease.schoolId, lease.actorId, lease.viewerInstanceId), null);
+    });
+  } finally {
+    resume(); const keys = await redis.keys(`${prefix}:*`); if (keys.length) await redis.del(keys);
+    redis.destroy();
+  }
+});
+
+test("source-qualified Stop handles a lost policy response without clearing a replacement source", async () => {
+  const student = await inSchool(() => storage.createStudent({ schoolId, firstName: "Synthetic", lastName: "Lost response", status: "active" }));
+  await fixture.query("UPDATE students SET classpilot_pin_hash=$2 WHERE id=$1", [student.id, await hashClassPilotPin("1234")]);
+  const installed = await installation(), nonce = randomUUID();
+  const bound = await bind(installed.installationCredential, student.id, nonce); assert.equal(bound.status, 201);
+  const credential = bound.body.sessionCredential, initialRevision = bound.body.bindingRevision;
+  const firstGeneration = randomUUID(), nextGeneration = randomUUID();
+  try {
+    const lost = await request(`/policy?sourceGeneration=${firstGeneration}&bindingRevision=${initialRevision}`, "GET", undefined, credential);
+    assert.equal(lost.status, 200); assert.ok(lost.body.bindingRevision > initialRevision);
+    assert.equal((await request("/observations", "DELETE", { bindingRevision: initialRevision }, credential)).status, 409);
+    assert.equal((await request("/observations", "DELETE", { bindingRevision: initialRevision, sourceGeneration: firstGeneration }, credential)).status, 204);
+    await request("/session/renew", "POST", { osSessionNonce: nonce }, credential);
+    const next = await request(`/policy?sourceGeneration=${nextGeneration}`, "GET", undefined, credential);
+    assert.equal(next.status, 200);
+    assert.equal((await request("/observations", "DELETE", { bindingRevision: initialRevision, sourceGeneration: firstGeneration }, credential)).status, 409);
+    assert.equal((await request("/observations", "DELETE", { bindingRevision: next.body.bindingRevision + 1, sourceGeneration: nextGeneration }, credential)).status, 409);
+    assert.equal((await fixture.query("SELECT source_generation FROM classpilot_native_sessions WHERE id=$1", [credential.split('.')[3]])).rows[0].source_generation, nextGeneration);
+    assert.equal((await request("/observations", "DELETE", { bindingRevision: next.body.bindingRevision, sourceGeneration: nextGeneration }, credential)).status, 204);
+  } finally { await request(`/installations/${installed.installationCredential.split('.')[3]}`, "DELETE", undefined, adminToken, staffHeaders()); }
+});
+
+test("a tile response crossing the deadline during serialization is not denied after it was sent", async () => {
+  let offset = 0, crossed = false;
+  const now = performance.now.bind(performance);
+  const clock = mock.method(performance, "now", () => now() + offset);
+  const originalJson = express.response.json;
+  const observed = mock.method(express.response, "json", function (this: Response, body: unknown) {
+    const result = originalJson.call(this, body);
+    if (this.req.originalUrl.startsWith('/api/classpilot/native/tiles/desktop')) { crossed = true; offset = 5_000; }
+    return result;
+  });
+  const errors = mock.method(errorMonitor, "trackError", () => undefined);
+  try {
+    const response = await tiles();
+    assert.equal(response.status, 200); assert.equal(response.body.enabled, true); assert.equal(crossed, true);
+    assert.equal((await tiles()).status, 200, "A subsequent authority transaction settles after the original response releases its school lock");
+    assert.equal(errors.mock.calls.length, 0, "No late deadline error, rollback or second response should follow the valid response");
+  } finally { observed.mock.restore(); clock.mock.restore(); errors.mock.restore(); }
+});
+
+test("a late failure after a native response is delegated without a second write or unhandled rejection", async () => {
+  const originalJson = express.response.json;
+  let injected = false;
+  const observed = mock.method(express.response, "json", function (this: Response, body: unknown) {
+    const result = originalJson.call(this, body);
+    if (!injected && this.req.originalUrl.startsWith('/api/classpilot/native/tiles/desktop')) {
+      injected = true;
+      throw new ClasspilotNativeError('NATIVE_REQUEST_EXPIRED', 503);
+    }
+    return result;
+  });
+  let errorObserved: (() => void) | undefined;
+  const delegated = new Promise<void>(resolve => { errorObserved = resolve; });
+  const errors = mock.method(errorMonitor, "trackError", () => { errorObserved?.(); });
+  const consoleError = mock.method(console, "error", () => undefined);
+  try {
+    assert.equal((await tiles()).status, 200); assert.equal(injected, true);
+    await Promise.race([delegated, pause(2_000).then(() => { throw new Error("The sent-response failure was not delegated to the error handler"); })]);
+    assert.equal(errors.mock.calls.length, 1, "The normal error handler observes the failure exactly once");
+  } finally { observed.mock.restore(); errors.mock.restore(); consoleError.mock.restore(); }
+  assert.equal((await tiles()).status, 200, "The server and pool remain usable after the already-sent response failure");
 });

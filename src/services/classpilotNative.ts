@@ -13,6 +13,7 @@ import { createClasspilotNativeEnrollment, redeemClasspilotNativeEnrollment, rea
   getHeartbeatTrackingSettingsForSchool, classpilotNativeStaffCredentialVersion, classpilotNativeEntitlementDeadline,
   type NativeCurrentAuthority, type NativeStorageDb } from "./storage.js";
 import type { ClasspilotNativeSession } from "../schema/classpilotNative.js";
+import { assertNativeRequestActive, nativePhase } from "./classpilotNativeDiagnostics.js";
 
 export type NativeStaffScope = { schoolId: string; actorId: string; authVersion?: number; contextAuthorityRevision?: string };
 type TileRequest = NativeContext & { studentIds: string[]; viewerInstanceId?: string; selectedSources?: NativeTarget[] };
@@ -28,7 +29,8 @@ function matchesTarget(lease: NativeViewerLease, session: ClasspilotNativeSessio
     && target.bindingRevision === session.bindingRevision);
 }
 function withSchool<T>(schoolId: string, students: string[], action: (database: NativeStorageDb) => Promise<T>) {
-  return runWithTenantContext({ schoolId }, () => withClasspilotNativeAuthority(schoolId, students, action));
+  assertNativeRequestActive();
+  return nativePhase("tenant_context", () => runWithTenantContext({ schoolId }, () => withClasspilotNativeAuthority(schoolId, students, action)));
 }
 async function withSession<T>(token: string, action: (session: ClasspilotNativeSession, database: NativeStorageDb) => Promise<T>) {
   const credential = parseNativeCredential(token, "session");
@@ -96,21 +98,25 @@ export async function signOutNativeSession(token: string) {
   return withSession(token, async (session, database) => {
     await endClasspilotNativeSession(session, database);
     // Logical invalidation is transactional even if Redis cleanup is unavailable.
-    await store.clearImage(session.schoolId, session.sourceRef).catch(() => undefined);
+    await store.clearImage(session.schoolId, session.sourceRef, session.bindingRevision).catch(() => undefined);
   });
 }
-export async function stopNativeObservation(token: string, bindingRevision: number) {
+export async function stopNativeObservation(token: string, bindingRevision: number, sourceGeneration?: string) {
   return withSession(token, async (session, database) => {
     if (!session.sourceGeneration) return;
-    if (session.bindingRevision !== bindingRevision) throw new ClasspilotNativeError("NATIVE_BINDING_STALE", 409);
+    // After a lost policy response the caller still knows the unique source it
+    // selected. Only that exact generation may clear an advanced revision.
+    const matches = sourceGeneration === undefined ? session.bindingRevision === bindingRevision
+      : sourceGeneration === session.sourceGeneration && bindingRevision <= session.bindingRevision;
+    if (!matches) throw new ClasspilotNativeError("NATIVE_BINDING_STALE", 409);
     await updateClasspilotNativeSource(session, null, database);
-    await store.clearImage(session.schoolId, session.sourceRef).catch(() => undefined);
+    await store.clearImage(session.schoolId, session.sourceRef, session.bindingRevision).catch(() => undefined);
   });
 }
 export async function revokeNativeInstallation(scope: NativeStaffScope, id: string) {
   return withSchool(scope.schoolId, [], async database => {
     const sessions = await revokeClasspilotNativeInstallation(scope.schoolId, scope.actorId, id, database);
-    for (const session of sessions) await store.clearImage(session.schoolId, session.sourceRef).catch(() => undefined);
+    for (const session of sessions) await store.clearImage(session.schoolId, session.sourceRef, session.bindingRevision).catch(() => undefined);
   });
 }
 
@@ -151,7 +157,7 @@ export async function nativeCapturePolicy(token: string, generation: string, bin
     await store.rateLimit(["policy", existing.schoolId, existing.id], 12, 60_000);
     const changed = existing.sourceGeneration !== generation;
     const session = await updateClasspilotNativeSource(existing, generation, database);
-    if (changed) await store.clearImage(session.schoolId, session.sourceRef);
+    if (changed) await store.clearImage(session.schoolId, session.sourceRef, existing.bindingRevision);
     const base = { captureAllowed: false, bindingRevision: session.bindingRevision, expiresInSeconds: 0,
       intervalSeconds: NATIVE_LIMITS.captureSeconds, maxWidth: NATIVE_LIMITS.maxWidth, maxHeight: NATIVE_LIMITS.maxHeight,
       maxBytes: NATIVE_LIMITS.maxBytes, serverTime: new Date().toISOString() };
@@ -268,6 +274,7 @@ export async function readNativeTiles<T>(scope: NativeStaffScope, input: TileReq
         expiresAt: new Date(expiresAt).toISOString(), foregroundApplication: image.foregroundApplication, screenshot: image.screenshot });
     }
     // Serialize while the database authority locks still protect this response.
+    assertNativeRequestActive();
     return send({ enabled: true, serverTime: new Date().toISOString(), tiles });
   });
 }

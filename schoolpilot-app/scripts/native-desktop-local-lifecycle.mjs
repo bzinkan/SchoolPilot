@@ -1,10 +1,12 @@
-// Real, local synthetic lifecycle acceptance. No API mocks or screenshots.
+// Real, local synthetic lifecycle acceptance. No screenshots. Only the explicit
+// fail-next-selected-read operator command injects a one-shot local HTTP fault.
 // While running, write {"id":1,"action":"view"} to the printed private control
 // path. Increase id for each command. OS lock/unlock remains an external action.
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { attachNativeRequestDiagnostics } from './native-desktop-diagnostics.mjs';
 
 assert.equal(process.env.CLASSPILOT_NATIVE_E2E_ACK, 'synthetic-local-only');
 const apiOrigin = process.env.CLASSPILOT_NATIVE_E2E_API || 'http://127.0.0.1:4100';
@@ -18,7 +20,8 @@ const privateRoot = process.env.CLASSPILOT_NATIVE_E2E_PRIVATE_DIR
 const fixture = JSON.parse(await readFile(path.join(privateRoot, 'fixture.private.json'), 'utf8'));
 const studentId = fixture.students[0].id;
 const durationSeconds = Number(process.env.CLASSPILOT_NATIVE_E2E_SECONDS || 300);
-assert.ok(Number.isInteger(durationSeconds) && durationSeconds > 0 && durationSeconds <= 1800);
+assert.ok(Number.isInteger(durationSeconds) && durationSeconds > 0 && durationSeconds <= 3600);
+const headless = process.env.CLASSPILOT_NATIVE_E2E_HEADLESS !== 'false';
 const outputName = process.env.CLASSPILOT_NATIVE_E2E_OUTPUT_NAME || 'teacher-lifecycle';
 assert.match(outputName, /^[A-Za-z0-9_-]+$/);
 const output = path.join(privateRoot, outputName);
@@ -27,14 +30,16 @@ const metricsPath = path.join(output, 'lifecycle-metrics.json');
 const controlPath = path.join(output, 'control.json');
 await writeFile(controlPath, '{"id":0,"action":"none"}\n');
 const started = performance.now();
-const metrics = { schema: 1, kind: 'real-local-native-lifecycle', startedAt: new Date().toISOString(),
-  processId: process.pid, durationSeconds, status: 'starting', events: [], frames: [], reads: [], http: {}, pageErrorCount: 0,
+const metrics = { schema: 2, kind: 'real-local-native-lifecycle', startedAt: new Date().toISOString(),
+  processId: process.pid, durationSeconds, headless, status: 'starting', events: [], frames: [], reads: [], http: {}, pageErrorCount: 0,
+  lifecycle: { navigations: 0, documentLoads: 0, reloads: 0, browserTimerGaps: 0, harnessTimerGaps: 0, visibility: 'unknown' },
   ui: { imageVisible: false, imageCount: 0, foregroundVisible: false, desktopSelected: false,
     expandedVisible: false, expandedImageVisible: false, expandedForegroundVisible: false }, lastControlId: 0 };
-let browser, context, page, stop = false, firstImage = false;
+let browser, context, page, windowSession, windowId, stop = false, firstImage = false;
 const frameKeys = new Set();
 const activeViewers = new Set();
-const actions = new Set(['view', 'stop', 'browser', 'desktop', 'enlarge', 'close-preview', 'offline', 'online', 'finish']);
+const actions = new Set(['view', 'stop', 'browser', 'desktop', 'enlarge', 'close-preview', 'offline', 'online', 'finish', 'fail-next-selected-read', 'minimize', 'restore']);
+let failNextSelectedRead = false;
 const elapsed = () => Math.round(performance.now() - started);
 const announce = (type, extra = {}) => process.stdout.write(`${JSON.stringify({ type, ...extra })}\n`);
 const event = (type, extra = {}) => metrics.events.push({ elapsedMs: elapsed(), type, ...extra });
@@ -43,7 +48,7 @@ process.on('SIGINT', () => { stop = true; });
 process.on('SIGTERM', () => { stop = true; });
 
 try {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless });
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const login = await context.request.post(`${apiOrigin}/api/auth/login`, {
     data: { email: fixture.teacherEmail, password: fixture.staffPassword },
@@ -53,6 +58,55 @@ try {
   assert.ok(auth.memberships?.some(member => member.schoolId === fixture.schoolId));
   await context.addInitScript(({ schoolId }) => localStorage.setItem('sp_activeSchoolId', schoolId), { schoolId: fixture.schoolId });
   page = await context.newPage();
+  if (!headless) {
+    windowSession = await context.newCDPSession(page);
+    ({ windowId } = await windowSession.send('Browser.getWindowForTarget'));
+  }
+  attachNativeRequestDiagnostics(page, { metrics, event, elapsed });
+  // Explicit operator-only fault fixture. All other requests reach the real
+  // local API unchanged; normal runs never enable this one-shot interception.
+  await page.route('**/api/classpilot/native/tiles/desktop', async route => {
+    const request = route.request();
+    let body;
+    try { body = request.postDataJSON(); } catch { /* Leave malformed requests to the API. */ }
+    if (failNextSelectedRead && request.method() === 'POST'
+      && body?.selectedSources?.some(target => target.studentId === studentId)) {
+      failNextSelectedRead = false;
+      event('injected_fault', { operation: 'selected_read', status: 503, code: 'NATIVE_UNAVAILABLE' });
+      await route.fulfill({ status: 503, json: { code: 'NATIVE_UNAVAILABLE' } });
+    } else await route.continue();
+  });
+  await page.exposeBinding('nativeE2EReportLifecycle', (_source, sample) => {
+    if (!['visibility', 'pageshow', 'pagehide', 'browser_timer_gap'].includes(sample?.type)) return;
+    const visibility = ['visible', 'hidden', 'prerender'].includes(sample.visibility) ? sample.visibility : 'unknown';
+    metrics.lifecycle.visibility = visibility;
+    if (sample.type === 'browser_timer_gap') metrics.lifecycle.browserTimerGaps += 1;
+    event(sample.type, { visibility, ...(Number.isFinite(sample.gapMs) ? { gapMs: Math.round(sample.gapMs) } : {}) });
+  });
+  await page.addInitScript(() => {
+    const report = (type, extra = {}) => void window.nativeE2EReportLifecycle({ type, visibility: document.visibilityState, ...extra }).catch(() => {});
+    document.addEventListener('visibilitychange', () => report('visibility'));
+    window.addEventListener('pageshow', () => report('pageshow'));
+    window.addEventListener('pagehide', () => report('pagehide'));
+    let previous = performance.now();
+    setInterval(() => {
+      const now = performance.now(), gapMs = now - previous;
+      previous = now;
+      if (gapMs > 3_500) report('browser_timer_gap', { gapMs });
+    }, 1_000);
+  });
+  page.on('framenavigated', frame => {
+    if (frame === page.mainFrame()) { metrics.lifecycle.navigations += 1; event('main_frame_navigation'); }
+  });
+  page.on('domcontentloaded', async () => {
+    try {
+      const raw = await page.evaluate(() => performance.getEntriesByType('navigation')[0]?.type);
+      const navigationType = ['navigate', 'reload', 'back_forward', 'prerender'].includes(raw) ? raw : 'unknown';
+      metrics.lifecycle.documentLoads += 1;
+      if (navigationType === 'reload') metrics.lifecycle.reloads += 1;
+      event('document_loaded', { navigationType });
+    } catch { event('document_load_observation_failed'); }
+  });
   page.setDefaultTimeout(5_000);
   page.on('pageerror', () => { metrics.pageErrorCount += 1; });
   page.on('requestfailed', request => {
@@ -99,13 +153,14 @@ try {
       }
       if (!request.postDataJSON()?.selectedSources) {
         const state = row?.state || 'unavailable';
-        if (metrics.metadataState !== state) {
+        if (metrics.metadataState !== state || metrics.bindingRevision !== (row?.bindingRevision ?? null)) {
           metrics.metadataState = state;
+          metrics.bindingRevision = row?.bindingRevision ?? null;
           event('metadata', { state, bindingRevision: row?.bindingRevision ?? null });
         }
       }
       if (!row?.screenshot) return;
-      const frameKey = `${row.bindingRevision}:${row.sequence}`;
+      const frameKey = `${row.sourceRef}:${row.bindingRevision}:${row.sequence}`;
       if (frameKeys.has(frameKey)) return;
       frameKeys.add(frameKey);
       const data = row.screenshot.slice(row.screenshot.indexOf(',') + 1);
@@ -136,7 +191,14 @@ try {
     if (release) event('stop_release_acknowledged', { acknowledged: Boolean(await release) });
   };
   let lastReport = 0;
+  let previousSample = performance.now();
   while (!stop && performance.now() - activeStart < durationSeconds * 1000) {
+    const sampleTime = performance.now();
+    if (sampleTime - previousSample > 3_500) {
+      metrics.lifecycle.harnessTimerGaps += 1;
+      event('harness_timer_gap', { gapMs: Math.round(sampleTime - previousSample) });
+    }
+    previousSample = sampleTime;
     let command;
     try { command = JSON.parse(await readFile(controlPath, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
@@ -145,10 +207,12 @@ try {
       try {
         switch (command.action) {
           case 'view': {
-            if (await desktop.getAttribute('aria-pressed') !== 'true') await desktop.click();
+            let acted = false;
+            if (await desktop.getAttribute('aria-pressed') !== 'true') { await desktop.click(); acted = true; }
             const expandedButton = page.getByTestId('expanded-view-desktop');
             const button = await expandedButton.isVisible() ? expandedButton : page.getByTestId(`view-desktop-${studentId}`);
-            if (await button.isVisible()) await button.click();
+            if (await button.isVisible()) { await button.click(); acted = true; }
+            assert.ok(acted, 'NO_ACTIONABLE_VIEW_CONTROL');
             break;
           }
           case 'stop': await stopViewing(); break;
@@ -158,6 +222,13 @@ try {
           case 'close-preview': await closePreview(); break;
           case 'offline': await context.setOffline(true); break;
           case 'online': await context.setOffline(false); break;
+          case 'minimize':
+          case 'restore':
+            assert.ok(windowSession, 'HEADED_BROWSER_REQUIRED');
+            await windowSession.send('Browser.setWindowBounds', { windowId,
+              bounds: { windowState: command.action === 'minimize' ? 'minimized' : 'normal' } });
+            break;
+          case 'fail-next-selected-read': failNextSelectedRead = true; break;
           case 'finish': stop = true; break;
         }
         event('control', { id: command.id, action: command.action, accepted: true });
