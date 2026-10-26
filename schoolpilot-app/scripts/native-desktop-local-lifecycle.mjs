@@ -18,7 +18,7 @@ const privateRoot = process.env.CLASSPILOT_NATIVE_E2E_PRIVATE_DIR
 const fixture = JSON.parse(await readFile(path.join(privateRoot, 'fixture.private.json'), 'utf8'));
 const studentId = fixture.students[0].id;
 const durationSeconds = Number(process.env.CLASSPILOT_NATIVE_E2E_SECONDS || 300);
-assert.ok(Number.isInteger(durationSeconds) && durationSeconds > 0 && durationSeconds <= 900);
+assert.ok(Number.isInteger(durationSeconds) && durationSeconds > 0 && durationSeconds <= 1800);
 const outputName = process.env.CLASSPILOT_NATIVE_E2E_OUTPUT_NAME || 'teacher-lifecycle';
 assert.match(outputName, /^[A-Za-z0-9_-]+$/);
 const output = path.join(privateRoot, outputName);
@@ -28,8 +28,9 @@ const controlPath = path.join(output, 'control.json');
 await writeFile(controlPath, '{"id":0,"action":"none"}\n');
 const started = performance.now();
 const metrics = { schema: 1, kind: 'real-local-native-lifecycle', startedAt: new Date().toISOString(),
-  processId: process.pid, durationSeconds, status: 'starting', events: [], frames: [], http: {}, pageErrorCount: 0,
-  ui: { imageVisible: false, foregroundVisible: false, desktopSelected: false }, lastControlId: 0 };
+  processId: process.pid, durationSeconds, status: 'starting', events: [], frames: [], reads: [], http: {}, pageErrorCount: 0,
+  ui: { imageVisible: false, imageCount: 0, foregroundVisible: false, desktopSelected: false,
+    expandedVisible: false, expandedImageVisible: false, expandedForegroundVisible: false }, lastControlId: 0 };
 let browser, context, page, stop = false, firstImage = false;
 const frameKeys = new Set();
 const activeViewers = new Set();
@@ -54,6 +55,13 @@ try {
   page = await context.newPage();
   page.setDefaultTimeout(5_000);
   page.on('pageerror', () => { metrics.pageErrorCount += 1; });
+  page.on('requestfailed', request => {
+    const pathname = new URL(request.url()).pathname;
+    if (!pathname.startsWith('/api/classpilot/native/')) return;
+    const raw = request.failure()?.errorText || '';
+    event('transport_error', { kind: pathname.includes('/observation-leases/') ? 'lease' : 'tiles',
+      method: request.method(), code: /^net::ERR_[A-Z_]+$/.test(raw) ? raw : 'UNCLASSIFIED' });
+  });
   page.on('response', async response => {
     try {
       const url = new URL(response.url());
@@ -62,14 +70,33 @@ try {
       const kind = url.pathname.includes('/observation-leases/') ? 'lease' : 'tiles';
       const key = `${kind}:${request.method()}:${response.status()}`;
       metrics.http[key] = (metrics.http[key] || 0) + 1;
+      if (!response.ok()) {
+        let body;
+        try { body = await response.json(); } catch { /* Transport status remains useful. */ }
+        const code = typeof body?.code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(body.code) ? body.code : 'UNCLASSIFIED';
+        event('http_error', { kind, method: request.method(), status: response.status(), code,
+          selectedRead: Boolean(request.postDataJSON()?.selectedSources) });
+      }
       if (kind === 'lease') {
         if (request.method() === 'PUT' && response.ok()) activeViewers.add(url.pathname);
         if (request.method() === 'DELETE' && response.ok()) activeViewers.delete(url.pathname);
-        event('lease', { method: request.method(), status: response.status() }); return;
+        let expiresInMs = null;
+        if (request.method() === 'PUT' && response.ok()) {
+          const body = await response.json();
+          const remaining = Date.parse(body.expiresAt) - Date.parse(body.serverTime);
+          if (Number.isFinite(remaining)) expiresInMs = remaining;
+        }
+        event('lease', { method: request.method(), status: response.status(), expiresInMs }); return;
       }
       if (!response.ok()) return;
       const result = await response.json();
       const row = result.tiles?.find(tile => tile.studentId === studentId);
+      if (request.postDataJSON()?.selectedSources) {
+        const remaining = Date.parse(row?.expiresAt) - Date.parse(result.serverTime);
+        const age = Date.parse(result.serverTime) - Date.parse(row?.observedAt);
+        metrics.reads.push({ elapsedMs: elapsed(), state: row?.state || 'unavailable', sequence: row?.sequence ?? null,
+          expiresInMs: Number.isFinite(remaining) ? remaining : null, serverAgeMs: Number.isFinite(age) ? age : null });
+      }
       if (!request.postDataJSON()?.selectedSources) {
         const state = row?.state || 'unavailable';
         if (metrics.metadataState !== state) {
@@ -141,12 +168,17 @@ try {
       }
     }
     const imageVisible = await image.isVisible();
-    const ui = { imageVisible, foregroundVisible: await page.getByTestId(`desktop-observation-${studentId}`).isVisible(),
-      desktopSelected: await desktop.getAttribute('aria-pressed') === 'true' };
+    const ui = { imageVisible, imageCount: await page.getByTestId(`desktop-image-${studentId}`).count(),
+      foregroundVisible: await page.getByTestId(`desktop-observation-${studentId}`).isVisible(),
+      desktopSelected: await desktop.getAttribute('aria-pressed') === 'true',
+      expandedVisible: await nativeDialog.isVisible(),
+      expandedImageVisible: await page.getByTestId('expanded-desktop-preview').locator('img').isVisible(),
+      expandedForegroundVisible: await nativeDialog.getByText(/Foreground app — computer session/).isVisible() };
     if (JSON.stringify(ui) !== JSON.stringify(metrics.ui)) { metrics.ui = ui; event('ui', ui); }
     if (imageVisible && !firstImage) {
       assert.ok(await image.evaluate(node => node.complete && node.naturalWidth > 0));
       firstImage = true;
+      metrics.status = 'running';
       announce('first_image_decoded', { processId: process.pid, elapsedMs: elapsed() });
     }
     await save();

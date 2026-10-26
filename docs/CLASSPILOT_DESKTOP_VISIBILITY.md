@@ -71,3 +71,11 @@ The earlier complete backend run recorded **4,418 tests: 4,359 passed, 51 failed
 Content-free local evidence is consolidated in `%LOCALAPPDATA%\ClassPilotDesktop\validation\backend-completion-summary.json`; native results are in `native-completion.log`. These are local validation results. No production deployment, production flag activation, Terraform apply, or extension release was performed.
 
 Automated native/backend/frontend results, real Windows picker/capture evidence and the 30-minute resource run are recorded with the final implementation report. macOS native capture is **NOT RUN** on this Windows host. Real lock/unlock, sleep/wake, user switching, HDR/display reconfiguration and managed-device rollout must retain their individual evidence status; passing mocked lifecycle tests does not establish native OS verification.
+
+### Local Windows delivery, October 26, 2026
+
+The measured Windows session completed 1,817 seconds with 361 process samples and 29 accepted uploads inside that interval. It included a teacher-read HTTP 503, an upload timeout, explicit source/viewer recovery and expired-image clearing; it is not evidence of uninterrupted viewing. The final client then delivered fresh frames with monotonic capture timing and passed a selected-source closure check: tile and enlarged images and foreground-app content cleared while Desktop remained selected.
+
+After the operator's Ctrl+Alt+Delete/unlock sequence, the native guard cleared identity and preview, Resume required a PIN, and fresh PIN authentication alone did not start collection. This confirms input-desktop invalidation and reauthentication; the precise lock-versus-secure-desktop transition and OS-event-to-clear latency were not independently measured. Sleep/wake, user switching, RDP/HDR and macOS native testing remain unverified.
+
+The source/build hashes, exact resource numbers, test results and these limitations are recorded in `ClassPilotDesktop/docs/WINDOWS_VALIDATION_2026-10-26.md`. Its development ZIP is unsigned and framework-dependent; production signing, managed deployment and fleet validation remain a later milestone.
