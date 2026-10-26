@@ -25,14 +25,13 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Patch base-image packages on every build so newly-published CVEs in the
-# pinned node:alpine tag (e.g. openssl libcrypto3/libssl3) don't sit unfixed
-# until the upstream tag is rebuilt. Trivy fails the build loudly otherwise.
+# Upgrade Alpine packages when this layer is rebuilt. The deployment build also
+# pulls the Node base: apk cannot update libraries bundled in the Node binary.
 RUN apk upgrade --no-cache
 
 # Private paperwork imports validate and render PDFs without a shell; prlimit
 # bounds Poppler memory/CPU/output. Provider keys are stripped from subprocess environments.
-RUN apk add --no-cache poppler-utils util-linux-misc font-liberation
+RUN apk add --no-cache 'brotli-libs>=1.2.1-r0' poppler-utils util-linux-misc font-liberation
 
 # Bundle the AWS RDS global root CA chain for TLS verify-full (SOC 2 / SC-7).
 # Refreshed automatically on each image build. See:
