@@ -7335,7 +7335,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {/* Search Bar + Selection Controls */}
         {canShowStudentWorkspace ? (
-          <p role="status" className={activeStudentStatusSort ? '-mt-3 mb-4 text-xs text-muted-foreground' : 'sr-only'} data-testid="student-sort-status">
+          <p role="status" className={activeStudentStatusSort ? 'page-heading -mt-3 mb-4 text-xs text-muted-foreground' : 'sr-only'} data-testid="student-sort-status">
             {activeStudentStatusSort === 'online' ? `Showing online students first. Click ${desktopSourcesEnabled ? 'Browser online' : 'Online Now'} again to reset.`
               : activeStudentStatusSort === 'off-task' ? `Showing off-task students first. Click ${desktopSourcesEnabled ? 'Browser off-task' : 'Off-Task Alert'} again to reset.`
                 : 'Showing students in normal order.'}
