@@ -58,6 +58,37 @@ test('Open is one explicit student-scoped request and adds no restriction or Foc
   assert.equal(result[0].open, 'completed'); assert.equal(result[1].open, 'unavailable');
 });
 
+test('Open preserves mixed outcomes across contexts without restriction or Focus follow-ups', async () => {
+  const calls = [], reads = [];
+  const result = await runClassroomAction({ action: 'open', url: 'https://classroom.google.com/c/course/a/task/details', studentIds: ['a', 'b', 'c'],
+    flightPath, waitOptions: { sleep: async () => {} },
+    postCommand: async (...args) => {
+      calls.push(args);
+      return { commands: [command('open-class-a', [target('a', 'received')], 'open-tab'),
+        command('open-context-b', [target('b', 'failed', {})], 'open-tab')] };
+    },
+    readCommand: async source => {
+      reads.push(source.id);
+      return { command: command(source.id, [target('a', 'completed', { followUp: { kind: 'focus', state: 'committed', commandId: 'unexpected-focus' } })], 'open-tab') };
+    } });
+  assert.deepEqual(calls, [['open-tab', { url: 'https://classroom.google.com/c/course/a/task/details' }, ['a', 'b', 'c']]]);
+  assert.deepEqual(reads, ['open-class-a'], 'plain Open must never follow a Focus continuation');
+  assert.deepEqual(result.map(row => ({ studentId: row.studentId, open: row.open, restriction: row.restriction, focus: row.focus })), [
+    { studentId: 'a', open: 'completed', restriction: 'not requested', focus: 'not requested' },
+    { studentId: 'b', open: 'failed', restriction: 'not requested', focus: 'not requested' },
+    { studentId: 'c', open: 'unavailable', restriction: 'not requested', focus: 'not requested' },
+  ]);
+});
+
+test('cancelled or retired assignment opens cannot dispatch to a replacement scope', async () => {
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(runClassroomAction({ action: 'open', url: 'https://example.test/task', studentIds: ['a'], signal: controller.signal,
+    readCommand: noRead, postCommand: async () => assert.fail('Cancelled opens cannot send') }), { name: 'AbortError' });
+  await assert.rejects(runClassroomAction({ action: 'open', url: 'https://example.test/task', studentIds: ['a'],
+    assertCurrent: () => { throw new Error('Authority changed'); }, readCommand: noRead,
+    postCommand: async () => assert.fail('Retired opens cannot send') }), /Authority changed/);
+});
+
 test('Lesson opens only the applied target and includes the same exact source command prerequisite', async () => {
   const calls = [];
   const result = await runClassroomAction({ action: 'lesson', url: 'https://example.test/task', studentIds: ['a', 'b', 'c'], flightPath, readCommand: noRead,

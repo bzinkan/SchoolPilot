@@ -12,7 +12,13 @@ const snapshot = { schemaVersion: 1 as const, revision: 7, teachingSessionId: "c
   scheduledEndAt: null, hardExpiresAt: new Date(now.getTime() + 60_000).toISOString(), restrictions: emptyClasspilotRestrictions() };
 const expectedBinding = { bindingVersion: 2, schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device", controlRevision: 7 };
 const exact = z.object({ bindingVersion: z.literal(2), schoolId: z.string(), studentId: z.string(), studentSessionId: z.string(), deviceId: z.string(), controlRevision: z.number().int().nonnegative() }).strict();
-const framed = z.object({ exactBinding: exact, command: z.object({ exactBinding: exact, type: z.literal("stop-focus") }) });
+// The extension validates Stop Focus data before applying the state snapshot.
+// Transport metadata belongs on the envelope; even commandId in data rejects it.
+const framed = z.object({ commandId: z.literal("stop"), exactBinding: exact,
+  command: z.object({ commandId: z.literal("stop"), exactBinding: exact,
+    type: z.literal("stop-focus"), data: z.object({}).strict(),
+    authority: z.object({ teachingSessionId: z.literal("class"), supervisionContextId: z.null() }),
+    deliveryPolicy: z.literal("persistent_control"), expiresAt: z.string().datetime() }) });
 const make = (overrides: Partial<typeof target> = {}, state = snapshot, schoolId = "school") => classpilotCommandFrameForTarget(
   schoolId, "stop-focus", "stop-focus", { commandId: "stop" }, { ...target, ...overrides },
   { policy: "persistent_control", expiresAt: new Date(now.getTime() + 60_000) }, state,
@@ -29,6 +35,7 @@ test("Stop Focus carries complete current V2 authority without requiring a remai
   const parsed = framed.parse(frame);
   assert.deepEqual(parsed.exactBinding, expectedBinding);
   assert.deepEqual(parsed.command.exactBinding, expectedBinding);
+  assert.equal(parsed.command.expiresAt, snapshot.hardExpiresAt);
   assert.ok(frame && "classroomState" in frame);
   assert.deepEqual(frame.classroomState, snapshot);
   assert.equal("requiredCapability" in frame, false);
@@ -37,6 +44,8 @@ test("Stop Focus carries complete current V2 authority without requiring a remai
 
 test("Stop Focus keeps unrelated restrictions and private transport bindings out of teacher DTOs", () => {
   const state = { ...snapshot, restrictions: { ...snapshot.restrictions,
+    screenLock: { active: true, url: "https://docs.google.com/document/d/waypoint/edit" },
+    flightPath: { active: true, allowedDomains: ["classroom.google.com"], name: "Teacher Flight Path" },
     blockList: { active: true, blockedDomains: ["blocked.example"], name: "Existing school policy" }, tabLimit: 5 } };
   const frame = make({}, state);
   framed.parse(frame);

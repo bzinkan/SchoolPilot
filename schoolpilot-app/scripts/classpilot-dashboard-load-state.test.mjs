@@ -4902,10 +4902,12 @@ test('Classroom picker uses the current Dashboard authority and explicit student
   await page.getByTestId('button-classroom-assignments').click();
   await page.getByLabel('Course', { exact: true }).selectOption('course-a');
   await page.getByLabel('Assignment or material').selectOption('assignment-a');
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
-  await page.getByLabel('Classroom action results').getByText(/Open: Received/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Open + Focus', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Open as Lesson', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+  await page.getByLabel('Classroom action results').getByText('Received; awaiting confirmation', { exact: true }).waitFor();
   await page.clock.fastForward(1000);
-  await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).waitFor();
+  await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).waitFor();
   assert.deepEqual(posts, [{ teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
     commandType: 'open-tab', commandPayload: { url: 'https://lesson.example.edu/task' } }]);
   assert.equal(new URL(statusReads[0]).searchParams.get('teachingSessionId'), OWN_SESSION_ID);

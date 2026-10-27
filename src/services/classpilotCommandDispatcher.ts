@@ -907,7 +907,8 @@ export function classpilotCommandFrameForTarget(
       ...deliveryEnvelope,
       ...commandAuthority,
       ...classpilotTransientCurrentPageCommandEnvelope(delivery),
-      data: commandType === "open-tab" ? { url: payload.url }
+      // Stop Focus accepts an empty payload; command IDs stay on the envelope.
+      data: commandType === "stop-focus" ? {} : commandType === "open-tab" ? { url: payload.url }
         : Object.fromEntries(Object.entries(payload).filter(([key]) => !["focusAfterOpen", "afterRestrictionCommandId", "expectedFlightPathUpdatedAt"].includes(key))),
     },
     ...(classroomState ? { classroomState } : {}),
