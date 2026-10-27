@@ -89,10 +89,8 @@
     "zod": "^4.6.7"
   },
   "overrides": {
-    "drizzle-kit": {
-      "@esbuild-kit/core-utils": {
-        "esbuild": "0.28.1"
-      }
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.28.1"
     },
     "exceljs": {
       "uuid": "11.1.1"
