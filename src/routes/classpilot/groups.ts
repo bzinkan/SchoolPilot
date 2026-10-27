@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -29,6 +30,8 @@ import {
   getUserById,
   validateStaffEmailDomainForSchool,
   groupHasTeachingHistory,
+  getClasspilotAutomaticFlightPathPolicy,
+  updateClasspilotAutomaticFlightPathPolicy,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
@@ -103,6 +106,41 @@ router.get("/", ...auth, async (req, res, next) => {
     return res.json({ groups: enriched });
   } catch (err) {
     next(err);
+  }
+});
+
+const automaticFlightPathPolicyInput = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  enabled: z.boolean(),
+  flightPathId: z.string().trim().min(1).max(128).nullable(),
+}).strict();
+
+// A class's website preset is its own revisioned preference. In particular,
+// this writer does not grant permission to edit an official roster/schedule.
+router.get("/:id/automatic-flight-path", ...auth, async (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    return res.json(await getClasspilotAutomaticFlightPathPolicy({
+      schoolId: res.locals.schoolId!, groupId: param(req, "id"), actorId: req.authUser!.id,
+    }));
+  } catch (error) { next(error); }
+});
+
+router.patch("/:id/automatic-flight-path", ...auth, async (req, res, next) => {
+  const parsed = automaticFlightPathPolicyInput.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "A valid class preset and expectedRevision are required" });
+  try {
+    return res.json(await updateClasspilotAutomaticFlightPathPolicy({
+      schoolId: res.locals.schoolId!, groupId: param(req, "id"), actorId: req.authUser!.id,
+      ...parsed.data,
+    }));
+  } catch (error: any) {
+    if (error?.status) return res.status(error.status).json({
+      error: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.current ? { current: error.current } : {}),
+    });
+    next(error);
   }
 });
 

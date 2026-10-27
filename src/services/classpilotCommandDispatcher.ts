@@ -1057,6 +1057,7 @@ async function persistActiveState(options: {
   commandType: string;
   payload: any;
   targets: ResolvedClasspilotCommandTarget[];
+  stopAutomaticFlightPath?: { expectedRevision: number };
   deferredStudentIds?: Set<string>;
   bindingExpectationByStudent?: Map<string, {
     kind: "signed_out";
@@ -1067,7 +1068,7 @@ async function persistActiveState(options: {
   }>;
 }) {
   const targetStudentIds = options.targets.map((target) => target.studentId);
-  if (targetStudentIds.length === 0) {
+  if (targetStudentIds.length === 0 && !options.stopAutomaticFlightPath) {
     return { rows: [] as ClasspilotStudentControlState[], rejectedStudentIds: [] as string[] };
   }
   const now = new Date();
@@ -1177,6 +1178,7 @@ async function persistActiveState(options: {
   }
 
   const result = await persistClasspilotControlCommandState({
+    stopAutomaticFlightPath: options.stopAutomaticFlightPath,
     lateSignInGateRequiredStudentIds: [...(options.deferredStudentIds ?? [])],
     classroomStateClears,
     classroomStateUpserts: stateType ? options.targets.map((target) => ({
@@ -1328,12 +1330,21 @@ export async function executeClasspilotCommand(options: {
   rawCommandPayload: any;
   targets: ResolvedClasspilotCommandTarget[];
   persistClassroomState?: boolean;
+  stopAutomaticFlightPath?: { expectedRevision: number };
   supervisionActorIsAdmin?: boolean;
   contextAuthorityRevision?: string;
   routineReservation?: import("./classpilotToolsRoutines.js").RoutineReservation;
   originalTargetCommandId?: string;
   replayCommand?: import("../schema/classpilot.js").ClasspilotCommand;
 }) {
+  if (options.stopAutomaticFlightPath && (
+    options.commandType !== "remove-flight-path" || options.targetScope !== "class"
+    || !options.teachingSessionId || options.supervisionContextId
+    || !Number.isSafeInteger(options.stopAutomaticFlightPath.expectedRevision)
+    || options.stopAutomaticFlightPath.expectedRevision < 0 || options.persistClassroomState === false
+  )) {
+    throw Object.assign(new Error("Stopping an automatic Flight Path requires its exact class session and revision"), { status: 400 });
+  }
   const targetResolutionStartedAt = performance.now();
   let normalized = await normalizeCommandPayload(
     options.commandType,
@@ -1643,6 +1654,7 @@ export async function executeClasspilotCommand(options: {
           targets: stateAuthorizedTargets,
           deferredStudentIds: offlinePolicy.deferredStudentIds,
           bindingExpectationByStudent,
+          stopAutomaticFlightPath: options.stopAutomaticFlightPath,
         })
       : shouldPersistBeforeDelivery
         && options.persistClassroomState !== false
@@ -1672,9 +1684,13 @@ export async function executeClasspilotCommand(options: {
     recordHeartbeatHotPathCounter("restrictionPersistedTargets", persistence.rows.length);
   }
   if (persistence.rejectedStudentIds.length > 0) {
+    const rejectionReason = options.stopAutomaticFlightPath
+      ? "Automatic Flight Path already inactive, supervised elsewhere, or replaced by a teacher's manual choice"
+      : "Student binding changed before desired state was persisted";
     await markClasspilotCommandTargetsUnavailable(
       created.id,
-      persistence.rejectedStudentIds
+      persistence.rejectedStudentIds,
+      rejectionReason,
     );
     const rejected = new Set(persistence.rejectedStudentIds);
     committedTargets = committedTargets.map((target) => rejected.has(target.studentId)
@@ -1684,13 +1700,26 @@ export async function executeClasspilotCommand(options: {
           stateAuthorized: false,
           studentSessionId: null,
           deviceId: null,
-          unavailableReason: "Student binding changed before desired state was persisted",
+          unavailableReason: rejectionReason,
         }
       : target
     );
   }
   const controlStateRows = persistence.rows;
   const controlStateIds = new Set(controlStateRows.map((row) => row.studentId));
+  if (options.stopAutomaticFlightPath) {
+    // The session stop removes automatic-origin paths only. A later manual
+    // path must never receive the generic remove-flight-path extension action.
+    const unchanged = committedTargets.filter(target => target.available && !controlStateIds.has(target.studentId));
+    if (unchanged.length) {
+      const reason = "Automatic Flight Path already inactive or replaced by a teacher's manual choice";
+      await markClasspilotCommandTargetsUnavailable(created.id, unchanged.map(target => target.studentId), reason);
+      const unchangedIds = new Set(unchanged.map(target => target.studentId));
+      committedTargets = committedTargets.map(target => unchangedIds.has(target.studentId)
+        ? { ...target, available: false, stateAuthorized: false, studentSessionId: null, deviceId: null, unavailableReason: reason }
+        : target);
+    }
+  }
   const screenshotPolicyRefreshPromise = options.teachingSessionId
     && controlStateRows.length > 0
     ? nudgeClasspilotScreenshotPolicyRefresh({

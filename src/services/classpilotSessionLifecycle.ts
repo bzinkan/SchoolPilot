@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { automaticFlightPathStateDto } from "./classpilotAutomaticFlightPath.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import type db from "../db.js";
 import type { TeachingSession } from "../schema/classpilot.js";
@@ -328,6 +329,7 @@ export type ClasspilotSessionLifecycle = {
 };
 
 export function serializeClasspilotSession(session: TeachingSession) {
+  const { automaticFlightPathState, ...publicSession } = session;
   const scheduled = !!session.scheduledDate;
   const state: ClasspilotSessionLifecycle["state"] = scheduled
     ? (session.scheduledState as ClasspilotSessionLifecycle["state"] || (session.endTime ? "finalized" : "active"))
@@ -338,7 +340,8 @@ export function serializeClasspilotSession(session: TeachingSession) {
     session.scheduledFinalizationReason || ""
   );
   return {
-    ...session,
+    ...publicSession,
+    automaticFlightPathState: automaticFlightPathStateDto(automaticFlightPathState),
     lifecycle: {
       kind: scheduled ? "scheduled" as const : "manual" as const,
       state,

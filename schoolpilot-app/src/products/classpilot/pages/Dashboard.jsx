@@ -39,6 +39,9 @@ import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
 import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 import ClassroomActions from '../components/ClassroomActions';
+import AutomaticFlightPathStatus from '../components/AutomaticFlightPathStatus';
+import { useAutomaticFlightPathSession } from '../hooks/useAutomaticFlightPathSession';
+import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
@@ -1226,6 +1229,16 @@ export default function Dashboard() {
     coverageCommandTypes: coverageCapabilities.commandTypes || coverageCapabilities.allowedCommandTypes,
   }), Boolean(terminalSessionError));
   const signOutOnlySelectionActive = selectedServerSignOutStudentIds.size > 0;
+  const automaticFlightPathEnabled = dashboardCapabilities.ownedClassSession && studentView === 'class' && !roomWorkspace
+    && Boolean(effectiveAuthority?.teachingSessionId);
+  const automaticFlightPathQuery = useAutomaticFlightPathSession({
+    sessionId: effectiveAuthority?.teachingSessionId, schoolId: activeSchoolId, viewerId: currentUser?.id,
+    authorityRevision: contextAuthorityRevision, enabled: automaticFlightPathEnabled, request: requestActivityApi,
+  });
+  const automaticFlightPathStudents = useMemo(() => new Map(automaticFlightPathEnabled
+    ? (automaticFlightPathQuery.data?.students || []).map(student => [student.studentId,
+      automaticFlightPathQuery.isError ? { ...student, status: 'status-unavailable' } : student]) : []),
+  [automaticFlightPathEnabled, automaticFlightPathQuery.data, automaticFlightPathQuery.isError]);
   useEffect(() => {
     // `/settings` carries the authoritative per-session FAB revision. Its
     // query key is intentionally stable for legacy consumers, so refresh it
@@ -2259,6 +2272,7 @@ export default function Dashboard() {
               setWsAuthenticated(true);
               clientHealthRef.current.counters.recoveries += 1;
               void recoveryRefreshRef.current();
+              void queryClient.invalidateQueries({ queryKey: [AUTOMATIC_FLIGHT_PATH_SESSION_KEY, activeSchoolIdRef.current] });
               authenticatedSchoolIdRef.current = activeSchoolIdRef.current;
             }
             if (message.type === 'auth-error') {
@@ -2280,6 +2294,7 @@ export default function Dashboard() {
                 legacyCoverageStudents: coverageRows.filter(student => !student.assignedStaff?.id
                   || student.assignedStaff.id === websocketAuthRef.current?.userId),
               })) return;
+              void queryClient.invalidateQueries({ queryKey: [AUTOMATIC_FLIGHT_PATH_SESSION_KEY, activeSchoolIdRef.current] });
               const focusCommandId = message.commandId || publicCommand.id;
               if (focusCommandId && ['activate-tab', 'focus-tab', 'stop-focus'].includes(publicCommand.commandType)) {
                 const updates = focusCommandUpdatesRef.current;
@@ -2459,6 +2474,7 @@ export default function Dashboard() {
             }
             if (message.type === 'class-tools-updated') {
               queryClient.invalidateQueries({ queryKey: ['/api/class-tools/state', activeSchoolIdRef.current] });
+              queryClient.invalidateQueries({ queryKey: [AUTOMATIC_FLIGHT_PATH_SESSION_KEY, activeSchoolIdRef.current] });
             }
             if (message.type === 'chat-message-delivery') {
               if (!classRealtimeMessageEligibility(message)) return;
@@ -7386,6 +7402,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           </div>
         ) : null}
 
+        {automaticFlightPathEnabled ? <AutomaticFlightPathStatus key={activityScopeKey}
+          sessionId={effectiveAuthority.teachingSessionId} groupId={effectiveActivity?.groupId}
+          className={activeClassName} query={automaticFlightPathQuery} request={requestActivityApi} /> : null}
+
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
           <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
@@ -7969,6 +7989,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     />
                   ) : <StudentTile
                     student={tileStudent}
+                    automaticFlightPath={supervisedElsewhere ? null : automaticFlightPathStudents.get(student.studentId)}
                     desktop={supervisedElsewhere ? null : desktopByStudent.get(student.studentId) || null}
                     previewSourceSelection={previewSourceSelections[student.studentId]}
                     onPreviewSourceSelection={update => updatePreviewSourceSelection(student.studentId, update)}

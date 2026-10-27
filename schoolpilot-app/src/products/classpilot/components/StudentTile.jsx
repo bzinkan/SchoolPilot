@@ -30,6 +30,7 @@ import { desktopSourceKey, hasBrowserSource } from '../lib/nativeDesktop';
 import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
 import { normalizedTileControlRevision } from "../lib/tileBatchPolling";
 import { deriveTileLockControl } from "../lib/focusControls";
+import { automaticFlightPathBadge } from '../lib/automaticFlightPath';
 import "./studentTileFrame.css";
 import {
   activeTemporaryAllows,
@@ -88,6 +89,7 @@ function isBlockedDomain(url, blockedDomains) {
 
 function StudentTile({
   student,
+  automaticFlightPath,
   onOpenDetails,
   blockedDomains = [],
   isOffTask = false,
@@ -735,12 +737,16 @@ function StudentTile({
                   {student.suppressionReason || "Classroom noise suppressed"}
                 </Badge>
               )}
-              {student.flightPathActive && student.activeFlightPathName && !isBlockedByFlightPath && (
+              {student.flightPathActive && student.activeFlightPathName && !isBlockedByFlightPath
+                && (!automaticFlightPath || ['applied', 'overridden'].includes(automaticFlightPath.status)) && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-400 dark:border-blue-800" data-testid={`badge-scene-${student.studentId}`}>
                   <Layers className="h-3 w-3 mr-1" />
                   {student.activeFlightPathName}
                 </Badge>
               )}
+              {automaticFlightPathBadge(automaticFlightPath) ? <Badge variant="outline" className="text-[10px] px-2 py-0.5" data-testid={`badge-automatic-flight-path-${student.studentId}`}>
+                {automaticFlightPathBadge(automaticFlightPath)}
+              </Badge> : null}
               {isBlockedByFlightPath && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-by-scene-${student.studentId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />

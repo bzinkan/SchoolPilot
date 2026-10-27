@@ -646,6 +646,7 @@ async function assertCommandEntryPointsUnavailable(page, commandPosts) {
     "dialog-open-tab",
     "dialog-lock-screen",
     "dialog-send-message",
+    "automatic-flight-path-status",
   ]) {
     assert.equal(await page.getByTestId(testId).count(), 0, `${testId} must not be reachable`);
   }
@@ -4886,6 +4887,54 @@ test('tile lock: Stop Both sends sequential scoped cleanup and retains Waypoint 
   await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'Waypoint confirmation ends Stop Both');
   assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked');
   assert.equal(await lock.getAttribute('aria-label'), 'Focus current tab');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('automatic Flight Path turns off the entire owned session, preserves selection, and stays off after refresh', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultTimeout(30_000);
+  page.setDefaultNavigationTimeout(30_000);
+  await page.clock.install({ time: new Date('2026-08-25T13:01:00Z') });
+  const rows = [student({ flightPathActive: true, activeFlightPathName: 'Research destinations' }), student({ studentId: SIGNED_OUT_STUDENT_ID, studentName: 'Blair Student', flightPathActive: true, activeFlightPathName: 'Research destinations' })];
+  const aggregate = aggregateController({ scoped: success(rows) });
+  const live = { ...teachingSession(), lifecycle: { kind: 'scheduled', state: 'active' }, summaryTrigger: 'scheduled_end' };
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true });
+  let stopped = false;
+  const posts = [];
+  await page.route('**/api/classpilot/teaching-sessions/*/automatic-flight-path', route => route.fulfill({ json: {
+    automaticFlightPath: { schemaVersion: 1, revision: stopped ? 2 : 1, status: stopped ? 'off' : 'active', name: 'Research destinations', flightPathId: 'flight-a', assignmentId: 'auto-a' },
+    canStop: !stopped, summary: stopped ? { off: 2 } : { applied: 1, pending: 1, failed: 0, unavailable: 0, overridden: 0 },
+    students: rows.map((row, index) => ({ studentId: row.studentId, automatic: !stopped, status: stopped ? 'off' : index ? 'pending' : 'applied' })),
+  } }));
+  await page.route('**/api/classpilot/commands', async route => {
+    posts.push({ body: route.request().postDataJSON(), schoolId: route.request().headers()['x-school-id'] });
+    stopped = true;
+    await route.fulfill({ json: { command: { id: 'stop-auto', targets: rows.map(row => ({ studentId: row.studentId, status: 'received' })) } } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  try { await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor(); }
+  catch (error) { assert.fail(`${error.message}\n${JSON.stringify({ pageErrors: harness.pageErrors, body: (await page.locator('body').innerText()).slice(0, 5000) })}`); }
+  await harness.authenticateWebSocket();
+  const status = page.getByTestId('automatic-flight-path-status');
+  await status.getByText('Automatic Flight Path: Research destinations').waitFor();
+  await page.getByTestId(`badge-automatic-flight-path-${SIGNED_OUT_STUDENT_ID}`).getByText('Automatic · Pending').waitFor();
+  assert.equal(await page.getByTestId(`badge-scene-${SIGNED_OUT_STUDENT_ID}`).count(), 0, 'a pending automatic restriction cannot display an applied path badge');
+  await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await page.getByTestId('badge-selection-count').getByText(/1 selected/).waitFor();
+  assert.match(await status.innerText(), /1 applied · 1 pending · 0 failed · 0 unavailable · 0 manual override · 0 off/);
+  if (process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR) { mkdirSync(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, { recursive: true }); await page.screenshot({ path: path.join(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, 'automatic-flight-path-dashboard-desktop.png'), fullPage: true }); }
+  await status.getByRole('button', { name: 'Turn off for this session' }).click();
+  await status.getByText(/Off for this session/).waitFor();
+  assert.deepEqual(posts, [{ schoolId: SCHOOL_ID, body: { teachingSessionId: OWN_SESSION_ID, targetScope: 'class', commandType: 'remove-flight-path', commandPayload: {}, stopAutomaticFlightPath: { expectedRevision: 1 } } }]);
+  assert.equal(await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).getAttribute('data-state'), 'checked');
+  await page.reload();
+  await status.getByText(/Off for this session/).waitFor();
+  assert.equal(await status.getByRole('button', { name: 'Turn off for this session' }).count(), 0);
+  assert.equal(posts.length, 1, 'refresh never reissues a command');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await status.evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  if (process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR) await page.screenshot({ path: path.join(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, 'automatic-flight-path-dashboard-mobile.png'), fullPage: true });
   assert.deepEqual(harness.pageErrors, []);
 });
 

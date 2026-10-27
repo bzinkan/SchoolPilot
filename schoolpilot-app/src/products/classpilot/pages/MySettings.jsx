@@ -18,6 +18,7 @@ import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { teachingToolsSection, teachingToolsShouldBlock } from "../lib/teachingTools";
 import TeachingDefaults from "../components/TeachingDefaults";
+import AutomaticFlightPathSetup from "../components/AutomaticFlightPathSetup";
 import DashboardThemeCard from "../components/DashboardThemeCard";
 import ClassroomWebsiteImport from "../components/ClassroomWebsiteImport";
 import { teachingResourceBadge, teachingResourceErrorMessage, teachingResourceList } from "../lib/teachingResourceLibrary";
@@ -1044,6 +1045,20 @@ function TeachingToolsContent({ currentUser, logout, school }) {
           </section>
           <section hidden={section !== "classes"} className="space-y-6" aria-label="Class setup">
             <h2 className="text-xl font-semibold">Class setup</h2>
+            <div className="max-w-2xl space-y-2">
+              <Label htmlFor="teaching-class-selector">Class</Label>
+              <Select value={selectedGroupId} onValueChange={selectGroup}>
+                <SelectTrigger id="teaching-class-selector" data-testid="select-teaching-class"><SelectValue placeholder="Select a class" /></SelectTrigger>
+                <SelectContent>
+                  {groups.map(group => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}
+                  {groups.length === 0 ? <div className="p-2 text-sm text-muted-foreground">No classes available. Create a class first.</div> : null}
+                </SelectContent>
+              </Select>
+            </div>
+            <AutomaticFlightPathSetup key={selectedGroupId} groupId={selectedGroupId} schoolId={currentUser.schoolId} viewerId={currentUser.id}
+              primaryTeacherId={groups.find(group => group.id === selectedGroupId)?.teacherId} sharedPathsEnabled={flightPathData.libraryEnabled}
+              flightPaths={[...flightPaths, ...flightPathData.library.filter(item => !flightPaths.some(own => own.id === item.id))]}
+              flightPathsError={flightPathsError} active={section === 'classes'} />
             {/* Subgroups Section */}
             <Card data-testid="card-subgroups">
               <CardHeader>
@@ -1056,28 +1071,6 @@ function TeachingToolsContent({ currentUser, logout, school }) {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Group Selector */}
-                <div className="space-y-2">
-                  <Label htmlFor="teaching-class-selector">Class</Label>
-                  <Select value={selectedGroupId} onValueChange={selectGroup}>
-                    <SelectTrigger id="teaching-class-selector" data-testid="select-teaching-class">
-                      <SelectValue placeholder="Select a class" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {groups.map((group) => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                      {groups.length === 0 && (
-                        <div className="p-2 text-sm text-muted-foreground">
-                          No classes available. Create a class first.
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-
                 {selectedGroupId && (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-3">
