@@ -7394,7 +7394,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             {dashboardCapabilities.allows('open-tab') && <ClassroomActions
               key={focusControlScopeKey}
               schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={focusControlScopeKey}
-              preciseResourcesEnabled={preciseRestrictionResourcesEnabled}
               students={recipientStudents()}
               captureRecipients={() => captureRecipientSnapshot('open-tab')}
               availableRecipientIds={() => commandableRecipientIds('open-tab')}

@@ -10,7 +10,9 @@ import { createServer } from 'vite';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let vite, browser, base;
 const entry = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient,apiRequest}from'/src/lib/queryClient.js';import{snapshotCommandRecipients}from'/src/products/classpilot/lib/dashboardCommandContext.js';import Actions from'/src/products/classpilot/components/ClassroomActions.jsx';import'/src/index.css';const h=React.createElement;
-const rows=[{studentId:'a',studentName:'Alex Example',acceptedCapabilities:['scopedAuthorityChecksV1','focusTabV1']},{studentId:'b',studentName:'Blair Example',acceptedCapabilities:['scopedAuthorityChecksV1','focusTabV1']},{studentId:'c',studentName:'Casey Example',acceptedCapabilities:['scopedAuthorityChecksV1','focusTabV1']}];
+const capabilities=location.search.includes('capabilities=off')?[]:['scopedAuthorityChecksV1','focusTabV1','preciseRestrictionResourcesV1'];
+const restrictions=location.search.includes('restricted=on')?{screenLock:true,flightPath:{id:'existing-path'},focus:{active:true,assignmentId:'existing-focus'}}:{};
+const rows=[{studentId:'a',studentName:'Alex Example'},{studentId:'b',studentName:'Blair Example'},{studentId:'c',studentName:'Casey Example'}].map(row=>({...row,acceptedCapabilities:capabilities,classroomState:{restrictions}}));
 function Harness(){const[scope,setScope]=useState('class-a'),[ids,setIds]=useState(['a','b']),[available,setAvailable]=useState(['a','b','c']);window.changeScope=()=>setScope('class-b');window.changeRecipients=()=>setIds(['b','c']);window.setAvailable=ids=>setAvailable(ids);return h(Actions,{key:scope,scopeKey:scope,schoolId:'school-a',viewerId:'teacher-a',students:rows.filter(row=>ids.includes(row.studentId)),captureRecipients:()=>snapshotCommandRecipients({target:{targetStudentIds:ids},students:rows,scopeKey:scope,label:'Selected students'}),availableRecipientIds:()=>available,preciseResourcesEnabled:!location.search.includes('precise=off'),assertCurrent:()=>{},postCommand:(type,payload,ids)=>apiRequest('POST','/commands',{teachingSessionId:scope,targetScope:'students',targetStudentIds:ids,commandType:type,commandPayload:payload}),readCommand:(command,signal)=>apiRequest('GET','/classpilot/commands/'+command.id+'/status?teachingSessionId='+scope,undefined,{signal})});}createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(Harness)));`;
 before(async () => {
   vite = await createServer({ root, logLevel: 'error', cacheDir: `node_modules/.vite-classroom-actions-${process.pid}`, server: { host: '127.0.0.1', port: 0 },
@@ -29,7 +31,7 @@ const assignment = { id: 'assignment-a', title: 'Synthetic solar lesson', dueDat
 const command = (body, id) => ({ ...body, id, targets: body.targetStudentIds.map(studentId => ({ studentId, status: 'received' })) });
 async function fixture(options = {}) {
   const page = await browser.newPage({ viewport: { width: options.mobile ? 390 : 1440, height: 920 } });
-  const state = { requests: [], commands: new Map(), polls: [], errors: [], ...options };
+  const state = { requests: [], commands: new Map(), polls: [], errors: [], unexpectedRequests: [], ...options };
   page.on('pageerror', error => state.errors.push(error.message));
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), body = req.method() === 'GET' ? undefined : req.postDataJSON();
@@ -40,23 +42,6 @@ async function fixture(options = {}) {
       ? route.fulfill({ status: state.resourceError.status, json: state.resourceError.data })
       : json({ resources: [assignment] });
     if (url.pathname.endsWith('/google/auth-url')) return json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-client' });
-    if (url.pathname.endsWith('/preview-resources')) {
-      if (state.holdPreview) await new Promise(resolve => { state.releasePreview = resolve; });
-      const selected = body.resources.flatMap(item => item.links), website = body.boundary === 'website';
-      const domains = website ? [...new Set(selected.map(item => new URL(item.url).hostname.replace(/^www\./, '')))] : [];
-      const entries = website ? [] : selected.map(item => ({ url: item.url }));
-      return json({ schemaVersion: 1, purpose: 'classroom', boundary: body.boundary,
-        authoring: { allowedDomains: domains, resources: entries, resourceLinks: website ? domains.map(host => `https://${host}`) : selected.map(item => item.url) },
-        scopes: website ? domains.map(hostname => ({ type: 'website', hostname, url: `https://${hostname}`, label: 'Entire website', description: 'Every page and subdomain is allowed.' }))
-          : selected.map(item => ({ type: item.url === video.canonicalUrl ? 'resource' : 'section', url: item.url, label: item.url === video.canonicalUrl ? 'YouTube video' : 'Section', description: 'Only this reviewed boundary is allowed.' })),
-        warnings: website ? domains.map(hostname => ({ hostname, message: `${hostname} allows other pages and subdomains.` })) : [], skipped: [],
-      });
-    }
-    if (url.pathname.endsWith('/from-classroom') && state.holdAuthoring) await new Promise(resolve => { state.releaseAuthoring = resolve; });
-    if (url.pathname.endsWith('/from-classroom')) return json({ reused: true, flightPath: { id: 'lesson-a', updatedAt: '2026-09-30T12:00:00.000Z',
-      allowedDomains: body.boundary === 'website' ? body.resourceLinks.map(link => new URL(link).hostname) : [], blockedDomains: [],
-      resources: body.boundary === 'website' ? [] : body.resourceLinks.map(link => link === video.canonicalUrl ? video : ({ type: 'section', hostname: 'science.example.test', includeSubdomains: false, pathPrefix: '/solar' })),
-    } });
     if (url.pathname.endsWith('/commands') && req.method() === 'POST') {
       const value = command(body, `command-${state.commands.size + 1}`); state.commands.set(value.id, value);
       return json({ command: value });
@@ -65,18 +50,26 @@ async function fixture(options = {}) {
       const id = url.pathname.split('/').at(-2); state.polls.push(id);
       if (state.holdStatus) await new Promise(resolve => { state.releaseStatus = resolve; });
       const value = state.commands.get(id);
-      const targets = value.targets.map(row => ({ ...row, status: value.commandType === 'apply-flight-path' && row.studentId === 'b' ? 'failed' : 'completed',
-        result: value.commandType === 'apply-flight-path' ? { outcome: row.studentId === 'a' ? 'applied' : 'failed' }
-          : value.commandPayload.focusAfterOpen ? { followUp: { kind: 'focus', state: 'refused' } } : {} }));
+      const targets = value.targets.map(row => ({ ...row, status: 'completed', result: {}, ...state.targetResults?.[row.studentId] }));
       return json({ command: { ...value, targets } });
     }
-    return json({});
+    state.unexpectedRequests.push(url.pathname);
+    return route.fulfill({ status: 500, json: { error: 'Unexpected API request' } });
   });
-  await page.goto(`${base}/__classroom_actions${options.preciseOff ? '?precise=off' : ''}`);
+  const query = new URLSearchParams({ precise: options.preciseOff ? 'off' : 'on', capabilities: options.capabilitiesOff ? 'off' : 'on', restricted: options.restricted ? 'on' : 'off' });
+  await page.goto(`${base}/__classroom_actions?${query}`);
   await page.getByTestId('button-classroom-assignments').click();
   await page.getByLabel('Course', { exact: true }).selectOption('course-a');
   if (!options.resourceError) await page.getByLabel('Assignment or material').selectOption('assignment-a');
-  return { page, state, close: async () => { state.releasePreview?.(); state.releaseStatus?.(); state.releaseAuthoring?.(); await page.unrouteAll({ behavior: 'wait' }); await page.close(); } };
+  return { page, state, close: async () => { state.releaseStatus?.(); await page.unrouteAll({ behavior: 'wait' }); await page.close(); } };
+}
+
+function assertOpenOnly(state, expectedIds = ['a', 'b'], url = video.canonicalUrl) {
+  assert.deepEqual([...state.commands.values()].map(({ commandType, commandPayload, targetStudentIds }) => ({ commandType, commandPayload, targetStudentIds })),
+    [{ commandType: 'open-tab', commandPayload: { url }, targetStudentIds: expectedIds }]);
+  assert.deepEqual(state.unexpectedRequests, []);
+  assert.equal(state.requests.some(row => /flight-path|preview-resources|from-classroom/.test(row.path)), false);
+  assert.deepEqual(state.errors, []);
 }
 
 test('assignment permission failures offer reconnect even when the course list loaded successfully', async () => {
@@ -109,7 +102,7 @@ test('temporary assignment failures retry without requesting a new Google grant'
     state.resourceError = null;
     await page.getByRole('button', { name: 'Retry assignments', exact: true }).click();
     await page.getByLabel('Assignment or material').selectOption('assignment-a');
-    assert.equal(await page.getByRole('button', { name: 'Open', exact: true }).isEnabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Open assignment', exact: true }).isEnabled(), true);
     assert.equal(state.requests.filter(row => row.path.endsWith('/resources')).length, 2);
     assert.equal(state.requests.some(row => row.path.endsWith('/google/auth-url')), false);
     assert.equal(state.commands.size, 0);
@@ -117,86 +110,88 @@ test('temporary assignment failures retry without requesting a new Google grant'
   } finally { await close(); }
 });
 
-test('Open uses explicit students and Open + Focus reports a refused continuation truthfully', async () => {
+test('Open assignment sends only a URL to the captured students', async () => {
   const { page, state, close } = await fixture();
   try {
-    await page.getByRole('button', { name: 'Open', exact: true }).click();
-    await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).first().waitFor();
-    assert.deepEqual([...state.commands.values()][0].targetStudentIds, ['a', 'b']);
-    assert.deepEqual([...state.commands.values()][0].commandPayload, { url: video.canonicalUrl });
-    await page.getByRole('button', { name: 'Open + Focus', exact: true }).click();
-    await page.getByLabel('Classroom action results').getByText(/Focus: Refused/).first().waitFor();
-    assert.equal(state.requests.some(row => /allow-domain|lock-screen/.test(row.path)), false);
-    assert.deepEqual(state.errors, []);
+    assert.equal(await page.getByRole('button', { name: 'Open + Focus', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Open as Lesson', exact: true }).count(), 0);
+    assert.equal(await page.getByLabel('Classroom lesson scope').count(), 0);
+    if (process.env.CLASSROOM_UI_QA_DIR) { await mkdir(process.env.CLASSROOM_UI_QA_DIR, { recursive: true }); await page.screenshot({ path: path.join(process.env.CLASSROOM_UI_QA_DIR, 'classroom-desktop.png'), fullPage: true }); }
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+    assertOpenOnly(state);
   } finally { await close(); }
 });
 
-test('Lesson keeps reviewed boundaries, pins source version and opens only the confirmed student', async () => {
+test('the assignment picker fits mobile and opens the chosen attachment without restriction authoring', async () => {
   const { page, state, close } = await fixture({ mobile: true });
   try {
-    const button = page.getByRole('button', { name: 'Open as Lesson', exact: true }); assert.equal(await button.isDisabled(), true);
-    await page.getByTestId('button-review-restriction-scope').click();
-    await page.getByLabel('Reviewed allowed scope').waitFor();
+    const button = page.getByRole('button', { name: 'Open assignment', exact: true });
     assert.equal(await button.isEnabled(), true);
+    await page.getByLabel('Link to open', { exact: true }).selectOption(assignment.links[1].url);
     if (process.env.CLASSROOM_UI_QA_DIR) { await mkdir(process.env.CLASSROOM_UI_QA_DIR, { recursive: true }); await page.screenshot({ path: path.join(process.env.CLASSROOM_UI_QA_DIR, 'classroom-mobile.png'), fullPage: true }); }
     assert.equal(await page.getByTestId('dialog-classroom-actions').evaluate(node => node.scrollWidth <= node.clientWidth), true);
     await button.click();
-    await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).waitFor();
-    const created = state.requests.find(row => row.path.endsWith('/from-classroom')).body;
-    assert.equal(created.reuseReviewedSource, true); assert.equal(created.boundary, 'resource');
-    assert.deepEqual(created.resources, [{ id: 'assignment-a' }]); assert.deepEqual(created.resourceLinks, assignment.links.map(link => link.url));
-    const commands = [...state.commands.values()]; assert.equal(commands.length, 2);
-    assert.deepEqual(commands[0].commandPayload, { flightPathId: 'lesson-a', expectedFlightPathUpdatedAt: '2026-09-30T12:00:00.000Z' });
-    assert.deepEqual(commands[1].targetStudentIds, ['a']);
-    assert.deepEqual(commands[1].commandPayload, { url: video.canonicalUrl, afterRestrictionCommandId: commands[0].id });
-    await page.getByLabel('Classroom action results').getByText(/Open: not opened/).waitFor();
-    assert.deepEqual(state.errors, []);
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+    assertOpenOnly(state, ['a', 'b'], assignment.links[1].url);
   } finally { await close(); }
 });
 
-test('broader Website warning is reviewed explicitly and any boundary edit invalidates it', async () => {
+test('choosing a different attachment clears the previous open result until it is sent', async () => {
   const { page, state, close } = await fixture();
   try {
-    await page.getByRole('radio', { name: 'Entire website and subdomains' }).check();
-    await page.getByTestId('button-review-restriction-scope').click();
-    await page.getByText('youtube.com allows other pages and subdomains.', { exact: true }).waitFor();
-    await page.getByRole('radio', { name: 'Resource or Section' }).check();
-    assert.equal(await page.getByRole('button', { name: 'Open as Lesson', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByLabel('Reviewed allowed scope').count(), 0); assert.equal(state.commands.size, 0);
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+    await page.getByText(/Results show browser confirmations/).waitFor();
+    await page.getByLabel('Link to open', { exact: true }).selectOption(assignment.links[1].url);
+    assert.equal(await page.getByLabel('Classroom action results').count(), 0);
+    assert.equal(await page.getByText(/Results show browser confirmations/).count(), 0);
+    assertOpenOnly(state);
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+    assert.deepEqual([...state.commands.values()].map(({ commandType, commandPayload, targetStudentIds }) => ({ commandType, commandPayload, targetStudentIds })), [
+      { commandType: 'open-tab', commandPayload: { url: video.canonicalUrl }, targetStudentIds: ['a', 'b'] },
+      { commandType: 'open-tab', commandPayload: { url: assignment.links[1].url }, targetStudentIds: ['a', 'b'] },
+    ]);
+    assert.deepEqual(state.unexpectedRequests, []); assert.deepEqual(state.errors, []);
   } finally { await close(); }
 });
 
-test('authority retirement while a lesson acknowledgement is held cannot issue an open in the new scope', async () => {
+test('authority retirement while an open acknowledgement is held cancels waiting without sending to the new scope', async () => {
   const { page, state, close } = await fixture({ holdStatus: true });
   try {
-    await page.getByTestId('button-review-restriction-scope').click(); await page.getByLabel('Reviewed allowed scope').waitFor();
-    await page.getByRole('button', { name: 'Open as Lesson', exact: true }).click();
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
     await page.waitForFunction(() => document.body.textContent.includes('Waiting for per-student browser results'));
     await page.waitForTimeout(1000); assert.ok(state.releaseStatus);
     await page.evaluate(() => window.changeScope()); state.releaseStatus(); state.holdStatus = false;
     await page.waitForTimeout(1000);
-    assert.equal(await page.getByTestId('dialog-classroom-actions').count(), 0);
-    assert.equal(state.commands.size, 1); assert.deepEqual(state.errors, []);
+    assert.equal(await page.getByTestId('dialog-classroom-actions').count(), 0); assertOpenOnly(state);
+    assert.equal([...state.commands.values()][0].teachingSessionId, 'class-a');
   } finally { await close(); }
 });
 
-test('precise mode off retains Open actions and blocks Lesson authoring', async () => {
-  const { page, state, close } = await fixture({ preciseOff: true });
-  try {
-    assert.equal(await page.getByRole('button', { name: 'Open', exact: true }).isEnabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'Open as Lesson', exact: true }).count(), 0);
-    assert.equal(state.requests.some(row => row.path.endsWith('/preview-resources')), false);
-  } finally { await close(); }
-});
+for (const capabilitiesOff of [false, true]) {
+  test(`opening with existing controls preserves them with optional capabilities ${capabilitiesOff ? 'off' : 'on'}`, async () => {
+    const { page, state, close } = await fixture({ preciseOff: capabilitiesOff, capabilitiesOff, restricted: true });
+    try {
+      await page.getByText(/Existing browsing restrictions still apply/).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Open + Focus', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Open as Lesson', exact: true }).count(), 0);
+      await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+      await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+      assertOpenOnly(state);
+    } finally { await close(); }
+  });
+}
 
 
 test('a Classroom dialog keeps its original recipients across selection and subgroup inputs', async () => {
   const { page, state, close } = await fixture();
   try {
     await page.evaluate(() => window.changeRecipients());
-    await page.getByRole('button', { name: 'Open', exact: true }).click();
-    await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).first().waitFor();
-    assert.deepEqual([...state.commands.values()][0].targetStudentIds, ['a', 'b'], 'changing the live selection must never add Casey or drop Alex');
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+    assertOpenOnly(state);
     assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Alex Example', 'Blair Example']);
     assert.deepEqual(state.errors, []);
   } finally { await close(); }
@@ -206,58 +201,52 @@ test('a changed Classroom recipient list needs a separate confirmation and only 
   const { page, state, close } = await fixture();
   try {
     await page.evaluate(() => window.setAvailable(['a', 'c']));
-    await page.getByRole('button', { name: 'Open', exact: true }).click();
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
     await page.getByTestId('command-recipients-unavailable').getByText(/Blair Example/).waitFor();
     assert.equal(state.commands.size, 0);
     await page.getByRole('button', { name: 'Send to 1 available', exact: true }).click();
-    await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).first().waitFor();
-    assert.deepEqual([...state.commands.values()][0].targetStudentIds, ['a']); assert.deepEqual(state.errors, []);
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+    assertOpenOnly(state, ['a']);
   } finally { await close(); }
 });
 
-test('Google authoring cannot silently change the frozen lesson recipients while its response is held', async () => {
-  const { page, state, close } = await fixture({ holdAuthoring: true });
+test('mixed browser results identify the failed student without claiming every assignment opened', async () => {
+  const { page, state, close } = await fixture({ targetResults: { b: { status: 'failed', error: 'The assignment is blocked by an existing Flight Path.' } } });
   try {
-    await page.getByTestId('button-review-restriction-scope').click(); await page.getByLabel('Reviewed allowed scope').waitFor();
-    await page.getByRole('button', { name: 'Open as Lesson', exact: true }).click();
-    const deadline = Date.now() + 10_000;
-    while (!state.releaseAuthoring && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.ok(state.releaseAuthoring, 'the real authoring request is held');
-    await page.evaluate(() => { window.changeRecipients(); window.setAvailable(['a', 'c']); });
-    state.holdAuthoring = false; state.releaseAuthoring();
-    await page.getByText('Student availability changed while the lesson was prepared. Review the recipients and send again.', { exact: true }).waitFor();
-    assert.equal(state.commands.size, 0, 'no restriction or opening command may precede fresh consent');
-    assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Alex Example', "Blair Example · can't receive right now"]);
-    await page.getByRole('button', { name: 'Send to 1 available', exact: true }).click();
-    await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).first().waitFor();
-    assert.deepEqual([...state.commands.values()].map(command => command.targetStudentIds), [['a'], ['a']]);
-    assert.equal([...state.commands.values()][1].commandPayload.afterRestrictionCommandId, [...state.commands.values()][0].id);
-    assert.deepEqual(state.errors, []);
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
+    const results = page.getByLabel('Classroom action results');
+    await results.getByText('Failed', { exact: true }).waitFor();
+    assert.equal(await results.getByText('Opened', { exact: true }).count(), 1);
+    assert.match(await results.locator('div').filter({ has: page.getByText('Blair Example', { exact: true }) }).innerText(), /Failed.*The assignment is blocked/s);
+    assertOpenOnly(state);
+    await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+    await page.getByTestId('dialog-classroom-actions').waitFor({ state: 'hidden' });
+    assert.equal(await page.getByText(/Results show browser confirmations/).count(), 0, 'closing clears the obsolete toolbar notice');
   } finally { await close(); }
 });
 
+test('a held Classroom send ignores a repeated gesture', async () => {
+  const { page, state, close } = await fixture({ holdStatus: true });
+  try {
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).dblclick();
+    const deadline = Date.now() + 10_000;
+    while (!state.releaseStatus && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(state.releaseStatus); assertOpenOnly(state);
+    state.holdStatus = false; state.releaseStatus();
+    await page.getByLabel('Classroom action results').getByText('Opened', { exact: true }).first().waitFor();
+  } finally { await close(); }
+});
 
-test('a held Classroom send ignores a repeated gesture and authority retirement cancels held Google authoring', async () => {
-  const first = await fixture({ holdStatus: true });
+test('closing while an acknowledgement is held stops waiting and sends no follow-up command', async () => {
+  const { page, state, close } = await fixture({ holdStatus: true });
   try {
-    await first.page.getByRole('button', { name: 'Open', exact: true }).dblclick();
+    await page.getByRole('button', { name: 'Open assignment', exact: true }).click();
     const deadline = Date.now() + 10_000;
-    while (!first.state.releaseStatus && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.ok(first.state.releaseStatus); assert.equal(first.state.commands.size, 1);
-    first.state.holdStatus = false; first.state.releaseStatus();
-    await first.page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).first().waitFor();
-  } finally { await first.close(); }
-  const second = await fixture({ holdAuthoring: true });
-  try {
-    await second.page.getByTestId('button-review-restriction-scope').click(); await second.page.getByLabel('Reviewed allowed scope').waitFor();
-    await second.page.getByRole('button', { name: 'Open as Lesson', exact: true }).click();
-    const deadline = Date.now() + 10_000;
-    while (!second.state.releaseAuthoring && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
-    assert.ok(second.state.releaseAuthoring);
-    await second.page.evaluate(() => window.changeScope());
-    await second.page.getByTestId('dialog-classroom-actions').waitFor({ state: 'hidden' });
-    second.state.holdAuthoring = false; second.state.releaseAuthoring();
-    await second.page.waitForLoadState('networkidle'); assert.equal(second.state.commands.size, 0);
-    assert.deepEqual(second.state.errors, []);
-  } finally { await second.close(); }
+    while (!state.releaseStatus && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(state.releaseStatus);
+    await page.getByRole('button', { name: 'Stop waiting and close', exact: true }).click();
+    await page.getByTestId('dialog-classroom-actions').waitFor({ state: 'hidden' });
+    state.holdStatus = false; state.releaseStatus();
+    await page.waitForLoadState('networkidle'); assertOpenOnly(state);
+  } finally { await close(); }
 });

@@ -357,7 +357,8 @@ test("snapshot Stop Focus sends complete V2 authority after capability withdrawa
     void message.catch(() => undefined);
     const stopped = await issue("stop-focus", {});
     const frame = z.object({ commandId: z.literal(stopped.command.id), exactBinding: binding,
-      command: z.object({ exactBinding: binding }), classroomState: z.object({ revision: z.number(), restrictions: z.record(z.string(), z.unknown()) }) }).parse(await message);
+      command: z.object({ exactBinding: binding, data: z.object({}).strict() }),
+      classroomState: z.object({ revision: z.number(), restrictions: z.record(z.string(), z.unknown()) }) }).parse(await message);
     const current = await control();
     assert.equal(frame.exactBinding.controlRevision, current.revision);
     assert.deepEqual(frame.command.exactBinding, frame.exactBinding);

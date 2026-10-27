@@ -251,7 +251,7 @@ The intended classroom-control model, from the master plan's "FINAL PRODUCT MODE
 | Flight Path | "Let students move among these approved places." | Combines whole websites, sections and specific resources. |
 | Focus | "Keep this tab in front." | Persistent until the teacher stops it. |
 | Bring Forward | "Bring this tab forward once." | One-time; the student may navigate or switch afterwards. |
-| Google Classroom | "Open the teacher's existing assignment and optionally Focus or create a lesson restriction from its resources." | Open, Open + Focus, Open as Lesson. |
+| Google Classroom | "Open the teacher's existing assignment like Open URL; apply any restrictions separately." | Open assignment. |
 | PassPilot | "Manage student movement using enforceable school rules, appointments, capacity, and factual analytics." | Rules, appointments and analytics. |
 | Digital Usage | "Give administrators understandable browser-activity analytics without falsely claiming full-device screen time." | Called Monitored Browser Time, never Screen Time. |
 | Present to Class | "Teacher publishes one instructional screen stream to an SFU; authorized student Chromebooks subscribe to it." | New media stack; `teacherPresentationV1`. |
@@ -326,7 +326,7 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 | 1 | Shared Flight Paths + Block Lists | PR 1-pre, PR 1a, PR 1 | Merged in #547, #552 and #553; default off; current deployment/activation UNKNOWN |
 | 2 | Precise Restriction Engine for Waypoints + Flight Paths | PR 2-pre, PR 2, PR 3, PR 4, coordinated extension candidate | #550/#555/#559 merged; normalized preview API #567 and interface #571, ClassPilot enforcement #119 are draft implementations; package/device gates remain separate; production UNKNOWN |
 | 3 | Focus Tab + Bring Forward | PR 5, coordinated extension candidate | Final exact-tab/receipt/lifecycle contract #565, server #572, teacher interface #575 and ClassPilot #120 are draft implementation slices; source/CI/package/device gates tracked separately; default off |
-| 4 | Google Classroom Assignment -> Open / Open + Focus / Open as Lesson | PR 6 | Backend prerequisite/revision contract #582 and combined interface/integration #577 pass focused actual HTTP/browser tests; required current-head CI tracked separately; activation UNKNOWN |
+| 4 | Google Classroom Assignment -> Open assignment; restrictions separate | PR 6 | Historical prerequisite/revision contract #582 and combined interface/integration #577 retain compatibility coverage. The current picker uses open-tab only; required current-head CI and deployment remain separate. |
 | 5 | PassPilot Rules + Appointments + Expanded Analytics | PR 7, PR 8, PR 9 | Rules #554 merged; confidentiality #566, appointment API #570/races #573/year setup #574/interface #579 and Reports v2 API #583/interface #584 are draft continuation slices; default off; production UNKNOWN |
 | 6 | Digital Usage / Monitored Browser-Time Analytics | PR 10a, PR 10b, PR 11 | #548/#556 merged; coverage/cutoff correction #563, administrator page #568, initial load evidence #569 and equivalent query improvements #586 are drafts; expanded bounded workloads, failed repeats and stress limitations tracked separately; production UNKNOWN |
 | 7 | Present to Class using a NEW SFU-based architecture | PR 12–18 | Waits for the PR 12 ADR decision |
@@ -366,8 +366,8 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 ### Phase 4 — Google Classroom assignments
 
 - Reuses the existing Classroom OAuth, courses, coursework, materials, Drive resources, Forms, YouTube extraction and Classroom-to-Flight Path work.
-- Teacher actions: Open (open the assignment or resource), Open + Focus (open it and Focus its tab), Open as Lesson (create or reuse a resource-aware Flight Path and apply it).
-- One assigned YouTube video never allows all of YouTube. The teacher reviews generated restrictions before they apply. Generated Flight Paths are not duplicated uncontrollably.
+- Teacher action: Open assignment sends the assignment or selected resource through the same open-tab command as Open URL. It never requests Focus, locks, or a Flight Path.
+- Existing browsing restrictions continue to apply. Focus, Waypoint and Flight Path controls remain separate teacher actions, and Teaching tools retains explicit Classroom-to-Flight Path authoring.
 - The master plan suggests a capability `classroomAssignmentLaunchV1`; it is reserved and undesigned (see "Capabilities").
 
 ### Phase 5 — PassPilot rules, appointments and analytics
