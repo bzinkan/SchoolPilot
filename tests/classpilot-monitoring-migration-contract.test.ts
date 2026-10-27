@@ -227,7 +227,7 @@ test("control snapshots and legacy classroom states share one transaction bounda
   assert.match(storage, /const acceptedSet = new Set\(acceptedStudentIds\)/);
   assert.match(
     storage,
-    /for \(const clear of options\.classroomStateClears \|\| \[\]\) \{[\s\S]*?studentIds: \(clear\.studentIds \|\| \[\]\)\.filter\(\(studentId\) => acceptedSet\.has\(studentId\)\)[\s\S]*?\}, transactionDb\);/
+    /for \(const clear of options\.stopAutomaticFlightPath \? \[\] : options\.classroomStateClears \|\| \[\]\) \{[\s\S]*?studentIds: \(clear\.studentIds \|\| \[\]\)\.filter\(\(studentId\) => acceptedSet\.has\(studentId\)\)[\s\S]*?\}, transactionDb\);/
   );
   assert.match(storage, /upsertClasspilotClassroomStates\([\s\S]*transactionDb/);
   assert.match(storage, /replaceClasspilotStudentControlSnapshots\([\s\S]*transactionDb/);
