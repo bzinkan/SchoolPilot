@@ -513,6 +513,7 @@ export default function Dashboard() {
   const [selectedStudentBindingSnapshots, setSelectedStudentBindingSnapshots] = useState(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [studentStatusSort, setStudentStatusSort] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [liveViewState, setLiveViewState] = useState(EMPTY_LIVE_VIEW);
   const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
@@ -4632,6 +4633,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const idleCount = statsMonitoringDisplays.filter((display) => display.kind === 'idle').length;
   const offlineCount = statsMonitoringDisplays.filter((display) => display.kind === 'signed_out').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
+  const activeStudentStatusSort = studentView === 'available' ? null : studentStatusSort;
+  const prioritizedStudentIds = activeStudentStatusSort === null ? null : new Set(
+    statsStudents.filter((student, index) => activeStudentStatusSort === 'online'
+      ? statsMonitoringDisplays[index].kind === 'online'
+      : isStudentOffTask(student)).map((student) => student.studentId),
+  );
+  // Reorder only the tiles; preserve the existing filtered command/selection scope.
+  // Stable sorting keeps the normal alphabetical order within both groups.
+  const displayedStudents = prioritizedStudentIds === null ? filteredStudents : [...filteredStudents].sort(
+    (left, right) => Number(prioritizedStudentIds.has(right.studentId)) - Number(prioritizedStudentIds.has(left.studentId)),
+  );
 
   const resolveActiveCommandTarget = (
     overrideStudentIds = null,
@@ -7278,12 +7290,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {/* Stats Cards */}
         {canShowStudentWorkspace && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="chrome-stat p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
+            <button
+              type="button"
+              onClick={() => setStudentStatusSort((current) => current === 'online' ? null : 'online')}
+              aria-pressed={activeStudentStatusSort === 'online'}
+              disabled={studentView === 'available' || (activeStudentStatusSort !== 'online' && (!classStudentCountsKnown || onlineCount === 0))}
+              title={studentView === 'available' ? 'Sorting is available in Class and My room' : activeStudentStatusSort === 'online' ? 'Click again to restore normal order' : 'Show online students first'}
+              data-testid="button-sort-online"
+              className={`chrome-stat p-5 rounded-xl text-left bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default ${activeStudentStatusSort === 'online' ? 'ring-2 ring-green-500 bg-green-500/20 dark:bg-green-500/20' : 'enabled:cursor-pointer enabled:hover:bg-green-500/20'}`}
+            >
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-green-500 flex items-center justify-center"><Users className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-online-count">{classStudentCountsKnown ? onlineCount : '—'}</p><p className="text-[13px] text-green-500 font-medium">{desktopSourcesEnabled ? 'Browser online' : 'Online Now'}</p></div>
               </div>
-            </div>
+            </button>
             <div className="chrome-stat p-5 rounded-xl bg-amber-500/10 border border-amber-500/20 dark:bg-amber-500/10 dark:border-amber-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-amber-500 flex items-center justify-center"><Activity className="h-6 w-6 text-slate-900" /></div>
@@ -7296,16 +7316,32 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{classStudentCountsKnown ? offlineCount : '—'}</p><p className="text-[13px] text-muted-foreground font-medium">{desktopSourcesEnabled ? 'Browser signed out' : 'Not logged in'}</p></div>
               </div>
             </div>
-            <div className="chrome-stat p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
+            <button
+              type="button"
+              onClick={() => setStudentStatusSort((current) => current === 'off-task' ? null : 'off-task')}
+              aria-pressed={activeStudentStatusSort === 'off-task'}
+              disabled={studentView === 'available' || (activeStudentStatusSort !== 'off-task' && (!classStudentCountsKnown || offTaskCount === 0))}
+              title={studentView === 'available' ? 'Sorting is available in Class and My room' : activeStudentStatusSort === 'off-task' ? 'Click again to restore normal order' : 'Show off-task students first'}
+              data-testid="button-sort-offtask"
+              className={`chrome-stat p-5 rounded-xl text-left bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default ${activeStudentStatusSort === 'off-task' ? 'ring-2 ring-red-500 bg-red-500/20 dark:bg-red-500/20' : 'enabled:cursor-pointer enabled:hover:bg-red-500/20'}`}
+            >
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-red-500 flex items-center justify-center"><AlertTriangle className="h-6 w-6 text-white" /></div>
                 <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offtask-count">{classStudentCountsKnown ? offTaskCount : '—'}</p><p className="text-[13px] text-red-500 font-medium">{desktopSourcesEnabled ? 'Browser off-task' : 'Off-Task Alert'}</p></div>
               </div>
-            </div>
+            </button>
           </div>
         )}
 
         {/* Search Bar + Selection Controls */}
+        {canShowStudentWorkspace ? (
+          <p role="status" className={activeStudentStatusSort ? 'page-heading -mt-3 mb-4 text-xs text-muted-foreground' : 'sr-only'} data-testid="student-sort-status">
+            {activeStudentStatusSort === 'online' ? `Showing online students first. Click ${desktopSourcesEnabled ? 'Browser online' : 'Online Now'} again to reset.`
+              : activeStudentStatusSort === 'off-task' ? `Showing off-task students first. Click ${desktopSourcesEnabled ? 'Browser off-task' : 'Off-Task Alert'} again to reset.`
+                : 'Showing students in normal order.'}
+          </p>
+        ) : null}
+
         {canShowStudentWorkspace && (
           <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
             <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
@@ -7828,7 +7864,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           </div>
         ) : (
           <div data-student-grid style={{ marginRight: classToolsReservedWidth }} className="grid grid-cols-[repeat(auto-fill,minmax(min(224px,100%),1fr))] gap-6 motion-safe:transition-[margin] motion-safe:duration-200">
-            {filteredStudents.map((student) => {
+            {displayedStudents.map((student) => {
               const studentRealtimeKey = student.studentId;
               const supervisedElsewhere = isStudentMonitoringSuppressed(student);
               const monitoringDisplay = supervisedElsewhere
