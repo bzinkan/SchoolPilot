@@ -111,8 +111,8 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
         if (state.automaticConflict) { state.automaticConflict = false; state.automaticPolicy = { ...state.automaticPolicy, revision: 2 }; return route.fulfill({ status: 409, json: { error: 'Class preset changed elsewhere.' } }); }
         state.automaticPolicy = { ...state.automaticPolicy, revision: body.expectedRevision + 1, enabled: body.enabled, flightPathId: body.flightPathId, updatedBy: 'teacher-a' };
       }
-      return route.fulfill({ json: { policy: state.automaticPolicy, canManage: !state.coTeacher, eligible: url.pathname.includes('/official-a/'),
-        reasonCode: 'NOT_OFFICIAL_CLASS', flightPath: state.automaticPolicy.flightPathId ? { id: state.automaticPolicy.flightPathId, flightPathName: state.automaticPolicy.flightPathId === 'primary-private' ? 'Primary teacher preset' : 'Research destinations' } : null } });
+      return route.fulfill({ json: { policy: state.automaticPolicy, canManage: !state.coTeacher, eligible: state.automaticEligible ?? url.pathname.includes('/official-a/'),
+        reasonCode: 'AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED', flightPath: state.automaticPolicy.flightPathId ? { id: state.automaticPolicy.flightPathId, flightPathName: state.automaticPolicy.flightPathId === 'primary-private' ? 'Primary teacher preset' : 'Research destinations' } : null } });
     }
     if (url.pathname.endsWith('/admin/settings/rosterGrades')) {
       if (state.holdSave) await new Promise(resolve => { state.releaseSave = resolve; });
@@ -624,6 +624,32 @@ test('automatic class preset lets a non-primary administrator choose shared path
     await card.getByRole('button', { name: 'Save class preset' }).click();
     await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
     assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, enabled: true, flightPathId: 'shared-flight' }]);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('automatic class preset can be disabled after its schedule is removed without enabling or choosing another path', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a' });
+  try {
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Off', exact: true }).waitFor();
+    state.automaticPolicy = { schemaVersion: 1, revision: 3, enabled: true, flightPathId: 'flight-a' };
+    state.automaticEligible = false;
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/groups','official-a','automatic-flight-path'] }));
+    await card.getByText('Choose a teaching class with an active class schedule.').waitFor();
+    assert.equal(await card.getByRole('radio', { name: 'Use a saved Flight Path' }).isDisabled(), true);
+    assert.equal(await card.getByLabel('Saved Flight Path', { exact: true }).isDisabled(), true);
+    await card.getByRole('radio', { name: 'Off', exact: true }).check();
+    await card.getByRole('button', { name: 'Save class preset' }).click();
+    await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
+    assert.deepEqual(writes(state).map(({ path, body }) => ({ path, body })), [{ path: '/api/groups/official-a/automatic-flight-path', body: { expectedRevision: 3, enabled: false, flightPathId: null } }]);
+    assert.equal(await card.getByRole('radio').count(), 0, 'an unconfigured ineligible class offers no enable controls');
+    state.coTeacher = true;
+    state.automaticPolicy = { schemaVersion: 1, revision: 5, enabled: true, flightPathId: 'flight-a' };
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/groups','official-a','automatic-flight-path'] }));
+    await card.getByText('On · Research destinations').waitFor();
+    assert.equal(await card.getByRole('button', { name: 'Save class preset' }).count(), 0);
+    assert.equal(await card.getByRole('radio').count(), 0);
     assert.deepEqual(state.errors, []);
   } finally { await page.close(); }
 });

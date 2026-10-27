@@ -58,13 +58,13 @@ function PresetEditor({ incoming, queryKey, groupId, schoolId, flightPaths, flig
     {incoming.eligible !== true ? <p className="text-sm text-muted-foreground">{automaticFlightPathReason(incoming.reasonCode)}</p> : null}
     {!canManage ? <div className="space-y-2 text-sm"><p>{incoming.policy.enabled ? `On · ${savedName}` : 'Off'}</p>
         <p className="text-muted-foreground">The primary teacher or a school administrator manages this class preset. You can turn it off for a session you teach from the Dashboard.</p></div>
-        : <>
+        : incoming.eligible === true || baseline.enabled === true ? <>
           <fieldset className="space-y-2" disabled={save.isPending}><legend className="mb-2 text-sm font-medium">At the start of each scheduled session</legend>
-            {anotherTeacherClass ? <p className="text-sm text-muted-foreground">For another teacher’s class, choose a shared school Flight Path.</p> : null}
+            {anotherTeacherClass && incoming.eligible ? <p className="text-sm text-muted-foreground">For another teacher’s class, choose a shared school Flight Path.</p> : null}
             <label className="flex items-center gap-2 text-sm"><input type="radio" name={`automatic-flight-path-${groupId}`} checked={!enabled} onChange={() => update({ enabled: false })} />Off</label>
             <label className="flex items-center gap-2 text-sm"><input type="radio" name={`automatic-flight-path-${groupId}`} disabled={!incoming.eligible} checked={Boolean(enabled)} onChange={() => update({ enabled: true })} />Use a saved Flight Path</label>
             {enabled ? <div className="space-y-2 pt-2"><Label htmlFor={`automatic-flight-path-choice-${groupId}`}>Saved Flight Path</Label>
-              <select id={`automatic-flight-path-choice-${groupId}`} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={flightPathId} onChange={event => update({ flightPathId: event.target.value })}>
+              <select id={`automatic-flight-path-choice-${groupId}`} disabled={!incoming.eligible} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={flightPathId} onChange={event => update({ flightPathId: event.target.value })}>
                 <option value="">Choose a Flight Path</option>
                 {flightPathId && !selected ? <option value={flightPathId} disabled>{savedName}</option> : null}
                 {flightPaths.map(path => <option key={path.id} value={path.id}>{path.flightPathName}{teachingResourceBadge(path) ? ` · ${teachingResourceBadge(path)}` : ''}</option>)}
@@ -85,7 +85,7 @@ function PresetEditor({ incoming, queryKey, groupId, schoolId, flightPaths, flig
               catch { if (lifetime.current.alive) setNotice('The saved preset could not be reloaded. Your draft is still here.'); }
             }}>Reload saved preset</Button> : null}</div>
           {dirty ? <p role="status" className="text-sm">Unsaved class preset</p> : null}
-        </>}
+        </> : null}
     {notice ? <p role="status" className="text-sm">{notice}</p> : null}
     <Link className="text-sm text-primary underline underline-offset-4" to={`?section=websites&classId=${encodeURIComponent(groupId)}`}>Create or edit Flight Paths in Website tools</Link>
   </div>;

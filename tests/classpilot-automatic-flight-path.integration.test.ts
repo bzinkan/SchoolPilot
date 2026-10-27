@@ -153,12 +153,14 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     const sharedResources = await import("../src/db/sharedTeachingResourcesMigration.js");
     const preciseResources = await import("../src/db/flightPathResourcesMigration.js");
     const contentRevision = await import("../src/db/flightPathContentRevisionMigration.js");
+    const staffSignIn = await import("../src/db/microsoftSignInMigration.js");
     // The isolated workspace template predates the existing Flight Path
-    // library/precise-resource migrations. Apply their real additive SQL,
-    // rather than inventing a weaker test-only table shape.
+    // library/precise-resource migrations and staff sign-in columns needed by
+    // the HTTP auth middleware. Apply their real additive SQL rather than
+    // inventing a weaker test-only table shape.
     await admin.query(`BEGIN; ${sharedResources.SHARED_TEACHING_RESOURCES_EXPAND_SQL}
       ${preciseResources.FLIGHT_PATH_RESOURCES_EXPAND_SQL} ${contentRevision.FLIGHT_PATH_CONTENT_REVISION_SQL}
-      ${migration.CLASSPILOT_AUTOMATIC_FLIGHT_PATH_SQL} COMMIT;`);
+      ${staffSignIn.MICROSOFT_SIGN_IN_EXPAND_SQL} ${migration.CLASSPILOT_AUTOMATIC_FLIGHT_PATH_SQL} COMMIT;`);
     const { policySqlFor } = await import("../src/db/rlsPolicies.js");
     const tenantTables = ["groups", "flight_paths", "teaching_sessions", "classpilot_session_staff", "classpilot_session_students",
       "classpilot_student_control_states", "classpilot_classroom_states", "classpilot_commands", "classpilot_command_targets"];
@@ -316,7 +318,7 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     const { signUserToken } = await import("../src/services/jwt.js");
     const server = createServer(createApp());
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
     const request = (method: string, endpoint: string, actorId: string, body?: Record<string, unknown>) => fetch(`${baseUrl}${endpoint}`, {
       method,
       headers: { authorization: `Bearer ${signUserToken({ userId: actorId, email: `${actorId}@example.edu`, isSuperAdmin: false })}`,
