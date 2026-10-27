@@ -186,6 +186,9 @@ test("malformed CLI inputs never start Trivy", (t) => {
 
 test("workflow installs the same scanner, tests the wrapper, covers its PR inputs and stays read-only", () => {
   const workflow = readFileSync(new URL("../.github/workflows/trivy.yml", import.meta.url), "utf8");
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  assert.deepEqual([...dockerfile.matchAll(/^FROM ([^ \r\n]+)/gm)].map(match => match[1]), ["node:22-alpine", "node:22-alpine"]);
+  assert.match(workflow, /--build-context node:22-alpine=docker-image:\/\/docker\.io\/library\/node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914/);
   for (const file of ["scripts/security/scan-container.mjs", "tests/trivy-container-scan.test.mjs"]) {
     assert.ok(workflow.includes(`- '${file}'`));
   }

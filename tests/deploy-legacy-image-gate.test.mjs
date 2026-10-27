@@ -192,6 +192,12 @@ test('registry manifest and index retain exact digest/config/platform bindings',
 });
 
 const deploy = readFileSync(new URL('../scripts/deploy.sh', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+test('runtime image requires the patched Alpine Brotli package', () => {
+  const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8').replaceAll('\r\n', '\n');
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
+  assert.match(runtime, /^RUN apk upgrade --no-cache$/m);
+  assert.match(runtime, /^RUN apk add --no-cache 'brotli-libs>=1\.2\.1-r0' poppler-utils util-linux-misc font-liberation$/m);
+});
 const trapStart = deploy.indexOf('deploy_exit_cleanup() {');
 const trapEnd = deploy.indexOf('\n}\n', trapStart) + 3;
 assert.ok(trapStart > 0 && trapEnd > trapStart);
@@ -240,6 +246,7 @@ printf 'register-task-definition\\n' >> "$TRACE"
   assert.equal(result.status, ['none', 'immutable'].includes(failure) ? 0 : 1, result.stderr);
   assert.equal(calls.includes('register-task-definition'), ['none', 'immutable'].includes(failure));
   assert.match(calls, /cleanup-scratch\ncleanup-recovery\n$/);
+  if (failure !== 'immutable') assert.match(calls, /^docker:build --pull /m);
   if (['build', 'scan'].includes(failure)) assert.doesNotMatch(calls, /aws:| push | login /);
   if (failure === 'none') {
     assert.ok(calls.indexOf('helper:scan') < calls.indexOf('aws:ecr get-login-password'));

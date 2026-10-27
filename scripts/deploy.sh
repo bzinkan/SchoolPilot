@@ -6410,7 +6410,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     # the immutable-image workflow. It can then be removed in a separate PR.
     LEGACY_IMAGE_EVIDENCE=$(node "$SCRIPT_DIR/verify-legacy-deploy-image.mjs" init "$LOCAL_SHA")
     info "Building Docker image..."
-    docker build --label "org.opencontainers.image.revision=${LOCAL_SHA}" \
+    docker build --pull --label "org.opencontainers.image.revision=${LOCAL_SHA}" \
       --iidfile "$LEGACY_IMAGE_EVIDENCE/build-image-id.txt" -t "${NAME}-api:${IMAGE_TAG}" .
     success "Docker build complete"
 
