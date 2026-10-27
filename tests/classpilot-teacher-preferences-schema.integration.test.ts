@@ -154,8 +154,9 @@ test("typed schema, immutable ledger contract, and forced tenant RLS match", asy
   assert.equal(classpilotDashboardThemeLibraryMigration.mode, "transactional");
   assert.ok(schoolPilot27ExpandMigrations.some(migration => migration.id === classpilotDashboardThemeLibraryMigration.id));
   assert.equal(schoolPilot27Migrations.filter(migration => migration.id === classpilotDashboardThemeLibraryMigration.id).length, 1);
-  assert.equal(schoolPilot27Migrations.at(-2)?.id, classpilotDashboardAppearanceMigration.id, "the library migration follows the appearance one");
-  assert.equal(schoolPilot27Migrations.at(-1)?.id, classpilotDashboardThemeLibraryMigration.id, "appended to the end of the manifest");
+  const appearanceIndex = schoolPilot27Migrations.findIndex(migration => migration.id === classpilotDashboardAppearanceMigration.id);
+  const libraryIndex = schoolPilot27Migrations.findIndex(migration => migration.id === classpilotDashboardThemeLibraryMigration.id);
+  assert.equal(libraryIndex, appearanceIndex + 1, "the immutable library migration immediately follows appearance, allowing later migrations to append");
   const policy = (await admin.query(`SELECT c.relrowsecurity enabled,c.relforcerowsecurity forced,p.polname,pg_get_expr(p.polqual,p.polrelid) AS using,pg_get_expr(p.polwithcheck,p.polrelid) AS check
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_policy p ON p.polrelid=c.oid WHERE n.nspname=$1 AND c.relname='classpilot_teacher_preferences'`, [schema])).rows[0];
   assert.equal(policy.enabled, true); assert.equal(policy.forced, true); assert.equal(policy.polname, "tenant_isolation"); assert.equal(policy.using, policy.check);

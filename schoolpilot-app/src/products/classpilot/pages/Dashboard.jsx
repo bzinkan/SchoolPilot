@@ -174,6 +174,8 @@ import {
   unwrapToday,
 } from '../lib/scheduleChanges';
 import { useObservationLease, CLASSPILOT_TRANSPORT_RECOVERED_EVENT } from '../hooks/useObservationLease';
+import { useDesktopMetadata } from '../hooks/useDesktopMetadata';
+import { desktopSourceKey } from '../lib/nativeDesktop';
 import { useClasspilotPreviewRecovery } from '../hooks/useClasspilotPreviewRecovery';
 import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
@@ -500,6 +502,12 @@ export default function Dashboard() {
   const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [expandedScreenshot, setExpandedScreenshot] = useState(null);
+  const [previewSourceSelections, setPreviewSourceSelections] = useState({});
+  const updatePreviewSourceSelection = (studentId, update) => setPreviewSourceSelections(current => {
+    const previous = current[studentId];
+    const next = typeof update === 'function' ? update(previous) : update;
+    return next === previous ? current : { ...current, [studentId]: next };
+  });
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [selectedServerSignOutStudentIds, setSelectedServerSignOutStudentIds] = useState(new Set());
   const [selectedStudentBindingSnapshots, setSelectedStudentBindingSnapshots] = useState(new Map());
@@ -3627,6 +3635,18 @@ export default function Dashboard() {
   const screenshotTileQueryStudents = studentView === 'claimed'
     ? (claimedPreviewActive ? claimedPickupStudents : EMPTY_LIST)
     : effectiveActivityId ? students : EMPTY_LIST;
+  const desktopRosterStudents = useMemo(() => screenshotTileQueryStudents.filter(student => !isStudentMonitoringSuppressed(student)),
+    [screenshotTileQueryStudents, isStudentMonitoringSuppressed]);
+  const desktopByStudent = useDesktopMetadata({
+    enabled: studentView === 'claimed' ? claimedPreviewActive : studentView === 'class' && Boolean(effectiveActivityId) && !terminalSessionError,
+    students: desktopRosterStudents,
+    schoolId: activeSchoolId,
+    viewerId: currentUser?.id,
+    authority: effectiveAuthority,
+    contextAuthorityRevision,
+    claimedContexts: studentView === 'claimed' ? claimedPreviewContextById : undefined,
+  });
+  const desktopSourcesEnabled = desktopByStudent.size > 0;
   const historyTileQueryStudents = studentView === 'available'
     ? EMPTY_LIST
     : studentView === 'class' && effectiveActivityId
@@ -7249,7 +7269,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {studentView === 'class' && effectiveActivityId ? (
           <p className="mb-4 text-xs text-muted-foreground" data-testid="screenshot-refresh-disclosure">
-            Screen previews update automatically while this class is open. They are recent screenshots, not live video.
+            {desktopSourcesEnabled
+              ? 'Browser previews update automatically while this class is open. Select Desktop or View desktop to observe an available desktop source. Previews are recent screenshots, not live video.'
+              : 'Screen previews update automatically while this class is open. They are recent screenshots, not live video.'}
           </p>
         ) : null}
 
@@ -7259,25 +7281,25 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="chrome-stat p-5 rounded-xl bg-green-500/10 border border-green-500/20 dark:bg-green-500/10 dark:border-green-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-green-500 flex items-center justify-center"><Users className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-online-count">{classStudentCountsKnown ? onlineCount : '—'}</p><p className="text-[13px] text-green-500 font-medium">Online Now</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-online-count">{classStudentCountsKnown ? onlineCount : '—'}</p><p className="text-[13px] text-green-500 font-medium">{desktopSourcesEnabled ? 'Browser online' : 'Online Now'}</p></div>
               </div>
             </div>
             <div className="chrome-stat p-5 rounded-xl bg-amber-500/10 border border-amber-500/20 dark:bg-amber-500/10 dark:border-amber-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-amber-500 flex items-center justify-center"><Activity className="h-6 w-6 text-slate-900" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-idle-count">{classStudentCountsKnown ? idleCount : '—'}</p><p className="text-[13px] text-amber-500 font-medium">Idle</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-idle-count">{classStudentCountsKnown ? idleCount : '—'}</p><p className="text-[13px] text-amber-500 font-medium">{desktopSourcesEnabled ? 'Browser idle' : 'Idle'}</p></div>
               </div>
             </div>
             <div className="chrome-stat p-5 rounded-xl bg-slate-500/10 border border-slate-500/20 dark:bg-slate-500/10 dark:border-slate-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-slate-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{classStudentCountsKnown ? offlineCount : '—'}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{classStudentCountsKnown ? offlineCount : '—'}</p><p className="text-[13px] text-muted-foreground font-medium">{desktopSourcesEnabled ? 'Browser signed out' : 'Not logged in'}</p></div>
               </div>
             </div>
             <div className="chrome-stat p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-red-500 flex items-center justify-center"><AlertTriangle className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offtask-count">{classStudentCountsKnown ? offTaskCount : '—'}</p><p className="text-[13px] text-red-500 font-medium">Off-Task Alert</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offtask-count">{classStudentCountsKnown ? offTaskCount : '—'}</p><p className="text-[13px] text-red-500 font-medium">{desktopSourcesEnabled ? 'Browser off-task' : 'Off-Task Alert'}</p></div>
               </div>
             </div>
           </div>
@@ -7290,7 +7312,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="flex items-center gap-3">
               <div ref={selectionTargetRef} tabIndex={-1} className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="badge-selection-count">
                 <div className="text-[13px] font-semibold">{dashboardCapabilities.observedOtherClass ? 'Viewing' : 'Target'}: {activeClassName} - {displayedTargetBannerLabel}</div>
-                <div className="text-[11px] font-medium opacity-80">{displayedTargetConnectionLabel}</div>
+                <div className="text-[11px] font-medium opacity-80">{desktopSourcesEnabled ? 'Browser: ' : ''}{displayedTargetConnectionLabel}</div>
               </div>
               {!dashboardCapabilities.observedOtherClass ? (
                 <>
@@ -7490,22 +7512,22 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {observationLeaseStatus === 'denied' ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-denied">
-            Screen-preview authorization is no longer available for this class view. Cached previews and history were cleared.
+            {desktopSourcesEnabled ? 'Browser screen-preview' : 'Screen-preview'} authorization is no longer available for this class view. Cached {desktopSourcesEnabled ? 'browser ' : ''}previews and history were cleared.
             <Button type="button" size="sm" variant="outline" className="ml-3" onClick={retryClasspilotReads} disabled={readsRetrying} data-testid="retry-observation-reads">Refresh class</Button>
           </div>
         ) : observationLeaseStatus === 'ineligible' && !terminalSessionError ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-ineligible">
-            {awaitingLiveSupervision
+            {desktopSourcesEnabled ? 'Browser previews: ' : ''}{awaitingLiveSupervision
               ? 'This scheduled class is awaiting live supervision. Screen previews will appear automatically when the teacher opens the class. The class has not been closed.'
               : 'Screen previews become available when this class is live and its roster is ready.'}
           </div>
         ) : observationLeaseStatus === 'paused_unobserved' ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-paused">
-            Screen previews are paused because this class view is not actively observed. Activity reporting continues from heartbeats.
+            {desktopSourcesEnabled ? 'Browser screen previews' : 'Screen previews'} are paused because this class view is not actively observed. Activity reporting continues from heartbeats.
           </div>
         ) : observationLeaseStatus === 'error' ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="screenshot-observation-error">
-            Screen-preview observation could not be renewed. Activity reporting continues, but new ambient screenshots are paused.
+            {desktopSourcesEnabled ? 'Browser screen-preview' : 'Screen-preview'} observation could not be renewed. Activity reporting continues, but new ambient screenshots are paused.
           </div>
         ) : null}
 
@@ -7514,7 +7536,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             && (visibleScreenshotReadDenied || deniedHistoryReadIds.size > 0)
           : studentView === 'claimed' && deniedHistoryReadIds.size > 0) ? (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-4 py-3 text-sm" role="status" data-testid="tile-read-denied">
-            <span>{studentView === 'claimed'
+            <span>{desktopSourcesEnabled ? (studentView === 'claimed'
+              ? 'Some browser history is no longer available in this coverage view. Refresh coverage to check access again.'
+              : 'Some browser previews or history are no longer available in this class. Refresh the class to check access again.') : studentView === 'claimed'
               ? 'Some student history is no longer available in this coverage view. Refresh coverage to check access again.'
               : 'Some student previews or history are no longer available in this class. Refresh the class to check access again.'}</span>
             <Button type="button" size="sm" variant="outline" onClick={retryClasspilotReads} disabled={readsRetrying} data-testid="retry-tile-reads">{studentView === 'claimed' ? 'Refresh coverage' : 'Refresh class'}</Button>
@@ -7910,6 +7934,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     />
                   ) : <StudentTile
                     student={tileStudent}
+                    desktop={supervisedElsewhere ? null : desktopByStudent.get(student.studentId) || null}
+                    previewSourceSelection={previewSourceSelections[student.studentId]}
+                    onPreviewSourceSelection={update => updatePreviewSourceSelection(student.studentId, update)}
                     onOpenDetails={tileDetailsRevoked
                       ? undefined
                       : (opener) => openStudentDetails(student, opener)}
@@ -8010,6 +8037,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           privacyKey={expandedScreenshotSelection.privacyKey}
           refreshUnavailable={expandedScreenshotSelection.refreshUnavailable}
           unavailableMessage={expandedScreenshotSelection.unavailableMessage}
+          sourceControls={desktopByStudent.has(expandedScreenshotSelection.student.studentId) ? (
+            <div className="flex gap-2" role="group" aria-label="Enlarged preview source">
+              <Button size="sm" variant="secondary" aria-pressed data-testid="expanded-browser-source-browser">Browser</Button>
+              <Button size="sm" variant="outline" aria-pressed={false} data-testid="expanded-browser-source-desktop"
+                onClick={() => {
+                  const studentId = expandedScreenshotSelection.student.studentId;
+                  const desktop = desktopByStudent.get(studentId);
+                  updatePreviewSourceSelection(studentId, current => ({ key: `${desktop.contextKey}:${studentId}`,
+                    source: 'desktop', activationId: (current?.activationId || 0) + 1,
+                    activationKey: desktopSourceKey(desktop.source), expanded: true }));
+                  setExpandedScreenshot(null);
+                }}>Desktop</Button>
+            </div>
+          ) : null}
           onOpenChange={(open) => {
             if (!open) {
               restoreExpandedScreenshotFocusRef.current = true;

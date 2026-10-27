@@ -42,6 +42,7 @@ export default function ScreenshotPreviewDialog({
   unavailableMessage = 'Current screenshot unavailable. Waiting for the next authorized capture.',
   onReturnFocus,
   onOpenChange,
+  sourceControls = null,
 }) {
   const [zoom, setZoom] = useState('fit');
   const candidateDisplay = deriveScreenshotDisplay(screenshotData, freshnessNowMs);
@@ -86,6 +87,8 @@ export default function ScreenshotPreviewDialog({
             Automatically refreshed screenshot. Not live video.
           </DialogDescription>
         </DialogHeader>
+
+        {sourceControls}
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-y py-2">
           <div className="flex min-w-0 items-center gap-2 text-sm">

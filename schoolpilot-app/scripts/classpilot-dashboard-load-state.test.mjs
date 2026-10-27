@@ -712,7 +712,11 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
 // Share the Vite server and browser across these independent load states.
 // Close each completed scenario's context so its reconciliation and recovery
 // timers do not keep running while later scenarios make their assertions.
-test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 240_000 }, async (t) => {
+// A passing CI run took 219.8s for all thirteen scenarios, leaving only 9%
+// headroom under 240s. Keep a bounded 300s aggregate budget, 30s UI waits and
+// per-scenario timings so cold-runner variance cannot hide a stalled assertion.
+test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed aggregate states", { timeout: 300_000 }, async (t) => {
+  const testStartedAt = performance.now();
   const dashboardSource = readFileSync(
     path.join(APP_ROOT, "src/products/classpilot/pages/Dashboard.jsx"),
     "utf8",
@@ -740,14 +744,47 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   const baseURL = `http://127.0.0.1:${address.port}`;
 
   let browser;
+  let releaseFirstPaintScreenshots;
   const pages = [];
+  let scenario;
+  const bounded = async (operation, timeoutMs, description) => {
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(operation),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${description} exceeded ${timeoutMs}ms`)), timeoutMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  };
+  const reportScenario = phase => {
+    t.diagnostic(`Dashboard load-state ${scenario?.name || 'startup'}: ${phase}; scenario ${Math.round(performance.now() - (scenario?.startedAt ?? testStartedAt))}ms; total ${Math.round(performance.now() - testStartedAt)}ms`);
+  };
+  const closePage = async page => {
+    if (page && !page.isClosed()) await bounded(() => page.close(), 5_000, 'Scenario context cleanup');
+  };
+  const onAbort = () => {
+    releaseFirstPaintScreenshots?.();
+    // Closing interrupts an in-flight locator/evaluation, allowing finally to
+    // run even when the parent test's wall-clock budget is exhausted.
+    void browser?.close().catch(() => {});
+  };
+  t.signal.addEventListener('abort', onAbort, { once: true });
   const openScenarioPage = async (name) => {
     // Completed scenarios have independent browser contexts. Release their
     // timers, recovery reads and retained screen state before starting another.
     // Keep the shared browser/Vite startup and every existing UI assertion.
-    await pages.at(-1)?.close();
-    t.diagnostic(`Dashboard load-state scenario: ${name}`);
+    await closePage(pages.at(-1));
+    if (scenario) reportScenario('completed and context closed');
+    scenario = { name, startedAt: performance.now(), pageErrors: [], failedResponses: [] };
+    reportScenario('starting');
     const page = await browser.newPage();
+    page.setDefaultTimeout(30_000);
+    page.setDefaultNavigationTimeout(30_000);
+    const currentScenario = scenario;
+    page.on('pageerror', error => currentScenario.pageErrors.push(error.message.slice(0, 300)));
+    page.on('response', response => {
+      if (response.status() >= 400) currentScenario.failedResponses.push({ status: response.status(), pathname: new URL(response.url()).pathname });
+    });
     pages.push(page);
     return page;
   };
@@ -2189,7 +2226,6 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       school: success([]),
       scoped: success({ students: [firstPaintStudent] }),
     });
-    let releaseFirstPaintScreenshots;
     const firstPaintScreenshotGate = new Promise((resolve) => {
       releaseFirstPaintScreenshots = resolve;
     });
@@ -2213,6 +2249,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       },
     });
     await firstPaintPage.goto(`${baseURL}/classpilot`);
+    reportScenario('dashboard loaded; waiting for unresolved cohort stand-in');
 
     const firstPaintSkeleton = firstPaintPage.getByTestId(`student-tile-skeleton-${STUDENT_ID}`);
     await firstPaintSkeleton.waitFor();
@@ -2239,6 +2276,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
 
     releaseFirstPaintScreenshots();
+    reportScenario('first screenshot response released');
     const firstPaintCard = firstPaintPage.getByTestId(`card-student-${STUDENT_ID}`);
     await firstPaintCard.waitFor();
     await firstPaintCard.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
@@ -2266,10 +2304,28 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       "offscreen tiles must stay mounted instead of collapsing to a gray box",
     );
     assert.deepEqual(firstPaintHarness.pageErrors, []);
+    reportScenario('all assertions completed');
+  } catch (error) {
+    reportScenario(`failed: ${error.message.split('\n')[0]}`);
+    const page = pages.at(-1);
+    const ui = page && !page.isClosed() ? await bounded(() => page.evaluate(studentId => ({
+      readyState: document.readyState,
+      skeleton: Boolean(document.querySelector(`[data-testid="student-tile-skeleton-${studentId}"]`)),
+      card: Boolean(document.querySelector(`[data-testid="card-student-${studentId}"]`)),
+      preview: Boolean(document.querySelector(`[data-testid="screenshot-${studentId}"]`)),
+      queryError: Boolean(document.querySelector('[data-testid="students-query-error"]')),
+    }), STUDENT_ID), 2_000, 'Scenario failure diagnostics').catch(() => ({ unavailable: true })) : { closed: true };
+    t.diagnostic(JSON.stringify({ scenario: scenario?.name, ui,
+      pageErrors: scenario?.pageErrors.slice(-5), failedResponses: scenario?.failedResponses.slice(-5) }));
+    throw error;
   } finally {
-    for (const page of pages) await page.close().catch(() => {});
-    await browser?.close().catch(() => {});
-    await vite.close().catch(() => {});
+    // Resolve the held route on both assertion failure and cancellation before
+    // closing its context. Keep cleanup bounded and preserve the original error.
+    releaseFirstPaintScreenshots?.();
+    for (const page of pages) await closePage(page).catch(error => t.diagnostic(error.message));
+    await bounded(() => browser?.close(), 5_000, 'Browser cleanup').catch(error => t.diagnostic(error.message));
+    await bounded(() => vite.close(), 5_000, 'Vite cleanup').catch(error => t.diagnostic(error.message));
+    t.signal.removeEventListener('abort', onAbort);
   }
 });
 
@@ -7691,6 +7747,110 @@ test('reliability: online and authenticated recovery bypass two held old lease P
     assert.equal(harness.observationLeaseRequests.some(request => request.method === 'DELETE' && request.body.viewerInstanceId === currentViewer), false);
     assert.deepEqual(harness.pageErrors, []);
   } finally { releases.forEach(release => release()); }
+});
+
+test('native desktop: a browser-signed-out student uses the existing Dashboard tile and exact native authority', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-08-25T13:01:00Z');
+  await page.clock.install({ time: fixedTime });
+  const live = teachingSession();
+  const nativeStudent = student({ isLoggedIn: false, loginState: 'not_logged_in', status: 'offline',
+    monitoringState: 'signed_out', commandable: false, realtimeBinding: '', extensionVersion: null,
+    activeTabTitle: null, activeTabUrl: null, lastSeenAt: null, realtimeObservedAt: null });
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: live, allSessions: [live],
+    aggregate: aggregateController({ scoped: success([nativeStudent]) }), acknowledgeSessionSubscriptions: true });
+  const sharp = (await import('sharp')).default;
+  const screenshot = `data:image/jpeg;base64,${(await sharp({ create: { width: 240, height: 135, channels: 3, background: '#194c63' } }).jpeg().toBuffer()).toString('base64')}`;
+  const nativeRequests = [];
+  await page.route('**/api/classpilot/native/**', async route => {
+    const request = route.request(), url = new URL(request.url()), body = request.postDataJSON();
+    nativeRequests.push({ path: url.pathname, method: request.method(), body });
+    const now = fixedTime.getTime();
+    if (request.method() === 'DELETE') return route.fulfill({ status: 204 });
+    if (request.method() === 'PUT') return route.fulfill({ json: { serverTime: fixedTime.toISOString(), expiresAt: new Date(now + 45_000).toISOString(), renewAfterSeconds: 15 } });
+    return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+      sourceRef: 'native-source-a', bindingRevision: 1, platform: 'windows', sourceLabel: 'One selected display', state: 'available',
+      ...(body.selectedSources ? { screenshot, sequence: 1, observedAt: fixedTime.toISOString(), expiresAt: new Date(now + 30_000).toISOString(),
+        foregroundApplication: { id: 'synthetic-editor', displayName: 'Synthetic Editor', observedAt: fixedTime.toISOString() } } : {}),
+    }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 1);
+  assert.equal(await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
+  await page.getByText('Browser signed out', { exact: true }).waitFor();
+  await page.getByText('Browser online', { exact: true }).waitFor();
+  assert.equal(nativeRequests.some(request => request.method === 'PUT'), false);
+  await page.getByTestId(`view-desktop-${STUDENT_ID}`).click();
+  await page.getByTestId(`desktop-image-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).count(), 0);
+  const grant = nativeRequests.find(request => request.method === 'PUT');
+  assert.equal(grant.body.teachingSessionId, OWN_SESSION_ID);
+  assert.deepEqual(grant.body.targets, [{ studentId: STUDENT_ID, sourceRef: 'native-source-a', bindingRevision: 1 }]);
+  assert.equal(JSON.stringify(nativeRequests).includes('deviceId'), false);
+  assert.equal(harness.tileRequests.some(request => request.pathname.endsWith('/screenshots') && request.body.studentIds.includes(STUDENT_ID)), false);
+  await page.getByTestId(`preview-source-browser-${STUDENT_ID}`).click();
+  assert.equal(await page.getByTestId(`desktop-image-${STUDENT_ID}`).count(), 0);
+  await waitUntil(() => nativeRequests.some(request => request.method === 'DELETE'), 'Changing source must retire the native viewer');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('native desktop: both enlarged previews switch exact source and native close releases the tile viewer', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-08-25T13:01:00Z');
+  await page.clock.install({ time: fixedTime });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: live, allSessions: [live],
+    aggregate: aggregateController({ scoped: success([student()]) }), acknowledgeSessionSubscriptions: true,
+    screenshotTiles: () => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:source-switch-browser', screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: fixedTime.toISOString(), tabTitle: 'Synthetic browser',
+      tabUrl: 'https://classroom.example.edu/', bindingVersion: 'v2:source-switch-browser',
+    } }] }),
+  });
+  const sharp = (await import('sharp')).default;
+  const jpeg = `data:image/jpeg;base64,${(await sharp({ create: { width: 240, height: 135, channels: 3, background: '#194c63' } }).jpeg().toBuffer()).toString('base64')}`;
+  const requests = [];
+  await page.route('**/api/classpilot/native/**', async route => {
+    const request = route.request(), body = request.postDataJSON();
+    requests.push({ method: request.method(), path: new URL(request.url()).pathname, body });
+    if (request.method() === 'DELETE') return route.fulfill({ status: 204 });
+    if (request.method() === 'PUT') return route.fulfill({ json: { serverTime: fixedTime.toISOString(),
+      expiresAt: new Date(fixedTime.getTime() + 45_000).toISOString(), renewAfterSeconds: 15 } });
+    return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+      sourceRef: 'native-source-a', bindingRevision: 1, platform: 'windows', sourceLabel: 'Selected source', state: 'available',
+      ...(body.selectedSources ? { screenshot: jpeg, sequence: 1, observedAt: fixedTime.toISOString(),
+        expiresAt: new Date(fixedTime.getTime() + 30_000).toISOString(),
+        foregroundApplication: { id: 'synthetic-editor', displayName: 'Synthetic Editor', observedAt: fixedTime.toISOString() } } : {}),
+    }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`preview-source-browser-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
+  assert.equal(requests.some(request => request.method === 'PUT'), false);
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-browser-source-desktop').click();
+  await page.getByTestId('expanded-desktop-dialog').waitFor();
+  await page.getByTestId('expanded-desktop-preview').locator('img').waitFor();
+  assert.equal(await page.getByTestId('expanded-screenshot-dialog').count(), 0);
+  assert.equal(requests.filter(request => request.method === 'PUT').length, 1);
+  await page.getByTestId('expanded-native-source-browser').click();
+  await page.getByTestId('expanded-screenshot-dialog').waitFor();
+  assert.equal(await page.getByTestId(`desktop-image-${STUDENT_ID}`).count(), 0);
+  await waitUntil(() => requests.some(request => request.method === 'DELETE'), 'Native handoff releases its viewer');
+  await page.getByTestId('expanded-browser-source-desktop').click();
+  await page.getByTestId('expanded-desktop-preview').locator('img').waitFor();
+  assert.equal(requests.filter(request => request.method === 'PUT').length, 2);
+  await page.keyboard.press('Escape');
+  await page.getByTestId('expanded-desktop-dialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId(`desktop-image-${STUDENT_ID}`).count(), 0);
+  assert.equal(await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
+  await page.getByTestId(`view-desktop-${STUDENT_ID}`).waitFor();
+  await waitUntil(() => requests.filter(request => request.method === 'DELETE').length >= 2, 'Native close releases its shared viewer');
+  assert.deepEqual(harness.pageErrors, []);
 });
 
 if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));

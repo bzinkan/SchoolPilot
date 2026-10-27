@@ -13,6 +13,7 @@ export * from "./gopilot.js";
 
 // ClassPilot tables
 export * from "./classpilot.js";
+export * from "./classpilotNative.js";
 
 // Shared tables
 export * from "./shared.js";

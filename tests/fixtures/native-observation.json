@@ -1,0 +1,11 @@
+{
+  "grantId": "11111111-1111-4111-8111-111111111111",
+  "sourceGeneration": "22222222-2222-4222-8222-222222222222",
+  "sequence": 1,
+  "capturedAt": "2026-10-26T16:41:37.7500000+00:00",
+  "foregroundApplication": {
+    "id": "win32.syntheticcontent",
+    "displayName": "SyntheticContent",
+    "observedAt": "2026-10-26T16:41:37.8000000+00:00"
+  }
+}

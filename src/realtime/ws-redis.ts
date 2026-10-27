@@ -427,12 +427,20 @@ export async function executeRealtimeRedisCommand<T = unknown>(
   command: string[],
   options: { timeoutMs?: number } = {}
 ): Promise<T | undefined> {
-  if (!redisUrl) return undefined;
+  const outcome = await executeRealtimeRedisCommandOutcome<T>(command, options);
+  return outcome.status === "accepted" ? outcome.value : undefined;
+}
+
+/** Preserve a fixed transport disposition for callers that need diagnostics. */
+export async function executeRealtimeRedisCommandOutcome<T = unknown>(
+  command: string[], options: { timeoutMs?: number } = {},
+): Promise<RedisPublicationOutcome<T>> {
+  if (!redisUrl) return { status: "not_admitted", reason: "not_configured" };
   const timeoutMs = Math.max(50, options.timeoutMs ?? 500);
   const outcome = await coordinationRuntime.publish(client => client.sendCommand<T>(command), { budgetMs: timeoutMs });
   // Advisory presence/refresh claims fail closed. An uncertain SET is not
   // retried; its frozen timestamps/NX lease remain bounded if it executes late.
-  return outcome.status === "accepted" ? outcome.value : undefined;
+  return outcome;
 }
 
 /** Bounded coordination reply plus its transport disposition. An AbortSignal

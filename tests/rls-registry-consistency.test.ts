@@ -42,6 +42,7 @@ type Registry = {
     classpilotUsageRollupDaysPostExpand: RegistryInventory;
     passpilotAppointmentsPostExpand: RegistryInventory;
     classpilotPrivateChatLifecyclePostExpand: RegistryInventory;
+    classpilotNativeVisibilityPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -93,6 +94,18 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("appends the native identity bundle without rewriting the private-chat inventory", () => {
+    const previous = registry.inventories.classpilotPrivateChatLifecyclePostExpand;
+    const next = registry.inventories.classpilotNativeVisibilityPostExpand;
+    const bundle = ["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"];
+    assert.deepEqual(next.tables, [...previous.tables, ...bundle]);
+    assert.equal(next.count, 132);
+    assert.equal(next.sha256, sha256(next.tables));
+    assert.deepEqual(registry.reviewedEnablementRequests.classpilotNativeVisibility, bundle);
+    assert.equal(isReviewedRlsEnforcementRequest(bundle), true);
+    assert.equal(isReviewedRlsEnforcementRequest(bundle.slice(0, 1)), false);
+    assert.equal(isReviewedRlsEnforcementRequest([...bundle].reverse()), false);
+  });
   it("appends private chat threads after the immutable appointments inventory", () => {
     const previous = registry.inventories.passpilotAppointmentsPostExpand;
     const next = registry.inventories.classpilotPrivateChatLifecyclePostExpand;
@@ -253,7 +266,7 @@ describe("semantic RLS registry", () => {
     // CI admits the reviewed PassPilot rule bundle and the usage rollup table
     // ahead of production, which keeps the observed 121-table baseline until a
     // later adoption PR.
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotPrivateChatLifecyclePostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotNativeVisibilityPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

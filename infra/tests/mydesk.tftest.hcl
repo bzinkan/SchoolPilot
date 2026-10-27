@@ -379,11 +379,27 @@ run "classpilot_private_chat_lifecycle_target" {
   }
   assert {
     condition = (
-      length(local.rls_post_expand_tables) == 129 &&
       length(local.rls_configured_tables) == 129 &&
       toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.passpilotAppointmentsPostExpand.tables, ["classpilot_private_chat_threads"])) &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
+    )
+    error_message = "The historical 129-table target must remain an exact preserved subset of the current target."
+  }
+}
+
+run "classpilot_native_visibility_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotNativeVisibilityPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_post_expand_tables) == 132 &&
+      length(local.rls_configured_tables) == 132 &&
+      toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotPrivateChatLifecyclePostExpand.tables, ["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"])) &&
       toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
     )
-    error_message = "The current 129-table target must preserve the exact historical appointments inventory and append only classpilot_private_chat_threads."
+    error_message = "The native visibility target must append only the three independent native identity tables."
   }
 }

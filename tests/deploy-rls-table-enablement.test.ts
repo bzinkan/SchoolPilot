@@ -38,6 +38,7 @@ const rlsRegistry = JSON.parse(
     classpilotUsageRollupDaysPostExpand: { count: number; tables: string[] };
     passpilotAppointmentsPostExpand: { count: number; tables: string[] };
     classpilotPrivateChatLifecyclePostExpand: { count: number; tables: string[] };
+    classpilotNativeVisibilityPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -69,6 +70,19 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits native identities only as the complete ordered three-table bundle", () => {
+    const previous = rlsRegistry.inventories.classpilotPrivateChatLifecyclePostExpand.tables;
+    const tables = ["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"];
+    const table = tables.join(",");
+    const api = taskDefinition("api", previous), worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table });
+    const candidates = [{ taskDefinition: api, containerName: "api" }, { taskDefinition: worker, containerName: "scheduler-worker" }];
+    for (const candidate of candidates) addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table });
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table, expectedPreviousTables: previous });
+    assert.deepEqual(environmentValue(api, "RLS_ENABLED_TABLES")?.split(","), rlsRegistry.inventories.classpilotNativeVisibilityPostExpand.tables);
+    assert.throws(() => addReviewedRlsTable(taskDefinition("api", previous), { containerName: "api", table: tables[0] }), /reviewed/);
+    assert.throws(() => addReviewedRlsTable(taskDefinition("api", previous), { containerName: "api", table: [...tables].reverse().join(",") }), /reviewed/);
+  });
   it("admits only private chat threads after appointments on API and worker", () => {
     const previous = rlsRegistry.inventories.passpilotAppointmentsPostExpand.tables;
     const table = "classpilot_private_chat_threads";
@@ -320,6 +334,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.reviewedEnablementRequests.classpilotUsageRollupDays,
       ...rlsRegistry.reviewedEnablementRequests.passpilotAppointments,
       ...rlsRegistry.reviewedEnablementRequests.classpilotPrivateChatLifecycle,
+      ...["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"],
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

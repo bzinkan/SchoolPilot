@@ -5,6 +5,7 @@ import { setTimeout as pause } from "node:timers/promises";
 import { createClient } from "redis";
 import { BoundedRedisPublication, REDIS_PUBLICATION_LIMITS, type PublicationDiagnostic } from "../src/realtime/boundedRedisPublication.js";
 import { checkHealthRedis } from "../src/services/healthRedis.js";
+import { NATIVE_REDIS_BUDGET_MS } from "../src/services/classpilotNativeDiagnostics.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -88,6 +89,28 @@ test("real written PUBLISH returns unknown at 250ms, and a late reply never retr
     assert.equal(runtime.snapshot().active, 0);
     assert.ok(events.includes("late_accepted"));
     assert.equal(fixture.writes(), 2, "uncertain one-shot publication is never retried");
+  } finally { await runtime.dispose(); await fixture.close(); }
+});
+
+test("native's bounded reply budget tolerates a 350ms Redis reply while ordinary publications retain 250ms", async () => {
+  const fixture = await respFixture();
+  const runtime = new BoundedRedisPublication({ create: () => {
+    const client = createClient({ url: fixture.url, disableOfflineQueue: true }); client.on("error", () => {}); return client;
+  } });
+  try {
+    assert.equal((await runtime.publish(client => client.ping())).status, "accepted");
+    fixture.hold();
+    let release = setTimeout(() => fixture.release(), 350);
+    const ordinary = await runtime.publish(client => client.sendCommand(["GET", "synthetic-native-image"]));
+    assert.deepEqual(ordinary, { status: "unknown", reason: "timeout" });
+    await pause(150); clearTimeout(release);
+    fixture.hold();
+    release = setTimeout(() => fixture.release(), 350);
+    const native = await runtime.publish(client => client.sendCommand(["GET", "synthetic-native-image"]), { budgetMs: NATIVE_REDIS_BUDGET_MS });
+    clearTimeout(release);
+    assert.equal(native.status, "accepted");
+    assert.equal(fixture.writes(), 3, "No timed-out read or write is replayed");
+    assert.equal(REDIS_PUBLICATION_LIMITS.ordinaryMs, 250);
   } finally { await runtime.dispose(); await fixture.close(); }
 });
 
