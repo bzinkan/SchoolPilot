@@ -7328,7 +7328,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <>
                   <button
                     onClick={selectAll}
-                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || selectAllStudents.every(student => selectedStudentIds.has(student.studentId))}
+                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || (
+                      (studentView === 'available' || selectedStudentIds.size === selectAllStudents.length)
+                      && selectAllStudents.every(student => selectedStudentIds.has(student.studentId))
+                    )}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="button-select-all-students"
                   >
