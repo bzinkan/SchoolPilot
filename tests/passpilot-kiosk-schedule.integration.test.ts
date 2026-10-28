@@ -423,7 +423,9 @@ for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${so
   }
   const issued = [];
   for (const studentId of studentIds) {
-    const passId = await seedReturnPass(f, { studentId });
+    const passId = await seedReturnPass(f, source === "legacy_grades"
+      ? { studentId, gradeId: receivingClassId }
+      : { studentId, classId: receivingClassId });
     const original = (await pool.query("SELECT issued_at,custom_destination FROM passes WHERE id=$1", [passId])).rows[0];
     issued.push({ studentId, passId, issuedAt: original.issued_at.getTime(), customDestination: original.custom_destination });
   }
@@ -447,8 +449,8 @@ for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${so
     assert.equal(stored.issued_at.getTime(), expected.issuedAt);
     assert.ok(stored.returned_at instanceof Date);
     assert.equal(stored.custom_destination, expected.customDestination);
-    assert.equal(stored.grade_id, source === "legacy_grades" ? f.classId : null);
-    assert.equal(stored.classpilot_group_id, source === "classpilot_groups" ? f.classId : null);
+    assert.equal(stored.grade_id, source === "legacy_grades" ? receivingClassId : null);
+    assert.equal(stored.classpilot_group_id, source === "classpilot_groups" ? receivingClassId : null);
   }
 });
 
