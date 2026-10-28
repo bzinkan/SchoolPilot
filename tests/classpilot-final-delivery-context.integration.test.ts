@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 import { sql } from "drizzle-orm";
+import { once } from "node:events";
+import { WebSocket, WebSocketServer } from "ws";
 
 process.env.NODE_ENV = "test";
 process.env.SCHEDULER_ENABLED = "false";
@@ -73,6 +75,87 @@ test("final delivery context preserves independent defaults, tenant scope and au
       const rollback = new Error("rollback isolated context case");
       await assert.rejects(scoped(a.school.id, () => db.transaction(async () => { await callback(); throw rollback; })), error => error === rollback);
     };
+    const createOpenCommand = (expiresAt = new Date(Date.now() + 15_000)) => storage.createClasspilotCommandWithTargets({
+      schoolId: a.school.id, teacherId: a.teacher.id, teachingSessionId: a.session.id, supervisionContextId: null,
+      targetScope: "students", commandType: "open-tab", commandPayload: { url: "https://example.invalid/synthetic" }, expiresAt },
+    [{ commandId: "reserved", schoolId: a.school.id, teachingSessionId: a.session.id, studentId: a.student.id,
+      studentSessionId: a.binding.id, deviceId: a.deviceId }],
+    { authority: { schoolId: a.school.id, actorId: a.teacher.id, teachingSessionId: a.session.id } });
+
+    await t.test("command creation rejects elapsed or future classes before the scheduler finalizes them", async () => {
+      for (const window of ["scheduled_end", "hard_expiry", "future_start"] as const) await isolated(async () => {
+        const now = Date.now();
+        const start = new Date(now + (window === "future_start" ? 60_000 : window === "hard_expiry" ? -13 * 3600_000 : -60_000));
+        const end = window === "scheduled_end" ? new Date(now - 1_000) : null;
+        if (end) await db.execute(sql`UPDATE teaching_sessions SET start_time=${start.toISOString()},
+          scheduled_date=${start.toISOString().slice(0, 10)},scheduled_timezone='UTC',scheduled_start_at=${start.toISOString()},
+          scheduled_end_at=${end.toISOString()},scheduled_state='active' WHERE id=${a.session.id}`);
+        else await db.execute(sql`UPDATE teaching_sessions SET start_time=${start.toISOString()} WHERE id=${a.session.id}`);
+        assert.deepEqual(await storage.getActiveClassOwnersForStudents(a.school.id, [a.student.id], db, new Date()), [],
+          "a clock-filtered owner projection must exclude the same inactive class");
+        await assert.rejects(createOpenCommand(new Date(now + 15_000)),
+        { code: "COMMAND_SESSION_STALE" }, window);
+        const commands = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM classpilot_commands WHERE teaching_session_id=${a.session.id}`);
+        assert.equal(commands.rows[0]!.count, 0, "an invalid class must never record or dispatch a command");
+      });
+    });
+
+    await t.test("current classes retain earlier delivery deadlines and cap commands at the class lifetime", async () => {
+      await isolated(async () => {
+        const expiresAt = new Date(Date.now() + 15_000);
+        const command = await createOpenCommand(expiresAt);
+        assert.equal(command.targets[0]!.status, "requested");
+        assert.equal(command.expiresAt!.getTime(), expiresAt.getTime());
+      });
+      await isolated(async () => {
+        const command = await createOpenCommand(new Date(Date.now() + 24 * 3600_000));
+        assert.equal(command.expiresAt!.getTime(), a.session.startTime.getTime() + 12 * 3600_000);
+      });
+      await isolated(async () => {
+        const end = new Date(Date.now() + 60_000);
+        await db.execute(sql`UPDATE teaching_sessions SET scheduled_date=${a.session.startTime.toISOString().slice(0, 10)},
+          scheduled_timezone='UTC',scheduled_start_at=${a.session.startTime.toISOString()},scheduled_end_at=${end.toISOString()},
+          scheduled_state='active' WHERE id=${a.session.id}`);
+        const command = await createOpenCommand(new Date(Date.now() + 3600_000));
+        assert.equal(command.expiresAt!.getTime(), end.getTime());
+      });
+    });
+
+    await t.test("ordinary command frames use the committed class deadline", () => isolated(async () => {
+      const dispatcher = await import("../src/services/classpilotCommandDispatcher.js");
+      const broadcast = await import("../src/realtime/ws-broadcast.js");
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      await once(wss, "listening");
+      const address = wss.address(); assert.ok(address && typeof address !== "string");
+      const accepted = once(wss, "connection");
+      const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+      const frames: Array<{ type: string; commandId?: string; expiresAt?: string; command?: { expiresAt?: string } }> = [];
+      client.on("message", data => frames.push(JSON.parse(data.toString())));
+      await once(client, "open");
+      const [server] = await accepted;
+      broadcast.registerWsClient(server);
+      broadcast.authenticateWsClient(server, { schoolId: a.school.id, studentId: a.student.id,
+        studentSessionId: a.binding.id, deviceId: a.deviceId, role: "student", acceptedCapabilities: [] });
+      try {
+        const end = new Date(Date.now() + 10_000);
+        await db.execute(sql`UPDATE teaching_sessions SET scheduled_date=${a.session.startTime.toISOString().slice(0, 10)},
+          scheduled_timezone='UTC',scheduled_start_at=${a.session.startTime.toISOString()},scheduled_end_at=${end.toISOString()},
+          scheduled_state='active' WHERE id=${a.session.id}`);
+        const result = await dispatcher.executeClasspilotCommand({ schoolId: a.school.id, actorId: a.teacher.id,
+          teachingSessionId: a.session.id, targetScope: "students", commandType: "close-tabs", rawCommandPayload: { closeAll: true },
+          targets: [{ studentId: a.student.id, studentName: "Synthetic student", studentSessionId: a.binding.id,
+            deviceId: a.deviceId, available: true, stateAuthorized: true }] });
+        const deadline = Date.now() + 2_000;
+        while (!frames.some(frame => frame.commandId === result.command.id) && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        const frame = frames.find(value => value.type === "remote-control" && value.commandId === result.command.id);
+        assert.ok(frame, "a fake exact-bound socket must receive the ordinary command");
+        assert.equal(frame.expiresAt, end.toISOString());
+        assert.equal(frame.command?.expiresAt, end.toISOString());
+        assert.equal(result.command.expiresAt?.getTime(), end.getTime());
+      } finally { client.terminate(); server.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); }
+    }));
 
     await t.test("one fresh statement equals both prior reads for every field and five date decoders", () => isolated(async () => {
       await db.execute(sql`UPDATE classpilot_student_control_states SET revision=9,

@@ -8,6 +8,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
+import { z } from "zod";
 import { getTenantStore, tenantALS } from "../src/db/tenantContext.js";
 import * as schema from "../src/schema/index.js";
 import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "../src/db/classpilotPrivateChatLifecycleMigration.js";
@@ -27,7 +28,7 @@ delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS;
 
-const ids = { school: randomUUID(), teacher: randomUUID(), group: randomUUID(),
+const ids = { school: randomUUID(), teacher: randomUUID(), administrator: randomUUID(), group: randomUUID(),
   students: [randomUUID(), randomUUID(), randomUUID()], devices: [randomUUID(), randomUUID(), randomUUID()] };
 const capabilities = ["scopedAuthorityChecksV1", "studentChatIdempotencyV1", "privateChatLifecycleV1", "scheduledClassroomV1"];
 let admin: pg.Pool;
@@ -236,7 +237,9 @@ before(async () => {
   console.log(`Private lifecycle application posture: ${process.env.RLS_TEST_ROLE ? "restricted" : "ordinary privileged fixture"}`);
   await admin.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Private lifecycle fixture',$2,'active','active')", [ids.school, `${ids.school}.example.edu`]);
   await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Private','Teacher')", [ids.teacher, `${ids.teacher}@example.edu`]);
+  await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Private','Administrator')", [ids.administrator, `${ids.administrator}@example.edu`]);
   await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [ids.school, ids.teacher]);
+  await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'admin','active')", [ids.school, ids.administrator]);
   await admin.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [ids.school]);
   await inSchool(async () => {
     await database.execute(sql`INSERT INTO settings(school_id,school_name,ws_shared_key,enable_tracking_hours,after_hours_mode,pause_chat_during_testing)
@@ -605,20 +608,68 @@ test("End permanently expires pending replies, retains history and allows a new 
   assert.equal((await reply("Fresh explicit Send", ended.privateChatLifecycle)).message.privateChatGeneration, initial.threadGeneration + 1);
 });
 
-test("school hard-off/on advances its epoch once and never revives queued or attempted private replies", async () => {
+test("school hard-off/on advances activity FAB generations and never revives queued or attempted private replies", async () => {
+  const settingsApi = await import("../src/services/classpilotSettings.js");
+  const settingsActor = { schoolId: ids.school, actorId: ids.administrator };
+  const settingsVersion = z.object({ version: z.string().regex(/^[a-f0-9]{64}$/) });
+  const setSchoolMessaging = async (enabled: boolean) => {
+    const current = await inSchool(() => settingsApi.getClasspilotSchoolSettings(settingsActor));
+    const messaging = settingsVersion.parse(Reflect.get(current.sections, "messaging"));
+    return settingsVersion.parse(await inSchool(() => settingsApi.updateClasspilotSchoolSettings(settingsActor, "messaging", {
+      expectedVersion: messaging.version, studentMessagingEnabled: enabled,
+    })));
+  };
   const initial = await token(), sent = await reply("Before school off", initial);
   await inSchool(() => storage.markTeacherChatDeliveryAttempt({ ...binding(), chatMessageId: sent.message.id }));
-  await admin.query("UPDATE settings SET student_messaging_enabled=false WHERE school_id=$1", [ids.school]);
-  await admin.query("UPDATE settings SET student_messaging_enabled=false WHERE school_id=$1", [ids.school]);
+  const beforeFab = await Promise.all([0, 1].map(index => inSchool(() => fab.buildStudentFabState(ids.school, ids.students[index]!))));
+  const beforeControl = await inSchool(() => storage.getClasspilotStudentControlStates(ids.school, ids.students));
+  const disabled = await setSchoolMessaging(false);
+  const disabledFab = await Promise.all([0, 1].map(index => inSchool(() => fab.buildStudentFabState(ids.school, ids.students[index]!))));
+  for (const [index, state] of disabledFab.entries()) {
+    assert.equal(state.lifecycleRevision, beforeFab[index]!.lifecycleRevision + 1, "school changes advance both class and supervision FAB clocks");
+    assert.equal(state.ownershipRevision, beforeFab[index]!.ownershipRevision, "messaging changes do not invalidate unrelated classroom commands");
+    assert.equal(state.messagingChannelEnabled, false);
+  }
+  await setSchoolMessaging(false);
+  const unchangedFab = await Promise.all([0, 1].map(index => inSchool(() => fab.buildStudentFabState(ids.school, ids.students[index]!))));
+  assert.deepEqual(unchangedFab.map(state => state.lifecycleRevision), disabledFab.map(state => state.lifecycleRevision), "a no-op school save does not advance the clock");
   const off = await token(); assert.equal(off.schoolEpoch, initial.schoolEpoch + 1);
   assert.equal(await expired(sent.message.id), true);
   assert.equal(await ack(sent.message.id, initial), undefined);
   assert.equal(await inSchool(() => storage.classpilotTeacherChatAckRejection({ schoolId: ids.school, studentId: ids.students[0]!, chatMessageId: sent.message.id })), "PRIVATE_CHAT_EXPIRED");
-  await admin.query("UPDATE settings SET student_messaging_enabled=true WHERE school_id=$1", [ids.school]);
+  await setSchoolMessaging(true);
+  const enabledFab = await Promise.all([0, 1].map(index => inSchool(() => fab.buildStudentFabState(ids.school, ids.students[index]!))));
+  for (const [index, state] of enabledFab.entries()) {
+    assert.equal(state.lifecycleRevision, disabledFab[index]!.lifecycleRevision + 1, "re-enabling also supersedes delayed disabled snapshots");
+    assert.equal(state.messagingChannelEnabled, true);
+  }
+  await assert.rejects(inSchool(() => settingsApi.updateClasspilotSchoolSettings(settingsActor, "messaging", {
+    expectedVersion: disabled.version, studentMessagingEnabled: false,
+  })), hasCode("CLASSPILOT_SETTINGS_CONFLICT"));
+  assert.deepEqual(await inSchool(() => storage.getClasspilotStudentControlStates(ids.school, ids.students)), beforeControl,
+    "school messaging changes preserve desired restrictions, provenance, expiry, and control acknowledgements");
   assert.equal((await token()).schoolEpoch, off.schoolEpoch); assert.equal(await expired(sent.message.id), true);
   await assert.rejects(reply("Old queued retry after on", initial), hasCode("PRIVATE_CHAT_LIFECYCLE_STALE"));
   assert.deepEqual(await claim(), { authorized: true, value: { messages: [] } });
   assert.ok((await reply("Fresh after on")).message.id);
+});
+
+test("command creation rejects a future supervision context after acquiring its authority locks", async () => {
+  const before = await admin.query("SELECT count(*)::int AS count FROM classpilot_commands WHERE school_id=$1 AND supervision_context_id=$2", [ids.school, context.id]);
+  await admin.query("UPDATE classpilot_supervision_contexts SET starts_at=clock_timestamp()+interval '10 minutes' WHERE school_id=$1 AND id=$2", [ids.school, context.id]);
+  try {
+    await assert.rejects(inSchool(() => storage.createClasspilotCommandWithTargets({
+      schoolId: ids.school, teacherId: ids.teacher, teachingSessionId: null, supervisionContextId: context.id,
+      targetScope: "students", commandType: "open-tab", commandPayload: { url: "https://example.org/future-context" },
+      requestedCount: 1, expiresAt: new Date(Date.now() + 30_000),
+    }, [{ ...binding(1), commandId: "", teachingSessionId: null, supervisionContextId: context.id, status: "requested" }], {
+      authority: { schoolId: ids.school, actorId: ids.teacher, supervisionContextId: context.id },
+    })), hasCode("COMMAND_SUPERVISION_CONTEXT_STALE"));
+    assert.deepEqual((await admin.query("SELECT count(*)::int AS count FROM classpilot_commands WHERE school_id=$1 AND supervision_context_id=$2", [ids.school, context.id])).rows,
+      before.rows, "an activity that has not started must not persist a command header");
+  } finally {
+    await admin.query("UPDATE classpilot_supervision_contexts SET starts_at=$3 WHERE school_id=$1 AND id=$2", [ids.school, context.id, context.startsAt]);
+  }
 });
 
 test("activity hard-off/on has an independent permanent epoch while testing and teacher pauses remain soft", async () => {

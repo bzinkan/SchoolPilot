@@ -1074,6 +1074,8 @@ export function combineCommandSettlements(settlements, targetGroups, commandType
       studentId: targetStudentId,
       status: 'failed',
       error: message,
+      errorMessage: message,
+      requestFailed: true,
       errorCode: settlement.reason?.response?.data?.code || settlement.reason?.code || 'CONTEXT_REQUEST_FAILED',
       supervisionContextId: group.id,
     }));

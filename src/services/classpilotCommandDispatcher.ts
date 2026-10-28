@@ -1449,7 +1449,7 @@ export async function executeClasspilotCommand(options: {
   const deliveryPolicy: ClasspilotCommandDeliveryPolicy = currentPageRequested
     ? "transient_action"
     : classpilotCommandDeliveryPolicy(options.commandType);
-  const expiresAt = currentPageRequested
+  const requestedExpiresAt = currentPageRequested
     ? new Date(issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS)
     : classpilotCommandExpiresAt(options.commandType, issuedAt, options.schoolId);
   const currentUrlResolution = currentPageRequested
@@ -1520,7 +1520,7 @@ export async function executeClasspilotCommand(options: {
       commandPayload: storedCommandPayload,
       requestedCount: policyTargets.length,
       unavailableCount: policyTargets.filter((target) => !target.available).length,
-      expiresAt,
+      expiresAt: requestedExpiresAt,
     },
     policyTargets.map((target) => ({
       schoolId: options.schoolId,
@@ -1553,6 +1553,9 @@ export async function executeClasspilotCommand(options: {
       originalTargetCommandId: options.originalTargetCommandId,
     }
   );
+  // The locked authorizer caps delivery at the class/context deadline. Every
+  // wire frame and local deadline check must use that committed expiry.
+  const expiresAt = created.expiresAt;
   const committedCommandPayload = created.commandPayload
     && typeof created.commandPayload === "object"
     && !Array.isArray(created.commandPayload)

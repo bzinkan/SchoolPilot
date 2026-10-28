@@ -765,6 +765,26 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   };
 }
 
+/**
+ * FAB and exact-binding ownership may converge even when this client cannot
+ * receive a restriction snapshot. Deferred-origin withholding is different:
+ * its revision stays hidden until the serializer authorizes the whole
+ * transition. Unknown/null projections also stay fail closed.
+ */
+export function classpilotControlAuthorityRevisionForDelivery(options: {
+  state: Pick<ClasspilotStudentControlState, "revision"> | null | undefined;
+  delivery: ReturnType<typeof serializeClasspilotStudentControlStateForDelivery>;
+}): number {
+  const revision = options.delivery.classroomState?.revision ?? options.state?.revision ?? 0;
+  if (!Number.isSafeInteger(revision) || revision < 0) return 0;
+  if (options.delivery.classroomState) return revision;
+  return options.delivery.withheld && [
+    "restriction_auth_update_required",
+    "precise_restriction_capability_required",
+    "focus_tab_capability_required",
+  ].includes(options.delivery.withheldReason ?? "") ? revision : 0;
+}
+
 export function classpilotRestrictionAuthCapabilityRequired(options: {
   desiredState: unknown;
   gateActive: boolean;

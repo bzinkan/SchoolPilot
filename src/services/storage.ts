@@ -2,6 +2,7 @@ import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, s
   assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
 } from "./classpilotHeartbeatPreparedReads.js";
 import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
+import { classpilotTeachingSessionDeadline, classpilotTeachingSessionIsCurrent } from "./classpilotTeachingSessionWindow.js";
 import {
   automaticFlightPathDesiredState, automaticFlightPathPolicyDto, emptyAutomaticFlightPathState,
   normalizeAutomaticFlightPathPolicy, normalizeAutomaticFlightPathState, readAutomaticFlightPathOrigin,
@@ -16079,6 +16080,7 @@ export async function getActiveClassOwnersForStudents(
         eq(classpilotSessionStudents.schoolId, schoolId),
         eq(groups.schoolId, schoolId),
         currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
+        currentAt ? gt(teachingSessions.startTime, new Date(currentAt.getTime() - 12 * 3600_000)) : undefined,
         currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
         inArray(classpilotSessionStudents.studentId, uniqueStudentIds)
       )
@@ -16104,6 +16106,7 @@ export async function getActiveClassOwnersForStudents(
     .where(and(
       eq(groups.schoolId, schoolId),
       currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
+      currentAt ? gt(teachingSessions.startTime, new Date(currentAt.getTime() - 12 * 3600_000)) : undefined,
       currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
       inArray(groupStudents.studentId, uniqueStudentIds)
     ));
@@ -21681,7 +21684,22 @@ export async function createClasspilotCommandWithTargets(
           code: "COMMAND_SESSION_STALE",
         });
       }
+      // Read the database clock after acquiring the parent/student locks. A
+      // request may have waited across the bell while finalization is delayed.
+      const clock = await tx.execute<{ current_at: Date | string }>(sql`SELECT clock_timestamp() AS current_at`);
+      const rawCurrentAt = clock.rows[0]?.current_at;
+      const commandCurrentAt = rawCurrentAt instanceof Date ? rawCurrentAt : new Date(rawCurrentAt ?? NaN);
+      if (!classpilotTeachingSessionIsCurrent(lockedSession, commandCurrentAt)) {
+        throw Object.assign(new Error("This class has ended or is not active yet. Refresh the dashboard."), {
+          status: 409,
+          code: "COMMAND_SESSION_STALE",
+        });
+      }
       teachingSession = lockedSession;
+      const classDeadline = classpilotTeachingSessionDeadline(lockedSession);
+      if (!commandData.expiresAt || commandData.expiresAt > classDeadline) {
+        commandData = { ...commandData, expiresAt: classDeadline };
+      }
       if (!(await isAuthorizedClasspilotSessionStaff(
         authority.schoolId,
         authority.teachingSessionId!,
@@ -21717,7 +21735,8 @@ export async function createClasspilotCommandWithTargets(
       const owners = await getActiveClassOwnersForStudents(
         authority.schoolId,
         studentIds,
-        transactionDb
+        transactionDb,
+        commandCurrentAt
       );
       const supervision = await getActiveSupervisionForStudents(
         authority.schoolId,
@@ -21793,11 +21812,18 @@ export async function createClasspilotCommandWithTargets(
           ))
           .limit(1)
           .for("update");
-        if (!context || context.status !== "active" || context.endsAt <= new Date()) {
+        const clock = await tx.execute<{ current_at: Date | string }>(sql`SELECT clock_timestamp() AS current_at`);
+        const rawCurrentAt = clock.rows[0]?.current_at;
+        const contextCurrentAt = rawCurrentAt instanceof Date ? rawCurrentAt : new Date(rawCurrentAt ?? NaN);
+        if (!context || context.status !== "active" || !Number.isFinite(contextCurrentAt.getTime())
+          || context.startsAt > contextCurrentAt || context.endsAt <= contextCurrentAt) {
           throw Object.assign(new Error("Supervision context changed before dispatch"), {
             status: 409,
             code: "COMMAND_SUPERVISION_CONTEXT_STALE",
           });
+        }
+        if (!commandData.expiresAt || commandData.expiresAt > context.endsAt) {
+          commandData = { ...commandData, expiresAt: context.endsAt };
         }
         if (scheduledContextHasClassroomTools(context)) classroomContext = context;
         if (authority.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, authority.contextAuthorityRevision);

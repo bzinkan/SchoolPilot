@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   applyClasspilotControlCommand,
+  classpilotControlAuthorityRevisionForDelivery,
   classpilotLateSignInRevisionAppliedToBinding,
   classpilotRestrictionAuthCapabilityRequired,
   classpilotRestrictionAuthProjectionRevision,
@@ -137,6 +138,43 @@ describe("ClassPilot full classroom state", () => {
     assert.deepEqual(state.blockList, { active: true, blockedDomains: ["example.com"], name: "Test" });
     assert.deepEqual(state.attentionMode, { active: true, message: "Eyes up" });
     assert.equal(state.tabLimit, 2);
+  });
+
+  it("keeps FAB ownership independent of restriction-only capability withholding", () => {
+    for (const scope of [
+      { teachingSessionId: "teaching-1", supervisionContextId: null },
+      { teachingSessionId: null, supervisionContextId: "coverage-1" },
+    ]) {
+      const state = controlState(scope);
+      for (const withheldReason of ["restriction_auth_update_required", "precise_restriction_capability_required", "focus_tab_capability_required"] as const) {
+        const delivery = { classroomState: null, withheld: true, withheldReason };
+        assert.equal(classpilotControlAuthorityRevisionForDelivery({ state, delivery }), state.revision);
+        assert.equal(delivery.classroomState, null, "the authority watermark must not expose an unsupported restriction snapshot");
+      }
+    }
+  });
+
+  it("hides deferred-origin authority until its complete delivery gate passes", () => {
+    const now = new Date("2026-08-13T12:00:00.000Z");
+    const state = controlState({ desiredState: withClasspilotLateSignInOrigin({
+      desiredState: { restrictions: emptyClasspilotRestrictions() }, commandId: "deferred-command", createdAt: now,
+    }) });
+    const binding = { schoolId: state.schoolId, studentId: state.studentId, studentSessionId: "session-1", deviceId: "device-1" };
+    for (const options of [
+      { gateActive: false, acceptedCapabilities: ["lateSignInRestrictionSsoV1"], exactBinding: binding },
+      { gateActive: true, acceptedCapabilities: [], exactBinding: binding },
+      { gateActive: true, acceptedCapabilities: ["lateSignInRestrictionSsoV1"], exactBinding: { ...binding, studentId: "different-student" } },
+    ]) {
+      const delivery = serializeClasspilotStudentControlStateForDelivery({ state, now, ...options });
+      assert.equal(delivery.withheldReason, "late_sign_in_capability_required");
+      assert.equal(classpilotControlAuthorityRevisionForDelivery({ state, delivery }), 0);
+    }
+    const delivery = serializeClasspilotStudentControlStateForDelivery({ state, now, gateActive: true,
+      acceptedCapabilities: ["lateSignInRestrictionSsoV1"], exactBinding: binding });
+    assert.equal(classpilotControlAuthorityRevisionForDelivery({ state, delivery }), state.revision);
+    assert.equal(classpilotControlAuthorityRevisionForDelivery({ state, delivery: { classroomState: null, withheld: true } }), 0,
+      "an unclassified withholding stays fail closed");
+    assert.equal(classpilotControlAuthorityRevisionForDelivery({ state: null, delivery: { classroomState: null, withheld: false } }), 0);
   });
 
   it("screen unlock clears URL lock and Flight Path but retains independent controls", () => {

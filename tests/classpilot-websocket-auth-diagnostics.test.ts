@@ -6,6 +6,7 @@ import ts from "typescript";
 import { z } from "zod";
 import { type ErrorMonitor } from "../src/services/errorMonitor.js";
 import { resolveClasspilotMonitoringPolicy } from "../src/services/classpilotMonitoringPolicy.js";
+import { classpilotControlAuthorityRevisionForDelivery } from "../src/services/classpilotClassroomState.js";
 import {
   reportStudentWebSocketAuthenticationFailure,
   type StudentWebSocketAuthStage,
@@ -22,7 +23,9 @@ const executable = ts.transpileModule(`async function bootstrap() { ${source.sli
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 
-async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_token" | "inactive_session" | "not_entitled" | "peer_closed" | "retirement") {
+type WithheldReason = Parameters<typeof classpilotControlAuthorityRevisionForDelivery>[0]["delivery"]["withheldReason"];
+async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_token" | "inactive_session" | "not_entitled" | "peer_closed" | "retirement",
+  delivery: { withheldReason?: WithheldReason; supervision?: boolean } = {}) {
   const messages: Array<{ type: string; message?: string }> = [];
   const closes: Array<{ code?: number; reason?: string }> = [];
   const diagnostics: string[] = [];
@@ -33,7 +36,10 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
   let authorityHeld = false;
   let retirementFinished = false;
   const transactionDb = {};
-  const storedControlState = { teachingSessionId: "class-fixture", revision: 1 };
+  const scope = delivery.supervision
+    ? { teachingSessionId: null, supervisionContextId: "context-fixture" }
+    : { teachingSessionId: "class-fixture", supervisionContextId: null };
+  const storedControlState = { ...scope, revision: 1 };
   const retiredControlState = { ...storedControlState, revision: 2 };
   class InvalidTokenError extends Error {}
   class TokenExpiredError extends Error {}
@@ -113,7 +119,9 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
         authorityHeld = false;
       }
     },
-    buildStudentFabState: async () => { fail("bootstrap_projection"); return {}; },
+    buildStudentFabState: async () => { fail("bootstrap_projection"); return { ...scope, ownershipRevision: 1,
+      activeSessionIds: delivery.supervision ? [] : ["class-fixture"],
+      activeContexts: [delivery.supervision ? { supervisionContextId: "context-fixture" } : { teachingSessionId: "class-fixture" }] }; },
     getClasspilotSsoPolicyForSchool: async () => ({ policy: {}, revision: 1 }),
     retireLegacyTabFocusForStudentLocked: async (database: object, options: {
       schoolId: string; studentId: string; state: object; reason: string;
@@ -137,12 +145,16 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
       assert.equal(authorityHeld, true);
       assert.equal(retirementFinished, true);
       assert.equal(options.state, retiredControlState);
-      return { classroomState: { revision: retiredControlState.revision }, withheld: false };
+      return delivery.withheldReason
+        ? { classroomState: null, withheld: true, withheldReason: delivery.withheldReason }
+        : { classroomState: { revision: retiredControlState.revision }, withheld: false };
     },
+    classpilotControlAuthorityRevisionForDelivery,
+    prepareClasspilotFocusCleanupFrame: async () => null,
     isClasspilotCapabilityActive: () => true,
     resolveClasspilotScreenshotPolicy: async () => ({}),
     classpilotScreenshotAuthorityForDeliveredControl: () => ({}),
-    classpilotControlStateExactBinding: () => ({}),
+    classpilotControlStateExactBinding: (value: object) => value,
     clearStaffPresence: () => {},
     classpilotTransientReplayOnAuthEnabled: () => true,
     prepareClasspilotTransientCommandReplay: async () => [{ type: "remote-control", _msgId: "replayed-fixture" }],
@@ -233,6 +245,34 @@ describe("student WebSocket bootstrap operational diagnostics", () => {
     assert.equal(result.counters.get("transientCommandReplayedOnAuth") ?? 0, 0);
     assert.equal(result.removed, 0);
     assert.doesNotMatch(result.diagnostics.join("\n"), /private retirement/);
+  });
+
+  it("retains exact FAB ownership when a restriction-only capability withholds the snapshot", async () => {
+    for (const withheldReason of ["restriction_auth_update_required", "precise_restriction_capability_required", "focus_tab_capability_required"] as const) {
+      for (const supervision of [false, true]) {
+        const result = await bootstrapScenario(undefined, { withheldReason, supervision });
+        assert.deepEqual(result.diagnostics, []);
+        const bootstrap = z.object({
+          type: z.literal("auth-success"), classroomState: z.null(),
+          exactBinding: z.object({ controlRevision: z.number().int() }),
+          settings: z.object({ fab: z.object({ ownershipRevision: z.number().int(), activeContexts: z.array(z.unknown()) }) }),
+        }).parse(result.messages[0]);
+        assert.equal(bootstrap.exactBinding.controlRevision, 2);
+        assert.equal(bootstrap.settings.fab.ownershipRevision, 2, `${withheldReason} preserves the retired canonical revision`);
+        assert.deepEqual(bootstrap.settings.fab.activeContexts, [supervision
+          ? { supervisionContextId: "context-fixture" } : { teachingSessionId: "class-fixture" }]);
+      }
+    }
+  });
+
+  it("keeps the entire deferred-origin revision hidden during WebSocket bootstrap", async () => {
+    const result = await bootstrapScenario(undefined, { withheldReason: "late_sign_in_capability_required" });
+    const bootstrap = z.object({
+      classroomState: z.null(), exactBinding: z.object({ controlRevision: z.number().int() }),
+      settings: z.object({ fab: z.object({ ownershipRevision: z.number().int() }) }),
+    }).parse(result.messages[0]);
+    assert.equal(bootstrap.exactBinding.controlRevision, 0);
+    assert.equal(bootstrap.settings.fab.ownershipRevision, 0);
   });
 
   it("sends replayed transient frames after auth-success and counts them once the transaction completed", async () => {

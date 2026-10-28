@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import db from "../db.js";
 import { classpilotTeacherPreferences, schoolMemberships, schools, users } from "../schema/index.js";
 import { auditLogs, settings, type Settings, type InsertSettings } from "../schema/shared.js";
+import { classpilotStudentControlStates, sessionSettings } from "../schema/classpilot.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotRetentionHours } from "../util/classpilotRetention.js";
@@ -225,6 +226,30 @@ async function assertRecipient(tx: Transaction, schoolId: string, recipientId: s
   }
 }
 
+/** The caller holds the school lifecycle lock, before any activity writer. */
+async function advanceSchoolFabLifecycle(tx: Transaction, schoolId: string): Promise<string[]> {
+  const scopes = await tx.select({ studentId: classpilotStudentControlStates.studentId,
+    teachingSessionId: classpilotStudentControlStates.teachingSessionId,
+    supervisionContextId: classpilotStudentControlStates.supervisionContextId })
+    .from(classpilotStudentControlStates).where(and(eq(classpilotStudentControlStates.schoolId, schoolId),
+      or(isNotNull(classpilotStudentControlStates.teachingSessionId), isNotNull(classpilotStudentControlStates.supervisionContextId))));
+  const teachingSessionIds = [...new Set(scopes.flatMap(scope => scope.teachingSessionId ? [scope.teachingSessionId] : []))].sort();
+  const supervisionContextIds = [...new Set(scopes.flatMap(scope => scope.supervisionContextId ? [scope.supervisionContextId] : []))].sort();
+  const now = new Date();
+  const next = { lifecycleRevision: sql<number>`${sessionSettings.lifecycleRevision} + 1`, updatedAt: now };
+  // The school switch affects the complete FAB, so its generation must advance
+  // in the same per-activity clock that clients already compare. Keep classroom
+  // control revisions and independent restrictions/provenance unchanged.
+  if (teachingSessionIds.length) await tx.insert(sessionSettings)
+    .values(teachingSessionIds.map(sessionId => ({ schoolId, sessionId, lifecycleRevision: 1, updatedAt: now })))
+    .onConflictDoUpdate({ target: sessionSettings.sessionId, set: next, setWhere: eq(sessionSettings.schoolId, schoolId) });
+  if (supervisionContextIds.length) await tx.insert(sessionSettings)
+    .values(supervisionContextIds.map(supervisionContextId => ({ schoolId, supervisionContextId, lifecycleRevision: 1, updatedAt: now })))
+    .onConflictDoUpdate({ target: [sessionSettings.schoolId, sessionSettings.supervisionContextId],
+      targetWhere: sql`${sessionSettings.supervisionContextId} IS NOT NULL`, set: next });
+  return [...new Set(scopes.map(scope => scope.studentId))];
+}
+
 export async function updateClasspilotSchoolSettings(scope: SettingsActor, section: string, body: unknown) {
   if (section === "blockedWebsites") {
     const input = parse(blockedSchema, body);
@@ -268,11 +293,13 @@ export async function updateClasspilotSchoolSettings(scope: SettingsActor, secti
       case "appearance": { const { expectedVersion: _version, ...value } = parse(schemas.appearance, body); patch = { appearance: mergeSchoolAppearance(row.appearance, value) }; break; }
     }
     const [next] = await tx.update(settings).set(patch).where(eq(settings.schoolId, scope.schoolId)).returning();
+    const fabStudentIds = key === "messaging" && (row.studentMessagingEnabled !== false) !== (next!.studentMessagingEnabled !== false)
+      ? await advanceSchoolFabLifecycle(tx, scope.schoolId) : [];
     await tx.insert(auditLogs).values({ schoolId: scope.schoolId, userId: scope.actorId, userRole: actorRole,
       action: "classpilot.settings.update", entityType: "settings", entityId: scope.schoolId,
       metadata: { section: key, fields: Object.keys(patch) } });
     return { dto: sectionDto(scope.schoolId, key, next!), changedTabLimit: key === "classroom" && row.maxTabsPerStudent !== next!.maxTabsPerStudent,
-      maxTabs: readTabLimit(next!.maxTabsPerStudent) };
+      maxTabs: readTabLimit(next!.maxTabsPerStudent), fabStudentIds };
   });
   invalidateHeartbeatTrackingSettingsCache(scope.schoolId);
   await publishCacheInvalidation({ kind: "cache-invalidation", schoolId: scope.schoolId, cache: "heartbeat-tracking-settings" });
@@ -281,6 +308,12 @@ export async function updateClasspilotSchoolSettings(scope: SettingsActor, secti
   if (saved.changedTabLimit) await fanoutSchoolTabLimit(scope.schoolId, saved.maxTabs).catch(error => {
     console.warn("ClassPilot school tab policy delivery failed", safeErrorMetadata(error));
   });
+  if (saved.fabStudentIds.length) {
+    const { syncClasspilotControlStatesToActiveDevices } = await import("./classpilotControlStateDelivery.js");
+    await syncClasspilotControlStatesToActiveDevices(scope.schoolId, saved.fabStudentIds).catch(error => {
+      console.warn("ClassPilot school messaging settings delivery failed", safeErrorMetadata(error));
+    });
+  }
   return { schoolId: scope.schoolId, ...saved.dto };
 }
 

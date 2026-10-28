@@ -27,7 +27,7 @@ test("lifecycle control-state fanout stays inside exact student-binding authorit
   );
   assert.match(
     sync,
-    /classpilotControlStateHasLateSignInOrigin\(state\.desiredState\)[\s\S]*isClasspilotCapabilityActive\([\s\S]*"lateSignInRestrictionSsoV1"[\s\S]*deferredOriginWithheld: true[\s\S]*if \(prepared\.deferredOriginWithheld\) \{[\s\S]*return \{ publications: authorizedPublications \}/
+    /classpilotControlStateHasLateSignInOrigin\(state\.desiredState\)[\s\S]*isClasspilotCapabilityActive\([\s\S]*"lateSignInRestrictionSsoV1"[\s\S]*deferredOriginWithheld: true[\s\S]*if \(prepared\.deferredOriginWithheld\) \{[\s\S]*return \{ publications: authorizedPublications, fabSyncRetryRequired: false \}/
   );
   assert.match(
     sync,
