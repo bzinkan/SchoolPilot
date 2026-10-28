@@ -475,21 +475,21 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     assert.deepEqual((await restrictions(item)).flightPath.allowedDomains, ["manual.example.org"]);
   });
 
-  test("Turn off preserves a teacher's Focus, Waypoint, and tab limit", async () => {
+  test("Turn off preserves website Focus and tab limits for each student", async () => {
     const item = await fixture();
     await configure(item);
     await start(item);
     await issue(item, "limit-tabs", { maxTabs: 5 });
-    await issue(item, "focus-tab", { tabTargets: [{ studentId: item.bindings[0]!.studentId, tabRef: "automatic-path-exact-tab", observedRevision: 9 }] }, { indexes: [0] });
+    await issue(item, "lock-screen", { url: "https://example.org/focus" }, { indexes: [0] });
     await issue(item, "lock-screen", { url: "https://example.org/waypoint" }, { indexes: [1] });
-    const beforeFocus = (await restrictions(item)).focus;
+    const beforeFocus = (await restrictions(item)).screenLock;
     const beforeWaypoint = (await restrictions(item, 1)).screenLock;
-    assert.equal(beforeFocus?.active, true);
+    assert.equal(beforeFocus.active, true);
     assert.equal(beforeWaypoint.active, true);
     await turnOff(item);
     assert.equal((await restrictions(item)).flightPath.active, false);
     assert.equal((await restrictions(item, 1)).flightPath.active, false);
-    assert.deepEqual((await restrictions(item)).focus, beforeFocus);
+    assert.deepEqual((await restrictions(item)).screenLock, beforeFocus);
     assert.deepEqual((await restrictions(item, 1)).screenLock, beforeWaypoint);
     assert.equal((await restrictions(item)).tabLimit, 5);
     assert.equal((await restrictions(item, 1)).tabLimit, 5);

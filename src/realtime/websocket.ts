@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
 import { prepareClasspilotFocusCleanupFrame } from "../services/classpilotFocusCleanup.js";
+import { retireLegacyTabFocusForStudentLocked } from "../services/classpilotFocusRetirement.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { getClasspilotMonitoringPolicy, resolveClasspilotMonitoringPolicy, classpilotFullMonitoringDeadline } from "../services/classpilotMonitoringPolicy.js";
 import { getSchoolWebsitePolicy } from "../services/classpilotSchoolWebsitePolicy.js";
@@ -1245,7 +1246,7 @@ export function setupWebSocket(
                         acceptedCapabilities: protocol.acceptedCapabilities,
                         dbInstance: transactionDb,
                       });
-                      const [classroomStateRow, ssoPolicy] = await Promise.all([
+                      const [storedClassroomStateRow, ssoPolicy] = await Promise.all([
                         getClasspilotStudentControlState(
                           schoolId,
                           payload.studentId,
@@ -1253,6 +1254,8 @@ export function setupWebSocket(
                         ),
                         getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
                       ]);
+                      const classroomStateRow = await retireLegacyTabFocusForStudentLocked(transactionDb,
+                        { schoolId, studentId: payload.studentId, state: storedClassroomStateRow ?? null, reason: "reconnect" });
                       const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection({
                         schoolId,
                         studentId: payload.studentId,
@@ -2037,7 +2040,7 @@ export function setupWebSocket(
                   client.schoolId!,
                   transactionDb
                 );
-                const [state, ssoPolicy] = await Promise.all([
+                const [storedState, ssoPolicy] = await Promise.all([
                   getClasspilotStudentControlState(
                     client.schoolId!,
                     client.studentId!,
@@ -2045,6 +2048,8 @@ export function setupWebSocket(
                   ),
                   getClasspilotSsoPolicyForSchool(client.schoolId!, transactionDb),
                 ]);
+                const state = await retireLegacyTabFocusForStudentLocked(transactionDb,
+                  { schoolId: client.schoolId!, studentId: client.studentId!, state: storedState ?? null, reason: "reconnect" });
                 const delivery = state
                   ? serializeClasspilotStudentControlStateForDelivery({
                       state,

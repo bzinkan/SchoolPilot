@@ -86,6 +86,21 @@ export function focusRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : {};
 }
+
+/** Website/resource Focus keeps the existing screen-lock contract. The retired
+ * persistent tab assignment must never be recreated by an old dashboard or a
+ * queued Open + Focus continuation. Bring Forward remains a one-shot action. */
+export function isLegacyTabFocusStart(commandType: string, payload: unknown): boolean {
+  return commandType === "focus-tab"
+    || (commandType === "open-tab" && focusRecord(payload).focusAfterOpen === true);
+}
+
+export function assertLegacyTabFocusNotRetired(commandType: string, payload: unknown): void {
+  if (!isLegacyTabFocusStart(commandType, payload)) return;
+  throw Object.assign(new Error("Tab Focus has been retired. Refresh ClassPilot to use website Focus or Bring Forward."), {
+    status: 410, code: "TAB_FOCUS_RETIRED",
+  });
+}
 export function readFocusAssignment(desiredState: unknown): ClasspilotFocusAssignment | null {
   const parsed = assignmentSchema.safeParse(focusRecord(desiredState).focusAssignmentV1);
   return parsed.success ? parsed.data : null;

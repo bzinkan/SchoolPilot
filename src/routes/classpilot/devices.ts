@@ -2,6 +2,7 @@ import { privateChatMessageLifecycle } from "../../services/classpilotPrivateCha
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import crypto from "crypto";
 import { prepareClasspilotFocusCleanupFrame } from "../../services/classpilotFocusCleanup.js";
+import { retireLegacyTabFocusForStudentLocked } from "../../services/classpilotFocusRetirement.js";
 import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
@@ -4824,8 +4825,10 @@ router.post("/device/heartbeat",
       () => withClasspilotHeartbeatDeliveryAuthority(
         { schoolId, studentId, studentSessionId, deviceId, freezeSsoPolicy: true },
         async (transactionDb, readScreenshotAuthority) => {
-          const { controlState: finalControlState, ssoPolicy: finalSsoPolicy } =
+          const { controlState: storedControlState, ssoPolicy: finalSsoPolicy } =
             await getClasspilotStudentControlDeliveryContext(schoolId, studentId, transactionDb);
+          const finalControlState = await retireLegacyTabFocusForStudentLocked(transactionDb,
+            { schoolId, studentId, state: storedControlState ?? null, reason: "reconnect" });
           const serialized = finalControlState
             ? serializeClasspilotStudentControlStateForDelivery({
                 state: finalControlState,

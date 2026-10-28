@@ -1,4 +1,5 @@
 import { expirePrivateChatDeliveries } from "./classpilotPrivateChatLifecycle.js";
+import { retireLegacyTabFocusBatch } from "./classpilotFocusRetirement.js";
 import { claimStudentInformationJobs, processStudentInformationClaim, cleanupStudentInformationImports } from "./studentInformationWorker.js";
 import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
@@ -329,6 +330,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
     scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
     scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
+    scheduleLockedJob("retireLegacyTabFocus", retireLegacyTabFocus);
     scheduleLockedJob("expireClasspilotManualStudentSessions", expireClasspilotManualStudentSessions);
     scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
     scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
@@ -366,6 +368,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
   scheduleLockedJob("expireClasspilotTransientCommands", expireClasspilotTransientCommands);
+  scheduleLockedJob("retireLegacyTabFocus", retireLegacyTabFocus);
   scheduleLockedJob("expireClasspilotManualStudentSessions", expireClasspilotManualStudentSessions);
   scheduleLockedJob("expireClasspilotEvidenceCaptureRequests", expireClasspilotEvidenceCaptureRequests);
   scheduleLockedJob("reconcileClasspilotScheduledSessions", reconcileClasspilotScheduledSessions);
@@ -753,6 +756,16 @@ async function expireClasspilotSupervisionContexts() {
       job: "expireClasspilotSupervisionContexts",
     });
   }
+}
+
+let nextLegacyFocusRetirementAt = 0;
+async function retireLegacyTabFocus() {
+  if (Date.now() < nextLegacyFocusRetirementAt) return;
+  const result = await retireLegacyTabFocusBatch(schedulerDb, { publish: syncClasspilotControlStatesToActiveDevices });
+  // After the historical backlog drains, avoid rescanning command history on
+  // every minute tick. Startup and exact-binding reconnect recovery still run.
+  nextLegacyFocusRetirementAt = result.inspected === 0 ? Date.now() + 15 * 60_000 : 0;
+  if (result.inspected) console.log(JSON.stringify({ event: "classpilot_legacy_tab_focus_retirement", ...result }));
 }
 
 async function expireClasspilotTransientCommands() {

@@ -181,8 +181,8 @@ test('Dashboard fences command updates before focus or transient state changes',
   const handler = source.slice(source.indexOf("if (message.type === 'classpilot-command-update')"));
   const fence = handler.indexOf('if (!matchesCommandUpdateActivity(message,');
   assert.ok(fence >= 0);
-  assert.ok(fence < handler.indexOf('focusCommandUpdatesRef.current'));
-  assert.ok(fence < handler.indexOf('setLastFocusResult'));
+  assert.ok(fence < handler.indexOf('tabCommandUpdatesRef.current'));
+  assert.ok(fence < handler.indexOf('setLastTabActionResult'));
   assert.ok(fence < handler.indexOf('trackTransientCommandResponse('));
   assert.match(source, /useLayoutEffect\(\(\) => \{\s*knownClassroomCommandIdsRef\.current\.clear\(\);\s*transientCommandOutcomesRef\.current = new Map\(\);/);
   assert.match(source, /knownCommand: knownClassroomCommandIdsRef\.current\.has\(commandId\)/);

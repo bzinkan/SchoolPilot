@@ -705,7 +705,7 @@ test("Dashboard rollback projection cannot masquerade a deferred revision as app
   );
   assert.match(
     compat,
-    /enforcementUnavailableReason:\s*restrictionAuthUpdateRequired[\s\S]*Extension update required for sign-in-safe Waypoint or Flight Path/,
+    /enforcementUnavailableReason:\s*restrictionAuthUpdateRequired[\s\S]*Extension update required for sign-in-safe Focus or Flight Path/,
   );
   assert.match(compat, /getClasspilotSsoPolicyForSchool\(schoolId\)/);
   assert.match(

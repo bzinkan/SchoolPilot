@@ -30,7 +30,7 @@ const capable = ["scopedAuthorityChecksV1", "focusTabV1"];
 
 describe("Focus and Bring Forward public and desired-state contract", () => {
   it("strictly accepts one safe exact row per student and rejects private receipt fields", () => {
-    for (const command of ["focus-tab", "activate-tab"]) {
+    for (const command of ["activate-tab"]) {
       assert.deepEqual(validateClasspilotCommandPayload(command, { tabTargets: [row] }), { tabTargets: [row] });
       for (const payload of [{ tabTargets: [row, row] }, { tabTargets: [{ ...row, openTabCommandId: "proof" }] },
         { tabTargets: [{ ...row, observedRevision: Number.MAX_SAFE_INTEGER + 1 }] }, { tabTargets: [], url: "https://example.org" },
@@ -39,10 +39,13 @@ describe("Focus and Bring Forward public and desired-state contract", () => {
     assert.deepEqual(validateClasspilotCommandPayload("stop-focus", {}), {});
     assert.throws(() => validateClasspilotCommandPayload("stop-focus", { assignmentId: "assignment" }));
   });
-  it("keeps normal open identical and makes literal true the only continuation option", () => {
+  it("keeps normal open identical and rejects retired tab Focus authoring", () => {
     assert.deepEqual(validateClasspilotCommandPayload("open-tab", { url: "example.org" }), { url: "https://example.org/" });
-    assert.deepEqual(validateClasspilotCommandPayload("open-tab", { url: "example.org", focusAfterOpen: true }),
-      { url: "https://example.org/", focusAfterOpen: true });
+    for (const [command, payload] of [["open-tab", { url: "example.org", focusAfterOpen: true }],
+      ["focus-tab", { tabTargets: [row] }]] as const) {
+      assert.throws(() => validateClasspilotCommandPayload(command, payload),
+        { status: 410, code: "TAB_FOCUS_RETIRED" });
+    }
     assert.throws(() => validateClasspilotCommandPayload("open-tab", { url: "example.org", focusAfterOpen: false }));
   });
   it("requires explicit, nonduplicate student IDs exactly equal to target rows", () => {

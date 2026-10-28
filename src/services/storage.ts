@@ -13,7 +13,7 @@ import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
 import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
 import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
-import { focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
+import { isLegacyTabFocusStart, focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
   readFocusRestriction, withoutClasspilotFocus } from "./classpilotFocus.js";
 import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
@@ -20079,6 +20079,9 @@ export async function classpilotStudentRelayMessageAllowed(
 ): Promise<{ expiresAt: number | null } | null> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const frame = value as Record<string, unknown>;
+  // A queued state-only frame can predate retirement without naming any
+  // command. Refuse the entire legacy snapshot; never strip a partial policy.
+  if (focusRecord(focusRecord(focusRecord(frame.classroomState).restrictions).focus).active === true) return null;
   const remote = frame.command && typeof frame.command === "object" && !Array.isArray(frame.command)
     ? frame.command as Record<string, unknown> : null;
   const commandId = frame.commandId ?? remote?.commandId;
@@ -20100,6 +20103,7 @@ export async function classpilotStudentRelayMessageAllowed(
       )).limit(1).for("share", { of: classpilotCommandTargets });
     if (!row || (frame.commandId !== undefined && frame.commandId !== row.command.id)
       || (remote?.commandId !== undefined && remote.commandId !== row.command.id)) return null;
+    if (isLegacyTabFocusStart(row.command.commandType, row.command.commandPayload)) return null;
     const rawAuthority = remote?.authority ?? frame.authority;
     const authority = rawAuthority && typeof rawAuthority === "object" && !Array.isArray(rawAuthority)
       ? rawAuthority as Record<string, unknown> : null;
@@ -20144,7 +20148,10 @@ export async function classpilotStudentRelayMessageAllowed(
     // Persistent commands advance their own desired-state revision after
     // freezing creation authority. Deliver only the current committed source,
     // while exact transient actions retain the original frozen revision.
-    if (persistent && control?.sourceCommandId !== row.command.id) return null;
+    if (persistent && control?.sourceCommandId !== row.command.id
+      && !(row.command.commandType === "stop-focus" && control
+        && readFocusCleanup(control.desiredState)?.sourceCommandId === row.command.id
+        && readFocusCleanup(control.desiredState)?.sourceTargetId === row.target.id)) return null;
     if (!await hasCurrentClasspilotStudentControlAuthorityAtClock({ ...binding,
       teachingSessionId: row.command.teachingSessionId, supervisionContextId: row.command.supervisionContextId,
       ...(persistent ? { ownershipRevision: control!.revision }
@@ -21887,6 +21894,28 @@ export async function createClasspilotCommandWithTargets(
         ...commandData,
         unavailableCount: authoritativeTargets.filter((target) => target.status === "unavailable").length,
       };
+    }
+
+    // These exact actions skip desired-state persistence. Retire historical
+    // tab holding before freezing their target revision, while canonical
+    // actor/student authority is still locked. Current-page URLs stay local.
+    if (options.authority && (commandData.commandType === "activate-tab"
+      || (commandData.commandType === "lock-screen" && focusRecord(commandData.commandPayload).currentPage === true))) {
+      const { retireLegacyTabFocusForStudentLocked } = await import("./classpilotFocusRetirement.js");
+      const transactionDb = tx as unknown as typeof db;
+      for (let index = 0; index < authoritativeTargets.length; index++) {
+        const target = authoritativeTargets[index]!;
+        if (target.status === "unavailable" || !target.studentSessionId || !target.deviceId) continue;
+        const state = await getClasspilotStudentControlState(commandData.schoolId, target.studentId, transactionDb);
+        if (!state || state.teachingSessionId !== (commandData.teachingSessionId ?? null)
+          || state.supervisionContextId !== (commandData.supervisionContextId ?? null)) continue;
+        const retired = await retireLegacyTabFocusForStudentLocked(transactionDb, {
+          schoolId: commandData.schoolId, studentId: target.studentId, state, reason: "website_focus",
+        });
+        if (retired && retired.revision !== state.revision) authoritativeTargets[index] = { ...target,
+          result: frozenClasspilotCommandTargetResult(commandData, target, retired.revision,
+            classroomContext?.classroomAuthorityRevision) };
+      }
     }
 
     const lessonPayload = commandData.commandPayload as Record<string, unknown>;
@@ -24018,6 +24047,11 @@ export async function replaceClasspilotSupervisionControlSnapshots(
 
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    const retiresLegacyFocus = !!options.classroomCommand
+      && ["lock-screen", "unlock-screen"].includes(options.classroomCommand.commandType);
+    // The command header committed separately. Recheck entitlement before the
+    // student lock before minting a retirement receipt during this write.
+    if (retiresLegacyFocus) await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
     await lockClasspilotStudentControlAuthorities(
       options.schoolId,
       requestedStudentIds,
@@ -24247,6 +24281,14 @@ export async function replaceClasspilotSupervisionControlSnapshots(
     if (options.classroomCommand && scheduledContextHasClassroomTools(context, now)) {
       await persistScheduledClassroomStateRecords({ ...options.classroomCommand, schoolId: options.schoolId,
         contextId: context.id, studentIds: rows.map((row) => row.studentId), endsAt: context.endsAt, now }, transactionDb);
+    }
+    if (retiresLegacyFocus) {
+      const { retireLegacyTabFocusForStudentLocked } = await import("./classpilotFocusRetirement.js");
+      for (let index = 0; index < rows.length; index++) {
+        rows[index] = (await retireLegacyTabFocusForStudentLocked(transactionDb, {
+          schoolId: options.schoolId, studentId: rows[index]!.studentId, state: rows[index]!, reason: "website_focus", now,
+        }))!;
+      }
     }
     return rows;
   });
@@ -24903,6 +24945,10 @@ export async function persistClasspilotControlCommandState(
     // docs/classpilot-control-authority-lock-order.md for the coordinated
     // migration boundary and executable contract.
     let automaticStopActorId: string | null = null;
+    const retiresLegacyFocus = (options.classroomStateUpserts || []).some(state => state.stateType === "screen-lock")
+      || (options.classroomStateClears || []).some(clear => clear.stateTypes?.includes("screen-lock"));
+    if (retiresLegacyFocus && !options.stopAutomaticFlightPath)
+      await assertClasspilotEntitled(options.studentSnapshots.schoolId, transactionDb, { lock: true });
     if (options.stopAutomaticFlightPath) {
       if (!await lockStaffAssignmentLifecycleSchool(tx, options.studentSnapshots.schoolId))
         throw automaticFlightPathError("School not found", "SCHOOL_NOT_FOUND", 404);
@@ -25112,6 +25158,15 @@ export async function persistClasspilotControlCommandState(
         } },
       transactionDb
     );
+    if (retiresLegacyFocus) {
+      const { retireLegacyTabFocusForStudentLocked } = await import("./classpilotFocusRetirement.js");
+      for (let index = 0; index < studentControlStates.length; index++) {
+        studentControlStates[index] = (await retireLegacyTabFocusForStudentLocked(transactionDb, {
+          schoolId: options.studentSnapshots.schoolId, studentId: studentControlStates[index]!.studentId,
+          state: studentControlStates[index]!, reason: "website_focus",
+        }))!;
+      }
+    }
     return { classroomStates, studentControlStates, rejectedStudentIds };
   });
 }

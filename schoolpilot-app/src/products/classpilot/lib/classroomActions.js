@@ -23,14 +23,6 @@ export function classroomLoadFailure(error, subject) {
   }
 }
 
-export function classroomCanFocus(students) {
-  return students.some(student => {
-    const accepted = student.acceptedCapabilities ?? student.capabilities;
-    const has = capability => Array.isArray(accepted) ? accepted.includes(capability) : accepted?.[capability] === true;
-    return has('scopedAuthorityChecksV1') && has('focusTabV1');
-  });
-}
-
 export function classroomLinks(resource) {
   const seen = new Set();
   return (Array.isArray(resource?.links) ? resource.links : []).flatMap((link, index) => {
@@ -109,7 +101,7 @@ export function restrictionApplicationConfirmed(target) {
 
 export async function runClassroomAction({ action, url, studentIds, flightPath, postCommand, readCommand,
   signal, assertCurrent = () => {}, onUpdate = () => {}, waitOptions = {} }) {
-  if (!['open', 'open-focus', 'lesson'].includes(action) || !studentIds?.length
+  if (!['open', 'lesson'].includes(action) || !studentIds?.length
     || new Set(studentIds).size !== studentIds.length) throw new Error('Choose explicit students for this action.');
   const safeUrl = classroomLinks({ id: 'open', links: [{ url }] })[0]?.url;
   if (!safeUrl) throw new Error('Choose a valid Classroom resource link.');
@@ -122,7 +114,6 @@ export async function runClassroomAction({ action, url, studentIds, flightPath, 
     guard();
     ids.forEach(id => update(id, { open: 'requesting' }));
     const data = await postCommand('open-tab', { url: safeUrl,
-      ...(action === 'open-focus' ? { focusAfterOpen: true } : {}),
       ...(prerequisite ? { afterRestrictionCommandId: prerequisite } : {}),
     }, ids);
     guard();
@@ -131,20 +122,7 @@ export async function runClassroomAction({ action, url, studentIds, flightPath, 
       update(id, { open: 'unavailable', error: 'The student was not included in the open command.' });
     await Promise.all(commands.map(async command => {
       const commandIds = ids.filter(id => command.targets.some(target => target.studentId === id));
-      const rows = await wait(command, commandIds, 'open');
-      if (action !== 'open-focus') return;
-      await Promise.all(rows.map(async row => {
-        const followUp = row.result?.followUp;
-        if (row.status !== 'completed' || followUp?.state !== 'committed' || !followUp.commandId) {
-          update(row.studentId, { focus: followUp?.state || 'not confirmed' }); return;
-        }
-        guard();
-        update(row.studentId, { focus: 'pending' });
-        const child = await readCommand({ ...command, id: followUp.commandId }, signal);
-        guard();
-        if (!child?.command || child.command.id !== followUp.commandId || child.command.commandType !== 'focus-tab') throw new Error('The Focus continuation was incomplete.');
-        await wait(child.command, [row.studentId], 'focus');
-      }));
+      await wait(command, commandIds, 'open');
     }));
   }
   if (action !== 'lesson') await open(studentIds);

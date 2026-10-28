@@ -22,8 +22,6 @@ const CLASS_COMMANDS = Object.freeze([
   'temp-unblock',
   'limit-tabs',
   'activate-tab',
-  'focus-tab',
-  'stop-focus',
 ]);
 
 export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
@@ -37,8 +35,6 @@ export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
   'apply-block-list',
   'remove-block-list',
   'activate-tab',
-  'focus-tab',
-  'stop-focus',
 ]);
 
 export const LATE_SIGN_IN_RESTRICTION_COMMANDS = Object.freeze([
@@ -144,6 +140,8 @@ export function assertClassroomCommandSelectionIsolation(commandType, signOutOnl
 
 export function studentSupportsCapability(student, capabilityName) {
   if (!student || !capabilityName) return false;
+  if (student.acceptedCapabilities?.[capabilityName] === true
+    || Array.isArray(student.acceptedCapabilities) && student.acceptedCapabilities.includes(capabilityName)) return true;
   if (student.capabilities?.[capabilityName] === true) return true;
   const advertised = Array.isArray(student.extensionCapabilities)
     ? student.extensionCapabilities

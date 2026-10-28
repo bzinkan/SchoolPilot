@@ -11,7 +11,7 @@ import { serializeClasspilotStudentControlStateForDelivery } from "./classpilotC
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import { requireScheduledClassroomContext } from "./classpilotActivityAuthority.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
-import { focusAuthoringEnabled, focusCapabilityAccepted, focusOpenReceiptSchema, focusRecord,
+import { assertLegacyTabFocusNotRetired, isLegacyTabFocusStart, focusAssignmentMatches, focusAuthoringEnabled, focusCapabilityAccepted, focusOpenReceiptSchema, focusRecord,
   focusServerOrigin, readFocusAssignment, readFocusCleanup, readFocusOpenIntent, readFocusRestriction, withoutClasspilotFocus,
   type ClasspilotExactTabTarget, type ClasspilotFocusAssignment, type ClasspilotFocusOpenIntent } from "./classpilotFocus.js";
 
@@ -34,7 +34,7 @@ function assignmentFor(command: ClasspilotCommand, target: ClasspilotCommandTarg
 }
 
 async function writeFocus(database: Database, state: ClasspilotStudentControlState,
-  commandId: string, desiredState: Record<string, unknown>, now: Date): Promise<ClasspilotStudentControlState> {
+  commandId: string | null, desiredState: Record<string, unknown>, now: Date): Promise<ClasspilotStudentControlState> {
   const [updated] = await database.update(classpilotStudentControlStates).set({ desiredState,
     revision: state.revision + 1, sourceCommandId: commandId, enforcementHealth: "pending",
     appliedRevision: null, lastOutcome: null, lastError: null, lastAcknowledgedAt: null, updatedAt: now,
@@ -47,7 +47,7 @@ async function writeFocus(database: Database, state: ClasspilotStudentControlSta
 
 export async function cancelClasspilotFocusOpenIntents(database: Database, schoolId: string,
   studentIds: readonly string[], scope?: { teachingSessionId: string | null; supervisionContextId: string | null },
-  binding?: { studentSessionId: string; deviceId: string }): Promise<void> {
+  binding?: { studentSessionId: string; deviceId: string }, errorCode = "FOCUS_INTENT_CANCELLED"): Promise<void> {
   if (!studentIds.length) return;
   const targets = await database.select({ target: classpilotCommandTargets, command: classpilotCommands })
     .from(classpilotCommandTargets).innerJoin(classpilotCommands,
@@ -58,13 +58,54 @@ export async function cancelClasspilotFocusOpenIntents(database: Database, schoo
     if (scope && (scope.teachingSessionId !== command.teachingSessionId
       || scope.supervisionContextId !== command.supervisionContextId)) continue;
     const intent = readFocusOpenIntent(target.result);
-    if (!intent) continue;
+    if (!intent) {
+      // Retirement is terminal even for a malformed historical pending intent.
+      // Binding-specific lifecycle cleanup cannot infer its missing authority.
+      const raw = focusRecord(focusRecord(target.result).focusOpenIntentV1);
+      if (!binding && errorCode === "TAB_FOCUS_RETIRED" && raw.state === "pending") {
+        await database.update(classpilotCommandTargets).set({ result: { ...focusRecord(target.result),
+          focusOpenIntentV1: { ...raw, state: "refused", errorCode } }, updatedAt: new Date() })
+          .where(eq(classpilotCommandTargets.id, target.id));
+      }
+      continue;
+    }
     if (binding && (intent.binding.studentSessionId !== binding.studentSessionId
       || intent.binding.deviceId !== binding.deviceId)) continue;
     await database.update(classpilotCommandTargets).set({ result: { ...focusRecord(target.result),
-      focusOpenIntentV1: { ...intent, state: "refused", errorCode: "FOCUS_INTENT_CANCELLED" } }, updatedAt: new Date() })
+      focusOpenIntentV1: { ...intent, state: "refused", errorCode } }, updatedAt: new Date() })
       .where(eq(classpilotCommandTargets.id, target.id));
   }
+}
+
+/** Shared removal primitive. Caller holds the school/student control authority
+ * locks and has already authorized its teacher command or removal-only lifecycle
+ * operation. A real stop command/target is required before minting a tombstone. */
+export async function stopClasspilotFocusStateLocked(database: Database, options: {
+  state: ClasspilotStudentControlState; now?: Date;
+  sourceCommandId?: string | null;
+  stop?: { commandId: string; targetId: string; studentSessionId: string | null; deviceId: string | null };
+}): Promise<ClasspilotStudentControlState> {
+  const { state, stop } = options;
+  const cleaned = withoutClasspilotFocus(state.desiredState);
+  const assignment = readFocusAssignment(state.desiredState);
+  const cleanup = readFocusCleanup(state.desiredState);
+  const exact = assignment || cleanup;
+  if (stop && exact && stop.studentSessionId && stop.deviceId
+    && focusAssignmentMatches({ assignment: exact, schoolId: state.schoolId, studentId: state.studentId,
+      studentSessionId: stop.studentSessionId, deviceId: stop.deviceId,
+      teachingSessionId: state.teachingSessionId, supervisionContextId: state.supervisionContextId })) {
+    cleaned.focusCleanupV1 = assignment ? { ...assignment, sourceCommandId: stop.commandId,
+      sourceTargetId: stop.targetId, revisionAtAssignment: state.revision + 1 } : cleanup;
+  } else if (!assignment && cleanup) {
+    // Saved-state cleanup and repeated recovery never discard an outstanding
+    // exact stop receipt. Binding/ownership lifecycle retirement handles it.
+    cleaned.focusCleanupV1 = cleanup;
+    const status = focusRecord(state.desiredState).focusStatusV1;
+    if (focusRecord(status).state === "inactive") cleaned.focusStatusV1 = status;
+  }
+  return JSON.stringify(cleaned) === JSON.stringify(state.desiredState) ? state
+    : writeFocus(database, state, options.sourceCommandId !== undefined ? options.sourceCommandId
+      : stop?.commandId ?? state.sourceCommandId, cleaned, options.now || new Date());
 }
 
 /** Session end/transfer already holds the sorted student-control lock. */
@@ -94,6 +135,7 @@ export async function retireClasspilotFocusForBinding(database: Database, school
 export async function persistClasspilotFocusCommand(database: Database, command: ClasspilotCommand,
   targets: ClasspilotCommandTarget[], now = new Date()): Promise<ClasspilotCommandTarget[]> {
   const payload = focusRecord(command.commandPayload);
+  assertLegacyTabFocusNotRetired(command.commandType, payload);
   const exact = command.commandType === "focus-tab" || command.commandType === "activate-tab";
   const chained = command.commandType === "open-tab" && payload.focusAfterOpen === true;
   const stop = command.commandType === "stop-focus";
@@ -113,16 +155,9 @@ export async function persistClasspilotFocusCommand(database: Database, command:
     }
     if (stop) {
       await cancelClasspilotFocusOpenIntents(database, command.schoolId, [target.studentId], command);
-      const cleaned = withoutClasspilotFocus(current.desiredState);
-      const oldAssignment = readFocusAssignment(current.desiredState);
-      const oldCleanup = readFocusCleanup(current.desiredState);
-      const exact = oldAssignment || oldCleanup;
-      if (exact && exact.studentSessionId === target.studentSessionId && exact.deviceId === target.deviceId) {
-        cleaned.focusCleanupV1 = oldAssignment ? { ...oldAssignment, sourceCommandId: command.id,
-          sourceTargetId: target.id, revisionAtAssignment: current.revision + 1 } : oldCleanup;
-      }
-      const state = JSON.stringify(cleaned) !== JSON.stringify(current.desiredState)
-        ? await writeFocus(database, current, command.id, cleaned, now) : current;
+      const state = await stopClasspilotFocusStateLocked(database, { state: current, now,
+        stop: { commandId: command.id, targetId: target.id,
+          studentSessionId: target.studentSessionId, deviceId: target.deviceId } });
       const [updated] = await database.update(classpilotCommandTargets).set({ result: { ...focusRecord(target.result),
         frozenControlRevision: state.revision }, updatedAt: now }).where(eq(classpilotCommandTargets.id, target.id)).returning();
       updatedTargets.push(updated!);
@@ -185,6 +220,7 @@ export async function consumeClasspilotFocusOpenReceipt(database: Database, comm
   const result = focusRecord(target.result);
   const reject = (errorCode: string, state: "refused" | "expired" = "refused") => ({ ...result,
     focusOpenIntentV1: { ...intent, state, errorCode } });
+  if (isLegacyTabFocusStart(command.commandType, command.commandPayload)) return reject("TAB_FOCUS_RETIRED");
   if (Date.parse(intent.deadline) <= options.now.getTime()) return reject("FOCUS_RECEIPT_EXPIRED", "expired");
   const receipt = focusOpenReceiptSchema.safeParse(options.result);
   if (!receipt.success) return reject("FOCUS_RECEIPT_INVALID");

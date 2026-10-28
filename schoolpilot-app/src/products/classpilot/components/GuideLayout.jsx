@@ -212,7 +212,7 @@ export function GuideLayout({
                 id="guide-search"
                 value={query}
                 onChange={(event) => setParam("q", event.target.value, { replace: true })}
-                placeholder="Try “signed out”, “PIN”, or “Waypoint”"
+                placeholder="Try “signed out”, “PIN”, or “Focus”"
                 className="h-11 pl-10 pr-10"
                 aria-describedby="guide-search-results"
               />

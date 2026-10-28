@@ -177,7 +177,7 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
           ? `${plural(unsupported, 'student needs', 'students need')} the ClassPilot update before this restriction can apply.`
           : null,
         Number(value?.skippedCurrentPageCount) > 0
-          ? `${plural(Number(value.skippedCurrentPageCount), 'signed-out student was', 'signed-out students were')} skipped because a current-page Waypoint needs a fresh online page.`
+          ? `${plural(Number(value.skippedCurrentPageCount), 'signed-out student was', 'signed-out students were')} skipped because current-page Focus needs a fresh online page.`
           : null,
         'Acknowledgements are device-reported and are not tamper proof.',
       ].filter(Boolean).join(' '),

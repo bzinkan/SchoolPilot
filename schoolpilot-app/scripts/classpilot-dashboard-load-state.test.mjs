@@ -4670,7 +4670,7 @@ async function focusBrowserFixture(context, overrides = {}) {
   const page = await browser.newPage();
   await page.clock.install({ time: new Date('2026-08-25T13:01:00Z') });
   const row = student({ clientProtocolVersion: 3, tabSnapshotRevision: 7,
-    acceptedCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true, closeTabsExactV2: true },
+    acceptedCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true, closeTabsExactV2: true, screenOnlyUnlockV1: true },
     activeTabRef: 'opaque-first', activeTabUrl: 'https://lesson.example.edu/same',
     allOpenTabs: [{ tabRef: 'opaque-first', url: 'https://lesson.example.edu/same', title: 'First duplicate' },
       { tabRef: 'opaque-second', url: 'https://lesson.example.edu/same', title: 'Second duplicate' }], ...overrides });
@@ -4700,194 +4700,111 @@ async function refreshFocusStudent(fixture, row) {
   });
 }
 
-test('tile lock: current-tab Focus and tile Stop Focus synchronize with Manage Tabs after confirmation', { timeout: 60_000 }, async context => {
-  const fixture = await focusBrowserFixture(context);
+test('unified Focus: tile current website starts and stops exactly its own student with confirmed lifecycle', { timeout: 60_000 }, async context => {
+  const fixture = await focusBrowserFixture(context, { screenLocked: false,
+    classroomState: { revision: 1, restrictions: { screenLock: { active: false } } } });
   const { page, harness, row, posts } = fixture;
+  const qaDir = process.env.UNIFIED_FOCUS_QA_DIR;
+  if (qaDir) {
+    mkdirSync(qaDir, { recursive: true });
+    await page.setViewportSize({ width: 1360, height: 900 });
+    await page.screenshot({ path: path.join(qaDir, 'manage-tabs-bring-forward-desktop.png'), fullPage: true });
+  }
   await page.getByTestId('button-close-tabs-dialog').click();
-  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
-  let focusConfirmed = false, stopConfirmed = false;
-  const reads = [];
+  const lock = page.getByTestId('button-lock-toggle-' + STUDENT_ID);
+  let complete = false;
   await page.route('**/api/classpilot/commands/focus-*/status?*', async route => {
     const index = Number(new URL(route.request().url()).pathname.match(/focus-(\d+)\/status$/)[1]) - 1;
-    reads.push(route.request().url());
-    const confirmed = index === 0 ? focusConfirmed : stopConfirmed;
-    await route.fulfill({ json: { command: { id: `focus-${index + 1}`, ...posts[index],
-      targets: [{ studentId: STUDENT_ID, status: confirmed ? 'completed' : 'received' }] } } });
+    await route.fulfill({ json: { command: { id: 'focus-' + (index + 1), ...posts[index],
+      targets: [{ studentId: STUDENT_ID, status: complete ? 'completed' : 'received',
+        result: complete ? (index === 0 ? { currentPage: true } : { outcome: 'applied' }) : {} }] } } });
   });
-
-  assert.equal(await lock.getAttribute('aria-label'), 'Focus current tab');
+  assert.equal(await lock.getAttribute('aria-label'), 'Focus current website');
   await lock.click();
-  await waitUntil(() => posts.length === 1, 'The tile must post current-tab Focus for its own student');
+  await waitUntil(() => posts.length === 1, 'tile Focus must post one student');
   assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
-    commandType: 'focus-tab', commandPayload: { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-first', observedRevision: 7 }] } });
-  await page.getByTestId(`lock-spinner-${STUDENT_ID}`).waitFor();
-  assert.equal(await lock.getAttribute('aria-busy'), 'true');
-  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
-  assert.equal(await lock.isDisabled(), true, 'the same tile cannot issue duplicate Focus commands while pending');
-
-  const focused = { ...row, focus: { state: 'active', assignmentId: 'tile-focus' },
-    classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'tile-focus' } } } };
-  const readsBeforeEarlyAck = reads.length;
-  focusConfirmed = true;
-  await page.clock.runFor(1000);
-  await waitUntil(() => reads.length > readsBeforeEarlyAck, 'The device ACK must arrive before lifecycle telemetry in this regression');
-  await waitUntil(async () => await lock.getAttribute('aria-label') === 'Stop Focus',
-    'An early completed Focus ACK retains cleanup instead of reopening current-tab Focus');
-  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'device ACK alone cannot confirm the corresponding Focus lifecycle');
-  await page.getByTestId(`lock-spinner-${STUDENT_ID}`).waitFor();
-  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
-  assert.equal(posts.length, 1, 'the ACK-to-telemetry gap never automatically starts a duplicate Focus');
-
-  await refreshFocusStudent(fixture, focused);
-  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'The matching device result ends the pending tile operation');
-  assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
+    commandType: 'lock-screen', commandPayload: { url: 'CURRENT_URL' } });
+  assert.equal(await lock.isDisabled(), true);
+  assert.equal(await page.getByTestId('lock-status-' + STUDENT_ID).getByText('Focus confirmed', { exact: true }).count(), 0);
+  await lock.evaluate(node => node.click()); assert.equal(posts.length, 1);
+  complete = true; await page.clock.runFor(1000);
+  await waitUntil(async () => !(await lock.isDisabled()), 'completed request releases duplicate-send guard');
   assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
-  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
-  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).waitFor();
-  await page.getByTestId('button-close-tabs-dialog').click();
-  await lock.click();
-  await waitUntil(() => posts.length === 2, 'The closed tile lock must stop Focus without opening a confirmation dialog');
+  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'early ACK cannot be undone by the old inactive row');
+  await refreshFocusStudent(fixture, { ...row, screenLocked: false, realtimeObservedAt: '2026-08-25T13:01:00.500Z' });
+  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'newer inactive telemetry before observed enforcement is not a release');
+  await refreshFocusStudent(fixture, { ...row, screenLocked: true, realtimeObservedAt: '2026-08-25T13:01:01.000Z' });
+  await page.getByTestId('lock-status-' + STUDENT_ID).getByText('Focus confirmed', { exact: true }).waitFor();
+  assert.equal(await lock.getAttribute('aria-busy'), 'false', 'transient Focus converges with the saved policy still inactive at revision 1');
+  await lock.click(); await waitUntil(() => posts.length === 2, 'Stop Focus posts one narrow release');
   assert.deepEqual(posts[1], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
-    commandType: 'stop-focus', commandPayload: {} });
-  assert.equal(await page.getByTestId('dialog-stop-focus').count(), 0);
-  assert.equal(await lock.getAttribute('aria-busy'), 'true');
-
-  stopConfirmed = true;
-  await refreshFocusStudent(fixture, { ...row, focus: { state: 'none' },
-    classroomState: { revision: 3, restrictions: { focus: { active: false } } } });
+    commandType: 'unlock-screen', commandPayload: { screenOnly: true } });
   await page.clock.runFor(1000);
-  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'Stop Focus requires its own confirmation');
-  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked');
-  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
-  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('No Focus confirmed', { exact: true }).waitFor();
-  assert.ok(reads.length >= 2);
-  assert.ok(reads.every(url => new URL(url).searchParams.get('teachingSessionId') === OWN_SESSION_ID));
+  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus', 'completed Stop still awaits fresh browser release');
+  await refreshFocusStudent(fixture, { ...row, screenLocked: false, realtimeObservedAt: '2026-08-25T13:01:02.000Z' });
+  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'browser release completes the tile');
+  assert.equal(await lock.getAttribute('aria-label'), 'Focus current website');
+  if (qaDir) {
+    await page.getByTestId('checkbox-select-student-' + STUDENT_ID).click();
+    await page.getByTestId('button-lock-screen').click();
+    await page.getByTestId('dialog-lock-screen').waitFor();
+    await page.screenshot({ path: path.join(qaDir, 'set-focus-desktop.png'), fullPage: true });
+  }
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('tile lock: Manage Tabs Focus replaces an older assignment without letting its ACK confirm the tile', { timeout: 60_000 }, async context => {
-  const fixture = await focusBrowserFixture(context);
-  const { page, harness, row, posts } = fixture;
-  await page.getByTestId('button-focus-tab-opaque-second').click();
-  await waitUntil(() => posts.length === 1, 'Manage Tabs must post the explicitly selected duplicate tab');
-  assert.deepEqual(posts[0].commandPayload, { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-second', observedRevision: 7 }] });
-  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
+test('unified Focus: website shortcut requires a fresh web page but not exact-tab capability', { timeout: 60_000 }, async context => {
+  const fixture = await focusBrowserFixture(context, { activeTabRef: null, tabSnapshotRevision: null,
+    acceptedCapabilities: { screenOnlyUnlockV1: true } });
+  const { page, row, posts, harness } = fixture;
+  assert.equal(await page.getByTestId('button-bring-forward-opaque-first').isDisabled(), true);
+  assert.equal(await page.getByTestId('button-focus-tab-opaque-first').count(), 0);
   await page.getByTestId('button-close-tabs-dialog').click();
-  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
-  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'Manage Tabs HTTP acceptance immediately projects pending Focus onto the tile');
-  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
-  await page.getByTestId(`lock-spinner-${STUDENT_ID}`).waitFor();
-  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
-
-  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
-    command: { id: 'focus-1', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
-      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
-  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
-  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
-  assert.equal(await lock.getAttribute('aria-busy'), 'true', 'an early Manage Tabs ACK cannot replace missing lifecycle telemetry');
-  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
-  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
-
-  await refreshFocusStudent(fixture, { ...row, focus: { state: 'active', assignmentId: 'older-focus' },
-    classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'replacement-focus' } } } });
-  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus requested; awaiting confirmation', { exact: true }).waitFor();
-  await page.getByTestId('button-close-tabs-dialog').click();
-  assert.equal(await lock.getAttribute('aria-busy'), 'true');
-  assert.equal(await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).count(), 0);
-
-  await refreshFocusStudent(fixture, { ...row, focus: { state: 'active', assignmentId: 'replacement-focus' },
-    classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'replacement-focus' } } } });
-  await page.getByTestId(`lock-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).waitFor();
-  assert.equal(await lock.getAttribute('aria-busy'), 'false');
-  assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
-  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
-  assert.equal(posts.length, 1, 'status reconciliation never automatically chooses another tab');
+  const lock = page.getByTestId('button-lock-toggle-' + STUDENT_ID);
+  assert.equal(await lock.isDisabled(), false);
+  await refreshFocusStudent(fixture, { ...row, activeTabUrl: 'chrome://settings' });
+  await waitUntil(async () => await lock.isDisabled(), 'browser internal pages cannot start Focus');
+  assert.equal(posts.length, 0);
+  await refreshFocusStudent(fixture, row);
+  await waitUntil(async () => !(await lock.isDisabled()), 'a current HTTP page admits website Focus');
+  await page.route('**/api/classpilot/commands/focus-*/status?*', route => route.fulfill({ json: {
+    command: { id: 'focus-1', ...posts[0], targets: [{ studentId: STUDENT_ID, status: 'failed', errorMessage: 'Browser unavailable' }] },
+  } }));
+  await lock.click(); await waitUntil(() => posts.length === 1, 'website Focus sends without exact-tab capability');
+  assert.equal(posts[0].commandType, 'lock-screen');
+  await page.clock.runFor(1000);
+  await page.getByTestId('lock-operation-error-' + STUDENT_ID).getByText(/Browser unavailable/).waitFor();
+  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked');
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('tile lock: a late Manage Tabs HTTP response cannot restore ended Focus or revive its pending state', { timeout: 60_000 }, async context => {
-  const fixture = await focusBrowserFixture(context);
+test('unified Focus: one Stop releases both stored lock types while Flight Path stays visible', { timeout: 60_000 }, async context => {
+  const fixture = await focusBrowserFixture(context, { screenLocked: true,
+    flightPathActive: true, activeFlightPathName: 'Research destinations',
+    focus: { state: 'active', assignmentId: 'retired-tab' },
+    classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'retired-tab' }, screenLock: { active: true } } } });
   const { page, harness, row, posts } = fixture;
-  let finishResponse;
-  const responseGate = new Promise(resolve => { finishResponse = resolve; });
-  context.after(() => finishResponse());
-  await page.route('**/api/commands', async route => {
-    const body = route.request().postDataJSON();
-    posts.push(body);
-    await responseGate;
-    await route.fulfill({ json: { command: { id: 'focus-1', ...body, schoolId: SCHOOL_ID,
-      targets: [{ studentId: STUDENT_ID, status: 'received' }] } } });
-  });
-  await page.getByTestId('button-focus-tab-opaque-first').click();
-  await waitUntil(() => posts.length === 1, 'Hold the original Focus HTTP response while authoritative lifecycle changes');
-  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
-
-  await refreshFocusStudent(fixture, { ...row, focus: { state: 'active', assignmentId: 'brief-focus' } });
-  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus confirmed', { exact: true }).waitFor();
-  assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
-  await refreshFocusStudent(fixture, { ...row, focus: { state: 'inactive' } });
-  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('No Focus confirmed', { exact: true }).waitFor();
-  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked',
-    'observed inactive lifecycle retires the earlier provisional Focus even without a desired snapshot');
-
-  finishResponse();
-  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
-  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked', 'late HTTP acceptance cannot resurrect ended Focus');
-  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false',
-    'late HTTP acceptance cannot revive an already retired lifecycle wait', 5000);
-  assert.equal(await lock.getAttribute('aria-label'), 'Focus current tab');
-  assert.equal(await page.getByTestId(`lock-spinner-${STUDENT_ID}`).count(), 0);
+  assert.equal(await page.getByTestId('button-stop-focus-targets').count(), 0);
+  assert.equal(await page.getByTestId('button-stop-focus-' + STUDENT_ID).count(), 0);
   await page.getByTestId('button-close-tabs-dialog').click();
+  const lock = page.getByTestId('button-lock-toggle-' + STUDENT_ID);
+  let completed = false;
+  await page.route('**/api/classpilot/commands/focus-*/status?*', route => route.fulfill({ json: {
+    command: { id: 'focus-1', ...posts[0], targets: [{ studentId: STUDENT_ID, status: completed ? 'completed' : 'received' }] },
+  } }));
+  assert.equal(await lock.getAttribute('aria-label'), 'Stop Focus');
+  await lock.click(); await waitUntil(() => posts.length === 1, 'one Stop sends one command');
+  assert.equal(await page.getByRole('menu').count(), 0);
+  assert.deepEqual(posts[0].commandPayload, { screenOnly: true }); assert.equal(posts[0].commandType, 'unlock-screen');
+  await page.clock.runFor(1000); assert.equal(posts.length, 1); assert.equal(await lock.getAttribute('data-lock-state'), 'locked');
+  completed = true;
+  await refreshFocusStudent(fixture, { ...row, screenLocked: false, focus: { state: 'inactive' },
+    classroomState: { revision: 3, restrictions: { focus: { active: false }, screenLock: { active: false }, flightPath: { active: true } } } });
   await page.clock.runFor(1000);
+  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'release requires browser confirmation');
   assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked');
-  assert.equal(await lock.getAttribute('aria-busy'), 'false');
-  assert.equal(posts.length, 1, 'late response handling cannot create a replacement Focus');
-  assert.deepEqual(harness.pageErrors, []);
-});
-
-test('tile lock: Stop Both sends sequential scoped cleanup and retains Waypoint until its own confirmation', { timeout: 60_000 }, async context => {
-  const fixture = await focusBrowserFixture(context, {
-    acceptedCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true, closeTabsExactV2: true, screenOnlyUnlockV1: true },
-    screenLocked: true, focus: { state: 'active', assignmentId: 'both-focus' },
-    classroomState: { revision: 2, restrictions: { focus: { active: true, assignmentId: 'both-focus' }, screenLock: { active: true } } },
-  });
-  const { page, harness, row, posts } = fixture;
-  await page.getByTestId('button-close-tabs-dialog').click();
-  const lock = page.getByTestId(`button-lock-toggle-${STUDENT_ID}`);
-  let focusStopped = false, waypointCleared = false;
-  await page.route('**/api/classpilot/commands/focus-*/status?*', async route => {
-    const index = Number(new URL(route.request().url()).pathname.match(/focus-(\d+)\/status$/)[1]) - 1;
-    await route.fulfill({ json: { command: { id: `focus-${index + 1}`, ...posts[index], targets: [{ studentId: STUDENT_ID,
-      status: (index === 0 ? focusStopped : waypointCleared) ? 'completed' : 'received' }] } } });
-  });
-  assert.equal(await lock.getAttribute('aria-label'), 'Manage Focus and Waypoint');
-  await lock.click();
-  await page.getByTestId(`lock-action-stop-both-${STUDENT_ID}`).click();
-  await waitUntil(() => posts.length === 1, 'Stop Both starts only Stop Focus');
-  await page.clock.runFor(1000);
-  assert.equal(posts.length, 1, 'a received Focus command does not dispatch Waypoint clearing concurrently');
-  assert.equal(await lock.getAttribute('aria-busy'), 'true');
-
-  focusStopped = true;
-  await refreshFocusStudent(fixture, { ...row, focus: { state: 'none' },
-    classroomState: { revision: 3, restrictions: { focus: { active: false }, screenLock: { active: true } } } });
-  await page.clock.runFor(1000);
-  await waitUntil(() => posts.length === 2, 'Stop Focus completion admits the explicit screen-only unlock');
-  assert.deepEqual(posts.map(({ commandType, commandPayload, targetScope, targetStudentIds, teachingSessionId }) =>
-    ({ commandType, commandPayload, targetScope, targetStudentIds, teachingSessionId })), [
-    { commandType: 'stop-focus', commandPayload: {}, targetScope: 'students', targetStudentIds: [STUDENT_ID], teachingSessionId: OWN_SESSION_ID },
-    { commandType: 'unlock-screen', commandPayload: { screenOnly: true }, targetScope: 'students', targetStudentIds: [STUDENT_ID], teachingSessionId: OWN_SESSION_ID },
-  ]);
-  assert.equal(await lock.getAttribute('data-lock-state'), 'locked', 'Waypoint keeps the padlock closed while its confirmation is pending');
-  assert.equal(await lock.getAttribute('aria-busy'), 'true');
-  waypointCleared = true;
-  await refreshFocusStudent(fixture, { ...row, screenLocked: false, focus: { state: 'none' },
-    classroomState: { revision: 4, restrictions: { focus: { active: false }, screenLock: { active: false } } } });
-  await page.clock.runFor(1000);
-  await waitUntil(async () => await lock.getAttribute('aria-busy') === 'false', 'Waypoint confirmation ends Stop Both');
-  assert.equal(await lock.getAttribute('data-lock-state'), 'unlocked');
-  assert.equal(await lock.getAttribute('aria-label'), 'Focus current tab');
-  assert.deepEqual(harness.pageErrors, []);
+  await page.getByTestId('badge-scene-' + STUDENT_ID).getByText('Research destinations').waitFor();
+  assert.equal(posts.length, 1); assert.deepEqual(harness.pageErrors, []);
 });
 
 test('automatic Flight Path turns off the entire owned session, preserves selection, and stays off after refresh', { timeout: 90_000 }, async context => {
@@ -4963,7 +4880,7 @@ test('Classroom picker uses the current Dashboard authority and explicit student
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Focus controls bind duplicate URLs to the selected opaque tab and keep received pending until completion', { timeout: 60_000 }, async context => {
+test('Bring Forward bind duplicate URLs to the selected opaque tab and keep received pending until completion', { timeout: 60_000 }, async context => {
   const { page, harness, posts } = await focusBrowserFixture(context);
   assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-first`).getByText('Active', { exact: true }).count(), 1);
   assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-second`).getByText('Active', { exact: true }).count(), 0);
@@ -4971,15 +4888,15 @@ test('Focus controls bind duplicate URLs to the selected opaque tab and keep rec
     mkdirSync(process.env.FOCUS_UI_QA_DIR, { recursive: true });
     await page.screenshot({ path: path.join(process.env.FOCUS_UI_QA_DIR, 'focus-desktop.png'), fullPage: true });
   }
-  await page.getByTestId('button-focus-tab-opaque-second').click();
-  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
+  await page.getByTestId('button-bring-forward-opaque-second').click();
+  await page.getByTestId(`tab-result-${STUDENT_ID}`).getByText(/received/).waitFor();
   assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
-    commandType: 'focus-tab', commandPayload: { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-second', observedRevision: 7 }] } });
-  await page.getByTestId('focus-command-results').getByText('Focus: awaiting confirmation', { exact: true }).waitFor();
+    commandType: 'activate-tab', commandPayload: { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-second', observedRevision: 7 }] } });
+  await page.getByTestId('tab-command-results').getByText('Bring Forward: awaiting confirmation', { exact: true }).waitFor();
   await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
-    command: { id: 'focus-1', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+    command: { id: 'focus-1', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'activate-tab',
       targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
-  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  await page.getByTestId(`tab-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
   await page.getByTestId('button-bring-forward-opaque-first').click();
   await waitUntil(() => posts.length === 2, 'Bring Forward must post its selected exact target');
   assert.equal(posts[1].commandType, 'activate-tab');
@@ -4987,20 +4904,16 @@ test('Focus controls bind duplicate URLs to the selected opaque tab and keep rec
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Focus controls reject advertised but withdrawn capability and preserve exact Stop cleanup', { timeout: 60_000 }, async context => {
+test('Bring Forward rejects advertised but withdrawn capability without exposing old Focus actions', { timeout: 60_000 }, async context => {
   const { page, harness, posts } = await focusBrowserFixture(context, {
-    acceptedCapabilities: {}, extensionCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true },
-    focus: { state: 'suspended', assignmentId: 'prior-focus', reason: 'authentication' } });
-  assert.equal(await page.getByTestId('button-focus-tab-opaque-first').isDisabled(), true);
+    acceptedCapabilities: {}, extensionCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true } });
   assert.equal(await page.getByTestId('button-bring-forward-opaque-first').isDisabled(), true);
-  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus paused for sign-in', { exact: true }).waitFor();
-  await page.getByTestId(`button-stop-focus-${STUDENT_ID}`).click();
-  await waitUntil(() => posts.length === 1, 'Stop Focus remains an explicit cleanup request');
-  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID], commandType: 'stop-focus', commandPayload: {} });
-  assert.deepEqual(harness.pageErrors, []);
+  assert.equal(await page.getByTestId('button-focus-tab-opaque-first').count(), 0);
+  assert.equal(await page.getByTestId('button-stop-focus-' + STUDENT_ID).count(), 0);
+  assert.deepEqual(posts, []); assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Focus controls retain a completed acknowledgement that arrives before the HTTP creation response', { timeout: 60_000 }, async context => {
+test('Bring Forward retain a completed acknowledgement that arrives before the HTTP creation response', { timeout: 60_000 }, async context => {
   const { page, harness } = await focusBrowserFixture(context);
   let finishResponse;
   let started = false;
@@ -5012,49 +4925,34 @@ test('Focus controls retain a completed acknowledgement that arrives before the 
     await route.fulfill({ json: { command: { id: 'early-ack', ...body,
       targets: [{ studentId: STUDENT_ID, status: 'pending' }] } } });
   });
-  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await page.getByTestId('button-bring-forward-opaque-first').click();
   await waitUntil(() => started, 'Hold the HTTP response after creating the command');
   await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
-    command: { id: 'early-ack', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+    command: { id: 'early-ack', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'activate-tab',
       targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
   finishResponse();
-  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
-  await page.getByTestId('focus-command-results').getByText('Focus: device confirmation received', { exact: true }).waitFor();
+  await page.getByTestId(`tab-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  await page.getByTestId('tab-command-results').getByText('Bring Forward: device confirmation received', { exact: true }).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Focus cleanup includes offline assigned students without a missing-target broadcast', { timeout: 60_000 }, async context => {
-  const { page, harness, posts } = await focusBrowserFixture(context);
+test('unified Focus: toolbar Stop freezes selected students and survives lost monitoring', { timeout: 60_000 }, async context => {
+  const fixture = await focusBrowserFixture(context, { screenLocked: true });
+  const { page, harness, row, posts } = fixture;
   await page.getByTestId('button-close-tabs-dialog').click();
-  // Current-authority roster updates can withdraw telemetry while saved Focus
-  // still requires cleanup. Query the actual Dashboard through its cache.
-  await page.evaluate(async ({ studentId }) => {
-    const { queryClient } = await import('/src/lib/queryClient.js');
-    for (const query of queryClient.getQueryCache().getAll()) {
-      if (!String(query.queryKey[0]).includes('aggregated')) continue;
-      queryClient.setQueryData(query.queryKey, previous => {
-        if (!previous) return previous;
-        const rows = Array.isArray(previous) ? previous : previous.students;
-        if (!Array.isArray(rows)) return previous;
-        const next = rows.map(row => row.studentId === studentId ? { ...row, status: 'offline', isLoggedIn: false,
-          loginState: 'not_logged_in', lastSeenAt: null, realtimeObservedAt: null, monitoringState: 'not_expected' } : row);
-        return Array.isArray(previous) ? next : { ...previous, students: next };
-      });
-    }
-  }, { studentId: STUDENT_ID });
-  await page.getByTestId(`preview-unavailable-${STUDENT_ID}`).waitFor();
-  await page.getByTestId('button-stop-focus').click();
+  await page.getByTestId('checkbox-select-student-' + STUDENT_ID).click();
+  await page.getByTestId('button-unlock-screen').click();
   await page.getByTestId('dialog-stop-focus').waitFor();
   assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student']);
+  await refreshFocusStudent(fixture, { ...row, status: 'offline', realtimeObservedAt: '2026-08-25T12:00:00Z', lastSeenAt: null });
   await page.getByTestId('button-confirm-stop-focus').click();
-  await waitUntil(() => posts.length === 1, 'Offline cleanup must send its explicit student');
-  assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
-  assert.equal(posts[0].targetScope, 'students');
-  assert.deepEqual(posts[0].commandPayload, {});
+  await waitUntil(() => posts.length === 1, 'Stop retains its selected restriction when monitoring is lost');
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'unlock-screen', commandPayload: { screenOnly: true } });
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Focus controls discard a late command response after the assignment changes and fit a narrow viewport', { timeout: 60_000 }, async context => {
+test('Bring Forward discard a late command response after the assignment changes and fit a narrow viewport', { timeout: 60_000 }, async context => {
   const { page, harness } = await focusBrowserFixture(context);
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.getByTestId('dialog-tabs').evaluate(node => node.scrollWidth <= node.clientWidth), true);
@@ -5072,7 +4970,7 @@ test('Focus controls discard a late command response after the assignment change
     await route.fulfill({ json: { command: { id: 'late-focus', ...body,
       targets: [{ studentId: STUDENT_ID, status: 'completed' }] } } });
   });
-  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await page.getByTestId('button-bring-forward-opaque-first').click();
   await waitUntil(() => started, 'The original assignment command must be in flight');
   harness.setActiveSession(null);
   harness.setAllSessions([]);
@@ -5085,10 +4983,10 @@ test('Focus controls discard a late command response after the assignment change
   finishCommand();
   await page.waitForFunction(async () => {
     const { queryClient } = await import('/src/lib/queryClient.js');
-    return queryClient.getMutationCache().getAll().some(mutation => mutation.state.variables?.type === 'focus-tab'
+    return queryClient.getMutationCache().getAll().some(mutation => mutation.state.variables?.tab?.tabRef === 'opaque-first'
       && mutation.state.status === 'error');
   });
-  assert.equal(await page.getByTestId('focus-command-results').count(), 0);
+  assert.equal(await page.getByTestId('tab-command-results').count(), 0);
   assert.deepEqual(harness.pageErrors, []);
 });
 

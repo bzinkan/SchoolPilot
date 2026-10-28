@@ -69,3 +69,27 @@ test("Stop Focus refuses an incomplete exact tuple or invalid authoritative revi
     classpilotCommandAuthorityEnvelope({ teachingSessionId: "class" }));
   assert.equal(withoutRevision, null);
 });
+
+test("retired queued tab Focus is never framed while Bring Forward stays exact and one-shot", () => {
+  const payload = { commandId: "queued", tabTargets: [{ studentId: target.studentId, tabRef: "opaque-tab", observedRevision: 3 }] };
+  const delivery = { policy: "persistent_control" as const, expiresAt: now,
+    requiredCapabilities: ["focusTabV1" as const], exactBindingControlRevision: snapshot.revision };
+  const authority = classpilotCommandAuthorityEnvelope({ teachingSessionId: "class" });
+  assert.equal(classpilotCommandFrameForTarget("school", "focus-tab", "focus-tab", payload,
+    target, delivery, snapshot, authority), null);
+  assert.equal(classpilotCommandFrameForTarget("school", "open-tab", "open-tab",
+    { commandId: "queued-open", url: "https://example.org", focusAfterOpen: true },
+    target, delivery, snapshot, authority), null);
+  const retiredSnapshot = { ...snapshot, restrictions: { ...snapshot.restrictions,
+    focus: { active: true as const, assignmentId: "legacy", tabRef: "opaque-tab", observedRevision: 3,
+      targetKind: "snapshot" as const, source: "teacher" as const, setAt: now.toISOString() } } };
+  assert.equal(classpilotCommandFrameForTarget("school", "activate-tab", "activate-tab", payload,
+    target, delivery, retiredSnapshot, authority), null, "an old full snapshot must not reapply retired Focus");
+  const bringForward = classpilotCommandFrameForTarget("school", "activate-tab", "activate-tab", payload,
+    target, { ...delivery, policy: "transient_action" }, snapshot, authority);
+  assert.ok(bringForward && "command" in bringForward);
+  assert.equal(bringForward.command.type, "activate-tab");
+  assert.deepEqual(bringForward.command.data, { tabRef: "opaque-tab", observedRevision: 3 });
+  assert.deepEqual(bringForward.command.exactBinding, expectedBinding);
+  assert.equal(bringForward.classroomState?.restrictions.focus, undefined);
+});

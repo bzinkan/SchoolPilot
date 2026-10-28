@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { retireLegacyTabFocusForStudentLocked } from "./classpilotFocusRetirement.js";
 import { prepareClasspilotFocusCleanupFrame } from "./classpilotFocusCleanup.js";
 import { sendToStudentBindingLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch, type PublishWSBatchItem } from "../realtime/ws-redis.js";
@@ -92,7 +93,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
         exactTarget,
         async (transactionDb) => {
           await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
-          const [state, ssoPolicy] = await Promise.all([
+          const [storedState, ssoPolicy] = await Promise.all([
             getClasspilotStudentControlState(
               schoolId,
               studentId,
@@ -100,6 +101,8 @@ export async function syncClasspilotControlStatesToActiveDevices(
             ),
             getClasspilotSsoPolicyForSchool(schoolId, transactionDb),
           ]);
+          const state = await retireLegacyTabFocusForStudentLocked(transactionDb,
+            { schoolId, studentId, state: storedState ?? null, reason: "reconnect" });
           const lateSignInRequired = !!state
             && classpilotControlStateHasLateSignInOrigin(state.desiredState);
           const focusCleanup = await prepareClasspilotFocusCleanupFrame(transactionDb, state,

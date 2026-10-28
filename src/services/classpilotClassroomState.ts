@@ -218,7 +218,7 @@ function iso(value: unknown): string | null {
 export const CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON =
   "Unsupported client: preciseRestrictionResourcesV1 is required";
 export const CLASSPILOT_PRECISE_RESTRICTION_ENFORCEMENT_UNAVAILABLE_REASON =
-  "Extension update required for this Waypoint or Flight Path";
+  "Extension update required for this Focus or Flight Path";
 
 function carriesPreciseRestrictionKey(value: unknown, key: "resource" | "resources"): boolean {
   const source = objectValue(value);

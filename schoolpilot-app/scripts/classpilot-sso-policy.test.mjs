@@ -36,7 +36,7 @@ test("administrator SSO policy card is role-contained and uses the dedicated rev
 test("portal copy makes Clever-first and explicit destination choice clear", () => {
   assert.match(component, /Student Portal & Sign-In/);
   assert.match(component, /First portal after ClassPilot sign-in/);
-  assert.match(component, /Choose Clever to open it first while a Waypoint or Flight Path is active/);
+  assert.match(component, /Choose Clever to open it first while Focus or a Flight Path is active/);
   assert.match(component, /Completing provider sign-in does not automatically open a learning site/);
   assert.match(component, /student chooses an approved destination/);
 });

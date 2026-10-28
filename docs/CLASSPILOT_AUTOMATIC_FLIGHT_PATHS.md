@@ -32,10 +32,12 @@ available to the primary teacher when the next class starts.
 - Turning it off saves the session override and removes this assignment's
   automatic restrictions. Reconnect, late sign-in, and return from temporary
   supervision honor that decision. The next occurrence may use the saved preset.
-- Later manual Flight Path and Waypoint choices take precedence. Automatic
-  initialization and removal preserve Focus, manual restrictions, block lists,
-  and tab limits. Classroom assignments continue to open work through Open URL's
-  plain opening behavior. Stop Focus remains a separate action.
+- Later manual Flight Path and Focus choices take precedence. Automatic
+  initialization and removal preserve website/resource Focus, any remaining
+  legacy tab Focus, manual restrictions, block lists, and tab limits. Classroom
+  assignments continue to open work through Open URL's plain opening behavior.
+  Stop Focus releases Focus without stopping the automatic Flight Path;
+  Turn off for this session stops only that automatic preset.
 - Class finalization clears session-owned state. Existing scheduled and hard
   expiration deadlines also release restrictions on a disconnected Chromebook.
   An early stop cannot reach an offline browser immediately: the dashboard shows
