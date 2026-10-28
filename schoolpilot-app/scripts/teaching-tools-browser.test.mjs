@@ -54,7 +54,7 @@ const PRECISE_VIDEO = {
   resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
 };
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false, library = [], theme = null } = {}) {
+async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false, themes = true, uploads = false, locked = false, library = [], theme = null, automaticPrimaryTeacherId = 'teacher-a', automaticLibrary = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6, dashboardTheme: theme, dashboardThemeAssets: library, dashboardThemeLibraryLimit: 5, effectiveDashboardTheme: null, schoolTheme: null, schoolCalendar: { autoCalendar: true, holidays: ['halloween', 'thanksgiving', 'valentines', 'st-patricks'], leadDays: 10, starts: {}, signInGateTheme: true }, dashboardThemesEnabled: themes, dashboardThemeUploadsEnabled: uploads, dashboardThemeLocked: locked, schoolDashboardTheme: locked ? { kind: 'preset', preset: 'christmas' } : null, dashboardThemeAsset: null }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
@@ -105,12 +105,26 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
       return route.fulfill({ json: schoolId === 'school-b' ? { schoolId, revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 3, effectiveMaxTabsPerStudent: 3 } : { schoolId, ...state.preference } });
     }
     if (url.pathname.endsWith('/admin/settings')) return route.fulfill({ json: { schoolId, sections: { rosterGrades: { version: state.gradeVersion, gradeLevels: state.gradeLevels } }, schoolName: 'Cedar Grove' } });
+    if (url.pathname.endsWith('/automatic-flight-path')) {
+      state.automaticPolicy ||= { schemaVersion: 1, revision: 0, enabled: false, flightPathId: null, updatedBy: null };
+      if (req.method() === 'PATCH') {
+        if (state.automaticConflict) { state.automaticConflict = false; state.automaticPolicy = { ...state.automaticPolicy, revision: 2 }; return route.fulfill({ status: 409, json: { error: 'Class preset changed elsewhere.' } }); }
+        state.automaticPolicy = { ...state.automaticPolicy, revision: body.expectedRevision + 1, enabled: body.enabled, flightPathId: body.flightPathId, updatedBy: 'teacher-a' };
+      }
+      return route.fulfill({ json: { policy: state.automaticPolicy, canManage: !state.coTeacher, eligible: state.automaticEligible ?? url.pathname.includes('/official-a/'),
+        reasonCode: 'AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED', flightPath: state.automaticPolicy.flightPathId ? { id: state.automaticPolicy.flightPathId, flightPathName: state.automaticPolicy.flightPathId === 'primary-private' ? 'Primary teacher preset' : 'Research destinations' } : null } });
+    }
     if (url.pathname.endsWith('/admin/settings/rosterGrades')) {
       if (state.holdSave) await new Promise(resolve => { state.releaseSave = resolve; });
       if (state.gradeConflict) { state.gradeConflict = false; state.gradeVersion = 'grades-v2'; state.gradeLevels = ['5','6']; return route.fulfill({ status: 409, json: { code: 'CLASSPILOT_SETTINGS_CONFLICT', current: { version: state.gradeVersion, gradeLevels: state.gradeLevels } } }); }
       state.gradeVersion = 'grades-v3'; state.gradeLevels = body.gradeLevels;
       return route.fulfill({ json: { schoolId, version: state.gradeVersion, gradeLevels: state.gradeLevels } });
     }
+    if (url.pathname.endsWith('/flight-paths') && automaticLibrary) return route.fulfill({ json: {
+      flightPaths: [{ id: 'flight-a', flightPathName: 'My private destinations', allowedDomains: ['private.example.test'] }],
+      library: [{ id: 'shared-flight', flightPathName: 'Shared science', allowedDomains: ['science.example.test'], visibility: 'school' }],
+      features: { sharedTeachingResources: true },
+    } });
     if (url.pathname.endsWith('/flight-paths')) return route.fulfill({ json: state.precise
       ? {
           flightPaths: [{ id: 'flight-a', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'], resources: [PRECISE_VIDEO] }],
@@ -118,7 +132,7 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
         }
       : { flightPaths: [{ id: 'flight-a', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'] }] } });
     if (url.pathname.endsWith('/block-lists')) return route.fulfill({ json: { blockLists: [{ id: 'block-a', name: 'Independent work', blockedDomains: ['games.example.test'] }] } });
-    if (url.pathname.endsWith('/teacher/groups')) return route.fulfill({ json: { groups: [...(state.groupsRevoked ? [] : [{ id: 'own-a', name: 'My Science', teacherId: 'teacher-a', groupType: 'teacher_group' }]), { id: 'official-a', name: 'Official Biology', teacherId: 'teacher-a', groupType: 'admin_class' }] } });
+    if (url.pathname.endsWith('/teacher/groups')) return route.fulfill({ json: { groups: [...(state.groupsRevoked ? [] : [{ id: 'own-a', name: 'My Science', teacherId: 'teacher-a', groupType: 'teacher_group' }]), { id: 'official-a', name: 'Official Biology', teacherId: automaticPrimaryTeacherId, groupType: 'admin_class' }] } });
     if (url.pathname.endsWith('/subgroups')) { if (req.method() === 'POST' && state.holdClassSave) await new Promise(resolve => { state.releaseClassSave = resolve; }); return route.fulfill({ json: { subgroups: [] } }); }
     if (url.pathname.endsWith('/students')) return route.fulfill({ json: [] });
     if (url.pathname.endsWith('/users/teachers')) return route.fulfill({ json: { teachers: [{ userId: 'teacher-b', role: 'teacher', user: { firstName: 'Morgan', lastName: 'Reed' } }] } });
@@ -535,6 +549,109 @@ test('Manage Tabs honors resolved unlimited and cleanup distinguishes scoped too
   assert.equal(teachingToolsQuery({ queryKey: ['/api/groups','class-a','students'] }), false);
   assert.equal(teachingToolsQuery({ queryKey: ['/api/groups','class-a','students','school-a','teacher-a'] }), true);
   assert.equal(teachingToolsQuery({ queryKey: ['/api/flight-paths'] }), false);
+});
+
+test('automatic class preset starts off, saves the selected class version for next session, and persists after reload', async () => {
+  const route = '/classpilot/my-settings?section=classes&classId=official-a';
+  const { page, state } = await open({ route });
+  try {
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Off', exact: true }).waitFor();
+    assert.equal(await card.getByRole('radio', { name: 'Off', exact: true }).isChecked(), true);
+    assert.deepEqual(writes(state), []);
+    await card.getByRole('radio', { name: 'Use a saved Flight Path' }).check();
+    await card.getByLabel('Saved Flight Path', { exact: true }).selectOption('flight-a');
+    await card.getByLabel('Automatic Flight Path allowed scope').getByText(/science.example.test/).waitFor();
+    await card.getByRole('button', { name: 'Save class preset' }).click();
+    await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
+    assert.deepEqual(writes(state).map(({ path, schoolId, body }) => ({ path, schoolId, body })), [{ path: '/api/groups/official-a/automatic-flight-path', schoolId: 'school-a', body: { expectedRevision: 0, enabled: true, flightPathId: 'flight-a' } }]);
+    await page.goto(`${base}/__teaching_tools?${new URLSearchParams({ route })}`);
+    await card.getByRole('radio', { name: 'Use a saved Flight Path' }).waitFor();
+    assert.equal(await card.getByRole('radio', { name: 'Use a saved Flight Path' }).isChecked(), true);
+    assert.equal(await card.getByLabel('Saved Flight Path', { exact: true }).inputValue(), 'flight-a');
+    if (process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR) { await mkdir(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, { recursive: true }); await page.screenshot({ path: path.join(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, 'automatic-flight-path-setup-desktop.png'), fullPage: true }); }
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    if (process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR) await page.screenshot({ path: path.join(process.env.AUTOMATIC_FLIGHT_PATH_QA_DIR, 'automatic-flight-path-setup-mobile.png'), fullPage: true });
+    assert.equal(state.requests.some(row => row.path.includes('/commands')), false);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('automatic preset conflicts retain drafts; co-teachers see the saved name without write controls', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a' });
+  try {
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Use a saved Flight Path' }).check();
+    await card.getByLabel('Saved Flight Path', { exact: true }).selectOption('flight-a');
+    await page.getByTestId('select-teaching-class').click();
+    await page.getByRole('option', { name: 'My Science', exact: true }).click();
+    await page.getByRole('alertdialog').getByText('Leave with unsaved changes?').waitFor();
+    await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    assert.equal(new URL(page.url()).searchParams.get('classId'), 'official-a');
+    assert.equal(await card.getByLabel('Saved Flight Path', { exact: true }).inputValue(), 'flight-a');
+    state.automaticConflict = true;
+    await card.getByRole('button', { name: 'Save class preset' }).click();
+    await card.getByText(/This class preset changed elsewhere/).waitFor();
+    assert.equal(await card.getByLabel('Saved Flight Path', { exact: true }).inputValue(), 'flight-a');
+    assert.equal(await card.getByRole('button', { name: 'Save class preset' }).isDisabled(), true);
+    await card.getByRole('button', { name: 'Reload saved preset' }).click();
+    await card.getByRole('radio', { name: 'Off', exact: true }).waitFor();
+    state.coTeacher = true;
+    state.automaticPolicy = { ...state.automaticPolicy, enabled: true, flightPathId: 'private-other-teacher' };
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/groups','official-a','automatic-flight-path'] }));
+    await card.getByText('On · Research destinations').waitFor();
+    assert.equal(await card.getByRole('button', { name: 'Save class preset' }).count(), 0);
+    assert.equal(await card.getByRole('radio').count(), 0);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('automatic class preset lets a non-primary administrator choose shared paths while preserving the approved private name', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a', role: 'school_admin', automaticPrimaryTeacherId: 'teacher-b', automaticLibrary: true });
+  try {
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Off', exact: true }).waitFor();
+    state.automaticPolicy = { schemaVersion: 1, revision: 0, enabled: true, flightPathId: 'primary-private' };
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/groups','official-a','automatic-flight-path'] }));
+    const choice = card.getByLabel('Saved Flight Path', { exact: true });
+    await choice.waitFor();
+    await card.getByText('For another teacher’s class, choose a shared school Flight Path.').waitFor();
+    assert.equal(await choice.locator('option[value="flight-a"]').count(), 0, 'administrator personal paths must not be offered for another teacher');
+    assert.equal(await choice.locator('option[value="primary-private"]').isDisabled(), true);
+    assert.equal(await choice.locator('option[value="primary-private"]').innerText(), 'Primary teacher preset');
+    await choice.selectOption('shared-flight');
+    await card.getByRole('button', { name: 'Save class preset' }).click();
+    await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
+    assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, enabled: true, flightPathId: 'shared-flight' }]);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('automatic class preset can be disabled after its schedule is removed without enabling or choosing another path', async () => {
+  const { page, state } = await open({ route: '/classpilot/my-settings?section=classes&classId=official-a' });
+  try {
+    const card = page.getByTestId('card-automatic-flight-path');
+    await card.getByRole('radio', { name: 'Off', exact: true }).waitFor();
+    state.automaticPolicy = { schemaVersion: 1, revision: 3, enabled: true, flightPathId: 'flight-a' };
+    state.automaticEligible = false;
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/groups','official-a','automatic-flight-path'] }));
+    await card.getByText('Choose a teaching class with an active class schedule.').waitFor();
+    assert.equal(await card.getByRole('radio', { name: 'Use a saved Flight Path' }).isDisabled(), true);
+    assert.equal(await card.getByLabel('Saved Flight Path', { exact: true }).isDisabled(), true);
+    await card.getByRole('radio', { name: 'Off', exact: true }).check();
+    await card.getByRole('button', { name: 'Save class preset' }).click();
+    await card.getByText('Class preset saved. It takes effect at the next scheduled session.').waitFor();
+    assert.deepEqual(writes(state).map(({ path, body }) => ({ path, body })), [{ path: '/api/groups/official-a/automatic-flight-path', body: { expectedRevision: 3, enabled: false, flightPathId: null } }]);
+    assert.equal(await card.getByRole('radio').count(), 0, 'an unconfigured ineligible class offers no enable controls');
+    state.coTeacher = true;
+    state.automaticPolicy = { schemaVersion: 1, revision: 5, enabled: true, flightPathId: 'flight-a' };
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/groups','official-a','automatic-flight-path'] }));
+    await card.getByText('On · Research destinations').waitFor();
+    assert.equal(await card.getByRole('button', { name: 'Save class preset' }).count(), 0);
+    assert.equal(await card.getByRole('radio').count(), 0);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
 });
 
 test('Appearance saves a personal dashboard theme through the preference writer and hides choices when themes are off', async () => {

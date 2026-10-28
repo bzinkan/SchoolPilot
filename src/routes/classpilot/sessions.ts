@@ -7,9 +7,11 @@ import { requireClasspilotEntitlement } from "../../middleware/requireClasspilot
 import {
   getActiveClassOwnersForStudents,
   getActiveSessionByStudent,
+  getActiveSessionsForStudents,
   getActiveSupervisionForStudents,
   getActiveTeachingSessionForSchool,
   getClasspilotSessionStudents,
+  getClasspilotSessionStudentRoster,
   getTeachingSessionByIdAndSchool,
   getSessionSettings,
   getGroupByIdAndSchool,
@@ -39,6 +41,11 @@ import { localDateTimeUtc } from "../../util/schoolTime.js";
 import { updateAndFanoutSessionFabSettings } from "../../services/classpilotFab.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { isScheduledClassStaff } from "../../services/classpilotScheduledStaff.js";
+import { summarizeAutomaticFlightPathSession } from "../../services/classpilotAutomaticFlightPathStatus.js";
+import { normalizeAutomaticFlightPathState } from "../../services/classpilotAutomaticFlightPath.js";
+import { db } from "../../db.js";
+import { and, eq, inArray } from "drizzle-orm";
+import { classpilotStudentControlStates } from "../../schema/classpilot.js";
 
 const router = Router();
 
@@ -52,6 +59,37 @@ const auth = [
   requireClasspilotEntitlement,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
+
+router.get("/:id/automatic-flight-path", ...auth, async (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const schoolId = res.locals.schoolId!;
+    const session = await getTeachingSessionByIdAndSchool(param(req, "id"), schoolId);
+    if (!session) return res.status(404).json({ error: "Class session not found" });
+    const staff = await isAuthorizedClasspilotSessionStaff(schoolId, session.id, req.authUser!.id);
+    if (!staff && !requestHasAnySchoolRole(req, res, ["admin", "school_admin"])) {
+      return res.status(404).json({ error: "Class session not found" });
+    }
+    const state = normalizeAutomaticFlightPathState(session.automaticFlightPathState);
+    if (state.status === "inactive") return res.json({
+      ...summarizeAutomaticFlightPathSession({ session, studentIds: [], controls: [], activeSessions: [] }),
+      canStop: false,
+    });
+    const roster = await getClasspilotSessionStudentRoster(schoolId, session.id);
+    const studentIds = roster.map(student => student.studentId);
+    const controls = studentIds.length ? await db.select().from(classpilotStudentControlStates).where(and(
+      eq(classpilotStudentControlStates.schoolId, schoolId),
+      eq(classpilotStudentControlStates.teachingSessionId, session.id),
+      inArray(classpilotStudentControlStates.studentId, studentIds),
+    )) : [];
+    const activeSessions = await getActiveSessionsForStudents(schoolId, studentIds);
+    return res.json({
+      ...summarizeAutomaticFlightPathSession({ session, studentIds, controls, activeSessions }),
+      canStop: staff && !session.endTime && session.sessionMode === "live" && state.status === "active"
+        && !!session.scheduledEndAt && session.scheduledEndAt > new Date(),
+    });
+  } catch (error) { next(error); }
+});
 
 function displayName(user: any): string {
   return user?.displayName || [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || user?.email || "Unknown teacher";

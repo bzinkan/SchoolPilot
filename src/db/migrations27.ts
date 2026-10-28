@@ -397,6 +397,18 @@ ALTER TABLE schools
   ADD COLUMN IF NOT EXISTS staff_password_login_enabled BOOLEAN NOT NULL DEFAULT true;
 `;
 
+// Additive columns on existing tenant tables; no RLS inventory expansion.
+export const CLASSPILOT_AUTOMATIC_FLIGHT_PATH_SQL = `
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS automatic_flight_path_policy JSONB;
+ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS automatic_flight_path_state JSONB;
+`;
+export const classpilotAutomaticFlightPathMigration: SchoolPilotMigration = {
+  id: "20261027_classpilot_automatic_flight_path",
+  checksum: createHash("sha256").update(CLASSPILOT_AUTOMATIC_FLIGHT_PATH_SQL).digest("hex"),
+  mode: "transactional",
+  apply: async (connection) => { await connection.query(CLASSPILOT_AUTOMATIC_FLIGHT_PATH_SQL); },
+};
+
 export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   {
     id: "20260822_classpilot_2_7_expand",
@@ -547,6 +559,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotDashboardAppearanceMigration,
   classpilotDashboardThemeLibraryMigration,
   classpilotNativeVisibilityMigration,
+  classpilotAutomaticFlightPathMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

@@ -296,6 +296,7 @@ export const groups = pgTable(
     blockEndTime: text("block_end_time"),     // HH:MM 24h format, e.g. "10:55"
     scheduleSkippedDate: text("schedule_skipped_date"), // YYYY-MM-DD, set when teacher manually ends early
     scheduleRule: jsonb("schedule_rule").$type<import("../services/classpilotSchedulingRules.js").ClasspilotScheduleRule>(),
+    automaticFlightPathPolicy: jsonb("automatic_flight_path_policy").$type<import("../services/classpilotAutomaticFlightPath.js").AutomaticFlightPathPolicy>(),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
@@ -582,6 +583,7 @@ export const teachingSessions = pgTable(
     schoolId: text("school_id"),
     startTime: timestamp("start_time").notNull().default(sql`now()`),
     controlUpdatedAt: timestamp("control_updated_at"),
+    automaticFlightPathState: jsonb("automatic_flight_path_state").$type<import("../services/classpilotAutomaticFlightPath.js").AutomaticFlightPathState>(),
     sessionMode: text("session_mode").notNull().default("live"),
     scheduledConflictId: text("scheduled_conflict_id"),
     // Frozen occurrence metadata. These fields are populated together for an

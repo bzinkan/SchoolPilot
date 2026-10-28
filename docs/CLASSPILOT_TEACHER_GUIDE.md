@@ -17,11 +17,12 @@ Prepare, start, guide, monitor, and wrap up an exact-authority ClassPilot class.
 Check the roster, choose a class, and set up the tools you expect to use before the bell.
 
 1. **Review your assigned classes.** Confirm the class and students you expect to teach. Ask an administrator to correct official class membership or teacher assignments.
-2. **Build reusable tools.** In Teaching tools, Website tools contains your personal Flight Paths and Block Lists. They stay private to you unless you choose Share with school. From Classroom uses your own Google Classroom resources to create a Flight Path. Apply a Flight Path or Block List explicitly from the Dashboard when ready.
+2. **Build reusable tools.** In Teaching tools, Website tools contains your personal Flight Paths and Block Lists. They stay private to you unless you choose Share with school. From Classroom uses your own Google Classroom resources to create a saved Flight Path. Apply a saved tool from the Dashboard when ready, or choose an optional automatic Flight Path in Class setup.
 3. **Use the School Library.** When the School Library is available for your school, Website tools also lists the Flight Paths and Block Lists colleagues shared and the Official items administrators maintain. Apply one from the Dashboard as it is, or choose Copy to make a private version you can edit. Only administrators can change an Official item.
-4. **Organize a class.** Open Class tools and select a class once to manage its subgroups and co-teachers. Official class assignments remain administrator-managed; only the owner of a personal class can change its co-teachers.
-5. **Choose classroom defaults.** Choose Use school default or a custom tab limit from 1 to 100. Save classroom defaults changes only your preference in this school and sends no student commands. Manage Tabs starts with your personal limit, then the school default, then unlimited; apply the limit explicitly during class.
-6. **Check today’s schedule.** If your school permits one-day schedule changes, review requests and approved changes before class begins.
+4. **Organize a class.** Open Class setup in Teaching tools and select a class once to manage its subgroups, co-teachers, and automatic Flight Path. Official class assignments remain administrator-managed; only the owner of a personal class can change its co-teachers.
+5. **Choose an optional class preset.** Automatic Flight Path is Off by default. The primary teacher or a school administrator can choose a saved Flight Path, review its allowed scope, and select Save class preset. One preset is shared by all teachers of this scheduled class; co-teachers can view it. For another teacher’s class, administrators choose a shared school Flight Path. Saving applies to future scheduled sessions; the current session keeps its controls.
+6. **Choose classroom defaults.** Choose Use school default or a custom tab limit from 1 to 100. Save classroom defaults changes only your preference in this school and sends no student commands. Manage Tabs starts with your personal limit, then the school default, then unlimited; apply the limit explicitly during class.
+7. **Check today’s schedule.** If your school permits one-day schedule changes, review requests and approved changes before class begins.
 
 > **Flight note:** Use clear names such as “Period 2 Research” so the right tool is easy to find during class.
 
@@ -119,9 +120,10 @@ ClassPilot never turns a missing target into a class-wide action.
 Send learning resources and close the exact tabs shown for a student.
 
 1. **Open a resource.** Select the intended students, choose Open URL, and verify the address before sending.
-2. **Inspect current tabs.** Use Manage Tabs to review the current tab inventory for each selected student.
-3. **Close exact rows.** Choose the specific tab rows to close, or use Close All when that is truly intended. Duplicate addresses remain separate tabs.
-4. **Use tab limits carefully.** A tab limit manages tab count but preserves the last usable destination and an active school-approved sign-in flow.
+2. **Open a Classroom assignment.** Choose Classroom assignments, select the course, assignment or material, and link, then select Open assignment. It opens only the chosen link in a new tab, like Open URL. Existing browsing restrictions still apply. Use the Dashboard controls afterward if you want to set Focus or a Waypoint.
+3. **Inspect current tabs.** Use Manage Tabs to review the current tab inventory for each selected student.
+4. **Close exact rows.** Choose the specific tab rows to close, or use Close All when that is truly intended. Duplicate addresses remain separate tabs.
+5. **Use tab limits carefully.** A tab limit manages tab count but preserves the last usable destination and an active school-approved sign-in flow.
 
 [Open Dashboard](/classpilot)
 
@@ -135,7 +137,8 @@ A Waypoint holds students on one destination site; a Flight Path confines browsi
 2. **Account for signed-out students.** A saved destination can wait for eligible signed-out students. A Current Page Waypoint cannot resolve a signed-out student’s page, so those students are skipped and counted.
 3. **Start from the Student Portal.** When the school enables the Student Portal, students signing into ClassPilot with an active restriction start at the school’s selected portal, such as Clever. They choose a teacher-approved destination there. Finishing provider sign-in does not automatically open a learning site, and other sites remain blocked.
 4. **Allow school-approved sign-in.** If a chosen destination needs an approved provider such as Clever or Google Accounts, the student can complete that sign-in while the Waypoint or Flight Path remains active. An identity-provider callback does not trigger an automatic jump to a learning site.
-5. **Remove the right control.** Unlock removes a Waypoint screen lock without silently deleting an active Flight Path. Remove Flight Path is a separate action.
+5. **Check an automatic class preset.** When a scheduled class uses an automatic Flight Path, its status appears above the student tiles. Review the applied, pending, failed, and unavailable counts and each tile’s badge. Turn off for this session stops that automatic preset for the entire named class session, regardless of selected students. It stays off after refresh and resumes next scheduled class if the preset remains enabled. Manual teacher overrides are preserved.
+6. **Remove the right control.** Unlock removes a Waypoint screen lock without silently deleting an active Flight Path. Remove Flight Path is a separate action.
 
 > **Check before continuing:** The portal remains available while the restriction is active. An identity-provider page is for sign-in, not proof that the student reached the assigned learning destination.
 

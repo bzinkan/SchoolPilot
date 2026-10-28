@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type RequestHandler } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -42,14 +42,27 @@ import { getScheduledClassroomTransientState } from "../../services/classpilotSc
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "../../db.js";
 import { classpilotClassroomStates, classpilotCommands, classpilotCommandTargets } from "../../schema/classpilot.js";
+import { parseAutomaticFlightPathStopOption } from "../../services/classpilotAutomaticFlightPathCommand.js";
 
 const router = Router();
+
+const requireCommandsMonitoring: RequestHandler = async (req, res, next) => {
+  try {
+    // A school-hours boundary must never prevent authorized removal of an
+    // existing automatic restriction. Every other action/read keeps its gate.
+    if (req.method === "POST" && req.path === "/commands" && parseAutomaticFlightPathStopOption(req.body)) {
+      next();
+      return;
+    }
+    await requireClasspilotFullMonitoring(req, res, next);
+  } catch (error) { next(error); }
+};
 
 const auth = [
   authenticate,
   requireSchoolContext,
   requireClasspilotEntitlement,
-  requireClasspilotFullMonitoring,
+  requireCommandsMonitoring,
   requireRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
 
@@ -101,7 +114,9 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
 
   const classRows = await getClasspilotSessionStudentRoster(schoolId, teachingSessionId);
   const classStudentIds = new Set(classRows.map((row) => row.studentId));
-  if (classRows.length === 0) throw Object.assign(new Error("The active class has no students"), { status: 400 });
+  if (classRows.length === 0 && !body.stopAutomaticFlightPath) {
+    throw Object.assign(new Error("The active class has no students"), { status: 400 });
+  }
 
   let selectedRows = classRows;
   if (scope === "students") {
@@ -254,6 +269,7 @@ router.post("/commands", ...auth, async (req, res, next) => {
     const teachingSessionId = String(req.body.teachingSessionId || "").trim();
     const supervisionContextId = String(req.body.supervisionContextId || "").trim();
     if (!parseClasspilotActivityAuthority(req.body)) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    const stopAutomaticFlightPath = parseAutomaticFlightPathStopOption(req.body);
     const pollAction = commandType === "poll"
       ? String(req.body.commandPayload?.action || "start").trim()
       : "";
@@ -291,6 +307,7 @@ router.post("/commands", ...auth, async (req, res, next) => {
       rawCommandPayload: req.body.commandPayload || {},
       targets,
       persistClassroomState: true,
+      stopAutomaticFlightPath,
     });
 
     return res.status(201).json({ ...result, command: publicClasspilotCommand(result.command) });

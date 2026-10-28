@@ -617,11 +617,18 @@ describe("PR 2-pre fence: honest withheld outcomes", () => {
     const markers = dispatcher.match(/markClasspilotCommandTargetsUnavailableWithReasons\(\s*created\.id,\s*(authUnavailableReasons\.keys\(\)|lateAuthUnavailableStudentIds),\s*authUnavailableReasons\s*\)/g);
     assert.equal(markers?.length, 2, "both withheld mappings persist the real per-target reason");
     const direct = dispatcher.match(/await markClasspilotCommandTargetsUnavailable\(/g);
-    assert.equal(direct?.length, 2, "only the reason helper and the binding-race path call storage directly");
+    assert.equal(direct?.length, 3, "the reason helper, binding-race path, and automatic-stop preservation persist their own outcomes");
+    const rejected = section(dispatcher, "if (persistence.rejectedStudentIds.length > 0)", "const controlStateRows = persistence.rows;");
     assert.match(
-      dispatcher,
-      /persistence\.rejectedStudentIds\.length > 0\) \{\n    await markClasspilotCommandTargetsUnavailable\(\n      created\.id,\n      persistence\.rejectedStudentIds\n    \);/,
-      "the binding-race path keeps its accurate storage default"
+      rejected,
+      /const rejectionReason = options\.stopAutomaticFlightPath[\s\S]*?"Automatic Flight Path already inactive, supervised elsewhere, or replaced by a teacher's manual choice"[\s\S]*?: "Student binding changed before desired state was persisted";[\s\S]*?markClasspilotCommandTargetsUnavailable\(\s*created\.id,\s*persistence\.rejectedStudentIds,\s*rejectionReason/,
+      "binding races retain their reason while automatic-stop skips explain preserved teacher choices"
+    );
+    const automaticStop = section(dispatcher, "if (options.stopAutomaticFlightPath) {\n    // The session stop", "const screenshotPolicyRefreshPromise");
+    assert.match(
+      automaticStop,
+      /committedTargets\.filter\(target => target\.available && !controlStateIds\.has\(target\.studentId\)\)[\s\S]*?markClasspilotCommandTargetsUnavailable\(created\.id, unchanged\.map\(target => target\.studentId\), reason\)/,
+      "manual paths without an automatic removal snapshot are unavailable for generic remove delivery"
     );
   });
 

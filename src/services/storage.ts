@@ -2,6 +2,12 @@ import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, s
   assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
 } from "./classpilotHeartbeatPreparedReads.js";
 import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
+import {
+  automaticFlightPathDesiredState, automaticFlightPathPolicyDto, emptyAutomaticFlightPathState,
+  normalizeAutomaticFlightPathPolicy, normalizeAutomaticFlightPathState, readAutomaticFlightPathOrigin,
+  removeAutomaticFlightPathFromDesiredState, withoutAutomaticFlightPathOrigin,
+  type AutomaticFlightPathState,
+} from "./classpilotAutomaticFlightPath.js";
 import type { HeartbeatScreenshotOwnerRow } from "./classpilotHeartbeatScreenshotEvidence.js";
 import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
 import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
@@ -51,6 +57,7 @@ import {
   classpilotRestrictionAuthCapabilityRequired,
   classpilotRestrictionAuthProjectionRevision,
   readClasspilotLateSignInDeliveryProvenance,
+  withClasspilotLateSignInOrigin,
   recordClasspilotLateSignInAppliedBinding,
   restrictionsFromClassroomStates,
 } from "./classpilotClassroomState.js";
@@ -12673,6 +12680,9 @@ export async function createTeachingSession(
       .where(eq(teachingSessions.id, session.id))
       .returning();
     const authoritativeSession = snapshotted || session;
+    if (authoritativeSession.scheduledDate && authoritativeSession.sessionMode === "live") {
+      authoritativeSession.automaticFlightPathState = await initializeAutomaticFlightPathForSession(authoritativeSession, transactionDb);
+    }
     await initializeClasspilotStudentControlStatesForSession(authoritativeSession, transactionDb);
     return authoritativeSession;
   });
@@ -12960,7 +12970,10 @@ export async function promoteScheduledReportSessionToLive(
         isNull(teachingSessions.endTime)
       ))
       .returning();
-    if (session) await initializeClasspilotStudentControlStatesForSession(session, transactionDb);
+    if (session) {
+      session.automaticFlightPathState = await initializeAutomaticFlightPathForSession(session, transactionDb);
+      await initializeClasspilotStudentControlStatesForSession(session, transactionDb);
+    }
     return session;
   });
 }
@@ -15880,6 +15893,7 @@ export async function getActiveTeachingSessions(
       schoolId: teachingSessions.schoolId,
       startTime: teachingSessions.startTime,
       controlUpdatedAt: teachingSessions.controlUpdatedAt,
+      automaticFlightPathState: teachingSessions.automaticFlightPathState,
       sessionMode: teachingSessions.sessionMode,
       scheduledConflictId: teachingSessions.scheduledConflictId,
       scheduledDate: teachingSessions.scheduledDate,
@@ -16315,6 +16329,7 @@ export async function getScheduledGroupsReadyToStart(
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
       scheduleRule: groups.scheduleRule,
+      automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
       createdAt: groups.createdAt,
     })
     .from(groups)
@@ -16358,6 +16373,7 @@ export async function getScheduledGroupsReadyToEnd(
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
       scheduleRule: groups.scheduleRule,
+      automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
       createdAt: groups.createdAt,
       sessionId: teachingSessions.id,
       sessionMode: teachingSessions.sessionMode,
@@ -16492,6 +16508,7 @@ export async function getAdminClassSummariesBySchool(
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
       scheduleRule: groups.scheduleRule,
+      automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
       createdAt: groups.createdAt,
       studentCount: sql<number>`COUNT(DISTINCT ${students.id})::int`,
     })
@@ -23471,37 +23488,213 @@ function effectiveClasspilotScheduledControlEndAt(
   return scheduledEndAt < hardExpiresAt ? scheduledEndAt : hardExpiresAt;
 }
 
+/** Class presets are independent of legacy, teacher-wide default settings. */
+function automaticFlightPathError(message: string, code: string, status = 409) {
+  return Object.assign(new Error(message), { status, code, expose: true });
+}
+
+function automaticFlightPathClassEligible(group: Group): boolean {
+  if (group.status !== "active" || group.parentGroupId || !["admin_class", "teacher_created"].includes(group.groupType)
+    || !group.scheduleEnabled) return false;
+  try {
+    const rule = normalizeClassScheduleRule(group.scheduleRule);
+    return !!rule.periodId || (!!group.blockStartTime && !!group.blockEndTime && group.blockStartTime < group.blockEndTime);
+  } catch { return false; }
+}
+
+async function automaticFlightPathPolicyAccess(options: { schoolId: string; groupId: string; actorId: string }, database: typeof db, write: boolean) {
+  const [group] = await database.select().from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).limit(1);
+  if (!group) throw automaticFlightPathError("Class not found", "CLASS_NOT_FOUND", 404);
+  const memberships = await database.select({ role: schoolMemberships.role }).from(schoolMemberships).where(and(
+    eq(schoolMemberships.schoolId, options.schoolId), eq(schoolMemberships.userId, options.actorId), eq(schoolMemberships.status, "active"),
+    inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"])));
+  const admin = memberships.some(membership => ["admin", "school_admin"].includes(membership.role));
+  const canManage = memberships.length > 0 && (admin || group.teacherId === options.actorId);
+  const [coTeacher] = memberships.length && !canManage ? await database.select({ id: groupTeachers.id }).from(groupTeachers)
+    .where(and(eq(groupTeachers.groupId, group.id), eq(groupTeachers.teacherId, options.actorId))).limit(1) : [];
+  if (!memberships.length || (!canManage && (write || !coTeacher)))
+    throw automaticFlightPathError("Only the primary teacher or a school administrator can manage this class preset", "AUTOMATIC_FLIGHT_PATH_FORBIDDEN", 403);
+  return { group, canManage };
+}
+
+async function automaticFlightPathPolicyResult(group: Group, canManage: boolean, database: typeof db) {
+  const policy = normalizeAutomaticFlightPathPolicy(group.automaticFlightPathPolicy);
+  const [path] = policy.flightPathId ? await database.select({ id: flightPaths.id, flightPathName: flightPaths.flightPathName }).from(flightPaths)
+    .where(and(eq(flightPaths.id, policy.flightPathId), eq(flightPaths.schoolId, group.schoolId))).limit(1) : [];
+  const eligible = automaticFlightPathClassEligible(group);
+  return { policy: automaticFlightPathPolicyDto(policy), canManage, eligible,
+    reasonCode: eligible ? null : "AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED", flightPath: path || null };
+}
+
+export async function getClasspilotAutomaticFlightPathPolicy(options: { schoolId: string; groupId: string; actorId: string }, dbInstance: typeof db = db) {
+  const { group, canManage } = await automaticFlightPathPolicyAccess(options, dbInstance, false);
+  return automaticFlightPathPolicyResult(group, canManage, dbInstance);
+}
+
+export async function updateClasspilotAutomaticFlightPathPolicy(options: {
+  schoolId: string; groupId: string; actorId: string; expectedRevision: number; enabled: boolean;
+  flightPathId: string | null; expectedFlightPathUpdatedAt?: string;
+}, dbInstance: typeof db = db) {
+  return dbInstance.transaction(async (tx) => {
+    const database = tx as unknown as typeof db;
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw automaticFlightPathError("School not found", "SCHOOL_NOT_FOUND", 404);
+    await assertClasspilotEntitled(options.schoolId, database, { lock: true });
+    await tx.select({ id: groups.id }).from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).for("update");
+    const { group, canManage } = await automaticFlightPathPolicyAccess(options, database, true);
+    const current = normalizeAutomaticFlightPathPolicy(group.automaticFlightPathPolicy);
+    if (current.revision !== options.expectedRevision) throw automaticFlightPathError("This class preset changed; refresh before saving", "AUTOMATIC_FLIGHT_PATH_REVISION_CONFLICT");
+    if (options.enabled && !automaticFlightPathClassEligible(group)) throw automaticFlightPathError("Automatic Flight Paths require a scheduled teaching class", "AUTOMATIC_FLIGHT_PATH_SCHEDULED_CLASS_REQUIRED");
+    if (options.enabled && !options.flightPathId) throw automaticFlightPathError("Choose a saved Flight Path", "AUTOMATIC_FLIGHT_PATH_REQUIRED", 400);
+    if (options.flightPathId && (options.enabled || options.flightPathId !== current.flightPathId)) {
+      const [path] = await tx.select().from(flightPaths).where(and(eq(flightPaths.id, options.flightPathId), eq(flightPaths.schoolId, options.schoolId))).limit(1).for("share");
+      const { isSharedTeachingResourcesEnabled } = await import("../config/sharedTeachingResources.js");
+      if (!path || (path.teacherId !== group.teacherId && !(isSharedTeachingResourcesEnabled(options.schoolId) && (path.visibility === "school" || path.official))))
+        throw automaticFlightPathError("Choose the primary teacher's Flight Path or a shared school Flight Path", "AUTOMATIC_FLIGHT_PATH_NOT_ACCESSIBLE", 404);
+      const { classpilotFlightPathApplyPayload } = await import("./classpilotPreciseRestrictions.js");
+      const payload = classpilotFlightPathApplyPayload({ schoolId: options.schoolId, flightPath: path });
+      if (payload.allowedDomains.length > 1000) throw automaticFlightPathError("Flight Paths support at most 1,000 website rules", "CLASSROOM_RULE_LIMIT_EXCEEDED", 400);
+      if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 48 * 1024)
+        throw automaticFlightPathError("This Flight Path is too large for an automatic class restriction", "AUTOMATIC_FLIGHT_PATH_TOO_LARGE", 400);
+      if (options.expectedFlightPathUpdatedAt) {
+        const { flightPathReviewedInstantMatches } = await import("./classpilotLessonPrerequisites.js");
+        if (!flightPathReviewedInstantMatches(path.updatedAt, options.expectedFlightPathUpdatedAt))
+          throw automaticFlightPathError("This Flight Path changed; review it again", "FLIGHT_PATH_REVIEW_STALE");
+      }
+    }
+    const next = { schemaVersion: 1 as const, revision: current.revision + 1, enabled: options.enabled,
+      flightPathId: options.flightPathId, updatedBy: options.actorId };
+    const [updated] = await tx.update(groups).set({ automaticFlightPathPolicy: next })
+      .where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).returning();
+    await tx.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
+      action: "classpilot.automatic_flight_path.policy_updated", entityType: "group", entityId: group.id,
+      metadata: { enabled: next.enabled, revision: next.revision, flightPathId: next.flightPathId } });
+    return automaticFlightPathPolicyResult(updated!, canManage, database);
+  });
+}
+
+/** Freeze once at the scheduled report -> live boundary, under existing locks. */
+export async function initializeAutomaticFlightPathForSession(session: TeachingSession, dbInstance: typeof db = db): Promise<AutomaticFlightPathState> {
+  if (!session.schoolId || !session.scheduledDate || session.sessionMode !== "live" || session.endTime) return emptyAutomaticFlightPathState();
+  return dbInstance.transaction(async (tx) => {
+    const database = tx as unknown as typeof db;
+    const roster = await tx.select({ studentId: classpilotSessionStudents.studentId }).from(classpilotSessionStudents)
+      .where(and(eq(classpilotSessionStudents.schoolId, session.schoolId!), eq(classpilotSessionStudents.teachingSessionId, session.id)));
+    const studentIds = roster.map(row => row.studentId);
+    await lockClasspilotStudentControlAuthorities(session.schoolId!, studentIds, database);
+    const [locked] = await tx.select().from(teachingSessions).where(and(eq(teachingSessions.id, session.id), eq(teachingSessions.schoolId, session.schoolId!))).limit(1).for("update");
+    if (!locked || locked.endTime || locked.sessionMode !== "live" || !locked.scheduledDate) return emptyAutomaticFlightPathState();
+    if (locked.automaticFlightPathState !== null) return normalizeAutomaticFlightPathState(locked.automaticFlightPathState);
+    const [group] = await tx.select().from(groups).where(and(eq(groups.id, locked.groupId), eq(groups.schoolId, session.schoolId!))).limit(1);
+    const policy = normalizeAutomaticFlightPathPolicy(group?.automaticFlightPathPolicy);
+    let state = { ...emptyAutomaticFlightPathState(), revision: 1, sourcePolicyRevision: policy.revision };
+    if (policy.enabled && group && automaticFlightPathClassEligible(group)) {
+      state = { ...state, assignmentId: randomUUID(), flightPathId: policy.flightPathId };
+      const [path] = policy.flightPathId ? await tx.select().from(flightPaths)
+        .where(and(eq(flightPaths.id, policy.flightPathId), eq(flightPaths.schoolId, session.schoolId!))).limit(1).for("share") : [];
+      const { isSharedTeachingResourcesEnabled } = await import("../config/sharedTeachingResources.js");
+      if (!path || (path.teacherId !== group.teacherId && !(isSharedTeachingResourcesEnabled(session.schoolId!) && (path.visibility === "school" || path.official)))) {
+        state = { ...state, status: "unavailable", reasonCode: "AUTOMATIC_FLIGHT_PATH_NOT_ACCESSIBLE" };
+      } else {
+        try {
+          const { classpilotFlightPathApplyPayload } = await import("./classpilotPreciseRestrictions.js");
+          const payload = classpilotFlightPathApplyPayload({ schoolId: session.schoolId!, flightPath: path });
+          if (payload.allowedDomains.length > 1000) throw automaticFlightPathError("Flight Paths support at most 1,000 website rules", "CLASSROOM_RULE_LIMIT_EXCEEDED", 400);
+          // Leave room under the existing 64-KiB desired-state limit for
+          // exact-binding/deferred provenance and unrelated control fields.
+          if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 48 * 1024)
+            throw automaticFlightPathError("This Flight Path is too large for an automatic class restriction", "AUTOMATIC_FLIGHT_PATH_TOO_LARGE", 400);
+          state = { ...state, status: "active", payload,
+            name: path.flightPathName, flightPathUpdatedAt: path.updatedAt.toISOString() };
+        } catch (error) {
+          const code = (error as { code?: string }).code;
+          if (!code) throw error;
+          state = { ...state, status: "unavailable", reasonCode: code };
+        }
+      }
+      if (state.status === "active") {
+        const { resolveClasspilotMonitoringPolicy } = await import("./classpilotMonitoringPolicy.js");
+        const tracking = await getHeartbeatTrackingSettingsForSchool(session.schoolId!, database, { lock: true });
+        if (resolveClasspilotMonitoringPolicy(tracking).policyMode !== "full") {
+          state = { ...state, status: "unavailable", payload: null,
+            reasonCode: "AUTOMATIC_FLIGHT_PATH_MONITORING_UNAVAILABLE" };
+        }
+      }
+      if (state.status === "active") {
+        const bindings = await getActiveSessionsForStudents(session.schoolId!, studentIds, database);
+        const byStudent = new Map(bindings.map(binding => [binding.studentId, binding]));
+        const { readClasspilotRealtimeStatusBatch, classpilotRealtimeFresh } = await import("./classpilotRealtimeStatus.js");
+        const evidence = await readClasspilotRealtimeStatusBatch(session.schoolId!, bindings.map(binding => ({ studentId: binding.studentId, studentSessionId: binding.id, deviceId: binding.deviceId })));
+        const sso = await getClasspilotSsoPolicyForSchool(session.schoolId!, database);
+        const authRequired = isClasspilotCapabilityActive("restrictionAuthPassThroughV1", { schoolId: session.schoolId! }) && sso.policy.enabled;
+        const deferEnabled = isClasspilotCapabilityActive("lateSignInRestrictionSsoV1", { schoolId: session.schoolId! });
+        for (const studentId of studentIds) {
+          const binding = byStudent.get(studentId);
+          const read = evidence.get(studentId);
+          const live = !!binding && read?.status === "hit" && classpilotRealtimeFresh(read.snapshot);
+          const capabilities = read?.status === "hit" ? read.snapshot.acceptedCapabilities ?? [] : [];
+          let reason: string | undefined;
+          if (state.payload?.resources?.length && (!live || !capabilities.includes("preciseRestrictionResourcesV1"))) reason = "AUTOMATIC_FLIGHT_PATH_PRECISE_CAPABILITY_REQUIRED";
+          else if (!live && (binding || !deferEnabled)) reason = "AUTOMATIC_FLIGHT_PATH_OFFLINE_UNSUPPORTED";
+          else if (live && authRequired && !capabilities.includes("restrictionAuthPassThroughV1")) reason = "AUTOMATIC_FLIGHT_PATH_AUTH_CAPABILITY_REQUIRED";
+          if (reason) { state.unavailableStudentIds.push(studentId); state.unavailableReasons[studentId] = reason; }
+          else { state.eligibleStudentIds.push(studentId); if (!live) state.deferredStudentIds.push(studentId); }
+        }
+      }
+    }
+    await tx.update(teachingSessions).set({ automaticFlightPathState: state }).where(eq(teachingSessions.id, session.id));
+    if (policy.enabled) await tx.insert(auditLogs).values({ schoolId: session.schoolId!, userId: locked.teacherId,
+      action: "classpilot.automatic_flight_path.started", entityType: "teaching_session", entityId: session.id,
+      metadata: { source: "automatic", assignmentId: state.assignmentId, revision: state.revision,
+        policyRevision: state.sourcePolicyRevision, status: state.status, eligibleCount: state.eligibleStudentIds.length,
+        unavailableCount: state.unavailableStudentIds.length, reasonCode: state.reasonCode } });
+    return state;
+  });
+}
+
 /**
- * Bind every frozen roster student to a revisioned empty control snapshot as
- * soon as a class begins. Besides replacing a former teacher's state, this
- * gives the extension an authenticated teaching-session scope for its bounded
- * monitoring-event outbox even before the new teacher applies a restriction.
+ * Bind the frozen roster to current class control state at startup and on
+ * reconciliation. New classes replace the former owner's controls; replays
+ * retain current teacher choices and the frozen automatic session decision.
  */
 export async function initializeClasspilotStudentControlStatesForSession(
   session: TeachingSession,
   dbInstance: typeof db = db
 ): Promise<ClasspilotStudentControlState[]> {
   if (!session.schoolId || session.endTime) return [];
-  const roster = await dbInstance
+  const schoolId = session.schoolId;
+  return dbInstance.transaction(async (tx) => {
+  const transactionDb = tx as unknown as typeof db;
+  const roster = await transactionDb
     .select({ studentId: classpilotSessionStudents.studentId })
     .from(classpilotSessionStudents)
     .where(and(
-      eq(classpilotSessionStudents.schoolId, session.schoolId),
+      eq(classpilotSessionStudents.schoolId, schoolId),
       eq(classpilotSessionStudents.teachingSessionId, session.id)
     ));
+  await lockClasspilotStudentControlAuthorities(session.schoolId!, roster.map(row => row.studentId), transactionDb);
+  // Only the actual creation/promotion boundary freezes a preset. A pre-upgrade
+  // live session with NULL state must never pick up a future-only class edit.
+  const [currentSession] = await tx.select({ automaticFlightPathState: teachingSessions.automaticFlightPathState })
+    .from(teachingSessions).where(and(eq(teachingSessions.id, session.id), eq(teachingSessions.schoolId, session.schoolId!))).limit(1).for("update");
+  const automaticState = normalizeAutomaticFlightPathState(currentSession?.automaticFlightPathState);
   if (roster.length === 0) return [];
 
   const now = new Date();
   const hardExpiresAt = new Date(session.startTime.getTime() + 12 * 60 * 60 * 1000);
   if (hardExpiresAt <= now) return [];
   return replaceClasspilotStudentControlSnapshots({
-    schoolId: session.schoolId,
+    schoolId,
     teachingSessionId: session.id,
     // The replacement transaction rechecks the authoritative owner after it
     // acquires the per-student locks. Passing the full frozen roster here
     // avoids a pre-lock supervision read racing a simultaneous release.
     studentIds: roster.map((row) => row.studentId),
-    desiredState: { restrictions: {} },
+    desiredState: (studentId: string, current: ClasspilotStudentControlState | null) => {
+      const existing = current?.teachingSessionId === session.id ? current.desiredState : { restrictions: {} };
+      const desired = automaticFlightPathDesiredState({ desiredState: existing, state: automaticState, studentId, teachingSessionId: session.id });
+      return automaticState.deferredStudentIds.includes(studentId) && readAutomaticFlightPathOrigin(desired)
+        ? withClasspilotLateSignInOrigin({ desiredState: desired, commandId: automaticState.assignmentId!, createdAt: now }) : desired;
+    },
     scheduledEndAt: effectiveClasspilotScheduledControlEndAt(
       session.scheduledEndAt,
       hardExpiresAt
@@ -23509,7 +23702,9 @@ export async function initializeClasspilotStudentControlStatesForSession(
     hardExpiresAt,
     now,
     authorityMode: "filter",
-  }, dbInstance);
+    preserveSourceCommandId: true,
+  }, transactionDb);
+  });
 }
 
 function assertDesiredControlState(value: unknown): Record<string, unknown> {
@@ -24162,11 +24357,16 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
           && restorable.desiredState
           ? restorable.desiredState
           : { restrictions: restrictionsFromClassroomStates(activeStates, now) };
+        const automaticState = normalizeAutomaticFlightPathState(owner.session.automaticFlightPathState);
+        let restoredAutomaticDesired = automaticFlightPathDesiredState({ desiredState: withoutClasspilotFocus(restoredDesiredState),
+          state: automaticState, studentId, teachingSessionId: owner.session.id });
+        if (automaticState.deferredStudentIds.includes(studentId) && readAutomaticFlightPathOrigin(restoredAutomaticDesired))
+          restoredAutomaticDesired = withClasspilotLateSignInOrigin({ desiredState: restoredAutomaticDesired, commandId: automaticState.assignmentId!, createdAt: now });
         const rows = await replaceClasspilotStudentControlSnapshots({
           schoolId: options.schoolId,
           teachingSessionId: owner.session.id,
           studentIds: [studentId],
-          desiredState: withoutClasspilotFocus(restoredDesiredState),
+          desiredState: restoredAutomaticDesired,
           sourceCommandId: restorable?.sourceCommandId || null,
           scheduledEndAt,
           hardExpiresAt,
@@ -24652,6 +24852,7 @@ export async function acknowledgeClasspilotStudentControlState(
  */
 export async function persistClasspilotControlCommandState(
   options: {
+    stopAutomaticFlightPath?: { expectedRevision: number };
     /**
      * Signed-out targets whose persistence was admitted only by the
      * late-sign-in operator gate. Rechecked under the student-control lock so
@@ -24701,15 +24902,31 @@ export async function persistClasspilotControlCommandState(
     // writer to session-first would deadlock a mixed deployment. See
     // docs/classpilot-control-authority-lock-order.md for the coordinated
     // migration boundary and executable contract.
+    let automaticStopActorId: string | null = null;
+    if (options.stopAutomaticFlightPath) {
+      if (!await lockStaffAssignmentLifecycleSchool(tx, options.studentSnapshots.schoolId))
+        throw automaticFlightPathError("School not found", "SCHOOL_NOT_FOUND", 404);
+      await assertClasspilotEntitled(options.studentSnapshots.schoolId, transactionDb, { lock: true });
+      const [command] = options.studentSnapshots.sourceCommandId ? await tx.select().from(classpilotCommands)
+        .where(and(eq(classpilotCommands.id, options.studentSnapshots.sourceCommandId), eq(classpilotCommands.schoolId, options.studentSnapshots.schoolId),
+          eq(classpilotCommands.teachingSessionId, options.studentSnapshots.teachingSessionId), eq(classpilotCommands.commandType, "remove-flight-path"),
+          eq(classpilotCommands.targetScope, "class"))).limit(1) : [];
+      if (!command) throw automaticFlightPathError("A whole-class command is required", "AUTOMATIC_FLIGHT_PATH_FORBIDDEN", 403);
+      automaticStopActorId = command.teacherId;
+      await assertActiveClasspilotTeacherMembership(command.teacherId, options.studentSnapshots.schoolId, transactionDb);
+    }
+    const automaticStopRoster = options.stopAutomaticFlightPath ? await tx.select({ studentId: classpilotSessionStudents.studentId })
+      .from(classpilotSessionStudents).where(and(eq(classpilotSessionStudents.schoolId, options.studentSnapshots.schoolId),
+        eq(classpilotSessionStudents.teachingSessionId, options.studentSnapshots.teachingSessionId))) : [];
     await lockClasspilotStudentControlAuthorities(
       options.studentSnapshots.schoolId,
-      options.studentSnapshots.studentIds,
+      options.stopAutomaticFlightPath ? automaticStopRoster.map(row => row.studentId) : options.studentSnapshots.studentIds,
       transactionDb
     );
     const expectations = options.studentSnapshots.bindingExpectationByStudent;
     let acceptedStudentIds = [...new Set(options.studentSnapshots.studentIds)];
     const rejectedStudentIds: string[] = [];
-    if (expectations && expectations.size > 0 && acceptedStudentIds.length > 0) {
+    if (!options.stopAutomaticFlightPath && expectations && expectations.size > 0 && acceptedStudentIds.length > 0) {
       // Heartbeat authority and session transfer both lock the source device
       // before the represented session. Follow that same order for exact live
       // persistence so a heartbeat/resume racing a teacher command cannot
@@ -24790,7 +25007,7 @@ export async function persistClasspilotControlCommandState(
     // snapshot outside this final lock can otherwise drop a concurrent teacher
     // command even when revisions remain monotonic.
     const [lockedSession] = await tx
-      .select({ id: teachingSessions.id })
+      .select({ id: teachingSessions.id, automaticFlightPathState: teachingSessions.automaticFlightPathState })
       .from(teachingSessions)
       .where(and(
         eq(teachingSessions.id, options.studentSnapshots.teachingSessionId),
@@ -24806,8 +25023,39 @@ export async function persistClasspilotControlCommandState(
       });
     }
 
+    let automaticState = normalizeAutomaticFlightPathState(lockedSession.automaticFlightPathState);
+    if (options.stopAutomaticFlightPath) {
+      if (!automaticStopActorId || !await isAuthorizedClasspilotSessionStaff(options.studentSnapshots.schoolId, lockedSession.id, automaticStopActorId, transactionDb))
+        throw automaticFlightPathError("Only current class staff can turn off the automatic Flight Path", "AUTOMATIC_FLIGHT_PATH_FORBIDDEN", 403);
+      if (automaticState.revision !== options.stopAutomaticFlightPath.expectedRevision)
+        throw automaticFlightPathError("The automatic Flight Path changed; refresh before stopping it", "AUTOMATIC_FLIGHT_PATH_REVISION_CONFLICT");
+      if (automaticState.status !== "active" && automaticState.status !== "off")
+        throw automaticFlightPathError("This class has no active automatic Flight Path", "AUTOMATIC_FLIGHT_PATH_NOT_ACTIVE");
+      automaticState = { ...automaticState, status: "off", revision: automaticState.revision + 1 };
+      await tx.update(teachingSessions).set({ automaticFlightPathState: automaticState }).where(eq(teachingSessions.id, lockedSession.id));
+      await tx.insert(auditLogs).values({ schoolId: options.studentSnapshots.schoolId, userId: automaticStopActorId,
+        action: "classpilot.automatic_flight_path.stopped", entityType: "teaching_session", entityId: lockedSession.id,
+        metadata: { assignmentId: automaticState.assignmentId, revision: automaticState.revision, source: "automatic" } });
+      // The latch covers the entire frozen occurrence, including students in
+      // another supervision context. Their saved state is filtered on return.
+      const allIds = automaticStopRoster.map(row => row.studentId);
+      const controls = allIds.length ? await tx.select().from(classpilotStudentControlStates).where(and(
+        eq(classpilotStudentControlStates.schoolId, options.studentSnapshots.schoolId), inArray(classpilotStudentControlStates.studentId, allIds))) : [];
+      const owned = await getActiveClassOwnersForStudents(options.studentSnapshots.schoolId, allIds, transactionDb);
+      const supervised = new Set((await getActiveSupervisionForStudents(options.studentSnapshots.schoolId, allIds, transactionDb)).map(row => row.studentId));
+      const ownerByStudent = new Map(owned.map(owner => [owner.studentId, owner.session.id]));
+      acceptedStudentIds = controls.filter(row => row.teachingSessionId === lockedSession.id && !row.supervisionContextId
+        && !supervised.has(row.studentId) && (!ownerByStudent.has(row.studentId) || ownerByStudent.get(row.studentId) === lockedSession.id)
+        && readAutomaticFlightPathOrigin(row.desiredState)?.assignmentId === automaticState.assignmentId).map(row => row.studentId);
+      for (const studentId of options.studentSnapshots.studentIds) if (!acceptedStudentIds.includes(studentId)) rejectedStudentIds.push(studentId);
+      if (automaticState.assignmentId) await tx.update(classpilotClassroomStates).set({ clearedAt: new Date(), updatedAt: new Date() }).where(and(
+        eq(classpilotClassroomStates.schoolId, options.studentSnapshots.schoolId), eq(classpilotClassroomStates.teachingSessionId, lockedSession.id),
+        eq(classpilotClassroomStates.stateType, "flight-path"), isNull(classpilotClassroomStates.clearedAt),
+        sql`${classpilotClassroomStates.payload}->>'automaticFlightPathAssignmentId' = ${automaticState.assignmentId}`));
+    }
+
     if (
-      options.lateSignInGateRequiredStudentIds?.length
+      !options.stopAutomaticFlightPath && options.lateSignInGateRequiredStudentIds?.length
       && !isClasspilotCapabilityActive(
         "lateSignInRestrictionSsoV1",
         { schoolId: options.studentSnapshots.schoolId }
@@ -24825,14 +25073,23 @@ export async function persistClasspilotControlCommandState(
       return { classroomStates: [], studentControlStates: [], rejectedStudentIds };
     }
     const acceptedSet = new Set(acceptedStudentIds);
-    for (const clear of options.classroomStateClears || []) {
+    const manualPathChange = !options.stopAutomaticFlightPath && (
+      (options.classroomStateClears || []).some(clear => clear.stateTypes?.includes("flight-path"))
+      || (options.classroomStateUpserts || []).some(state => ["flight-path", "screen-lock"].includes(state.stateType)));
+    const manualLock = (options.classroomStateUpserts || []).some(state => state.stateType === "screen-lock");
+    if (manualPathChange && automaticState.assignmentId) {
+      automaticState = { ...automaticState, revision: automaticState.revision + 1,
+        manualOverrideStudentIds: [...new Set([...automaticState.manualOverrideStudentIds, ...acceptedStudentIds])] };
+      await tx.update(teachingSessions).set({ automaticFlightPathState: automaticState }).where(eq(teachingSessions.id, lockedSession.id));
+    }
+    for (const clear of options.stopAutomaticFlightPath ? [] : options.classroomStateClears || []) {
       await clearClasspilotClassroomStates({
         ...clear,
         studentIds: (clear.studentIds || []).filter((studentId) => acceptedSet.has(studentId)),
       }, transactionDb);
     }
     const classroomStates = await upsertClasspilotClassroomStates(
-      (options.classroomStateUpserts || []).filter((state) =>
+      (options.stopAutomaticFlightPath ? [] : options.classroomStateUpserts || []).filter((state) =>
         !state.studentId || acceptedSet.has(state.studentId)
       ),
       transactionDb
@@ -24841,7 +25098,18 @@ export async function persistClasspilotControlCommandState(
       // A re-issued command must publish a revision even when the resulting
       // desired state is identical, so target reconciliation and client
       // re-acknowledgement still run.
-      { ...options.studentSnapshots, studentIds: acceptedStudentIds, forceRevision: true },
+      { ...options.studentSnapshots, studentIds: acceptedStudentIds, forceRevision: true,
+        desiredState: (studentId: string, currentState: ClasspilotStudentControlState | null, activeStates: ClasspilotClassroomState[]) => {
+          if (options.stopAutomaticFlightPath) return removeAutomaticFlightPathFromDesiredState(currentState?.desiredState,
+            automaticState.assignmentId!, lockedSession.id);
+          let desired = typeof options.studentSnapshots.desiredState === "function"
+            ? options.studentSnapshots.desiredState(studentId, currentState, activeStates) : options.studentSnapshots.desiredState;
+          if (manualPathChange) {
+            if (manualLock && automaticState.assignmentId) desired = removeAutomaticFlightPathFromDesiredState(desired, automaticState.assignmentId, lockedSession.id);
+            return withoutAutomaticFlightPathOrigin(desired);
+          }
+          return desired;
+        } },
       transactionDb
     );
     return { classroomStates, studentControlStates, rejectedStudentIds };
@@ -29071,6 +29339,7 @@ async function loadPasspilotMigrationInventory(
           blockEndTime: groups.blockEndTime,
           scheduleSkippedDate: groups.scheduleSkippedDate,
           scheduleRule: groups.scheduleRule,
+          automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
           createdAt: groups.createdAt,
           studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
         })

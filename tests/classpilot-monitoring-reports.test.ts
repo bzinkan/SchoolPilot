@@ -38,6 +38,7 @@ const typedTeachingSession: TeachingSession = {
   startTime: at(0),
   controlUpdatedAt: null,
   sessionMode: "live",
+  automaticFlightPathState: null,
   scheduledConflictId: null,
   scheduledDate: null,
   scheduledTimezone: null,
