@@ -48,6 +48,7 @@ import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
+import { buildAvailableRoster, filterAvailableRoster, NO_AVAILABLE_CLASS, NO_AVAILABLE_GRADE } from '../lib/availableStudents';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
@@ -611,6 +612,20 @@ export default function Dashboard() {
   useLayoutEffect(() => { setRoomClaimStudents(null); setRoomEndTimeOpen(false); }, [roomDialogScopeKey]);
   const [roomGradeFilter, setRoomGradeFilter] = useState('');
   const [roomClassFilter, setRoomClassFilter] = useState('');
+  const [availableClassFilter, setAvailableClassFilter] = useState('');
+  const [availableGradeFilter, setAvailableGradeFilter] = useState('');
+  const [availableSelectionNotice, setAvailableSelectionNotice] = useState('');
+  const previousAvailableView = useRef(false);
+  useLayoutEffect(() => {
+    const wasAvailable = previousAvailableView.current;
+    previousAvailableView.current = selectedStudentView === 'available';
+    if (!wasAvailable && selectedStudentView !== 'available') return;
+    setAvailableClassFilter(''); setAvailableGradeFilter(''); setAvailableSelectionNotice('');
+    setSearchQuery('');
+    setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
+  }, [roomDialogScopeKey, selectedStudentView]);
   useLayoutEffect(() => {
     setRoomGradeFilter(''); setRoomClassFilter(''); setRoomEndTimeOpen(false);
   }, [roomActivity?.id]);
@@ -1010,8 +1025,16 @@ export default function Dashboard() {
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id,
   });
 
-  const { data: availablePickupData = EMPTY_PICKUP_DATA, dataUpdatedAt: availablePickupUpdatedAt, refetch: refetchAvailableStudents } = useQuery({
-    queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id],
+  const {
+    data: availablePickupData = EMPTY_PICKUP_DATA,
+    isPending: availableStudentsLoading,
+    isError: availableStudentsError,
+    isSuccess: availableStudentsReadSucceeded,
+    isFetching: availableStudentsRefreshing,
+    dataUpdatedAt: availableStudentsUpdatedAt,
+    refetch: refetchAvailableStudents,
+  } = useQuery({
+    queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id, currentUser?.role, currentUser?.isSuperAdmin],
     queryFn: ({ signal }) => apiRequest('GET', '/coverage/available-students', undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
     }),
@@ -1037,7 +1060,7 @@ export default function Dashboard() {
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
   const availableServerTime = Date.parse(availablePickupData.serverTime);
   const availableServerOffset = Number.isFinite(availableServerTime)
-    ? availableServerTime - availablePickupUpdatedAt : 0;
+    ? availableServerTime - availableStudentsUpdatedAt : 0;
   const availableTestingNowMs = freshnessNowMs + availableServerOffset;
   useEffect(() => {
     if (studentView !== 'available') return;
@@ -1054,6 +1077,18 @@ export default function Dashboard() {
     }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) - now + 5)));
     return () => clearTimeout(timer);
   }, [studentView, availablePickupData.testingNextBoundaryAt, availablePickupStudents, availableServerOffset, refetchAvailableStudents]);
+  const availableRoster = useMemo(() => buildAvailableRoster(availablePickupStudents, scheduledCoverageGroups),
+    [availablePickupStudents, scheduledCoverageGroups]);
+  const availableStudentsReady = availableStudentsReadSucceeded && availableRoster.metadataReady;
+  const availableMetadataMissing = !availableStudentsLoading && !availableRoster.metadataReady;
+  useEffect(() => {
+    if (studentView !== 'available' || !availableStudentsReady) return;
+    const availableIds = new Set(availableRoster.students.map(student => student.studentId));
+    const removedCount = [...selectedStudentIdsRef.current].filter(studentId => !availableIds.has(studentId)).length;
+    if (removedCount === 0) return;
+    setSelectedStudentIds(current => new Set([...current].filter(studentId => availableIds.has(studentId))));
+    setAvailableSelectionNotice(`${removedCount} selected student${removedCount === 1 ? ' is' : 's are'} no longer available.`);
+  }, [availableRoster, availableStudentsReady, availableStudentsUpdatedAt, studentView]);
 
   const {
     data: allClaimedPickupStudents = EMPTY_LIST,
@@ -3000,6 +3035,7 @@ export default function Dashboard() {
   // Selection handlers. Any selection the teacher makes replaces a selection
   // that was lost automatically (selectionLoss).
   const toggleStudentSelection = (studentId) => {
+    if (studentView === 'available' && !availableStudentsReady) return;
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
       if (isStudentLateSignInRestrictionEligible(student)) {
@@ -3107,6 +3143,12 @@ export default function Dashboard() {
     });
   };
   const selectAll = () => {
+    if (studentView === 'available') {
+      if (!availableStudentsReady) return;
+      setSelectedStudentIds(current => new Set([...current, ...filteredStudents.map(student => student.studentId)]));
+      setAvailableSelectionNotice('');
+      return;
+    }
     const allStudentIds = selectAllStudents.map((s) => s.studentId);
     setSelectionLoss(null);
     setSelectedStudentIds(new Set(allStudentIds));
@@ -3121,6 +3163,7 @@ export default function Dashboard() {
   };
   const clearSelection = () => {
     setSelectionLoss(null);
+    setAvailableSelectionNotice('');
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -3382,28 +3425,20 @@ export default function Dashboard() {
       return matchesStudentSearch(student) && matchesSubgroup;
     })
     .sort(compareStudentsByLastName);
-  const filteredAvailableStudents = availablePickupStudents
-    .filter(matchesStudentSearch)
+  const availableView = useMemo(() => filterAvailableRoster(availableRoster, {
+    classId: availableClassFilter, grade: availableGradeFilter, query: normalizedSearchQuery, nowMs: availableTestingNowMs,
+  }, compareStudentsByLastName), [availableRoster, availableClassFilter, availableGradeFilter, normalizedSearchQuery, availableTestingNowMs]);
+  const filteredAvailableStudents = availableView.ordinaryStudents;
+  const filteredScheduledCoverageGroups = availableView.scheduledGroups;
+  const selectedAvailableStudents = availableRoster.students.filter(student => selectedStudentIds.has(student.studentId))
     .sort(compareStudentsByLastName);
-  const filteredScheduledCoverageGroups = scheduledCoverageGroups
-    .map((group) => ({
-      ...group,
-      students: (group.students || [])
-        .filter((student) => (
-          matchesStudentSearch(student) ||
-          (group.label || '').toLowerCase().includes(normalizedSearchQuery) ||
-          (group.className || '').toLowerCase().includes(normalizedSearchQuery) ||
-          (group.teacherName || '').toLowerCase().includes(normalizedSearchQuery)
-        ))
-        .sort(compareStudentsByLastName),
-    }))
-    .filter((group) => group.students.length > 0)
-    .sort((a, b) => (a.className || a.label || "").localeCompare(b.className || b.label || ""));
+  const availableShownIds = new Set(availableView.students.map(student => student.studentId));
+  const hiddenAvailableSelectionCount = selectedAvailableStudents.filter(student => !availableShownIds.has(student.studentId)).length;
   const filteredClaimedStudents = claimedPickupStudents
     .filter(matchesStudentSearch)
     .sort(compareStudentsByLastName);
   const filteredStudents = studentView === "available"
-    ? [...filteredScheduledCoverageGroups.flatMap((group) => group.students), ...filteredAvailableStudents]
+    ? availableView.students
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
@@ -4623,7 +4658,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     : EMPTY_LIST;
   // Select All is for actions that can run now. Signed-out students may still
   // be ticked individually for an explicit saved restriction.
-  const selectAllStudents = selectableStudents.filter(isStudentCommandable);
+  const selectAllStudents = studentView === 'available'
+    ? availableStudentsReady ? filteredStudents : EMPTY_LIST
+    : selectableStudents.filter(isStudentCommandable);
 
   const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
     .filter((student) => !isStudentMonitoringSuppressed(student));
@@ -4789,7 +4826,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const targetStudents = studentView === "available"
-    ? filteredStudents
+    ? selectedAvailableStudents.length > 0 ? selectedAvailableStudents : filteredStudents
     : getActiveCommandStudents(null, {
         commandType: 'apply-flight-path',
       });
@@ -4928,7 +4965,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
     ? ` · ${filteredClaimedStudents.length} currently shown by search`
     : '';
-  const targetBannerLabel = subgroupCommandsDisabled
+  const targetBannerLabel = studentView === 'available'
+    ? !availableStudentsReady ? 'Available students need a refresh'
+      : selectedAvailableStudents.length > 0
+        ? `${selectedAvailableStudents.length} selected student${selectedAvailableStudents.length === 1 ? '' : 's'}${hiddenAvailableSelectionCount ? ` · ${hiddenAvailableSelectionCount} hidden by filters` : ''}`
+        : `${filteredStudents.length} shown of ${availableRoster.students.length} available students`
+    : subgroupCommandsDisabled
     ? `${subgroupName || 'Subgroup'} roster unavailable`
     : selectionLossActive && selectedServerSignOutStudentIds.size === 0
     ? SELECTION_CLEARED_TARGET_LABEL
@@ -4993,31 +5035,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   // than assumed from Apply: claimed-coverage mode can allow Apply but not Remove.
   const flightPathMenuAvailable = dashboardCapabilities.allows('remove-flight-path') || studentView === "class";
   const blockListMenuAvailable = dashboardCapabilities.allows('remove-block-list') || studentView === "class";
-  const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
-  const availableGroupSections = (() => {
-    const sections = new Map();
-    filteredAvailableStudents.forEach((student) => {
-      const group = activeAvailableTestingGroup(student, availableTestingNowMs);
-      const key = group ? `testing:${group.applicationId}:${group.date}:${group.blockId}` : "scope:available";
-      if (!sections.has(key)) {
-        sections.set(key, {
-          id: key,
-          kind: group ? "group" : "scope",
-          label: group?.name || "Available students",
-          description: group ? "Scheduled testing · eligible online students" : "Eligible online students",
-          testingGroup: group,
-          students: [],
-        });
-      }
-      sections.get(key).students.push(student);
-    });
-    return Array.from(sections.values())
-      .map((section) => ({
-        ...section,
-        students: section.students.sort(compareStudentsByLastName),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  })();
+  const availableGroupSections = availableView.sections;
 
   const buildCommandRequest = (commandType, commandPayload = {}, options = {}) => {
     assertClassroomCommandSelectionIsolation(
@@ -5387,6 +5405,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
   const handleClaimStudents = (studentsToClaim, options = {}) => {
     if (dashboardCapabilities.observedOtherClass) return;
+    if (studentView === 'available' && !availableStudentsReady) return;
     if (!studentsToClaim.length) {
       toast({ variant: "destructive", title: "Select students first" });
       return;
@@ -6814,7 +6833,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       <header data-class-tools-navigation className="chrome-surface sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
         <div className="max-w-screen-2xl mx-auto px-6 py-3">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             {/* Left: Logo & School */}
             <div className="flex items-center gap-3">
               <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
@@ -6833,7 +6852,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <HeaderOrnament />
             </div>
             {/* Center: Status badges */}
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
               <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
@@ -6859,7 +6878,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               {isTeacher && !scheduledSupervisionId && (
                 <>
                   {activeSession ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       {!activeSessionIsScheduled && (
                         <button
                           type="button"
@@ -6885,7 +6904,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       <select
                         value={startGroupId}
                         onChange={(event) => setStartGroupId(event.target.value)}
@@ -6970,7 +6989,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     </>
                   )}
                   {!activeSession && !scheduledSupervisionId && !retainedObservedSession && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       <select
                         value={adminStartGroupId}
                         onChange={(event) => setAdminStartGroupId(event.target.value)}
@@ -7044,7 +7063,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               )}
             </div>
             {/* Right: Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
               <ThemeToggle />
               {(isTeacher || isAdmin) && !scheduledSupervisionId && (
@@ -7271,8 +7290,36 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {canShowStudentWorkspace && (
           <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
-            <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-end gap-3">
+              <input type="text" aria-label="Search students" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-full sm:w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
+              {studentView === 'available' ? <>
+                <label className="grid min-w-0 max-w-full gap-1 text-xs font-medium">Class
+                  <select aria-label="Filter available by class" value={availableClassFilter} onChange={event => setAvailableClassFilter(event.target.value)}
+                    disabled={availableStudentsLoading || !availableRoster.metadataReady}
+                    className="h-11 max-w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground sm:max-w-[220px]">
+                    <option value="">All classes</option>
+                    {availableRoster.classOptions.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                    {availableRoster.hasNoClass || availableClassFilter === NO_AVAILABLE_CLASS ? <option value={NO_AVAILABLE_CLASS}>No class assigned</option> : null}
+                    {availableClassFilter && availableClassFilter !== NO_AVAILABLE_CLASS && !availableRoster.classOptions.some(group => group.id === availableClassFilter)
+                      ? <option value={availableClassFilter}>Selected class (none available)</option> : null}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-medium">Grade
+                  <select aria-label="Filter available by grade" value={availableGradeFilter} onChange={event => setAvailableGradeFilter(event.target.value)}
+                    disabled={availableStudentsLoading || !availableRoster.metadataReady}
+                    className="h-11 rounded-lg border border-border bg-card px-3 text-sm text-foreground">
+                    <option value="">All grades</option>
+                    {availableRoster.grades.map(grade => <option key={grade} value={grade}>{grade}</option>)}
+                    {availableRoster.hasNoGrade || availableGradeFilter === NO_AVAILABLE_GRADE ? <option value={NO_AVAILABLE_GRADE}>No grade assigned</option> : null}
+                    {availableGradeFilter && availableGradeFilter !== NO_AVAILABLE_GRADE && !availableRoster.grades.includes(availableGradeFilter)
+                      ? <option value={availableGradeFilter}>{availableGradeFilter} (none available)</option> : null}
+                  </select>
+                </label>
+                <Button variant="outline" data-testid="button-clear-available-filters" disabled={!availableClassFilter && !availableGradeFilter && !searchQuery}
+                  onClick={() => { setAvailableClassFilter(''); setAvailableGradeFilter(''); setSearchQuery(''); }}>Clear filters</Button>
+              </> : null}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               <div ref={selectionTargetRef} tabIndex={-1} className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="badge-selection-count">
                 <div className="text-[13px] font-semibold">{dashboardCapabilities.observedOtherClass ? 'Viewing' : 'Target'}: {activeClassName} - {displayedTargetBannerLabel}</div>
                 <div className="text-[11px] font-medium opacity-80">{desktopSourcesEnabled ? 'Browser: ' : ''}{displayedTargetConnectionLabel}</div>
@@ -7281,11 +7328,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <>
                   <button
                     onClick={selectAll}
-                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || (selectedStudentIds.size === selectAllStudents.length && selectAllStudents.every(student => selectedStudentIds.has(student.studentId)))}
+                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || (
+                      (studentView === 'available' || selectedStudentIds.size === selectAllStudents.length)
+                      && selectAllStudents.every(student => selectedStudentIds.has(student.studentId))
+                    )}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="button-select-all-students"
                   >
-                    <Users className="h-4 w-4" /> Select All ({selectAllStudents.length})
+                    <Users className="h-4 w-4" /> {studentView === 'available' ? 'Select shown' : 'Select All'} ({selectAllStudents.length})
                   </button>
                   <button onClick={clearSelection} disabled={selectedStudentIds.size === 0 && selectedServerSignOutStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                     Clear Selection
@@ -7555,38 +7605,71 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold page-heading">Available students</h2>
-                <p className="text-sm text-muted-foreground">Online students from your supervision permissions who are not in an active class.</p>
+                <p className="text-sm text-muted-foreground">Students available within your supervision permissions, organized by class roster. Roster classes do not indicate which class is meeting now.</p>
                 {availablePickupData.claim?.endsAt && <p className="mt-1 text-sm" data-testid="quick-claim-deadline">Claim to {availablePickupData.claim.supervisorName || currentUser?.displayName} · ends {new Date(availablePickupData.claim.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.timezone || 'America/New_York' })}. Adding students keeps the current deadline.</p>}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
                   onClick={() => handleClaimStudents(selectedAvailableStudents)}
-                  disabled={selectedAvailableStudents.length === 0 || claimPickupMutation.isPending}
+                  disabled={!availableStudentsReady || selectedAvailableStudents.length === 0 || claimPickupMutation.isPending}
                   data-testid="button-claim-selected-students"
                 >
                   <UserCheck className="h-4 w-4 mr-2" />
-                  Claim selected
+                  Claim selected ({selectedAvailableStudents.length})
                 </Button>
                 <Button
                   onClick={() => handleClaimStudents(filteredStudents)}
-                  disabled={filteredStudents.length === 0 || claimPickupMutation.isPending}
+                  disabled={!availableStudentsReady || filteredStudents.length === 0 || claimPickupMutation.isPending}
                   data-testid="button-claim-all-students"
                 >
                   <Users className="h-4 w-4 mr-2" />
-                  Claim all
+                  Claim shown ({filteredStudents.length})
                 </Button>
               </div>
             </div>
-            {filteredScheduledCoverageGroups.length === 0 && filteredAvailableStudents.length === 0 ? (
+            {!availableStudentsLoading && availableRoster.metadataReady ? <p className="text-sm text-muted-foreground" data-testid="available-students-summary">
+              Showing {filteredStudents.length} of {availableRoster.students.length} available students. Students in multiple class sections count once.
+            </p> : null}
+            <div role="status" aria-live="polite" data-testid="available-selection-notice" className="text-sm text-muted-foreground">{availableSelectionNotice}</div>
+            {selectedAvailableStudents.length > 0 ? (
+              <section className="rounded-lg border bg-card p-4" data-testid="available-selection-tray" aria-label="Selected available students">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold">{selectedAvailableStudents.length} selected{hiddenAvailableSelectionCount > 0 ? ` · ${hiddenAvailableSelectionCount} hidden by filters` : ''}</p>
+                  <Button size="sm" variant="ghost" onClick={clearSelection}>Clear selected students</Button>
+                </div>
+                <ul className="flex flex-wrap gap-2">
+                  {selectedAvailableStudents.map(student => <li key={student.studentId} className="flex max-w-full items-center gap-2 rounded-md border bg-background py-1 pl-3 pr-1 text-sm">
+                    <span className="min-w-0 break-words">{student.studentName}{!availableShownIds.has(student.studentId) ? ' (hidden)' : ''}</span>
+                    <button type="button" aria-label={`Remove ${student.studentName} from selection`} onClick={() => deselectStudents([student.studentId])}
+                      className="shrink-0 rounded p-1 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-4 w-4" /></button>
+                  </li>)}
+                </ul>
+              </section>
+            ) : null}
+            {availableStudentsError || availableMetadataMissing ? (
+              <div role="alert" data-testid="available-students-error" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+                <p>{availableMetadataMissing ? 'Class roster details are unavailable. Refresh before claiming students.'
+                  : availableRoster.students.length > 0 ? 'Showing the last available student data because refresh failed. Refresh before claiming students.'
+                    : 'Available students could not load. Refresh to try again.'}</p>
+                <Button size="sm" variant="outline" disabled={availableStudentsRefreshing} onClick={() => refetchAvailableStudents()} data-testid="retry-available-students"><RefreshCw className="mr-2 h-4 w-4" />Retry</Button>
+              </div>
+            ) : null}
+            {availableStudentsLoading ? (
+              <div role="status" data-testid="available-students-loading" className="rounded-lg border bg-card px-4 py-14 text-center text-sm text-muted-foreground">Loading available students…</div>
+            ) : availableMetadataMissing ? null : filteredScheduledCoverageGroups.length === 0 && filteredAvailableStudents.length === 0 && !availableStudentsError ? (
               <div className="rounded-lg border bg-card px-4 py-14 text-center">
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-muted/40">
                   <UserCheck className="h-7 w-7 text-muted-foreground" />
                 </div>
-                <h3 className="text-lg font-semibold">No students available</h3>
+                <h3 className="text-lg font-semibold">{availableClassFilter || availableGradeFilter || searchQuery ? 'No available students match these filters' : 'No students available'}</h3>
                 <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                  Students will appear here when they log in outside a class and match one of your supervision permissions.
+                  {availableClassFilter || availableGradeFilter || searchQuery
+                    ? 'Adjust Class, Grade, or search to browse other students within your permissions.'
+                    : 'Students will appear here when they are available and match one of your supervision permissions.'}
                 </p>
+                {availableClassFilter || availableGradeFilter || searchQuery ? <Button variant="outline" className="mt-4"
+                  onClick={() => { setAvailableClassFilter(''); setAvailableGradeFilter(''); setSearchQuery(''); }}>Clear filters</Button> : null}
               </div>
             ) : (
               <div className="space-y-4">
@@ -7608,6 +7691,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                             size="sm"
                             variant="outline"
                             onClick={() => handleStartScheduledConflict(section.id)}
+                            title="Starts the full class roster, including students hidden by filters."
                             disabled={startScheduledConflictMutation.isPending}
                             data-testid={`button-start-scheduled-coverage-${section.id}`}
                           >
@@ -7617,22 +7701,24 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         <Button
                           size="sm"
                           onClick={() => handleClaimStudents(section.students)}
-                          disabled={claimPickupMutation.isPending || section.students.length === 0}
+                          disabled={!availableStudentsReady || claimPickupMutation.isPending || section.students.length === 0}
                           data-testid={`button-claim-scheduled-coverage-${section.id}`}
                           className="bg-amber-400 text-slate-950 hover:bg-amber-300"
                         >
                           <Users className="h-4 w-4 mr-2" />
-                          Claim Group
+                          Claim shown ({section.students.length})
                         </Button>
                       </div>
+                      {section.canStartClass && (availableClassFilter || availableGradeFilter || searchQuery) ? <p className="w-full text-xs text-muted-foreground">Start Class uses the full class roster. Claim shown uses the filtered students.</p> : null}
                     </div>
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 p-4">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-4 p-4">
                       {section.students.map((student) => (
                         <div key={`${section.id}-${student.studentId}`} className="rounded-lg border bg-background p-4 shadow-sm" data-testid={`card-scheduled-coverage-student-${student.studentId}`}>
                           <div className="flex items-start gap-3">
                             <input
                               type="checkbox"
                               checked={selectedStudentIds.has(student.studentId)}
+                              disabled={!availableStudentsReady}
                               onChange={() => toggleStudentSelection(student.studentId)}
                               className="mt-1 h-4 w-4 rounded border-border"
                               aria-label={`Select ${student.studentName}`}
@@ -7658,7 +7744,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                             <Button
                               size="sm"
                               onClick={() => handleClaimStudents([student], { quickClaimStudentId: student.studentId })}
-                              disabled={claimPickupMutation.isPending}
+                              disabled={!availableStudentsReady || claimPickupMutation.isPending}
                               data-testid={`button-claim-scheduled-student-${student.studentId}`}
                               className="bg-amber-400 text-slate-950 hover:bg-amber-300 focus-visible:ring-amber-300 disabled:bg-amber-200 disabled:text-slate-700"
                             >
@@ -7685,21 +7771,22 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       <Button
                         size="sm"
                         onClick={() => handleClaimStudents(section.students)}
-                        disabled={claimPickupMutation.isPending || section.students.length === 0}
+                        disabled={!availableStudentsReady || claimPickupMutation.isPending || section.students.length === 0}
                         data-testid={`button-claim-section-${section.id}`}
                         className="bg-amber-400 text-slate-950 hover:bg-amber-300"
                       >
                         <Users className="h-4 w-4 mr-2" />
-                        {section.kind === "group" ? "Claim Group" : "Claim students"}
+                        Claim shown ({section.students.length})
                       </Button>
                     </div>
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 p-4">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-4 p-4">
                       {section.students.map((student) => (
                         <div key={`${section.id}-${student.studentId}`} className="rounded-lg border bg-background p-4 shadow-sm" data-testid={`card-available-student-${student.studentId}`}>
                           <div className="flex items-start gap-3">
                             <input
                               type="checkbox"
                               checked={selectedStudentIds.has(student.studentId)}
+                              disabled={!availableStudentsReady}
                               onChange={() => toggleStudentSelection(student.studentId)}
                               className="mt-1 h-4 w-4 rounded border-border"
                               aria-label={`Select ${student.studentName}`}
@@ -7725,7 +7812,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                             <Button
                               size="sm"
                               onClick={() => handleClaimStudents([student], { quickClaimStudentId: student.studentId })}
-                              disabled={claimPickupMutation.isPending}
+                              disabled={!availableStudentsReady || claimPickupMutation.isPending}
                               data-testid={`button-claim-student-${student.studentId}`}
                               className="bg-amber-400 text-slate-950 hover:bg-amber-300 focus-visible:ring-amber-300 disabled:bg-amber-200 disabled:text-slate-700"
                             >

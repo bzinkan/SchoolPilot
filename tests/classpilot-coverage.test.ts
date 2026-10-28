@@ -646,6 +646,21 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     ];
     assert.deepEqual(available.body.students[0].classes, expectedClasses);
     expectNoDeviceIds(available.body);
+    await inSchool(school.id, () => createCoverageAssignment({
+      schoolId: school.id, staffId: staff.id, scopeType: "students", scopeValue: studentUnassigned.id,
+      permissions: { claim: true, setup: false }, active: true, createdBy: admin.id,
+    }));
+    const dashboardAvailable = await requestJson("GET", "/coverage/available-students", undefined, staffAuth);
+    assert.equal(dashboardAvailable.status, 200);
+    assert.deepEqual(new Set(dashboardAvailable.body.students.map((row: { studentId: string }) => row.studentId)),
+      new Set([filterStudent.id, studentUnassigned.id]), "class enrichment must not add unauthorized online students");
+    assert.deepEqual(dashboardAvailable.body.students.find((row: { studentId: string }) => row.studentId === filterStudent.id).classes,
+      expectedClasses, "all active official memberships remain available with automatic scheduling off");
+    assert.deepEqual(dashboardAvailable.body.students.find((row: { studentId: string }) => row.studentId === studentUnassigned.id).classes, []);
+    assert.deepEqual(dashboardAvailable.body.scheduledCoverageGroups, []);
+    assert.equal(classA.scheduleEnabled, false);
+    assert.equal(classB.scheduleEnabled, false);
+    expectNoDeviceIds(dashboardAvailable.body);
     const classes = await inSchool(school.id, () => getCoverageStudentClasses(school.id, [filterStudent.id, filterStudent.id, noClassStudent.id]));
     assert.deepEqual(classes.get(filterStudent.id), expectedClasses);
     assert.deepEqual(classes.get(noClassStudent.id), []);
@@ -779,6 +794,11 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       );
       assert.equal(schoolWide.status, 200);
       assert.deepEqual(schoolWide.body, []);
+      const emptyAvailable = await requestJson("GET", "/coverage/available-students", undefined, authFor(emptyAdmin, emptySchool.id));
+      assert.equal(emptyAvailable.status, 200);
+      assert.deepEqual(emptyAvailable.body.students, [], "school-wide Available must not include the other tenant's online students or class metadata");
+      assert.deepEqual(emptyAvailable.body.scheduledCoverageGroups, []);
+      expectNoDeviceIds(emptyAvailable.body);
 
       const emptyGroup = await inSchool(emptySchool.id, () => createGroup({
         schoolId: emptySchool.id,
@@ -2010,6 +2030,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(staffQueue.body.scheduledCoverageGroups[0].canStartClass, false);
     const scheduledCoverageIds = new Set(staffQueue.body.scheduledCoverageGroups[0].students.map((student: any) => student.studentId));
     assert.equal(scheduledCoverageIds.has(scheduledOnlyStudent.id), true);
+    assert.deepEqual(staffQueue.body.scheduledCoverageGroups[0].students.find((student: { studentId: string }) => student.studentId === scheduledOnlyStudent.id).classes,
+      [{ id: scheduledGroup.id, name: scheduledGroup.name, gradeLevel: scheduledGroup.gradeLevel }]);
     expectNoDeviceIds(staffQueue.body.scheduledCoverageGroups[0]);
 
     const scheduledTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(scheduledTeacher, school.id));

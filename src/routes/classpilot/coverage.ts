@@ -1860,9 +1860,22 @@ router.get("/coverage/available-students", ...auth, requireClasspilotFullMonitor
         testing.activeTestingGroups.get(row.student.id) ?? null
       )];
     });
+    // Class membership narrows discovery only. Enrich the exact authorized
+    // students from both queues without using their classes to widen access.
+    const classes = await getCoverageStudentClasses(schoolId, [
+      ...students.map((student) => student.studentId),
+      ...scheduledCoverageStudentIds,
+    ]);
+    const withClasses = <T extends { studentId: string }>(student: T) => ({
+      ...student,
+      classes: classes.get(student.studentId) || [],
+    });
     const existingClaim = await getActiveDirectSupervisionContextForStaff(schoolId, req.authUser!.id);
     const claimEndsAt = existingClaim?.endsAt || await defaultClaimEndsAt(schoolId);
-    return res.json({ students, scheduledCoverageGroups, serverTime: testing.serverTime,
+    return res.json({ students: students.map(withClasses),
+      scheduledCoverageGroups: scheduledCoverageGroups.map((group) => ({
+        ...group, students: group.students.map(withClasses),
+      })), serverTime: testing.serverTime,
       testingNextBoundaryAt: testing.testingNextBoundaryAt, claim: { contextId: existingClaim?.id || null,
       assignedStaffId: req.authUser!.id, supervisorName: req.authUser!.displayName || req.authUser!.email,
       endsAt: claimEndsAt.toISOString() } });

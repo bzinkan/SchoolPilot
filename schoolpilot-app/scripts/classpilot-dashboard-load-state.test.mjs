@@ -287,6 +287,7 @@ async function configureDashboard(page, {
   const observationLeaseRequests = [];
   const sessionRequests = [];
   const claimedRosterRequests = [];
+  const availableRosterRequests = [];
   const coverageSummaryRequests = [];
   const activityRequests = [];
   const pageErrors = [];
@@ -453,7 +454,11 @@ async function configureDashboard(page, {
       return;
     }
     if (pathname === '/api/coverage/available-students') {
-      await route.fulfill({ json: { students: typeof availableStudents === 'function' ? await availableStudents(request) : availableStudents } });
+      availableRosterRequests.push({ schoolId: request.headers()['x-school-id'] });
+      const response = typeof availableStudents === 'function' ? await availableStudents(request) : availableStudents;
+      await route.fulfill(Number(response?.status) >= 400
+        ? { status: response.status, json: response.body || { error: 'Available students unavailable' } }
+        : { json: Array.isArray(response) ? { students: response } : response });
       return;
     }
     if (pathname === '/api/coverage/claim' && request.method() === 'POST' && claimResponse) {
@@ -565,6 +570,7 @@ async function configureDashboard(page, {
     tileRequests,
     sessionRequests,
     claimedRosterRequests,
+    availableRosterRequests,
     coverageSummaryRequests,
     activityRequests,
     websocketConnections, websocketMessages,
@@ -573,6 +579,7 @@ async function configureDashboard(page, {
     setCoverageSummary(summary) { coverageSummary = summary; },
     setDashboardActivity(activity) { dashboardActivity = activity; },
     setClaimedStudents(students) { claimedStudents = students; },
+    setAvailableStudents(students) { availableStudents = students; },
     setRespondTransport(value) { respondTransport = value; },
     async disconnectWebSocket() {
       const previous = dashboardSocket;
@@ -3318,18 +3325,251 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
 });
 
 async function installRoomPreview(page, rows, eligible = () => true, defaultEndsAt = '2026-09-14T16:00:00Z') {
+  const previewRequests = [];
   await page.route('**/api/coverage/session-options*', route => route.fulfill({ json: {
     students: rows, groups: [], staff: [], defaultEndsAt,
   } }));
   await page.route('**/api/coverage/preview', async route => {
     const request = { ...route.request().postDataJSON(), action: 'claim_room', contextType: 'temporary_room', name: 'My room' };
+    previewRequests.push(request);
     await route.fulfill({ json: { request, reviewToken: 'synthetic-room-review', destination: { name: 'My room', purpose: 'claim',
       assignedStaffId: ADMIN_ID, supervisorName: 'Alex Admin', endsAt: request.endsAt }, students: request.studentIds.map(studentId => ({
         studentId, name: rows.find(row => row.studentId === studentId)?.studentName || 'Student', eligible: eligible(studentId),
         status: eligible(studentId) ? 'ready' : 'unavailable', reason: eligible(studentId) ? null : 'Another supervisor controls this student.',
       })) } });
   });
+  return previewRequests;
 }
+
+function availableFilterRoster() {
+  const algebra = { id: OWN_GROUP_ID, name: 'Algebra', gradeLevel: '7' };
+  const biology = { id: OBSERVED_GROUP_ID, name: 'Biology', gradeLevel: '8' };
+  return [
+    student({ studentId: STUDENT_ID, studentName: 'Ada Adams', gradeLevel: '7', classes: [algebra, biology] }),
+    student({ studentId: SIGNED_OUT_STUDENT_ID, studentName: 'Ben Brown', gradeLevel: '7', classes: [algebra] }),
+    student({ studentId: SIGNAL_LOST_STUDENT_ID, studentName: 'Cara Clark', gradeLevel: '8', classes: [biology] }),
+    student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Drew Diaz', gradeLevel: null, classes: [] }),
+  ].map(row => ({ ...row, studentEmail: `${row.studentName.split(' ')[0].toLowerCase()}@example.edu`,
+    supervisionState: 'available', matchingGroups: [], matchingScopes: [],
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
+}
+
+async function availableFilterFixture(context, overrides = {}) {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  await page.clock.setFixedTime(TESTING_TIME);
+  const rows = availableFilterRoster();
+  const harness = await configureDashboard(page, { aggregate: aggregateController(), userRole: 'teacher', activeSession: null,
+    availableStudents: rows, coverageSummary: { ...ownSupervisionSummary([]), availableStudentCount: rows.length }, ...overrides });
+  const previews = await installRoomPreview(page, rows);
+  await page.goto(`${baseURL}/classpilot`, { timeout: 60_000 });
+  await page.getByTestId('button-view-available-students').click();
+  return { browser, baseURL, page, rows, harness, previews };
+}
+
+async function refetchAvailable(page) {
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.refetchQueries({ queryKey: ['/api/coverage/available-students'], type: 'active' });
+  });
+}
+
+const availableClassFilter = page => page.getByLabel('Filter available by class', { exact: true });
+const availableGradeFilter = page => page.getByLabel('Filter available by grade', { exact: true });
+const availableCard = (page, id) => page.getByTestId(`card-available-student-${id}`);
+
+async function assertAvailableSummary(page, shown, total) {
+  await waitUntil(async () => (await page.getByTestId('available-students-summary').innerText()).includes(`Showing ${shown} of ${total} available students`),
+    `Available must show ${shown} of ${total} unique students`);
+}
+
+test('Available roster filters work without scheduling or an active class and share multi-class selection', { timeout: 90_000 }, async context => {
+  const { page, harness } = await availableFilterFixture(context);
+  await assertAvailableSummary(page, 4, 4);
+  assert.equal(await availableClassFilter(page).inputValue(), '');
+  assert.equal(await availableGradeFilter(page).inputValue(), '');
+  assert.equal(await availableCard(page, STUDENT_ID).count(), 2, 'A multi-class student is displayed in both roster sections');
+  const headings = await page.locator('[data-testid^="section-available-"] h3').allTextContents();
+  assert.deepEqual(headings.map(text => text.split(' - ')[0]), ['Algebra', 'Biology', 'No class assigned']);
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-available-students'), [4]);
+  assert.match(await page.getByTestId('button-claim-all-students').innerText(), /Claim shown \(4\)/);
+  await availableCard(page, STUDENT_ID).first().getByRole('checkbox').check();
+  assert.equal(await availableCard(page, STUDENT_ID).last().getByRole('checkbox').isChecked(), true);
+  await page.getByTestId('available-selection-tray').waitFor();
+  assert.match(await page.getByTestId('button-claim-selected-students').innerText(), /Claim selected \(1\)/);
+
+  await availableClassFilter(page).selectOption(OWN_GROUP_ID);
+  await availableGradeFilter(page).selectOption('7');
+  await page.getByTestId('input-search-students').fill('Brown');
+  await assertAvailableSummary(page, 1, 4);
+  assert.equal(await availableCard(page, STUDENT_ID).count(), 0);
+  await availableCard(page, SIGNED_OUT_STUDENT_ID).waitFor();
+  assert.match(await page.getByTestId('available-selection-tray').innerText(), /Ada Adams/);
+  assert.equal(await availableClassFilter(page).getByRole('option', { name: 'Biology', exact: true }).count(), 1,
+    'Class options come from the full response, not search results');
+  assert.equal(await availableGradeFilter(page).getByRole('option', { name: '8', exact: true }).count(), 1,
+    'Grade options remain available across filters');
+  await availableGradeFilter(page).selectOption('8');
+  await assertAvailableSummary(page, 0, 4);
+  assert.equal(await page.getByTestId('button-claim-all-students').isDisabled(), true);
+  await page.getByTestId('button-clear-available-filters').click();
+  await assertAvailableSummary(page, 4, 4);
+  await availableClassFilter(page).selectOption({ label: 'No class assigned' });
+  await availableGradeFilter(page).selectOption({ label: 'No grade assigned' });
+  await assertAvailableSummary(page, 1, 4);
+  await availableCard(page, MOVED_CLASS_STUDENT_ID).waitFor();
+  await page.getByTestId('button-clear-available-filters').click();
+
+  const evidence = process.env.CLASSPILOT_ACTIVITY_EVIDENCE_DIR;
+  if (evidence) {
+    mkdirSync(evidence, { recursive: true });
+    await page.screenshot({ path: path.join(evidence, 'available-class-filters-desktop.png'), fullPage: true });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await availableClassFilter(page).scrollIntoViewIfNeeded();
+  for (const control of [availableClassFilter(page), availableGradeFilter(page), page.getByTestId('input-search-students'), page.getByTestId('available-selection-tray')]) {
+    const bounds = await control.boundingBox();
+    assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391, 'Available controls fit the narrow viewport');
+  }
+  if (evidence) {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(evidence, 'available-class-filters-mobile.png'), fullPage: true });
+  }
+  const overflow = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+    elements: [...document.querySelectorAll('main *, [data-testid]')].filter(node => {
+      const rect = node.getBoundingClientRect(); return rect.width && rect.right > innerWidth + 1;
+    }).slice(0, 8).map(node => ({ tag: node.tagName, testId: node.dataset.testid, text: node.textContent?.slice(0, 70), className: node.className })) }));
+  assert.ok(overflow.scrollWidth <= overflow.width + 1, `Available has no horizontal overflow: ${JSON.stringify(overflow)}`);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Available preserves cross-filter picks and freezes unique shown and selected claim reviews', { timeout: 90_000 }, async context => {
+  const { page, rows, harness, previews } = await availableFilterFixture(context);
+  await assertAvailableSummary(page, 4, 4);
+  await availableClassFilter(page).selectOption(OWN_GROUP_ID);
+  await availableCard(page, SIGNED_OUT_STUDENT_ID).getByRole('checkbox').check();
+  await availableClassFilter(page).selectOption(OBSERVED_GROUP_ID);
+  await page.getByTestId('button-select-all-students').click();
+  assert.match(await page.getByTestId('button-claim-selected-students').innerText(), /Claim selected \(3\)/);
+  assert.match(await page.getByTestId('available-selection-tray').innerText(), /Ben Brown/);
+  assert.match(await page.getByTestId('available-selection-tray').innerText(), /1.*(?:hidden|outside)/i);
+
+  await page.getByTestId('button-claim-all-students').click();
+  await page.getByTestId('review-supervision').click();
+  await waitUntil(() => previews.length === 1, 'Claim shown opens an exact preview');
+  assert.deepEqual([...previews[0].studentIds].sort(), [STUDENT_ID, SIGNAL_LOST_STUDENT_ID].sort(),
+    'Claim shown excludes the selected student hidden by the class filter');
+  await page.getByTestId('supervision-session-dialog').getByRole('button', { name: 'Back', exact: true }).click();
+  await page.getByTestId('supervision-session-dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByTestId('supervision-session-dialog').waitFor({ state: 'hidden' });
+
+  await page.getByTestId('button-claim-selected-students').click();
+  harness.setAvailableStudents([rows[3]]);
+  await refetchAvailable(page);
+  await page.getByTestId('review-supervision').click();
+  await waitUntil(() => previews.length === 2, 'Claim selected opens its frozen preview');
+  assert.deepEqual([...previews[1].studentIds].sort(), [STUDENT_ID, SIGNED_OUT_STUDENT_ID, SIGNAL_LOST_STUDENT_ID].sort(),
+    'Refreshing Available cannot replace an already opened review cohort');
+  assert.equal(new Set(previews[1].studentIds).size, 3);
+  assert.deepEqual(harness.commandPosts, [], 'Available selection never grants classroom command access');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Available refresh errors retain selection until recovery and missing class metadata never becomes unassigned', { timeout: 90_000 }, async context => {
+  const { page, rows, harness } = await availableFilterFixture(context);
+  await assertAvailableSummary(page, 4, 4);
+  await availableClassFilter(page).selectOption(OWN_GROUP_ID);
+  await availableCard(page, SIGNED_OUT_STUDENT_ID).getByRole('checkbox').check();
+  harness.setAvailableStudents({ status: 503, body: { error: 'Roster lookup unavailable' } });
+  await refetchAvailable(page);
+  await page.getByTestId('available-students-error').waitFor();
+  await availableCard(page, SIGNED_OUT_STUDENT_ID).waitFor();
+  assert.match(await page.getByTestId('available-selection-tray').innerText(), /Ben Brown/);
+  assert.equal(await page.getByTestId('button-claim-selected-students').isDisabled(), true);
+  assert.equal(await page.getByTestId('button-claim-all-students').isDisabled(), true);
+  assert.equal(await availableCard(page, SIGNED_OUT_STUDENT_ID).getByRole('button', { name: 'Claim', exact: true }).isDisabled(), true);
+
+  harness.setAvailableStudents(rows.filter(row => row.studentId !== SIGNED_OUT_STUDENT_ID));
+  await page.getByTestId('retry-available-students').click();
+  await page.getByTestId('available-students-error').waitFor({ state: 'hidden' });
+  await assertAvailableSummary(page, 1, 3);
+  assert.match(await page.getByTestId('available-selection-notice').innerText(), /1.*no longer available/i);
+  assert.equal(await page.getByTestId('button-claim-selected-students').isDisabled(), true);
+  assert.equal(await page.getByTestId('available-selection-tray').count(), 0);
+
+  const { classes: _classes, ...missingClasses } = rows[0];
+  harness.setAvailableStudents([missingClasses]);
+  await refetchAvailable(page);
+  await page.getByTestId('available-students-error').waitFor();
+  assert.equal(await page.getByTestId('button-claim-all-students').isDisabled(), true);
+  assert.equal(await page.getByRole('heading', { name: /^No class assigned/ }).count(), 0,
+    'Missing metadata is an error, not an empty membership array');
+  harness.setAvailableStudents(rows);
+  await page.getByTestId('retry-available-students').click();
+  await page.getByTestId('available-students-error').waitFor({ state: 'hidden' });
+  await availableCard(page, STUDENT_ID).first().getByRole('checkbox').check();
+  await availableGradeFilter(page).selectOption('7');
+  await page.getByTestId('input-search-students').fill('Ada');
+  await page.getByTestId('button-view-class-students').click();
+  await page.getByTestId('button-view-available-students').click();
+  await assertAvailableSummary(page, 4, 4);
+  assert.equal(await availableClassFilter(page).inputValue(), '');
+  assert.equal(await availableGradeFilter(page).inputValue(), '');
+  assert.equal(await page.getByTestId('input-search-students').inputValue(), '');
+  assert.equal(await page.getByTestId('available-selection-tray').count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Available distinguishes an initial roster load from a confirmed empty response', { timeout: 60_000 }, async context => {
+  let resolveRows;
+  const heldRows = new Promise(resolve => { resolveRows = resolve; });
+  context.after(() => resolveRows([]));
+  const { page, harness } = await availableFilterFixture(context, { availableStudents: () => heldRows });
+  await page.getByTestId('available-students-loading').waitFor();
+  assert.equal(await page.getByTestId('button-claim-all-students').isDisabled(), true);
+  assert.equal(await page.getByRole('heading', { name: 'No students available', exact: true }).count(), 0,
+    'Loading must not be rendered as an empty roster');
+  resolveRows([]);
+  await page.getByTestId('available-students-loading').waitFor({ state: 'hidden' });
+  await assertAvailableSummary(page, 0, 0);
+  await page.getByRole('heading', { name: 'No students available', exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Available roster filters preserve scheduled sections and full-class Start while claiming only shown students', { timeout: 90_000 }, async context => {
+  const rows = availableFilterRoster();
+  const conflictId = 'available-filter-conflict';
+  const scheduled = { id: conflictId, className: 'Scheduled Algebra', label: 'Scheduled Supervision Needed: Scheduled Algebra',
+    teacherName: 'Scheduled teacher', canStartClass: true, students: rows.slice(0, 2) };
+  const { page, harness, previews } = await availableFilterFixture(context, {
+    dashboardActivity: scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }),
+    availableStudents: { students: rows.slice(2), scheduledCoverageGroups: [scheduled] },
+  });
+  await assertAvailableSummary(page, 4, 4);
+  assert.equal(await availableCard(page, STUDENT_ID).count(), 0, 'Scheduled students have no ordinary-section duplicates');
+  await page.getByTestId(`section-scheduled-coverage-${conflictId}`).waitFor();
+  const sections = await page.locator('[data-testid^="section-scheduled-coverage-"], [data-testid^="section-available-"]').evaluateAll(nodes => nodes.map(node => node.dataset.testid));
+  assert.equal(sections[0], `section-scheduled-coverage-${conflictId}`);
+  await availableClassFilter(page).selectOption(OWN_GROUP_ID);
+  await page.getByTestId('input-search-students').fill('Ada');
+  await assertAvailableSummary(page, 1, 4);
+  await page.getByTestId(`button-start-scheduled-coverage-${conflictId}`).waitFor();
+  await page.getByTestId(`button-claim-scheduled-coverage-${conflictId}`).click();
+  await page.getByTestId('review-supervision').click();
+  await waitUntil(() => previews.length === 1, 'The filtered scheduled section opens a claim preview');
+  assert.deepEqual(previews[0].studentIds, [STUDENT_ID]);
+  await page.getByTestId('supervision-session-dialog').getByRole('button', { name: 'Back', exact: true }).click();
+  await page.getByTestId('supervision-session-dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  const starts = [];
+  await page.route(`**/api/classpilot/scheduled-conflicts/${conflictId}/start-anyway`, async route => {
+    starts.push(route.request().postDataJSON());
+    await route.fulfill({ status: 409, json: { error: 'Synthetic full-class review boundary' } });
+  });
+  await page.getByTestId(`button-start-scheduled-coverage-${conflictId}`).click();
+  await waitUntil(() => starts.length === 1, 'Start Class must retain the scheduled-conflict action');
+  assert.deepEqual(starts[0], {}, 'Start Class is not narrowed to the current filter');
+  assert.deepEqual(harness.pageErrors, []);
+});
 
 for (const userRole of ['teacher', 'admin']) {
 test(`Dashboard ${userRole} claims review unavailable students and commit one exact room cohort`, { timeout: 75_000 }, async context => {
@@ -3338,6 +3578,7 @@ test(`Dashboard ${userRole} claims review unavailable students and commit one ex
   await page.clock.install({ time: TESTING_TIME });
   const available = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((id, index) => ({
     ...testingStudent(id, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned', gradeLevel: String(index + 3),
+    classes: [],
     matchingGroups: [{ id: `claim-group-${index}`, name: `Claim group ${index}` }],
   }));
   const room = scheduledTestingActivity({ id: OWN_TESTING_CONTEXT_ID, name: 'My room', purpose: 'claim', contextType: 'temporary_room',
@@ -3424,7 +3665,8 @@ test(`a delayed reviewed room claim cannot switch the Dashboard after a ${identi
         memberships: [SCHOOL_ID, SECOND_SCHOOL_ID].map(id => ({ schoolId: id, role: claimRole, schoolName: `School ${id.slice(0, 4)}`, schoolTimezone: 'America/New_York' })) };
     },
     expectedWebsocketRole: () => claimRole === 'teacher' ? 'teacher' : 'school_admin',
-    availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }],
+    availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned', gradeLevel: '7',
+      classes: [{ id: OWN_GROUP_ID, name: 'Algebra', gradeLevel: '7' }] }],
     coverageSummary: request => ({ ...ownSupervisionSummary([]), schoolId: request.headers()['x-school-id'] || SCHOOL_ID }),
     claimResponse: async request => {
       claimSchool = request.headers()['x-school-id'];
@@ -3435,7 +3677,11 @@ test(`a delayed reviewed room claim cannot switch the Dashboard after a ${identi
   await installRoomPreview(page, [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }]);
   await page.goto(`${baseURL}/__delayed-claim-school`);
   await page.getByTestId('button-view-available-students').click();
-  await page.getByTestId('button-claim-all-students').click();
+  await availableClassFilter(page).selectOption(OWN_GROUP_ID);
+  await availableGradeFilter(page).selectOption('7');
+  await page.getByTestId('input-search-students').fill('Testing');
+  await availableCard(page, STUDENT_ID).getByRole('checkbox').check();
+  await page.getByTestId('button-claim-selected-students').click();
   await page.getByTestId('review-supervision').click();
   await page.getByTestId('confirm-supervision-review').click();
   await waitUntil(() => claimSchool === SCHOOL_ID, 'The original claim is submitted under school A');
@@ -3458,6 +3704,12 @@ test(`a delayed reviewed room claim cannot switch the Dashboard after a ${identi
   assert.equal(await page.getByTestId('assigned-supervision-notice').count(), 0);
   assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0);
   assert.equal(harness.coverageMutationRequests.filter(request => request.pathname.endsWith('/claim')).length, 1);
+  if (identityChange === 'school') await page.getByTestId('button-view-available-students').click();
+  await assertAvailableSummary(page, 1, 1);
+  assert.equal(await availableClassFilter(page).inputValue(), '');
+  assert.equal(await availableGradeFilter(page).inputValue(), '');
+  assert.equal(await page.getByTestId('input-search-students').inputValue(), '');
+  assert.equal(await page.getByTestId('available-selection-tray').count(), 0, 'Identity changes clear the old Available selection');
   assert.deepEqual(harness.pageErrors, []);
 });
 }
@@ -5270,7 +5522,7 @@ test('a confirmed reviewed room claim retains exact membership while its summary
   const harness = await configureDashboard(page, {
     aggregate: aggregateController({ scoped: success([row]) }),
     dashboardActivity: scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }),
-    availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }],
+    availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned', classes: [] }],
     coverageSummary: async () => {
       if (phase === 'initial') return { ...ownSupervisionSummary([]), activeContextCount: 0, claimedStudentCount: 0 };
       if (phase === 'pending') {
@@ -6528,6 +6780,7 @@ test('Available testing labels use only the active applied block and keep other 
   const groups = [{ id: 'test-a', name: 'Vatter MAP Test A' }, { id: 'test-b', name: 'Wendell MAP Test B' }];
   const rows = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((studentId, index) => ({
     ...student({ studentId, studentName: `Available student ${index + 1}` }),
+    classes: [],
     matchingGroups: groups,
     matchingScopes: [{ id: 'saved-scope', name: 'Another saved testing scope' }],
     activeTestingGroup: index === 0 ? { groupId: 'test-a', name: 'Applied MAP Test A', applicationId: 'application-a',
@@ -6537,7 +6790,7 @@ test('Available testing labels use only the active applied block and keep other 
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
   await page.getByRole('heading', { name: 'Applied MAP Test A - 1 available', exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).textContent(), 'Applied MAP Test A');
   assert.equal(await page.getByTestId(`badge-available-testing-${SIGNED_OUT_STUDENT_ID}`).count(), 0);
   for (const group of groups) assert.equal(await page.getByText(group.name, { exact: true }).count(), 0);
@@ -6551,7 +6804,7 @@ test('Available testing labels expire at the applied block end even when refresh
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
   const endsAt = new Date(TESTING_TIME.getTime() + 30_000).toISOString();
-  const row = { ...student(), matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
+  const row = { ...student(), classes: [], matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
     activeTestingGroup: { groupId: 'saved-testing', name: 'Current MAP block', applicationId: 'application-a',
       blockId: 'block-a', date: '2026-09-14', startsAt: '2026-09-14T12:00:00Z', endsAt } };
   const harness = await configureDashboard(page, { aggregate: aggregateController(), userRole: 'teacher' });
@@ -6567,7 +6820,7 @@ test('Available testing labels expire at the applied block end even when refresh
   await page.getByRole('heading', { name: 'Current MAP block - 1 available', exact: true }).waitFor();
   await harness.authenticateWebSocket();
   await page.clock.fastForward(30_100);
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   assert.equal(await page.getByText('Current MAP block', { exact: true }).count(), 0);
   await waitUntil(() => reads > 1, 'The applied testing boundary refreshes Available without a realtime event');
@@ -6581,7 +6834,7 @@ test('Available testing labels refresh at the next applied start with an authent
   await page.clock.install({ time: TESTING_TIME });
   const startsAt = new Date(TESTING_TIME.getTime() + 30_000).toISOString();
   const endsAt = new Date(TESTING_TIME.getTime() + 60_000).toISOString();
-  const row = { ...student(), matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }] };
+  const row = { ...student(), classes: [], matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }] };
   const harness = await configureDashboard(page, { aggregate: aggregateController(), userRole: 'teacher' });
   let reads = 0;
   await page.route('**/api/coverage/available-students', route => {
@@ -6594,7 +6847,7 @@ test('Available testing labels refresh at the next applied start with an authent
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   await harness.authenticateWebSocket();
   await page.clock.fastForward(30_100);
@@ -6613,7 +6866,7 @@ test('Available testing labels reconcile terminal activation without a realtime 
   let reads = 0;
   await page.route('**/api/coverage/available-students', route => {
     reads += 1;
-    return route.fulfill({ json: { students: [{ ...student(), matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
+    return route.fulfill({ json: { students: [{ ...student(), classes: [], matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
       activeTestingGroup: reads === 1 ? { groupId: 'saved-testing', name: 'Pending MAP block', applicationId: 'application-a',
         blockId: 'block-a', date: '2026-09-14', startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T13:00:00Z' } : null,
     }], serverTime: TESTING_TIME.toISOString(), testingNextBoundaryAt: null } });
@@ -6623,7 +6876,7 @@ test('Available testing labels reconcile terminal activation without a realtime 
   await page.getByRole('heading', { name: 'Pending MAP block - 1 available', exact: true }).waitFor();
   await harness.authenticateWebSocket();
   await page.clock.fastForward(10_100);
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   assert.ok(reads > 1);
   assert.deepEqual(harness.coverageMutationRequests, []);
@@ -6645,7 +6898,7 @@ test('ordinary claims from an inactive testing group open a neutral room and pre
     userRole: 'teacher', activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
     aggregate: aggregateController({ scoped: success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Own class student' })]) }),
     dashboardActivity: scheduledActivityResponse(own, { serverTime: TESTING_TIME.toISOString() }),
-    availableStudents: [{ ...claimed, matchingGroups: [{ id: 'saved-testing-group', name: 'Reading MAP' }] }],
+    availableStudents: [{ ...claimed, classes: [], matchingGroups: [{ id: 'saved-testing-group', name: 'Reading MAP' }] }],
     claimedStudents: () => claimedNow && !released ? [claimed] : [],
     coverageSummary: () => ({ ...ownSupervisionSummary(claimedNow && !released ? [claim] : []), ownAdHocContexts: claimedNow && !released ? [{ ...claim, activeStudentCount: 1 }] : [] }),
     claimResponse: request => {
@@ -6668,7 +6921,7 @@ test('ordinary claims from an inactive testing group open a neutral room and pre
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByText('Reading MAP', { exact: true }).count(), 0);
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   await page.getByTestId('button-claim-all-students').click();
@@ -6708,6 +6961,7 @@ test('Available scheduled Claim opens one room and renders only independently st
     supervisionState: 'temporary_coverage', supervisionContext: { id: claimed.id, type: 'supervision_group', assignedStaffId: ADMIN_ID },
   }));
   const available = roster.map(row => ({ ...row, supervisionState: 'available', supervisionContext: null,
+    classes: [{ id: OWN_GROUP_ID, name: 'Grade 6 SS', gradeLevel: '6' }],
     matchingScheduledCoverage: { id: conflictId, className: 'Grade 6 SS', teacherName: 'Scheduled teacher' } }));
   const aggregate = aggregateController({ scoped: success([]) });
   // These are raw API responses. Do not repair a missing screenshot stamp by
