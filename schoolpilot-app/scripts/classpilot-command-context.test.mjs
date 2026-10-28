@@ -664,6 +664,46 @@ test('mixed delivery feedback never hides adverse outcomes behind an acknowledge
   assert.equal(feedback.variant, 'destructive', 'a device-reported failure stays destructive');
 });
 
+test('a failed tab-close ACK shows the named device reason and never claims partial success', () => {
+  const feedback = commandDeliveryFeedback({
+    command: { commandType: 'close-tabs', targets: [{ studentId: 'student-a', status: 'failed',
+      errorMessage: 'Command belongs to an inactive teaching session' }] },
+    // received is a transport milestone and can remain set after execution fails.
+    summary: { requested: 1, attempted: 1, acknowledged: 1, received: 1, completed: 0, failed: 1, pending: 0, awaitingAck: 0 },
+  }, 'close-tabs', { 'student-a': 'Taylor Example' });
+  assert.equal(feedback.title, 'Failed');
+  assert.equal(feedback.variant, 'destructive');
+  assert.match(feedback.description, /^Taylor Example: Command belongs to an inactive teaching session\./);
+  assert.match(feedback.description, /1 failed/);
+  assert.doesNotMatch(feedback.description, /student-a/);
+});
+
+test('tab-close failure details preserve mixed completion and pending outcomes', () => {
+  const failed = { studentId: 'student-a', status: 'failed', errorMessage: 'The selected tab is no longer available.' };
+  const mixed = commandDeliveryFeedback({ command: { commandType: 'close-tabs', targets: [failed,
+    { studentId: 'student-b', status: 'completed' }] } }, 'close-tabs', { 'student-a': 'Taylor Example' });
+  assert.equal(mixed.title, 'Partially delivered');
+  assert.match(mixed.description, /Taylor Example: The selected tab is no longer available\./);
+  assert.match(mixed.description, /1 completed, 1 failed/);
+  const pending = commandDeliveryFeedback({ command: { commandType: 'close-tabs', targets: [failed,
+    { studentId: 'student-b', status: 'sent' }] } }, 'close-tabs', { 'student-a': 'Taylor Example' });
+  assert.equal(pending.title, 'Delivery attempted');
+  assert.equal(pending.variant, 'destructive');
+  assert.match(pending.description, /1 target awaiting device acknowledgement/);
+  assert.match(pending.description, /1 target failed/);
+});
+
+test('failure details are bounded plain text and never use a target-supplied name or identifier', () => {
+  const feedback = commandDeliveryFeedback({ command: { commandType: 'close-tabs', targets:
+    Array.from({ length: 7 }, (_, index) => ({ studentId: `private-id-${index}`, studentName: 'Untrusted name',
+      status: 'failed', errorMessage: `Reason ${index}\n${'x'.repeat(500)}` })) } }, 'close-tabs');
+  assert.equal(feedback.title, 'Failed');
+  assert.match(feedback.description, /^Student: Reason 0 /);
+  assert.match(feedback.description, /2 additional failures reported/);
+  assert.doesNotMatch(feedback.description, /private-id-|Untrusted name|\n/);
+  assert.ok(feedback.description.length < 1600);
+});
+
 test('transient partial delivery is destructive only for failures or zero acknowledgements', () => {
   // 2026-10-09 connection audit, finding #1: one straggler that expired after
   // the rest of the class acknowledged painted a red toast. Expired-only is

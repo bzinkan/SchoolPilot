@@ -34,6 +34,7 @@ import {
   latestTransientClassroomUiEffect,
   trackTransientCommandResponse,
   transientClassroomUiEffect,
+  transientEntryFeedback,
 } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
 import {
   advanceGraceReconciliationLatch,
@@ -1002,6 +1003,24 @@ test('an acknowledgement before expiry prevents local expiration', () => {
   assert.equal(expireTransientCommands(updated, observedAt + 30_000), updated);
   assert.equal(findNextTransientExpiry(updated, observedAt), null);
   assert.equal(updated.get('command-1').summary.pending, 1, 'received work may finish after expiry');
+});
+
+test('a late failed tab-close ACK retains its real error after an older HTTP response arrives', () => {
+  const response = transientResponse();
+  response.command.commandType = 'close-tabs';
+  const pending = trackTransientCommandResponse(new Map(), response, 'close-tabs');
+  const failed = applyTransientCommandUpdate(pending, {
+    type: 'classpilot-command-update', commandId: response.command.id,
+    command: { ...response.command, targets: [{ studentId: 'student-1', status: 'failed',
+      errorMessage: 'Command belongs to an inactive teaching session' }] },
+    summary: { requested: 1, attempted: 1, acknowledged: 1, failed: 1, pending: 0, awaitingAck: 0 },
+  });
+  const afterLateHttp = trackTransientCommandResponse(failed, response, 'close-tabs');
+  const feedback = transientEntryFeedback(afterLateHttp.get(response.command.id), { 'student-1': 'Taylor Example' });
+  assert.equal(feedback.title, 'Failed');
+  assert.equal(feedback.variant, 'destructive');
+  assert.match(feedback.description, /^Taylor Example: Command belongs to an inactive teaching session\./);
+  assert.equal(afterLateHttp.get(response.command.id).command.targets[0].status, 'failed');
 });
 
 test('an unacknowledged transient becomes not delivered at expiry', () => {
