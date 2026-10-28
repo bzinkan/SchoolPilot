@@ -170,6 +170,7 @@ function MyClassTab() {
   const [timePeriod, setTimePeriod] = useState('today');
   const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name, classId, schoolId }
   const [updatingPassId, setUpdatingPassId] = useState(null);
+  const [updatingKioskSessionId, setUpdatingKioskSessionId] = useState(null);
   // A pass rule an administrator may override: { studentId, studentName, passType, customReasonText, code, message }.
   const [ruleOverride, setRuleOverride] = useState(null);
   const passActionInFlightRef = React.useRef(false);
@@ -190,7 +191,7 @@ function MyClassTab() {
   const sourceResolved = !!schoolId && classInventoryQuery.isSuccess;
   const canonical = sourceResolved && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
 
-  const { kioskSessions, legacyKioskServer, retargetKiosks, releaseKiosk, resumeAutomatic } =
+  const { kioskSessions, legacyKioskServer, retargetKiosks, retargetKiosk, releaseKiosk, resumeAutomatic } =
     useKioskSessions({ enabled: sourceResolved });
 
   const legacyKioskConfigQuery = useQuery({
@@ -628,6 +629,21 @@ function MyClassTab() {
       });
     } catch {
       toast({ title: "Error", description: "Failed to update kiosk.", variant: "destructive" });
+    }
+  };
+
+  const handleRetargetKiosk = async (sessionId, classId, className) => {
+    setUpdatingKioskSessionId(sessionId);
+    try {
+      await retargetKiosk(sessionId, classId);
+      toast({
+        title: "Kiosk Updated",
+        description: `Sent ${className ?? "this class"} to this kiosk.`,
+      });
+    } catch {
+      toast({ title: "Error", description: "Failed to update kiosk.", variant: "destructive" });
+    } finally {
+      setUpdatingKioskSessionId(null);
     }
   };
 
@@ -1106,14 +1122,14 @@ function MyClassTab() {
           )}
         </div>
         {kioskSessions.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-stretch gap-2">
             {kioskSessions.map((kioskSession) => (
-              <span
+              <div
                 key={kioskSession.id}
-                className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground"
+                className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs text-muted-foreground"
               >
                 <Monitor className="w-3.5 h-3.5" />
-                <span>
+                <span className="min-w-0">
                   {kioskSession.activity ? kioskSession.activity.current?.name || 'No class scheduled' : kioskSession.className || 'No class'} · kiosk
                   {kioskSession.activity?.current && kioskSession.activity.mode !== 'manual' ? <span className="block">
                     Until {formatTimeFull(kioskSession.activity.current.endsAt, kioskSession.activity.timezone)}
@@ -1122,6 +1138,34 @@ function MyClassTab() {
                   {kioskSession.activity?.next ? <span className="block">Next: {kioskSession.activity.next.name} · {formatTimeFull(kioskSession.activity.next.startsAt, kioskSession.activity.timezone)}</span> : null}
                   {kioskSession.activity?.status === 'unavailable' ? <span className="block text-destructive">Schedule unavailable</span> : null}
                 </span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2"
+                      aria-label={`Choose class for ${kioskSession.kioskName || 'this'} kiosk`}
+                      data-testid={`assign-class-to-kiosk-${kioskSession.id}`}
+                      disabled={updatingKioskSessionId === kioskSession.id || myClasses.length === 0}
+                    >
+                      Send class
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {myClasses.map((classItem) => (
+                      <DropdownMenuItem
+                        key={classItem.id}
+                        onClick={() => handleRetargetKiosk(kioskSession.id, classItem.id, classItem.name)}
+                        data-testid={`send-class-${classItem.id}-to-kiosk-${kioskSession.id}`}
+                        disabled={updatingKioskSessionId === kioskSession.id}
+                      >
+                        Send {classItem.name} to this kiosk
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 {kioskSession.activity?.overridden ? <button type="button" className="underline" onClick={async () => {
                   try { await resumeAutomatic(kioskSession.id); } catch (error) { toast({ title: 'Could not resume', description: error.message, variant: 'destructive' }); }
                 }}>Resume automatic</button> : null}
@@ -1134,7 +1178,7 @@ function MyClassTab() {
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
-              </span>
+              </div>
             ))}
           </div>
         )}

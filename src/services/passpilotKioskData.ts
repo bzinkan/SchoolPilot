@@ -179,7 +179,8 @@ async function getCanonicalRoster(
 async function getRosterActivePasses(
   schoolId: string,
   studentIds: string[],
-  operation: PasspilotKioskQueryOperation
+  operation: PasspilotKioskQueryOperation,
+  classScope?: { source: PasspilotKioskClassSource; classId: string }
 ): Promise<Pass[]> {
   if (studentIds.length === 0) return [];
   recordPasspilotKioskQueryStatements(operation);
@@ -198,7 +199,9 @@ async function getRosterActivePasses(
       and(
         eq(passes.schoolId, schoolId),
         inArray(passes.studentId, studentIds),
-        eq(passes.status, "active")
+        eq(passes.status, "active"),
+        classScope?.source === "legacy_grades" ? eq(passes.gradeId, classScope.classId) : undefined,
+        classScope?.source === "classpilot_groups" ? eq(passes.classpilotGroupId, classScope.classId) : undefined
       )
     )
     .orderBy(asc(passes.studentId), asc(passes.id));
@@ -209,13 +212,15 @@ export async function getPasspilotKioskRosterState(
   schoolId: string,
   source: PasspilotKioskClassSource,
   classId: string,
-  operation: PasspilotKioskQueryOperation
+  operation: PasspilotKioskQueryOperation,
+  classScoped = false
 ): Promise<PasspilotKioskRosterState> {
   const studentRows = await (source === "classpilot_groups"
       ? getCanonicalRoster(schoolId, classId, operation)
       : getLegacyRoster(schoolId, classId, operation));
-  // A roster student's current pass may have been issued in another class or
-  // activity. Its origin does not prevent that student returning at this kiosk.
-  const activePasses = await getRosterActivePasses(schoolId, studentRows.map(student => student.id), operation);
+  // Claimed kiosks only expose passes issued in their assigned class. The
+  // legacy school-wide kiosk keeps its existing cross-class return behavior.
+  const activePasses = await getRosterActivePasses(schoolId, studentRows.map(student => student.id), operation,
+    classScoped ? { source, classId } : undefined);
   return { students: studentRows, activePasses };
 }

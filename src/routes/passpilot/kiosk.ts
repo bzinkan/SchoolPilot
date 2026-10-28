@@ -133,10 +133,15 @@ async function guardKioskActivityCapability(req: { headers: Record<string, unkno
 
 async function activitySnapshot(schoolId: string, session: KioskSession, kioskName: string | null, school: NonNullable<Awaited<ReturnType<typeof getSchoolById>>>) {
   const assignment = await resolveKioskDisplayAssignment(schoolId, session);
-  const returnable = await kioskReturnablePasses(schoolId, session.teacherId!);
+  const classScope = assignment.current?.kind === "class" && assignment.current.classId
+    ? { source: assignment.source, classId: assignment.current.classId }
+    : undefined;
+  const returnable = await kioskReturnablePasses(schoolId, session.teacherId!, classScope);
   const rosterIds = assignment.roster.map(s => s.id);
   const currentPasses = rosterIds.length ? await db.select().from(passTable).where(and(eq(passTable.schoolId, schoolId),
-    inArray(passTable.studentId, rosterIds), eq(passTable.status, "active"))) : [];
+    inArray(passTable.studentId, rosterIds), eq(passTable.status, "active"),
+    classScope?.source === "legacy_grades" ? eq(passTable.gradeId, classScope.classId) : undefined,
+    classScope?.source === "classpilot_groups" ? eq(passTable.classpilotGroupId, classScope.classId) : undefined)) : [];
   const passMap = new Map([...currentPasses, ...returnable.map(r => r.pass)].map(p => [p.studentId, p]));
   const roster = new Map(assignment.roster.map(student => [student.id, { ...student, returnOnly: false }]));
   for (const row of returnable) if (!roster.has(row.student.id)) roster.set(row.student.id, { ...row.student, returnOnly: true });
@@ -661,7 +666,8 @@ router.get("/snapshot", kioskLimiter, async (req, res, next) => {
           schoolId,
           source,
           classId,
-          "snapshot"
+          "snapshot",
+          !!kioskSession
         );
       const legacyIdentity = !resolved && school.kioskActivatedByUserId
         ? await kioskSessionTeacherIdentity(
@@ -888,8 +894,8 @@ router.post("/session/resume", kioskLimiter, async (req, res, next) => {
 // Public kiosk endpoints (no auth required, school ID from header)
 // ============================================================================
 
-// Return discovery is independent of the kiosk's checkout roster and assignment.
-// It exposes only bounded exact pass/student identities needed to mark a return.
+// Return discovery is independent of checkout eligibility, but stays inside the
+// claimed kiosk's current class. It exposes only bounded pass/student identities.
 router.post("/returns/lookup", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
@@ -903,7 +909,14 @@ router.post("/returns/lookup", kioskLimiter, async (req, res, next) => {
     return await runWithKioskTenantContext(schoolId, async () => {
       const resolved = await requireActiveKioskSession(req, res, schoolId, undefined, true);
       if (resolved === null) return;
-      return res.json(await findPasspilotReturnMatches(schoolId, parsed.data.search));
+      let classScope: { source: "legacy_grades" | "classpilot_groups"; classId: string } | null | undefined;
+      if (resolved?.session) {
+        const assignment = await resolveKioskDisplayAssignment(schoolId, resolved.session);
+        classScope = assignment.current?.kind === "class" && assignment.current.classId
+          ? { source: assignment.source, classId: assignment.current.classId }
+          : undefined;
+      }
+      return res.json(await findPasspilotReturnMatches(schoolId, parsed.data.search, classScope));
     });
   } catch (error) {
     next(error);
@@ -931,16 +944,6 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     await runWithKioskTenantContext(schoolId, async () => {
     const resolved = await requireActiveKioskSession(req, res, schoolId, undefined, true);
     if (resolved === null) return;
-    const returningStudent = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
-    const returningPass = returningStudent ? await getActivePassForStudent(returningStudent.id, schoolId) : undefined;
-    if (returningStudent && returningPass) {
-      const activePass = kioskReturnPassSummary(returningPass);
-      return res.json({
-        student: { id: returningStudent.id, firstName: returningStudent.firstName, lastName: returningStudent.lastName,
-          studentIdNumber: returningStudent.studentIdNumber, returnOnly: true, canReturn: true, activePass },
-        activePass,
-      });
-    }
     if (resolved) await guardKioskActivityCapability(req, schoolId, resolved.session);
     if (resolved && hasActivityCapability(req)) {
       const state = await activitySnapshot(schoolId, resolved.session, resolved.kioskName, kioskAuthorization.school!);
@@ -949,6 +952,17 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
       if (student.activePass && !student.canReturn) return res.status(409).json({ error: "Student already has an active pass", student: null });
       return res.json({ source: state.source, classId: state.classId, student, activePass: student.activePass,
         assignmentRevision: state.assignmentRevision, activity: state.activity });
+    }
+    const classAssignedSession = !!resolved?.session && !!kioskSessionClassId(resolved.session);
+    const returningStudent = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
+    const returningPass = (!resolved || !classAssignedSession) && returningStudent ? await getActivePassForStudent(returningStudent.id, schoolId) : undefined;
+    if (returningStudent && returningPass) {
+      const activePass = kioskReturnPassSummary(returningPass);
+      return res.json({
+        student: { id: returningStudent.id, firstName: returningStudent.firstName, lastName: returningStudent.lastName,
+          studentIdNumber: returningStudent.studentIdNumber, returnOnly: true, canReturn: true, activePass },
+        activePass,
+      });
     }
     let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
     if (resolved) {
@@ -1344,7 +1358,8 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
             schoolId,
             source,
             classId,
-            "students"
+            "students",
+            !!kioskSession
           );
         const passMap = new Map(activePasses.map((pass) => [pass.studentId, withoutNullRuleOverride(pass)]));
         const result = studentsList.map((student) => ({

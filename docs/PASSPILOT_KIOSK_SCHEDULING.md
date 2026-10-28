@@ -48,17 +48,17 @@ Older clients retain manual behavior and receive HTTP 426 for automatic mode.
 The class-model capability is required for ClassPilot automatic mode even when
 the school continues using legacy PassPilot grades.
 
-Any outstanding pass can be returned at an authorized kiosk in the same school,
-regardless of its issuing teacher, kiosk, class, activity, or issuance channel.
-Reassigning a kiosk, a class transition, an overdue deadline, and a missing or
-failed schedule do not prevent check-in. Current-roster passes remain returnable;
-the **Return a pass** lookup also finds an outstanding pass by student name or ID
-without requiring the student to appear on the kiosk's current roster. Results
-contain only the identity needed to select and return the exact pass, are capped
-at 20, and require a narrower search when more matches exist. Checkout eligibility
-and history permissions are unchanged. Device continuity IDs never authorize a
-return; current PassPilot/kiosk authorization, school isolation, and valid kiosk
-sessions still apply.
+Each class-assigned kiosk lists, looks up, and returns active passes only for its
+current class, matched by both class source and class ID. The server rechecks the
+assignment when returning a pass, so a stale kiosk screen cannot return a pass
+from its previous class after reassignment or a schedule transition. The kiosk's
+**Return a pass** lookup uses the same class scope. Classless testing and coverage
+assignments and kiosks without a current class keep their existing return
+behavior. Teachers can still return an outstanding pass from any class in the
+PassPilot dashboard. Overdue deadlines do not automatically return a pass.
+Checkout eligibility and history permissions are unchanged. Device continuity
+IDs never authorize a return; current PassPilot/kiosk authorization, school
+isolation, and valid kiosk sessions still apply.
 
 Authenticated teachers and school managers can also find and return an exact
 same-school active pass regardless of who issued it. This return-only authority
