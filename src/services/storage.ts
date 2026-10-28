@@ -4845,6 +4845,13 @@ export async function getKioskStudentState(
       .limit(1)
       .for("update");
     const classSource = source?.value ?? "legacy_grades";
+    if (override && override.source !== classSource) {
+      throw passpilotClassError(
+        "PASSPILOT_CLASS_SOURCE_CHANGED",
+        "PassPilot class configuration changed. Reload the kiosk.",
+        409
+      );
+    }
     const [activePassRow] = await tx
       .select({ pass: passes })
       .from(passes)
@@ -4865,17 +4872,14 @@ export async function getKioskStudentState(
       )
       .limit(1);
     const activePass = activePassRow?.pass;
-    if (activePass) {
+    const activePassMatchesOverride = !override
+      || (override.source === "legacy_grades"
+        ? activePass?.gradeId === override.configuredClassId
+        : activePass?.classpilotGroupId === override.configuredClassId);
+    if (activePass && !override) {
       return { source: classSource,
-        configuredClassId: override?.configuredClassId ?? (classSource === "classpilot_groups" ? school.classId : school.kioskGradeId),
+        configuredClassId: classSource === "classpilot_groups" ? school.classId : school.kioskGradeId,
         enrolled: true, activePass, hasActivePassInAnotherClass: false };
-    }
-    if (override && override.source !== classSource) {
-      throw passpilotClassError(
-        "PASSPILOT_CLASS_SOURCE_CHANGED",
-        "PassPilot class configuration changed. Reload the kiosk.",
-        409
-      );
     }
     if (classSource === "legacy_grades") {
       const configuredClassId = override?.configuredClassId ?? school.kioskGradeId;
@@ -4913,8 +4917,8 @@ export async function getKioskStudentState(
         source: classSource,
         configuredClassId,
         enrolled: true,
-        activePass: null,
-        hasActivePassInAnotherClass: false,
+        activePass: activePassMatchesOverride ? activePass ?? null : null,
+        hasActivePassInAnotherClass: !!activePass && !activePassMatchesOverride,
       };
     }
     if (!canonicalCapability) {
@@ -4978,8 +4982,8 @@ export async function getKioskStudentState(
       source: classSource,
       configuredClassId: configuredClass.id,
       enrolled: true,
-      activePass: null,
-      hasActivePassInAnotherClass: false,
+      activePass: activePassMatchesOverride ? activePass ?? null : null,
+      hasActivePassInAnotherClass: !!activePass && !activePassMatchesOverride,
     };
   });
 }
@@ -35302,10 +35306,17 @@ export async function getClasspilotScheduleChangeNotificationContext(options: {
 }
 
 /** Bounded same-school discovery for explicitly returning an outstanding pass. */
-export async function getActivePassReturnMatches(schoolId: string, search: string) {
+export async function getActivePassReturnMatches(schoolId: string, search: string,
+  classScope?: { source: PasspilotClassSource; classId: string } | null) {
   const query = search.trim();
   if (query.length < 2 || query.length > 100) return [];
+  if (classScope === null) return [];
   const pattern = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
+  const classFilter = classScope?.source === "legacy_grades"
+    ? eq(passes.gradeId, classScope.classId)
+    : classScope
+      ? eq(passes.classpilotGroupId, classScope.classId)
+      : undefined;
   return db.select({
     passId: passes.id,
     studentId: students.id,
@@ -35318,6 +35329,7 @@ export async function getActivePassReturnMatches(schoolId: string, search: strin
     .where(and(
       eq(passes.schoolId, schoolId),
       eq(passes.status, "active"),
+      classFilter,
       or(
         eq(students.studentIdNumber, query),
         ilike(students.firstName, pattern),

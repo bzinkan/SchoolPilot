@@ -210,8 +210,9 @@ test("teacher ClassPilot kiosk passes coexist with legacy overrides, report accu
   assert.equal(legacyPass.gradeId, f.nextClassId); assert.equal(legacyPass.classpilotGroupId, null);
   const changed = await fetch(baseUrl + "/snapshot", { headers });
   const body = await changed.json() as { students: { id: string; returnOnly: boolean; canReturn: boolean }[] };
-  assert.ok(body.students.some(s => s.id === f.studentId && s.returnOnly && s.canReturn));
-  assert.equal((await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)))?.id, issued.id);
+  assert.equal(body.students.some(s => s.id === f.studentId), false, "a kiosk retargeted to another class must not list the previous class's pass");
+  assert.equal(await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)), null,
+    "the old assignment must not return a pass after the kiosk changes classes");
   const resumed = await resolve({ ...f, session: { ...targeted[0]!, overrideExpiresAt: new Date(0) } }, new Date());
   assert.equal(resumed.source, "classpilot_groups"); assert.equal(resumed.current?.classId, f.classIds[0]);
   await save(f, 1, "manual");
@@ -255,7 +256,66 @@ test("bulk manual override is temporary, schedule edits shorten its deadline, an
   assert.equal((await resolve({ ...f, session: ended }, now)).current?.classId, f.nextClassId);
 });
 
-test("snapshot/lookup/checkout contract fails closed for old clients and stale assignments; returns survive transitions", async () => {
+test("claimed kiosks keep independent class scopes for roster, lookup, and check-in; teachers can still return across classes", async () => {
+  const f = await fixture();
+  const secondSession = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null,
+    { actorUserId: f.teacherId, manager: false }));
+  const teacherHeaders = staffHeaders(f, f.teacherId);
+  const firstAssignment = await fetch(baseUrl + `/sessions/${f.session.id}`, {
+    method: "PUT", headers: teacherHeaders, body: JSON.stringify({ classId: f.classId }),
+  });
+  const secondAssignment = await fetch(baseUrl + `/sessions/${secondSession.id}`, {
+    method: "PUT", headers: teacherHeaders, body: JSON.stringify({ classId: f.nextClassId }),
+  });
+  assert.equal(firstAssignment.status, 200);
+  assert.equal(secondAssignment.status, 200);
+  const assignedRows = (await pool.query(
+    "SELECT id,grade_id FROM passpilot_kiosk_sessions WHERE id=ANY($1::text[]) ORDER BY id",
+    [[f.session.id, secondSession.id]],
+  )).rows;
+  assert.equal(assignedRows.find((row: { id: string }) => row.id === f.session.id)?.grade_id, f.classId);
+  assert.equal(assignedRows.find((row: { id: string }) => row.id === secondSession.id)?.grade_id, f.nextClassId);
+
+  const firstPassId = await seedReturnPass(f, { studentId: f.studentId, issuedVia: "kiosk", gradeId: f.classId, classId: null });
+  const secondPassId = await seedReturnPass(f, { studentId: f.nextStudentId, issuedVia: "kiosk", gradeId: f.nextClassId, classId: null });
+  const firstHeaders = kioskHeaders({ ...f, session: f.session });
+  const secondHeaders = kioskHeaders({ ...f, session: secondSession });
+  const firstSnapshot = await (await fetch(baseUrl + "/snapshot", { headers: firstHeaders })).json() as {
+    students: { id: string }[]; activePasses: { id: string }[];
+  };
+  const secondSnapshot = await (await fetch(baseUrl + "/snapshot", { headers: secondHeaders })).json() as {
+    students: { id: string }[]; activePasses: { id: string }[];
+  };
+  assert.deepEqual(firstSnapshot.students.map(student => student.id), [f.studentId]);
+  assert.deepEqual(secondSnapshot.students.map(student => student.id), [f.nextStudentId]);
+  assert.deepEqual(firstSnapshot.activePasses.map(pass => pass.id), [firstPassId]);
+  assert.deepEqual(secondSnapshot.activePasses.map(pass => pass.id), [secondPassId]);
+
+  const firstReturnSearch = await kioskPost("/returns/lookup", firstHeaders, { search: "Second" });
+  assert.deepEqual((await firstReturnSearch.json() as ReturnLookup).matches, []);
+  const secondReturnSearch = await kioskPost("/returns/lookup", secondHeaders, { search: "Second" });
+  assert.deepEqual((await secondReturnSearch.json() as ReturnLookup).matches.map(match => match.passId), [secondPassId]);
+  const crossClassLookup = await kioskPost("/lookup", firstHeaders, { studentIdNumber: f.nextStudentId });
+  assert.equal((await crossClassLookup.json() as { student: unknown }).student, null);
+  const legacyClientHeaders: Record<string, string> = { ...firstHeaders };
+  delete legacyClientHeaders["x-passpilot-kiosk-activity"];
+  const legacyCrossClassLookup = await kioskPost("/lookup", legacyClientHeaders, { studentIdNumber: f.nextStudentId });
+  assert.equal(legacyCrossClassLookup.status, 200);
+  assert.equal((await legacyCrossClassLookup.json() as { student: unknown }).student, null,
+    "legacy badge lookup must check class membership before exposing an active pass");
+
+  const deniedCheckin = await kioskPost("/checkin", firstHeaders, { studentId: f.nextStudentId, passId: secondPassId });
+  assert.equal(deniedCheckin.status, 400);
+  assert.equal((await pool.query("SELECT status FROM passes WHERE id=$1", [secondPassId])).rows[0].status, "active");
+  const allowedCheckin = await kioskPost("/checkin", firstHeaders, { studentId: f.studentId, passId: firstPassId });
+  assert.equal(allowedCheckin.status, 200);
+
+  const staffBase = baseUrl.replace(/\/kiosk$/, "/passes");
+  const dashboardReturn = await fetch(staffBase + `/${secondPassId}/return`, { method: "PATCH", headers: teacherHeaders });
+  assert.equal(dashboardReturn.status, 200, "teacher returns continue to work across kiosk class scopes");
+});
+
+test("snapshot/lookup/checkout contract fails closed for old clients and stale assignments; kiosk returns stay class-scoped", async () => {
   const f = await fixture(); await save(f);
   const headers = kioskHeaders(f);
   const oldHeaders = { ...headers }; delete (oldHeaders as Partial<typeof headers>)["x-passpilot-kiosk-activity"];
@@ -273,12 +333,15 @@ test("snapshot/lookup/checkout contract fails closed for old clients and stale a
   await save(f, 1, "passpilot", allDay(f, f.nextClassId));
   await assert.rejects(checkout(f, body.assignmentRevision), /assignment changed/);
   const transitioned = await (await fetch(baseUrl + "/snapshot", { headers })).json() as { students: { id: string; returnOnly: boolean; canReturn: boolean }[] };
-  assert.equal(transitioned.students.find(s => s.id === f.studentId)?.returnOnly, true);
+  assert.equal(transitioned.students.some(s => s.id === f.studentId), false);
   const lookup = await fetch(baseUrl + "/lookup", { method: "POST", headers, body: JSON.stringify({ studentIdNumber: f.studentId }) });
   assert.equal(lookup.status, 200);
-  const other = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null, { actorUserId: f.otherTeacherId, manager: false }));
-  const returned = await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, other.id, f.studentId, pinHash));
-  assert.equal(returned?.status, "returned"); assert.equal(returned?.gradeId, f.classId);
+  assert.equal((await lookup.json() as { student: unknown }).student, null);
+  const [{ id: crossClassPassId }] = (await pool.query("SELECT id FROM passes WHERE school_id=$1 AND student_id=$2 AND status='active'", [f.schoolId, f.studentId])).rows;
+  const dashboardReturn = await fetch(baseUrl.replace(/\/kiosk$/, `/passes/${crossClassPassId}/return`), {
+    method: "PATCH", headers: staffHeaders(f, f.teacherId),
+  });
+  assert.equal(dashboardReturn.status, 200, "the teacher dashboard retains cross-class return authority");
   assert.equal(await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)), null);
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM student_timeline_events WHERE school_id=$1", [f.schoolId])).rows[0].count, 2);
 });
@@ -327,7 +390,7 @@ test("current kiosk rosters can return any issuer's pass without listing the sch
   const f = await fixture();
   const [targeted] = await scoped(f.schoolId, () => retargetKioskSessionsForTeacher(f.schoolId, f.teacherId, { source: f.source, classId: f.classId }, { actorUserId: f.teacherId, manager: false }));
   assert.ok(targeted);
-  const passId = await seedReturnPass(f, { teacherId: f.otherTeacherId, gradeId: f.nextClassId });
+  const passId = await seedReturnPass(f, { teacherId: f.otherTeacherId, gradeId: f.classId });
   await seedReturnPass(f, { studentId: f.nextStudentId, teacherId: f.otherTeacherId, gradeId: f.nextClassId });
   const response = await fetch(baseUrl + "/snapshot", { headers: kioskHeaders({ ...f, session: targeted }) });
   assert.equal(response.status, 200);

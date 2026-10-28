@@ -75,6 +75,24 @@ export function useKioskSessions({ enabled = true } = {}) {
     return data;
   };
 
+  // Point one claimed kiosk at a class without changing the other sessions.
+  const retargetKiosk = async (sessionId, classId) => {
+    const data = await passPilotClassRequest(
+      "PUT",
+      `/passpilot/kiosk/sessions/${sessionId}`,
+      { classId }
+    );
+    const session = data?.session;
+    if (session?.id !== sessionId || session?.classId !== classId) {
+      throw new Error("PassPilot returned an invalid kiosk retarget response.");
+    }
+    await queryClient.cancelQueries({ queryKey });
+    queryClient.setQueryData(queryKey, (current) => current && Array.isArray(current.sessions)
+      ? { ...current, sessions: current.sessions.map((item) => item.id === sessionId ? session : item) }
+      : current);
+    return session;
+  };
+
   // Release one kiosk (it returns to its claim-code screen). Always refreshes
   // the list; rethrows so callers can distinguish 404 (already dead = fine).
   const releaseKiosk = async (sessionId) => {
@@ -97,6 +115,7 @@ export function useKioskSessions({ enabled = true } = {}) {
     invalidate,
     claimKiosk,
     retargetKiosks,
+    retargetKiosk,
     releaseKiosk,
     resumeAutomatic: async (sessionId) => {
       await passPilotClassRequest('POST', '/passpilot/kiosk/preferences/resume', sessionId ? { sessionId } : {});

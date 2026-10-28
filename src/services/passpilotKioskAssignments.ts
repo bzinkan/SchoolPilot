@@ -298,11 +298,22 @@ export async function setKioskOverride(schoolId: string, session: KioskSession, 
   session.overrideExpiresAt = new Date(assignment.nextBoundaryAt);
 }
 
-export async function kioskReturnablePasses(schoolId: string, teacherId: string, database: Database = db) {
+export async function kioskReturnablePasses(schoolId: string, teacherId: string,
+  classScope?: { source: Source; classId: string } | null, database: Database = db) {
+  const scopedClass = classScope?.source === "legacy_grades"
+    ? eq(passes.gradeId, classScope.classId)
+    : classScope === null
+      ? sql`false`
+      : classScope
+      ? eq(passes.classpilotGroupId, classScope.classId)
+      : undefined;
+  const legacyTeacherKioskScope = classScope === undefined
+    ? and(eq(passes.teacherId, teacherId), eq(passes.issuedVia, "kiosk"))
+    : undefined;
   const rows = await database.select({ pass: passes, student: { id: students.id, firstName: students.firstName, lastName: students.lastName,
     studentIdNumber: students.studentIdNumber, status: students.status } }).from(passes)
     .innerJoin(students, and(eq(students.schoolId, schoolId), eq(students.id, passes.studentId)))
-    .where(and(eq(passes.schoolId, schoolId), eq(passes.teacherId, teacherId), eq(passes.issuedVia, "kiosk"), eq(passes.status, "active")))
+    .where(and(eq(passes.schoolId, schoolId), eq(passes.status, "active"), scopedClass, legacyTeacherKioskScope))
     .orderBy(passes.id).limit(MAX_ROSTER + 1);
   if (rows.length > MAX_ROSTER) throw kioskError("Too many outstanding passes to load completely.", "PASSPILOT_KIOSK_SCOPE_LIMIT", 422);
   return rows;
@@ -395,16 +406,33 @@ export async function returnTeacherKioskPass(schoolId: string, sessionId: string
   return db.transaction(async tx => {
     const database = tx as unknown as Database;
     await lockKioskSchool(database, schoolId);
-    await assertKioskWriteAccess(database, schoolId, expectedPinHash);
+    const school = await assertKioskWriteAccess(database, schoolId, expectedPinHash);
     let returningTeacherId: string | null = null;
+    let classScope: { source: Source; classId: string } | null | undefined;
     if (sessionId) {
+      await lockInstructionalCalendarDate(schoolId, localDateInTimeZone(new Date(), school.schoolTimezone), database);
       const [session] = await tx.select().from(passpilotKioskSessions).where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.id, sessionId))).limit(1).for("update");
       assertLiveSession(session);
       await kioskTeacher(schoolId, session.teacherId, database);
       returningTeacherId = session.teacherId;
+      const assignment = await resolveKioskAssignment(schoolId, session, database);
+      if (assignment.source === "classpilot_groups" && assignment.current?.kind === "class" && assignment.current.classId) {
+        await assertClasspilotEntitled(schoolId, database, { lock: true });
+      }
+      if (assignment.current?.kind === "class" && assignment.current.classId) {
+        classScope = { source: assignment.source, classId: assignment.current.classId };
+      }
     }
+    const scopedClass = classScope?.source === "legacy_grades"
+      ? eq(passes.gradeId, classScope.classId)
+      : classScope === null
+        ? sql`false`
+        : classScope
+        ? eq(passes.classpilotGroupId, classScope.classId)
+        : undefined;
     const [pass] = await tx.update(passes).set({ status: "returned", returnedAt: new Date() }).where(and(eq(passes.schoolId, schoolId),
-      eq(passes.studentId, studentId), eq(passes.status, "active"), expectedPassId ? eq(passes.id, expectedPassId) : undefined)).returning();
+      eq(passes.studentId, studentId), eq(passes.status, "active"), scopedClass,
+      expectedPassId ? eq(passes.id, expectedPassId) : undefined)).returning();
     if (pass) {
       await recordKioskPassTimeline(database, pass, "returned", { userId: returningTeacherId, sessionId });
       if (sessionId) await tx.update(passpilotKioskSessions).set({ lastSeenAt: new Date() }).where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.id, sessionId)));

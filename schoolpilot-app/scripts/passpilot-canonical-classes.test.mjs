@@ -596,6 +596,20 @@ async function installApiMocks(page, state) {
       await route.fulfill({ json: { updated: sessions.length, sessions } });
       return;
     }
+    if (pathname.startsWith("/api/passpilot/kiosk/sessions/") && request.method() === "PUT") {
+      const sessionId = pathname.split("/").pop();
+      const payload = request.postDataJSON();
+      state.kioskSingleRetargets.push({ sessionId, classId: payload.classId });
+      const className = officialClasses.find((item) => item.id === payload.classId)?.name || null;
+      const session = state.kioskSessions.find((item) => item.id === sessionId);
+      if (!session) {
+        await route.fulfill({ status: 404, json: { error: "Kiosk session not found" } });
+        return;
+      }
+      Object.assign(session, { classId: payload.classId, className });
+      await route.fulfill({ json: { session } });
+      return;
+    }
     if (pathname.startsWith("/api/passpilot/kiosk/sessions/") && request.method() === "DELETE") {
       const sessionId = pathname.split("/").pop();
       state.kioskSessions = state.kioskSessions.filter((session) => session.id !== sessionId);
@@ -679,6 +693,7 @@ function freshState(overrides = {}) {
     kioskSessions: [],
     kioskClaims: [],
     kioskRetargets: [],
+    kioskSingleRetargets: [],
     kioskMineRequests: 0,
     kioskSessionFailuresRemaining: 0,
     kioskRetargetFailuresRemaining: 0,
@@ -825,6 +840,8 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
   assert.match(kioskSessionsHook, /setQueryData\(queryKey/);
   assert.match(kioskSessionsHook, /data\.updated !== data\.sessions\.length/);
   assert.match(kioskSessionsHook, /session\?\.classId !== classId/);
+  assert.match(kioskSessionsHook, /\/passpilot\/kiosk\/sessions\/\$\{sessionId\}/);
+  assert.match(kioskSessionsHook, /retargetKiosk/);
 
   const classData = await readFile(path.join(APP_ROOT, "src/products/passpilot/classData.js"), "utf8");
   const myClass = await readFile(
@@ -1279,6 +1296,17 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
     await canonicalPage.getByTestId("menu-send-to-kiosks").click();
     await canonicalPage.waitForFunction(() => document.body.textContent.includes("Kiosk Updated"));
     await canonicalPage.getByRole("button", { name: "On 2 Kiosks", exact: true }).waitFor();
+    const [firstClassScopedKiosk, secondClassScopedKiosk] = canonicalState.kioskSessions;
+    await canonicalPage.getByTestId(`assign-class-to-kiosk-${firstClassScopedKiosk.id}`).click();
+    await canonicalPage.getByTestId(`send-class-class-one-to-kiosk-${firstClassScopedKiosk.id}`).click();
+    await canonicalPage.getByText("Sent Grade 3 Homeroom to this kiosk.", { exact: true }).waitFor();
+    assert.deepEqual(canonicalState.kioskSingleRetargets, [{ sessionId: firstClassScopedKiosk.id, classId: "class-one" }]);
+    assert.equal(canonicalState.kioskSessions[0].classId, "class-one");
+    assert.equal(canonicalState.kioskSessions[1].classId, "class-two", "retargeting one kiosk must leave its sibling unchanged");
+    await canonicalPage.getByTestId(`assign-class-to-kiosk-${firstClassScopedKiosk.id}`).click();
+    await canonicalPage.getByTestId(`send-class-class-two-to-kiosk-${firstClassScopedKiosk.id}`).click();
+    await canonicalPage.getByText("Sent Grade 4 Homeroom to this kiosk.", { exact: true }).waitFor();
+    assert.ok(canonicalState.kioskSessions.every((session) => session.classId === "class-two"));
     // Release one of the two class-two kiosks; the survivor keeps On Kiosk.
     await canonicalPage.getByLabel("Release kiosk").last().click();
     await canonicalPage.getByRole("button", { name: "On Kiosk", exact: true }).waitFor();
