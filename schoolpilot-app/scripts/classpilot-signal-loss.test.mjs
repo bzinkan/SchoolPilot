@@ -40,6 +40,7 @@ import {
   advanceGraceReconciliationLatch,
   reconcileGraceCohort,
 } from '../src/products/classpilot/lib/graceReconciliation.js';
+import { combineCommandSettlements } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 
 const observedAt = Date.parse('2026-08-13T12:00:00.000Z');
 const monitoredStudent = (overrides = {}) => ({
@@ -1023,6 +1024,108 @@ test('a late failed tab-close ACK retains its real error after an older HTTP res
   assert.equal(afterLateHttp.get(response.command.id).command.targets[0].status, 'failed');
 });
 
+function crossContextCommand(id, studentId, expiresAfter = 15_000, commandType = 'close-tabs') {
+  return { ...transientResponse().command, id, commandType,
+    expiresAt: new Date(observedAt + expiresAfter).toISOString(), targets: [{ studentId, status: 'sent' }] };
+}
+
+function acceptedContext(command) {
+  return { status: 'fulfilled', value: { command,
+    summary: { requested: 1, attempted: 1, pending: 1, acknowledged: 0, awaitingAck: 1 } } };
+}
+
+const crossContextGroups = [{ id: 'context-one', targetStudentIds: ['student-1'] }, { id: 'context-two', targetStudentIds: ['student-2'] }];
+const rejectedContext = (message) => ({ status: 'rejected', reason: { response: { data: { error: message } } } });
+
+test('a successful context ACK cannot erase a sibling HTTP failure, even when the original response arrives late', () => {
+  const command = crossContextCommand('context-command-one', 'student-1');
+  const combined = combineCommandSettlements([acceptedContext(command), rejectedContext('This supervision context ended.')], crossContextGroups, 'close-tabs');
+  assert.match(commandDeliveryFeedback(combined, 'close-tabs', { 'student-2': 'Jordan Example' }).description, /Jordan Example: This supervision context ended\./);
+  let tracked = trackTransientCommandResponse(new Map(), combined, 'close-tabs');
+  tracked = applyTransientCommandUpdate(tracked, { commandId: command.id, command: { ...command,
+    targets: [{ studentId: 'student-1', status: 'completed' }] } });
+  tracked = trackTransientCommandResponse(tracked, combined, 'close-tabs');
+  const feedback = transientEntryFeedback(tracked.get(command.id), { 'student-2': 'Jordan Example' });
+  assert.equal(feedback.title, 'Partially delivered');
+  assert.match(feedback.description, /1 completed, 1 failed/);
+  assert.match(feedback.description, /Jordan Example: This supervision context ended\./);
+  assert.equal(feedback.variant, 'destructive');
+});
+
+test('each accepted context is tracked and expires independently while sibling outcomes remain visible', () => {
+  const first = crossContextCommand('context-command-one', 'student-1');
+  const second = crossContextCommand('context-command-two', 'student-2', 30_000);
+  const combined = combineCommandSettlements([acceptedContext(first), acceptedContext(second)], crossContextGroups, 'close-tabs');
+  let tracked = trackTransientCommandResponse(new Map(), combined, 'close-tabs');
+  assert.equal(tracked.size, 2);
+  assert.equal(findNextTransientExpiry(tracked, observedAt), observedAt + 15_000);
+  tracked = applyTransientCommandUpdate(tracked, { commandId: first.id, command: { ...first,
+    targets: [{ studentId: 'student-1', status: 'completed' }] } });
+  assert.equal(findNextTransientExpiry(tracked, observedAt), observedAt + 30_000);
+  assert.equal(expireTransientCommands(tracked, observedAt + 20_000), tracked);
+  tracked = expireTransientCommands(tracked, observedAt + 30_000);
+  for (const entry of tracked.values()) {
+    const feedback = transientEntryFeedback(entry, { 'student-2': 'Jordan Example' });
+    assert.equal(feedback.title, 'Partially delivered');
+    assert.match(feedback.description, /1 completed, 1 expired/);
+    assert.match(feedback.description, /Jordan Example: The student did not acknowledge this action before it expired\./);
+  }
+  assert.equal(tracked.get(first.id).command.targets[0].status, 'completed');
+  assert.equal(tracked.get(second.id).command.targets[0].status, 'expired');
+});
+
+test('simultaneous context expirations retain every expired target in the shared batch', () => {
+  const commands = [crossContextCommand('context-command-one', 'student-1'), crossContextCommand('context-command-two', 'student-2')];
+  const combined = combineCommandSettlements(commands.map(acceptedContext), crossContextGroups, 'close-tabs');
+  const tracked = expireTransientCommands(trackTransientCommandResponse(new Map(), combined, 'close-tabs'), observedAt + 15_000);
+  for (const entry of tracked.values()) {
+    const feedback = transientEntryFeedback(entry, { 'student-1': 'Taylor Example', 'student-2': 'Jordan Example' });
+    assert.equal(feedback.title, 'Not delivered');
+    assert.match(feedback.description, /2 expired/);
+    assert.match(feedback.description, /Taylor Example: The student did not acknowledge/);
+    assert.match(feedback.description, /Jordan Example: The student did not acknowledge/);
+  }
+});
+
+test('rejected context requests show both actual errors without claiming a restriction was saved or a message queued', () => {
+  for (const commandType of ['close-tabs', 'apply-flight-path', 'teacher-message']) {
+    const combined = combineCommandSettlements([rejectedContext('First context ended.'), rejectedContext('Second context changed.')], crossContextGroups, commandType);
+    const feedback = commandDeliveryFeedback(combined, commandType, { 'student-1': 'Taylor Example', 'student-2': 'Jordan Example' });
+    assert.equal(feedback.title, 'Failed', commandType);
+    assert.match(feedback.description, /Taylor Example: First context ended\./);
+    assert.match(feedback.description, /Jordan Example: Second context changed\./);
+    assert.doesNotMatch(feedback.description, /saved|queued/);
+    assert.equal(trackTransientCommandResponse(new Map(), combined, commandType).size, 0);
+  }
+});
+
+test('persistent and durable commands retain delayed errors and completion without transient expiry or resend', () => {
+  for (const [commandType, policy, pendingTitle, completedTitle] of [
+    ['apply-flight-path', 'persistent_control', 'Restriction saved', 'Restriction saved'],
+    ['teacher-message', 'durable_message', 'Message queued', 'Acknowledged'],
+  ]) {
+    const command = { ...crossContextCommand(`late-${commandType}`, 'student-1'), deliveryPolicy: policy };
+    let tracked = trackTransientCommandResponse(new Map(), { command }, commandType);
+    assert.equal(tracked.size, 1);
+    assert.equal(transientEntryFeedback(tracked.get(command.id)).title, pendingTitle);
+    assert.equal(findNextTransientExpiry(tracked, observedAt), null);
+    assert.equal(expireTransientCommands(tracked, observedAt + 60_000), tracked);
+    tracked = applyTransientCommandUpdate(tracked, { commandId: command.id, command: { ...command,
+      targets: [{ studentId: 'student-1', status: 'failed', errorMessage: 'Classroom authority changed.' }] } });
+    let feedback = transientEntryFeedback(tracked.get(command.id), { 'student-1': 'Taylor Example' });
+    assert.equal(feedback.variant, 'destructive');
+    assert.equal(feedback.title, policy === 'durable_message' ? 'Message failed' : 'Restriction not applied');
+    assert.match(feedback.description, /^Taylor Example: Classroom authority changed\./);
+    assert.doesNotMatch(feedback.description, /will be delivered when the student reconnects/);
+    tracked = applyTransientCommandUpdate(tracked, { commandId: command.id, command: { ...command,
+      targets: [{ studentId: 'student-1', status: 'completed', errorMessage: null }] } });
+    feedback = transientEntryFeedback(tracked.get(command.id));
+    assert.equal(feedback.title, completedTitle);
+    assert.doesNotMatch(feedback.description, /Classroom authority changed|failed|expired/);
+    assert.equal(findNextTransientExpiry(tracked, observedAt), null);
+  }
+});
+
 test('an unacknowledged transient becomes not delivered at expiry', () => {
   const tracked = trackTransientCommandResponse(new Map(), transientResponse(), 'open-tab');
   const expired = expireTransientCommands(tracked, observedAt + 15_001);
@@ -1431,6 +1534,78 @@ test('server-authoritative sign-out requires completed targets before claiming c
   assert.equal(completedFeedback.title, 'Sign-out completed');
   assert.match(completedFeedback.description, /1 student session ended on the server/);
   assert.deepEqual([...completedStudentIdsFromCommand(completed)], ['student-1']);
+});
+
+function signOutResponse(targets, commandType = 'student-sign-out', deliveryPolicy = 'server_authoritative') {
+  return { command: { id: 'sign-out-race', commandType, deliveryPolicy, targets } };
+}
+
+test('verified server sign-out completion wins before and after a failed device ACK without inventing receipt', () => {
+  const sent = signOutResponse([{ studentId: 'student-1', status: 'sent' }]);
+  const failure = signOutResponse([{ studentId: 'student-1', status: 'failed', ackState: 'failed',
+    errorMessage: 'The browser could not complete sign-out.' }]);
+  const completed = signOutResponse([{ studentId: 'student-1', status: 'completed',
+    ackState: null, receivedAt: null, result: { serverAuthoritative: true } }]);
+  // A stale nested summary must not override the verified per-target outcome.
+  completed.command.summary = { requested: 1, failed: 1, completed: 0 };
+  for (const withEarlyFailure of [false, true]) {
+    let tracked = trackTransientCommandResponse(new Map(), sent, 'student-sign-out');
+    if (withEarlyFailure) tracked = applyTransientCommandUpdate(tracked, failure);
+    tracked = trackTransientCommandResponse(tracked, completed, 'student-sign-out');
+    const entry = tracked.get('sign-out-race');
+    assert.equal(entry.command.targets[0].status, 'completed');
+    assert.equal(entry.command.targets[0].errorMessage, null);
+    assert.equal(entry.summary.completed, 1);
+    assert.equal(entry.summary.failed, 0);
+    assert.equal(entry.summary.received, 0, 'server completion is not a device receipt');
+    assert.equal(entry.summary.acknowledged, withEarlyFailure ? 1 : 0, 'only the actual failed device ACK counts');
+    assert.equal(transientEntryFeedback(entry).title, 'Sign-out completed');
+
+    const lateFailure = applyTransientCommandUpdate(tracked, failure).get('sign-out-race');
+    assert.equal(lateFailure.command.targets[0].status, 'completed');
+    assert.equal(lateFailure.summary.completed, 1);
+    assert.equal(lateFailure.summary.failed, 0);
+    assert.equal(lateFailure.summary.acknowledged, 1, 'a late actual device ACK remains a transport milestone');
+    assert.equal(transientEntryFeedback(lateFailure).title, 'Sign-out completed');
+    assert.doesNotMatch(transientEntryFeedback(lateFailure).description, /could not complete|failed/);
+  }
+});
+
+test('verified sign-out completion is per student and never masks a sibling failure', () => {
+  const completed = signOutResponse([
+    { studentId: 'student-1', status: 'completed', result: { serverAuthoritative: true } },
+    { studentId: 'student-2', status: 'sent' },
+  ]);
+  const tracked = trackTransientCommandResponse(new Map(), completed, 'student-sign-out');
+  const updated = applyTransientCommandUpdate(tracked, signOutResponse([
+    { studentId: 'student-1', status: 'failed', ackState: 'failed', errorMessage: 'Old browser failure.' },
+    { studentId: 'student-2', status: 'failed', ackState: 'failed', errorMessage: 'This student session could not be ended.' },
+  ])).get('sign-out-race');
+  assert.deepEqual(updated.command.targets.map((target) => target.status), ['completed', 'failed']);
+  assert.equal(updated.summary.completed, 1);
+  assert.equal(updated.summary.failed, 1);
+  const feedback = transientEntryFeedback(updated, { 'student-1': 'Taylor Example', 'student-2': 'Jordan Example' });
+  assert.equal(feedback.variant, 'destructive');
+  assert.match(feedback.description, /Jordan Example: This student session could not be ended\./);
+  assert.doesNotMatch(feedback.description, /Old browser failure/);
+});
+
+test('an unverified or stray completion marker cannot override observed command outcomes', () => {
+  for (const [commandType, policy, proof] of [
+    ['open-tab', 'transient_action', true],
+    ['student-sign-out', 'transient_action', true],
+    ['student-sign-out', 'server_authoritative', false],
+  ]) {
+    const sent = signOutResponse([{ studentId: 'student-1', status: 'sent' }], commandType, policy);
+    let tracked = trackTransientCommandResponse(new Map(), sent, commandType);
+    tracked = applyTransientCommandUpdate(tracked, signOutResponse([
+      { studentId: 'student-1', status: 'received' },
+    ], commandType, policy));
+    tracked = trackTransientCommandResponse(tracked, signOutResponse([
+      { studentId: 'student-1', status: 'completed', result: { serverAuthoritative: proof } },
+    ], commandType, policy), commandType);
+    assert.equal(tracked.get('sign-out-race').command.targets[0].status, 'received', 'later socket outcome still wins over HTTP');
+  }
 });
 
 test('the transient dashboard map remains bounded', () => {

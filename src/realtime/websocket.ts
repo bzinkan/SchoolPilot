@@ -118,6 +118,7 @@ import {
   type ClasspilotStaffPresenceStore,
 } from "./classpilotStaffPresence.js";
 import {
+  classpilotControlAuthorityRevisionForDelivery,
   classpilotControlStateHasAuthRelevantRestriction,
   classpilotControlStateHasLateSignInOrigin,
   classpilotLateSignInRevisionAppliedToBinding,
@@ -1287,6 +1288,10 @@ export function setupWebSocket(
                           })
                         : { classroomState: null, withheld: false };
                       const classroomState = authDelivery.classroomState;
+                      const controlAuthorityRevision = classpilotControlAuthorityRevisionForDelivery({
+                        state: classroomStateRow,
+                        delivery: authDelivery,
+                      });
                       const focusCleanup = authDelivery.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
                         classroomStateRow, { schoolId, deviceId, studentId: payload.studentId, studentSessionId: activeSession.id },
                         protocol.acceptedCapabilities) : null;
@@ -1353,6 +1358,7 @@ export function setupWebSocket(
                       return {
                         fab,
                         classroomState,
+                        controlAuthorityRevision,
                         focusCleanup,
                         screenshotPolicy,
                         deliveryWithheld: authDelivery.withheld,
@@ -1405,7 +1411,7 @@ export function setupWebSocket(
                           deviceId,
                           studentId: payload.studentId,
                           studentSessionId: activeSession.id,
-                          controlRevision: prepared.classroomState?.revision ?? prepared.focusCleanup?.exactBinding.controlRevision ?? 0,
+                          controlRevision: prepared.controlAuthorityRevision || prepared.focusCleanup?.exactBinding.controlRevision || 0,
                         }),
                         settings: {
                           policyRevision: schoolWebsitePolicy.policyRevision,
@@ -1414,7 +1420,7 @@ export function setupWebSocket(
                           globalBlockedDomains: schoolSettings?.blockedDomains || [],
                           fab: {
                             ...prepared.fab,
-                            ownershipRevision: prepared.classroomState?.revision ?? 0,
+                            ownershipRevision: prepared.controlAuthorityRevision,
                           },
                         },
                         // Explicit null is authoritative on shared Chromebooks.

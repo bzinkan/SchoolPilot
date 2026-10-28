@@ -990,7 +990,7 @@ async function endStudentSessionsForSignOut(options: {
   requestedCount?: number;
 }) {
   const seenSessionIds = new Set<string>();
-  const completedStudentIds = new Set<string>();
+  const candidateBindings: Array<{ studentId: string; studentSessionId: string; deviceId: string }> = [];
   let cleanupFailures = 0;
   let publicationFailures = 0;
   let authorityRefusals = 0;
@@ -1001,6 +1001,7 @@ async function endStudentSessionsForSignOut(options: {
     if (!target.deviceId || !target.studentSessionId) continue;
     if (seenSessionIds.has(target.studentSessionId)) continue;
     seenSessionIds.add(target.studentSessionId);
+    candidateBindings.push({ studentId: target.studentId, studentSessionId: target.studentSessionId, deviceId: target.deviceId });
     let endedSession;
     try {
       endedSession = await endStudentSessionExact({
@@ -1008,6 +1009,9 @@ async function endStudentSessionsForSignOut(options: {
         studentId: target.studentId,
         studentSessionId: target.studentSessionId,
         deviceId: target.deviceId,
+        ...(options.teachingSessionId ? {
+          teachingClassroom: { teachingSessionId: options.teachingSessionId, actorId: options.actorId },
+        } : {}),
         ...(options.supervisionContextId && target.scheduledAuthorityRevision !== undefined ? {
           scheduledClassroom: { contextId: options.supervisionContextId, actorId: options.actorId, controlRevision: target.scheduledAuthorityRevision },
         } : {}),
@@ -1020,7 +1024,6 @@ async function endStudentSessionsForSignOut(options: {
       authorityRefusals += 1;
       continue;
     }
-    completedStudentIds.add(target.studentId);
     try {
       await publishClasspilotStudentSessionEnded({
         schoolId: options.schoolId,
@@ -1033,10 +1036,15 @@ async function endStudentSessionsForSignOut(options: {
       publicationFailures += 1;
     }
   }
-  await markClasspilotCommandTargetsServerCompleted(
-    options.commandId,
-    [...completedStudentIds]
-  );
+  // The device's own server sign-out may have ended the exact binding before
+  // our follow-up. Verify every original candidate against the ended row;
+  // neither an undefined local end nor a device ACK establishes the outcome.
+  const verifiedTargets = await markClasspilotCommandTargetsServerCompleted({
+    commandId: options.commandId,
+    schoolId: options.schoolId,
+    endedBindings: candidateBindings,
+  });
+  const completedStudentIds = new Set(verifiedTargets.map(target => target.studentId));
   recordRuntimePerformanceCounter("classpilotStudentSignOutEnded", completedStudentIds.size);
   const notEnded = Math.max(0, requestedCount - completedStudentIds.size);
   recordRuntimePerformanceCounter("classpilotStudentSignOutNotEnded", notEnded);
@@ -1449,7 +1457,7 @@ export async function executeClasspilotCommand(options: {
   const deliveryPolicy: ClasspilotCommandDeliveryPolicy = currentPageRequested
     ? "transient_action"
     : classpilotCommandDeliveryPolicy(options.commandType);
-  const expiresAt = currentPageRequested
+  const requestedExpiresAt = currentPageRequested
     ? new Date(issuedAt.getTime() + CLASSPILOT_TRANSIENT_COMMAND_TTL_MS)
     : classpilotCommandExpiresAt(options.commandType, issuedAt, options.schoolId);
   const currentUrlResolution = currentPageRequested
@@ -1520,7 +1528,7 @@ export async function executeClasspilotCommand(options: {
       commandPayload: storedCommandPayload,
       requestedCount: policyTargets.length,
       unavailableCount: policyTargets.filter((target) => !target.available).length,
-      expiresAt,
+      expiresAt: requestedExpiresAt,
     },
     policyTargets.map((target) => ({
       schoolId: options.schoolId,
@@ -1553,6 +1561,9 @@ export async function executeClasspilotCommand(options: {
       originalTargetCommandId: options.originalTargetCommandId,
     }
   );
+  // The locked authorizer caps delivery at the class/context deadline. Every
+  // wire frame and local deadline check must use that committed expiry.
+  const expiresAt = created.expiresAt;
   const committedCommandPayload = created.commandPayload
     && typeof created.commandPayload === "object"
     && !Array.isArray(created.commandPayload)

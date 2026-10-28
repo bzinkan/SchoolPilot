@@ -43,6 +43,7 @@ import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "../../db.js";
 import { classpilotClassroomStates, classpilotCommands, classpilotCommandTargets } from "../../schema/classpilot.js";
 import { parseAutomaticFlightPathStopOption } from "../../services/classpilotAutomaticFlightPathCommand.js";
+import { classpilotTeachingSessionIsCurrent } from "../../services/classpilotTeachingSessionWindow.js";
 
 const router = Router();
 
@@ -105,6 +106,13 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   if (!(await isAuthorizedClasspilotSessionStaff(schoolId, teachingSessionId, userId))) {
     throw Object.assign(new Error("Active class session not found"), { status: 404 });
   }
+  const commandCurrentAt = new Date();
+  if (!classpilotTeachingSessionIsCurrent(session, commandCurrentAt)) {
+    throw Object.assign(new Error("This class has ended or is not active yet. Refresh the dashboard."), {
+      status: 409,
+      code: "COMMAND_SESSION_STALE",
+    });
+  }
 
   const group = await getGroupByIdAndSchool(session.groupId, schoolId);
   if (!group) throw Object.assign(new Error("Active class group not found"), { status: 404 });
@@ -164,7 +172,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   // request-scoped client, and without RLS this avoids tripling pool demand
   // when many teachers issue commands at the same time.
   const activeCoverage = await getActiveSupervisionForStudents(schoolId, selectedStudentIds);
-  const activeClassOwners = await getActiveClassOwnersForStudents(schoolId, selectedStudentIds);
+  const activeClassOwners = await getActiveClassOwnersForStudents(schoolId, selectedStudentIds, undefined, commandCurrentAt);
   const activeStudentSessions = await getActiveSessionsForStudents(schoolId, selectedStudentIds);
   const coverageByStudent = new Map(activeCoverage.map((entry) => [entry.studentId, entry.context]));
   const classOwnerByStudent = new Map(activeClassOwners.map((owner) => [owner.studentId, owner]));

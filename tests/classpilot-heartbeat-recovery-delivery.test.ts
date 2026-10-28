@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { classpilotControlAuthorityRevisionForDelivery } from "../src/services/classpilotClassroomState.js";
 
 const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", import.meta.url), "utf8");
 const start = source.indexOf("    const teacherReplyCheckKey = `${studentSessionId}:${deviceId}`;");
@@ -19,13 +20,18 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>; recover?: boolean } = {}) {
+type WithheldReason = Parameters<typeof classpilotControlAuthorityRevisionForDelivery>[0]["delivery"]["withheldReason"];
+function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>; recover?: boolean;
+  requestFab?: boolean; withheldReason?: WithheldReason; supervision?: boolean; cleanup?: boolean } = {}) {
   const order: string[] = [], local: Array<{ target: Frame; frame: Frame }> = [], remote: Array<{ target: Frame; frame: Frame }> = [];
   let held = false, leases = 0, authorities = 0, response: Frame | undefined;
   const released = deferred();
   const transactionDb = { fixture: "private-recovery-transaction" };
-  const storedControlState = { revision: 46, desiredState: { restrictions: { focus: { active: true } } } };
-  const retiredControlState = { revision: 47, desiredState: { restrictions: {} } };
+  const scope = options.supervision
+    ? { teachingSessionId: null, supervisionContextId: "context-a" }
+    : { teachingSessionId: "teaching-a", supervisionContextId: null };
+  const storedControlState = { ...scope, revision: 46, desiredState: { restrictions: { focus: { active: true } } } };
+  const retiredControlState = { ...scope, revision: 47, desiredState: { restrictions: {} } };
   const lifecycle = { threadId: "thread-a", threadGeneration: 2, schoolEpoch: 3, activityEpoch: 4 };
   const rows = options.messages ? [{ message: { id: "message-a", content: "Synthetic private reply", supervisionContextId: "context-a" } }] : [];
   const context = {
@@ -64,14 +70,20 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
     isClasspilotCapabilityActive() { return true; },
     serializeClasspilotStudentControlStateForDelivery(value: Frame) {
       assert.equal(held, true); assert.equal(value.state, retiredControlState);
-      order.push("serialize"); return { classroomState: null, withheld: true };
+      order.push("serialize"); return { classroomState: null, withheld: true, withheldReason: options.withheldReason };
     },
+    classpilotControlAuthorityRevisionForDelivery,
     async prepareClasspilotFocusCleanupFrame(database: object, state: object) {
       assert.equal(held, true); assert.equal(database, transactionDb); assert.equal(state, retiredControlState);
-      order.push("cleanup"); return { exactBinding: { controlRevision: 99 } };
+      order.push("cleanup"); return options.cleanup === false ? null : { exactBinding: { controlRevision: 99 } };
+    },
+    async buildStudentFabState(_schoolId: string, _studentId: string, value: Frame) {
+      assert.equal(held, true); assert.equal(value.dbInstance, transactionDb);
+      return { ...scope, ownershipRevision: 47, activeSessionIds: options.supervision ? [] : ["teaching-a"],
+        activeContexts: [options.supervision ? { supervisionContextId: "context-a" } : { teachingSessionId: "teaching-a" }] };
     },
     trackingWindowScreenshotLeaseNegotiated: false, screenshotPolicy: { enabled: false },
-    protocol: { acceptedCapabilities: ["privateChatLifecycleV1"] }, req: { body: {} }, fabSyncPending: false,
+    protocol: { acceptedCapabilities: ["privateChatLifecycleV1"] }, req: { body: { requestFabState: options.requestFab === true } }, fabSyncPending: false,
     classpilotControlStateExactBinding(value: Frame) { return value; },
     school: { planStatus: "active" }, pendingMessages: [],
     recordRuntimePerformanceCounter() {}, recordHeartbeatHotPathCounter() {},
@@ -134,4 +146,32 @@ test("actual heartbeat keeps the thirty-second recovery cooldown without skippin
   assert.equal(f.local.length, 0);
   assert.equal(f.remote.length, 0);
   assert.equal(f.snapshot().response?.ok, true);
+});
+
+test("heartbeat recovery preserves classroom ownership when only a restriction snapshot is withheld", async () => {
+  for (const withheldReason of ["restriction_auth_update_required", "precise_restriction_capability_required", "focus_tab_capability_required"] as const) {
+    for (const supervision of [false, true]) {
+      const f = fixture({ requestFab: true, withheldReason, supervision, cleanup: false });
+      await f.run();
+      const response = f.snapshot().response!;
+      const fab = response.fab as Frame;
+      const binding = response.exactBinding as Frame;
+      assert.equal(response.classroomState, null, "unsupported restrictions remain withheld");
+      assert.equal(fab.ownershipRevision, 47, `${withheldReason} retains canonical FAB ownership`);
+      assert.equal(binding.controlRevision, 47, "the exact binding and FAB carry the same current revision");
+      assert.deepEqual(JSON.parse(JSON.stringify(fab.activeContexts)), [supervision
+        ? { supervisionContextId: "context-a" } : { teachingSessionId: "teaching-a" }]);
+    }
+  }
+});
+
+test("heartbeat recovery keeps deferred-origin and unknown withheld revisions hidden", async () => {
+  for (const withheldReason of ["late_sign_in_capability_required", undefined] as const) {
+    const f = fixture({ requestFab: true, withheldReason, cleanup: false });
+    await f.run();
+    const response = f.snapshot().response!;
+    assert.equal(response.classroomState, null);
+    assert.equal((response.fab as Frame).ownershipRevision, 0);
+    assert.equal((response.exactBinding as Frame).controlRevision, 0);
+  }
 });

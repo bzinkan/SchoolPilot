@@ -298,11 +298,11 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   );
   assert.match(
     websocket,
-    /fab: \{[\s\S]*\.\.\.prepared\.fab,[\s\S]*ownershipRevision: prepared\.classroomState\?\.revision \?\? 0/,
+    /classpilotControlAuthorityRevisionForDelivery\(\{[\s\S]*state: classroomStateRow,[\s\S]*delivery: authDelivery,[\s\S]*fab: \{[\s\S]*\.\.\.prepared\.fab,[\s\S]*ownershipRevision: prepared\.controlAuthorityRevision/,
   );
   assert.match(
     devices,
-    /deliveredFab: finalFab[\s\S]*ownershipRevision: finalClassroomState\?\.revision \?\? 0/,
+    /classpilotControlAuthorityRevisionForDelivery\(\{[\s\S]*state: finalControlState,[\s\S]*delivery: serialized,[\s\S]*deliveredFab: finalFab[\s\S]*ownershipRevision: controlAuthorityRevision/,
   );
   assert.match(
     websocket,
@@ -570,7 +570,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
     finalHeartbeat,
     /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*getClasspilotStudentControlDeliveryContext\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared, inbox\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
   );
-  assert.match(finalHeartbeat, /controlRevision: prepared\.classroomState\?\.revision \?\? prepared\.focusCleanup\?\.exactBinding\.controlRevision \?\? 0/);
+  assert.match(finalHeartbeat, /controlRevision: prepared\.controlAuthorityRevision \|\| prepared\.focusCleanup\?\.exactBinding\.controlRevision \|\| 0/);
   assert.doesNotMatch(finalHeartbeat, /getActiveSessionsForStudents/);
 
   const teacherReplyRecovery = section(

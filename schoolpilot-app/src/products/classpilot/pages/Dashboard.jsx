@@ -2390,8 +2390,12 @@ export default function Dashboard() {
                   && (
                     (!previousEntry && currentEntry.summary.acknowledged > 0)
                     || currentEntry.summary.acknowledged > (previousEntry?.summary.acknowledged || 0)
+                    || (currentEntry.summary.completed > (previousEntry?.summary.completed || 0)
+                      && (currentEntry.deliveryPolicy === 'durable_message'
+                        || currentEntry.summary.failed < (previousEntry?.summary.failed || 0)))
                     || currentEntry.summary.expired > (previousEntry?.summary.expired || 0)
                     || currentEntry.summary.failed > (previousEntry?.summary.failed || 0)
+                    || currentEntry.summary.unavailable > (previousEntry?.summary.unavailable || 0)
                   )
                 ) {
                   const feedback = transientEntryFeedback(currentEntry, commandStudentNames(tileLockStudentsRef.current.values()));
@@ -2963,9 +2967,12 @@ export default function Dashboard() {
       if (after !== before) {
         transientCommandOutcomesRef.current = after;
         setTransientPendingControls(pendingTransientControls(after));
+        const notified = new Set();
         for (const [id, entry] of after) {
           const previousEntry = before.get(id);
-          if (entry.summary.expired > (previousEntry?.summary.expired || 0)) {
+          const batch = entry.feedbackBatch || id;
+          if (entry.summary.expired > (previousEntry?.summary.expired || 0) && !notified.has(batch)) {
+            notified.add(batch);
             toast(transientEntryFeedback(entry, commandStudentNames(tileLockStudentsRef.current.values())));
           }
         }
@@ -5480,7 +5487,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       setTransientCommandVersion((version) => version + 1);
     }
     const studentNames = commandStudentNames([...students, ...claimedPickupStudents]);
-    const textFeedback = commandDeliveryFeedback(enrichedData, commandType, studentNames);
+    const trackedEntry = [commandId, ...(data?.commands || []).map((command) => command?.id)]
+      .map((id) => tracked.get(id)).find(Boolean);
+    const textFeedback = trackedEntry
+      ? transientEntryFeedback(trackedEntry, studentNames)
+      : commandDeliveryFeedback(enrichedData, commandType, studentNames);
     // Name the students whose ClassPilot extension must update before a
     // precise Waypoint or Flight Path can reach them.
     const { unsupportedStudentIds, ...feedbackFields } = textFeedback;
@@ -5517,7 +5528,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const commandAuthorityKey = activityAuthorityKey(request);
     const commandScope = activityScopeKey;
     const commandFocusScope = commandControlScopeKey;
-    const data = await requestActivityApi('POST', '/commands', request);
+    const data = await requestActivityApi('POST', '/commands', request).catch((error) => {
+      // Preserve the response/code for scoped recovery, while mutation toasts
+      // show the server's public refusal instead of Axios's status-only text.
+      const reason = error?.response?.data?.error;
+      if (error instanceof Error && typeof reason === 'string' && reason.trim()) error.message = reason.trim().slice(0, 500);
+      throw error;
+    });
     if (commandScope !== activityScopeRef.current || commandFocusScope !== commandControlScopeRef.current
       || commandAuthorityKey !== activityAuthorityKey(effectiveAuthorityRef.current)) {
       throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');

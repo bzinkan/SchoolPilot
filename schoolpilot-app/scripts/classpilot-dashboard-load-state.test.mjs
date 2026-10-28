@@ -4993,6 +4993,126 @@ test('tab-close failures show the roster name and actual error for initial and l
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('persistent controls and durable announcements show delayed failure and recovery ACKs without resending', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context, { studentName: 'Taylor Example' });
+  const commandFor = (body) => ({ id: `audit-${body.commandType}`, ...body, schoolId: SCHOOL_ID,
+    deliveryPolicy: body.commandType === 'teacher-message' ? 'durable_message' : 'persistent_control',
+    targets: [{ studentId: STUDENT_ID, status: 'sent' }] });
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); posts.push(body);
+    await route.fulfill({ status: 201, json: { command: commandFor(body),
+      summary: { requested: 1, attempted: 1, pending: 1, awaitingAck: 1 } } });
+  });
+  // Manage Tabs remains modal after changing a limit; its visible toast is
+  // outside the modal's accessibility subtree until the dialog closes.
+  const notices = page.getByRole('region', { name: /Notifications/, includeHidden: true });
+  const reportOutcome = async (body, status, errorMessage = null) => {
+    const command = commandFor(body);
+    await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID,
+      teachingSessionId: OWN_SESSION_ID, commandId: command.id,
+      command: { ...command, targets: [{ studentId: STUDENT_ID, status, errorMessage }] },
+      summary: { requested: 1, attempted: 1, acknowledged: 1, pending: 0, awaitingAck: 0,
+        failed: status === 'failed' ? 1 : 0, completed: status === 'completed' ? 1 : 0 },
+    });
+  };
+  await page.getByTestId('input-tab-limit').fill('3');
+  await page.getByTestId('button-apply-tab-limit').click();
+  await notices.getByText('Restriction saved', { exact: true }).waitFor();
+  await reportOutcome(posts[0], 'failed', 'The classroom command could not be applied.');
+  await notices.getByText(/Taylor Example: The classroom command could not be applied\./).waitFor();
+  await page.clock.runFor(6000);
+  await reportOutcome(posts[0], 'completed');
+  await notices.getByText('Restriction saved', { exact: true }).waitFor();
+  await page.clock.runFor(6000);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await openSendMessageDialog(page);
+  await page.getByTestId('input-send-message').fill('Synthetic audited announcement');
+  await page.getByTestId('button-confirm-send-message').click();
+  await notices.getByText('Message queued', { exact: true }).waitFor();
+  await reportOutcome(posts[1], 'failed', 'The message could not be stored.');
+  await notices.getByText(/Taylor Example: The message could not be stored\./).waitFor();
+  await page.clock.runFor(6000);
+  await reportOutcome(posts[1], 'completed');
+  await notices.getByText('Acknowledged', { exact: true }).waitFor();
+  await page.clock.runFor(60_000);
+  assert.equal(posts.length, 2, 'status feedback never resends the original action');
+  assert.deepEqual(posts.map((body) => body.commandType), ['limit-tabs', 'teacher-message']);
+  assert.equal(await notices.getByText('Not delivered', { exact: true }).count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('canonical command HTTP refusals show the actual server reason and keep the exact target dialog open', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context, {
+    acceptedCapabilities: { scopedAuthorityChecksV1: true, exactTabCloseV2: true },
+  });
+  const reason = 'This scheduled class is no longer active. Open the current classroom.';
+  await page.route('**/api/commands', async route => {
+    posts.push(route.request().postDataJSON());
+    await route.fulfill({ status: 409, json: { error: reason, code: 'CLASSROOM_ACTIVITY_UNAVAILABLE' } });
+  });
+  await page.getByTestId('button-close-tab-opaque-first').click();
+  const notices = page.getByRole('region', { name: /Notifications/, includeHidden: true });
+  await notices.getByText(reason, { exact: true }).waitFor();
+  assert.equal(await notices.getByText(/Request failed with status code/).count(), 0);
+  assert.equal(await page.getByTestId('dialog-tabs').isVisible(), true);
+  assert.equal(posts.length, 1, 'a refused command is not retried or widened');
+  assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('verified server sign-out completion survives failed device ACKs before and after the HTTP response', { timeout: 120_000 }, async context => {
+  for (const earlyFailure of [true, false]) await context.test(earlyFailure ? 'failure before HTTP completion' : 'failure after HTTP completion', async scenario => {
+    let releaseResponse;
+    const responseGate = new Promise(resolve => { releaseResponse = resolve; });
+    scenario.after(() => releaseResponse());
+    const { page, harness, posts } = await focusBrowserFixture(scenario, { studentName: 'Taylor Example' });
+    const commandId = `sign-out-race-${earlyFailure}`;
+    const actualError = 'The browser could not complete sign-out.';
+    const commandFor = (body, target) => ({ id: commandId, ...body, schoolId: SCHOOL_ID,
+      deliveryPolicy: 'server_authoritative', targets: [{ studentId: STUDENT_ID, ...target }] });
+    await page.route('**/api/commands', async route => {
+      const body = route.request().postDataJSON(); posts.push(body);
+      await responseGate;
+      await route.fulfill({ status: 201, json: {
+        command: commandFor(body, { status: 'completed', result: { serverAuthoritative: true },
+          ackState: earlyFailure ? 'failed' : null, errorMessage: null }),
+        summary: { requested: 1, attempted: 1, completed: 1, failed: 0, pending: 0,
+          acknowledged: earlyFailure ? 1 : 0, awaitingAck: earlyFailure ? 0 : 1 },
+      } });
+    });
+    const sendFailure = () => harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID,
+      teachingSessionId: OWN_SESSION_ID, commandId,
+      command: commandFor(posts[0], { status: 'failed', ackState: 'failed', errorMessage: actualError }),
+      summary: { requested: 1, attempted: 1, completed: 0, failed: 1, pending: 0, acknowledged: 1, awaitingAck: 0 },
+    });
+    await page.getByTestId('button-close-tabs-dialog').click();
+    await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+    await page.getByTestId('button-sign-out-students').click();
+    await page.getByTestId('button-confirm-sign-out-students').click();
+    await waitUntil(() => posts.length === 1, 'one exact sign-out request is in flight');
+    const notices = page.getByRole('region', { name: /Notifications/, includeHidden: true });
+    if (earlyFailure) {
+      await sendFailure();
+      await notices.getByText(`Taylor Example: ${actualError}`, { exact: false }).waitFor();
+      await notices.getByText('Failed', { exact: true }).waitFor();
+      await page.clock.runFor(6000);
+    }
+    releaseResponse();
+    await notices.getByText('Sign-out completed', { exact: true }).waitFor();
+    assert.equal(await notices.getByText('Failed', { exact: true }).count(), 0);
+    assert.equal(await notices.getByText(actualError, { exact: false }).count(), 0);
+    await page.clock.runFor(6000);
+    await sendFailure();
+    if (!earlyFailure) await notices.getByText('Sign-out completed', { exact: true }).waitFor();
+    await page.clock.runFor(1000);
+    assert.equal(await notices.getByText('Failed', { exact: true }).count(), 0, 'old device failure cannot replace verified completion');
+    assert.equal(await notices.getByText(actualError, { exact: false }).count(), 0);
+    assert.deepEqual(posts, [{ teachingSessionId: OWN_SESSION_ID, targetScope: 'students',
+      targetStudentIds: [STUDENT_ID], commandType: 'student-sign-out', commandPayload: {} }]);
+    assert.deepEqual(harness.pageErrors, []);
+  });
+});
+
 test('unified Focus: tile current website starts and stops exactly its own student with confirmed lifecycle', { timeout: 60_000 }, async context => {
   const fixture = await focusBrowserFixture(context, { screenLocked: false,
     classroomState: { revision: 1, restrictions: { screenLock: { active: false } } } });

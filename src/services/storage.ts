@@ -2,6 +2,7 @@ import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, s
   assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
 } from "./classpilotHeartbeatPreparedReads.js";
 import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
+import { classpilotTeachingSessionDeadline, classpilotTeachingSessionIsCurrent } from "./classpilotTeachingSessionWindow.js";
 import {
   automaticFlightPathDesiredState, automaticFlightPathPolicyDto, emptyAutomaticFlightPathState,
   normalizeAutomaticFlightPathPolicy, normalizeAutomaticFlightPathState, readAutomaticFlightPathOrigin,
@@ -11522,14 +11523,30 @@ export async function endStudentSessionExact(options: {
   studentId: string;
   deviceId: string;
   studentSessionId: string;
+  teachingClassroom?: { teachingSessionId: string; actorId: string };
   scheduledClassroom?: { contextId: string; actorId: string; controlRevision: number };
 }): Promise<StudentSession | undefined> {
   const result = await db.transaction(async (tx) => {
-    await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], tx as unknown as typeof db);
+    const transactionDb = tx as unknown as typeof db;
+    if (options.teachingClassroom && options.scheduledClassroom) return undefined;
+    // Teaching lifecycle writers lock the school before student authority. A
+    // shared entitlement lock keeps that order while fencing this final end.
+    if (options.teachingClassroom || options.scheduledClassroom) await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], transactionDb);
+    if (options.teachingClassroom) {
+      const [teachingSession] = await tx.select().from(teachingSessions).where(and(
+        eq(teachingSessions.id, options.teachingClassroom.teachingSessionId),
+        eq(teachingSessions.schoolId, options.schoolId)
+      )).limit(1).for("share");
+      const clock = await tx.execute<{ current_at: Date | string }>(sql`SELECT clock_timestamp() AS current_at`);
+      const rawCurrentAt = clock.rows[0]?.current_at;
+      const currentAt = rawCurrentAt instanceof Date ? rawCurrentAt : new Date(rawCurrentAt ?? NaN);
+      if (!teachingSession || !classpilotTeachingSessionIsCurrent(teachingSession, currentAt)
+        || !(await isAuthorizedClasspilotSessionStaff(options.schoolId, teachingSession.id, options.teachingClassroom.actorId, transactionDb))
+        || !(await hasCurrentClasspilotStudentControlAuthorityAtClock({ schoolId: options.schoolId, studentId: options.studentId,
+          teachingSessionId: teachingSession.id }, transactionDb, "current"))) return undefined;
+    }
     if (options.scheduledClassroom) {
-      const transactionDb = tx as unknown as typeof db;
-      await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
-      await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], transactionDb);
       await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: options.scheduledClassroom.contextId,
         actorId: options.scheduledClassroom.actorId, lock: true }, transactionDb);
       if (!(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: options.studentId,
@@ -16079,6 +16096,7 @@ export async function getActiveClassOwnersForStudents(
         eq(classpilotSessionStudents.schoolId, schoolId),
         eq(groups.schoolId, schoolId),
         currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
+        currentAt ? gt(teachingSessions.startTime, new Date(currentAt.getTime() - 12 * 3600_000)) : undefined,
         currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
         inArray(classpilotSessionStudents.studentId, uniqueStudentIds)
       )
@@ -16104,6 +16122,7 @@ export async function getActiveClassOwnersForStudents(
     .where(and(
       eq(groups.schoolId, schoolId),
       currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
+      currentAt ? gt(teachingSessions.startTime, new Date(currentAt.getTime() - 12 * 3600_000)) : undefined,
       currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
       inArray(groupStudents.studentId, uniqueStudentIds)
     ));
@@ -21543,6 +21562,7 @@ function frozenClasspilotCommandTargetResult(
 }
 
 const classpilotCommandAuthorityResultKeys = [
+  "serverAuthoritative",
   "exactTabCloseVersion",
   "frozenControlRevision",
   "durableAuthorityRevision",
@@ -21681,7 +21701,22 @@ export async function createClasspilotCommandWithTargets(
           code: "COMMAND_SESSION_STALE",
         });
       }
+      // Read the database clock after acquiring the parent/student locks. A
+      // request may have waited across the bell while finalization is delayed.
+      const clock = await tx.execute<{ current_at: Date | string }>(sql`SELECT clock_timestamp() AS current_at`);
+      const rawCurrentAt = clock.rows[0]?.current_at;
+      const commandCurrentAt = rawCurrentAt instanceof Date ? rawCurrentAt : new Date(rawCurrentAt ?? NaN);
+      if (!classpilotTeachingSessionIsCurrent(lockedSession, commandCurrentAt)) {
+        throw Object.assign(new Error("This class has ended or is not active yet. Refresh the dashboard."), {
+          status: 409,
+          code: "COMMAND_SESSION_STALE",
+        });
+      }
       teachingSession = lockedSession;
+      const classDeadline = classpilotTeachingSessionDeadline(lockedSession);
+      if (!commandData.expiresAt || commandData.expiresAt > classDeadline) {
+        commandData = { ...commandData, expiresAt: classDeadline };
+      }
       if (!(await isAuthorizedClasspilotSessionStaff(
         authority.schoolId,
         authority.teachingSessionId!,
@@ -21717,7 +21752,8 @@ export async function createClasspilotCommandWithTargets(
       const owners = await getActiveClassOwnersForStudents(
         authority.schoolId,
         studentIds,
-        transactionDb
+        transactionDb,
+        commandCurrentAt
       );
       const supervision = await getActiveSupervisionForStudents(
         authority.schoolId,
@@ -21793,11 +21829,18 @@ export async function createClasspilotCommandWithTargets(
           ))
           .limit(1)
           .for("update");
-        if (!context || context.status !== "active" || context.endsAt <= new Date()) {
+        const clock = await tx.execute<{ current_at: Date | string }>(sql`SELECT clock_timestamp() AS current_at`);
+        const rawCurrentAt = clock.rows[0]?.current_at;
+        const contextCurrentAt = rawCurrentAt instanceof Date ? rawCurrentAt : new Date(rawCurrentAt ?? NaN);
+        if (!context || context.status !== "active" || !Number.isFinite(contextCurrentAt.getTime())
+          || context.startsAt > contextCurrentAt || context.endsAt <= contextCurrentAt) {
           throw Object.assign(new Error("Supervision context changed before dispatch"), {
             status: 409,
             code: "COMMAND_SUPERVISION_CONTEXT_STALE",
           });
+        }
+        if (!commandData.expiresAt || commandData.expiresAt > context.endsAt) {
+          commandData = { ...commandData, expiresAt: context.endsAt };
         }
         if (scheduledContextHasClassroomTools(context)) classroomContext = context;
         if (authority.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, authority.contextAuthorityRevision);
@@ -22307,7 +22350,12 @@ export async function updateClasspilotCommandSummary(
       sentCount: sql<number>`greatest(${classpilotCommands.sentCount}, ${summary.targetSentCount})`,
       receivedCount: sql<number>`greatest(${classpilotCommands.receivedCount}, ${summary.targetReceivedCount})`,
       completedCount: sql<number>`greatest(${classpilotCommands.completedCount}, ${summary.targetCompletedCount})`,
-      failedCount: sql<number>`greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount})`,
+      // A verified server sign-out can complete after a device failure arrived.
+      // Its final failed count follows those targets; other ACK milestones keep
+      // their established monotonic summary behavior.
+      failedCount: sql<number>`case when ${classpilotCommands.commandType} = 'student-sign-out'
+        then ${summary.targetFailedCount}
+        else greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount}) end`,
       // Unlike delivery milestones, unavailable is not monotonic: an offline
       // durable message or desired-state target may bind later and complete.
       unavailableCount: sql<number>`${summary.targetUnavailableCount}`,
@@ -22380,29 +22428,62 @@ export async function markClasspilotCommandTargetsUnavailable(
   return targets;
 }
 
-export async function markClasspilotCommandTargetsServerCompleted(
-  commandId: string,
-  studentIds: string[]
-): Promise<ClasspilotCommandTarget[]> {
-  const uniqueStudentIds = [...new Set(studentIds.filter(Boolean))];
-  if (uniqueStudentIds.length === 0) return [];
+/** The exact server session end is the student-sign-out outcome. Only this
+ * verified transition may replace an earlier device failed/expired outcome;
+ * generic command ACK terminal transitions remain monotonic. */
+export async function markClasspilotCommandTargetsServerCompleted(options: {
+  commandId: string;
+  schoolId: string;
+  endedBindings: Array<{ studentId: string; studentSessionId: string; deviceId: string }>;
+}): Promise<ClasspilotCommandTarget[]> {
+  if (options.endedBindings.length === 0) return [];
+  const exactBindings = options.endedBindings.map(binding => and(
+    eq(classpilotCommandTargets.studentId, binding.studentId),
+    eq(classpilotCommandTargets.studentSessionId, binding.studentSessionId),
+    eq(classpilotCommandTargets.deviceId, binding.deviceId)
+  ));
+  const endedSignOutTarget = db.select({ id: classpilotCommands.id })
+    .from(classpilotCommands)
+    .innerJoin(studentSessions, and(
+      eq(studentSessions.id, classpilotCommandTargets.studentSessionId),
+      eq(studentSessions.studentId, classpilotCommandTargets.studentId),
+      eq(studentSessions.deviceId, classpilotCommandTargets.deviceId)
+    ))
+    .innerJoin(students, and(
+      eq(students.id, studentSessions.studentId),
+      eq(students.schoolId, classpilotCommands.schoolId)
+    ))
+    .where(and(
+      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
+      eq(classpilotCommands.schoolId, options.schoolId),
+      eq(classpilotCommands.commandType, "student-sign-out"),
+      eq(studentSessions.isActive, false),
+      isNotNull(studentSessions.endedAt),
+      gte(studentSessions.endedAt, classpilotCommands.createdAt)
+    ));
   const now = new Date();
   const targets = await db
     .update(classpilotCommandTargets)
     .set({
       status: "completed",
       completedAt: sql<Date>`coalesce(${classpilotCommandTargets.completedAt}, ${now})`,
-      result: sql`coalesce(${classpilotCommandTargets.result}, '{}'::jsonb) || '{"serverAuthoritative":true}'::jsonb`,
+      result: sql`(case
+        when ${classpilotCommandTargets.result} is null then '{}'::jsonb
+        when jsonb_typeof(${classpilotCommandTargets.result}) = 'object' then ${classpilotCommandTargets.result}
+        else jsonb_build_object('ackResult', ${classpilotCommandTargets.result})
+      end) || '{"serverAuthoritative":true}'::jsonb`,
       errorMessage: null,
       updatedAt: now,
     })
     .where(and(
-      eq(classpilotCommandTargets.commandId, commandId),
-      inArray(classpilotCommandTargets.studentId, uniqueStudentIds),
-      inArray(classpilotCommandTargets.status, ["requested", "sent", "received"])
+      eq(classpilotCommandTargets.commandId, options.commandId),
+      eq(classpilotCommandTargets.schoolId, options.schoolId),
+      or(...exactBindings),
+      inArray(classpilotCommandTargets.status, ["requested", "sent", "received", "completed", "failed", "expired"]),
+      exists(endedSignOutTarget)
     ))
     .returning();
-  await updateClasspilotCommandSummary(commandId);
+  await updateClasspilotCommandSummary(options.commandId);
   return targets;
 }
 
@@ -22791,6 +22872,12 @@ export async function persistClasspilotCommandTargetAck(
       };
     }
 
+    // A device can acknowledge its sign-out handler before the exact server
+    // session end succeeds. Its completion is transport receipt only; the
+    // verified server-ended binding is the sole completion authority.
+    if (binding.commandType === "student-sign-out" && options.ackState === "completed") {
+      options = { ...options, ackState: "received" };
+    }
     const target = binding.target;
     if (
       target.deviceId !== options.deviceId

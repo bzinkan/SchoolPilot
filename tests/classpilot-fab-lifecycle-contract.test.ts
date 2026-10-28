@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 describe("ClassPilot FAB lifecycle publication contract", () => {
   it("shares one authoritative start/end publisher", async () => {
@@ -17,7 +19,39 @@ describe("ClassPilot FAB lifecycle publication contract", () => {
     assert.match(lifecycle, /event: "ended"/);
     assert.match(lifecycle, /syncClasspilotControlStatesToActiveDevices/);
     assert.match(delivery, /classpilotFabStatePushFrame/);
-    assert.match(delivery, /activeSessionIds: \[\]/);
+    assert.match(delivery, /fabState = await buildStudentFabState\(schoolId, studentId,/);
+    assert.match(delivery, /data: \{\s+\.\.\.fabState,/);
+  });
+
+  it("builds exact-bound disabled snapshots from verified empty classroom authority", async () => {
+    const fab = await readFile(new URL("../src/services/classpilotFab.ts", import.meta.url), "utf8");
+    const start = fab.indexOf("export async function buildStudentFabState");
+    const end = fab.indexOf("export async function getSessionStudentDeviceIds", start);
+    assert.ok(start >= 0 && end > start);
+    const executable = ts.transpileModule(`${fab.slice(start, end).replace("export async function", "async function")}\nbuildStudentFabState;`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+    }).outputText;
+    for (const supervision of [null, { context: { id: "coverage-a", contextType: "coverage", name: "Synthetic coverage" } }]) {
+      const build: (schoolId: string, studentId: string, options: { studentSessionId: string }) => Promise<Record<string, unknown>> = runInNewContext(executable, {
+        async getClasspilotFabAuthoritySnapshot() {
+          return { ownershipRevision: 8, studentSession: null, teachingSession: null, supervision };
+        },
+        async readPrivateChatLifecycleState() { return { schoolEpoch: 1, threads: [] }; },
+        scheduledContextHasClassroomTools: () => false,
+        classToolsPhase: () => 0,
+        async getActiveHandsForStudent() { return []; },
+      });
+      const state = await build("school-a", "student-a", { studentSessionId: "session-a" });
+      assert.equal(state.studentId, "student-a");
+      assert.equal(state.studentSessionId, "session-a");
+      assert.equal(state.ownershipRevision, 8);
+      assert.equal(state.teachingSessionId, null);
+      assert.deepEqual(Array.from(state.activeSessionIds as string[]), []);
+      assert.deepEqual(Array.from(state.activeContexts as unknown[]), []);
+      assert.equal(state.messagingEnabled, false);
+      assert.equal(state.messagingChannelEnabled, false);
+      assert.equal(state.handRaisingEnabled, false);
+    }
   });
 
   it("limits start fanout to the frozen roster's current owned bindings", async () => {

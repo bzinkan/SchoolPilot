@@ -124,29 +124,17 @@ export async function syncClasspilotControlStatesToActiveDevices(
             };
           }
 
-          let fabState: Record<string, unknown>;
+          let fabState: Record<string, unknown> | null = null;
           try {
             fabState = await buildStudentFabState(schoolId, studentId, {
               studentSessionId: session.id,
               dbInstance: transactionDb,
             });
           } catch {
-            // Revocation and incomplete legacy data both fail closed. The explicit
-            // disabled snapshot clears a formerly visible FAB immediately; auth
-            // remains the durable recovery/revocation boundary.
-            fabState = {
-              schemaVersion: 1,
-              studentId,
-              studentSessionId: session.id,
-              teachingSessionId: null,
-              activeSessionIds: [],
-              messagingEnabled: false,
-              messagingChannelEnabled: false,
-              handRaisingEnabled: false,
-              handRaised: false,
-              lifecycleRevision: 0,
-              revision: 0,
-            };
+            // A failed read cannot establish an authoritative disabled FAB.
+            // Omit this surface instead of showing fabricated disabled controls,
+            // and retry it on the next exact-bound heartbeat. The independently
+            // verified classroom state can still converge.
           }
           return {
             state,
@@ -161,13 +149,13 @@ export async function syncClasspilotControlStatesToActiveDevices(
           const authorizedPublications: PublishWSBatchItem[] = [];
           if (prepared.focusCleanup) authorizedPublications.push({ target: exactTarget, message: prepared.focusCleanup });
           if (prepared.deferredOriginWithheld) {
-            return { publications: authorizedPublications };
+            return { publications: authorizedPublications, fabSyncRetryRequired: false };
           }
           const gateActive = !prepared.lateSignInRequired || isClasspilotCapabilityActive(
             "lateSignInRestrictionSsoV1",
             { schoolId }
           );
-          if (!gateActive) return { publications: authorizedPublications };
+          if (!gateActive) return { publications: authorizedPublications, fabSyncRetryRequired: false };
           const fabState = prepared.fabState;
           const requiredCapability = prepared.lateSignInRequired
             ? "lateSignInRestrictionSsoV1" as const
@@ -229,6 +217,9 @@ export async function syncClasspilotControlStatesToActiveDevices(
             }
           }
 
+          if (!fabState) {
+            return { publications: authorizedPublications, fabSyncRetryRequired: true };
+          }
           const fabMessage = classpilotFabStatePushFrame({
             messageId: randomUUID(),
             binding: {
@@ -249,7 +240,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
             ? { ...exactTarget, requiredCapability }
             : exactTarget;
           authorizedPublications.push({ target: fabTarget, message: fabMessage });
-          return { publications: authorizedPublications };
+          return { publications: authorizedPublications, fabSyncRetryRequired: false };
         }
       );
       if (!delivery.authorized) continue;
@@ -268,7 +259,9 @@ export async function syncClasspilotControlStatesToActiveDevices(
           fabPublicationIndex = publications.length + index;
         }
       });
-      if (fabDeliveredLocally === false) {
+      if (delivery.value.fabSyncRetryRequired) {
+        await markClasspilotFabSyncPending(exactTarget);
+      } else if (fabDeliveredLocally === false) {
         const fabData = (delivery.value.publications[fabPublicationIndex - publications.length]?.message as {
           data?: { teachingSessionId?: unknown; supervisionContextId?: unknown };
         } | undefined)?.data;

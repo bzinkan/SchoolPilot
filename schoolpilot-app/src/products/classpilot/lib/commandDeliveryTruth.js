@@ -140,6 +140,11 @@ function commandDeliverySummaryFeedback(value, commandType) {
   const summary = normalizeCommandSummary(value);
   const expiresAt = value?.expiresAt ?? value?.command?.expiresAt;
 
+  const requestFailures = (value?.command?.targets || value?.targets || []).filter((target) => target.requestFailed);
+  if (summary.requested > 0 && requestFailures.length === summary.requested) {
+    return { title: 'Failed', description: 'No command was accepted for the selected students.', variant: 'destructive' };
+  }
+
   if (policy === 'persistent_control') {
     // An unavailable target is a student the restriction did NOT reach. Only
     // `pending` targets are genuinely awaiting a device acknowledgement, so
@@ -156,7 +161,10 @@ function commandDeliverySummaryFeedback(value, commandType) {
     const unsupportedStudentIds = unsupportedCommandStudentIds(value);
     const unsupported = Math.min(unsupportedStudentIds.length, summary.unavailable);
     const signedOut = summary.unavailable - unsupported;
-    const pendingText = summary.pending > 0
+    const allFailed = summary.requested > 0 && summary.failed >= summary.requested;
+    const pendingText = allFailed
+      ? 'The desired restriction was saved, but no device confirmed applying it.'
+      : summary.pending > 0
       ? `${plural(summary.pending, 'restriction is', 'restrictions are')} pending — will apply when monitoring resumes.`
       : summary.acknowledged > 0
         ? `${plural(summary.acknowledged, 'target')} device-reported acknowledgement.`
@@ -164,7 +172,7 @@ function commandDeliverySummaryFeedback(value, commandType) {
           ? null
           : 'The desired restriction was saved for the selected students.';
     return {
-      title: nothingDelivered
+      title: allFailed ? 'Restriction not applied' : nothingDelivered
         ? unsupported > 0 && signedOut === 0 ? 'Extension update required' : 'Restriction not delivered'
         : 'Restriction saved',
       description: [
@@ -188,9 +196,17 @@ function commandDeliverySummaryFeedback(value, commandType) {
 
   if (policy === 'durable_message') {
     const breakdown = commandOutcomeBreakdown(summary);
+    const allFailed = summary.requested > 0 && summary.failed >= summary.requested;
+    const remainingQueued = summary.pending + summary.unavailable;
     return {
-      title: summary.completed > 0 ? 'Acknowledged' : 'Message queued',
-      description: summary.completed > 0
+      title: allFailed ? 'Message failed' : summary.failed > 0 ? 'Partially delivered' : summary.completed > 0 ? 'Acknowledged' : 'Message queued',
+      description: summary.failed > 0
+        ? [
+            `${breakdown}.`,
+            remainingQueued > 0 ? `${plural(remainingQueued, 'remaining recipient is', 'remaining recipients are')} queued.` : null,
+            'Delivery to failed recipients was not confirmed.',
+          ].filter(Boolean).join(' ')
+        : summary.completed > 0
         ? `${breakdown}. Device acknowledgements are self-reported and are not tamper proof.`
         : [
             'The message is retained in the student inbox and will be delivered when the student reconnects.',
@@ -332,14 +348,49 @@ function bounded(entries) {
   return trimmed;
 }
 
-export function trackTransientCommandResponse(current, value, commandType) {
+function preserveVerifiedSignOutCompletion(entry, existing, value) {
+  if (entry.commandType !== 'student-sign-out' || entry.deliveryPolicy !== 'server_authoritative') return entry;
+  const verified = new Map();
+  const receipts = new Map();
+  for (const target of [...(existing?.command?.targets || []), ...(value.command?.targets || [])]) {
+    if (target.status === 'completed' && target.result?.serverAuthoritative === true) verified.set(target.studentId, target);
+    receipts.set(target.studentId, { ...receipts.get(target.studentId),
+      ...(target.receivedAt ? { receivedAt: target.receivedAt } : {}),
+      ...(['received', 'completed', 'failed'].includes(target.ackState) ? { ackState: target.ackState } : {}) });
+  }
+  if (verified.size === 0) return entry;
+
+  // The API's exact server session end is final, even if a device failure was
+  // published first or arrives late. Other targets keep their own outcomes.
+  const targets = (entry.command.targets || []).map((target) => {
+    const completed = verified.get(target.studentId);
+    if (!completed) return target;
+    verified.delete(target.studentId);
+    return { ...target, ...completed, ...receipts.get(target.studentId), errorMessage: null };
+  });
+  targets.push(...[...verified.values()].map((target) => ({ ...target, ...receipts.get(target.studentId), errorMessage: null })));
+  const command = { ...entry.command, targets,
+    ...(targets.length > 0 && targets.every((target) => target.status === 'completed') ? { status: 'completed' } : {}) };
+  // Rebuild terminal counts from targets, never a stale nested DTO summary.
+  // Server completion itself is not a device receipt or acknowledgement.
+  const summary = normalizeCommandSummary({ targets });
+  summary.attempted = targets.filter((target) => target.sentAt || ['received', 'completed', 'failed'].includes(target.status)).length;
+  summary.sent = summary.attempted;
+  summary.received = targets.filter((target) => target.receivedAt).length;
+  summary.acknowledged = targets.filter((target) => target.receivedAt || ['received', 'completed', 'failed'].includes(target.ackState)).length;
+  summary.pending = countTargets(targets, new Set(['requested', 'sent', 'received']));
+  summary.awaitingAck = Math.max(0, summary.attempted - summary.acknowledged - summary.expired);
+  return { ...entry, command, summary };
+}
+
+function trackedCommandEntry(current, value, commandType) {
   const id = commandId(value);
   const policy = commandDeliveryPolicy(commandType ?? value?.command?.commandType, value);
-  if (!id || policy !== 'transient_action') return current;
+  if (!id) return null;
 
   const existing = current.get(id);
-  const next = new Map(current);
-  next.set(id, {
+  const preserveObservedOutcome = existing?.updateObserved || existing?.expiredLocally;
+  const entry = {
     ...(existing || {}),
     commandId: id,
     commandType: commandType ?? value?.command?.commandType,
@@ -347,10 +398,10 @@ export function trackTransientCommandResponse(current, value, commandType) {
     expiresAtMs: commandExpiry(value) ?? existing?.expiresAtMs ?? null,
     // A scoped socket update is a later delivery milestone than the initiating
     // HTTP response, even if network scheduling delivers that response last.
-    summary: existing?.updateObserved
+    summary: preserveObservedOutcome
       ? existing.summary
       : normalizeCommandSummary(value),
-    command: existing?.updateObserved
+    command: preserveObservedOutcome
       ? {
           ...(value?.command || {}),
           ...(existing.command || {}),
@@ -359,8 +410,80 @@ export function trackTransientCommandResponse(current, value, commandType) {
           ...(existing?.command || {}),
           ...(value?.command || {}),
         },
+  };
+  return preserveVerifiedSignOutCompletion(entry, existing, value);
+}
+
+function entryResponse(entry) {
+  return { command: entry.command, summary: entry.summary };
+}
+
+function replaceBatchResponse(batch, entry) {
+  return { ...batch, responses: batch.responses.map((response) => (
+    commandId(response) === entry.commandId ? entryResponse(entry) : response
+  )) };
+}
+
+function attachFeedbackBatch(entries, batch) {
+  for (const response of batch.responses) {
+    const id = commandId(response);
+    const entry = entries.get(id);
+    if (entry) entries.set(id, { ...entry, feedbackBatch: batch });
+  }
+  return entries;
+}
+
+function storeCommandEntry(current, entry) {
+  const next = new Map(current);
+  next.set(entry.commandId, entry);
+  if (entry.feedbackBatch) attachFeedbackBatch(next, replaceBatchResponse(entry.feedbackBatch, entry));
+  return next;
+}
+
+function feedbackBatchResponse(batch) {
+  const summaries = batch.responses.map((response) => response.summary);
+  const summary = Object.fromEntries(Object.keys(normalizeCommandSummary({})).map((key) => [key,
+    summaries.reduce((count, value) => count + value[key], 0)]));
+  // A rejected context request has no device receipt or delivery attempt.
+  // Keep those original failures beside every later child-command outcome.
+  for (const target of batch.fixedTargets) {
+    summary.requested += 1;
+    if (Object.hasOwn(summary, target.status)) summary[target.status] += 1;
+  }
+  return {
+    command: { commandType: batch.commandType, deliveryPolicy: batch.deliveryPolicy,
+      expiresAt: batch.responses.map((response) => response.command?.expiresAt).filter(Boolean).sort()[0],
+      targets: [...batch.fixedTargets, ...batch.responses.flatMap((response) => (
+        (response.command?.targets || []).map((target) => ({ ...target, commandId: commandId(response) }))
+      ))] },
+    summary,
+  };
+}
+
+// The legacy export name is retained for callers. Every command policy needs
+// later ACK/error feedback; only the expiry helpers below are transient-only.
+export function trackTransientCommandResponse(current, value, commandType) {
+  const commands = (value?.commands || []).filter((command) => commandId(command));
+  if (commands.length === 0) {
+    const entry = trackedCommandEntry(current, value, commandType);
+    return entry ? bounded(storeCommandEntry(current, entry)) : current;
+  }
+
+  const next = new Map(current);
+  const ids = new Set(commands.map((command) => commandId(command)));
+  const responses = commands.map((command) => {
+    const result = value.results?.find((row) => commandId(row) === command.id);
+    const entry = trackedCommandEntry(next, { ...result, command }, commandType);
+    next.set(entry.commandId, entry);
+    return entryResponse(entry);
   });
-  return bounded(next);
+  const batch = {
+    commandType: commandType ?? value.command?.commandType,
+    deliveryPolicy: commandDeliveryPolicy(commandType, value),
+    fixedTargets: (value.command?.targets || value.targets || []).filter((target) => !ids.has(target.commandId)),
+    responses,
+  };
+  return bounded(attachFeedbackBatch(next, batch));
 }
 
 export function applyTransientCommandUpdate(current, message) {
@@ -368,8 +491,7 @@ export function applyTransientCommandUpdate(current, message) {
   if (!id || !current.has(id)) return current;
   const value = message?.command ? message : { ...message, command: message };
   const existing = current.get(id);
-  const next = new Map(current);
-  next.set(id, {
+  const entry = {
     ...existing,
     commandType: value?.command?.commandType ?? existing.commandType,
     expiresAtMs: commandExpiry(value) ?? existing.expiresAtMs,
@@ -379,8 +501,9 @@ export function applyTransientCommandUpdate(current, message) {
       ...(value.command || {}),
     },
     updateObserved: true,
-  });
-  return bounded(next);
+    expiredLocally: false,
+  };
+  return bounded(storeCommandEntry(current, preserveVerifiedSignOutCompletion(entry, existing, value)));
 }
 
 function acknowledgedTransientAction(entry) {
@@ -389,7 +512,8 @@ function acknowledgedTransientAction(entry) {
     ? targets.some((target) => target?.status === 'received' || target?.status === 'completed')
     : entry?.summary?.received > 0 || entry?.summary?.completed > 0;
   return Boolean(
-    entry?.updateObserved
+    entry?.deliveryPolicy === 'transient_action'
+    && entry?.updateObserved
     && hasCurrentTargetOutcome,
   );
 }
@@ -476,21 +600,28 @@ export function hasPendingTransientAction(current, commandType) {
 
 export function expireTransientCommands(current, nowMs = Date.now()) {
   let next = current;
-  for (const [id, entry] of current) {
+  for (const [id, originalEntry] of current) {
+    const entry = next.get(id) || originalEntry;
     if (
-      entry.summary.awaitingAck <= 0
+      entry.deliveryPolicy !== 'transient_action'
+      || entry.summary.awaitingAck <= 0
       || entry.expiresAtMs === null
       || nowMs < entry.expiresAtMs
     ) continue;
-    if (next === current) next = new Map(current);
-    next.set(id, {
+    next = storeCommandEntry(next, {
       ...entry,
+      command: { ...entry.command, targets: entry.command?.targets?.map((target) => (
+        ['requested', 'sent', 'pending'].includes(target.status)
+          ? { ...target, status: 'expired', errorMessage: 'The student did not acknowledge this action before it expired.' }
+          : target
+      )) },
       summary: {
         ...entry.summary,
         expired: entry.summary.expired + entry.summary.awaitingAck,
         pending: Math.max(0, entry.summary.pending - entry.summary.awaitingAck),
         awaitingAck: 0,
       },
+      expiredLocally: true,
     });
   }
   return next;
@@ -500,7 +631,8 @@ export function findNextTransientExpiry(current, nowMs = Date.now()) {
   let earliest = null;
   for (const entry of current.values()) {
     if (
-      entry.summary.awaitingAck <= 0
+      entry.deliveryPolicy !== 'transient_action'
+      || entry.summary.awaitingAck <= 0
       || entry.expiresAtMs === null
       || entry.expiresAtMs <= nowMs
     ) continue;
@@ -510,7 +642,7 @@ export function findNextTransientExpiry(current, nowMs = Date.now()) {
 }
 
 export function transientEntryFeedback(entry, studentNames = {}) {
-  return commandDeliveryFeedback({
+  const value = entry.feedbackBatch ? feedbackBatchResponse(entry.feedbackBatch) : {
     commandId: entry.commandId,
     command: {
       ...(entry.command || {}),
@@ -519,5 +651,6 @@ export function transientEntryFeedback(entry, studentNames = {}) {
       expiresAt: entry.expiresAtMs === null ? null : new Date(entry.expiresAtMs).toISOString(),
     },
     summary: entry.summary,
-  }, entry.commandType, studentNames);
+  };
+  return commandDeliveryFeedback(value, entry.commandType, studentNames);
 }

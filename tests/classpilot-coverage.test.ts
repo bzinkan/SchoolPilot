@@ -3238,7 +3238,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(selectedCommand.body.summary.acknowledged, 0);
     assert.equal(selectedCommand.body.summary.unavailable, 0);
     assert.equal(selectedCommand.body.deliveryPolicy, "server_authoritative");
-    assert.equal(selectedCommand.body.expiresAt, null);
+    assert.equal(selectedCommand.body.expiresAt, new Date(session.startTime.getTime() + 12 * 3600_000).toISOString());
     assert.equal(selectedCommand.body.command.targets[0].studentId, signOutStudent.id);
     assert.equal(selectedCommand.body.command.targets[0].result.serverAuthoritative, true);
     expectNoDeviceIds(selectedCommand.body);
@@ -5734,7 +5734,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }));
 
     assert.equal(result.deliveryPolicy, "durable_message");
-    assert.equal(result.expiresAt, null);
+    assert.equal(result.expiresAt?.getTime(), teachingSession.startTime.getTime() + 12 * 3600_000);
     assert.equal(result.summary.requested, 1);
     assert.equal(result.summary.attempted, 0);
     await inSchool(school.id, () => db.execute(sql`

@@ -79,7 +79,7 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     );
     assert.match(
       heartbeat,
-      /deliveredFab: finalFab[\s\S]*?ownershipRevision: finalClassroomState\?\.revision \?\? 0/
+      /classpilotControlAuthorityRevisionForDelivery\(\{[\s\S]*?state: finalControlState,[\s\S]*?delivery: serialized,[\s\S]*?deliveredFab: finalFab[\s\S]*?ownershipRevision: controlAuthorityRevision/
     );
     assert.match(heartbeat, /\.\.\.\(prepared\.deliveredFab \? \{ fab: prepared\.deliveredFab \} : \{\}\)/);
     assert.equal(heartbeat.match(/buildStudentFabState\(/g)?.length, 1);

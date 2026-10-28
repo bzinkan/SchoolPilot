@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { classpilotControlAuthorityRevisionForDelivery } from "../src/services/classpilotClassroomState.js";
 
 const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", import.meta.url), "utf8");
 const foregroundStart = source.indexOf("    const completedHeartbeatTileCacheWrite = Promise.resolve(");
@@ -155,6 +156,7 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
       assert.equal(value.deliveredControlRevision, retiredControlState.revision); return value;
     },
     trackingSettings: {}, heartbeatObservationStatus: "active", req: { body: {} },
+    classpilotControlAuthorityRevisionForDelivery,
     classpilotControlStateExactBinding(value: Fields) { return value; },
   };
   const run: () => Promise<unknown> = runInNewContext(executable, context);

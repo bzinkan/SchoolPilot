@@ -226,6 +226,7 @@ import {
 } from "../../services/classpilotRealtimeStatus.js";
 import {
   classpilotLateSignInRevisionAppliedToBinding,
+  classpilotControlAuthorityRevisionForDelivery,
   classpilotControlStateHasLateSignInOrigin,
   classpilotControlStateHasAuthRelevantRestriction,
   classpilotRestrictionAuthCapabilityRequired,
@@ -4849,6 +4850,10 @@ router.post("/device/heartbeat",
               })
             : { classroomState: null, withheld: false };
           const finalClassroomState = serialized.classroomState;
+          const controlAuthorityRevision = classpilotControlAuthorityRevisionForDelivery({
+            state: finalControlState,
+            delivery: serialized,
+          });
           const focusCleanup = serialized.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
             finalControlState, { schoolId, studentId, studentSessionId, deviceId }, protocol.acceptedCapabilities) : null;
           const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated
@@ -4874,13 +4879,14 @@ router.post("/device/heartbeat",
             : undefined;
           return {
             privateReplyControlRevision: finalControlState?.revision,
+            controlAuthorityRevision,
             classroomState: finalClassroomState,
             focusCleanup,
             screenshotPolicy: finalScreenshotPolicy,
             deliveredFab: finalFab
               ? {
                   ...finalFab,
-                  ownershipRevision: finalClassroomState?.revision ?? 0,
+                  ownershipRevision: controlAuthorityRevision,
                 }
               : undefined,
             withheld: serialized.withheld,
@@ -4909,7 +4915,7 @@ router.post("/device/heartbeat",
               deviceId,
               studentId,
               studentSessionId,
-              controlRevision: prepared.classroomState?.revision ?? prepared.focusCleanup?.exactBinding.controlRevision ?? 0,
+              controlRevision: prepared.controlAuthorityRevision || prepared.focusCleanup?.exactBinding.controlRevision || 0,
             }),
             planStatus: school.planStatus || "active",
             classroomState: prepared.classroomState,

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { classpilotControlAuthorityRevisionForDelivery } from "../src/services/classpilotClassroomState.js";
 const source = readFileSync(new URL("../src/routes/classpilot/devices.ts", import.meta.url), "utf8");
 const start = source.indexOf("    // --- Deliver any missed messages");
 const end = source.indexOf("\n  } catch (err)", start);
@@ -51,6 +52,7 @@ function fixture(options: { rows?: Fields[]; checked?: boolean; failCommit?: boo
     trackingWindowScreenshotLeaseNegotiated: false, screenshotPolicy: {}, fabSyncPending: false, protocol: {}, req: { body: {} },
     deferredForeground: undefined, school: { planStatus: "active" }, res: response,
     recordRuntimePerformanceCounter() {}, recordHeartbeatHotPathCounter() {},
+    classpilotControlAuthorityRevisionForDelivery,
     classpilotControlStateExactBinding(value: unknown) { return value; },
   };
   const run: () => Promise<unknown> = runInNewContext(executable, context);
