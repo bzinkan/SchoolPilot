@@ -6833,7 +6833,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       <header data-class-tools-navigation className="chrome-surface sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
         <div className="max-w-screen-2xl mx-auto px-6 py-3">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             {/* Left: Logo & School */}
             <div className="flex items-center gap-3">
               <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
@@ -6852,7 +6852,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <HeaderOrnament />
             </div>
             {/* Center: Status badges */}
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
               <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
@@ -6878,7 +6878,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               {isTeacher && !scheduledSupervisionId && (
                 <>
                   {activeSession ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       {!activeSessionIsScheduled && (
                         <button
                           type="button"
@@ -6904,7 +6904,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       <select
                         value={startGroupId}
                         onChange={(event) => setStartGroupId(event.target.value)}
@@ -6989,7 +6989,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     </>
                   )}
                   {!activeSession && !scheduledSupervisionId && !retainedObservedSession && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       <select
                         value={adminStartGroupId}
                         onChange={(event) => setAdminStartGroupId(event.target.value)}
@@ -7063,7 +7063,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               )}
             </div>
             {/* Right: Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
               <ThemeToggle />
               {(isTeacher || isAdmin) && !scheduledSupervisionId && (

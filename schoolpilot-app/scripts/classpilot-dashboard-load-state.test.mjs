@@ -3431,8 +3431,15 @@ test('Available roster filters work without scheduling or an active class and sh
     const bounds = await control.boundingBox();
     assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391, 'Available controls fit the narrow viewport');
   }
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, 'Available has no horizontal overflow');
-  if (evidence) await page.screenshot({ path: path.join(evidence, 'available-class-filters-mobile.png'), fullPage: true });
+  if (evidence) {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(evidence, 'available-class-filters-mobile.png'), fullPage: true });
+  }
+  const overflow = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+    elements: [...document.querySelectorAll('main *, [data-testid]')].filter(node => {
+      const rect = node.getBoundingClientRect(); return rect.width && rect.right > innerWidth + 1;
+    }).slice(0, 8).map(node => ({ tag: node.tagName, testId: node.dataset.testid, text: node.textContent?.slice(0, 70), className: node.className })) }));
+  assert.ok(overflow.scrollWidth <= overflow.width + 1, `Available has no horizontal overflow: ${JSON.stringify(overflow)}`);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -6914,7 +6921,7 @@ test('ordinary claims from an inactive testing group open a neutral room and pre
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByText('Reading MAP', { exact: true }).count(), 0);
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   await page.getByTestId('button-claim-all-students').click();
