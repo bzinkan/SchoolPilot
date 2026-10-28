@@ -1,3 +1,5 @@
+import { activeAvailableTestingGroup } from './availableTestingGroup.js';
+
 export const NO_AVAILABLE_CLASS = '__no_class__';
 export const NO_AVAILABLE_GRADE = '__no_grade__';
 
@@ -10,8 +12,8 @@ export function buildAvailableRoster(students, scheduledGroups) {
   const scheduledIds = new Set(scheduledStudents.map(student => student.studentId));
   const ordinaryStudents = uniqueStudents(students.filter(student => !scheduledIds.has(student.studentId)));
   const allStudents = uniqueStudents([...ordinaryStudents, ...scheduledStudents]);
-  const metadataReady = allStudents.every(student => Array.isArray(student.classes)
-    && student.classes.every(group => typeof group.id === 'string' && group.id.length > 0
+  const metadataReady = [...students, ...scheduledStudents].every(student => Array.isArray(student.classes)
+    && student.classes.every(group => group && typeof group === 'object' && typeof group.id === 'string' && group.id.length > 0
       && typeof group.name === 'string' && group.name.length > 0));
   const classOptions = metadataReady ? [...new Map(allStudents.flatMap(student => student.classes)
     .map(group => [group.id, { id: group.id, name: group.name }])).values()]
@@ -30,7 +32,7 @@ export function buildAvailableRoster(students, scheduledGroups) {
   };
 }
 
-export function filterAvailableRoster(roster, { classId = '', grade = '', query = '' }, compareStudents) {
+export function filterAvailableRoster(roster, { classId = '', grade = '', query = '', nowMs }, compareStudents) {
   if (!roster.metadataReady) return { students: [], ordinaryStudents: [], scheduledGroups: [], sections: [] };
   const normalizedQuery = query.trim().toLowerCase();
   const matches = (student, extraSearch = '') => {
@@ -42,7 +44,7 @@ export function filterAvailableRoster(roster, { classId = '', grade = '', query 
       ...student.classes.map(group => group.name), extraSearch]
       .some(value => String(value || '').toLowerCase().includes(normalizedQuery));
   };
-  const ordinaryStudents = roster.ordinaryStudents.filter(student => matches(student)).sort(compareStudents);
+  const ordinaryStudents = roster.ordinaryStudents.filter(student => matches(student, activeAvailableTestingGroup(student, nowMs)?.name || '')).sort(compareStudents);
   const scheduledGroups = roster.scheduledGroups.map(group => ({
     ...group,
     students: group.students.filter(student => matches(student, `${group.label || ''} ${group.className || ''} ${group.teacherName || ''}`))
@@ -50,7 +52,18 @@ export function filterAvailableRoster(roster, { classId = '', grade = '', query 
   })).filter(group => group.students.length > 0)
     .sort((left, right) => (left.className || left.label || '').localeCompare(right.className || right.label || ''));
   const sections = new Map();
+  const testingSections = new Map();
   for (const student of ordinaryStudents) {
+    const testingGroup = activeAvailableTestingGroup(student, nowMs);
+    if (testingGroup) {
+      const key = `testing:${testingGroup.applicationId}:${testingGroup.date}:${testingGroup.blockId}`;
+      if (!testingSections.has(key)) testingSections.set(key, {
+        id: key, kind: 'group', label: testingGroup.name,
+        description: 'Scheduled testing · eligible online students', testingGroup, students: [],
+      });
+      testingSections.get(key).students.push(student);
+      continue;
+    }
     const memberships = student.classes.length ? student.classes : [{ id: NO_AVAILABLE_CLASS, name: 'No class assigned' }];
     for (const group of memberships) {
       if (classId && group.id !== classId) continue;
@@ -66,6 +79,7 @@ export function filterAvailableRoster(roster, { classId = '', grade = '', query 
     students: uniqueStudents([...scheduledGroups.flatMap(group => group.students), ...ordinaryStudents]).sort(compareStudents),
     ordinaryStudents,
     scheduledGroups,
-    sections: [...sections.values()].sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id)),
+    sections: [...testingSections.values()].sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id))
+      .concat([...sections.values()].sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id))),
   };
 }

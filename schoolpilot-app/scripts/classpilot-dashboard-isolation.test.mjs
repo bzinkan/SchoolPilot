@@ -415,9 +415,9 @@ test('dashboard renews observation only for a visible exact scope and virtualize
     'the tile wall must reflow on its own width so a fixed sidebar keeps tiles at 224px or the narrower available width',
   );
   assert.equal(
-    (dashboard.match(/grid grid-cols-\[repeat\(auto-fill,minmax\(300px,1fr\)\)\] gap-4 p-4/g) || []).length,
+    (dashboard.match(/grid grid-cols-\[repeat\(auto-fill,minmax\(min\(300px,100%\),1fr\)\)\] gap-4 p-4/g) || []).length,
     2,
-    'both coverage panels must reflow on their own width',
+    'both coverage panels must reflow on their own width and fit containers narrower than 300px',
   );
   assert.doesNotMatch(
     dashboard,

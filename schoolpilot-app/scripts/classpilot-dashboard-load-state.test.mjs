@@ -3349,7 +3349,8 @@ function availableFilterRoster() {
     student({ studentId: SIGNED_OUT_STUDENT_ID, studentName: 'Ben Brown', gradeLevel: '7', classes: [algebra] }),
     student({ studentId: SIGNAL_LOST_STUDENT_ID, studentName: 'Cara Clark', gradeLevel: '8', classes: [biology] }),
     student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Drew Diaz', gradeLevel: null, classes: [] }),
-  ].map(row => ({ ...row, supervisionState: 'available', matchingGroups: [], matchingScopes: [],
+  ].map(row => ({ ...row, studentEmail: `${row.studentName.split(' ')[0].toLowerCase()}@example.edu`,
+    supervisionState: 'available', matchingGroups: [], matchingScopes: [],
     lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() }));
 }
 
@@ -3361,7 +3362,7 @@ async function availableFilterFixture(context, overrides = {}) {
   const harness = await configureDashboard(page, { aggregate: aggregateController(), userRole: 'teacher', activeSession: null,
     availableStudents: rows, coverageSummary: { ...ownSupervisionSummary([]), availableStudentCount: rows.length }, ...overrides });
   const previews = await installRoomPreview(page, rows);
-  await page.goto(`${baseURL}/classpilot`);
+  await page.goto(`${baseURL}/classpilot`, { timeout: 60_000 });
   await page.getByTestId('button-view-available-students').click();
   return { browser, baseURL, page, rows, harness, previews };
 }
@@ -3509,6 +3510,22 @@ test('Available refresh errors retain selection until recovery and missing class
   assert.equal(await availableGradeFilter(page).inputValue(), '');
   assert.equal(await page.getByTestId('input-search-students').inputValue(), '');
   assert.equal(await page.getByTestId('available-selection-tray').count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Available distinguishes an initial roster load from a confirmed empty response', { timeout: 60_000 }, async context => {
+  let resolveRows;
+  const heldRows = new Promise(resolve => { resolveRows = resolve; });
+  context.after(() => resolveRows([]));
+  const { page, harness } = await availableFilterFixture(context, { availableStudents: () => heldRows });
+  await page.getByTestId('available-students-loading').waitFor();
+  assert.equal(await page.getByTestId('button-claim-all-students').isDisabled(), true);
+  assert.equal(await page.getByRole('heading', { name: 'No students available', exact: true }).count(), 0,
+    'Loading must not be rendered as an empty roster');
+  resolveRows([]);
+  await page.getByTestId('available-students-loading').waitFor({ state: 'hidden' });
+  await assertAvailableSummary(page, 0, 0);
+  await page.getByRole('heading', { name: 'No students available', exact: true }).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -6756,6 +6773,7 @@ test('Available testing labels use only the active applied block and keep other 
   const groups = [{ id: 'test-a', name: 'Vatter MAP Test A' }, { id: 'test-b', name: 'Wendell MAP Test B' }];
   const rows = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((studentId, index) => ({
     ...student({ studentId, studentName: `Available student ${index + 1}` }),
+    classes: [],
     matchingGroups: groups,
     matchingScopes: [{ id: 'saved-scope', name: 'Another saved testing scope' }],
     activeTestingGroup: index === 0 ? { groupId: 'test-a', name: 'Applied MAP Test A', applicationId: 'application-a',
@@ -6765,7 +6783,7 @@ test('Available testing labels use only the active applied block and keep other 
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
   await page.getByRole('heading', { name: 'Applied MAP Test A - 1 available', exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).textContent(), 'Applied MAP Test A');
   assert.equal(await page.getByTestId(`badge-available-testing-${SIGNED_OUT_STUDENT_ID}`).count(), 0);
   for (const group of groups) assert.equal(await page.getByText(group.name, { exact: true }).count(), 0);
@@ -6779,7 +6797,7 @@ test('Available testing labels expire at the applied block end even when refresh
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
   const endsAt = new Date(TESTING_TIME.getTime() + 30_000).toISOString();
-  const row = { ...student(), matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
+  const row = { ...student(), classes: [], matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
     activeTestingGroup: { groupId: 'saved-testing', name: 'Current MAP block', applicationId: 'application-a',
       blockId: 'block-a', date: '2026-09-14', startsAt: '2026-09-14T12:00:00Z', endsAt } };
   const harness = await configureDashboard(page, { aggregate: aggregateController(), userRole: 'teacher' });
@@ -6795,7 +6813,7 @@ test('Available testing labels expire at the applied block end even when refresh
   await page.getByRole('heading', { name: 'Current MAP block - 1 available', exact: true }).waitFor();
   await harness.authenticateWebSocket();
   await page.clock.fastForward(30_100);
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   assert.equal(await page.getByText('Current MAP block', { exact: true }).count(), 0);
   await waitUntil(() => reads > 1, 'The applied testing boundary refreshes Available without a realtime event');
@@ -6809,7 +6827,7 @@ test('Available testing labels refresh at the next applied start with an authent
   await page.clock.install({ time: TESTING_TIME });
   const startsAt = new Date(TESTING_TIME.getTime() + 30_000).toISOString();
   const endsAt = new Date(TESTING_TIME.getTime() + 60_000).toISOString();
-  const row = { ...student(), matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }] };
+  const row = { ...student(), classes: [], matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }] };
   const harness = await configureDashboard(page, { aggregate: aggregateController(), userRole: 'teacher' });
   let reads = 0;
   await page.route('**/api/coverage/available-students', route => {
@@ -6822,7 +6840,7 @@ test('Available testing labels refresh at the next applied start with an authent
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   await harness.authenticateWebSocket();
   await page.clock.fastForward(30_100);
@@ -6841,7 +6859,7 @@ test('Available testing labels reconcile terminal activation without a realtime 
   let reads = 0;
   await page.route('**/api/coverage/available-students', route => {
     reads += 1;
-    return route.fulfill({ json: { students: [{ ...student(), matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
+    return route.fulfill({ json: { students: [{ ...student(), classes: [], matchingGroups: [{ id: 'saved-testing', name: 'Saved MAP roster' }],
       activeTestingGroup: reads === 1 ? { groupId: 'saved-testing', name: 'Pending MAP block', applicationId: 'application-a',
         blockId: 'block-a', date: '2026-09-14', startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T13:00:00Z' } : null,
     }], serverTime: TESTING_TIME.toISOString(), testingNextBoundaryAt: null } });
@@ -6851,7 +6869,7 @@ test('Available testing labels reconcile terminal activation without a realtime 
   await page.getByRole('heading', { name: 'Pending MAP block - 1 available', exact: true }).waitFor();
   await harness.authenticateWebSocket();
   await page.clock.fastForward(10_100);
-  await page.getByRole('heading', { name: 'Available students - 1 available', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'No class assigned - 1 available', exact: true }).waitFor();
   assert.equal(await page.getByTestId(`badge-available-testing-${STUDENT_ID}`).count(), 0);
   assert.ok(reads > 1);
   assert.deepEqual(harness.coverageMutationRequests, []);
