@@ -48,6 +48,7 @@ import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
+import { buildAvailableRoster, filterAvailableRoster, NO_AVAILABLE_CLASS, NO_AVAILABLE_GRADE } from '../lib/availableStudents';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
@@ -611,6 +612,16 @@ export default function Dashboard() {
   useLayoutEffect(() => { setRoomClaimStudents(null); setRoomEndTimeOpen(false); }, [roomDialogScopeKey]);
   const [roomGradeFilter, setRoomGradeFilter] = useState('');
   const [roomClassFilter, setRoomClassFilter] = useState('');
+  const [availableClassFilter, setAvailableClassFilter] = useState('');
+  const [availableGradeFilter, setAvailableGradeFilter] = useState('');
+  const [availableSelectionNotice, setAvailableSelectionNotice] = useState('');
+  useLayoutEffect(() => {
+    setAvailableClassFilter(''); setAvailableGradeFilter(''); setAvailableSelectionNotice('');
+    setSearchQuery('');
+    setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
+  }, [roomDialogScopeKey, selectedStudentView]);
   useLayoutEffect(() => {
     setRoomGradeFilter(''); setRoomClassFilter(''); setRoomEndTimeOpen(false);
   }, [roomActivity?.id]);
@@ -1010,8 +1021,16 @@ export default function Dashboard() {
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id,
   });
 
-  const { data: availablePickupData = EMPTY_PICKUP_DATA, dataUpdatedAt: availablePickupUpdatedAt, refetch: refetchAvailableStudents } = useQuery({
-    queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id],
+  const {
+    data: availablePickupData = EMPTY_PICKUP_DATA,
+    isPending: availableStudentsLoading,
+    isError: availableStudentsError,
+    isSuccess: availableStudentsReadSucceeded,
+    isFetching: availableStudentsRefreshing,
+    dataUpdatedAt: availableStudentsUpdatedAt,
+    refetch: refetchAvailableStudents,
+  } = useQuery({
+    queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id, currentUser?.role, currentUser?.isSuperAdmin],
     queryFn: ({ signal }) => apiRequest('GET', '/coverage/available-students', undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
     }),
@@ -1037,7 +1056,7 @@ export default function Dashboard() {
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
   const availableServerTime = Date.parse(availablePickupData.serverTime);
   const availableServerOffset = Number.isFinite(availableServerTime)
-    ? availableServerTime - availablePickupUpdatedAt : 0;
+    ? availableServerTime - availableStudentsUpdatedAt : 0;
   const availableTestingNowMs = freshnessNowMs + availableServerOffset;
   useEffect(() => {
     if (studentView !== 'available') return;
@@ -1054,6 +1073,18 @@ export default function Dashboard() {
     }, Math.min(2147483647, Math.max(1, Math.min(...deadlines) - now + 5)));
     return () => clearTimeout(timer);
   }, [studentView, availablePickupData.testingNextBoundaryAt, availablePickupStudents, availableServerOffset, refetchAvailableStudents]);
+  const availableRoster = useMemo(() => buildAvailableRoster(availablePickupStudents, scheduledCoverageGroups),
+    [availablePickupStudents, scheduledCoverageGroups]);
+  const availableStudentsReady = availableStudentsReadSucceeded && availableRoster.metadataReady;
+  const availableMetadataMissing = !availableStudentsLoading && !availableRoster.metadataReady;
+  useEffect(() => {
+    if (studentView !== 'available' || !availableStudentsReady) return;
+    const availableIds = new Set(availableRoster.students.map(student => student.studentId));
+    const removedCount = [...selectedStudentIdsRef.current].filter(studentId => !availableIds.has(studentId)).length;
+    if (removedCount === 0) return;
+    setSelectedStudentIds(current => new Set([...current].filter(studentId => availableIds.has(studentId))));
+    setAvailableSelectionNotice(`${removedCount} selected student${removedCount === 1 ? ' is' : 's are'} no longer available.`);
+  }, [availableRoster, availableStudentsReady, availableStudentsUpdatedAt, studentView]);
 
   const {
     data: allClaimedPickupStudents = EMPTY_LIST,
@@ -3000,6 +3031,7 @@ export default function Dashboard() {
   // Selection handlers. Any selection the teacher makes replaces a selection
   // that was lost automatically (selectionLoss).
   const toggleStudentSelection = (studentId) => {
+    if (studentView === 'available' && !availableStudentsReady) return;
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
       if (isStudentLateSignInRestrictionEligible(student)) {
@@ -3107,6 +3139,12 @@ export default function Dashboard() {
     });
   };
   const selectAll = () => {
+    if (studentView === 'available') {
+      if (!availableStudentsReady) return;
+      setSelectedStudentIds(current => new Set([...current, ...filteredStudents.map(student => student.studentId)]));
+      setAvailableSelectionNotice('');
+      return;
+    }
     const allStudentIds = selectAllStudents.map((s) => s.studentId);
     setSelectionLoss(null);
     setSelectedStudentIds(new Set(allStudentIds));
@@ -3121,6 +3159,7 @@ export default function Dashboard() {
   };
   const clearSelection = () => {
     setSelectionLoss(null);
+    setAvailableSelectionNotice('');
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -3382,28 +3421,20 @@ export default function Dashboard() {
       return matchesStudentSearch(student) && matchesSubgroup;
     })
     .sort(compareStudentsByLastName);
-  const filteredAvailableStudents = availablePickupStudents
-    .filter(matchesStudentSearch)
+  const availableView = useMemo(() => filterAvailableRoster(availableRoster, {
+    classId: availableClassFilter, grade: availableGradeFilter, query: normalizedSearchQuery,
+  }, compareStudentsByLastName), [availableRoster, availableClassFilter, availableGradeFilter, normalizedSearchQuery]);
+  const filteredAvailableStudents = availableView.ordinaryStudents;
+  const filteredScheduledCoverageGroups = availableView.scheduledGroups;
+  const selectedAvailableStudents = availableRoster.students.filter(student => selectedStudentIds.has(student.studentId))
     .sort(compareStudentsByLastName);
-  const filteredScheduledCoverageGroups = scheduledCoverageGroups
-    .map((group) => ({
-      ...group,
-      students: (group.students || [])
-        .filter((student) => (
-          matchesStudentSearch(student) ||
-          (group.label || '').toLowerCase().includes(normalizedSearchQuery) ||
-          (group.className || '').toLowerCase().includes(normalizedSearchQuery) ||
-          (group.teacherName || '').toLowerCase().includes(normalizedSearchQuery)
-        ))
-        .sort(compareStudentsByLastName),
-    }))
-    .filter((group) => group.students.length > 0)
-    .sort((a, b) => (a.className || a.label || "").localeCompare(b.className || b.label || ""));
+  const availableShownIds = new Set(availableView.students.map(student => student.studentId));
+  const hiddenAvailableSelectionCount = selectedAvailableStudents.filter(student => !availableShownIds.has(student.studentId)).length;
   const filteredClaimedStudents = claimedPickupStudents
     .filter(matchesStudentSearch)
     .sort(compareStudentsByLastName);
   const filteredStudents = studentView === "available"
-    ? [...filteredScheduledCoverageGroups.flatMap((group) => group.students), ...filteredAvailableStudents]
+    ? availableView.students
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
@@ -4623,7 +4654,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     : EMPTY_LIST;
   // Select All is for actions that can run now. Signed-out students may still
   // be ticked individually for an explicit saved restriction.
-  const selectAllStudents = selectableStudents.filter(isStudentCommandable);
+  const selectAllStudents = studentView === 'available'
+    ? availableStudentsReady ? filteredStudents : EMPTY_LIST
+    : selectableStudents.filter(isStudentCommandable);
 
   const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
     .filter((student) => !isStudentMonitoringSuppressed(student));
@@ -4789,7 +4822,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const targetStudents = studentView === "available"
-    ? filteredStudents
+    ? selectedAvailableStudents.length > 0 ? selectedAvailableStudents : filteredStudents
     : getActiveCommandStudents(null, {
         commandType: 'apply-flight-path',
       });
@@ -4928,7 +4961,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
     ? ` · ${filteredClaimedStudents.length} currently shown by search`
     : '';
-  const targetBannerLabel = subgroupCommandsDisabled
+  const targetBannerLabel = studentView === 'available'
+    ? !availableStudentsReady ? 'Available students need a refresh'
+      : selectedAvailableStudents.length > 0
+        ? `${selectedAvailableStudents.length} selected student${selectedAvailableStudents.length === 1 ? '' : 's'}${hiddenAvailableSelectionCount ? ` · ${hiddenAvailableSelectionCount} hidden by filters` : ''}`
+        : `${filteredStudents.length} shown of ${availableRoster.students.length} available students`
+    : subgroupCommandsDisabled
     ? `${subgroupName || 'Subgroup'} roster unavailable`
     : selectionLossActive && selectedServerSignOutStudentIds.size === 0
     ? SELECTION_CLEARED_TARGET_LABEL
@@ -4993,31 +5031,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   // than assumed from Apply: claimed-coverage mode can allow Apply but not Remove.
   const flightPathMenuAvailable = dashboardCapabilities.allows('remove-flight-path') || studentView === "class";
   const blockListMenuAvailable = dashboardCapabilities.allows('remove-block-list') || studentView === "class";
-  const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
-  const availableGroupSections = (() => {
-    const sections = new Map();
-    filteredAvailableStudents.forEach((student) => {
-      const group = activeAvailableTestingGroup(student, availableTestingNowMs);
-      const key = group ? `testing:${group.applicationId}:${group.date}:${group.blockId}` : "scope:available";
-      if (!sections.has(key)) {
-        sections.set(key, {
-          id: key,
-          kind: group ? "group" : "scope",
-          label: group?.name || "Available students",
-          description: group ? "Scheduled testing · eligible online students" : "Eligible online students",
-          testingGroup: group,
-          students: [],
-        });
-      }
-      sections.get(key).students.push(student);
-    });
-    return Array.from(sections.values())
-      .map((section) => ({
-        ...section,
-        students: section.students.sort(compareStudentsByLastName),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  })();
+  const availableGroupSections = availableView.sections;
 
   const buildCommandRequest = (commandType, commandPayload = {}, options = {}) => {
     assertClassroomCommandSelectionIsolation(
@@ -5387,6 +5401,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
   const handleClaimStudents = (studentsToClaim, options = {}) => {
     if (dashboardCapabilities.observedOtherClass) return;
+    if (studentView === 'available' && !availableStudentsReady) return;
     if (!studentsToClaim.length) {
       toast({ variant: "destructive", title: "Select students first" });
       return;
@@ -7271,8 +7286,36 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {canShowStudentWorkspace && (
           <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
-            <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-end gap-3">
+              <input type="text" aria-label="Search students" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-full sm:w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
+              {studentView === 'available' ? <>
+                <label className="grid min-w-0 max-w-full gap-1 text-xs font-medium">Class
+                  <select aria-label="Filter available by class" value={availableClassFilter} onChange={event => setAvailableClassFilter(event.target.value)}
+                    disabled={availableStudentsLoading || !availableRoster.metadataReady}
+                    className="h-11 max-w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground sm:max-w-[220px]">
+                    <option value="">All classes</option>
+                    {availableRoster.classOptions.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                    {availableRoster.hasNoClass || availableClassFilter === NO_AVAILABLE_CLASS ? <option value={NO_AVAILABLE_CLASS}>No class assigned</option> : null}
+                    {availableClassFilter && availableClassFilter !== NO_AVAILABLE_CLASS && !availableRoster.classOptions.some(group => group.id === availableClassFilter)
+                      ? <option value={availableClassFilter}>Selected class (none available)</option> : null}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-medium">Grade
+                  <select aria-label="Filter available by grade" value={availableGradeFilter} onChange={event => setAvailableGradeFilter(event.target.value)}
+                    disabled={availableStudentsLoading || !availableRoster.metadataReady}
+                    className="h-11 rounded-lg border border-border bg-card px-3 text-sm text-foreground">
+                    <option value="">All grades</option>
+                    {availableRoster.grades.map(grade => <option key={grade} value={grade}>{grade}</option>)}
+                    {availableRoster.hasNoGrade || availableGradeFilter === NO_AVAILABLE_GRADE ? <option value={NO_AVAILABLE_GRADE}>No grade assigned</option> : null}
+                    {availableGradeFilter && availableGradeFilter !== NO_AVAILABLE_GRADE && !availableRoster.grades.includes(availableGradeFilter)
+                      ? <option value={availableGradeFilter}>{availableGradeFilter} (none available)</option> : null}
+                  </select>
+                </label>
+                <Button variant="outline" data-testid="button-clear-available-filters" disabled={!availableClassFilter && !availableGradeFilter && !searchQuery}
+                  onClick={() => { setAvailableClassFilter(''); setAvailableGradeFilter(''); setSearchQuery(''); }}>Clear filters</Button>
+              </> : null}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               <div ref={selectionTargetRef} tabIndex={-1} className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="badge-selection-count">
                 <div className="text-[13px] font-semibold">{dashboardCapabilities.observedOtherClass ? 'Viewing' : 'Target'}: {activeClassName} - {displayedTargetBannerLabel}</div>
                 <div className="text-[11px] font-medium opacity-80">{desktopSourcesEnabled ? 'Browser: ' : ''}{displayedTargetConnectionLabel}</div>
@@ -7281,11 +7324,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <>
                   <button
                     onClick={selectAll}
-                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || (selectedStudentIds.size === selectAllStudents.length && selectAllStudents.every(student => selectedStudentIds.has(student.studentId)))}
+                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || selectAllStudents.every(student => selectedStudentIds.has(student.studentId))}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="button-select-all-students"
                   >
-                    <Users className="h-4 w-4" /> Select All ({selectAllStudents.length})
+                    <Users className="h-4 w-4" /> {studentView === 'available' ? 'Select shown' : 'Select All'} ({selectAllStudents.length})
                   </button>
                   <button onClick={clearSelection} disabled={selectedStudentIds.size === 0 && selectedServerSignOutStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                     Clear Selection
