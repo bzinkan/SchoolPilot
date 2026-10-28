@@ -85,6 +85,7 @@ function rosterRow(studentId, report, { lateSignIn = false } = {}) {
     activeTabTitle: `${NAMES[studentId]} notes`, activeTabUrl: `https://classroom.example.edu/${firstName}`,
     allOpenTabs: signedOut ? [] : [{ tabRef: `tab-${firstName}`, url: `https://classroom.example.edu/${firstName}`, title: `${NAMES[studentId]} notes` }],
     tabSnapshotRevision: 1,
+    acceptedCapabilities: { screenOnlyUnlockV1: true },
     lastSeenAt: observedAt, realtimeObservedAt: signedOut ? null : observedAt,
     realtimeBinding: signedOut ? null : `binding-${firstName}`, realtimeRevision: signedOut ? null : report.revision,
     ...(lateSignIn ? { lateSignInRestrictionSsoV1Enabled: true } : {}),
@@ -735,34 +736,57 @@ test('Class tools names a sign-out-only selection as the Target badge does, befo
 });
 
 
-test('Stop Focus is reachable with every assigned student offline and sends exactly its frozen structural list', { timeout: 60_000 }, async () => {
-  const { page, commands, pageErrors, report } = await classPage([ADA, BEN], { signedOut: [ADA, BEN] });
+test('Stop Focus keeps the explicitly selected signed-out recipients frozen until confirmation', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, report, tick } = await classPage([ADA, BEN], { signedOut: [ADA, BEN], lateSignIn: true });
   try {
-    await page.getByTestId('button-stop-focus').click();
+    await tick(ADA); await tick(BEN);
+    await page.getByTestId('button-unlock-screen').click();
     const dialog = page.getByTestId('dialog-stop-focus'); await dialog.waitFor();
     assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student', 'Ben Student']);
     await report({ signIn: [BEN] });
     assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student', 'Ben Student']);
     await page.getByTestId('button-confirm-stop-focus').click();
-    await waitUntil(() => commands.length === 1, 'offline Focus cleanup posts one explicit cohort');
-    assert.deepEqual(commands[0].targetStudentIds, [ADA, BEN]);
-    assert.equal(commands[0].targetScope, 'students'); assert.equal(commands[0].commandType, 'stop-focus');
-    assert.deepEqual(commands[0].commandPayload, {}); assert.deepEqual(pageErrors, []);
+    await waitUntil(() => commands.length === 1, 'Stop Focus posts one explicit frozen cohort');
+    assert.deepEqual(commands[0].targetStudentIds, [ADA, BEN]); assert.equal(commands[0].targetScope, 'students');
+    assert.equal(commands[0].commandType, 'unlock-screen'); assert.deepEqual(commands[0].commandPayload, { screenOnly: true });
+    assert.deepEqual(pageErrors, []);
   } finally { await page.close(); }
 });
 
-test('Manage Tabs Stop Focus reviews only the named frozen recipients rather than broadening to other offline students', { timeout: 60_000 }, async () => {
-  const { page, commands, pageErrors } = await classPage([ADA, BEN, CY], { signedOut: [ADA, BEN] });
+test('Manage Tabs has no persistent tab Focus and Stop Focus cannot broaden to unselected students', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, tick } = await classPage([ADA, BEN, CY], { signedOut: [ADA, BEN] });
   try {
     await page.getByTestId('button-tabs').click(); await page.getByTestId('dialog-tabs').waitFor();
-    assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Cy Student']);
-    await page.getByTestId('button-stop-focus-targets').click(); await settle(page);
-    assert.deepEqual(commands, [], 'reviewing Stop Focus must not immediately send a different live cohort');
+    assert.equal(await page.getByTestId('button-stop-focus-targets').count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Focus', exact: true }).count(), 0);
+    await page.getByTestId('button-close-tabs-dialog').click(); await tick(CY);
+    await page.getByTestId('button-unlock-screen').click();
     await page.getByTestId('dialog-stop-focus').waitFor();
     assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Cy Student']);
     await page.getByTestId('button-confirm-stop-focus').click();
     await waitUntil(() => commands.length === 1, 'the reviewed Focus cleanup posts');
-    assert.deepEqual(commands[0].targetStudentIds, [CY]); assert.equal(commands[0].commandType, 'stop-focus');
+    assert.deepEqual(commands[0].targetStudentIds, [CY]); assert.equal(commands[0].commandType, 'unlock-screen');
+    assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('Set Focus freezes its students and requires a new gesture when one current page becomes unavailable', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, report, tick } = await classPage([ADA, BEN, CY]);
+  try {
+    await tick(ADA); await tick(BEN);
+    await page.getByTestId('button-lock-screen').click();
+    const dialog = page.getByTestId('dialog-lock-screen'); await dialog.waitFor();
+    assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student', 'Ben Student']);
+    await report({ stale: [BEN] });
+    assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student', 'Ben Student']);
+    await page.getByTestId('button-confirm-lock-screen').click();
+    assert.deepEqual(commands, [], 'a changed live cohort cannot silently narrow or broaden the frozen audience');
+    await page.getByTestId('button-confirm-lock-screen').getByText('Send to 1 available', { exact: true }).waitFor();
+    await page.getByTestId('button-confirm-lock-screen').click();
+    await waitUntil(() => commands.length === 1, 'the second gesture sends the explicitly reviewed available student');
+    assert.deepEqual(commands[0].targetStudentIds, [ADA]);
+    assert.equal(commands[0].commandType, 'lock-screen');
+    assert.deepEqual(commands[0].commandPayload, { url: 'CURRENT_URL' });
     assert.deepEqual(pageErrors, []);
   } finally { await page.close(); }
 });

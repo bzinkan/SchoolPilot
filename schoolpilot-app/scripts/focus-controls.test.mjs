@@ -1,433 +1,114 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusTabCapability, focusPayloadForStudents, focusStatusLabel, focusCommandFeedback, tileFocusLifecycleObserved }
-  from '../src/products/classpilot/lib/focusControls.js';
+import { currentPageFocusTarget, deriveTileLockControl, exactTabPayload, exactTabCapability,
+  exactTabPayloadForStudents, tabActionFeedback, tileFocusLifecycleObserved } from '../src/products/classpilot/lib/focusControls.js';
+const row = (studentId = 'a', tabRef = 'opaque-a') => ({ studentId, tabRef, observedRevision: 7, acceptedCapabilities: ['scopedAuthorityChecksV1', 'focusTabV1'] });
+const student = (extra = {}) => ({ studentId: 'a', activeTabUrl: 'https://lesson.example.test/page', screenLocked: false,
+  acceptedCapabilities: { screenOnlyUnlockV1: true }, classroomState: { revision: 1, restrictions: { screenLock: { active: false }, focus: { active: false } } }, ...extra });
+const focused = (extra = {}) => student({ screenLocked: true, classroomState: { revision: 2, restrictions: { screenLock: { active: true } } }, ...extra });
 
-const row = (studentId, tabRef) => ({ studentId, tabRef, observedRevision: 7,
-  acceptedCapabilities: { focusTabV1: true, scopedAuthorityChecksV1: true }, url: 'https://duplicate.example/', deviceId: 'must-not-leak' });
-test('duplicate URLs retain each selected opaque ref and never enter the payload', () => {
-  assert.deepEqual(exactFocusPayload([row('student-a', 'opaque-a'), row('student-b', 'opaque-b')]), {
-    tabTargets: [{ studentId: 'student-a', tabRef: 'opaque-a', observedRevision: 7 }, { studentId: 'student-b', tabRef: 'opaque-b', observedRevision: 7 }] });
+test('Bring Forward retains exact opaque identity, revisions and negotiated capabilities', () => {
+  const payload = exactTabPayload([row('a'), row('b', 'opaque-b')]);
+  assert.deepEqual(payload, { tabTargets: [{ studentId: 'a', tabRef: 'opaque-a', observedRevision: 7 }, { studentId: 'b', tabRef: 'opaque-b', observedRevision: 7 }] });
+  for (const value of [{ ...row(), acceptedCapabilities: [], extensionCapabilities: ['focusTabV1', 'scopedAuthorityChecksV1'] },
+    { ...row(), tabRef: '' }, { ...row(), observedRevision: 0 }]) {
+    assert.equal(exactTabCapability(value).enabled, false); assert.throws(() => exactTabPayload([value]));
+  }
+  assert.throws(() => exactTabPayload([row(), row()])); assert.throws(() => exactTabPayload([]));
+  assert.deepEqual(exactTabPayloadForStudents(payload, ['b']), { tabTargets: [payload.tabTargets[1]] });
+  for (const ids of [[], ['c'], ['a', 'a']]) assert.throws(() => exactTabPayloadForStudents(payload, ids));
+  assert.match(exactTabCapability({ ...row(), acceptedCapabilities: [] }).reason, /^Bring Forward/);
 });
-test('raw advertisement cannot override capability withdrawal', () => {
-  assert.equal(focusTabCapability({ ...row('a', 'ref'), acceptedCapabilities: [],
-    capabilities: { focusTabV1: true, scopedAuthorityChecksV1: true }, extensionCapabilities: ['focusTabV1', 'scopedAuthorityChecksV1'] }).enabled, false);
+test('website Focus uses CURRENT_URL without exact-tab capability or opaque identity', () => {
+  const current = student({ activeTabRef: null, tabSnapshotRevision: null, acceptedCapabilities: {} });
+  assert.deepEqual(currentPageFocusTarget(current), { enabled: true, reason: '', payload: { url: 'CURRENT_URL' } });
+  const control = deriveTileLockControl(current);
+  assert.equal(control.action, 'focus-current-page'); assert.equal(control.disabled, false);
+  assert.equal(control.label, 'Focus current website'); assert.equal(control.locked, false);
+  assert.match(control.description, /Other pages on that website remain available/);
 });
-test('missing refs, stale revisions and two targets for one student cannot construct a command', () => {
-  for (const value of [{ ...row('a', 'ref'), tabRef: '' }, { ...row('a', 'ref'), observedRevision: 0 }, { ...row('a', 'ref'), observedRevision: 1.2 }])
-    assert.throws(() => exactFocusPayload([value]));
-  assert.throws(() => exactFocusPayload([row('a', 'ref'), row('a', 'other')]));
-  assert.throws(() => exactFocusPayload([]));
+test('website shortcut refuses unsafe pages, stale telemetry and unavailable authority', () => {
+  for (const activeTabUrl of ['', null, 'chrome://settings', 'about:blank', 'https://person:secret@example.test/'])
+    assert.equal(deriveTileLockControl(student({ activeTabUrl })).disabled, true);
+  assert.equal(currentPageFocusTarget(student({ studentId: '' })).enabled, false);
+  for (const options of [{ focusTelemetryCurrent: false }, { canSetFocus: false }, { actionsDisabled: true }])
+    assert.equal(deriveTileLockControl(student(), options).disabled, true);
 });
-test('claimed contexts receive only their selected students and reject missing or duplicate bindings', () => {
-  const payload = exactFocusPayload([row('a', 'ref-a'), row('b', 'ref-b')]);
-  assert.deepEqual(focusPayloadForStudents(payload, ['b']), { tabTargets: [{ studentId: 'b', tabRef: 'ref-b', observedRevision: 7 }] });
-  assert.throws(() => focusPayloadForStudents(payload, ['c']));
-  assert.throws(() => focusPayloadForStudents(payload, ['a', 'a']));
-});
-test('desired Focus is pending and suspended states never claim active enforcement', () => {
-  assert.match(focusStatusLabel({ classroomState: { restrictions: { focus: { active: true } } } }), /awaiting confirmation/);
-  assert.equal(focusStatusLabel({ focus: { state: 'suspended', reason: 'authentication' } }), 'Focus paused for sign-in');
-  assert.equal(focusStatusLabel({ focus: { state: 'active' } }), 'Focus confirmed');
-});
-test('a prior device assignment cannot confirm or describe a newly requested Focus', () => {
-  const classroomState = { restrictions: { focus: { active: true, assignmentId: 'new-focus' } } };
-  for (const focus of [
-    { state: 'active', assignmentId: 'old-focus' },
-    { state: 'suspended', assignmentId: 'old-focus', reason: 'attention' },
-    { state: 'suspended', assignmentId: 'old-focus', reason: 'authentication' },
-    { state: 'invalidated', assignmentId: 'old-focus', reason: 'focus_tab_closed' },
-  ]) {
-    assert.equal(focusStatusLabel({ classroomState, focus }), 'Focus requested; awaiting confirmation');
+test('one Stop Focus releases website or lingering legacy state with no second menu', () => {
+  const active = deriveTileLockControl(focused());
+  assert.equal(active.action, 'stop-focus'); assert.equal(active.statusLabel, 'Focus confirmed');
+  for (const legacy of [student({ focus: { state: 'active' } }), student({ focus: { state: 'suspended' } }),
+    student({ classroomState: { revision: 1, restrictions: { focus: { active: true } } } })]) {
+    const control = deriveTileLockControl(legacy, { focusTelemetryCurrent: false, canSetFocus: false });
+    assert.equal(control.action, 'stop-focus'); assert.equal(control.disabled, false);
+    assert.equal(control.statusLabel, 'Focus cleanup available');
   }
 });
-test('matching Focus assignment retains its actual lifecycle label', () => {
-  const classroomState = { restrictions: { focus: { active: true, assignmentId: 'current-focus' } } };
-  for (const [focus, expected] of [
-    [{ state: 'active', assignmentId: 'current-focus' }, 'Focus confirmed'],
-    [{ state: 'suspended', assignmentId: 'current-focus', reason: 'attention' }, 'Focus paused for Attention'],
-    [{ state: 'suspended', assignmentId: 'current-focus', reason: 'authentication' }, 'Focus paused for sign-in'],
-    [{ state: 'invalidated', assignmentId: 'current-focus', reason: 'focus_tab_closed' }, 'Focus ended: tab closed'],
-  ]) {
-    assert.equal(focusStatusLabel({ classroomState, focus }), expected);
-    assert.equal(focusStatusLabel({ focus }), expected, 'coverage rows without desired assignment retain reported truth');
-    assert.equal(focusStatusLabel({ classroomState: { restrictions: { focus: { active: true } } }, focus }), expected,
-      'legacy desired state without an assignment cannot establish a mismatch');
-  }
+test('Stop Focus retains capability and authority gates while current telemetry is unavailable', () => {
+  assert.equal(deriveTileLockControl(focused(), { focusTelemetryCurrent: false }).disabled, false);
+  assert.equal(deriveTileLockControl(focused({ acceptedCapabilities: {} })).disabled, true);
+  assert.equal(deriveTileLockControl(focused(), { canStopFocus: false }).disabled, true);
+  assert.equal(deriveTileLockControl(focused(), { actionsDisabled: true }).disabled, true);
+  assert.equal(deriveTileLockControl(focused({ acceptedCapabilities: [], capabilities: { screenOnlyUnlockV1: true } })).disabled, false);
 });
-test('received ACKs remain pending and unavailable recipients do not become signed-out claims', () => {
-  const feedback = focusCommandFeedback({ targets: [{ status: 'received' }, { status: 'unavailable' }] }, 'focus-tab');
-  assert.match(feedback.title, /awaiting/); assert.match(feedback.description, /0 completed, 1 pending, 1 failed or unavailable/);
-  assert.doesNotMatch(feedback.description, /signed out|saved/);
+test('saved Focus requests and transient browser Focus remain distinct', () => {
+  assert.equal(deriveTileLockControl(focused({ screenLocked: false })).statusLabel, 'Focus requested; awaiting confirmation');
+  assert.equal(deriveTileLockControl(student({ screenLocked: true })).statusLabel, 'Focus confirmed');
 });
-
-const tileStudent = (overrides = {}) => ({
-  studentId: 'student-a', activeTabRef: 'exact-current', tabSnapshotRevision: 7,
-  acceptedCapabilities: { focusTabV1: true, scopedAuthorityChecksV1: true },
-  capabilities: { screenOnlyUnlockV1: true }, screenLocked: false,
-  allOpenTabs: [
-    { tabRef: 'same-url-other-tab', url: 'https://duplicate.example/', active: true },
-    { tabRef: 'exact-current', url: 'https://duplicate.example/', title: 'Current exact tab' },
-  ],
-  ...overrides,
+test('accepted tile start stays clearable until a newer authoritative lifecycle snapshot arrives', () => {
+  const operation = { action: 'focus-current-page', focusControlRevision: 1, awaitingFocusLifecycle: true, pending: false,
+    outcomes: { focus: { status: 'completed', commandType: 'lock-screen' } } };
+  const pending = deriveTileLockControl(student(), { lockOperation: operation });
+  assert.equal(pending.locked, true); assert.equal(pending.action, 'stop-focus');
+  assert.equal(pending.statusLabel, 'Focus requested; awaiting confirmation');
+  assert.equal(tileFocusLifecycleObserved(student(), operation), false);
+  assert.equal(tileFocusLifecycleObserved(focused(), operation), true);
+  assert.equal(deriveTileLockControl(focused(), { lockOperation: operation }).statusLabel, 'Focus confirmed');
+  const cleared = student({ classroomState: { revision: 3, restrictions: { screenLock: { active: false } } } });
+  assert.equal(tileFocusLifecycleObserved(cleared, operation), true);
+  assert.equal(deriveTileLockControl(cleared, { lockOperation: operation }).locked, false);
 });
-const desired = (focus, waypoint = false) => ({ restrictions: { focus, screenLock: { active: waypoint } } });
-const activeFocusStudent = (overrides = {}) => tileStudent({
-  classroomState: desired({ active: true, assignmentId: 'current-focus' }),
-  focus: { state: 'active', assignmentId: 'current-focus' },
-  ...overrides,
+test('failed starts and obsolete stop acknowledgements cannot invent enforcement or erase newer Focus', () => {
+  const failed = { action: 'focus-current-page', awaitingFocusLifecycle: true, outcomes: { focus: { status: 'failed' } } };
+  assert.equal(deriveTileLockControl(student(), { lockOperation: failed }).locked, false);
+  assert.equal(deriveTileLockControl(student(), { lockOperation: failed }).warning, true);
+  assert.equal(deriveTileLockControl(student(), { lockOperation: { pending: true, action: 'focus-current-page' } }).disabled, true);
+  const oldStop = { action: 'stop-focus', focusControlRevision: 1, outcomes: { focus: { status: 'completed', commandType: 'unlock-screen' } } };
+  assert.equal(deriveTileLockControl(focused(), { lockOperation: oldStop }).locked, true);
+  assert.equal(deriveTileLockControl(student({ classroomState: { revision: 3, restrictions: { screenLock: { active: false } } } }), { lockOperation: oldStop }).locked, false);
 });
-
-test('tile shortcut chooses the active opaque ref, never a duplicate URL or active-flag guess', () => {
-  const target = currentTabFocusTarget(tileStudent());
-  assert.equal(target.enabled, true);
-  assert.equal(target.row.title, 'Current exact tab');
-  assert.deepEqual(target.payload, { tabTargets: [{ studentId: 'student-a', tabRef: 'exact-current', observedRevision: 7 }] });
-  assert.equal(currentTabFocusTarget(tileStudent({ tabSnapshotRevision: undefined, tabSnapshot: { revision: 9 } })).row.observedRevision, 9);
+test('transient current-page Focus confirms at the same policy revision and rejects old inactive telemetry', () => {
+  const observedAt = Date.now() - 10_000;
+  const initial = student({ realtimeObservedAt: observedAt });
+  const operation = { action: 'focus-current-page', focusControlRevision: 1, focusObservedAt: observedAt,
+    awaitingFocusLifecycle: true, pending: false,
+    outcomes: { focus: { status: 'completed', commandType: 'lock-screen', commandId: 'exact-start', result: { currentPage: true } } } };
+  assert.equal(tileFocusLifecycleObserved(initial, operation), false);
+  assert.equal(deriveTileLockControl(initial, { lockOperation: operation }).statusLabel, 'Focus requested; awaiting confirmation');
+  const newerInactive = { ...initial, realtimeObservedAt: observedAt + 1000 };
+  assert.equal(tileFocusLifecycleObserved(newerInactive, operation), false, 'inactive telemetry alone cannot erase an accepted transient start');
+  const active = { ...initial, screenLocked: true, realtimeObservedAt: observedAt + 2000 };
+  assert.equal(tileFocusLifecycleObserved(active, operation), true);
+  assert.equal(tileFocusLifecycleObserved(active, operation, false), false, 'stale monitoring is not convergence evidence');
+  assert.equal(deriveTileLockControl(active, { lockOperation: operation }).statusLabel, 'Focus confirmed');
+  assert.equal(deriveTileLockControl(active, { lockOperation: operation }).pending, false);
+  assert.equal(tileFocusLifecycleObserved(active, { ...operation, outcomes: { focus: { status: 'received' } } }), false);
+  const confirmed = { ...operation, awaitingFocusLifecycle: false, focusConfirmedObservedAt: observedAt + 2000 };
+  assert.equal(deriveTileLockControl(initial, { lockOperation: confirmed }).locked, true, 'an older inactive row cannot undo observed Focus');
+  assert.equal(deriveTileLockControl({ ...initial, realtimeObservedAt: observedAt + 3000 }, { lockOperation: confirmed }).locked, false);
 });
-
-test('tile shortcut fails closed without genuine snapshot identity and a single matching HTTP(S) row', () => {
-  const invalid = [
-    { activeTabRef: undefined }, { activeTabRef: ' exact-current ' }, { activeTabRef: 'missing' },
-    { tabSnapshotRevision: undefined, revision: 7 }, { tabSnapshotRevision: '7' },
-    { tabSnapshotRevision: 0 }, { tabSnapshotRevision: 1.2 },
-    { allOpenTabs: [{ tabRef: 'exact-current', url: 'chrome://newtab/' }] },
-    { allOpenTabs: [{ tabRef: 'exact-current', url: 'javascript:alert(1)' }] },
-    { allOpenTabs: [{ tabRef: 'exact-current', url: 'invalid-url' }] },
-    { allOpenTabs: [{ tabRef: 'exact-current', url: 'https://a.example/' }, { tabRef: 'exact-current', url: 'https://b.example/' }] },
-    { acceptedCapabilities: [] }, { acceptedCapabilities: { focusTabV1: true, scopedAuthorityChecksV1: false } },
-  ];
-  for (const overrides of invalid) {
-    const target = currentTabFocusTarget(tileStudent(overrides));
-    assert.equal(target.enabled, false, JSON.stringify(overrides));
-    assert.equal(target.reason, 'Current tab unavailable—refresh or use Manage Tabs.');
-    assert.equal(target.row, null);
-    assert.equal(target.payload, null);
-  }
+test('a transient Stop needs fresh release telemetry and never clears a newer Focus', () => {
+  const observedAt = Date.now() - 10_000;
+  const operation = { action: 'stop-focus', focusControlRevision: 1, focusObservedAt: observedAt,
+    outcomes: { focus: { status: 'completed', commandType: 'unlock-screen', commandId: 'exact-stop' } } };
+  const inactive = student({ realtimeObservedAt: observedAt });
+  assert.equal(deriveTileLockControl(inactive, { lockOperation: operation }).statusLabel, 'Stopping Focus; awaiting confirmation');
+  assert.equal(deriveTileLockControl({ ...inactive, realtimeObservedAt: observedAt + 1000 }, { lockOperation: operation }).locked, false);
+  const newerFocus = focused({ realtimeObservedAt: observedAt + 2000 });
+  assert.equal(deriveTileLockControl(newerFocus, { lockOperation: operation }).statusLabel, 'Focus confirmed');
 });
-
-test('tile lock matrix uses direct Focus, Stop Focus, and screen-only Waypoint actions, with a menu only for both', () => {
-  for (const [student, expected] of [
-    [tileStudent(), { action: 'focus-current-tab', locked: false, menu: false, label: 'Focus current tab' }],
-    [activeFocusStudent(), { action: 'stop-focus', locked: true, menu: false, label: 'Stop Focus' }],
-    [tileStudent({ screenLocked: true }), { action: 'clear-waypoint', locked: true, menu: false, label: 'Clear Waypoint' }],
-    [activeFocusStudent({ screenLocked: true, classroomState: desired({ active: true, assignmentId: 'current-focus' }, true) }),
-      { action: null, locked: true, menu: true, label: 'Manage Focus and Waypoint' }],
-  ]) {
-    const control = deriveTileLockControl(student);
-    for (const [key, value] of Object.entries(expected)) assert.equal(control[key], value, key);
-    assert.equal(control.disabled, false);
-  }
-});
-
-test('requested and paused Focus stay clearable alongside Waypoint without claiming active enforcement', () => {
-  for (const [focus, status, label] of [
-    [{ state: 'active', assignmentId: 'prior-focus' }, 'requested', 'Focus requested; awaiting confirmation'],
-    [{ state: 'suspended', assignmentId: 'current-focus', reason: 'attention' }, 'suspended', 'Focus paused for Attention'],
-    [{ state: 'suspended', assignmentId: 'current-focus', reason: 'authentication' }, 'suspended', 'Focus paused for sign-in'],
-    [{ state: 'suspended', assignmentId: 'current-focus', reason: 'browser_operation_pending' }, 'suspended', 'Focus waiting for the browser'],
-  ]) {
-    const control = deriveTileLockControl(activeFocusStudent({ focus, screenLocked: true,
-      classroomState: desired({ active: true, assignmentId: 'current-focus' }, true) }));
-    assert.equal(control.focus.status, status);
-    assert.equal(control.focus.label, label);
-    assert.equal(control.focus.confirmed, false);
-    assert.equal(control.menu, true);
-    assert.equal(control.locked, true);
-  }
-});
-
-test('matching invalidated Focus is visibly ended and cannot turn an unrelated Waypoint into Stop Focus', () => {
-  const student = activeFocusStudent({ focus: { state: 'invalidated', assignmentId: 'current-focus', reason: 'focus_tab_closed' } });
-  const ended = deriveTileLockControl(student);
-  assert.equal(ended.locked, false);
-  assert.equal(ended.action, 'focus-current-tab');
-  assert.match(ended.statusLabel, /Focus ended/);
-  assert.equal(ended.warning, true);
-  const waypoint = deriveTileLockControl({ ...student, screenLocked: true,
-    classroomState: desired({ active: true, assignmentId: 'current-focus' }, true) });
-  assert.equal(waypoint.locked, true);
-  assert.equal(waypoint.action, 'clear-waypoint');
-  assert.equal(waypoint.menu, false);
-});
-
-test('invalidated Focus explains each target lifecycle reason without claiming enforcement', () => {
-  for (const [reason, label] of [
-    ['focus_tab_closed', 'Focus ended: tab closed'],
-    ['focus_tab_missing', 'Focus ended: tab unavailable'],
-    ['focus_tab_off_policy', 'Focus ended: tab no longer allowed'],
-    ['unknown-reason', 'Focus ended: target unavailable'],
-  ]) {
-    const student = activeFocusStudent({ focus: { state: 'invalidated', assignmentId: 'current-focus', reason } });
-    assert.equal(focusStatusLabel(student), label);
-    const control = deriveTileLockControl(student);
-    assert.equal(control.statusLabel, label);
-    assert.equal(control.locked, false);
-    assert.equal(control.focus.clearable, false);
-  }
-});
-
-test('stale telemetry disables starting with current-tab guidance while authority and selection retain their reasons', () => {
-  const stale = deriveTileLockControl(tileStudent(), {
-    canFocusTab: false, focusTelemetryCurrent: false, actionsDisabledReason: 'Student actions are disabled while monitoring updates',
-  });
-  assert.equal(stale.disabled, true);
-  assert.equal(stale.reason, 'Current tab unavailable—refresh or use Manage Tabs.');
-  const missing = deriveTileLockControl(tileStudent({ activeTabRef: undefined }), { canFocusTab: false });
-  assert.equal(missing.reason, 'Current tab unavailable—refresh or use Manage Tabs.');
-  for (const actionsDisabledReason of ['Observe access is read-only', 'Clear the signed-out restriction selection']) {
-    const denied = deriveTileLockControl(tileStudent(), {
-      actionsDisabled: true, focusTelemetryCurrent: false, actionsDisabledReason,
-    });
-    assert.equal(denied.disabled, true);
-    assert.equal(denied.reason, actionsDisabledReason);
-  }
-});
-
-test('desired and reported Waypoint state show pending start and release truthfully', () => {
-  const starting = deriveTileLockControl(tileStudent({ classroomState: desired(undefined, true) }));
-  assert.equal(starting.waypoint.status, 'requested');
-  assert.equal(starting.waypoint.confirmed, false);
-  assert.equal(starting.locked, true);
-  assert.equal(starting.pending, true);
-  const releasing = deriveTileLockControl(tileStudent({ screenLocked: true, classroomState: desired(undefined, false) }));
-  assert.equal(releasing.waypoint.status, 'releasing');
-  assert.equal(releasing.locked, true);
-  assert.match(releasing.statusLabel, /Clearing Waypoint; awaiting confirmation/);
-});
-
-test('Focus cleanup can remain available without current-tab capability or fresh target proof', () => {
-  const control = deriveTileLockControl(activeFocusStudent({ activeTabRef: undefined, acceptedCapabilities: [] }), {
-    canFocusTab: false, canStopFocus: true, canClearWaypoint: false,
-  });
-  assert.equal(control.action, 'stop-focus');
-  assert.equal(control.disabled, false);
-  assert.equal(control.focusTarget.enabled, false);
-});
-
-test('action authority and screen-only capability gate each menu choice independently', () => {
-  const both = activeFocusStudent({ screenLocked: true, classroomState: desired({ active: true, assignmentId: 'current-focus' }, true) });
-  const focusOnly = deriveTileLockControl(both, { canStopFocus: true, canClearWaypoint: false });
-  assert.equal(focusOnly.disabled, false);
-  assert.equal(focusOnly.stopFocusDisabled, false);
-  assert.equal(focusOnly.clearWaypointDisabled, true);
-  assert.equal(focusOnly.stopBothDisabled, true);
-  const unsupported = deriveTileLockControl({ ...both, capabilities: {}, extensionCapabilities: [] });
-  assert.equal(unsupported.stopFocusDisabled, false);
-  assert.equal(unsupported.clearWaypointDisabled, true);
-  assert.equal(unsupported.stopBothDisabled, true);
-  const denied = deriveTileLockControl(both, { canStopFocus: false, canClearWaypoint: false });
-  assert.equal(denied.disabled, true);
-  assert.equal(deriveTileLockControl(both, { actionsDisabled: true }).disabled, true);
-  const unrestricted = deriveTileLockControl(tileStudent());
-  assert.equal(unrestricted.stopFocusDisabled, true);
-  assert.equal(unrestricted.clearWaypointDisabled, true);
-  assert.equal(unrestricted.stopBothDisabled, true);
-});
-
-test('pending operation disables duplicate dispatch but bounded waiting keeps cleanup available', () => {
-  const student = activeFocusStudent();
-  const operation = { action: 'stop-focus', phase: 'Stop Focus: awaiting confirmation',
-    focusAssignmentId: 'current-focus', outcomes: { focus: { status: 'received' } } };
-  const inFlight = deriveTileLockControl(student, { lockOperation: { ...operation, pending: true } });
-  assert.equal(inFlight.pending, true);
-  assert.equal(inFlight.disabled, true);
-  assert.equal(inFlight.statusLabel, 'Stopping Focus; awaiting confirmation');
-  const stillAwaiting = deriveTileLockControl(student, { lockOperation: { ...operation, pending: false } });
-  assert.equal(stillAwaiting.pending, true);
-  assert.equal(stillAwaiting.disabled, false);
-  assert.equal(stillAwaiting.action, 'stop-focus');
-});
-
-test('completed Focus cleanup only overrides its original assignment, never a replacement', () => {
-  const operation = { pending: false, action: 'stop-focus', focusAssignmentId: 'current-focus',
-    outcomes: { focus: { status: 'completed' } } };
-  const stopped = deriveTileLockControl(activeFocusStudent(), { lockOperation: operation });
-  assert.equal(stopped.locked, false);
-  assert.equal(stopped.action, 'focus-current-tab');
-  const replacement = activeFocusStudent({ classroomState: desired({ active: true, assignmentId: 'replacement-focus' }),
-    focus: { state: 'active', assignmentId: 'replacement-focus' } });
-  const active = deriveTileLockControl(replacement, { lockOperation: operation });
-  assert.equal(active.locked, true);
-  assert.equal(active.focus.confirmed, true);
-  const obsoletePending = deriveTileLockControl(replacement, { lockOperation: { ...operation, outcomes: { focus: { status: 'received' } } } });
-  assert.equal(obsoletePending.pending, false);
-  assert.equal(obsoletePending.statusLabel, 'Focus confirmed');
-  const oldAcknowledgment = deriveTileLockControl(activeFocusStudent({
-    focus: { state: 'active', assignmentId: 'prior-focus' },
-  }), { lockOperation: operation });
-  assert.equal(oldAcknowledgment.locked, false, 'old ACK cannot defeat a completed cleanup of the current desired assignment');
-});
-
-test('Stop Both preserves failed restrictions and does not roll back a confirmed independent release', () => {
-  const lockOperation = { pending: false, action: 'stop-both', focusAssignmentId: 'current-focus',
-    outcomes: { focus: { status: 'completed' }, waypoint: { status: 'failed', error: 'Waypoint unavailable' } },
-    error: 'Focus stopped; Waypoint could not be cleared.' };
-  const partial = deriveTileLockControl(activeFocusStudent({ screenLocked: true,
-    classroomState: desired({ active: true, assignmentId: 'current-focus' }, true) }), { lockOperation });
-  assert.equal(partial.focus.clearable, false);
-  assert.equal(partial.waypoint.clearable, true);
-  assert.equal(partial.locked, true);
-  assert.equal(partial.action, 'clear-waypoint');
-  assert.equal(partial.warning, true);
-  const reverse = deriveTileLockControl(activeFocusStudent({ screenLocked: true,
-    classroomState: desired({ active: true, assignmentId: 'current-focus' }, false) }), {
-    lockOperation: { ...lockOperation, outcomes: { focus: { status: 'failed' }, waypoint: { status: 'completed' } } },
-  });
-  assert.equal(reverse.focus.clearable, true);
-  assert.equal(reverse.waypoint.clearable, false);
-  assert.equal(reverse.action, 'stop-focus');
-});
-
-test('retrying Waypoint preserves the independently confirmed original Focus cleanup', () => {
-  const student = activeFocusStudent({ screenLocked: true,
-    classroomState: desired({ active: true, assignmentId: 'current-focus' }, true) });
-  const lockOperation = { pending: true, action: 'clear-waypoint', focusAssignmentId: 'current-focus',
-    outcomes: { focus: { status: 'completed', commandType: 'stop-focus' },
-      waypoint: { status: 'received', commandType: 'unlock-screen' } } };
-  const retrying = deriveTileLockControl(student, { lockOperation });
-  assert.equal(retrying.focus.clearable, false);
-  assert.equal(retrying.menu, false);
-  assert.equal(retrying.locked, true);
-  assert.equal(retrying.pending, true);
-  assert.equal(retrying.statusLabel, 'Clearing Waypoint; awaiting confirmation');
-  const replacement = deriveTileLockControl({ ...student,
-    classroomState: desired({ active: true, assignmentId: 'replacement-focus' }, true),
-    focus: { state: 'active', assignmentId: 'replacement-focus' },
-  }, { lockOperation: { ...lockOperation, pending: false } });
-  assert.equal(replacement.focus.confirmed, true);
-  assert.equal(replacement.menu, true);
-});
-
-test('fresh telemetry converging after a timeout clears stale awaiting indicators for independent cleanup outcomes', () => {
-  const student = tileStudent({ classroomState: desired(undefined, false), focus: { state: 'inactive' } });
-  const lockOperation = { pending: false, action: 'stop-both', focusAssignmentId: 'current-focus',
-    outcomes: { focus: { status: 'received', commandType: 'stop-focus' },
-      waypoint: { status: 'pending', commandType: 'unlock-screen' } } };
-  const converged = deriveTileLockControl(student, { lockOperation });
-  assert.equal(converged.pending, false);
-  assert.equal(converged.locked, false);
-  assert.equal(converged.statusLabel, 'No Focus or Waypoint');
-  const unknown = deriveTileLockControl({ ...student, focus: undefined, screenLocked: undefined }, { lockOperation });
-  assert.equal(unknown.pending, true, 'absent status is not a device confirmation');
-  const inFlight = deriveTileLockControl(student, { lockOperation: { ...lockOperation, pending: true } });
-  assert.equal(inFlight.pending, true, 'still-running requests retain their duplicate-dispatch guard');
-});
-
-test('fresh matching Focus lifecycle replaces an obsolete starting-command awaiting indicator', () => {
-  const lockOperation = { pending: false, action: 'focus-current-tab', focusAssignmentId: null,
-    outcomes: { focus: { status: 'received', commandType: 'focus-tab' } } };
-  const control = deriveTileLockControl(activeFocusStudent(), { lockOperation });
-  assert.equal(control.pending, false);
-  assert.equal(control.statusLabel, 'Focus confirmed');
-  const paused = deriveTileLockControl(activeFocusStudent({
-    focus: { state: 'suspended', assignmentId: 'current-focus', reason: 'authentication' },
-  }), { lockOperation });
-  assert.equal(paused.pending, false);
-  assert.equal(paused.statusLabel, 'Focus paused for sign-in');
-});
-
-test('requested and sent cleanup commands remain awaiting after timeout and converge on later telemetry', () => {
-  for (const status of ['requesting', 'requested', 'sent', 'pending', 'received']) {
-    const lockOperation = { pending: false, action: 'clear-waypoint',
-      outcomes: { waypoint: { status, commandType: 'unlock-screen' } } };
-    const pending = deriveTileLockControl(tileStudent({ screenLocked: true,
-      classroomState: desired(undefined, true) }), { lockOperation });
-    assert.equal(pending.pending, true, status);
-    assert.equal(pending.statusLabel, 'Clearing Waypoint; awaiting confirmation', status);
-    assert.equal(pending.disabled, false, 'bounded wait releases only the duplicate-dispatch guard');
-    const converged = deriveTileLockControl(tileStudent({ screenLocked: false,
-      classroomState: desired(undefined, false) }), { lockOperation });
-    assert.equal(converged.pending, false, status);
-    assert.equal(converged.statusLabel, 'No Focus or Waypoint', status);
-
-    const focusOperation = { pending: false, action: 'stop-focus', focusAssignmentId: 'current-focus',
-      outcomes: { focus: { status, commandType: 'stop-focus' } } };
-    const focusPending = deriveTileLockControl(activeFocusStudent(), { lockOperation: focusOperation });
-    assert.equal(focusPending.pending, true, status);
-    assert.equal(focusPending.statusLabel, 'Stopping Focus; awaiting confirmation', status);
-    const focusConverged = deriveTileLockControl(tileStudent({ focus: { state: 'inactive' },
-      classroomState: desired(undefined, false) }), { lockOperation: focusOperation });
-    assert.equal(focusConverged.pending, false, status);
-  }
-});
-
-test('completed start remains provisionally locked and clearable until newer lifecycle telemetry arrives', () => {
-  const lockOperation = { pending: false, action: 'focus-current-tab', awaitingFocusLifecycle: true,
-    focusAssignmentId: null, focusControlRevision: 4,
-    outcomes: { focus: { status: 'completed', commandType: 'focus-tab' } } };
-  const initial = tileStudent({ focus: { state: 'inactive' },
-    classroomState: { revision: 4, ...desired(undefined, false) } });
-  assert.equal(tileFocusLifecycleObserved(initial, lockOperation), false);
-  const awaiting = deriveTileLockControl(initial, { lockOperation });
-  assert.equal(awaiting.locked, true);
-  assert.equal(awaiting.focus.confirmed, false);
-  assert.equal(awaiting.focus.clearable, true);
-  assert.equal(awaiting.pending, true);
-  assert.equal(awaiting.action, 'stop-focus');
-  assert.equal(awaiting.disabled, false, 'confirmed start remains removable while telemetry catches up');
-  assert.equal(awaiting.statusLabel, 'Focus requested; awaiting confirmation');
-
-  for (const [state, reason, expected] of [
-    ['active', undefined, 'Focus confirmed'],
-    ['suspended', 'authentication', 'Focus paused for sign-in'],
-    ['invalidated', 'focus_tab_closed', 'Focus ended: tab closed'],
-  ]) {
-    const current = activeFocusStudent({ focus: { state, assignmentId: 'current-focus', reason },
-      classroomState: { revision: 5, ...desired({ active: true, assignmentId: 'current-focus' }) } });
-    assert.equal(tileFocusLifecycleObserved(current, lockOperation), true, state);
-    const observed = deriveTileLockControl(current, { lockOperation });
-    assert.equal(observed.pending, false, state);
-    assert.equal(observed.statusLabel, expected, state);
-  }
-  const inactive = tileStudent({ focus: { state: 'inactive' },
-    classroomState: { revision: 6, ...desired(undefined, false) } });
-  assert.equal(tileFocusLifecycleObserved(inactive, lockOperation), true, 'newer clear supersedes an applied start');
-  const retired = deriveTileLockControl(inactive, { lockOperation: { ...lockOperation, awaitingFocusLifecycle: false } });
-  assert.equal(retired.pending, false);
-  assert.equal(retired.locked, false);
-  assert.equal(retired.action, 'focus-current-tab');
-});
-
-test('start lifecycle observation rejects old assignments and revision guesses while admitting coverage reports', () => {
-  const operation = { action: 'focus-current-tab', awaitingFocusLifecycle: true,
-    focusAssignmentId: 'old-focus', focusControlRevision: 4 };
-  assert.equal(tileFocusLifecycleObserved(activeFocusStudent({
-    focus: { state: 'active', assignmentId: 'old-focus' },
-  }), operation), false);
-  assert.equal(tileFocusLifecycleObserved(activeFocusStudent({
-    focus: { state: 'active', assignmentId: 'other-focus' },
-  }), operation), false, 'reported lifecycle must match the desired assignment');
-  assert.equal(tileFocusLifecycleObserved(tileStudent({
-    focus: { state: 'active', assignmentId: 'new-coverage-focus' }, classroomState: undefined,
-  }), operation), true);
-  for (const revision of [undefined, 0, 4, '5', 5.5]) {
-    assert.equal(tileFocusLifecycleObserved(tileStudent({ focus: { state: 'inactive' },
-      classroomState: { revision, ...desired({ active: false }) } }), operation), false, String(revision));
-  }
-  assert.equal(tileFocusLifecycleObserved(tileStudent({ focus: { state: 'inactive' },
-    classroomState: { revision: 5, ...desired({ active: false }) } }), operation), true);
-  const staleEnded = deriveTileLockControl(activeFocusStudent({
-    focus: { state: 'invalidated', assignmentId: 'old-focus', reason: 'focus_tab_closed' },
-    classroomState: { revision: 4, ...desired(undefined) },
-  }), { lockOperation: operation });
-  assert.equal(staleEnded.focus.status, 'requested', 'previous ended assignment must not erase the new provisional request');
-});
-
-test('retired lifecycle bridge never revives a received start after authoritative reconciliation', () => {
-  const student = tileStudent({ focus: { state: 'inactive' }, classroomState: undefined });
-  for (const focusAssignmentId of [null, 'old-focus']) {
-    for (const status of ['received', 'sent', 'requested']) {
-      const control = deriveTileLockControl(student, { lockOperation: {
-        pending: false, action: 'focus-current-tab', awaitingFocusLifecycle: false,
-        focusAssignmentId, focusControlRevision: 4,
-        outcomes: { focus: { status, commandType: 'focus-tab' } },
-      } });
-      assert.equal(control.focus.status, 'none', `${focusAssignmentId}: ${status}`);
-      assert.equal(control.locked, false, `${focusAssignmentId}: ${status}`);
-      assert.equal(control.pending, false, `${focusAssignmentId}: ${status}`);
-      assert.equal(control.statusLabel, 'No Focus or Waypoint');
-      assert.equal(control.action, 'focus-current-tab');
-    }
-  }
+test('Bring Forward feedback keeps received pending until completed', () => {
+  assert.match(tabActionFeedback({ targets: [{ status: 'received' }] }).title, /awaiting confirmation/);
+  assert.match(tabActionFeedback({ targets: [{ status: 'completed' }] }).title, /device confirmation received/);
+  assert.equal(tabActionFeedback({ targets: [{ status: 'failed' }] }).variant, 'destructive');
 });

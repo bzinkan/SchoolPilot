@@ -67,6 +67,9 @@ test("guide content has stable IDs, searchable structure, roles, and valid appli
 test("teacher guide contains no administrator routes or retired terminology", () => {
   assert.equal(teacherGuideTopics.some((topic) => topic.route === "/classpilot/settings" || topic.route.startsWith("/classpilot/admin")), false);
   assert.doesNotMatch(contentText(teacherGuideTopics), forbiddenGuideTerms);
+  // Existing topic links and search aliases stay stable; rendered guidance
+  // must not direct a teacher back to the retired controls.
+  assert.doesNotMatch(teacherGuideMarkdown, /\bWaypoints?\b|Open \+ Focus|Focus current tab|Stop Both/i);
 });
 
 test("administrator guide covers entitlement and restricted sign-in policy without retired terminology", () => {
@@ -85,6 +88,7 @@ test("administrator guide covers entitlement and restricted sign-in policy witho
   const adminIds = adminGuideTopics.map((topic) => topic.id);
   assert.equal(adminIds[adminIds.indexOf("school-settings") + 1], "google-workspace-policies", "Workspace policy topic must follow school settings");
   assert.doesNotMatch(contentText(adminGuideTopics), forbiddenGuideTerms);
+  assert.doesNotMatch(adminGuideMarkdown, /\bWaypoints?\b/i);
 });
 
 test("generated Markdown exports exactly match the canonical in-app source", async () => {

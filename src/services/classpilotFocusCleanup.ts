@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { and, eq, inArray } from "drizzle-orm";
 import type { db } from "../db.js";
 import type { ClasspilotStudentControlState } from "../schema/classpilot.js";
+import { schoolMemberships } from "../schema/core.js";
 import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { classpilotControlStateExactBinding } from "./classpilotControlStateFrame.js";
 import { focusAssignmentMatches, focusRecord, readFocusCleanup } from "./classpilotFocus.js";
@@ -40,6 +42,11 @@ export async function prepareClasspilotFocusCleanupFrame(database: typeof db,
     teachingSessionId: state.teachingSessionId, supervisionContextId: state.supervisionContextId,
     ownershipRevision: state.revision }, database);
   if (!authorityCurrent) return null;
+  const [membership] = await database.select({ id: schoolMemberships.id }).from(schoolMemberships).where(and(
+    eq(schoolMemberships.schoolId, binding.schoolId), eq(schoolMemberships.userId, cleanup.ownerId),
+    eq(schoolMemberships.status, "active"), inArray(schoolMemberships.role, ["teacher", "admin", "school_admin", "office_staff"]),
+  )).limit(1).for("share");
+  if (!membership) return null;
   if (state.teachingSessionId) {
     if (!(await isAuthorizedClasspilotSessionStaff(binding.schoolId, state.teachingSessionId, cleanup.ownerId, database))) return null;
   } else {

@@ -966,6 +966,7 @@ test('toolbar Unlock capability gating fails closed for a mixed selection', () =
   const selectedStudents = [
     { studentId: 'student-a', capabilities: { screenOnlyUnlockV1: true } },
     { studentId: 'student-b', extensionCapabilities: ['screenOnlyUnlockV1'] },
+    { studentId: 'student-negotiated', acceptedCapabilities: { screenOnlyUnlockV1: true } },
   ];
   assert.equal(
     selectedStudents.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1')),
@@ -980,6 +981,11 @@ test('toolbar Unlock capability gating fails closed for a mixed selection', () =
     mixedSelection.every((student) => studentSupportsCapability(student, 'screenOnlyUnlockV1')),
     false,
     'one unsupported selected student must disable the combined Unlock action',
+  );
+  assert.equal(
+    studentSupportsCapability({ acceptedCapabilities: { screenOnlyUnlockV1: false } }, 'screenOnlyUnlockV1'),
+    false,
+    'an unaccepted screen-only capability must not enable Stop Focus',
   );
 });
 

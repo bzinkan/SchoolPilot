@@ -898,8 +898,8 @@ test('late-sign-in restriction authoring is row-gated and command-specific', asy
   );
   assert.match(
     dashboard,
-    /partitionCurrentPageWaypointTargets\([\s\S]{0,180}explicitlySelectedStudents/,
-    'current-page Waypoints must partition away students without fresh telemetry',
+    /partitionCurrentPageWaypointTargets\(\s*recipientStudents\(\)\.filter\(student => recipientSnapshot\?\.snapshot\?\.ids\?\.includes\(student\.studentId\)\),\s*\(student\) => monitoringDisplayFor\(student\)\.telemetryCurrent/,
+    'current-page Focus must partition only frozen recipients using fresh telemetry, excluding signed-out students',
   );
 });
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { describe, it } from "node:test";
 import ts from "typescript";
+import { z } from "zod";
 import { type ErrorMonitor } from "../src/services/errorMonitor.js";
 import { resolveClasspilotMonitoringPolicy } from "../src/services/classpilotMonitoringPolicy.js";
 import {
@@ -21,7 +22,7 @@ const executable = ts.transpileModule(`async function bootstrap() { ${source.sli
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 
-async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_token" | "inactive_session" | "not_entitled" | "peer_closed") {
+async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_token" | "inactive_session" | "not_entitled" | "peer_closed" | "retirement") {
   const messages: Array<{ type: string; message?: string }> = [];
   const closes: Array<{ code?: number; reason?: string }> = [];
   const diagnostics: string[] = [];
@@ -29,6 +30,11 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
   const counters = new Map<string, number>();
   let removed = 0;
   let controlReads = 0;
+  let authorityHeld = false;
+  let retirementFinished = false;
+  const transactionDb = {};
+  const storedControlState = { teachingSessionId: "class-fixture", revision: 1 };
+  const retiredControlState = { ...storedControlState, revision: 2 };
   class InvalidTokenError extends Error {}
   class TokenExpiredError extends Error {}
   const fail = (stage: StudentWebSocketAuthStage) => {
@@ -78,9 +84,15 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
     resolveClasspilotMonitoringPolicy,
     getSchoolWebsitePolicy: async () => ({ policyRevision: 0, blockedDomains: [] }),
     negotiateClasspilotSurfaceProtocol: () => ({ acceptedCapabilities: ["screenshotActiveObservationCadenceV1"] }),
-    getClasspilotStudentControlState: async () => {
+    getClasspilotStudentControlState: async (schoolId: string, studentId: string, database?: object) => {
       if (++controlReads === 1) fail("observation_hint");
-      return { teachingSessionId: "class-fixture", revision: 1 };
+      else {
+        assert.equal(authorityHeld, true);
+        assert.equal(database, transactionDb);
+        assert.equal(schoolId, payload.schoolId);
+        assert.equal(studentId, payload.studentId);
+      }
+      return storedControlState;
     },
     classpilotObservationStatus: async () => ({ status: "observed", expiresInSeconds: 120 }),
     withClasspilotStudentWebSocketBootstrapAuthority: async (
@@ -90,15 +102,43 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
     ) => {
       assert.equal(binding.freezeSsoPolicy, true, "The real bootstrap adapter must request the pre-claim SSO fence");
       fail("authority_lock");
-      const prepared = await prepare({});
-      deliver([], prepared);
-      fail("transaction_completion");
-      return { authorized: true };
+      authorityHeld = true;
+      try {
+        const prepared = await prepare(transactionDb);
+        assert.equal(retirementFinished, true, "Retirement finishes before registration or socket delivery");
+        deliver([], prepared);
+        fail("transaction_completion");
+        return { authorized: true };
+      } finally {
+        authorityHeld = false;
+      }
     },
     buildStudentFabState: async () => { fail("bootstrap_projection"); return {}; },
     getClasspilotSsoPolicyForSchool: async () => ({ policy: {}, revision: 1 }),
-    getClasspilotScreenshotAuthorityProjection: async () => ({}),
-    serializeClasspilotStudentControlStateForDelivery: () => ({ classroomState: { revision: 1 }, withheld: false }),
+    retireLegacyTabFocusForStudentLocked: async (database: object, options: {
+      schoolId: string; studentId: string; state: object; reason: string;
+    }) => {
+      assert.equal(database, transactionDb);
+      assert.equal(authorityHeld, true);
+      assert.equal(controlReads, 2, "Retirement follows the authoritative control read");
+      assert.equal(options.schoolId, payload.schoolId);
+      assert.equal(options.studentId, payload.studentId);
+      assert.equal(options.state, storedControlState);
+      assert.equal(options.reason, "reconnect");
+      if (failure === "retirement") throw Object.assign(new Error("private retirement failure"), { code: "ECONNRESET" });
+      retirementFinished = true;
+      return retiredControlState;
+    },
+    getClasspilotScreenshotAuthorityProjection: async () => {
+      assert.equal(retirementFinished, true);
+      return {};
+    },
+    serializeClasspilotStudentControlStateForDelivery: (options: { state: object }) => {
+      assert.equal(authorityHeld, true);
+      assert.equal(retirementFinished, true);
+      assert.equal(options.state, retiredControlState);
+      return { classroomState: { revision: retiredControlState.revision }, withheld: false };
+    },
     isClasspilotCapabilityActive: () => true,
     resolveClasspilotScreenshotPolicy: async () => ({}),
     classpilotScreenshotAuthorityForDeliveredControl: () => ({}),
@@ -106,7 +146,11 @@ async function bootstrapScenario(failure?: StudentWebSocketAuthStage | "invalid_
     clearStaffPresence: () => {},
     classpilotTransientReplayOnAuthEnabled: () => true,
     prepareClasspilotTransientCommandReplay: async () => [{ type: "remote-control", _msgId: "replayed-fixture" }],
-    authenticateWsClient: () => failure === "socket_delivery" ? false : {},
+    authenticateWsClient: () => {
+      assert.equal(authorityHeld, true);
+      assert.equal(retirementFinished, true);
+      return failure === "socket_delivery" ? false : {};
+    },
     removeWsClient: () => { removed += 1; },
     reportStudentWebSocketAuthenticationFailure: (error: unknown, stage: StudentWebSocketAuthStage, job: "studentWebSocketAuth") =>
       reportStudentWebSocketAuthenticationFailure(error, stage, job, {
@@ -165,9 +209,30 @@ describe("student WebSocket bootstrap operational diagnostics", () => {
     const result = await bootstrapScenario();
     assert.equal(result.diagnostics.length, 0);
     assert.equal(result.messages[0]?.type, "auth-success");
+    const bootstrap = z.object({
+      type: z.literal("auth-success"),
+      classroomState: z.object({ revision: z.number().int() }),
+      settings: z.object({ fab: z.object({ ownershipRevision: z.number().int() }) }),
+    }).parse(result.messages[0]);
+    assert.equal(bootstrap.classroomState.revision, 2);
+    assert.equal(bootstrap.settings.fab.ownershipRevision, 2, "FAB matches the post-retirement state delivered in the same bootstrap");
     assert.equal(result.counters.get("studentWebSocketAuthAttempt"), 1);
     assert.equal(result.counters.get("studentWebSocketAuthSuccess"), 1);
     assert.equal(result.closes.length, 0);
+  });
+
+  it("reports retirement failure as bootstrap projection and never registers or sends stale state", async () => {
+    const result = await bootstrapScenario("retirement");
+    assert.equal(result.diagnostics.length, 1);
+    assert.equal(JSON.parse(result.diagnostics[0]!).stage, "bootstrap_projection");
+    assert.equal(JSON.parse(result.diagnostics[0]!).cause, "connection_reset");
+    assert.equal(result.messages.some(message => message.type === "auth-success"), false);
+    assert.equal(result.messages.at(-1)?.message, "Authentication service unavailable");
+    assert.deepEqual(result.closes.at(-1), { code: 1013, reason: "Authentication service unavailable" });
+    assert.equal(result.counters.get("studentWebSocketAuthSuccess") ?? 0, 0);
+    assert.equal(result.counters.get("transientCommandReplayedOnAuth") ?? 0, 0);
+    assert.equal(result.removed, 0);
+    assert.doesNotMatch(result.diagnostics.join("\n"), /private retirement/);
   });
 
   it("sends replayed transient frames after auth-success and counts them once the transaction completed", async () => {

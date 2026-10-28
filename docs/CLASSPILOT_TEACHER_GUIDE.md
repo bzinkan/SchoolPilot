@@ -120,25 +120,26 @@ ClassPilot never turns a missing target into a class-wide action.
 Send learning resources and close the exact tabs shown for a student.
 
 1. **Open a resource.** Select the intended students, choose Open URL, and verify the address before sending.
-2. **Open a Classroom assignment.** Choose Classroom assignments, select the course, assignment or material, and link, then select Open assignment. It opens only the chosen link in a new tab, like Open URL. Existing browsing restrictions still apply. Use the Dashboard controls afterward if you want to set Focus or a Waypoint.
+2. **Open a Classroom assignment.** Choose Classroom assignments, select the course, assignment or material, and link, then select Open assignment. It opens only the chosen link in a new tab, like Open URL. Existing browsing restrictions still apply. Use Focus separately to keep students on an approved website or resource.
 3. **Inspect current tabs.** Use Manage Tabs to review the current tab inventory for each selected student.
-4. **Close exact rows.** Choose the specific tab rows to close, or use Close All when that is truly intended. Duplicate addresses remain separate tabs.
-5. **Use tab limits carefully.** A tab limit manages tab count but preserves the last usable destination and an active school-approved sign-in flow.
+4. **Bring a tab forward once.** Choose Bring Forward beside the exact tab you want the student to see. It activates that tab once without starting Focus or locking the student to that tab. Existing browsing restrictions still apply.
+5. **Close exact rows.** Choose the specific tab rows to close, or use Close All when that is truly intended. Duplicate addresses remain separate tabs.
+6. **Use tab limits carefully.** A tab limit manages tab count but preserves the last usable destination and an active school-approved sign-in flow.
 
 [Open Dashboard](/classpilot)
 
-### Use Waypoints and Flight Paths
+### Use Focus and Flight Paths
 
 **Who can use this:** Assigned or coverage teacher
 
-A Waypoint holds students on one destination site; a Flight Path confines browsing to a prepared set of destinations.
+Focus keeps students on an approved website or resource; a Flight Path confines browsing to a prepared set of destinations.
 
-1. **Choose the restriction.** Use a Waypoint to hold students on one destination site (the whole site is allowed) or apply a Flight Path for a bounded set of learning destinations.
-2. **Account for signed-out students.** A saved destination can wait for eligible signed-out students. A Current Page Waypoint cannot resolve a signed-out student’s page, so those students are skipped and counted.
+1. **Choose the restriction.** Select the intended students and use Focus for their current page or a specific destination. Review the allowed scope before sending: Entire website permits the website, while This resource only limits browsing to the supported resource shown in the preview. Apply a Flight Path when students need a prepared set of destinations.
+2. **Account for signed-out students.** A saved website destination can wait for eligible signed-out students. Current-page Focus cannot resolve a signed-out student’s page, so those students are skipped and counted. This resource only requires a compatible, connected Chromebook and never falls back to allowing the whole site.
 3. **Start from the Student Portal.** When the school enables the Student Portal, students signing into ClassPilot with an active restriction start at the school’s selected portal, such as Clever. They choose a teacher-approved destination there. Finishing provider sign-in does not automatically open a learning site, and other sites remain blocked.
-4. **Allow school-approved sign-in.** If a chosen destination needs an approved provider such as Clever or Google Accounts, the student can complete that sign-in while the Waypoint or Flight Path remains active. An identity-provider callback does not trigger an automatic jump to a learning site.
+4. **Allow school-approved sign-in.** If a chosen destination needs an approved provider such as Clever or Google Accounts, the student can complete that sign-in while Focus or a Flight Path remains active. An identity-provider callback does not trigger an automatic jump to a learning site.
 5. **Check an automatic class preset.** When a scheduled class uses an automatic Flight Path, its status appears above the student tiles. Review the applied, pending, failed, and unavailable counts and each tile’s badge. Turn off for this session stops that automatic preset for the entire named class session, regardless of selected students. It stays off after refresh and resumes next scheduled class if the preset remains enabled. Manual teacher overrides are preserved.
-6. **Remove the right control.** Unlock removes a Waypoint screen lock without silently deleting an active Flight Path. Remove Flight Path is a separate action.
+6. **Stop Focus.** Use Stop Focus to release Focus while keeping Flight Paths, block lists, Attention, and tab limits in place. Review each student’s result: an offline student can remain pending until reconnect or expiry. Remove Flight Path and Turn off for this session remain separate actions.
 
 > **Check before continuing:** The portal remains available while the restriction is active. An identity-provider page is for sign-in, not proof that the student reached the assigned learning destination.
 
@@ -163,7 +164,7 @@ Apply the least disruptive classroom tool that solves the moment.
 
 Help, Messages, Activities, and Tools share one workspace. New capabilities appear as your school enables them and student extensions become ready.
 
-1. **Open or pin the workspace.** Open Class tools at the bottom right. Its separate Help and Messages counts show waiting requests and unread conversations; an active countdown stays visible. Pin the panel to make room beside the student tiles, drag or resize it, or use Reset position. On smaller screens it becomes a drawer. Open URL, Manage Tabs, Waypoints, Flight Paths, Block Lists, and Student Sign Out remain in the Dashboard toolbar.
+1. **Open or pin the workspace.** Open Class tools at the bottom right. Its separate Help and Messages counts show waiting requests and unread conversations; an active countdown stays visible. Pin the panel to make room beside the student tiles, drag or resize it, or use Reset position. On smaller screens it becomes a drawer. Open URL, Manage Tabs, Focus, Flight Paths, Block Lists, and Student Sign Out remain in the Dashboard toolbar.
 2. **Manage the help queue.** Help lists immediate requests oldest first. Acknowledge tells the student You’re on my list; Mark helped finishes the request. Students can edit a request without losing their place or withdraw it. Questions for later are separate: add a group label, answer, then mark answered. Requests and questions stay private to authorized staff.
 3. **Message any student from the class roster.** Messages lists your whole class in the same order as the student tiles, even when the grid is searched or filtered to a group. Each line shows a mark, a name, an unread count and at most one status: Absent, Not signed in, or “With” followed by the staff member supervising the student elsewhere. A filled dot means the student’s device is reporting now; a hollow ring means it is not reporting. The list never shows message text, so it can stay on a projector, but an open conversation and new-message alerts do show what students wrote. Choose a student to open the conversation with the message box ready to type, or type in Find a student and press Enter when only one student matches; Esc clears Find. A message to a signed-out student waits until they sign in during this class. The N need reply button opens the student who has waited longest for an answer you can send. A conversation with a student who is with another staff member can be read but not answered until they return. Conversations with students who are no longer in the class appear under Other conversations, where you can read them but not reply.
 4. **Keep conversations in context.** Messages keeps quick replies, Got it, delivery and Seen indicators, per-student drafts, transcripts, and readiness explanations. A tile’s Message button or unread badge also opens that student. Announce to class opens one message for every reporting student; when students are ticked or a group is selected, the button names them instead, such as Message 3 selected students or Message Reading table. If the Dashboard clears your ticks itself, for example when a ticked student stops reporting, the button reads Selection cleared · choose students again until you choose students, a group or the whole class. Switching tools preserves your draft without marking incoming messages read. Pause stops new student messages while allowing your replies. Turning messaging off for the class is stronger, and so is your school turning it off: Messages then lists only existing conversations, which you can read but not answer, and turning the class back on cannot override the school. A conversation you had started but not sent closes, and its draft is kept for when messaging is back on. Clear thread and End chat for student remain separate actions. A real classroom or account change clears outgoing drafts.
@@ -231,7 +232,7 @@ Claim students within your authorized scope, use the Dashboard tools, and releas
 
 End the session, review outcomes, and know when an administrator must help.
 
-1. **Check temporary controls.** Ending class clears Waypoints, Flight Paths, and other session controls automatically. Lift anything sooner only if students need it before the bell, then end class and wait for the session to close.
+1. **Check temporary controls.** Ending class clears Focus, Flight Paths, and other session controls automatically. Lift anything sooner only if students need it before the bell, then end class and wait for the session to close.
 2. **Review the summary.** Check the session summary and any pending or unavailable outcomes that need later follow-up.
 3. **Retry connection issues once.** Resync the class after a student reconnects. Do not repeatedly broadcast a command while the student remains unavailable.
 4. **Escalate policy issues.** Ask an administrator for help with extension versions, school blocks, managed configuration, provider policy, setup keys, or official roster and schedule changes.

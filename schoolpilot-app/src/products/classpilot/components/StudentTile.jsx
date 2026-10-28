@@ -6,14 +6,6 @@ import { Button } from "../../../components/ui/button";
 import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, LoaderCircle, Layers, Maximize2, X, List, RotateCcw, EyeOff, UserRound, MessageSquare } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "../../../components/ui/dropdown-menu";
-import {
   deriveScreenshotDisplay,
   deriveScreenshotHealthDisplay,
   deriveScreenshotPreviewMode,
@@ -111,9 +103,8 @@ function StudentTile({
   commandPending = false,
   commandError = "",
   canLockScreen = true,
-  canFocusTab = true,
-  canStopFocus = true,
-  canClearWaypoint = canLockScreen,
+  canSetFocus = canLockScreen,
+  canStopFocus = canLockScreen,
   canRemoveFlightPath = true,
   canTempUnblock = false,
   actionsDisabled = false,
@@ -347,10 +338,9 @@ function StudentTile({
   // authorized route when monitoring is lost, including saved offline Focus.
   const lockControl = deriveTileLockControl(student, {
     lockOperation,
-    canFocusTab,
+    canSetFocus,
     focusTelemetryCurrent: currentTelemetry,
     canStopFocus,
-    canClearWaypoint,
     actionsDisabled: actionsDisabled || monitoringSuppressed || nonSignOutCommandsBlocked || restrictionSelectionActive,
     actionsDisabledReason: unavailableActionReason,
   });
@@ -502,7 +492,7 @@ function StudentTile({
       disabled={lockControl.disabled || !onLockAction || commandPending}
       onClick={(event) => {
         event.stopPropagation();
-        if (lockControl.disabled || !onLockAction || commandPending || lockControl.menu) return;
+        if (lockControl.disabled || !onLockAction || commandPending) return;
         onLockAction(lockControl.action);
       }}
       aria-label={lockControl.label}
@@ -618,37 +608,7 @@ function StudentTile({
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            {!monitoringSuppressed ? lockControl.menu ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>{lockButton}</DropdownMenuTrigger>
-                <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-                  <DropdownMenuLabel>Focus and Waypoint</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    disabled={lockControl.stopFocusDisabled || !onLockAction || commandPending}
-                    onSelect={() => onLockAction?.('stop-focus')}
-                    data-testid={`lock-action-stop-focus-${student.studentId}`}
-                  >
-                    Stop Focus
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={lockControl.clearWaypointDisabled || !onLockAction || commandPending}
-                    onSelect={() => onLockAction?.('clear-waypoint')}
-                    data-testid={`lock-action-clear-waypoint-${student.studentId}`}
-                  >
-                    Clear Waypoint
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    disabled={lockControl.stopBothDisabled || !onLockAction || commandPending}
-                    onSelect={() => onLockAction?.('stop-both')}
-                    data-testid={`lock-action-stop-both-${student.studentId}`}
-                  >
-                    Stop Both
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : lockButton : null}
+            {!monitoringSuppressed ? lockButton : null}
           </div>
         </div>
 
@@ -674,14 +634,12 @@ function StudentTile({
           <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" role="alert" data-testid={`lock-operation-error-${student.studentId}`}>
             {lockOperation.error ? <p>{lockOperation.error}</p> : null}
             {failedLockOutcomes.map(([name, outcome]) => {
-              const startingFocus = name === 'focus' && lockOperation.action === 'focus-current-tab';
-              const action = name === 'waypoint' ? 'clear-waypoint' : startingFocus ? 'focus-current-tab' : 'stop-focus';
-              const label = name === 'waypoint' ? 'Clear Waypoint' : startingFocus ? 'Focus current tab' : 'Stop Focus';
+              const startingFocus = lockOperation.action === 'focus-current-page';
+              const action = startingFocus ? 'focus-current-page' : 'stop-focus';
+              const label = startingFocus ? 'Focus current website' : 'Stop Focus';
               const disabled = !onLockAction || commandPending || (startingFocus
-                ? interactionsDisabled || !canFocusTab || !lockControl.focusTarget.enabled || lockControl.busy || lockControl.focus.clearable
-                : name === 'waypoint'
-                  ? lockControl.clearWaypointDisabled || !lockControl.waypoint.clearable
-                  : lockControl.stopFocusDisabled || !lockControl.focus.clearable);
+                ? interactionsDisabled || !canSetFocus || !lockControl.focusTarget.enabled || lockControl.busy || lockControl.locked
+                : lockControl.stopFocusDisabled);
               return (
                 <div key={name} className="mt-1.5 space-y-1">
                   <p>{label}: {outcome.error || 'Not confirmed. Try again.'}</p>
@@ -717,7 +675,7 @@ function StudentTile({
                 aria-live="polite"
                 title={lockOperation?.phase || undefined}
                 variant="outline"
-                className={lockControl.focus.status === 'none' && lockControl.waypoint.status === 'none' && !lockControl.pending
+                className={!lockControl.locked && !lockControl.pending
                   ? 'sr-only'
                   : `text-[10px] px-2 py-0.5 ${lockControl.warning
                     ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'

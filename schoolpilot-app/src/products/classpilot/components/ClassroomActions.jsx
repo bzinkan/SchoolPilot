@@ -120,7 +120,7 @@ export default function ClassroomActions({ schoolId, viewerId, scopeKey, student
           <p className="text-sm text-muted-foreground">{resource.dueDate ? `Due ${resource.dueDate.year}-${String(resource.dueDate.month).padStart(2, '0')}-${String(resource.dueDate.day).padStart(2, '0')}` : 'No due date'}</p>
           {links.length ? <div><Label htmlFor="classroom-actions-open-url">Link to open</Label><select id="classroom-actions-open-url" className="w-full rounded border bg-background p-2" disabled={busy} value={openUrl} onChange={event => { setOpenUrl(event.target.value); setNotice(''); setOutcomes([]); }}>{links.map(link => <option key={link.id} value={link.url}>{link.title}</option>)}</select><p className="mt-1 break-all text-xs text-muted-foreground">{openUrl}</p></div> : <p>No usable browser links are available.</p>}
           <Button disabled={!canOpen} onClick={event => void run(event)}>{sendLabel('open', 'Open assignment')}</Button>
-          <p className="text-sm text-muted-foreground">Opens the selected link in a new tab. Existing browsing restrictions still apply. Use the Dashboard controls afterward if you want to set Focus or a Waypoint.</p>
+          <p className="text-sm text-muted-foreground">Opens the selected link in a new tab. Existing browsing restrictions still apply. Use Focus separately to keep students on an approved website or resource.</p>
         </>}
         {busy && <p role="status">Waiting for per-student browser results…</p>}
         {notice && <p role="status" className="text-sm">{notice}</p>}

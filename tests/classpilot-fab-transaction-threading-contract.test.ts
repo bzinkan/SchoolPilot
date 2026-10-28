@@ -22,9 +22,19 @@ test("WebSocket FAB bootstrap reuses its transaction fence for every authority r
   const websocketFab = section(
     websocket,
     "const fab = await buildStudentFabState",
-    "const [classroomStateRow, ssoPolicy] = await Promise.all",
+    "const [storedClassroomStateRow, ssoPolicy] = await Promise.all",
   );
   assert.match(websocketFab, /dbInstance: transactionDb/);
+  const bootstrapControl = section(
+    websocket,
+    "const [storedClassroomStateRow, ssoPolicy] = await Promise.all",
+    "const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection",
+  );
+  assert.match(bootstrapControl, /getClasspilotStudentControlState\(\s*schoolId,\s*payload\.studentId,\s*transactionDb\s*\)/);
+  assert.match(bootstrapControl, /getClasspilotSsoPolicyForSchool\(schoolId, transactionDb\)/);
+  assert.match(bootstrapControl, /const classroomStateRow = await retireLegacyTabFocusForStudentLocked\(transactionDb,\s*\{ schoolId, studentId: payload\.studentId, state: storedClassroomStateRow \?\? null, reason: "reconnect" \}\)/);
+  assert.doesNotMatch(bootstrapControl, /\b(?:db|transactionDb)\.transaction\(/);
+  assert.match(websocket, /const classroomStateRow = await retireLegacyTabFocusForStudentLocked\(transactionDb,[\s\S]*?const screenshotTrackingAuthority = await getClasspilotScreenshotAuthorityProjection\([\s\S]*?\}, transactionDb\);\s*const authDelivery = classroomStateRow\s*\? serializeClasspilotStudentControlStateForDelivery\(\{\s*state: classroomStateRow/);
 
   const buildState = section(
     fab,

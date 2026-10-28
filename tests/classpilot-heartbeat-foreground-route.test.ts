@@ -26,17 +26,21 @@ const executable = ts.transpileModule(`async function heartbeat() {
 
 type Fields = Record<string, unknown>;
 type Foreground = { publish: () => Promise<void>; onFailure: () => void };
-type Mode = "fallback" | "published" | "partial" | "suppressed" | "unauthorized" | "prepare-throws" | "final-fence-throws";
+type Mode = "fallback" | "published" | "partial" | "suppressed" | "unauthorized" | "prepare-throws" | "retirement-throws" | "final-fence-throws";
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(done => { resolve = done; });
   return { promise, resolve };
 }
 
-function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?: boolean; failFallback?: boolean; nullClassification?: boolean } = {}) {
+function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?: boolean; holdRetirement?: boolean; failFallback?: boolean; nullClassification?: boolean } = {}) {
   const order: string[] = [], frames: Fields[] = [], historical: Fields[] = [], tracked: Promise<unknown>[] = [];
   const counters: string[] = [], phaseCounters: Array<{ name: string; operation: string }> = [];
   const release = deferred(), publication = deferred(), authorityReady = deferred();
+  const retirement = deferred(), retirementStarted = deferred();
+  const transactionDb = { fixture: "final-delivery-transaction" };
+  const storedControlState = { revision: 3, desiredState: { restrictions: { focus: { active: true } } }, teachingSessionId: "class" };
+  const retiredControlState = { ...storedControlState, revision: 4, desiredState: { restrictions: {} } };
   let held = false, foregroundAttempts = 0, fallbackCalls = 0;
   const snapshot = { revision: 3, observedAt: 1000, activeTabUrl: "https://www.ixl.com/math", heartbeatId: "heartbeat",
     state: "active", schoolId: "school", studentId: "student", studentSessionId: "login", deviceId: "device" };
@@ -105,7 +109,13 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
       deliver: (rows: never[], prepared: Fields) => unknown, recovery: unknown, foreground: Foreground) {
       assert.equal(binding.freezeSsoPolicy, true); assert.equal(recovery, undefined);
       assert.ok(foreground, "negotiated ordinary teaching must reach the owned publication path");
-      const prepared = await prepare({}, async () => ({ authority: { kind: "teaching_session", teachingSessionId: "class", controlRevision: 3 } }));
+      const prepared = await prepare(transactionDb, async () => {
+        assert.equal(held, true);
+        assert.ok(order.includes("focus-retired"), "authority projection must follow retirement");
+        return { authority: { kind: "teaching_session", teachingSessionId: "class", controlRevision: 4 } };
+      });
+      assert.equal(prepared.privateReplyControlRevision, retiredControlState.revision);
+      assert.equal((prepared.deliveredFab as Fields).ownershipRevision, retiredControlState.revision);
       authorityReady.resolve();
       if (mode === "unauthorized") return { authorized: false, foreground: { status: "suppressed" } };
       let result: { status: string; succeeded?: boolean } = { status: mode === "fallback" ? "fallback" : "suppressed" };
@@ -116,19 +126,60 @@ function fixture(mode: Mode, options: { holdRelease?: boolean; holdPublication?:
       if (mode === "final-fence-throws") throw new Error("synthetic mandatory entitlement failure");
       return { authorized: true, value: deliver([], prepared), foreground: result };
     },
-    async getClasspilotStudentControlDeliveryContext() { if (mode === "prepare-throws") throw new Error("synthetic required preparation failure"); return { controlState: { revision: 3, desiredState: {}, teachingSessionId: "class" }, ssoPolicy: { revision: 1, policy: {} } }; },
-    serializeClasspilotStudentControlStateForDelivery() { return { classroomState: { revision: 3 }, withheld: false }; },
-    isClasspilotCapabilityActive() { return true; }, async buildStudentFabState() { return { synthetic: true }; },
+    async getClasspilotStudentControlDeliveryContext(schoolId: string, studentId: string, database: object) {
+      assert.equal(held, true); assert.equal(database, transactionDb);
+      assert.equal(schoolId, "school"); assert.equal(studentId, "student"); order.push("control-read");
+      if (mode === "prepare-throws") throw new Error("synthetic required preparation failure");
+      return { controlState: storedControlState, ssoPolicy: { revision: 1, policy: {} } };
+    },
+    async retireLegacyTabFocusForStudentLocked(database: object, value: Fields) {
+      assert.equal(held, true); assert.equal(database, transactionDb);
+      assert.equal(value.schoolId, "school"); assert.equal(value.studentId, "student");
+      assert.equal(value.state, storedControlState); assert.equal(value.reason, "reconnect");
+      order.push("focus-retirement-start"); retirementStarted.resolve();
+      if (mode === "retirement-throws") throw new Error("synthetic legacy retirement failure");
+      if (options.holdRetirement) await retirement.promise;
+      assert.equal(held, true); order.push("focus-retired"); return retiredControlState;
+    },
+    serializeClasspilotStudentControlStateForDelivery(value: Fields) {
+      assert.equal(held, true); assert.equal(value.state, retiredControlState);
+      assert.ok(order.includes("focus-retired")); order.push("serialize");
+      return { classroomState: { revision: retiredControlState.revision }, withheld: false };
+    },
+    isClasspilotCapabilityActive() { return true; },
+    async buildStudentFabState(_schoolId: string, _studentId: string, value: Fields) {
+      assert.equal(held, true); assert.equal(value.dbInstance, transactionDb); return { synthetic: true };
+    },
     async resolveClasspilotScreenshotPolicy() { return { enabled: false }; },
-    classpilotScreenshotAuthorityForDeliveredControl(value: Fields) { return value; },
+    classpilotScreenshotAuthorityForDeliveredControl(value: Fields) {
+      assert.equal(value.deliveredControlRevision, retiredControlState.revision); return value;
+    },
     trackingSettings: {}, heartbeatObservationStatus: "active", req: { body: {} },
     classpilotControlStateExactBinding(value: Fields) { return value; },
   };
   const run: () => Promise<unknown> = runInNewContext(executable, context);
   return { run, order, frames, historical, counters, phaseCounters, authorityReady: authorityReady.promise,
     release: release.resolve, releasePublication: publication.resolve,
+    retirementStarted: retirementStarted.promise, releaseRetirement: retirement.resolve,
     snapshot: () => ({ held, fallbackCalls, foregroundAttempts }), drain: async () => { await Promise.all(tracked); } };
 }
+
+test("reconnect retirement finishes under the same lease before projection and foreground delivery", async () => {
+  const f = fixture("published", { holdRetirement: true });
+  const running = f.run();
+  try {
+    await f.retirementStarted; await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(f.snapshot().held, true);
+    assert.equal(f.order.includes("serialize"), false);
+    assert.equal(f.snapshot().foregroundAttempts, 0);
+    assert.equal(f.order.includes("http:ok"), false);
+    assert.equal(f.order.includes("commit-reset"), false);
+  } finally { f.releaseRetirement(); await running; await f.drain(); }
+  assert.ok(f.order.indexOf("control-read") < f.order.indexOf("focus-retired"));
+  assert.ok(f.order.indexOf("focus-retired") < f.order.indexOf("serialize"));
+  assert.ok(f.order.indexOf("serialize") < f.order.indexOf("foreground"));
+  assert.ok(f.order.indexOf("released") < f.order.indexOf("ai-publication"));
+});
 
 test("unsupported foreground proof falls back only after COMMIT/RESET/tenant release", async () => {
   const f = fixture("fallback", { holdRelease: true });
@@ -185,8 +236,8 @@ test("fallback failure drains historical work and records both counters without 
   assert.deepEqual(f.phaseCounters, [{ name: "heartbeatOptionalTelemetryFailures", operation: "heartbeat_background" }]);
 });
 
-for (const mode of ["prepare-throws", "final-fence-throws"] as const) test(`${mode} settles the actual outer barrier without fallback or newer AI publication`, async () => {
-  const f = fixture(mode); await assert.rejects(f.run(), /synthetic (required preparation|mandatory entitlement) failure/); await f.drain();
+for (const mode of ["prepare-throws", "retirement-throws", "final-fence-throws"] as const) test(`${mode} settles the actual outer barrier without fallback or newer AI publication`, async () => {
+  const f = fixture(mode); await assert.rejects(f.run(), /synthetic (required preparation|legacy retirement|mandatory entitlement) failure/); await f.drain();
   assert.equal(f.snapshot().held, false); assert.equal(f.snapshot().fallbackCalls, 0); assert.equal(f.historical.length, 1);
   assert.equal(f.frames.some(frame => frame.type === "ai-classification"), false);
   assert.equal(f.frames.length, mode === "final-fence-throws" ? 1 : 0);

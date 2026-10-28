@@ -12,6 +12,7 @@ FORBIDDEN_TERMS = (
     "camera monitoring",
     "ip allowlist",
     "manual device assignment",
+    "waypoint",
 )
 
 
@@ -47,7 +48,8 @@ def install_routes(context, payload):
 
 
 def assert_no_retired_copy(page):
-    copy = page.locator("main").inner_text().lower()
+    # The admin shell adds an outer main; inspect the guide content itself.
+    copy = page.locator("main").last.inner_text().lower()
     for term in FORBIDDEN_TERMS:
         assert term not in copy, f"retired guide term rendered: {term}"
 
@@ -59,14 +61,15 @@ def exercise_teacher(browser, screenshot_dir):
     page.emulate_media(reduced_motion="reduce")
     page.goto(f"{BASE_URL}/classpilot/my-settings/guide", wait_until="networkidle")
     expect(page.get_by_role("heading", name="Teach with a clear route from bell to wrap-up.")).to_be_visible()
-    expect(page.get_by_role("link", name="Teacher Guide")).to_have_attribute("aria-current", "page")
+    expect(page.get_by_role("navigation", name="Teaching tools sections")).to_be_visible()
+    expect(page.get_by_role("link", name="Website tools", exact=True)).to_have_attribute("href", "/classpilot/my-settings?section=websites")
     assert page.locator('a[href^="/classpilot/admin"], a[href="/classpilot/settings"]').count() == 0
     assert_no_retired_copy(page)
 
     search = page.get_by_role("textbox", name="Search the flight plan")
     search.fill("signed out")
     expect(page.locator("#guide-search-results")).to_contain_text("matching “signed out”")
-    expect(page.get_by_role("heading", name="Use Waypoints and Flight Paths")).to_be_visible()
+    expect(page.get_by_role("heading", name="Use Focus and Flight Paths")).to_be_visible()
     search.fill("no-route-should-match-this")
     expect(page.get_by_role("heading", name="No route matches that search")).to_be_visible()
     page.get_by_role("button", name="Clear search").click()
@@ -100,8 +103,8 @@ def exercise_admin(browser, screenshot_dir, entitled):
     install_routes(context, auth_payload("school_admin", mailpilot_entitled=entitled))
     page = context.new_page()
     page.goto(f"{BASE_URL}/classpilot/settings/guide?topic=student-sign-in-policy", wait_until="networkidle")
-    expect(page.get_by_role("heading", name="Launch, govern, and support the whole ClassPilot program.")).to_be_visible()
-    expect(page.get_by_role("link", name="Admin Guide")).to_have_attribute("aria-current", "page")
+    expect(page.get_by_role("heading", name="Admin guide", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Admin guide", exact=True)).to_have_attribute("aria-current", "page")
     expect(page.locator("#topic-student-sign-in-policy summary")).to_be_focused()
     expect(page.get_by_text("restrictionPortalFirstV1", exact=False)).to_be_visible()
     assert_no_retired_copy(page)

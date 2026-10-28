@@ -78,7 +78,7 @@ import {
 } from "../../services/classpilotCoverageSummary.js";
 import { scheduledSupervisionSource, scheduledContextHasClassroomTools, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { SCHEDULED_CLASSROOM_COMMANDS } from "../../services/classpilotDashboardActivity.js";
-import { assertExactFocusTargetScope, type ClasspilotExactTabTarget } from "../../services/classpilotFocus.js";
+import { assertExactFocusTargetScope, assertLegacyTabFocusNotRetired, type ClasspilotExactTabTarget } from "../../services/classpilotFocus.js";
 import { validateClasspilotCommandPayload } from "../../services/classpilotCommandValidation.js";
 import { supervisionActivityPresentation } from "../../services/classpilotSupervisionPurpose.js";
 import { classpilotSupervisionPreviewObserved } from "../../config/classpilotSupervisionPreviewRollout.js";
@@ -2410,6 +2410,7 @@ router.post("/coverage/contexts/:id/commands", ...auth, requireClasspilotFullMon
     }
 
     const commandType = String(req.body.commandType || "").trim();
+    assertLegacyTabFocusNotRetired(commandType, req.body.commandPayload);
     // A context carrying classroom tools accepts the full class command set; the
     // dispatcher re-checks that authority, so this must never be the narrower gate.
     const classroomTools = scheduledContextHasClassroomTools(context);

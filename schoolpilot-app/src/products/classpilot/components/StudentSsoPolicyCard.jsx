@@ -359,7 +359,7 @@ function PolicyEditor({ response: incoming, refetch, queryKey }) {
       <div className="flex flex-col gap-4 rounded-xl border-2 border-slate-800 bg-slate-950 p-4 text-white sm:flex-row sm:items-center sm:justify-between dark:border-slate-600">
         <div>
           <Label htmlFor="waypoint-student-sign-in" className="text-sm font-semibold text-white">
-            Enable the Student Portal during Waypoints and Flight Paths
+            Enable the Student Portal during Focus and Flight Paths
           </Label>
           <p id="waypoint-student-sign-in-description" className="mt-1 max-w-2xl text-sm text-slate-300">
             After ClassPilot sign-in, students start at the selected portal. Approved provider hosts remain available for authentication and portal launch; learning sites stay limited to the teacher’s approved destinations.
@@ -378,7 +378,7 @@ function PolicyEditor({ response: incoming, refetch, queryKey }) {
         <div>
           <Label htmlFor="sso-default-provider" className="font-semibold">First portal after ClassPilot sign-in</Label>
           <p className="mt-1 text-sm text-muted-foreground">
-            Choose Clever to open it first while a Waypoint or Flight Path is active. Completing provider sign-in does not automatically open a learning site; the student chooses an approved destination.
+            Choose Clever to open it first while Focus or a Flight Path is active. Completing provider sign-in does not automatically open a learning site; the student chooses an approved destination.
           </p>
         </div>
         <Select
@@ -503,7 +503,7 @@ export function StudentSsoPolicyCard({ canManage }) {
           <KeyRound className="h-5 w-5 text-amber-300" /> Student Portal & Sign-In
         </CardTitle>
         <CardDescription className="relative max-w-2xl text-slate-300">
-          Set up the student’s starting point after ClassPilot sign-in. Students can launch the teacher-approved sites for their active Waypoint or Flight Path.
+          Set up the student’s starting point after ClassPilot sign-in. Students can launch the teacher-approved destinations allowed by Focus or their active Flight Path.
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-6">

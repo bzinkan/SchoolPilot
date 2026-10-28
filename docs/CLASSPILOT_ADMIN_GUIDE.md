@@ -207,9 +207,9 @@ Apply the standard Chrome and sign-in policies that force-install ClassPilot and
 
 **Who can use this:** Administrator or school administrator
 
-Choose the portal students open after ClassPilot sign-in while their Waypoint or Flight Path remains active.
+Choose the portal students open after ClassPilot sign-in while Focus or a Flight Path remains active.
 
-1. **Open Admin Panel → Settings → Student portal.** Review rollout and Chromebook readiness, then enable the Student Portal for active Waypoints and Flight Paths. Only school administrators can configure it.
+1. **Open Admin Panel → Settings → Student portal.** Review rollout and Chromebook readiness, then enable the Student Portal during Focus and Flight Paths. Only school administrators can configure it.
 2. **Choose Clever as the first portal.** Select Clever under First portal after ClassPilot sign-in to start restricted students there. They then choose a teacher-approved learning destination from the portal; completing provider sign-in does not automatically send them to a learning site.
 3. **Configure providers.** Use the built-in Google or Clever profile, enter the district Clever launch address when required, or add a bounded custom provider for the school’s identity system.
 4. **Approve exact hosts.** Prefer exact hostnames. Allow subdomains only when the provider genuinely requires them. Lookalikes, wildcards, public suffixes, local addresses, and unsafe URLs are rejected.

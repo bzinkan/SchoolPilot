@@ -186,9 +186,8 @@ import { chatStudentName, countUnreadByStudent, deriveChatConversations, describ
 import { broadcastButtonLabel, buildMessagingRoster } from '../lib/chatRoster';
 import { compareStudentsByLastName } from '../lib/studentOrder';
 import { mergeCommandUpdateIntoBatches, mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
-import { currentTabFocusTarget, deriveTileLockControl, exactFocusPayload, focusCommandFeedback, focusPayloadForStudents, focusStatusLabel, focusTabCapability, tileFocusLifecycleObserved } from '../lib/focusControls';
-import { runTileLockAction, tileLockAuthorityKey, tileLockCommandOutcome } from '../lib/tileLockActions';
-import { classroomCommands } from '../lib/classroomActions';
+import { currentPageFocusTarget, deriveTileLockControl, exactTabPayload, tabActionFeedback, exactTabPayloadForStudents, exactTabCapability, tileFocusLifecycleObserved, tileFocusTelemetryObservedAt } from '../lib/focusControls';
+import { runTileLockAction, tileLockAuthorityKey } from '../lib/tileLockActions';
 import {
   classpilotObservationSessionEligible,
   claimedPreviewContextsFromRoster,
@@ -1129,27 +1128,28 @@ export default function Dashboard() {
   const contextAuthorityRevision = effectiveActivity?.contextAuthorityRevision ?? effectiveActivity?.authority?.contextAuthorityRevision ?? null;
   const effectiveAuthorityKey = JSON.stringify([activityAuthorityKey(effectiveAuthority), contextAuthorityRevision]);
   const activityScopeKey = JSON.stringify([classReaderKey, effectiveAuthorityKey]);
-  const focusControlScopeKey = JSON.stringify([activityScopeKey, studentView,
+  const commandControlScopeKey = JSON.stringify([activityScopeKey, studentView,
     studentView === 'claimed' ? claimedPickupStudents.map((student) => [student.studentId, student.contextId,
       student.contextAuthorityRevision ?? student.supervisionContext?.contextAuthorityRevision ?? null]).sort() : []]);
-  const focusControlScopeRef = useRef(focusControlScopeKey);
-  const focusCommandUpdatesRef = useRef(new Map());
-  const [lastFocusResult, setLastFocusResult] = useState(null);
+  const commandControlScopeRef = useRef(commandControlScopeKey);
+  const tabCommandUpdatesRef = useRef(new Map());
+  const [lastTabActionResult, setLastTabActionResult] = useState(null);
   useLayoutEffect(() => {
-    focusControlScopeRef.current = focusControlScopeKey;
+    commandControlScopeRef.current = commandControlScopeKey;
     knownClassroomCommandIdsRef.current.clear();
     for (const request of tileLockRequestsRef.current.values()) request.controller.abort();
     tileLockRequestsRef.current.clear();
     setTileLockOperations({});
-    focusCommandUpdatesRef.current.clear();
-    setLastFocusResult(null);
+    tabCommandUpdatesRef.current.clear();
+    setLastTabActionResult(null);
     setShowCloseTabsDialog(false);
     setShowStopFocusDialog(false);
-    setRecipientSnapshot((current) => ['manage-tabs', 'stop-focus'].includes(current?.kind) ? null : current);
+    setShowLockScreenDialog(false);
+    setRecipientSnapshot((current) => ['manage-tabs', 'stop-focus', 'lock-screen'].includes(current?.kind) ? null : current);
     setSelectedTabsToClose(new Set());
     setManageTabsStudentIds(null);
     setManageTabsTargetSnapshot('');
-  }, [focusControlScopeKey]);
+  }, [commandControlScopeKey]);
   const activityScopeRef = useRef(activityScopeKey);
   useLayoutEffect(() => { activityScopeRef.current = activityScopeKey; }, [activityScopeKey]);
   useLayoutEffect(() => { setShowRerouteDialog(false); }, [activityScopeKey, roomDialogScopeKey]);
@@ -2296,27 +2296,12 @@ export default function Dashboard() {
               })) return;
               void queryClient.invalidateQueries({ queryKey: [AUTOMATIC_FLIGHT_PATH_SESSION_KEY, activeSchoolIdRef.current] });
               const focusCommandId = message.commandId || publicCommand.id;
-              if (focusCommandId && ['activate-tab', 'focus-tab', 'stop-focus'].includes(publicCommand.commandType)) {
-                const updates = focusCommandUpdatesRef.current;
+              if (focusCommandId && publicCommand.commandType === 'activate-tab') {
+                const updates = tabCommandUpdatesRef.current;
                 updates.set(focusCommandId, message);
                 if (updates.size > 100) updates.delete(updates.keys().next().value);
               }
-              setLastFocusResult((current) => current ? mergeCommandUpdateIntoBatches([current], message)[0] : current);
-              setTileLockOperations((current) => {
-                let changed = false;
-                const next = Object.entries(current).map(([id, operation]) => {
-                  if (operation.source !== 'manage-tabs' || operation.outcomes?.focus?.commandId !== focusCommandId)
-                    return [id, operation];
-                  const target = (publicCommand.targets || message.targets || []).find((entry) => entry.studentId === id);
-                  if (!target) return [id, operation];
-                  changed = true;
-                  const outcome = tileLockCommandOutcome(target, operation.outcomes.focus.commandType, focusCommandId);
-                  return [id, { ...operation, outcomes: { focus: outcome },
-                    awaitingFocusLifecycle: operation.awaitingFocusLifecycle
-                      && !['failed', 'unavailable', 'expired'].includes(outcome.status) }];
-                });
-                return changed ? Object.fromEntries(next) : current;
-              });
+              setLastTabActionResult((current) => current ? mergeCommandUpdateIntoBatches([current], message)[0] : current);
 
               const before = transientCommandOutcomesRef.current;
               const tracked = trackTransientCommandResponse(
@@ -2992,7 +2977,9 @@ export default function Dashboard() {
       : deriveStudentMonitoringDisplay(student, freshnessNowMs);
     return display.telemetryCurrent || (
       allowSafetyUnlock
-      && student?.screenLocked === true
+      && (student?.screenLocked === true || student?.classroomState?.restrictions?.screenLock?.active === true
+        || student?.classroomState?.restrictions?.focus?.active === true
+        || ['active', 'suspended'].includes(student?.focus?.state))
       && studentSupportsCapability(student, 'screenOnlyUnlockV1')
     );
   };
@@ -3362,10 +3349,10 @@ export default function Dashboard() {
     commandType,
     commandPayload = {},
     { allowSafetyUnlock = false } = {},
-  ) => commandType === 'stop-focus' ? isStudentStructurallyCommandable(student) : (
+  ) => (
     (!scheduledSupervisionId || ['open-tab', 'close-tabs', 'lock-screen', 'unlock-screen', 'apply-flight-path', 'remove-flight-path', 'apply-block-list', 'remove-block-list', 'teacher-message'].includes(commandType)
       || studentSupportsScheduledClassroom(student))
-    && (isStudentCommandable(student, { allowSafetyUnlock })
+    && (isStudentCommandable(student, { allowSafetyUnlock: allowSafetyUnlock || (commandType === 'unlock-screen' && commandPayload.screenOnly === true) })
     || (
       commandSupportsLateSignInRestriction(commandType, commandPayload)
       && isStudentLateSignInRestrictionEligible(student)
@@ -4732,28 +4719,32 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     tileLockStudentsRef.current = new Map(rows.map((student) => [student.studentId, student]));
     for (const [id, request] of tileLockRequestsRef.current) {
       const student = tileLockStudentsRef.current.get(id);
-      if (!student || request.authorityKey !== tileLockAuthorityKey(focusControlScopeKey, student))
+      if (!student || request.authorityKey !== tileLockAuthorityKey(commandControlScopeKey, student))
         request.controller.abort();
-      else if (request.action === 'focus-current-tab' && tileFocusLifecycleObserved(student, request))
+      else if (request.action === 'focus-current-page' && tileFocusLifecycleObserved(student, request, monitoringDisplayFor(student).telemetryCurrent)) {
         request.focusLifecycleObserved = true;
+        if (student.screenLocked === true) request.focusConfirmedObservedAt = tileFocusTelemetryObservedAt(student);
+      }
     }
     setTileLockOperations((current) => {
       let changed = false;
       const entries = Object.entries(current).flatMap(([id, operation]) => {
         const student = tileLockStudentsRef.current.get(id);
-        if (!student || operation.authorityKey !== tileLockAuthorityKey(focusControlScopeKey, student)) {
+        if (!student || operation.authorityKey !== tileLockAuthorityKey(commandControlScopeKey, student)) {
           changed = true;
           return [];
         }
-        if (operation.awaitingFocusLifecycle && tileFocusLifecycleObserved(student, operation)) {
+        if (operation.awaitingFocusLifecycle && tileFocusLifecycleObserved(student, operation, monitoringDisplayFor(student).telemetryCurrent)) {
           changed = true;
-          return [[id, { ...operation, awaitingFocusLifecycle: false }]];
+          return [[id, { ...operation, awaitingFocusLifecycle: false,
+            focusConfirmedObservedAt: student.screenLocked === true
+              ? tileFocusTelemetryObservedAt(student) : operation.focusConfirmedObservedAt }]];
         }
         return [[id, operation]];
       });
       return changed ? Object.fromEntries(entries) : current;
     });
-  }, [claimedPickupStudents, sessionFilteredStudents, studentView, focusControlScopeKey]);
+  }, [claimedPickupStudents, sessionFilteredStudents, studentView, commandControlScopeKey, monitoringDisplayFor]);
   useEffect(() => () => {
     for (const request of tileLockRequestsRef.current.values()) request.controller.abort();
   }, []);
@@ -4863,7 +4854,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         : deriveStudentMonitoringDisplay(student, freshnessNowMs).telemetryCurrent
     ),
   );
-  const waypointDomainRestrictionMessage = restrictionMessageForStudents(explicitlySelectedStudents);
+  const waypointDomainRestrictionMessage = restrictionMessageForStudents(recipientSnapshotRows('lock-screen'));
+  const focusSignedOutRecipientCount = recipientSnapshotRows('lock-screen').filter(isStudentLateSignInRestrictionEligible).length;
   // Apply Flight Path describes the recipients it froze when it opened.
   const flightPathDomainRestrictionMessage = restrictionMessageForStudents(recipientSnapshotRows('flight-path'));
   const activeClassName = roomWorkspace ? roomActivity.name || 'My room' : studentView === "available"
@@ -5502,9 +5494,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const { request, target } = buildCommandRequest(commandType, commandPayload, options);
     const commandAuthorityKey = activityAuthorityKey(request);
     const commandScope = activityScopeKey;
-    const commandFocusScope = focusControlScopeKey;
+    const commandFocusScope = commandControlScopeKey;
     const data = await requestActivityApi('POST', '/commands', request);
-    if (commandScope !== activityScopeRef.current || commandFocusScope !== focusControlScopeRef.current
+    if (commandScope !== activityScopeRef.current || commandFocusScope !== commandControlScopeRef.current
       || commandAuthorityKey !== activityAuthorityKey(effectiveAuthorityRef.current)) {
       throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
     }
@@ -5517,18 +5509,18 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
   const postClaimedCommand = async (commandType, commandPayload, options = {}) => {
     const commandScope = activityScopeKey;
-    const commandFocusScope = focusControlScopeKey;
+    const commandFocusScope = commandControlScopeKey;
     const target = resolveActiveCommandTarget(options.studentIds ?? null, { commandType, commandPayload });
     const settlements = await Promise.allSettled(target.groups.map((group) =>
       apiRequest('POST', `/coverage/contexts/${group.id}/commands`, {
         targetScope: "students",
         targetStudentIds: group.targetStudentIds,
         commandType,
-        commandPayload: ['activate-tab', 'focus-tab'].includes(commandType)
-          ? focusPayloadForStudents(commandPayload, group.targetStudentIds) : commandPayload,
+        commandPayload: commandType === 'activate-tab'
+          ? exactTabPayloadForStudents(commandPayload, group.targetStudentIds) : commandPayload,
       })
     ));
-    if (commandScope !== activityScopeRef.current || commandFocusScope !== focusControlScopeRef.current) {
+    if (commandScope !== activityScopeRef.current || commandFocusScope !== commandControlScopeRef.current) {
       throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
     }
     const combined = combineCommandSettlements(settlements, target.groups, commandType);
@@ -5549,7 +5541,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     // Every caller names its students: a dialog's frozen list, a tile, or the
     // selection resolved when a one-click action was pressed. A missing list
     // is refused, never resolved from whatever happens to be selected by now.
-    if (Array.isArray(options.studentIds) && ['focus-tab', 'stop-focus', 'lock-screen', 'unlock-screen'].includes(commandType)
+    if (Array.isArray(options.studentIds) && ['lock-screen', 'unlock-screen'].includes(commandType)
       && options.studentIds.some((id) => {
         const activeRequest = tileLockRequestsRef.current.get(id);
         return activeRequest && activeRequest !== options.lockRequest;
@@ -5594,6 +5586,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     'block-list': setShowApplyBlockListDialog,
     'manage-tabs': setShowCloseTabsDialog,
     'stop-focus': setShowStopFocusDialog,
+    'lock-screen': setShowLockScreenDialog,
   };
   const captureRecipientSnapshot = (commandType, commandPayload = {}, overrideStudentIds = null) => snapshotCommandRecipients({
     target: resolveActiveCommandTarget(overrideStudentIds, { commandType, commandPayload }),
@@ -5664,6 +5657,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     'block-list': showApplyBlockListDialog,
     'manage-tabs': showCloseTabsDialog,
     'stop-focus': showStopFocusDialog,
+    'lock-screen': showLockScreenDialog,
   };
   // `open` hides the list while a closing dialog animates out, so a cleared
   // snapshot is never drawn as "no recipients" after a successful send.
@@ -5799,105 +5793,31 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     onSettled: (_data, _error, variables) => { if (variables?.recipients) releaseRecipientSend('manage-tabs'); },
   });
 
-  const focusMutation = useMutation({
-    onMutate: ({ type, tab, studentIds, recipients }) => {
-      if (!['focus-tab', 'stop-focus'].includes(type)) return { operations: {} };
-      const ids = recipients ? snapshotRecipientOptions(recipients).studentIds : type === 'stop-focus' ? studentIds : [tab?.studentId];
-      if (!Array.isArray(ids) || ids.some((id) => tileLockRequestsRef.current.has(id)))
-        throw new Error('Wait for this student’s lock action to finish.');
-      const operations = Object.fromEntries(ids.flatMap((id) => {
-        const student = tileLockStudentsRef.current.get(id);
-        if (!student) return [];
-        return [[id, { source: 'manage-tabs', requestToken: {}, action: type === 'focus-tab' ? 'focus-current-tab' : 'stop-focus',
-          authorityKey: tileLockAuthorityKey(focusControlScopeRef.current, student),
-          focusAssignmentId: student.classroomState?.restrictions?.focus?.assignmentId || student.focus?.assignmentId || null,
-          focusControlRevision: normalizedTileControlRevision(student),
-          awaitingFocusLifecycle: type === 'focus-tab', pending: true,
-          outcomes: { focus: { status: 'requesting', commandType: type } } }]];
-      }));
-      setTileLockOperations((current) => ({ ...current, ...operations }));
-      return { operations };
-    },
-    mutationFn: async ({ type, tab, studentIds, recipients }) => {
-      const scope = focusControlScopeKey;
-      const ids = recipients ? snapshotRecipientOptions(recipients).studentIds : type === 'stop-focus' ? studentIds : [tab?.studentId];
-      if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => !id)) {
-        throw new Error('Select a student before sending this command.');
-      }
-      if (ids.some((id) => tileLockRequestsRef.current.has(id)))
-        throw new Error('Wait for this student’s lock action to finish.');
-      const data = await postActiveCommand(type, type === 'stop-focus' ? {} : exactFocusPayload([tab]), { studentIds: ids });
-      if (scope !== focusControlScopeRef.current) throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
+  const bringForwardMutation = useMutation({
+    mutationFn: async ({ tab }) => {
+      const scope = commandControlScopeKey;
+      if (!tab?.studentId) throw new Error('Select a student before sending this command.');
+      const data = await postActiveCommand('activate-tab', exactTabPayload([tab]), { studentIds: [tab.studentId] });
+      if (scope !== commandControlScopeRef.current) throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
       return data;
     },
-    onSuccess: (data, variables, context) => {
-      const confirmed = [...focusCommandUpdatesRef.current.values()].reduce((current, message) => mergeCommandUpdateIntoBatches([current], message)[0], data);
-      toast(variables.recipients ? recipientDeliveryToast(focusCommandFeedback(confirmed, variables.type), variables.recipients) : focusCommandFeedback(confirmed, variables.type));
-      if (variables.recipients) closeRecipientDialog('stop-focus');
-      setLastFocusResult({ ...confirmed, type: variables.type });
-      setTileLockOperations((current) => {
-        const next = { ...current };
-        for (const [id, anchor] of Object.entries(context?.operations || {})) {
-          const student = tileLockStudentsRef.current.get(id);
-          if (!student || anchor.authorityKey !== tileLockAuthorityKey(focusControlScopeRef.current, student)
-            || current[id]?.requestToken !== anchor.requestToken) continue;
-          const command = classroomCommands(confirmed).find((entry) => entry.targets.some((target) => target.studentId === id));
-          const target = command?.targets.find((entry) => entry.studentId === id);
-          const outcome = target ? tileLockCommandOutcome(target, variables.type, command.id)
-            : { status: 'pending', commandType: variables.type };
-          next[id] = { ...anchor, pending: false, outcomes: { focus: outcome },
-            awaitingFocusLifecycle: anchor.awaitingFocusLifecycle
-              && current[id]?.awaitingFocusLifecycle !== false
-              && !tileFocusLifecycleObserved(student, anchor)
-              && !['failed', 'unavailable', 'expired'].includes(outcome.status) };
-        }
-        return next;
-      });
-      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
+    onSuccess: (data) => {
+      const confirmed = [...tabCommandUpdatesRef.current.values()].reduce((current, message) => mergeCommandUpdateIntoBatches([current], message)[0], data);
+      toast(tabActionFeedback(confirmed));
+      setLastTabActionResult(confirmed);
       void refetchStudents();
     },
-    onError: (error, _variables, context) => {
-      if (error?.name === 'AbortError') return;
-      setTileLockOperations((current) => {
-        const next = { ...current };
-        for (const [id, anchor] of Object.entries(context?.operations || {})) {
-          const student = tileLockStudentsRef.current.get(id);
-          if (!student || anchor.authorityKey !== tileLockAuthorityKey(focusControlScopeRef.current, student)
-            || current[id]?.requestToken !== anchor.requestToken) continue;
-          next[id] = { ...anchor, pending: false, awaitingFocusLifecycle: false,
-            outcomes: { focus: { status: 'failed', commandType: anchor.outcomes.focus.commandType, error: error.message } } };
-        }
-        return next;
-      });
-      toast({ variant: 'destructive', title: 'Command unavailable', description: error.message });
+    onError: (error) => {
+      if (error?.name !== 'AbortError') toast({ variant: 'destructive', title: 'Command unavailable', description: error.message });
     },
-    onSettled: (_data, _error, variables) => { if (variables?.recipients) releaseRecipientSend('stop-focus'); },
   });
 
   const handleStopFocus = (event) => {
-    if (focusMutation.isPending || recipientSendBusyRef.current === 'stop-focus') return;
-    const recipients = takeSnapshotRecipients('stop-focus', 'stop-focus', {}, { repeatGesture: event?.detail > 1 });
+    if (unlockScreenMutation.isPending || recipientSendBusyRef.current === 'stop-focus') return;
+    const recipients = takeSnapshotRecipients('stop-focus', 'unlock-screen', { screenOnly: true }, { repeatGesture: event?.detail > 1 });
     if (!recipients) return;
     recipientSendBusyRef.current = 'stop-focus';
-    focusMutation.mutate({ type: 'stop-focus', recipients });
-  };
-  const openStopFocus = () => {
-    // This owns a structural cohort, independently of the online tabs shown
-    // in Manage Tabs. Never use its close-tabs snapshot or a later live target.
-    const explicitIds = showCloseTabsDialog
-      ? manageTabsStudentIds || manageTabsRecipients?.ids
-      : null;
-    try {
-      if (showCloseTabsDialog && (!Array.isArray(explicitIds) || explicitIds.length === 0)) throw new Error(RECIPIENTS_MISSING_MESSAGE);
-      assertClassroomCommandSelectionIsolation('stop-focus', selectedServerSignOutStudentIds.size);
-      if (!dashboardCapabilities.allows('stop-focus')) return;
-      const snapshot = captureRecipientSnapshot('stop-focus', {}, explicitIds);
-      if (showCloseTabsDialog) closeManageTabsDialog();
-      setRecipientSnapshot({ kind: 'stop-focus', snapshot, unavailableIds: null, confirmIds: null, notice: '' });
-      setShowStopFocusDialog(true);
-    } catch (error) {
-      toast({ variant: 'destructive', title: 'Stop Focus unavailable', description: error.message });
-    }
+    unlockScreenMutation.mutate({ recipients });
   };
 
   const limitTabsMutation = useMutation({
@@ -5924,10 +5844,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const lockScreenMutation = useMutation({
     // The Entire website payload stays exactly { url }; only This resource
     // only adds a boundary, and the server derives the resource itself.
-    mutationFn: async ({ url, studentIds, boundary }) => postActiveCommand(
+    mutationFn: async ({ url, studentIds, boundary, recipients }) => postActiveCommand(
       'lock-screen',
       boundary === 'resource' ? { url, boundary } : { url },
-      { studentIds },
+      recipients ? snapshotRecipientOptions(recipients) : { studentIds },
     ),
     onSuccess: (data, variables) => {
       const skippedCount = Number(variables.skippedSignedOutCount || 0);
@@ -5937,7 +5857,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             description: `${data.message} ${skippedCount} signed-out student${skippedCount === 1 ? ' was' : 's were'} skipped because a current page is not available before sign-in.`,
           }
         : data.deliveryFeedback);
-      setShowLockScreenDialog(false);
+      closeRecipientDialog('lock-screen');
       // Auto-allow an explicit lock domain so on-task students aren't flagged.
       // A This-resource-only Waypoint never allows its whole domain: the
       // off-task check matches the resource itself.
@@ -5954,11 +5874,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       // This-resource-only links are validated on the server; show its reason.
       toast({ variant: "destructive", title: "Error", description: error?.response?.data?.error || error.message });
     },
+    onSettled: () => releaseRecipientSend('lock-screen'),
   });
 
   const unlockScreenMutation = useMutation({
-    mutationFn: async ({ studentIds } = {}) => postActiveCommand('unlock-screen', { screenOnly: true }, { studentIds }),
-    onSuccess: (data) => {
+    mutationFn: async ({ studentIds, recipients } = {}) => postActiveCommand('unlock-screen', { screenOnly: true }, recipients ? snapshotRecipientOptions(recipients) : { studentIds }),
+    onSuccess: (data, variables) => {
+      if (variables?.recipients) closeRecipientDialog('stop-focus');
       toast(data.deliveryFeedback);
       refreshScreenshotsForDevices();
     },
@@ -5966,6 +5888,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
+    onSettled: () => releaseRecipientSend('stop-focus'),
   });
 
   const handleOpenTab = (event) => {
@@ -6061,50 +5984,47 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setLockScreenBoundary("website");
     setLockScreenMode("current");
     setLockScreenUrl("");
+    const snapshot = captureRecipientSnapshot('lock-screen', {}, command.studentIds);
+    setRecipientSnapshot({ kind: 'lock-screen', snapshot, unavailableIds: null, confirmIds: null, notice: '' });
     setShowLockScreenDialog(true);
   };
 
   const waypointPreview = useRestrictionScopePreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
     enabled: showLockScreenDialog && lockScreenMode === 'url',
     input: { purpose: 'waypoint', boundary: preciseRestrictionResourcesEnabled ? lockScreenBoundary : 'website', url: lockScreenUrl.trim() },
-    context: [preciseRestrictionResourcesEnabled, Array.from(selectedStudentIds).sort(), activityScopeKey, effectiveAuthorityKey],
+    context: [preciseRestrictionResourcesEnabled, recipientSnapshot?.snapshot?.ids, activityScopeKey, effectiveAuthorityKey],
   });
   const waypointReviewRequired = lockScreenMode === 'url' && preciseRestrictionResourcesEnabled;
-  const handleConfirmLockScreen = () => {
+  const handleConfirmLockScreen = (event) => {
+    if (lockScreenMutation.isPending || recipientSendBusyRef.current === 'lock-screen') return;
     if (waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)) return;
-    const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
-    if (!command || !exactSelectedTargetsResolved) {
-      toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
-      return;
-    }
-    let url = command.commandPayload.url;
-    let studentIds = command.studentIds;
+    let url = 'CURRENT_URL';
     let skippedSignedOutCount = 0;
     if (lockScreenMode === "url") {
-      if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set as the waypoint" }); return; }
+      if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set for Focus" }); return; }
       url = waypointPreview.preview?.authoring.url || lockScreenUrl.trim();
       if (!url.match(/^https?:\/\//i)) url = 'https://' + url;
     } else {
       const partition = partitionCurrentPageWaypointTargets(
-        explicitlySelectedStudents,
+        recipientStudents().filter(student => recipientSnapshot?.snapshot?.ids?.includes(student.studentId)),
         (student) => monitoringDisplayFor(student).telemetryCurrent,
       );
-      studentIds = partition.targetStudentIds;
       skippedSignedOutCount = partition.skippedStudentIds.length;
-      if (studentIds.length === 0) {
+      if (partition.targetStudentIds.length === 0) {
         toast({
           title: 'No current pages available',
-          description: `${skippedSignedOutCount} signed-out student${skippedSignedOutCount === 1 ? ' was' : 's were'} skipped. Choose a specific domain or URL to save a Waypoint before sign-in.`,
+          description: `${skippedSignedOutCount} signed-out student${skippedSignedOutCount === 1 ? ' was' : 's were'} skipped. Choose a specific domain or URL to save Focus before sign-in.`,
         });
         return;
       }
     }
-    lockScreenMutation.mutate({
-      url,
-      studentIds,
-      skippedSignedOutCount,
-      boundary: lockScreenMode === "url" && preciseRestrictionResourcesEnabled ? lockScreenBoundary : "website",
-    });
+    const boundary = lockScreenMode === "url" && preciseRestrictionResourcesEnabled ? lockScreenBoundary : "website";
+    const payload = boundary === 'resource' ? { url, boundary } : { url };
+    const recipients = takeSnapshotRecipients('lock-screen', 'lock-screen', payload, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'lock-screen';
+    lockScreenMutation.mutate({ url, recipients, skippedSignedOutCount, boundary });
+
   };
 
   const handleUnlockScreen = () => {
@@ -6117,7 +6037,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       toast({ variant: "destructive", title: "Extension update required", description: "Every selected student must use a ClassPilot version that supports screen-only unlock." });
       return;
     }
-    unlockScreenMutation.mutate({ studentIds: command.studentIds });
+    const snapshot = captureRecipientSnapshot('unlock-screen', { screenOnly: true }, command.studentIds);
+    setRecipientSnapshot({ kind: 'stop-focus', snapshot, unavailableIds: null, confirmIds: null, notice: '' });
+    setShowStopFocusDialog(true);
   };
 
   // The toolbar's Manage Tabs (studentIds null) freezes the current target
@@ -6266,7 +6188,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const handleTileLockAction = async (studentId, action) => {
-    if (tileLockRequestsRef.current.has(studentId) || focusMutation.isPending) return;
+    if (tileLockRequestsRef.current.has(studentId)) return;
     if (nonRestrictionSelectionActive) {
       toast({ variant: 'destructive', title: 'Clear the current selection',
         description: 'Clear signed-out or sign-out-only selections before using an individual student action.' });
@@ -6274,37 +6196,33 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     }
     const student = tileLockStudentsRef.current.get(studentId);
     if (!student || !isStudentStructurallyCommandable(student)) return;
-    const scope = focusControlScopeRef.current;
+    const scope = commandControlScopeRef.current;
     const authorityKey = tileLockAuthorityKey(scope, student);
     const controller = new AbortController();
-    const focusAssignmentId = student.classroomState?.restrictions?.focus?.assignmentId
-      || student.focus?.assignmentId || null;
     const focusControlRevision = normalizedTileControlRevision(student);
-    const request = { authorityKey, controller, action, focusAssignmentId, focusControlRevision,
-      focusLifecycleObserved: false };
+    const focusObservedAt = tileFocusTelemetryObservedAt(student);
+    const request = { authorityKey, controller, action, focusControlRevision, focusObservedAt, focusLifecycleObserved: false };
     const previousOperation = tileLockOperations[studentId];
-    const carriedOutcomes = action === 'clear-waypoint'
-      && previousOperation?.focusAssignmentId === focusAssignmentId
-      && previousOperation?.outcomes?.focus?.status === 'completed'
-      && (['stop-focus', 'stop-both'].includes(previousOperation.action)
-        || previousOperation.outcomes.focus.commandType === 'stop-focus')
-      ? { focus: { ...previousOperation.outcomes.focus, commandType: 'stop-focus' } } : {};
     const assertCurrent = () => {
       const current = tileLockStudentsRef.current.get(studentId);
-      if (controller.signal.aborted || scope !== focusControlScopeRef.current || !current
+      if (controller.signal.aborted || scope !== commandControlScopeRef.current || !current
         || authorityKey !== tileLockAuthorityKey(scope, current))
         throw new DOMException('Classroom assignment changed', 'AbortError');
     };
     const update = (operation) => {
       assertCurrent();
-      if (action === 'focus-current-tab'
-        && tileFocusLifecycleObserved(tileLockStudentsRef.current.get(studentId), request))
+      request.outcomes = operation.outcomes;
+      const currentStudent = tileLockStudentsRef.current.get(studentId);
+      if (action === 'focus-current-page'
+        && tileFocusLifecycleObserved(currentStudent, request, monitoringDisplayFor(currentStudent).telemetryCurrent)) {
         request.focusLifecycleObserved = true;
-      const awaitingFocusLifecycle = action === 'focus-current-tab' && !request.focusLifecycleObserved
+        if (currentStudent.screenLocked === true) request.focusConfirmedObservedAt = tileFocusTelemetryObservedAt(currentStudent);
+      }
+      const awaitingFocusLifecycle = action === 'focus-current-page' && !request.focusLifecycleObserved
         && !operation.error && !['failed', 'unavailable', 'expired'].includes(operation.outcomes?.focus?.status);
       setTileLockOperations((current) => ({ ...current, [studentId]: {
-        ...operation, outcomes: { ...carriedOutcomes, ...operation.outcomes }, authorityKey, focusAssignmentId,
-        focusControlRevision, awaitingFocusLifecycle,
+        ...operation, authorityKey, focusControlRevision, focusObservedAt,
+        focusConfirmedObservedAt: request.focusConfirmedObservedAt, awaitingFocusLifecycle,
       } }));
     };
     tileLockRequestsRef.current.set(studentId, request);
@@ -6312,24 +6230,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const control = deriveTileLockControl(student, {
         lockOperation: previousOperation,
         focusTelemetryCurrent: monitoringDisplayFor(student).telemetryCurrent,
-        canFocusTab: dashboardCapabilities.allows('focus-tab') && isStudentCommandableForCommand(student, 'focus-tab'),
-        canStopFocus: dashboardCapabilities.allows('stop-focus') && isStudentStructurallyCommandable(student),
-        canClearWaypoint: dashboardCapabilities.allows('unlock-screen')
+        canSetFocus: dashboardCapabilities.allows('lock-screen') && isStudentCommandableForCommand(student, 'lock-screen', { url: 'CURRENT_URL' }),
+        canStopFocus: dashboardCapabilities.allows('unlock-screen')
           && isStudentCommandableForCommand(student, 'unlock-screen', { screenOnly: true }, { allowSafetyUnlock: true }),
       });
-      const actionDisabled = action === 'stop-both' ? control.stopBothDisabled
-        : action === 'stop-focus' ? control.stopFocusDisabled
-          : action === 'clear-waypoint' ? control.clearWaypointDisabled : control.disabled;
-      if (actionDisabled) throw new Error(control.reason);
-      const focusTarget = action === 'focus-current-tab' ? currentTabFocusTarget(student) : null;
+      if (control.disabled || control.action !== action) throw new Error(control.reason || 'Refresh the student before changing Focus.');
+      const focusTarget = action === 'focus-current-page' ? currentPageFocusTarget(student) : null;
       if (focusTarget && !focusTarget.enabled) throw new Error(focusTarget.reason);
-      const result = await runTileLockAction({ action, studentId, focusPayload: focusTarget?.payload,
+      const result = await runTileLockAction({ action, studentId,
         signal: controller.signal, assertCurrent, onUpdate: update,
         postCommand: async (type, payload, studentIds) => {
           assertCurrent();
           const data = await postActiveCommand(type, payload, { studentIds, lockRequest: request });
           assertCurrent();
-          if (type === 'focus-tab' || type === 'stop-focus') setLastFocusResult({ ...data, type });
           queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
           return data;
         },
@@ -6345,11 +6258,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const outcomes = Object.values(result.outcomes);
       const complete = outcomes.length > 0 && outcomes.every((outcome) => outcome.status === 'completed');
       const failed = outcomes.some((outcome) => ['failed', 'unavailable', 'expired'].includes(outcome.status));
-      toast({ title: action === 'stop-both' ? complete ? 'Focus and Waypoint stopped' : 'Stop Both: review results'
-        : complete ? 'Lock action confirmed' : failed ? 'Lock action not confirmed' : 'Lock action awaiting confirmation',
-      variant: failed ? 'destructive' : undefined,
-      description: Object.entries(result.outcomes).map(([kind, outcome]) =>
-        `${kind === 'focus' ? 'Focus' : 'Waypoint'}: ${outcome.status}${outcome.error ? ` — ${outcome.error}` : ''}`).join('. ') });
+      toast({ title: complete ? 'Focus change confirmed' : failed ? 'Focus change not confirmed' : 'Focus change awaiting confirmation',
+        variant: failed ? 'destructive' : undefined,
+        description: outcomes.map((outcome) => outcome.status + (outcome.error ? ' — ' + outcome.error : '')).join('. ') });
       void refetchStudents();
       queueTargetedScreenshotRefresh([studentId]);
     } catch (error) {
@@ -7412,13 +7323,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('open-tab', 'open-tab', { url: '' })} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('open-tab') && <ClassroomActions
-              key={focusControlScopeKey}
-              schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={focusControlScopeKey}
+              key={commandControlScopeKey}
+              schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={commandControlScopeKey}
               students={recipientStudents()}
               captureRecipients={() => captureRecipientSnapshot('open-tab')}
               availableRecipientIds={() => commandableRecipientIds('open-tab')}
               disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive}
-              assertCurrent={() => { if (focusControlScopeRef.current !== focusControlScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError'); }}
+              assertCurrent={() => { if (commandControlScopeRef.current !== commandControlScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError'); }}
               postCommand={(type, payload, studentIds) => postActiveCommand(type, payload, { studentIds })}
               readCommand={(command, signal) => {
                 const authority = activityAuthority(command) || activityAuthority({ teachingSessionId: command.sessionId }) || effectiveAuthority;
@@ -7427,9 +7338,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
               }}
             />}
-            {dashboardCapabilities.allows('stop-focus') && <Button size="sm" variant="outline" onClick={openStopFocus} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || selectionLossActive} title="Release tab Focus while keeping Waypoints, Flight Paths, and block lists in place" data-testid="button-stop-focus">Stop Focus</Button>}
-            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
-            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
+            {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Focus selected students on their current website or a specific destination' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Focus</Button>}
+            {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Stop Focus while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Stop Focus</Button>}
             {(dashboardCapabilities.allows('apply-flight-path') || flightPathMenuAvailable) && (
               <div className="inline-flex items-center" role="group" aria-label="Flight Path">
                 {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('flight-path', 'apply-flight-path')} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className={`relative focus-visible:z-10 text-purple-600 dark:text-purple-400${flightPathMenuAvailable ? ' rounded-r-none' : ''}`}><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
@@ -8026,9 +7936,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     onCommand={tileActionsDisabled ? undefined : handleTileCommand}
                     onLockAction={tileActionsDisabled ? undefined : (action) => tileLockActionRef.current?.(student.studentId, action)}
                     lockOperation={tileLockOperations[student.studentId]}
-                    canFocusTab={dashboardCapabilities.allows('focus-tab') && isStudentCommandableForCommand(student, 'focus-tab') && !focusMutation.isPending}
-                    canStopFocus={dashboardCapabilities.allows('stop-focus') && isStudentStructurallyCommandable(student) && !focusMutation.isPending}
-                    canClearWaypoint={dashboardCapabilities.allows('unlock-screen') && isStudentCommandableForCommand(student, 'unlock-screen', { screenOnly: true }, { allowSafetyUnlock: true }) && !focusMutation.isPending}
+                    canSetFocus={dashboardCapabilities.allows('lock-screen') && isStudentCommandableForCommand(student, 'lock-screen', { url: 'CURRENT_URL' })}
+                    canStopFocus={dashboardCapabilities.allows('unlock-screen') && isStudentCommandableForCommand(student, 'unlock-screen', { screenOnly: true }, { allowSafetyUnlock: true })}
                     commandPending={tileCommandState[student.studentId]?.pending === true}
                     commandError={supervisedElsewhere ? '' : tileCommandState[student.studentId]?.error || ''}
                     canLockScreen={dashboardCapabilities.allows('lock-screen') && dashboardCapabilities.allows('unlock-screen')}
@@ -8509,38 +8418,38 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       </Dialog>
 
       {/* Waypoint (lock-screen) Dialog */}
-      <Dialog open={showLockScreenDialog} onOpenChange={setShowLockScreenDialog}>
+      <Dialog open={showLockScreenDialog} onOpenChange={(open) => open ? setShowLockScreenDialog(true) : closeRecipientDialog('lock-screen')}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto" data-testid="dialog-lock-screen">
           <DialogHeader>
-            <DialogTitle>Set Waypoint</DialogTitle>
+            <DialogTitle>Set Focus</DialogTitle>
             <DialogDescription className="space-y-1">
-              <span className="block">Target: {targetBannerLabel}.</span>
               <span className="block" data-testid="waypoint-domain-preservation-message">
                 {waypointDomainRestrictionMessage}
               </span>
             </DialogDescription>
           </DialogHeader>
+          <CommandRecipients {...recipientDialogProps('lock-screen')} />
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm">
                 <input type="radio" name="lock-screen-mode" value="current" checked={lockScreenMode === "current"} onChange={() => setLockScreenMode("current")} data-testid="radio-lock-screen-current" />
-                Each student's current page
+                Each student's current website
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="radio" name="lock-screen-mode" value="url" checked={lockScreenMode === "url"} onChange={() => setLockScreenMode("url")} data-testid="radio-lock-screen-specific" />
                 A specific domain or URL for everyone
               </label>
             </div>
-            {lockScreenMode === "current" && selectedLateSignInRestrictionStudentIds.length > 0 && (
+            {lockScreenMode === "current" && focusSignedOutRecipientCount > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-300" data-testid="waypoint-current-page-skipped-count">
-                {selectedLateSignInRestrictionStudentIds.length} signed-out student{selectedLateSignInRestrictionStudentIds.length === 1 ? '' : 's'} will be skipped because no current page exists before sign-in. Choose a specific URL to save their Waypoint.
+                {focusSignedOutRecipientCount} signed-out student{focusSignedOutRecipientCount === 1 ? '' : 's'} will be skipped because no current page exists before sign-in. Choose a specific URL to save their Focus.
               </p>
             )}
             {lockScreenMode === 'current' && <p className="text-xs text-muted-foreground">Each signed-in student's current page is the starting point. Browsing stays on that student's website, which may differ for each student. Choose a specific link to review one shared resource or Section.</p>}
             {lockScreenMode === "url" && (
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
-                <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleConfirmLockScreen(); }} data-testid="input-lock-screen-url" />
+                <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (e.repeat) return; if (recipientConfirmPending('lock-screen')) focusRecipientSendButton(e); else handleConfirmLockScreen(e); } }} data-testid="input-lock-screen-url" />
                 <p className="text-xs text-muted-foreground">{preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
                   ? 'The full URL is the landing page. Review below to see the item or Section students can use.'
                   : DOMAIN_RESTRICTION_URL_HELP}</p>
@@ -8562,19 +8471,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowLockScreenDialog(false)} data-testid="button-cancel-lock-screen">Cancel</Button>
-            <Button onClick={handleConfirmLockScreen} disabled={lockScreenMutation.isPending || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('lock-screen')} data-testid="button-cancel-lock-screen">Cancel</Button>
+            <Button onClick={handleConfirmLockScreen} onKeyDown={ignoreHeldEnter} data-recipient-send="" disabled={lockScreenMutation.isPending || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />{recipientSendLabel('lock-screen', 'Set Focus')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={showStopFocusDialog} onOpenChange={(open) => open ? setShowStopFocusDialog(true) : closeRecipientDialog('stop-focus')}>
         <DialogContent data-testid="dialog-stop-focus">
-          <DialogHeader><DialogTitle>Stop Focus</DialogTitle><DialogDescription>Clear saved Focus for exactly these students, including students who reconnect later.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Stop Focus</DialogTitle><DialogDescription>Stop Focus for exactly these students, including students who reconnect later. Flight Paths and block lists stay in place.</DialogDescription></DialogHeader>
           <CommandRecipients {...recipientDialogProps('stop-focus')} />
           <DialogFooter>
             <Button variant="outline" onClick={() => closeRecipientDialog('stop-focus')}>Cancel</Button>
-            <Button disabled={focusMutation.isPending} onClick={handleStopFocus} onKeyDown={ignoreHeldEnter} data-recipient-send="" data-testid="button-confirm-stop-focus">{recipientSendLabel('stop-focus', 'Stop Focus')}</Button>
+            <Button disabled={unlockScreenMutation.isPending} onClick={handleStopFocus} onKeyDown={ignoreHeldEnter} data-recipient-send="" data-testid="button-confirm-stop-focus">{recipientSendLabel('stop-focus', 'Stop Focus')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -8598,15 +8507,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   {Object.values(openTabsByStudent).map((group) => (
                     <div key={group.studentId} className="bg-background">
                       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/40">
-                        <div className="min-w-0"><div className="text-sm font-semibold">{group.studentName || "Unnamed Student"}</div><p className="text-xs text-muted-foreground" data-testid={`focus-status-${group.studentId}`}>{focusStatusLabel(manageTabsStudents.find((student) => student.studentId === group.studentId))}</p></div>
-                        {dashboardCapabilities.allows('stop-focus') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => focusMutation.mutate({ type: 'stop-focus', studentIds: [group.studentId] })} disabled={focusMutation.isPending} data-testid={`button-stop-focus-${group.studentId}`}>Stop Focus</Button>}
+                        <div className="min-w-0 text-sm font-semibold">{group.studentName || "Unnamed Student"}</div>
                         <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => closeTabsMutation.mutate({ closeAll: true, studentIds: [group.studentId] })} disabled={closeTabsMutation.isPending}>
                           Close all (bulk)
                         </Button>
                       </div>
                       {group.tabs.map((tab, tabIndex) => {
                         const exactCapability = exactTabCloseCapability(tab);
-                        const focusCapability = focusTabCapability(tab);
+                        const tabCapability = exactTabCapability(tab);
                         const compositeKey = tabSelectionKey(tab);
                         const hostname = (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })();
                         return (
@@ -8618,8 +8526,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                               {!exactCapability.enabled ? <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{exactCapability.reason}</div> : null}
                             </div>
                             <div className="col-span-2 col-start-2 row-start-2 sm:col-span-1 sm:col-start-3 sm:row-start-1 flex flex-wrap gap-1">
-                              {dashboardCapabilities.allows('activate-tab') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={focusMutation.isPending || !focusCapability.enabled} title={focusCapability.reason || 'Bring this exact tab forward once'} onClick={() => focusMutation.mutate({ type: 'activate-tab', tab })} data-testid={`button-bring-forward-${tab.tabRef || tabIndex}`}>Bring Forward</Button>}
-                              {dashboardCapabilities.allows('focus-tab') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={focusMutation.isPending || !focusCapability.enabled} title={focusCapability.reason || 'Keep this exact tab focused until Focus ends'} onClick={() => focusMutation.mutate({ type: 'focus-tab', tab })} data-testid={`button-focus-tab-${tab.tabRef || tabIndex}`}>Focus</Button>}
+                              {dashboardCapabilities.allows('activate-tab') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={bringForwardMutation.isPending || !tabCapability.enabled} title={tabCapability.reason || 'Bring this exact tab forward once'} onClick={() => bringForwardMutation.mutate({ tab })} data-testid={`button-bring-forward-${tab.tabRef || tabIndex}`}>Bring Forward</Button>}
                             </div>
                             <Button type="button" variant="ghost" size="icon" className="col-start-3 row-start-1 sm:col-start-4 h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab)} disabled={closeTabsMutation.isPending || !exactCapability.enabled} title={exactCapability.reason || 'Close this exact tab'} data-testid={`button-close-tab-${tab.tabRef || tabIndex}`}>
                               <X className="h-4 w-4" />
@@ -8633,10 +8540,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               </>
             )}
           </div>
-          {lastFocusResult && <div className="rounded-md border p-3 text-sm space-y-1" aria-live="polite" data-testid="focus-command-results">
-            <p className="font-medium">{focusCommandFeedback(lastFocusResult, lastFocusResult.type).title}</p>
-            {(lastFocusResult.command?.targets || lastFocusResult.targets || []).map((target) => <p key={`${target.commandId || ''}:${target.studentId}`} data-testid={`focus-result-${target.studentId}`}>
-              {lastFocusResult.studentNames?.[target.studentId] || 'Student'}: {target.status || 'pending'}{target.errorMessage ? ` — ${target.errorMessage}` : ''}
+          {lastTabActionResult && <div className="rounded-md border p-3 text-sm space-y-1" aria-live="polite" data-testid="tab-command-results">
+            <p className="font-medium">{tabActionFeedback(lastTabActionResult).title}</p>
+            {(lastTabActionResult.command?.targets || lastTabActionResult.targets || []).map((target) => <p key={`${target.commandId || ''}:${target.studentId}`} data-testid={`tab-result-${target.studentId}`}>
+              {lastTabActionResult.studentNames?.[target.studentId] || 'Student'}: {target.status || 'pending'}{target.errorMessage ? ` — ${target.errorMessage}` : ''}
             </p>)}
           </div>}
           {dashboardCapabilities.allows('limit-tabs') && (
@@ -8663,7 +8570,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           )}
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={closeManageTabsDialog} data-testid="button-close-tabs-dialog">Done</Button>
-            {dashboardCapabilities.allows('stop-focus') && <Button variant="outline" disabled={focusMutation.isPending} onClick={openStopFocus} title="Review the exact students whose saved Focus will be cleared" data-testid="button-stop-focus-targets">Review Stop Focus</Button>}
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}
             {openTabs.length > 0 && <Button variant="destructive" onClick={handleCloseAllTabs} onKeyDown={ignoreHeldEnter} disabled={closeTabsMutation.isPending} title="Bulk close remains available for older extension versions" data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />{recipientSendLabel('manage-tabs', 'Close All Tabs (bulk)', 'close-all-tabs')}</Button>}
           </DialogFooter>
@@ -8752,7 +8658,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         {effectiveRestrictions.flightPathActive && (student.isLoggedIn || lateSignInTarget) ? (
                           <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
                         ) : effectiveRestrictions.screenLockActive && (student.isLoggedIn || lateSignInTarget) ? (
-                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !canClearWaypoint} title={canClearWaypoint ? 'Clear the waypoint (screen only)' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{canClearWaypoint ? 'Clear Waypoint' : 'Update Required'}</Button>
+                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending || !canClearWaypoint} title={canClearWaypoint ? 'Stop Focus (screen only)' : 'ClassPilot extension 2.6.0 or newer is required'} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />{canClearWaypoint ? 'Stop Focus' : 'Update Required'}</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>
                     </tr>

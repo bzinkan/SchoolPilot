@@ -289,54 +289,22 @@ const LOCK_CAPABILITIES = Object.freeze({
   focusTabV1: true,
   screenOnlyUnlockV1: true,
 });
-const LOCK_SCENARIOS = Object.freeze([
-  'none', 'focus', 'waypoint', 'both', 'suspended-attention', 'suspended-authentication',
-  'invalidated', 'outdated-ack', 'missing-ref', 'missing-revision', 'duplicate-ref',
-  'duplicate-url', 'unsupported', 'browser-page', 'stale', 'offline-focus', 'offline-waypoint',
-]);
-
+const LOCK_SCENARIOS = Object.freeze(['none', 'website', 'legacy', 'both', 'requested', 'releasing',
+  'missing-ref', 'missing-revision', 'unsupported', 'browser-page', 'stale', 'offline-focus', 'offline-website']);
 function lockStudent(scenario) {
-  const focusActive = ['focus', 'both', 'suspended-attention', 'suspended-authentication', 'offline-focus'].includes(scenario);
-  const waypointActive = ['waypoint', 'both', 'offline-waypoint'].includes(scenario);
-  const desiredFocusActive = focusActive || ['invalidated', 'outdated-ack'].includes(scenario);
-  const url = scenario === 'browser-page' ? 'chrome://settings' : ONLINE_STUDENT.activeTabUrl;
-  const currentTab = { tabRef: 'lock-current-tab', url, title: 'Current lesson' };
-  const allOpenTabs = [currentTab];
-  if (scenario === 'duplicate-ref') allOpenTabs.push({ ...currentTab, title: 'Ambiguous reference' });
-  if (scenario === 'duplicate-url') allOpenTabs.push({ ...currentTab, tabRef: 'same-url-other-tab', title: 'Same URL, different tab' });
-  const focus = scenario === 'invalidated'
-    ? { state: 'invalidated', assignmentId: 'current-focus', reason: 'focus_tab_closed' }
-    : scenario === 'outdated-ack'
-      ? { state: 'active', assignmentId: 'prior-focus' }
-      : scenario.startsWith('suspended-')
-        ? { state: 'suspended', assignmentId: 'current-focus', reason: scenario.replace('suspended-', '') }
-        : focusActive
-          ? { state: 'active', assignmentId: 'current-focus' }
-          : { state: 'none' };
-  return {
-    ...ONLINE_STUDENT,
-    studentId: LOCK_STUDENT_ID,
-    studentName: 'Lock Control Student',
+  const website = ['website', 'both', 'offline-website', 'releasing'].includes(scenario);
+  const legacy = ['legacy', 'both', 'offline-focus'].includes(scenario);
+  return { ...ONLINE_STUDENT, studentId: LOCK_STUDENT_ID, studentName: 'Lock Control Student',
     realtimeBinding: 'v2:lock-binding',
-    activeTabUrl: url,
+    activeTabUrl: scenario === 'browser-page' ? 'chrome://settings' : ONLINE_STUDENT.activeTabUrl,
     activeTabRef: scenario === 'missing-ref' ? null : 'lock-current-tab',
     tabSnapshotRevision: scenario === 'missing-revision' ? null : 7,
-    acceptedCapabilities: scenario === 'unsupported' ? {} : LOCK_CAPABILITIES,
-    allOpenTabs,
-    screenLocked: waypointActive,
-    focus,
-    classroomState: {
-      revision: 9,
-      restrictions: {
-        focus: { active: desiredFocusActive, assignmentId: desiredFocusActive ? 'current-focus' : null },
-        screenLock: { active: waypointActive },
-      },
-    },
+    acceptedCapabilities: scenario === 'unsupported' ? { screenOnlyUnlockV1: true } : LOCK_CAPABILITIES,
+    screenLocked: website, focus: { state: legacy ? 'active' : 'inactive' },
+    classroomState: { revision: 9, restrictions: { focus: { active: legacy },
+      screenLock: { active: scenario === 'requested' || (website && scenario !== 'releasing') } } },
   };
 }
-
-// Authoritative status changes are explicit. An accepted click only records a
-// pending operation, so the runner can prove the tile never invents a device ACK.
 function LockControlRegressionHarness() {
   const [scenario, setScenario] = useState('none');
   const [operation, setOperation] = useState(null);
@@ -345,56 +313,39 @@ function LockControlRegressionHarness() {
   const [selectionClicks, setSelectionClicks] = useState(0);
   const [detailsClicks, setDetailsClicks] = useState(0);
   const student = lockStudent(scenario);
-  const offline = scenario.startsWith('offline-');
-  const stale = offline || scenario === 'stale';
-  const display = stale
-    ? { kind: 'signal_lost', status: 'signal_lost', label: 'Monitoring signal lost', telemetryCurrent: false, observedAtMs: Date.now() - 120_000 }
-    : onlineDisplay(Date.now());
-  const changeScenario = (value) => {
+  const stale = scenario.startsWith('offline-') || scenario === 'stale';
+  const display = stale ? { kind: 'signal_lost', status: 'signal_lost', label: 'Monitoring signal lost',
+    telemetryCurrent: false, observedAtMs: Date.now() - 120_000 } : onlineDisplay(Date.now());
+  const changeScenario = value => {
     setScenario(value);
-    setOperation(null);
+    setOperation(value === 'releasing'
+      ? { action: 'stop-focus', focusControlRevision: 9, outcomes: { focus: { status: 'received', commandType: 'unlock-screen' } } }
+      : null);
   };
-  const receiveAction = (action) => {
-    setActions((previous) => [...previous, action]);
-    setOperation({ pending: true, phase: action, outcomes: {} });
+  const receiveAction = action => {
+    setActions(previous => [...previous, action]);
+    setOperation({ action, pending: true, phase: action, outcomes: {} });
   };
-
-  return (
-    <section data-testid="lock-regression-harness" className="mt-8 space-y-3">
-      <div className="flex flex-wrap gap-2">
-        {LOCK_SCENARIOS.map((value) => (
-          <Button key={value} data-testid={`lock-scenario-${value}`} onClick={() => changeScenario(value)}>{value}</Button>
-        ))}
-        <Button data-testid="lock-confirm-focus" onClick={() => changeScenario(scenario === 'waypoint' || scenario === 'both' ? 'both' : 'focus')}>Manage Tabs confirms Focus</Button>
-        <Button data-testid="lock-confirm-stop-focus" onClick={() => changeScenario(scenario === 'both' ? 'waypoint' : 'none')}>Manage Tabs confirms Stop Focus</Button>
-        <Button data-testid="lock-confirm-clear-waypoint" onClick={() => changeScenario(scenario === 'both' ? 'focus' : 'none')}>Waypoint cleared</Button>
-        <Button data-testid="lock-partial-result" onClick={() => {
-          setScenario('waypoint');
-          setOperation({ pending: false, action: 'stop-both', phase: 'stop-both', outcomes: { focus: { status: 'completed' }, waypoint: { status: 'failed' } }, error: 'Focus stopped. Waypoint could not be cleared; retry Clear Waypoint.' });
-        }}>Partial Stop Both result</Button>
-      </div>
-      <output data-testid="lock-actions">{JSON.stringify(actions)}</output>
-      <output data-testid="lock-body-clicks">{bodyClicks}</output>
-      <output data-testid="lock-selection-clicks">{selectionClicks}</output>
-      <output data-testid="lock-details-clicks">{detailsClicks}</output>
-      <div className="max-w-sm">
-        <StudentTile
-          student={student}
-          monitoringDisplay={display}
-          freshnessNowMs={Date.now()}
-          onLockAction={receiveAction}
-          canFocusTab
-          canStopFocus
-          canClearWaypoint
-          lockOperation={operation}
-          onOpenScreenshot={() => setBodyClicks((count) => count + 1)}
-          onOpenDetails={() => setDetailsClicks((count) => count + 1)}
-          onToggleSelect={() => setSelectionClicks((count) => count + 1)}
-          screenshotData={{ screenshot: SCREENSHOT_DATA_URL, timestamp: Date.now(), bindingVersion: 'v2:lock-binding', tabTitle: 'Lesson' }}
-        />
-      </div>
-    </section>
-  );
+  return <section data-testid="lock-regression-harness" className="mt-8 space-y-3">
+    <div className="flex flex-wrap gap-2">
+      {LOCK_SCENARIOS.map(value => <Button key={value} data-testid={'lock-scenario-' + value} onClick={() => changeScenario(value)}>{value}</Button>)}
+      <Button data-testid="lock-confirm-focus" onClick={() => changeScenario('website')}>Browser confirms Focus</Button>
+      <Button data-testid="lock-confirm-stop-focus" onClick={() => changeScenario('none')}>Browser confirms Stop Focus</Button>
+      <Button data-testid="lock-failed-result" onClick={() => {
+        setScenario('website');
+        setOperation({ pending: false, action: 'stop-focus', outcomes: { focus: { status: 'failed', error: 'Focus could not be stopped.' } } });
+      }}>Failed Stop Focus</Button>
+    </div>
+    <output data-testid="lock-actions">{JSON.stringify(actions)}</output>
+    <output data-testid="lock-body-clicks">{bodyClicks}</output>
+    <output data-testid="lock-selection-clicks">{selectionClicks}</output>
+    <output data-testid="lock-details-clicks">{detailsClicks}</output>
+    <div className="max-w-sm"><StudentTile student={student} monitoringDisplay={display} freshnessNowMs={Date.now()}
+      onLockAction={receiveAction} canSetFocus canStopFocus lockOperation={operation}
+      onOpenScreenshot={() => setBodyClicks(count => count + 1)} onOpenDetails={() => setDetailsClicks(count => count + 1)}
+      onToggleSelect={() => setSelectionClicks(count => count + 1)}
+      screenshotData={{ screenshot: SCREENSHOT_DATA_URL, timestamp: Date.now(), bindingVersion: 'v2:lock-binding', tabTitle: 'Lesson' }} /></div>
+  </section>;
 }
 
 function TileRegressionHarness() {

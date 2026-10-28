@@ -1430,7 +1430,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         enforcementHealth,
         appliedFabRevision: visibleRealtime?.appliedFabRevision ?? null,
         enforcementUnavailableReason: restrictionAuthUpdateRequired && !preciseRestrictionUpdateRequired
-          ? "Extension update required for sign-in-safe Waypoint or Flight Path"
+          ? "Extension update required for sign-in-safe Focus or Flight Path"
           : preciseRestrictionUpdateRequired
             ? CLASSPILOT_PRECISE_RESTRICTION_ENFORCEMENT_UNAVAILABLE_REASON
             : null,

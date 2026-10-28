@@ -57,6 +57,8 @@ test('heartbeat uses the joined fresh read only inside the final frozen authorit
   const route = readFileSync(new URL('../src/routes/classpilot/devices.ts', import.meta.url), 'utf8');
   const final = route.slice(route.indexOf('    const finalDelivery = await runWithTenantContext('),
     route.indexOf('    if (!finalDelivery.authorized)'));
-  assert.match(final, /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*freezeSsoPolicy: true[\s\S]*async \(transactionDb, readScreenshotAuthority\) => \{\s*const \{ controlState: finalControlState, ssoPolicy: finalSsoPolicy \} =\s*await getClasspilotStudentControlDeliveryContext\(schoolId, studentId, transactionDb\)/);
+  assert.match(final, /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*freezeSsoPolicy: true[\s\S]*async \(transactionDb, readScreenshotAuthority\) => \{\s*const \{ controlState: storedControlState, ssoPolicy: finalSsoPolicy \} =\s*await getClasspilotStudentControlDeliveryContext\(schoolId, studentId, transactionDb\);\s*const finalControlState = await retireLegacyTabFocusForStudentLocked\(transactionDb,\s*\{ schoolId, studentId, state: storedControlState \?\? null, reason: "reconnect" \}\);\s*const serialized = finalControlState\s*\? serializeClasspilotStudentControlStateForDelivery\(\{\s*state: finalControlState/);
   assert.doesNotMatch(final, /getClasspilotStudentControlState\(|getClasspilotSsoPolicyForSchool\(/);
+  assert.equal((final.match(/await retireLegacyTabFocusForStudentLocked\(/g) || []).length, 1);
+  assert.doesNotMatch(final, /\b(?:db|transactionDb)\.transaction\(/);
 });

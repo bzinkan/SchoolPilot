@@ -1284,18 +1284,18 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /setLockScreenMode\("current"\);\s*\n\s*setLockScreenUrl\(""\);\s*\n\s*setShowLockScreenDialog\(true\);/,
+  /setLockScreenMode\("current"\);\s*\n\s*setLockScreenUrl\(""\);[\s\S]{0,350}captureRecipientSnapshot\('lock-screen', \{\}, command\.studentIds\)[\s\S]{0,250}setShowLockScreenDialog\(true\);/,
   'opening the lock dialog must reset to the CURRENT_URL default mode',
 );
 assert.match(
   dashboardSource,
-  /data-testid="button-lock-screen"[\s\S]{0,180}>Set Waypoint<\/Button>/,
-  'the waypoint action must retain button-lock-screen and display the Set Waypoint label',
+  /data-testid="button-lock-screen"[\s\S]{0,180}>Set Focus<\/Button>/,
+  'website Focus retains button-lock-screen and displays Set Focus',
 );
 assert.match(
   dashboardSource,
-  /data-testid="button-unlock-screen"[\s\S]{0,220}>Clear Waypoint<\/Button>/,
-  'the screen-only release action must use button-unlock-screen and display Clear Waypoint',
+  /data-testid="button-unlock-screen"[\s\S]{0,220}>Stop Focus<\/Button>/,
+  'the screen-only release action retains button-unlock-screen and displays Stop Focus',
 );
 // Flight Path and Block List are split buttons (2026-09): Apply stays a
 // one-line toolbar Button, the chevron trigger is attached to it, and Remove /
@@ -1384,7 +1384,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /boundary: lockScreenMode === "url" && preciseRestrictionResourcesEnabled \? lockScreenBoundary : "website"/,
+  /const boundary = lockScreenMode === "url" && preciseRestrictionResourcesEnabled \? lockScreenBoundary : "website"/,
   'a current-page Waypoint is never a resource boundary',
 );
 assert.match(
@@ -1411,8 +1411,8 @@ assert.match(dashboardSource, /combineCommandSettlements\(settlements, target\.g
   'claimed commands must preserve partial outcomes for each original context');
 assert.match(dashboardSource, /commandDeliveryFeedback\(enrichedData, commandType\)/,
   'the canonical dashboard must retain shared pending, unavailable, and skip feedback');
-assert.match(dashboardSource, /partitionCurrentPageWaypointTargets\([\s\S]{0,160}explicitlySelectedStudents[\s\S]{0,160}monitoringDisplayFor\(student\)\.telemetryCurrent/,
-  'supervision Waypoints must retain exact-selection and current-telemetry guards');
+assert.match(dashboardSource, /partitionCurrentPageWaypointTargets\([\s\S]{0,200}recipientSnapshot\?\.snapshot\?\.ids\?\.includes\(student\.studentId\)[\s\S]{0,160}monitoringDisplayFor\(student\)\.telemetryCurrent/,
+  'website Focus retains frozen explicit recipients and current-telemetry guards');
 assert.match(supervisionReviewSource, /apiRequest\('POST', '\/coverage\/preview', request/,
   'Start and Send must preview their exact selection before mutation');
 assert.match(supervisionReviewSource, /\{ \.\.\.review\.request, reviewToken: review\.reviewToken \}/,

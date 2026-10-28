@@ -101,7 +101,8 @@ import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPo
 import { classpilotSsoPolicyApprovesObservedUrl } from "./classpilotHeartbeatSsoSanitizer.js";
 import { classpilotTransientCurrentPageCommandEnvelope } from "./classpilotTransientCurrentPage.js";
 import { requireScheduledClassroomContext } from "./classpilotActivityAuthority.js";
-import { assertExactFocusTargetScope, focusAuthoringEnabled, focusCapabilityAccepted, focusRecord,
+import { assertExactFocusTargetScope, assertLegacyTabFocusNotRetired, isLegacyTabFocusStart,
+  focusAuthoringEnabled, focusCapabilityAccepted, focusRecord,
   FOCUS_TAB_CAPABILITY, type ClasspilotExactTabTarget } from "./classpilotFocus.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
@@ -538,7 +539,7 @@ async function authorizeScreenOnlyUnlock(options: {
       deviceId: target.deviceId!,
   }));
   const snapshots = await readClasspilotRealtimeStatusBatch(options.schoolId, bindings);
-  // A signed-out student may still carry a pending late-sign-in Waypoint.
+  // A signed-out student may still carry a pending late-sign-in Focus.
   // Clearing that never-applied screen restriction is a desired-state update,
   // so it does not require an online extension or screenOnlyUnlockV1. Other
   // desired restrictions remain untouched by the screen-only clear.
@@ -754,10 +755,14 @@ export function classpilotCommandFrameForTarget(
   classroomState: ReturnType<typeof serializeClasspilotStudentControlState> | undefined,
   commandAuthority: ReturnType<typeof classpilotCommandAuthorityEnvelope>
 ) {
+  // A command created by an older server can reach the final framing lane
+  // after retirement. Never deliver a new persistent tab assignment from it.
+  if (isLegacyTabFocusStart(commandType, payload)
+    || classroomState?.restrictions.focus?.active === true) return null;
   // Precise restriction resources travel only inside their authoritative
   // classroom snapshot, to a binding the frame declares must have accepted
   // preciseRestrictionResourcesV1. A bare legacy frame would hand ClassPilot
-  // 2.9.x `data.url` as a whole-domain Waypoint (or an empty Flight Path), so
+  // 2.9.x `data.url` as a whole-domain Focus (or an empty Flight Path), so
   // a precise payload without a precise snapshot is never framed.
   const preciseCommandPayload = classpilotCommandPayloadRequiresPreciseCapability(commandType, payload);
   const preciseClassroomState = classpilotControlStateRequiresPreciseCapability(classroomState);
@@ -1358,6 +1363,7 @@ export async function executeClasspilotCommand(options: {
     normalized = { extensionType: normalized.extensionType, payload: { ...(options.replayCommand.commandPayload as object), replayOfCommandId: options.replayCommand.id } };
   }
   let commandPayload = { ...normalized.payload };
+  assertLegacyTabFocusNotRetired(options.commandType, commandPayload);
   const focusExact = options.commandType === "focus-tab" || options.commandType === "activate-tab";
   const focusNewAction = focusExact || (options.commandType === "open-tab" && commandPayload.focusAfterOpen === true);
   const lessonOpen = options.commandType === "open-tab" && typeof commandPayload.afterRestrictionCommandId === "string";
@@ -1606,7 +1612,7 @@ export async function executeClasspilotCommand(options: {
     });
   }
 
-  // A current-page Waypoint is inherently observation-bound. Persisting its
+  // A current-page Focus is inherently observation-bound. Persisting its
   // resolved URL would retain query/token material and could deliver it after
   // the student/session/device authority changes, so it is last-mile only.
   const shouldPersistBeforeDelivery = deliveryPolicy === "persistent_control"
@@ -1824,7 +1830,7 @@ export async function executeClasspilotCommand(options: {
       authUnavailableReasons.set(
         row.studentId,
         snapshot
-          ? "Extension update required for sign-in-safe Waypoint or Flight Path"
+          ? "Extension update required for sign-in-safe Focus or Flight Path"
           : "Extension capability status unavailable; reconnect or update before applying this restriction"
       );
     }
@@ -1866,7 +1872,7 @@ export async function executeClasspilotCommand(options: {
         authUnavailableReasons.set(
           target.studentId,
           snapshot
-            ? "Extension update required for sign-in-safe Waypoint or Flight Path"
+            ? "Extension update required for sign-in-safe Focus or Flight Path"
             : "Extension capability status unavailable; reconnect or update before applying this restriction"
         );
       }
@@ -2093,7 +2099,7 @@ export async function executeClasspilotCommand(options: {
                     kind: "unavailable" as const,
                     reason: delivered.withheldReason === "restriction_auth_update_required"
                       ? capabilitySnapshot
-                        ? "Extension update required for sign-in-safe Waypoint or Flight Path"
+                        ? "Extension update required for sign-in-safe Focus or Flight Path"
                         : "Extension capability status unavailable; reconnect or update before applying this restriction"
                       : delivered.withheldReason === "precise_restriction_capability_required"
                         ? CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON
@@ -2113,7 +2119,7 @@ export async function executeClasspilotCommand(options: {
               if (!Number.isSafeInteger(target.controlRevision)) {
                 return {
                   kind: "unavailable" as const,
-                  reason: "Waypoint authority changed before exact delivery",
+                  reason: "Focus authority changed before exact delivery",
                 };
               }
               const [currentControlState, currentSsoPolicy] = await Promise.all([
@@ -2132,7 +2138,7 @@ export async function executeClasspilotCommand(options: {
               ) {
                 return {
                   kind: "unavailable" as const,
-                  reason: "Waypoint authority changed before exact delivery",
+                  reason: "Focus authority changed before exact delivery",
                 };
               }
               const restrictionExpiresAt = [
@@ -2144,7 +2150,7 @@ export async function executeClasspilotCommand(options: {
               if (!restrictionExpiresAt || restrictionExpiresAt.getTime() <= Date.now()) {
                 return {
                   kind: "unavailable" as const,
-                  reason: "Waypoint classroom authority has expired",
+                  reason: "Focus classroom authority has expired",
                 };
               }
               const currentPageUrl = payloadByStudent?.get(target.studentId)?.url;
@@ -2157,7 +2163,7 @@ export async function executeClasspilotCommand(options: {
               // The observed URL stays process-local, but the school SSO policy
               // can change after that observation. Re-evaluate it under the
               // same shared policy lock used to build the delivery envelope so
-              // a newly approved IdP/callback URL can never become a Waypoint.
+              // a newly approved IdP/callback URL can never become a Focus.
               if (
                 classpilotSsoPolicyApprovesObservedUrl(
                   currentPageUrl,
@@ -2166,7 +2172,7 @@ export async function executeClasspilotCommand(options: {
               ) {
                 return {
                   kind: "unavailable" as const,
-                  reason: "Current page is an authentication URL and cannot become a Waypoint",
+                  reason: "Current page is an authentication URL and cannot become a Focus",
                 };
               }
               const authPassThrough = classpilotRestrictionAuthPassThroughEnvelope({
@@ -2186,7 +2192,7 @@ export async function executeClasspilotCommand(options: {
                 return {
                   kind: "unavailable" as const,
                   reason: capabilitySnapshot
-                    ? "Extension update required for sign-in-safe Waypoint or Flight Path"
+                    ? "Extension update required for sign-in-safe Focus or Flight Path"
                     : "Extension capability status unavailable; reconnect or update before applying this restriction",
                   authCapabilityMissing: true as const,
                 };
@@ -2197,6 +2203,8 @@ export async function executeClasspilotCommand(options: {
                 controlRevision: currentControlState.revision,
                 restrictionExpiresAt,
                 authPassThrough: authPassThrough || undefined,
+                legacyFocusCleanup: await prepareClasspilotFocusCleanupFrame(transactionDb, currentControlState,
+                  baseExactTarget, capabilitySnapshot?.acceptedCapabilities ?? []),
               };
             },
             (_claimed, prepared) => prepared
@@ -2291,12 +2299,22 @@ export async function executeClasspilotCommand(options: {
                 }
               : {}),
           };
+          // Current-page Focus deliberately has no persisted URL or full
+          // snapshot. Release a retired foreground-tab assignment first using
+          // its removal-only envelope, never a screenLock:false snapshot which
+          // could undo the transient website restriction.
+          const legacyFocusCleanup = "legacyFocusCleanup" in currentPageAuthority
+            ? currentPageAuthority.legacyFocusCleanup : null;
+          if (legacyFocusCleanup) sendToStudentBindingLocal(baseExactTarget, legacyFocusCleanup);
           sendToStudentBindingLocal(exactTarget, message, {
             requiredCapability: exactTarget.requiredCapability,
             requiredCapabilities: exactTarget.requiredCapabilities,
           });
           return {
             target,
+            ...(legacyFocusCleanup ? { cleanupPublication: {
+              target: baseExactTarget, message: legacyFocusCleanup,
+            } satisfies PublishWSBatchItem } : {}),
             publication: { target: exactTarget, message } satisfies PublishWSBatchItem,
           };
         }
@@ -2320,6 +2338,8 @@ export async function executeClasspilotCommand(options: {
     for (const delivery of authorizedDeliveries) {
       if (!delivery) continue;
       deliveryCandidates.push(delivery.target);
+      if ("cleanupPublication" in delivery && delivery.cleanupPublication)
+        remotePublications.push(delivery.cleanupPublication);
       remotePublications.push(delivery.publication);
     }
     localDeliverySucceeded = true;

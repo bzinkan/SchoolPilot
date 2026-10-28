@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classroomLoadFailure, classroomLinks, classroomCanFocus, classroomLessonStarts, reviewedFlightPathMatches, runClassroomAction, waitForClassroomTargets }
+import { classroomLoadFailure, classroomLinks, classroomLessonStarts, reviewedFlightPathMatches, runClassroomAction, waitForClassroomTargets }
   from '../src/products/classpilot/lib/classroomActions.js';
 
 const target = (studentId, status = 'completed', result = {}) => ({ studentId, status, result });
@@ -22,11 +22,6 @@ test('Classroom connection failures distinguish missing permissions, account mis
     reconnect: false, message: 'Assignments could not be loaded. Try again.',
   });
   assert.equal(classroomLoadFailure(new Error('Network error'), 'Courses').reconnect, false);
-});
-
-test('Open + Focus requires accepted capabilities and does not trust raw extension advertisement', () => {
-  assert.equal(classroomCanFocus([{ acceptedCapabilities: [], extensionCapabilities: ['scopedAuthorityChecksV1', 'focusTabV1'] }]), false);
-  assert.equal(classroomCanFocus([{ acceptedCapabilities: ['scopedAuthorityChecksV1', 'focusTabV1'] }]), true);
 });
 
 test('Website lesson starts keep the selected assignment URL inside the reviewed hostname boundary', () => {
@@ -114,22 +109,9 @@ test('a received restriction waits for its exact command and cannot open early',
   assert.equal(updates[0][0].open, 'not requested'); assert.equal(calls.length, 2);
 });
 
-test('server-issued Focus continuation remains pending until its own device confirmation', async () => {
-  const updates = [], reads = [];
-  const result = await runClassroomAction({ action: 'open-focus', url: 'https://duplicate.test/', studentIds: ['a'],
-    waitOptions: { sleep: async () => {} }, onUpdate: rows => updates.push(structuredClone(rows)),
-    postCommand: async (type, payload, ids) => { assert.equal(type, 'open-tab'); assert.deepEqual(payload, { url: 'https://duplicate.test/', focusAfterOpen: true }); assert.deepEqual(ids, ['a']);
-      return { command: command('open-a', [target('a', 'completed', { followUp: { kind: 'focus', state: 'committed', commandId: 'focus-exact-a' } })], type) }; },
-    readCommand: async source => { reads.push(source.id); return { command: command('focus-exact-a', [target('a', reads.length === 1 ? 'received' : 'completed')], 'focus-tab') }; } });
-  assert.deepEqual(reads, ['focus-exact-a', 'focus-exact-a']);
-  assert.ok(updates.some(rows => rows[0].open === 'completed' && rows[0].focus === 'received'));
-  assert.equal(result[0].focus, 'completed');
-});
-
-test('Focus refusal cannot fall back to another tab with a duplicate URL', async () => {
-  const result = await runClassroomAction({ action: 'open-focus', url: 'https://duplicate.test/', studentIds: ['a'], readCommand: noRead,
-    postCommand: async () => ({ command: command('open-a', [target('a', 'completed', { followUp: { kind: 'focus', state: 'refused' } })], 'open-tab') }) });
-  assert.equal(result[0].open, 'completed'); assert.equal(result[0].focus, 'refused');
+test('retired open-focus cannot dispatch any browser command', async () => {
+  await assert.rejects(runClassroomAction({ action: 'open-focus', url: 'https://example.test/', studentIds: ['a'],
+    postCommand: async () => assert.fail('Retired Focus must not dispatch') }), /explicit students/);
 });
 
 test('authority change after applied confirmation prevents the dependent open', async () => {

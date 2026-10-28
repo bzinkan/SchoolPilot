@@ -1,7 +1,7 @@
 import { classroomCommands, waitForClassroomTargets } from './classroomActions.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'unavailable', 'expired']);
-const ACTIONS = new Set(['focus-current-tab', 'stop-focus', 'clear-waypoint', 'stop-both']);
+const ACTIONS = new Set(['focus-current-page', 'stop-focus']);
 
 export function tileLockCommandOutcome(target, commandType, commandId) {
   const notApplied = target.status === 'completed'
@@ -19,14 +19,10 @@ export function tileLockAuthorityKey(scopeKey, student) {
     student?.contextAuthorityRevision ?? student?.supervisionContext?.contextAuthorityRevision ?? null]);
 }
 
-export async function runTileLockAction({ action, studentId, focusPayload, postCommand, readCommand,
+export async function runTileLockAction({ action, studentId, postCommand, readCommand,
   signal, assertCurrent = () => {}, onUpdate = () => {}, waitOptions = {} }) {
   if (!ACTIONS.has(action) || typeof studentId !== 'string' || !studentId)
     throw new Error('Choose one student and a valid lock action.');
-  if (action === 'focus-current-tab' && (!Array.isArray(focusPayload?.tabTargets)
-    || focusPayload.tabTargets.length !== 1 || focusPayload.tabTargets[0].studentId !== studentId))
-    throw new Error('Current tab unavailable—refresh or use Manage Tabs.');
-
   let pending = true;
   let phase = '';
   const outcomes = {};
@@ -85,18 +81,8 @@ export async function runTileLockAction({ action, studentId, focusPayload, postC
     }
   }
 
-  if (action === 'focus-current-tab') await send('focus', 'focus-tab', focusPayload, 'Focus');
-  if (action === 'stop-focus' || action === 'stop-both') {
-    const focus = await send('focus', 'stop-focus', {}, 'Stop Focus');
-    if (action === 'stop-both' && !TERMINAL.has(focus.status)) {
-      pending = false;
-      phase = 'Focus confirmation pending. Clear Waypoint separately when ready.';
-      guard(); onUpdate(snapshot());
-      return snapshot();
-    }
-  }
-  if (action === 'clear-waypoint' || action === 'stop-both')
-    await send('waypoint', 'unlock-screen', { screenOnly: true }, 'Clear Waypoint');
+  if (action === 'focus-current-page') await send('focus', 'lock-screen', { url: 'CURRENT_URL' }, 'Focus');
+  else await send('focus', 'unlock-screen', { screenOnly: true }, 'Stop Focus');
 
   pending = false;
   guard(); onUpdate(snapshot());

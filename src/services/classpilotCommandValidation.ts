@@ -1,7 +1,7 @@
 import { timerCommand, lessonCommand, promptStart, toolId } from "./classpilotToolsValidation.js";
 import { z } from "zod";
 import { normalizePreciseWaypointResource, waypointLandingUrl } from "./restrictionResources.js";
-import { exactTabTargetSchema } from "./classpilotFocus.js";
+import { assertLegacyTabFocusNotRetired, exactTabTargetSchema } from "./classpilotFocus.js";
 
 const id = z.string().trim().min(1).max(128);
 const message = z.string().trim().min(1).max(2_000);
@@ -29,21 +29,21 @@ function persistentWaypointUrl(value: unknown): string {
     throw new z.ZodError([{
       code: "custom",
       path: ["url"],
-      message: "Waypoint URL must use HTTPS",
+      message: "Focus URL must use HTTPS",
     }]);
   }
   if (parsed.search || parsed.hash) {
     throw new z.ZodError([{
       code: "custom",
       path: ["url"],
-      message: "Waypoint URL cannot include query parameters or fragments",
+      message: "Focus URL cannot include query parameters or fragments",
     }]);
   }
   if (parsed.username || parsed.password) {
     throw new z.ZodError([{
       code: "custom",
       path: ["url"],
-      message: "Waypoint URL cannot include credentials",
+      message: "Focus URL cannot include credentials",
     }]);
   }
   // Persist the canonical origin and pathname only. Query strings and
@@ -91,6 +91,7 @@ export function validateClasspilotCommandPayload(
   commandType: string,
   raw: unknown
 ): ValidatedClasspilotCommandPayload {
+  assertLegacyTabFocusNotRetired(commandType, raw);
   try {
     switch (commandType) {
       case "open-tab": {

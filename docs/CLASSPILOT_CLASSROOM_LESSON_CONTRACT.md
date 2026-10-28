@@ -1,5 +1,11 @@
 # Reviewed Classroom lesson prerequisites
 
+Current workflow: Classroom assignments opens links only. The teacher-facing
+Focus action restricts a website or resource; it does not create the historical
+tab Focus described by continuation fields below. New tab Focus starts and
+Open + Focus continuations are retired; existing status, cleanup, and expiry
+remain compatible. See [Teacher Focus controls](CLASSPILOT_FOCUS_CONTROLS.md).
+
 This implementation candidate adds server-owned preconditions to existing commands. It adds no extension command fields, capability, tenant table or product flag. SchoolPilot API/web deployment and the separately packaged ClassPilot extension retain their release boundaries.
 
 `POST /api/classpilot/flight-paths/from-classroom` accepts optional `reuseReviewedSource: true`. Canonical normalization happens first. The transaction locks the school/staff lifecycle and serializes the exact tenant, actor, course, selected resource IDs and canonical policy. It reuses only an actor-owned private, non-official Google Classroom source with identical allowed domains/resources and an empty block list. An explicit legacy import with the option omitted still creates a new personal Flight Path. Reviewed reuse returns `reused` and the Flight Path's public `updatedAt`.

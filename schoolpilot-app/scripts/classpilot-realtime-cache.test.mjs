@@ -9,7 +9,7 @@ import {
   mergeAggregatedStudents,
 } from '../src/products/classpilot/lib/studentRealtimeCache.js';
 import { normalizeObservedAtForOrdering } from '../src/products/classpilot/lib/studentMonitoringDisplay.js';
-import { focusStatusLabel } from '../src/products/classpilot/lib/focusControls.js';
+import { deriveTileLockControl } from '../src/products/classpilot/lib/focusControls.js';
 
 const base = () => [{
   studentId: 'student-1',
@@ -845,32 +845,53 @@ const focusUpdate = (revision, fields = {}) => ({
 });
 const confirmedFocus = { state: 'active', assignmentId: 'assignment-a' };
 
-test('Focus labels follow device-confirmed, suspended, invalidated and cleared realtime states', () => {
+test('legacy tab Focus lifecycle remains cached for cleanup without presenting a second Focus feature', () => {
   let current = base();
   const states = [
-    [confirmedFocus, 'Focus confirmed'],
-    [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'attention' }, 'Focus paused for Attention'],
-    [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'authentication' }, 'Focus paused for sign-in'],
-    [{ state: 'invalidated', assignmentId: 'assignment-a', reason: 'focus_tab_closed' }, 'Focus ended: tab closed'],
-    [{ state: 'inactive' }, 'No Focus confirmed'],
+    [confirmedFocus, 'Focus cleanup available', 'stop-focus'],
+    [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'attention' }, 'Focus cleanup available', 'stop-focus'],
+    [{ state: 'suspended', assignmentId: 'assignment-a', reason: 'authentication' }, 'Focus cleanup available', 'stop-focus'],
+    [{ state: 'invalidated', assignmentId: 'assignment-a', reason: 'focus_tab_closed' }, 'No Focus', 'focus-current-page'],
+    [{ state: 'inactive' }, 'No Focus', 'focus-current-page'],
   ];
-  for (const [index, [focus, label]] of states.entries()) {
+  for (const [index, [focus, label, action]] of states.entries()) {
     current = applyStudentRealtimeEvents(current, [focusUpdate(index + 4, { focus })], { schoolId: 'school-1' });
     assert.deepEqual(current[0].focus, focus);
-    assert.equal(focusStatusLabel(current[0]), label);
+    const control = deriveTileLockControl(current[0]);
+    assert.equal(control.statusLabel, label);
+    assert.equal(control.action, action);
   }
 });
 
-test('Focus survives omitted optional status but explicit clearing removes confirmation', () => {
-  const current = applyStudentRealtimeEvents(base(), [focusUpdate(4, { focus: confirmedFocus })]);
-  const omitted = applyStudentRealtimeEvents(current, [focusUpdate(5, { activeTabTitle: 'Changed title' })]);
-  assert.equal(focusStatusLabel(omitted[0]), 'Focus confirmed');
-  const cleared = applyStudentRealtimeEvents(omitted, [focusUpdate(6, { focus: undefined })]);
-  assert.equal(cleared[0].focus, undefined);
-  assert.equal(focusStatusLabel(cleared[0]), 'No Focus confirmed');
+test('website Focus follows browser telemetry independently of unchanged saved policy', () => {
+  const initial = [{ ...base()[0], screenLocked: false,
+    classroomState: { revision: 1, restrictions: { screenLock: { active: false } } } }];
+  const active = applyStudentRealtimeEvents(initial, [focusUpdate(4, { screenLocked: true })]);
+  assert.equal(active[0].classroomState.revision, 1);
+  assert.equal(active[0].classroomState.restrictions.screenLock.active, false);
+  assert.equal(deriveTileLockControl(active[0]).statusLabel, 'Focus confirmed');
+  assert.equal(deriveTileLockControl(active[0]).action, 'stop-focus');
+  const omitted = applyStudentRealtimeEvents(active, [focusUpdate(5, { activeTabTitle: 'Changed title' })]);
+  assert.equal(omitted[0].screenLocked, true);
+  assert.equal(deriveTileLockControl(omitted[0]).statusLabel, 'Focus confirmed');
+  assert.equal(applyStudentRealtimeEvents(omitted, [focusUpdate(4, { screenLocked: false })]), omitted);
+  const cleared = applyStudentRealtimeEvents(omitted, [focusUpdate(6, { screenLocked: false })]);
+  assert.equal(cleared[0].classroomState.revision, 1);
+  assert.equal(deriveTileLockControl(cleared[0]).statusLabel, 'No Focus');
+  assert.equal(deriveTileLockControl(cleared[0]).action, 'focus-current-page');
 });
 
-test('Focus cannot cross stale revisions, schools, missing bindings or classroom authority', () => {
+test('legacy tab Focus survives omitted optional status but explicit clearing removes the cleanup indicator', () => {
+  const current = applyStudentRealtimeEvents(base(), [focusUpdate(4, { focus: confirmedFocus })]);
+  const omitted = applyStudentRealtimeEvents(current, [focusUpdate(5, { activeTabTitle: 'Changed title' })]);
+  assert.deepEqual(omitted[0].focus, confirmedFocus);
+  assert.equal(deriveTileLockControl(omitted[0]).statusLabel, 'Focus cleanup available');
+  const cleared = applyStudentRealtimeEvents(omitted, [focusUpdate(6, { focus: undefined })]);
+  assert.equal(cleared[0].focus, undefined);
+  assert.equal(deriveTileLockControl(cleared[0]).statusLabel, 'No Focus');
+});
+
+test('legacy tab Focus cannot cross stale revisions, schools, missing bindings or classroom authority', () => {
   const current = applyStudentRealtimeEvents(base(), [focusUpdate(4, { focus: confirmedFocus })]);
   const scope = { schoolId: 'school-1', teachingSessionId: 'session-a' };
   for (const event of [
@@ -880,29 +901,29 @@ test('Focus cannot cross stale revisions, schools, missing bindings or classroom
     focusUpdate(5, { focus: { state: 'inactive' }, teachingSessionId: 'session-b' }),
   ]) {
     assert.equal(applyStudentRealtimeEvents(current, [event], scope), current);
-    assert.equal(focusStatusLabel(current[0]), 'Focus confirmed');
+    assert.equal(deriveTileLockControl(current[0]).statusLabel, 'Focus cleanup available');
   }
 });
 
-test('sign-out and a replacement session clear Focus and delayed frames cannot revive it', () => {
+test('sign-out and a replacement session clear legacy tab Focus and delayed frames cannot revive it', () => {
   const current = applyStudentRealtimeEvents(base(), [focusUpdate(4, { focus: confirmedFocus })]);
-  assert.equal(focusStatusLabel(current[0]), 'Focus confirmed');
+  assert.equal(deriveTileLockControl(current[0]).statusLabel, 'Focus cleanup available');
   const rebound = applyStudentRealtimeEvents(current, [focusUpdate(1, {
     realtimeBinding: 'binding-b', observedAtMs: Date.parse('2026-08-13T12:01:00.000Z'),
   })]);
   assert.equal(rebound[0].focus, undefined);
-  assert.equal(focusStatusLabel(rebound[0]), 'No Focus confirmed');
+  assert.equal(deriveTileLockControl(rebound[0]).statusLabel, 'No Focus');
   assert.equal(applyStudentRealtimeEvents(rebound, [focusUpdate(100, { focus: confirmedFocus })]), rebound);
 
   const signedOut = applyStudentRealtimeEvents(current, [{
     ...focusUpdate(5), type: 'student-signed-out',
   }]);
   assert.equal(signedOut[0].focus, undefined);
-  assert.equal(focusStatusLabel(signedOut[0]), 'No Focus confirmed');
+  assert.equal(deriveTileLockControl(signedOut[0]).statusLabel, 'No Focus');
   assert.equal(applyStudentRealtimeEvents(signedOut, [focusUpdate(6, { focus: confirmedFocus })]), signedOut);
 });
 
-test('stale HTTP reconciliation preserves newer Focus status and fresh HTTP can clear it', () => {
+test('stale HTTP reconciliation preserves newer legacy tab Focus status and fresh HTTP can clear it', () => {
   const current = applyStudentRealtimeEvents(base(), [focusUpdate(8, { focus: confirmedFocus })]);
   const stale = mergeAggregatedStudents(current, [{
     ...base()[0], realtimeRevision: 7, focus: { state: 'inactive' }, studentName: 'Updated name',
@@ -912,22 +933,22 @@ test('stale HTTP reconciliation preserves newer Focus status and fresh HTTP can 
   const cleared = mergeAggregatedStudents(stale, [{
     ...base()[0], realtimeRevision: 9, focus: { state: 'inactive' },
   }]);
-  assert.equal(focusStatusLabel(cleared[0]), 'No Focus confirmed');
+  assert.equal(deriveTileLockControl(cleared[0]).statusLabel, 'No Focus');
 });
 
-test('delegated telemetry removes prior Focus confirmation and suppresses incoming Focus updates', () => {
+test('delegated telemetry removes prior legacy tab Focus and suppresses incoming updates', () => {
   const current = applyStudentRealtimeEvents(base(), [focusUpdate(4, { focus: confirmedFocus })]);
-  assert.equal(focusStatusLabel(current[0]), 'Focus confirmed');
+  assert.equal(deriveTileLockControl(current[0]).statusLabel, 'Focus cleanup available');
   const delegated = mergeAggregatedStudents(current, [{
     ...base()[0], realtimeBinding: null, realtimeRevision: null, activeTabUrl: '',
     activityState: 'delegated', monitoringState: 'not_expected',
   }]);
   assert.equal(delegated[0]._realtimeSuppressed, true);
   assert.equal(delegated[0].focus, undefined);
-  assert.equal(focusStatusLabel(delegated[0]), 'No Focus confirmed');
+  assert.equal(deriveTileLockControl(delegated[0]).statusLabel, 'No Focus');
   const incoming = applyStudentRealtimeEvents(delegated, [focusUpdate(100, {
     focus: confirmedFocus,
   })], { schoolId: 'school-1' });
   assert.equal(incoming, delegated);
-  assert.equal(focusStatusLabel(incoming[0]), 'No Focus confirmed');
+  assert.equal(deriveTileLockControl(incoming[0]).statusLabel, 'No Focus');
 });

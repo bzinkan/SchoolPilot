@@ -23,6 +23,9 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
   const order: string[] = [], local: Array<{ target: Frame; frame: Frame }> = [], remote: Array<{ target: Frame; frame: Frame }> = [];
   let held = false, leases = 0, authorities = 0, response: Frame | undefined;
   const released = deferred();
+  const transactionDb = { fixture: "private-recovery-transaction" };
+  const storedControlState = { revision: 46, desiredState: { restrictions: { focus: { active: true } } } };
+  const retiredControlState = { revision: 47, desiredState: { restrictions: {} } };
   const lifecycle = { threadId: "thread-a", threadGeneration: 2, schoolEpoch: 3, activityEpoch: 4 };
   const rows = options.messages ? [{ message: { id: "message-a", content: "Synthetic private reply", supervisionContextId: "context-a" } }] : [];
   const context = {
@@ -42,17 +45,31 @@ function fixture(options: { messages?: boolean; publish?: () => Promise<boolean>
       recover: ((claimed: typeof rows, prepared: Frame) => unknown) | undefined) {
       authorities++;
       assert.equal(binding.freezeSsoPolicy, true);
-      const prepared = await prepare({}); order.push("prepared");
+      const prepared = await prepare(transactionDb); order.push("prepared");
+      assert.equal(prepared.privateReplyControlRevision, retiredControlState.revision);
       if (recover && rows.length) recover(rows, prepared);
       return { authorized: true, value: deliver(rows, prepared), foreground: { status: "fallback" } };
     },
-    async getClasspilotStudentControlDeliveryContext() {
-      assert.equal(held, true);
-      return { controlState: { revision: 47, desiredState: {} }, ssoPolicy: { revision: 6, policy: {} } };
+    async getClasspilotStudentControlDeliveryContext(schoolId: string, studentId: string, database: object) {
+      assert.equal(held, true); assert.equal(database, transactionDb);
+      assert.equal(schoolId, "school-a"); assert.equal(studentId, "student-a"); order.push("control-read");
+      return { controlState: storedControlState, ssoPolicy: { revision: 6, policy: {} } };
+    },
+    async retireLegacyTabFocusForStudentLocked(database: object, value: Frame) {
+      assert.equal(held, true); assert.equal(database, transactionDb);
+      assert.equal(value.schoolId, "school-a"); assert.equal(value.studentId, "student-a");
+      assert.equal(value.state, storedControlState); assert.equal(value.reason, "reconnect");
+      order.push("focus-retired"); return retiredControlState;
     },
     isClasspilotCapabilityActive() { return true; },
-    serializeClasspilotStudentControlStateForDelivery() { return { classroomState: null, withheld: true }; },
-    async prepareClasspilotFocusCleanupFrame() { return { exactBinding: { controlRevision: 99 } }; },
+    serializeClasspilotStudentControlStateForDelivery(value: Frame) {
+      assert.equal(held, true); assert.equal(value.state, retiredControlState);
+      order.push("serialize"); return { classroomState: null, withheld: true };
+    },
+    async prepareClasspilotFocusCleanupFrame(database: object, state: object) {
+      assert.equal(held, true); assert.equal(database, transactionDb); assert.equal(state, retiredControlState);
+      order.push("cleanup"); return { exactBinding: { controlRevision: 99 } };
+    },
     trackingWindowScreenshotLeaseNegotiated: false, screenshotPolicy: { enabled: false },
     protocol: { acceptedCapabilities: ["privateChatLifecycleV1"] }, req: { body: {} }, fabSyncPending: false,
     classpilotControlStateExactBinding(value: Frame) { return value; },
@@ -74,7 +91,7 @@ test("actual heartbeat final-delivery route uses one lease with empty outbox and
   await f.run();
   assert.equal(f.snapshot().leases, 1);
   assert.equal(f.snapshot().authorities, 1);
-  assert.deepEqual(f.order, ["lease", "prepared", "http", "released"]);
+  assert.deepEqual(f.order, ["lease", "control-read", "focus-retired", "serialize", "cleanup", "prepared", "http", "released"]);
   assert.equal(f.snapshot().response?.ok, true);
 });
 
@@ -88,11 +105,11 @@ test("actual heartbeat private frames keep exact binding and raw control revisio
     assert.equal(f.snapshot().held, false);
     assert.equal(f.snapshot().response?.ok, true);
     assert.equal(settled, false, "only network settlement remains after the lease ends");
-    assert.deepEqual(f.order, ["lease", "prepared", "local", "publish", "http", "released"]);
+    assert.deepEqual(f.order, ["lease", "control-read", "focus-retired", "serialize", "cleanup", "prepared", "local", "publish", "http", "released"]);
     assert.deepEqual(JSON.parse(JSON.stringify(f.local[0]?.target)), {
       kind: "student-binding", schoolId: "school-a", studentId: "student-a", studentSessionId: "session-a", deviceId: "device-a",
     });
-    assert.equal(f.local[0]?.frame.studentControlRevision, 47, "serialized/cleanup revision99 must not replace the private raw revision");
+    assert.equal(f.local[0]?.frame.studentControlRevision, 47, "use the retired row revision, never the old row46 or serialized/cleanup revision99");
     assert.equal(f.local[0]?.frame.chatMessageId, "message-a");
     assert.equal(f.local[0]?.frame.studentSessionId, "session-a");
     assert.deepEqual(f.local[0]?.frame.privateChatLifecycle, f.lifecycle);

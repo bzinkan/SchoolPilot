@@ -598,7 +598,7 @@ describe("PR 2-pre fence: honest withheld outcomes", () => {
     assert.ok(CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON.startsWith("Unsupported client:"));
     assert.equal(
       CLASSPILOT_PRECISE_RESTRICTION_ENFORCEMENT_UNAVAILABLE_REASON,
-      "Extension update required for this Waypoint or Flight Path"
+      "Extension update required for this Focus or Flight Path"
     );
   });
 

@@ -7,19 +7,21 @@ import pg from "pg";
 import { sql } from "drizzle-orm";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
-import { focusRecord, focusStatusChanged, readClasspilotFocusStatusEnvelope, readFocusAssignment, readFocusOpenIntent, readFocusRestriction } from "../src/services/classpilotFocus.js";
+import { focusRecord, focusServerOrigin, focusStatusChanged, readClasspilotFocusStatusEnvelope, readFocusAssignment, readFocusOpenIntent, readFocusRestriction, withoutClasspilotFocus } from "../src/services/classpilotFocus.js";
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
 process.env.CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1 = "true";
 process.env.CLASSPILOT_CAP_FOCUS_TAB_V1 = "true";
+process.env.CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1 = "true";
 delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS;
 
 const ids = { school: randomUUID(), otherSchool: randomUUID(), teacher: randomUUID(), students: [randomUUID(), randomUUID()], devices: [randomUUID(), randomUUID()] };
-const capabilities = ["scopedAuthorityChecksV1", "scheduledClassroomV1", "focusTabV1"];
+const capabilities = ["classroomStateV1", "scopedAuthorityChecksV1", "scheduledClassroomV1", "focusTabV1",
+  "lateSignInRestrictionSsoV1", "screenOnlyUnlockV1"];
 const refs = ["student-one-exact-tab", "student-two-exact-tab"];
 let admin: pg.Pool;
 let controlWasForced = false;
@@ -59,7 +61,52 @@ const openAck = (commandId: string, controlRevision: number, overrides: Partial<
   result: { tabReceiptVersion: 1, tabRef: "private-twenty-first-tab", tabSnapshotRevision: 10 }, ...overrides,
 }));
 
-describe("Focus authority and continuation under restricted RLS", { skip: process.env.RLS_GUC_ENABLED !== "true" }, () => {
+// Seed historical rows through the independent local fixture role. Production
+// authoring stays permanently retired: cleanup tests must not enable a bypass.
+async function seedLegacyOpen() {
+  const source = await issue("open-tab", { url: "https://example.org/lesson" });
+  const state = await control(), originalTarget = await sourceTarget(source.command.id);
+  const binding = { version: 1 as const, assignmentId: randomUUID(), schoolId: ids.school, studentId: ids.students[0]!,
+    studentSessionId: sessions[0]!, deviceId: ids.devices[0]!, serverOrigin: focusServerOrigin(),
+    teachingSessionId: null, supervisionContextId: context.id, ownerId: ids.teacher,
+    contextAuthorityRevision: String(context.classroomAuthorityRevision), sourceCommandId: source.command.id,
+    sourceTargetId: originalTarget.id, revisionAtAssignment: state.revision };
+  const intent = { version: 1, assignmentId: binding.assignmentId, childCommandId: randomUUID(),
+    deadline: source.command.expiresAt!.toISOString(), state: "pending", binding };
+  await admin.query("UPDATE classpilot_commands SET command_payload=$2::jsonb WHERE id=$1", [source.command.id,
+    JSON.stringify({ url: "https://example.org/lesson", focusAfterOpen: true })]);
+  await admin.query("UPDATE classpilot_command_targets SET result=$2::jsonb WHERE id=$1", [originalTarget.id,
+    JSON.stringify({ ...focusRecord(originalTarget.result), frozenControlRevision: state.revision, focusOpenIntentV1: intent })]);
+  const command = await inSchool(() => storage.getClasspilotCommandByIdAndSchool(source.command.id, ids.school));
+  assert.ok(command); return { command };
+}
+
+async function seedLegacyFocus(indexes = [0]) {
+  const source = await issue("open-tab", { url: "https://example.org/lesson" }, indexes);
+  await admin.query("UPDATE classpilot_commands SET command_type='focus-tab',command_payload=$2::jsonb,expires_at=NULL WHERE id=$1",
+    [source.command.id, JSON.stringify({ tabTargets: indexes.map(index => row(index)) })]);
+  for (const index of indexes) {
+    const state = await control(index);
+    const sourceTargetRow = source.command.targets.find(value => value.studentId === ids.students[index]);
+    assert.ok(sourceTargetRow);
+    const assignment = { version: 1, assignmentId: randomUUID(), schoolId: ids.school, studentId: ids.students[index]!,
+      studentSessionId: sessions[index]!, deviceId: ids.devices[index]!, serverOrigin: focusServerOrigin(),
+      teachingSessionId: null, supervisionContextId: context.id, ownerId: ids.teacher,
+      contextAuthorityRevision: String(context.classroomAuthorityRevision), sourceCommandId: source.command.id,
+      sourceTargetId: sourceTargetRow.id, revisionAtAssignment: state.revision + 1 };
+    const base = withoutClasspilotFocus(state.desiredState);
+    const desired = { ...base, restrictions: { ...focusRecord(base.restrictions),
+      focus: { active: true, assignmentId: assignment.assignmentId, tabRef: refs[index], observedRevision: 9,
+        targetKind: "snapshot", source: "teacher", setAt: new Date().toISOString() } }, focusAssignmentV1: assignment };
+    await admin.query("UPDATE classpilot_student_control_states SET desired_state=$2::jsonb,revision=revision+1,source_command_id=$3 WHERE id=$1",
+      [state.id, JSON.stringify(desired), source.command.id]);
+    await admin.query("UPDATE classpilot_command_targets SET result=$2::jsonb WHERE id=$1", [sourceTargetRow.id,
+      JSON.stringify({ ...focusRecord(sourceTargetRow.result), focusExactAuthorityV1: assignment, frozenControlRevision: state.revision + 1 })]);
+  }
+  return source;
+}
+
+describe("Legacy tab Focus cleanup and Bring Forward under restricted RLS", { skip: process.env.RLS_GUC_ENABLED !== "true" }, () => {
 before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname));
   assert.ok(process.env.ADMIN_DATABASE_URL, "The fixture requires an independent local bootstrap role");
@@ -132,9 +179,8 @@ after(async () => {
   await Promise.all([admin.end(), pools.pool.end(), pools.sessionPool.end(), scheduler.schedulerPool.end(), scheduler.schedulerLockPool.end()]);
 });
 
-test("exact multi-student Focus persists distinct immutable targets and no other tenant can read them", async () => {
-  const result = await issue("focus-tab", { tabTargets: [row(0), row(1)] }, [0, 1]);
-  assert.deepEqual(result.tabOutcomes?.map(outcome => outcome.status), ["accepted", "accepted"]);
+test("historical multi-student Focus retains distinct immutable targets and tenant isolation", async () => {
+  await seedLegacyFocus([0, 1]);
   const assignments = [];
   for (let index = 0; index < 2; index++) {
     const state = await control(index);
@@ -154,35 +200,32 @@ test("stale public refs and advertised-only clients get bounded unavailability a
   assert.equal(stale.tabOutcomes?.[0]?.status, "stale_tab_ref");
   assert.equal(await focus(), null);
   await refresh(0, ["scopedAuthorityChecksV1"]);
-  const unsupported = await issue("focus-tab", { tabTargets: [row(0)] });
+  const unsupported = await issue("activate-tab", { tabTargets: [row(0)] });
   assert.equal(unsupported.tabOutcomes?.[0]?.status, "unsupported");
   assert.equal(await focus(), null);
 });
 
-test("successful open consumes the private 21st-tab receipt once without public snapshot lookup", async () => {
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+test("a successful delayed legacy open never creates a retired 21st-tab Focus child", async () => {
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result);
   assert.ok(intent);
   assert.equal(await focus(), null);
   const ack = await openAck(source.command.id, intent.binding.revisionAtAssignment);
   assert.equal(ack.disposition, "applied");
   const committed = readFocusOpenIntent((await sourceTarget(source.command.id)).result);
-  assert.equal(committed?.state, "committed");
-  const active = await focus();
-  assert.ok(active?.active);
-  assert.equal(active.tabRef, "private-twenty-first-tab");
-  assert.equal(active.targetKind, "open_receipt");
-  assert.equal(active.assignmentId, intent.assignmentId);
+  assert.equal(committed?.state, "refused");
+  assert.equal(committed?.errorCode, "TAB_FOCUS_RETIRED");
+  assert.equal(await focus(), null);
   const revision = (await control()).revision;
   const retry = await openAck(source.command.id, intent.binding.revisionAtAssignment);
   assert.equal(retry.disposition, "idempotent");
   assert.equal((await control()).revision, revision);
   const children = await admin.query<{ count: string }>("SELECT count(*) FROM classpilot_commands WHERE id=$1", [intent.childCommandId]);
-  assert.equal(Number(children.rows[0]?.count), 1);
+  assert.equal(Number(children.rows[0]?.count), 0);
 });
 
 test("received or failed opens and forged receipt metadata cannot create a follow-up", async () => {
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   const received = await openAck(source.command.id, intent.binding.revisionAtAssignment, { ackState: "received",
     result: { followUp: { kind: "focus", state: "committed", commandId: "forged-child" } } });
@@ -195,7 +238,7 @@ test("received or failed opens and forged receipt metadata cannot create a follo
   assert.equal(readFocusOpenIntent((await sourceTarget(source.command.id)).result)?.state, "refused");
   assert.equal(Object.hasOwn(focusRecord((await sourceTarget(source.command.id)).result), "followUp"), false);
   assert.equal(await focus(), null);
-  const failedSource = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  const failedSource = await seedLegacyOpen();
   const failedIntent = readFocusOpenIntent(failedSource.command.targets[0]?.result); assert.ok(failedIntent);
   await openAck(failedSource.command.id, failedIntent.binding.revisionAtAssignment, { ackState: "failed" });
   assert.equal(readFocusOpenIntent((await sourceTarget(failedSource.command.id)).result)?.state, "refused");
@@ -203,7 +246,7 @@ test("received or failed opens and forged receipt metadata cannot create a follo
 });
 
 test("received open does not extend the continuation deadline", async () => {
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   await openAck(source.command.id, intent.binding.revisionAtAssignment, { ackState: "received" });
   const afterDeadline = new Date(Date.parse(intent.deadline) + 1);
@@ -217,7 +260,7 @@ test("received open does not extend the continuation deadline", async () => {
 });
 
 test("queued continuation rechecks a valid context-end and actor-deactivation mutation under the canonical school lock", async () => {
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   const mutation = await admin.connect();
   try {
@@ -241,7 +284,7 @@ test("queued continuation rechecks a valid context-end and actor-deactivation mu
 });
 
 test("license wall-clock expiry during a control lock wait prevents child creation", async () => {
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   const blocker = await admin.connect();
   try {
@@ -261,7 +304,7 @@ test("license wall-clock expiry during a control lock wait prevents child creati
 });
 
 test("stop remains available gate-off and fences a concurrently queued successful open ACK", { timeout: 30_000 }, async () => {
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   const blocker = await admin.connect();
   let stop: ReturnType<typeof issue> | undefined;
@@ -283,32 +326,52 @@ test("stop remains available gate-off and fences a concurrently queued successfu
   assert.equal(Number(child.rows[0]?.count), 0);
 });
 
-test("replacement assignment B survives the concurrently queued invalidation ACK for assignment A", { timeout: 30_000 }, async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
+test("website Focus survives a concurrently queued invalidation ACK for retired tab Focus", { timeout: 30_000 }, async () => {
+  await seedLegacyFocus();
   const a = await control();
   const assignmentA = readFocusAssignment(a.desiredState); assert.ok(assignmentA);
   const blocker = await admin.connect();
+  let websiteCommandId: string | undefined;
   try {
     await blocker.query("BEGIN");
     await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0::bigint))", [`classpilot:student-control:${ids.school}:${ids.students[0]}`]);
-    const replacement = issue("focus-tab", { tabTargets: [row(0)] });
-    await pause(100);
+    const replacement = issue("lock-screen", { url: "https://example.org/" });
+    // Wait for the replacement's real lock request. Fixed sleeps let an ACK
+    // overtake the website command's capability/authority reads under load.
+    const deadline = Date.now() + 5_000;
+    while (true) {
+      const waiting = await admin.query<{ count: string }>("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())");
+      if (Number(waiting.rows[0]?.count) > 0) break;
+      assert.ok(Date.now() < deadline, "website Focus must reach the held student-control lock");
+      await pause(10);
+    }
     const invalidation = inSchool(() => storage.acknowledgeClasspilotStudentControlState({ schoolId: ids.school,
       studentId: ids.students[0]!, studentSessionId: sessions[0]!, deviceId: ids.devices[0]!, appliedRevision: a.revision,
       outcome: "applied", acceptedCapabilities: capabilities,
       focusStatus: { assignmentId: assignmentA.assignmentId, state: "invalidated", reason: "focus_tab_closed" } }));
     await pause(100);
     await blocker.query("COMMIT");
-    const [, stale] = await Promise.all([replacement, invalidation]);
-    assert.equal(stale, undefined);
+    // Header creation and website persistence have separate transactions. The
+    // ACK may validly retire the old layer between them; it must never remove
+    // the website restriction after that newer state commits.
+    const [newFocus] = await Promise.all([replacement, invalidation]);
+    websiteCommandId = newFocus.command.id;
+    assert.notEqual(newFocus.command.targets[0]?.status, "unavailable", newFocus.command.targets[0]?.errorMessage ?? undefined);
   } finally { await blocker.query("ROLLBACK"); blocker.release(); }
-  const assignmentB = readFocusAssignment((await control()).desiredState); assert.ok(assignmentB);
-  assert.notEqual(assignmentB.assignmentId, assignmentA.assignmentId);
-  assert.equal((await focus())?.active, true);
+  const current = await control();
+  assert.deepEqual(focusRecord(focusRecord(current.desiredState).restrictions).screenLock,
+    { active: true, url: "https://example.org/" });
+  assert.equal(await focus(), null);
+  assert.equal(current.sourceCommandId, websiteCommandId);
+  assert.equal(await inSchool(() => storage.acknowledgeClasspilotStudentControlState({ schoolId: ids.school,
+    studentId: ids.students[0]!, studentSessionId: sessions[0]!, deviceId: ids.devices[0]!, appliedRevision: a.revision,
+    outcome: "applied", acceptedCapabilities: capabilities,
+    focusStatus: { assignmentId: assignmentA.assignmentId, state: "invalidated", reason: "focus_tab_closed" } })), undefined);
+  assert.equal((await control()).revision, current.revision);
 });
 
 test("Focus invalidation clears only its own layer and retirement ACK cannot replay", async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
+  await seedLegacyFocus();
   const current = await control();
   const assignment = readFocusAssignment(current.desiredState); assert.ok(assignment);
   const ack = { schoolId: ids.school, studentId: ids.students[0]!, studentSessionId: sessions[0]!, deviceId: ids.devices[0]!,
@@ -323,7 +386,7 @@ test("Focus invalidation clears only its own layer and retirement ACK cannot rep
 });
 
 test("snapshot Stop Focus sends complete V2 authority after capability withdrawal and preserves other controls", { timeout: 30_000 }, async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
+  await seedLegacyFocus();
   const active = await control(), original = focusRecord(active.desiredState);
   const blockList = { active: true, blockedDomains: ["blocked.example"], name: "Existing policy" };
   await admin.query("UPDATE classpilot_student_control_states SET desired_state=$2::jsonb WHERE id=$1", [active.id,
@@ -382,7 +445,7 @@ test("snapshot Stop Focus sends complete V2 authority after capability withdrawa
 });
 
 test("offline Stop Focus retains durable cleanup when new Focus issuance is disabled", async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
+  await seedLegacyFocus();
   const active = await control();
   process.env.CLASSPILOT_CAP_FOCUS_TAB_V1 = "false";
   await inSchool(() => dispatcher.executeClasspilotCommand({ schoolId: ids.school, actorId: ids.teacher,
@@ -396,7 +459,7 @@ test("offline Stop Focus retains durable cleanup when new Focus issuance is disa
 });
 
 test("bare stop survives gate/capability withdrawal and wholly withheld precise state, but never crosses assignment B", async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
+  await seedLegacyFocus();
   const active = await control();
   const original = focusRecord(active.desiredState);
   const precise = { ...original, restrictions: { ...focusRecord(original.restrictions), flightPath: { active: true,
@@ -432,7 +495,7 @@ test("bare stop survives gate/capability withdrawal and wholly withheld precise 
   assert.equal((await inSchool(() => storage.persistClasspilotCommandTargetAck(ack))).disposition, "idempotent");
   await admin.query("UPDATE classpilot_student_control_states SET desired_state=jsonb_set(desired_state,'{restrictions,flightPath}','{\"active\":false}'::jsonb) WHERE id=$1", [active.id]);
   process.env.CLASSPILOT_CAP_FOCUS_TAB_V1 = "true"; await refresh(0);
-  await issue("focus-tab", { tabTargets: [row(0)] });
+  await seedLegacyFocus();
   const b = await control();
   assert.equal(Object.hasOwn(focusRecord(b.desiredState), "focusCleanupV1"), false);
   assert.ok(frame.exactBinding.controlRevision < b.revision);
@@ -441,7 +504,7 @@ test("bare stop survives gate/capability withdrawal and wholly withheld precise 
 });
 
 test("packaged Focus status crosses normalization and locked storage without JSONB-order rewrites", async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
+  await seedLegacyFocus();
   const initial = await control();
   const assignment = readFocusAssignment(initial.desiredState); assert.ok(assignment);
   const acknowledge = (status: unknown, overrides = {}) => inSchool(() => storage.acknowledgeClasspilotStudentControlState({
@@ -476,8 +539,8 @@ test("packaged Focus status crosses normalization and locked storage without JSO
 });
 
 test("recovery-token sign-out retires exact assignment and pending open continuation", async () => {
-  await issue("focus-tab", { tabTargets: [row(0)] });
-  const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
+  await seedLegacyFocus();
+  const source = await seedLegacyOpen();
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   const ended = await inSchool(() => storage.endStudentSessionByRecoveryTokenHash({ schoolId: ids.school, tokenHash: "1".repeat(64) }));
   assert.equal(ended?.id, sessions[0]);

@@ -1,5 +1,12 @@
 # Focus and Bring Forward v1: command contract
 
+Teacher-workflow note: this document retains the historical persistent **tab
+Focus** protocol meaning. The current teacher-facing **Focus** name refers to
+the former Waypoint website/resource restriction; see
+[Teacher Focus controls](CLASSPILOT_FOCUS_CONTROLS.md). New teacher requests no
+longer create tab Focus or an Open + Focus continuation. Bring Forward and
+legacy tab Focus state, cleanup, and expiry retain the wire contracts below.
+
 Status: **IMPLEMENTED ON THE COORDINATED RELEASE BRANCH; FINAL RELEASE GATES PENDING**. This document defines the reviewed Focus/Bring Forward contract. Record final combined-source, exact-package and CI acceptance separately from deployment and activation in the [2.9.7 operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md). The owner replaced the two-managed-Chromebook prerequisite with documented live validation; record it as `waived_not_passed`.
 
 The public command shapes below are fixed. This document supersedes the former provisional Focus section 12 of [the precise restriction contract](CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md). The existing precise matcher, resource fields, restriction precedence and sign-in envelope remain authoritative. Focus never creates a restriction exception.

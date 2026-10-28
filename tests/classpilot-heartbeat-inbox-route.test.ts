@@ -19,18 +19,35 @@ function fixture(options: { rows?: Fields[]; checked?: boolean; failCommit?: boo
   const deviceLastHeartbeat = new Map([["device", { studentId: "student", studentSessionId: "session" }]]);
   const response = Object.assign(new EventEmitter(), { body: {} as Fields, destroyed: options.alreadyClosed === true, writableFinished: false, status() { return response; }, json(body: Fields) { response.body = body; if (options.finish !== false) response.emit("finish"); return body; } });
   const release = deferred(), delivered = deferred(); let inboxRequest: Fields | undefined;
+  const transactionDb = { fixture: "inbox-delivery-transaction" };
+  let held = false, controlRead = false, retirementFinished = false;
   const context = {
     Map, Set, Promise, Date, deliveredMessages, deviceLastHeartbeat, deviceId: "device", schoolId: "school", studentId: "student", studentSessionId: "session", now: 1000,
     pendingMessageRecoveryHeartbeat: false, PENDING_MESSAGE_PERIODIC_CHECK_MS: 300_000, MAX_DELIVERED_MESSAGE_DEVICES: 100, DELIVERED_MESSAGE_CACHE_MAX_IDS: 500,
     teacherReplyLastCheck: new Map([["session:device", 1000]]), MAX_TEACHER_REPLY_CHECKS: 100,
     setBoundedMap(map: Map<string, unknown>, key: string, value: unknown) { map.set(key, value); },
-    async runWithTenantContext(_scope: Fields, work: () => Promise<unknown>) { const result = await work(); delivered.resolve(); await release.promise; if (options.failCommit) throw new Error("COMMIT failed"); return result; },
+    async runWithTenantContext(scope: Fields, work: () => Promise<unknown>) {
+      assert.equal(scope.operation, "heartbeat_final_delivery"); held = true;
+      try { const result = await work(); delivered.resolve(); await release.promise; if (options.failCommit) throw new Error("COMMIT failed"); return result; }
+      finally { held = false; }
+    },
     async withClasspilotHeartbeatDeliveryAuthority(_binding: Fields, prepare: (db: object, read: () => Promise<undefined>) => Promise<Fields>, deliver: (rows: never[], prepared: Fields, inbox: Fields) => unknown, _recovery: unknown, _foreground: unknown, request: Fields | undefined) {
-      inboxRequest = request; const prepared = await prepare({}, async () => undefined);
+      inboxRequest = request; const prepared = await prepare(transactionDb, async () => undefined);
+      assert.equal(retirementFinished, true, "inbox delivery must use the post-retirement projection");
       if (options.denied) return { authorized: false, foreground: { status: "suppressed" } };
       return { authorized: true, value: deliver([], prepared, request && options.checked !== false ? { checked: true, messages: options.rows ?? [] } : { checked: false }), foreground: { status: "fallback" } };
     },
-    async getClasspilotStudentControlDeliveryContext() { return { controlState: null, ssoPolicy: {} }; },
+    async getClasspilotStudentControlDeliveryContext(schoolId: string, studentId: string, database: object) {
+      assert.equal(held, true); assert.equal(database, transactionDb);
+      assert.equal(schoolId, "school"); assert.equal(studentId, "student");
+      controlRead = true; return { controlState: null, ssoPolicy: {} };
+    },
+    async retireLegacyTabFocusForStudentLocked(database: object, value: Fields) {
+      assert.equal(held, true); assert.equal(database, transactionDb); assert.equal(controlRead, true);
+      assert.equal(value.schoolId, "school"); assert.equal(value.studentId, "student");
+      assert.equal(value.state, null, "an absent control row stays explicit and does not trigger another read");
+      assert.equal(value.reason, "reconnect"); retirementFinished = true; return null;
+    },
     trackingWindowScreenshotLeaseNegotiated: false, screenshotPolicy: {}, fabSyncPending: false, protocol: {}, req: { body: {} },
     deferredForeground: undefined, school: { planStatus: "active" }, res: response,
     recordRuntimePerformanceCounter() {}, recordHeartbeatHotPathCounter() {},
