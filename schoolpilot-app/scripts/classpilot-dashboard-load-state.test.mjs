@@ -4952,6 +4952,47 @@ async function refreshFocusStudent(fixture, row) {
   });
 }
 
+test('tab-close failures show the roster name and actual error for initial and later device ACKs', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context, {
+    studentName: 'Taylor Example', activeTabRef: 'opaque-little-alchemy',
+    acceptedCapabilities: { scopedAuthorityChecksV1: true, exactTabCloseV2: true },
+    allOpenTabs: [{ tabRef: 'opaque-little-alchemy', url: 'https://littlealchemy.com/', title: 'Little Alchemy' }],
+  });
+  const actualError = 'Command belongs to an inactive teaching session';
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); posts.push(body);
+    const failed = posts.length === 1;
+    await route.fulfill({ status: 201, json: {
+      command: { id: `close-${posts.length}`, ...body, schoolId: SCHOOL_ID,
+        targets: [{ studentId: STUDENT_ID, status: failed ? 'failed' : 'sent', ...(failed ? { errorMessage: actualError } : {}) }] },
+      summary: { requested: 1, attempted: 1, acknowledged: failed ? 1 : 0, failed: failed ? 1 : 0,
+        completed: 0, pending: failed ? 0 : 1, awaitingAck: failed ? 0 : 1 },
+    } });
+  });
+  const notices = page.getByRole('region', { name: /Notifications/ });
+  await page.getByTestId('button-close-tab-opaque-little-alchemy').click();
+  await notices.getByText(`Taylor Example: ${actualError}.`, { exact: false }).waitFor();
+  assert.equal(await notices.getByText('Failed', { exact: true }).count(), 1);
+  assert.equal(await notices.getByText('Partially delivered', { exact: true }).count(), 0);
+  assert.equal(posts[0].commandType, 'close-tabs');
+  assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
+  await page.clock.runFor(6000);
+  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
+  await page.getByTestId('button-close-tab-opaque-little-alchemy').click();
+  await waitUntil(() => posts.length === 2, 'second exact close is sent');
+  await notices.getByText('Delivery attempted', { exact: true }).waitFor();
+  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID,
+    teachingSessionId: OWN_SESSION_ID, commandId: 'close-2',
+    command: { id: 'close-2', ...posts[1], schoolId: SCHOOL_ID,
+      targets: [{ studentId: STUDENT_ID, status: 'failed', errorMessage: actualError }] },
+    summary: { requested: 1, attempted: 1, acknowledged: 1, failed: 1, completed: 0, pending: 0, awaitingAck: 0 },
+  });
+  await notices.getByText(`Taylor Example: ${actualError}.`, { exact: false }).waitFor();
+  assert.equal(await notices.getByText('Failed', { exact: true }).count(), 1);
+  assert.equal(await notices.getByText('Partially delivered', { exact: true }).count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('unified Focus: tile current website starts and stops exactly its own student with confirmed lifecycle', { timeout: 60_000 }, async context => {
   const fixture = await focusBrowserFixture(context, { screenLocked: false,
     classroomState: { revision: 1, restrictions: { screenLock: { active: false } } } });

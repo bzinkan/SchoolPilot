@@ -135,7 +135,7 @@ function formattedExpiry(expiresAt) {
   }).format(new Date(time));
 }
 
-export function commandDeliveryFeedback(value, commandType = value?.command?.commandType) {
+function commandDeliverySummaryFeedback(value, commandType) {
   const policy = commandDeliveryPolicy(commandType, value);
   const summary = normalizeCommandSummary(value);
   const expiresAt = value?.expiresAt ?? value?.command?.expiresAt;
@@ -232,8 +232,12 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
     };
   }
 
+  // A failed ACK proves receipt, but is not a successful acknowledgement of
+  // the action. Counting it as one labelled a single failed tab close as
+  // "Partially delivered" even though no student's action succeeded.
+  const successfulAcknowledgements = Math.max(summary.completed, summary.acknowledged - summary.failed);
   if (
-    summary.acknowledged === 0
+    successfulAcknowledgements === 0
     && summary.completed === 0
     && summary.awaitingAck === 0
     && (summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0)
@@ -245,7 +249,7 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
       variant: 'destructive',
     };
   }
-  if (summary.completed > 0 || summary.acknowledged > 0) {
+  if (successfulAcknowledgements > 0) {
     const breakdown = commandOutcomeBreakdown(summary);
     return {
       title: summary.failed > 0 || summary.unavailable > 0 || summary.expired > 0 ? 'Partially delivered' : 'Acknowledged',
@@ -272,8 +276,40 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
       `${plural(summary.attempted, 'target')} attempted; ${plural(summary.pending, 'target')} awaiting device acknowledgement.`,
       expiry ? `Unacknowledged delivery expires at ${expiry}.` : null,
       summary.unavailable > 0 ? `${plural(summary.unavailable, 'student is', 'students are')} unavailable.` : null,
+      summary.failed > 0 ? `${plural(summary.failed, 'target')} failed.` : null,
     ].filter(Boolean).join(' '),
+    variant: summary.failed > 0 ? 'destructive' : undefined,
   };
+}
+
+function commandFailureDescription(value, studentNames) {
+  const targets = value?.command?.targets || value?.targets || [];
+  const details = [];
+  const seen = new Set();
+  let omitted = 0;
+  for (const target of targets) {
+    if (!['failed', 'unavailable', 'expired'].includes(target?.status) || typeof target.errorMessage !== 'string') continue;
+    // eslint-disable-next-line no-control-regex -- Device diagnostics deliberately strip control characters.
+    const message = target.errorMessage.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (!message) continue;
+    const key = `${target.studentId}\u0000${message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (details.length >= 5) { omitted += 1; continue; }
+    // Names come only from the dashboard's authorized roster, never a device
+    // ACK or an identifier supplied by the command target.
+    const rosterName = Object.hasOwn(studentNames, target.studentId) ? studentNames[target.studentId] : null;
+    const name = typeof rosterName === 'string' && rosterName.trim() ? rosterName.trim().slice(0, 100) : 'Student';
+    details.push(`${name}: ${message}${/[.!?]$/.test(message) ? '' : '.'}`);
+  }
+  if (omitted > 0) details.push(`${plural(omitted, 'additional failure')} reported.`);
+  return details.join(' ');
+}
+
+export function commandDeliveryFeedback(value, commandType = value?.command?.commandType, studentNames = {}) {
+  const feedback = commandDeliverySummaryFeedback(value, commandType);
+  const failures = commandFailureDescription(value, studentNames);
+  return failures ? { ...feedback, description: `${failures} ${feedback.description}` } : feedback;
 }
 
 function commandId(value) {
@@ -473,7 +509,7 @@ export function findNextTransientExpiry(current, nowMs = Date.now()) {
   return earliest;
 }
 
-export function transientEntryFeedback(entry) {
+export function transientEntryFeedback(entry, studentNames = {}) {
   return commandDeliveryFeedback({
     commandId: entry.commandId,
     command: {
@@ -483,5 +519,5 @@ export function transientEntryFeedback(entry) {
       expiresAt: entry.expiresAtMs === null ? null : new Date(entry.expiresAtMs).toISOString(),
     },
     summary: entry.summary,
-  }, entry.commandType);
+  }, entry.commandType, studentNames);
 }

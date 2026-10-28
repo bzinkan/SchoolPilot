@@ -325,6 +325,12 @@ function pendingTransientControls(entries) {
   };
 }
 
+function commandStudentNames(rows) {
+  return Object.fromEntries(Array.from(rows)
+    .filter((student) => student?.studentId)
+    .map((student) => [student.studentId, student.studentName || student.studentEmail || 'Student']));
+}
+
 function classStartOverlapData(error) {
   const data = error?.response?.data || error?.data || null;
   if (data?.code !== "CLASS_ROSTER_ACTIVE_OVERLAP") return null;
@@ -2388,7 +2394,7 @@ export default function Dashboard() {
                     || currentEntry.summary.failed > (previousEntry?.summary.failed || 0)
                   )
                 ) {
-                  const feedback = transientEntryFeedback(currentEntry);
+                  const feedback = transientEntryFeedback(currentEntry, commandStudentNames(tileLockStudentsRef.current.values()));
                   toast(feedback);
                 }
               }
@@ -2960,7 +2966,7 @@ export default function Dashboard() {
         for (const [id, entry] of after) {
           const previousEntry = before.get(id);
           if (entry.summary.expired > (previousEntry?.summary.expired || 0)) {
-            toast(transientEntryFeedback(entry));
+            toast(transientEntryFeedback(entry, commandStudentNames(tileLockStudentsRef.current.values())));
           }
         }
       }
@@ -5473,11 +5479,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       setTransientPendingControls(pendingTransientControls(tracked));
       setTransientCommandVersion((version) => version + 1);
     }
-    const textFeedback = commandDeliveryFeedback(enrichedData, commandType);
-    const studentNames = [...students, ...claimedPickupStudents].reduce((names, student) => {
-      if (student?.studentId) names[student.studentId] = student.studentName || student.studentEmail || 'Student';
-      return names;
-    }, {});
+    const studentNames = commandStudentNames([...students, ...claimedPickupStudents]);
+    const textFeedback = commandDeliveryFeedback(enrichedData, commandType, studentNames);
     // Name the students whose ClassPilot extension must update before a
     // precise Waypoint or Flight Path can reach them.
     const { unsupportedStudentIds, ...feedbackFields } = textFeedback;

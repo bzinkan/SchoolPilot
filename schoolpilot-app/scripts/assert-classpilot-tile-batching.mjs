@@ -1409,8 +1409,8 @@ assert.match(dashboardSource, /const postClaimedCommand[\s\S]{0,700}targetScope:
   'claimed commands must stay partitioned by context and send exact student IDs');
 assert.match(dashboardSource, /combineCommandSettlements\(settlements, target\.groups, commandType\)/,
   'claimed commands must preserve partial outcomes for each original context');
-assert.match(dashboardSource, /commandDeliveryFeedback\(enrichedData, commandType\)/,
-  'the canonical dashboard must retain shared pending, unavailable, and skip feedback');
+assert.match(dashboardSource, /commandDeliveryFeedback\(enrichedData, commandType, studentNames\)/,
+  'the canonical dashboard must retain shared pending, unavailable, skip, and named target-error feedback');
 assert.match(dashboardSource, /partitionCurrentPageWaypointTargets\([\s\S]{0,200}recipientSnapshot\?\.snapshot\?\.ids\?\.includes\(student\.studentId\)[\s\S]{0,160}monitoringDisplayFor\(student\)\.telemetryCurrent/,
   'website Focus retains frozen explicit recipients and current-telemetry guards');
 assert.match(supervisionReviewSource, /apiRequest\('POST', '\/coverage\/preview', request/,

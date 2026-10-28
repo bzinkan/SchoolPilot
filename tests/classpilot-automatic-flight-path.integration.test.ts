@@ -237,6 +237,39 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     assert.equal((await restrictions(report)).flightPath.active, true, "a real live promotion is the application boundary");
   });
 
+  test("promoting an unchanged report-only occurrence advances classroom ownership exactly once", async () => {
+    const item = await fixture();
+    const reporting = await start(item, { mode: "scheduled_report" });
+    const before = await control(item);
+    assert.equal(before.teachingSessionId, reporting.id, "reporting already initialized the same session's control row");
+    const { buildStudentFabState } = await import("../src/services/classpilotFab.js");
+    const beforeFab = await inSchool(() => buildStudentFabState(ids.school, item.bindings[0]!.studentId));
+    assert.deepEqual(beforeFab.activeSessionIds, [], "reporting is not live command authority on the device");
+    assert.equal(beforeFab.ownershipRevision, before.revision);
+
+    const promotions = await Promise.all([
+      inSchool(() => storage.promoteScheduledReportSessionToLive({ schoolId: ids.school, sessionId: reporting.id })),
+      inSchool(() => storage.promoteScheduledReportSessionToLive({ schoolId: ids.school, sessionId: reporting.id })),
+    ]);
+    const promoted = promotions.find((session): session is TeachingSession => !!session);
+    assert.ok(promoted);
+    assert.equal(promotions.filter(Boolean).length, 1, "only one concurrent caller promotes the occurrence");
+    item.session = promoted;
+    const after = await control(item);
+    assert.equal(after.revision, before.revision + 1, "the live session set needs a higher ownership revision even with empty restrictions");
+    assert.deepEqual(after.desiredState, before.desiredState, "promotion preserves independent controls and the disabled automatic preset");
+    assert.equal(after.sourceCommandId, before.sourceCommandId);
+    assert.deepEqual(after.scheduledEndAt, before.scheduledEndAt);
+    assert.deepEqual(after.hardExpiresAt, before.hardExpiresAt);
+    const afterFab = await inSchool(() => buildStudentFabState(ids.school, item.bindings[0]!.studentId));
+    assert.deepEqual(afterFab.activeSessionIds, [reporting.id]);
+    assert.equal(afterFab.ownershipRevision, after.revision, "the populated device session set carries the new ownership revision");
+
+    assert.equal(await inSchool(() => storage.promoteScheduledReportSessionToLive({ schoolId: ids.school, sessionId: reporting.id })), undefined);
+    await inSchool(() => storage.initializeClasspilotStudentControlStatesForSession(promoted));
+    assert.equal((await control(item)).revision, after.revision, "live retries and ordinary reconciliation stay idempotent");
+  });
+
   test("a live co-teacher start uses the class's configured path and freezes later preference/resource changes", async () => {
     const item = await fixture();
     await configure(item);

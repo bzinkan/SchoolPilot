@@ -12976,7 +12976,11 @@ export async function promoteScheduledReportSessionToLive(
       .returning();
     if (session) {
       session.automaticFlightPathState = await initializeAutomaticFlightPathForSession(session, transactionDb);
-      await initializeClasspilotStudentControlStatesForSession(session, transactionDb);
+      // Reporting and live occurrences share the same session id and may have
+      // identical restrictions. Becoming live changes the device's active
+      // classroom authority, so that transition still needs a new ownership
+      // revision. Only the successful mode update reaches this writer.
+      await initializeClasspilotStudentControlStatesForSession(session, transactionDb, { forceRevision: true });
     }
     return session;
   });
@@ -23688,10 +23692,12 @@ export async function initializeAutomaticFlightPathForSession(session: TeachingS
  * Bind the frozen roster to current class control state at startup and on
  * reconciliation. New classes replace the former owner's controls; replays
  * retain current teacher choices and the frozen automatic session decision.
+ * A reporting-to-live promotion advances ownership even if its state matches.
  */
 export async function initializeClasspilotStudentControlStatesForSession(
   session: TeachingSession,
-  dbInstance: typeof db = db
+  dbInstance: typeof db = db,
+  options: { forceRevision?: boolean } = {}
 ): Promise<ClasspilotStudentControlState[]> {
   if (!session.schoolId || session.endTime) return [];
   const schoolId = session.schoolId;
@@ -23736,6 +23742,7 @@ export async function initializeClasspilotStudentControlStatesForSession(
     now,
     authorityMode: "filter",
     preserveSourceCommandId: true,
+    forceRevision: options.forceRevision,
   }, transactionDb);
   });
 }
@@ -23797,9 +23804,9 @@ export async function replaceClasspilotStudentControlSnapshots(
     authorityMode?: "require" | "filter";
     /**
      * Advance the revision even when nothing material changed. Command issue
-     * requires it: a re-issued command with an identical desired state must
-     * still publish a revision so sourceCommandId reconciliation and client
-     * re-acknowledgement run.
+     * and reporting-to-live promotion require it: an identical desired state
+     * can still introduce a new command or active classroom authority that
+     * clients must accept and acknowledge at a higher revision.
      */
     forceRevision?: boolean;
     /**
