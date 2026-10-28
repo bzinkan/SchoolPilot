@@ -189,6 +189,9 @@ jobs:
       - name: Canonical Usage harness contracts (no database or load)
         run: node --test scripts/load/usage/release-gates-v2/*.test.mjs
 
+      - name: Linux Usage runner controls (no cloud, database or load)
+        run: node --test scripts/load/usage/linux-runner/*.test.mjs
+
       - name: Infrastructure and load-safety tests (serial)
         run: npm run test:infrastructure
 
