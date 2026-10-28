@@ -76,6 +76,12 @@ import { EditStudentDialog } from "../components/EditStudentDialog";
 import { AdminClassesTabs } from "../components/ScheduleRouteTabs";
 import AdminScheduling from "./AdminScheduling";
 import RosterIntegrations from "../components/RosterIntegrations";
+import {
+  adminClassSortStorageKey,
+  readAdminClassSortPreference,
+  sortAdminClassesByTime,
+  writeAdminClassSortPreference,
+} from "../lib/adminClassSort";
 
 const ADMIN_CLASSES_KEY = ["classpilot-admin-classes"];
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
@@ -519,7 +525,7 @@ function ClassCard({
   };
 
   return (
-    <Collapsible open={expanded} onOpenChange={onToggleExpanded} className="rounded-lg border bg-background">
+    <Collapsible open={expanded} onOpenChange={onToggleExpanded} className="rounded-lg border bg-background" data-testid={`class-card-${group.id}`}>
       <div className="flex items-center justify-between gap-3 p-3">
         <div className="flex min-w-0 flex-1 items-start gap-2">
           <CollapsibleTrigger asChild>
@@ -949,12 +955,16 @@ export default function AdminClasses() {
   const location = useLocation();
   const { toast } = useToast();
   const { currentUser, isLoading: authLoading } = useClassPilotAuth();
+  const sortPreferenceKey = adminClassSortStorageKey(currentUser?.schoolId, currentUser?.id);
 
   const [statusFilter, setStatusFilter] = useState("active");
   const [search, setSearch] = useState("");
   const [schoolYearFilter, setSchoolYearFilter] = useState("");
   const [termFilter, setTermFilter] = useState("");
-  const [sortBy, setSortBy] = useState("name");
+  const [sortOverride, setSortOverride] = useState(null);
+  const sortBy = sortOverride?.key === sortPreferenceKey
+    ? sortOverride.value
+    : readAdminClassSortPreference(sortPreferenceKey);
   const [classGradeFilter, setClassGradeFilter] = useState(ALL);
   const [assignGradeFilter, setAssignGradeFilter] = useState(ALL);
   const [selectedClassId, setSelectedClassId] = useState("");
@@ -977,6 +987,11 @@ export default function AdminClasses() {
   const safeReturnTarget = RETURN_TARGETS.has(requestedReturnTo)
     ? { path: requestedReturnTo, ...RETURN_TARGETS.get(requestedReturnTo) }
     : null;
+
+  const changeSortBy = (value) => {
+    setSortOverride({ key: sortPreferenceKey, value });
+    writeAdminClassSortPreference(sortPreferenceKey, value);
+  };
 
   const queryFilters = useMemo(() => {
     const params = new URLSearchParams();
@@ -1132,6 +1147,7 @@ export default function AdminClasses() {
   }, [requestedAssignStudentId, students, studentsQuery.isFetching, studentsQuery.isSuccess, toast]);
 
   const sortedClasses = useMemo(() => {
+    if (sortBy === "time") return sortAdminClassesByTime(classes);
     const copy = [...classes];
     copy.sort((a, b) => {
       if (sortBy === "teacher") {
@@ -1344,7 +1360,7 @@ export default function AdminClasses() {
                       data-testid="input-search-classes"
                     />
                   </div>
-                  <Select value={sortBy} onValueChange={setSortBy}>
+                  <Select value={sortBy} onValueChange={changeSortBy}>
                     <SelectTrigger aria-label="Sort classes">
                       <SelectValue />
                     </SelectTrigger>
@@ -1352,6 +1368,7 @@ export default function AdminClasses() {
                       <SelectItem value="name">Sort by name</SelectItem>
                       <SelectItem value="teacher">Sort by teacher</SelectItem>
                       <SelectItem value="grade">Sort by grade</SelectItem>
+                      <SelectItem value="time">Sort by time</SelectItem>
                     </SelectContent>
                   </Select>
                   <Select value={statusFilter} onValueChange={setStatusFilter}>

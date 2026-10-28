@@ -79,7 +79,7 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await vite?.close(); });
 
-async function open({ mode = 'guard', route, role, year = 'current' } = {}) {
+async function open({ mode = 'guard', route, role, year = 'current', classes = [] } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [], requests = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -91,7 +91,14 @@ async function open({ mode = 'guard', route, role, year = 'current' } = {}) {
     if (url.pathname.endsWith('/admin/teachers')) {
       return request.fulfill({ json: { teachers: [{ id: 'teacher-a', firstName: 'Taylor', lastName: 'Woods', role: 'teacher' }] } });
     }
-    if (url.pathname.endsWith('/classpilot/admin/classes')) return request.fulfill({ json: { classes: [] } });
+    if (url.pathname.endsWith('/classpilot/admin/classes')) {
+      const filters = url.searchParams;
+      const status = filters.get('status') || 'active';
+      const search = (filters.get('search') || '').toLowerCase();
+      const matchingClasses = classes.filter(group => (status === 'all' || group.status === status)
+        && (!search || [group.name, group.periodLabel, group.gradeLevel].some(value => String(value || '').toLowerCase().includes(search))));
+      return request.fulfill({ json: { classes: matchingClasses } });
+    }
     if (url.pathname.endsWith('/admin/teacher-students')) return request.fulfill({ json: { students: [] } });
     if (url.pathname.endsWith('/classpilot/admin/scheduling')) {
       return request.fulfill({ status: year === 'error' ? 503 : 200, json: year === 'error' ? { error: 'synthetic unavailable' } : {
@@ -328,6 +335,50 @@ test('Classroom import blocks browser Back until the submitted import finishes',
     await page.getByLabel('Draft').waitFor();
     assert.deepEqual(errors, []);
   } finally { finishImport?.(); await page.close(); }
+});
+
+test('Classes sort by start time, retain order through filters, and remember the choice after reload', async () => {
+  const classes = [
+    { id: 'math', name: 'Grade 5 Math', teacherId: 'teacher-a', gradeLevel: '5', status: 'active', scheduleEnabled: true, blockStartTime: '13:15', blockEndTime: '14:00', studentCount: 23 },
+    { id: 'homeroom', name: 'Grade 5 Homeroom', teacherId: 'teacher-a', gradeLevel: '5', status: 'active', scheduleEnabled: false, studentCount: 23 },
+    { id: 'science', name: 'Grade 5 Science', teacherId: 'teacher-a', gradeLevel: '5', status: 'active', scheduleEnabled: true, blockStartTime: '08:30', blockEndTime: '09:15', studentCount: 23 },
+    { id: 'art', name: 'Grade 5 Art', teacherId: 'teacher-a', gradeLevel: '5', status: 'active', scheduleEnabled: true, blockStartTime: '08:30', blockEndTime: '09:15', studentCount: 23 },
+    { id: 'music', name: 'Grade 4 Music', teacherId: 'teacher-a', gradeLevel: '4', status: 'active', scheduleEnabled: true, blockStartTime: '07:45', blockEndTime: '08:25', studentCount: 19 },
+    { id: 'archived', name: 'Grade 5 Archived', teacherId: 'teacher-a', gradeLevel: '5', status: 'archived', scheduleEnabled: true, blockStartTime: '07:30', blockEndTime: '08:00', studentCount: 10 },
+  ];
+  const { page, errors } = await open({ mode: 'classes', route: '/classpilot/admin', classes });
+  const classNames = () => page.locator('[data-testid^="class-card-"] p.font-medium.leading-tight').allTextContents();
+  try {
+    await page.getByLabel('Draft').waitFor();
+    await page.evaluate(() => window.fixtureGuardedNavigate('/classpilot/admin/classes'));
+    await page.getByTestId('class-card-math').waitFor();
+    assert.deepEqual(await classNames(), ['Grade 4 Music', 'Grade 5 Art', 'Grade 5 Homeroom', 'Grade 5 Math', 'Grade 5 Science']);
+
+    await page.getByRole('combobox', { name: 'Sort classes' }).click();
+    await page.getByRole('option', { name: 'Sort by time' }).click();
+    assert.deepEqual(await classNames(), ['Grade 4 Music', 'Grade 5 Art', 'Grade 5 Science', 'Grade 5 Math', 'Grade 5 Homeroom']);
+
+    await page.getByRole('tab', { name: 'Grade 5', exact: true }).click();
+    assert.deepEqual(await classNames(), ['Grade 5 Art', 'Grade 5 Science', 'Grade 5 Math', 'Grade 5 Homeroom']);
+
+    await page.getByRole('combobox', { name: 'Filter class status' }).click();
+    await page.getByRole('option', { name: 'Archived', exact: true }).click();
+    assert.deepEqual(await classNames(), ['Grade 5 Archived']);
+
+    await page.getByRole('combobox', { name: 'Filter class status' }).click();
+    await page.getByRole('option', { name: 'Active', exact: true }).click();
+    await page.getByTestId('input-search-classes').fill('Science');
+    await page.getByTestId('class-card-science').waitFor();
+    assert.deepEqual(await classNames(), ['Grade 5 Science']);
+
+    await page.goto(`${base}/__admin_shell?mode=classes&route=%2Fclasspilot%2Fadmin`);
+    await page.getByLabel('Draft').waitFor();
+    await page.evaluate(() => window.fixtureGuardedNavigate('/classpilot/admin/classes'));
+    await page.getByTestId('class-card-music').waitFor();
+    assert.match(await page.getByRole('combobox', { name: 'Sort classes' }).textContent(), /Sort by time/);
+    assert.deepEqual(await classNames(), ['Grade 4 Music', 'Grade 5 Art', 'Grade 5 Science', 'Grade 5 Math', 'Grade 5 Homeroom']);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });
 
 test('a queued committed-owner navigation is vetoed if that editor unmounts before approval', async () => {
