@@ -991,6 +991,7 @@ async function endStudentSessionsForSignOut(options: {
 }) {
   const seenSessionIds = new Set<string>();
   const completedStudentIds = new Set<string>();
+  const completedBindings: Array<{ studentId: string; studentSessionId: string; deviceId: string }> = [];
   let cleanupFailures = 0;
   let publicationFailures = 0;
   let authorityRefusals = 0;
@@ -1008,6 +1009,9 @@ async function endStudentSessionsForSignOut(options: {
         studentId: target.studentId,
         studentSessionId: target.studentSessionId,
         deviceId: target.deviceId,
+        ...(options.teachingSessionId ? {
+          teachingClassroom: { teachingSessionId: options.teachingSessionId, actorId: options.actorId },
+        } : {}),
         ...(options.supervisionContextId && target.scheduledAuthorityRevision !== undefined ? {
           scheduledClassroom: { contextId: options.supervisionContextId, actorId: options.actorId, controlRevision: target.scheduledAuthorityRevision },
         } : {}),
@@ -1021,6 +1025,7 @@ async function endStudentSessionsForSignOut(options: {
       continue;
     }
     completedStudentIds.add(target.studentId);
+    completedBindings.push({ studentId: endedSession.studentId, studentSessionId: endedSession.id, deviceId: endedSession.deviceId });
     try {
       await publishClasspilotStudentSessionEnded({
         schoolId: options.schoolId,
@@ -1033,10 +1038,11 @@ async function endStudentSessionsForSignOut(options: {
       publicationFailures += 1;
     }
   }
-  await markClasspilotCommandTargetsServerCompleted(
-    options.commandId,
-    [...completedStudentIds]
-  );
+  await markClasspilotCommandTargetsServerCompleted({
+    commandId: options.commandId,
+    schoolId: options.schoolId,
+    endedBindings: completedBindings,
+  });
   recordRuntimePerformanceCounter("classpilotStudentSignOutEnded", completedStudentIds.size);
   const notEnded = Math.max(0, requestedCount - completedStudentIds.size);
   recordRuntimePerformanceCounter("classpilotStudentSignOutNotEnded", notEnded);

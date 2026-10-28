@@ -11523,14 +11523,30 @@ export async function endStudentSessionExact(options: {
   studentId: string;
   deviceId: string;
   studentSessionId: string;
+  teachingClassroom?: { teachingSessionId: string; actorId: string };
   scheduledClassroom?: { contextId: string; actorId: string; controlRevision: number };
 }): Promise<StudentSession | undefined> {
   const result = await db.transaction(async (tx) => {
-    await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], tx as unknown as typeof db);
+    const transactionDb = tx as unknown as typeof db;
+    if (options.teachingClassroom && options.scheduledClassroom) return undefined;
+    // Teaching lifecycle writers lock the school before student authority. A
+    // shared entitlement lock keeps that order while fencing this final end.
+    if (options.teachingClassroom || options.scheduledClassroom) await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], transactionDb);
+    if (options.teachingClassroom) {
+      const [teachingSession] = await tx.select().from(teachingSessions).where(and(
+        eq(teachingSessions.id, options.teachingClassroom.teachingSessionId),
+        eq(teachingSessions.schoolId, options.schoolId)
+      )).limit(1).for("share");
+      const clock = await tx.execute<{ current_at: Date | string }>(sql`SELECT clock_timestamp() AS current_at`);
+      const rawCurrentAt = clock.rows[0]?.current_at;
+      const currentAt = rawCurrentAt instanceof Date ? rawCurrentAt : new Date(rawCurrentAt ?? NaN);
+      if (!teachingSession || !classpilotTeachingSessionIsCurrent(teachingSession, currentAt)
+        || !(await isAuthorizedClasspilotSessionStaff(options.schoolId, teachingSession.id, options.teachingClassroom.actorId, transactionDb))
+        || !(await hasCurrentClasspilotStudentControlAuthorityAtClock({ schoolId: options.schoolId, studentId: options.studentId,
+          teachingSessionId: teachingSession.id }, transactionDb, "current"))) return undefined;
+    }
     if (options.scheduledClassroom) {
-      const transactionDb = tx as unknown as typeof db;
-      await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
-      await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], transactionDb);
       await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: options.scheduledClassroom.contextId,
         actorId: options.scheduledClassroom.actorId, lock: true }, transactionDb);
       if (!(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: options.studentId,
@@ -21546,6 +21562,7 @@ function frozenClasspilotCommandTargetResult(
 }
 
 const classpilotCommandAuthorityResultKeys = [
+  "serverAuthoritative",
   "exactTabCloseVersion",
   "frozenControlRevision",
   "durableAuthorityRevision",
@@ -22333,7 +22350,12 @@ export async function updateClasspilotCommandSummary(
       sentCount: sql<number>`greatest(${classpilotCommands.sentCount}, ${summary.targetSentCount})`,
       receivedCount: sql<number>`greatest(${classpilotCommands.receivedCount}, ${summary.targetReceivedCount})`,
       completedCount: sql<number>`greatest(${classpilotCommands.completedCount}, ${summary.targetCompletedCount})`,
-      failedCount: sql<number>`greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount})`,
+      // A verified server sign-out can complete after a device failure arrived.
+      // Its final failed count follows those targets; other ACK milestones keep
+      // their established monotonic summary behavior.
+      failedCount: sql<number>`case when ${classpilotCommands.commandType} = 'student-sign-out'
+        then ${summary.targetFailedCount}
+        else greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount}) end`,
       // Unlike delivery milestones, unavailable is not monotonic: an offline
       // durable message or desired-state target may bind later and complete.
       unavailableCount: sql<number>`${summary.targetUnavailableCount}`,
@@ -22406,29 +22428,62 @@ export async function markClasspilotCommandTargetsUnavailable(
   return targets;
 }
 
-export async function markClasspilotCommandTargetsServerCompleted(
-  commandId: string,
-  studentIds: string[]
-): Promise<ClasspilotCommandTarget[]> {
-  const uniqueStudentIds = [...new Set(studentIds.filter(Boolean))];
-  if (uniqueStudentIds.length === 0) return [];
+/** The exact server session end is the student-sign-out outcome. Only this
+ * verified transition may replace an earlier device failed/expired outcome;
+ * generic command ACK terminal transitions remain monotonic. */
+export async function markClasspilotCommandTargetsServerCompleted(options: {
+  commandId: string;
+  schoolId: string;
+  endedBindings: Array<{ studentId: string; studentSessionId: string; deviceId: string }>;
+}): Promise<ClasspilotCommandTarget[]> {
+  if (options.endedBindings.length === 0) return [];
+  const exactBindings = options.endedBindings.map(binding => and(
+    eq(classpilotCommandTargets.studentId, binding.studentId),
+    eq(classpilotCommandTargets.studentSessionId, binding.studentSessionId),
+    eq(classpilotCommandTargets.deviceId, binding.deviceId)
+  ));
+  const endedSignOutTarget = db.select({ id: classpilotCommands.id })
+    .from(classpilotCommands)
+    .innerJoin(studentSessions, and(
+      eq(studentSessions.id, classpilotCommandTargets.studentSessionId),
+      eq(studentSessions.studentId, classpilotCommandTargets.studentId),
+      eq(studentSessions.deviceId, classpilotCommandTargets.deviceId)
+    ))
+    .innerJoin(students, and(
+      eq(students.id, studentSessions.studentId),
+      eq(students.schoolId, classpilotCommands.schoolId)
+    ))
+    .where(and(
+      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
+      eq(classpilotCommands.schoolId, options.schoolId),
+      eq(classpilotCommands.commandType, "student-sign-out"),
+      eq(studentSessions.isActive, false),
+      isNotNull(studentSessions.endedAt),
+      gte(studentSessions.endedAt, classpilotCommands.createdAt)
+    ));
   const now = new Date();
   const targets = await db
     .update(classpilotCommandTargets)
     .set({
       status: "completed",
       completedAt: sql<Date>`coalesce(${classpilotCommandTargets.completedAt}, ${now})`,
-      result: sql`coalesce(${classpilotCommandTargets.result}, '{}'::jsonb) || '{"serverAuthoritative":true}'::jsonb`,
+      result: sql`(case
+        when ${classpilotCommandTargets.result} is null then '{}'::jsonb
+        when jsonb_typeof(${classpilotCommandTargets.result}) = 'object' then ${classpilotCommandTargets.result}
+        else jsonb_build_object('ackResult', ${classpilotCommandTargets.result})
+      end) || '{"serverAuthoritative":true}'::jsonb`,
       errorMessage: null,
       updatedAt: now,
     })
     .where(and(
-      eq(classpilotCommandTargets.commandId, commandId),
-      inArray(classpilotCommandTargets.studentId, uniqueStudentIds),
-      inArray(classpilotCommandTargets.status, ["requested", "sent", "received"])
+      eq(classpilotCommandTargets.commandId, options.commandId),
+      eq(classpilotCommandTargets.schoolId, options.schoolId),
+      or(...exactBindings),
+      inArray(classpilotCommandTargets.status, ["requested", "sent", "received", "completed", "failed", "expired"]),
+      exists(endedSignOutTarget)
     ))
     .returning();
-  await updateClasspilotCommandSummary(commandId);
+  await updateClasspilotCommandSummary(options.commandId);
   return targets;
 }
 

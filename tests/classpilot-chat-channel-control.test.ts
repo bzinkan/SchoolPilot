@@ -122,7 +122,8 @@ describe("student chat channel control", () => {
     assert.match(fanout, /type: "messaging-toggle",[\s\S]*?messagingChannelEnabled: toggles\.messagingChannelEnabled,[\s\S]*?type: "hand-raising-toggle"/,
       "the legacy messaging-toggle command");
     const sync = delivery.slice(delivery.indexOf("export async function syncClasspilotControlStatesToActiveDevices"));
-    assert.match(sync, /\} catch \{[^}]*fabState = \{[^}]*\bmessagingChannelEnabled: false,/, "the fail-closed push closes the channel too");
+    assert.match(sync, /fabState = await buildStudentFabState\(schoolId, studentId,/, "ownership transitions build the authoritative channel state");
+    assert.match(sync, /data: \{\s+\.\.\.fabState,/, "ownership transitions forward the whole channel snapshot, including authoritative disabled states");
     const settingsRoute = devices.slice(devices.indexOf('router.get("/extension/settings"'), devices.indexOf('router.post("/extension/student-login"'));
     assert.match(settingsRoute, /: \{ \.\.\.settingsFab,[^}]*\bmessagingChannelEnabled: false\b[^}]*\}/, "no channel outside full monitoring");
     assert.match(settingsRoute, /messagingChannelEnabled: monitoringPolicy\.policyMode === "full" && settingsFab\.messagingChannelEnabled,/, "top-level copy");

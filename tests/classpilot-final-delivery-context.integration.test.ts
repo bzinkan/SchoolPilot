@@ -157,6 +157,137 @@ test("final delivery context preserves independent defaults, tenant scope and au
       } finally { client.terminate(); server.terminate(); await new Promise<void>(resolve => wss.close(() => resolve())); }
     }));
 
+    type CommandFixture = Awaited<ReturnType<typeof createFixture>>;
+    // Session-ending writers own their transaction, so each case uses its own
+    // real fixture rather than relying on the projection-only rollback helper.
+    const signOutCase = (callback: (row: CommandFixture) => Promise<void>) => async () => {
+      const row = await createFixture();
+      await scoped(row.school.id, () => callback(row));
+    };
+    const fixtureBinding = (row: CommandFixture) => ({ schoolId: row.school.id, studentId: row.student.id,
+      studentSessionId: row.binding.id, deviceId: row.deviceId });
+    const createTrackedCommand = (row: CommandFixture, commandType = "student-sign-out") => storage.createClasspilotCommandWithTargets({
+      schoolId: row.school.id, teacherId: row.teacher.id, teachingSessionId: row.session.id, supervisionContextId: null,
+      targetScope: "students", commandType, commandPayload: {}, requestedCount: 1 },
+    [{ commandId: "reserved", schoolId: row.school.id, teachingSessionId: row.session.id, studentId: row.student.id,
+      studentSessionId: row.binding.id, deviceId: row.deviceId }],
+    { authority: { schoolId: row.school.id, actorId: row.teacher.id, teachingSessionId: row.session.id } });
+    const signOutCompletion = (row: CommandFixture, commandId: string) => ({ commandId, schoolId: row.school.id,
+      endedBindings: [{ studentId: row.student.id, studentSessionId: row.binding.id, deviceId: row.deviceId }] });
+    for (const ackState of ["failed", "expired"] as const) await t.test(
+      `verified server sign-out completes after an earlier ${ackState} device ACK`, signOutCase(async row => {
+        const exact = fixtureBinding(row), command = await createTrackedCommand(row);
+        if (ackState === "expired") await db.execute(sql`UPDATE classpilot_commands SET expires_at=clock_timestamp()-interval '1 millisecond' WHERE id=${command.id}`);
+        const ack = await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState,
+          result: { serverAuthoritative: true }, errorMessage: "Command belongs to an inactive teaching session" });
+        assert.equal(ack.disposition, "applied");
+        await storage.updateClasspilotCommandSummary(command.id);
+        const deviceOutcome = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+        assert.equal(Reflect.get(deviceOutcome!.targets[0]!.result!, "serverAuthoritative"), undefined,
+          "a device ACK must not invent server completion proof");
+        if (ackState === "failed") assert.equal(deviceOutcome!.failedCount, 1);
+        assert.ok(await storage.endStudentSessionExact({ ...exact,
+          teachingClassroom: { teachingSessionId: row.session.id, actorId: row.teacher.id } }), "the real exact server transition must succeed");
+        const updated = await storage.markClasspilotCommandTargetsServerCompleted(signOutCompletion(row, command.id));
+        assert.equal(updated.length, 1);
+        const completed = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+        assert.ok(completed);
+        assert.equal(completed.status, "completed");
+        assert.equal(completed.completedCount, 1);
+        assert.equal(completed.failedCount, 0, "the persisted header must not retain the superseded device failure");
+        assert.equal(completed.targets[0]!.status, "completed");
+        assert.equal(completed.targets[0]!.ackState, ackState, "keep the device ACK history distinct from the server outcome");
+        assert.ok(completed.targets[0]!.completedAt);
+        assert.equal(completed.targets[0]!.errorMessage, null);
+        assert.equal(Reflect.get(completed.targets[0]!.result!, "serverAuthoritative"), true);
+        const late = await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "failed", result: { serverAuthoritative: false } });
+        assert.equal(late.disposition, "terminal_rejected");
+        const afterLate = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+        assert.equal(afterLate!.targets[0]!.status, "completed");
+        assert.equal(Reflect.get(afterLate!.targets[0]!.result!, "serverAuthoritative"), true);
+      })
+    );
+    await t.test("server sign-out completion remains successful when it precedes the device failure", signOutCase(async row => {
+      const exact = fixtureBinding(row), command = await createTrackedCommand(row);
+      assert.ok(await storage.endStudentSessionExact({ ...exact,
+        teachingClassroom: { teachingSessionId: row.session.id, actorId: row.teacher.id } }));
+      assert.equal((await storage.markClasspilotCommandTargetsServerCompleted(signOutCompletion(row, command.id))).length, 1);
+      const late = await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "failed" });
+      assert.equal(late.disposition, "terminal_rejected");
+      const completed = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+      assert.equal(completed!.targets[0]!.status, "completed");
+      assert.equal(completed!.failedCount, 0);
+    }));
+    for (const kind of ["scalar", "array"] as const) await t.test(
+      `server sign-out preserves ${kind} device outcomes beneath its object completion proof`, signOutCase(async row => {
+        const exact = fixtureBinding(row), command = await createTrackedCommand(row);
+        const result = kind === "scalar" ? "Synthetic device failure" : [{ serverAuthoritative: true }, "Synthetic device failure"];
+        assert.equal((await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "failed", result })).disposition, "applied");
+        assert.ok(await storage.endStudentSessionExact({ ...exact,
+          teachingClassroom: { teachingSessionId: row.session.id, actorId: row.teacher.id } }));
+        assert.equal((await storage.markClasspilotCommandTargetsServerCompleted(signOutCompletion(row, command.id))).length, 1);
+        const completed = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+        assert.equal(completed!.targets[0]!.status, "completed");
+        assert.equal(Reflect.get(completed!.targets[0]!.result!, "serverAuthoritative"), true);
+        assert.deepEqual(Reflect.get(completed!.targets[0]!.result!, "ackResult"), result);
+      })
+    );
+    await t.test("server completion cannot replace a generic command failure or its terminal ACK", signOutCase(async row => {
+      const exact = fixtureBinding(row), command = await createTrackedCommand(row, "open-tab");
+      assert.equal((await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "failed" })).disposition, "applied");
+      assert.equal((await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "completed" })).disposition, "terminal_rejected");
+      assert.ok(await storage.endStudentSessionExact(exact));
+      assert.deepEqual(await storage.markClasspilotCommandTargetsServerCompleted(signOutCompletion(row, command.id)), []);
+      const failed = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+      assert.equal(failed!.targets[0]!.status, "failed");
+      assert.equal(failed!.failedCount, 1);
+    }));
+    await t.test("device outcome fields cannot overwrite stored server completion proof", signOutCase(async row => {
+      const command = await createTrackedCommand(row);
+      // Seed the server-only field to exercise its sanitizer independently of
+      // the normal post-sign-out active-binding rejection.
+      await db.execute(sql`UPDATE classpilot_command_targets SET result='{"serverAuthoritative":true}'::jsonb WHERE command_id=${command.id}`);
+      const ack = await storage.persistClasspilotCommandTargetAck({ ...fixtureBinding(row), commandId: command.id,
+        ackState: "received", result: { serverAuthoritative: false, syntheticOutcome: true } });
+      assert.equal(ack.disposition, "applied");
+      const stored = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+      assert.equal(Reflect.get(stored!.targets[0]!.result!, "serverAuthoritative"), true);
+      assert.equal(Reflect.get(stored!.targets[0]!.result!, "syntheticOutcome"), true);
+    }));
+    await t.test("teaching sign-out refuses an exact binding handed to a replacement class", signOutCase(async row => {
+      await createTrackedCommand(row);
+      const replacementGroup = await storage.createGroup({ schoolId: row.school.id, teacherId: row.teacher.id,
+        name: `${tag}_replacement`, groupType: "teacher_created" });
+      await storage.addGroupStudentsDetailed(replacementGroup.id, [row.student.id]);
+      const replacement = await storage.createTeachingSession({ groupId: replacementGroup.id, teacherId: row.teacher.id,
+        startTime: new Date() });
+      assert.equal((await storage.getClasspilotStudentControlState(row.school.id, row.student.id))!.teachingSessionId, replacement.id);
+      assert.equal((await storage.getActiveSessionByStudent(row.student.id))!.id, row.binding.id,
+        "class handoff must retain the exact authenticated binding");
+      const ended = await storage.endStudentSessionExact({ ...fixtureBinding(row),
+        teachingClassroom: { teachingSessionId: row.session.id, actorId: row.teacher.id } });
+      assert.equal(ended, undefined, "the previous classroom cannot sign out the replacement classroom's current binding");
+      assert.equal((await storage.getActiveSessionByStudent(row.student.id))!.id, row.binding.id);
+    }));
+    for (const mismatch of ["active", "school", "student", "session", "device", "prior_end"] as const) await t.test(
+      `server sign-out completion refuses an unverified ${mismatch} binding`, signOutCase(async row => {
+        const exact = fixtureBinding(row), command = await createTrackedCommand(row);
+        assert.equal((await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "failed" })).disposition, "applied");
+        if (mismatch !== "active") assert.ok(await storage.endStudentSessionExact(exact));
+        const proof = signOutCompletion(row, command.id);
+        if (mismatch === "school") proof.schoolId = b.school.id;
+        if (mismatch === "student") proof.endedBindings[0]!.studentId = b.student.id;
+        if (mismatch === "session") proof.endedBindings[0]!.studentSessionId = b.binding.id;
+        if (mismatch === "device") proof.endedBindings[0]!.deviceId = b.deviceId;
+        if (mismatch === "prior_end") await db.execute(sql`UPDATE student_sessions SET ended_at=${new Date(command.createdAt.getTime() - 1_000).toISOString()}
+          WHERE id=${row.binding.id}`);
+        assert.deepEqual(await storage.markClasspilotCommandTargetsServerCompleted(proof), []);
+        const failed = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+        assert.equal(failed!.targets[0]!.status, "failed");
+        assert.equal(failed!.failedCount, 1);
+      })
+    );
+
     await t.test("one fresh statement equals both prior reads for every field and five date decoders", () => isolated(async () => {
       await db.execute(sql`UPDATE classpilot_student_control_states SET revision=9,
         desired_state='{"screenLocked":true,"synthetic":{"nested":true}}'::jsonb,

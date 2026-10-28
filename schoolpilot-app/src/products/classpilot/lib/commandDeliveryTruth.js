@@ -348,6 +348,41 @@ function bounded(entries) {
   return trimmed;
 }
 
+function preserveVerifiedSignOutCompletion(entry, existing, value) {
+  if (entry.commandType !== 'student-sign-out' || entry.deliveryPolicy !== 'server_authoritative') return entry;
+  const verified = new Map();
+  const receipts = new Map();
+  for (const target of [...(existing?.command?.targets || []), ...(value.command?.targets || [])]) {
+    if (target.status === 'completed' && target.result?.serverAuthoritative === true) verified.set(target.studentId, target);
+    receipts.set(target.studentId, { ...receipts.get(target.studentId),
+      ...(target.receivedAt ? { receivedAt: target.receivedAt } : {}),
+      ...(['received', 'completed', 'failed'].includes(target.ackState) ? { ackState: target.ackState } : {}) });
+  }
+  if (verified.size === 0) return entry;
+
+  // The API's exact server session end is final, even if a device failure was
+  // published first or arrives late. Other targets keep their own outcomes.
+  const targets = (entry.command.targets || []).map((target) => {
+    const completed = verified.get(target.studentId);
+    if (!completed) return target;
+    verified.delete(target.studentId);
+    return { ...target, ...completed, ...receipts.get(target.studentId), errorMessage: null };
+  });
+  targets.push(...[...verified.values()].map((target) => ({ ...target, ...receipts.get(target.studentId), errorMessage: null })));
+  const command = { ...entry.command, targets,
+    ...(targets.length > 0 && targets.every((target) => target.status === 'completed') ? { status: 'completed' } : {}) };
+  // Rebuild terminal counts from targets, never a stale nested DTO summary.
+  // Server completion itself is not a device receipt or acknowledgement.
+  const summary = normalizeCommandSummary({ targets });
+  summary.attempted = targets.filter((target) => target.sentAt || ['received', 'completed', 'failed'].includes(target.status)).length;
+  summary.sent = summary.attempted;
+  summary.received = targets.filter((target) => target.receivedAt).length;
+  summary.acknowledged = targets.filter((target) => target.receivedAt || ['received', 'completed', 'failed'].includes(target.ackState)).length;
+  summary.pending = countTargets(targets, new Set(['requested', 'sent', 'received']));
+  summary.awaitingAck = Math.max(0, summary.attempted - summary.acknowledged - summary.expired);
+  return { ...entry, command, summary };
+}
+
 function trackedCommandEntry(current, value, commandType) {
   const id = commandId(value);
   const policy = commandDeliveryPolicy(commandType ?? value?.command?.commandType, value);
@@ -355,7 +390,7 @@ function trackedCommandEntry(current, value, commandType) {
 
   const existing = current.get(id);
   const preserveObservedOutcome = existing?.updateObserved || existing?.expiredLocally;
-  return {
+  const entry = {
     ...(existing || {}),
     commandId: id,
     commandType: commandType ?? value?.command?.commandType,
@@ -376,6 +411,7 @@ function trackedCommandEntry(current, value, commandType) {
           ...(value?.command || {}),
         },
   };
+  return preserveVerifiedSignOutCompletion(entry, existing, value);
 }
 
 function entryResponse(entry) {
@@ -467,7 +503,7 @@ export function applyTransientCommandUpdate(current, message) {
     updateObserved: true,
     expiredLocally: false,
   };
-  return bounded(storeCommandEntry(current, entry));
+  return bounded(storeCommandEntry(current, preserveVerifiedSignOutCompletion(entry, existing, value)));
 }
 
 function acknowledgedTransientAction(entry) {

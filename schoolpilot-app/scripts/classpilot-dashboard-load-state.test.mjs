@@ -5060,6 +5060,59 @@ test('canonical command HTTP refusals show the actual server reason and keep the
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('verified server sign-out completion survives failed device ACKs before and after the HTTP response', { timeout: 120_000 }, async context => {
+  for (const earlyFailure of [true, false]) await context.test(earlyFailure ? 'failure before HTTP completion' : 'failure after HTTP completion', async scenario => {
+    let releaseResponse;
+    const responseGate = new Promise(resolve => { releaseResponse = resolve; });
+    scenario.after(() => releaseResponse());
+    const { page, harness, posts } = await focusBrowserFixture(scenario, { studentName: 'Taylor Example' });
+    const commandId = `sign-out-race-${earlyFailure}`;
+    const actualError = 'The browser could not complete sign-out.';
+    const commandFor = (body, target) => ({ id: commandId, ...body, schoolId: SCHOOL_ID,
+      deliveryPolicy: 'server_authoritative', targets: [{ studentId: STUDENT_ID, ...target }] });
+    await page.route('**/api/commands', async route => {
+      const body = route.request().postDataJSON(); posts.push(body);
+      await responseGate;
+      await route.fulfill({ status: 201, json: {
+        command: commandFor(body, { status: 'completed', result: { serverAuthoritative: true },
+          ackState: earlyFailure ? 'failed' : null, errorMessage: null }),
+        summary: { requested: 1, attempted: 1, completed: 1, failed: 0, pending: 0,
+          acknowledged: earlyFailure ? 1 : 0, awaitingAck: earlyFailure ? 0 : 1 },
+      } });
+    });
+    const sendFailure = () => harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID,
+      teachingSessionId: OWN_SESSION_ID, commandId,
+      command: commandFor(posts[0], { status: 'failed', ackState: 'failed', errorMessage: actualError }),
+      summary: { requested: 1, attempted: 1, completed: 0, failed: 1, pending: 0, acknowledged: 1, awaitingAck: 0 },
+    });
+    await page.getByTestId('button-close-tabs-dialog').click();
+    await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+    await page.getByTestId('button-sign-out-students').click();
+    await page.getByTestId('button-confirm-sign-out-students').click();
+    await waitUntil(() => posts.length === 1, 'one exact sign-out request is in flight');
+    const notices = page.getByRole('region', { name: /Notifications/, includeHidden: true });
+    if (earlyFailure) {
+      await sendFailure();
+      await notices.getByText(`Taylor Example: ${actualError}`, { exact: false }).waitFor();
+      await notices.getByText('Failed', { exact: true }).waitFor();
+      await page.clock.runFor(6000);
+    }
+    releaseResponse();
+    await notices.getByText('Sign-out completed', { exact: true }).waitFor();
+    assert.equal(await notices.getByText('Failed', { exact: true }).count(), 0);
+    assert.equal(await notices.getByText(actualError, { exact: false }).count(), 0);
+    await page.clock.runFor(6000);
+    await sendFailure();
+    if (!earlyFailure) await notices.getByText('Sign-out completed', { exact: true }).waitFor();
+    await page.clock.runFor(1000);
+    assert.equal(await notices.getByText('Failed', { exact: true }).count(), 0, 'old device failure cannot replace verified completion');
+    assert.equal(await notices.getByText(actualError, { exact: false }).count(), 0);
+    assert.deepEqual(posts, [{ teachingSessionId: OWN_SESSION_ID, targetScope: 'students',
+      targetStudentIds: [STUDENT_ID], commandType: 'student-sign-out', commandPayload: {} }]);
+    assert.deepEqual(harness.pageErrors, []);
+  });
+});
+
 test('unified Focus: tile current website starts and stops exactly its own student with confirmed lifecycle', { timeout: 60_000 }, async context => {
   const fixture = await focusBrowserFixture(context, { screenLocked: false,
     classroomState: { revision: 1, restrictions: { screenLock: { active: false } } } });

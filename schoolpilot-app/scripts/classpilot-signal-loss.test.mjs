@@ -1536,6 +1536,78 @@ test('server-authoritative sign-out requires completed targets before claiming c
   assert.deepEqual([...completedStudentIdsFromCommand(completed)], ['student-1']);
 });
 
+function signOutResponse(targets, commandType = 'student-sign-out', deliveryPolicy = 'server_authoritative') {
+  return { command: { id: 'sign-out-race', commandType, deliveryPolicy, targets } };
+}
+
+test('verified server sign-out completion wins before and after a failed device ACK without inventing receipt', () => {
+  const sent = signOutResponse([{ studentId: 'student-1', status: 'sent' }]);
+  const failure = signOutResponse([{ studentId: 'student-1', status: 'failed', ackState: 'failed',
+    errorMessage: 'The browser could not complete sign-out.' }]);
+  const completed = signOutResponse([{ studentId: 'student-1', status: 'completed',
+    ackState: null, receivedAt: null, result: { serverAuthoritative: true } }]);
+  // A stale nested summary must not override the verified per-target outcome.
+  completed.command.summary = { requested: 1, failed: 1, completed: 0 };
+  for (const withEarlyFailure of [false, true]) {
+    let tracked = trackTransientCommandResponse(new Map(), sent, 'student-sign-out');
+    if (withEarlyFailure) tracked = applyTransientCommandUpdate(tracked, failure);
+    tracked = trackTransientCommandResponse(tracked, completed, 'student-sign-out');
+    const entry = tracked.get('sign-out-race');
+    assert.equal(entry.command.targets[0].status, 'completed');
+    assert.equal(entry.command.targets[0].errorMessage, null);
+    assert.equal(entry.summary.completed, 1);
+    assert.equal(entry.summary.failed, 0);
+    assert.equal(entry.summary.received, 0, 'server completion is not a device receipt');
+    assert.equal(entry.summary.acknowledged, withEarlyFailure ? 1 : 0, 'only the actual failed device ACK counts');
+    assert.equal(transientEntryFeedback(entry).title, 'Sign-out completed');
+
+    const lateFailure = applyTransientCommandUpdate(tracked, failure).get('sign-out-race');
+    assert.equal(lateFailure.command.targets[0].status, 'completed');
+    assert.equal(lateFailure.summary.completed, 1);
+    assert.equal(lateFailure.summary.failed, 0);
+    assert.equal(lateFailure.summary.acknowledged, 1, 'a late actual device ACK remains a transport milestone');
+    assert.equal(transientEntryFeedback(lateFailure).title, 'Sign-out completed');
+    assert.doesNotMatch(transientEntryFeedback(lateFailure).description, /could not complete|failed/);
+  }
+});
+
+test('verified sign-out completion is per student and never masks a sibling failure', () => {
+  const completed = signOutResponse([
+    { studentId: 'student-1', status: 'completed', result: { serverAuthoritative: true } },
+    { studentId: 'student-2', status: 'sent' },
+  ]);
+  const tracked = trackTransientCommandResponse(new Map(), completed, 'student-sign-out');
+  const updated = applyTransientCommandUpdate(tracked, signOutResponse([
+    { studentId: 'student-1', status: 'failed', ackState: 'failed', errorMessage: 'Old browser failure.' },
+    { studentId: 'student-2', status: 'failed', ackState: 'failed', errorMessage: 'This student session could not be ended.' },
+  ])).get('sign-out-race');
+  assert.deepEqual(updated.command.targets.map((target) => target.status), ['completed', 'failed']);
+  assert.equal(updated.summary.completed, 1);
+  assert.equal(updated.summary.failed, 1);
+  const feedback = transientEntryFeedback(updated, { 'student-1': 'Taylor Example', 'student-2': 'Jordan Example' });
+  assert.equal(feedback.variant, 'destructive');
+  assert.match(feedback.description, /Jordan Example: This student session could not be ended\./);
+  assert.doesNotMatch(feedback.description, /Old browser failure/);
+});
+
+test('an unverified or stray completion marker cannot override observed command outcomes', () => {
+  for (const [commandType, policy, proof] of [
+    ['open-tab', 'transient_action', true],
+    ['student-sign-out', 'transient_action', true],
+    ['student-sign-out', 'server_authoritative', false],
+  ]) {
+    const sent = signOutResponse([{ studentId: 'student-1', status: 'sent' }], commandType, policy);
+    let tracked = trackTransientCommandResponse(new Map(), sent, commandType);
+    tracked = applyTransientCommandUpdate(tracked, signOutResponse([
+      { studentId: 'student-1', status: 'received' },
+    ], commandType, policy));
+    tracked = trackTransientCommandResponse(tracked, signOutResponse([
+      { studentId: 'student-1', status: 'completed', result: { serverAuthoritative: proof } },
+    ], commandType, policy), commandType);
+    assert.equal(tracked.get('sign-out-race').command.targets[0].status, 'received', 'later socket outcome still wins over HTTP');
+  }
+});
+
 test('the transient dashboard map remains bounded', () => {
   let tracked = new Map();
   for (let index = 1; index <= MAX_TRACKED_TRANSIENT_COMMANDS + 5; index += 1) {
