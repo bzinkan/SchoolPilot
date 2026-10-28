@@ -22872,6 +22872,12 @@ export async function persistClasspilotCommandTargetAck(
       };
     }
 
+    // A device can acknowledge its sign-out handler before the exact server
+    // session end succeeds. Its completion is transport receipt only; the
+    // verified server-ended binding is the sole completion authority.
+    if (binding.commandType === "student-sign-out" && options.ackState === "completed") {
+      options = { ...options, ackState: "received" };
+    }
     const target = binding.target;
     if (
       target.deviceId !== options.deviceId

@@ -174,6 +174,62 @@ test("final delivery context preserves independent defaults, tenant scope and au
     { authority: { schoolId: row.school.id, actorId: row.teacher.id, teachingSessionId: row.session.id } });
     const signOutCompletion = (row: CommandFixture, commandId: string) => ({ commandId, schoolId: row.school.id,
       endedBindings: [{ studentId: row.student.id, studentSessionId: row.binding.id, deviceId: row.deviceId }] });
+    await t.test("device completed sign-out is only a transport receipt until the exact server binding ends", signOutCase(async row => {
+      const exact = fixtureBinding(row), command = await createTrackedCommand(row);
+      const first = await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id,
+        ackState: "completed", result: { serverAuthoritative: true } });
+      assert.equal(first.disposition, "applied");
+      await storage.updateClasspilotCommandSummary(command.id);
+      const receipt = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+      assert.equal(receipt!.status, "received");
+      assert.equal(receipt!.completedCount, 0);
+      assert.equal(receipt!.targets[0]!.status, "received");
+      assert.equal(receipt!.targets[0]!.ackState, "received");
+      assert.ok(receipt!.targets[0]!.receivedAt);
+      assert.equal(receipt!.targets[0]!.completedAt, null);
+      assert.equal(Reflect.get(receipt!.targets[0]!.result!, "serverAuthoritative"), undefined);
+      assert.equal((await storage.getActiveSessionByStudent(row.student.id))!.id, row.binding.id);
+      assert.equal((await storage.persistClasspilotCommandTargetAck({ ...exact, commandId: command.id, ackState: "completed" })).disposition, "idempotent");
+      assert.deepEqual(await storage.markClasspilotCommandTargetsServerCompleted(signOutCompletion(row, command.id)), []);
+    }));
+    await t.test("generic device completed ACKs still complete their exact command", signOutCase(async row => {
+      const command = await createTrackedCommand(row, "open-tab");
+      assert.equal((await storage.persistClasspilotCommandTargetAck({ ...fixtureBinding(row), commandId: command.id,
+        ackState: "completed" })).disposition, "applied");
+      await storage.updateClasspilotCommandSummary(command.id);
+      const completed = await storage.getClasspilotCommandByIdAndSchool(command.id, row.school.id);
+      assert.equal(completed!.targets[0]!.status, "completed");
+      assert.equal(completed!.completedCount, 1);
+    }));
+    await t.test("sign-out follow-up verifies a binding honestly ended before its own exact end", signOutCase(async row => {
+      const dispatcher = await import("../src/services/classpilotCommandDispatcher.js");
+      const original = pg.Client.prototype.query;
+      let intercepted = false;
+      const mock = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+        const argument = args[0];
+        const text = typeof argument === "string" ? argument : argument && typeof argument === "object" && "text" in argument ? String(argument.text) : "";
+        const result = Reflect.apply(original, this, args);
+        if (!intercepted && text.startsWith('update "classpilot_command_targets" set "status" = case') && text.includes('"sent_at"')) {
+          intercepted = true;
+          return Promise.resolve(result).then(async value => {
+            assert.ok(await storage.endStudentSessionExact(fixtureBinding(row)), "the device's own exact server sign-out wins first");
+            return value;
+          });
+        }
+        return result;
+      });
+      try {
+        const result = await dispatcher.executeClasspilotCommand({ schoolId: row.school.id, actorId: row.teacher.id,
+          teachingSessionId: row.session.id, targetScope: "students", commandType: "student-sign-out", rawCommandPayload: {},
+          targets: [{ studentId: row.student.id, studentName: "Synthetic student", studentSessionId: row.binding.id,
+            deviceId: row.deviceId, available: true, stateAuthorized: true }] });
+        assert.equal(intercepted, true, "the deterministic device sign-out must precede the dispatcher follow-up");
+        assert.equal(result.command.targets[0]!.status, "completed");
+        assert.equal(Reflect.get(result.command.targets[0]!.result!, "serverAuthoritative"), true);
+        assert.equal(result.summary.completed, 1);
+        assert.equal(await storage.endStudentSessionExact(fixtureBinding(row)), undefined, "the exact binding must already be ended");
+      } finally { mock.mock.restore(); }
+    }));
     for (const ackState of ["failed", "expired"] as const) await t.test(
       `verified server sign-out completes after an earlier ${ackState} device ACK`, signOutCase(async row => {
         const exact = fixtureBinding(row), command = await createTrackedCommand(row);

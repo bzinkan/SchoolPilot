@@ -413,9 +413,9 @@ test("staff bulk sign-out completes durable ends despite per-row publication fai
   assert.match(signOut, /endStudentSessionExact/);
   assert.match(signOut, /publicationFailures \+= 1/);
   assert.ok(
-    signOut.indexOf("completedStudentIds.add")
+    signOut.indexOf("candidateBindings.push")
       < signOut.indexOf("await publishClasspilotStudentSessionEnded"),
-    "the durable transition must be marked complete before optional publication"
+    "exact completion candidates must survive optional publication failure"
   );
   assert.match(signOut, /markClasspilotCommandTargetsServerCompleted/);
   assert.doesNotMatch(signOut, /studentId:.*console|deviceId:.*console/);
