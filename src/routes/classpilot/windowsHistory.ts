@@ -1,0 +1,20 @@
+import { Router } from "express";
+import { z } from "zod";
+import { authenticate } from "../../middleware/authenticate.js";
+import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
+import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import { selectRequestSchoolRole } from "../../services/schoolAuthorization.js";
+import { getWindowsBrowsingHistory } from "../../services/classpilotWindowsHistory.js";
+import { requireWindowsEnabled } from "../../services/classpilotWindowsProtocol.js";
+const router=Router();
+router.get("/students/:studentId/browsing-history",authenticate,requireSchoolContext,requireClasspilotEntitlement,requireRole("admin","school_admin","teacher"),async(req,res,next)=>{try{
+  const role=selectRequestSchoolRole(req,res,["admin","school_admin","teacher"]);
+  if(role!=="admin"&&role!=="school_admin"&&role!=="teacher")return res.status(403).json({code:"HISTORY_DENIED"});
+  requireWindowsEnabled(res.locals.schoolId!);
+  const query=z.object({sourceRef:z.string().uuid(),bindingRevision:z.coerce.number().int().positive(),startDate:z.string().optional(),endDate:z.string().optional(),limit:z.coerce.number().int().min(1).max(500).optional(),cursor:z.string().max(4096).optional()}).strict().parse(req.query);
+  res.setHeader("Cache-Control","private, no-store");
+  await res.locals.releaseTenantContext?.();
+  return res.json(await getWindowsBrowsingHistory({...query,schoolId:res.locals.schoolId!,studentId:String(req.params.studentId),actorId:req.authUser!.id,role}));
+}catch(error){const failure=error as Error&{code?:string;status?:number};if(error instanceof z.ZodError)return res.status(400).json({code:"HISTORY_INVALID_REQUEST"});if(failure.status)return res.status(failure.status).json({code:failure.code,error:failure.message});return next(error);}});
+export default router;

@@ -12,7 +12,7 @@ import { normalizeContentCategory } from "./classpilotContentCategories.js";
 
 export type BrowsingHistoryRequest={schoolId:string;studentId:string;actorId:string;role:ClasspilotStudentDataRole;startDate?:unknown;endDate?:unknown;limit?:unknown;cursor?:unknown;view?:unknown;grouping?:unknown;now?:Date};
 type BrowsingHistoryEntry={id:string;timestamp:string;activeTabUrl:string|null;activeTabTitle:string;aiCategory:string|null;contentCategory:string|null;teacherIntentSource:string|null;screenLocked:boolean;cameraActive:boolean;estimatedSeconds:number;startedAt?:string;endedAt?:string;observationCount?:number;hasOffTaskObservation?:boolean};
-async function historyContext(input:BrowsingHistoryRequest){
+export async function historyContext(input:BrowsingHistoryRequest,sourceScope:readonly string[]=[]){
   const view=resolveHistoryView(input.view);
   const grouping=resolveHistoryGrouping(input.grouping);
   const now=input.now||new Date();
@@ -25,7 +25,7 @@ async function historyContext(input:BrowsingHistoryRequest){
   const dates=resolveHistoryDates({startDate:input.startDate??cursorDates?.startDate,endDate:input.endDate??cursorDates?.endDate,timeZone:school?.timeZone||"America/New_York",now});
   // Preserve existing all-observation cursors while binding filtered cursors to
   // their view. Switching views must restart pagination.
-  const scope=historyScopeHash([input.schoolId,input.studentId,input.actorId,input.role,dates.startDate,dates.endDate,...(view==="pages"?[view]:[]),...(grouping==="visits"?[grouping]:[])]);
+  const scope=historyScopeHash([input.schoolId,input.studentId,input.actorId,input.role,dates.startDate,dates.endDate,...(view==="pages"?[view]:[]),...(grouping==="visits"?[grouping]:[]),...sourceScope]);
   const cursor=decodeHistoryCursor(input.cursor,scope,now);const anchor=cursor?new Date(cursor.anchor):now;
   const authority=input.role==="teacher"?await getClasspilotStudentHistoryAuthority({...input,now,retentionCutoff}):null;
   if(authority&&!authority.windows.length)throw historyError("HISTORY_DENIED","You can view browsing only during classes or supervision you actually taught.",403);

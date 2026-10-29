@@ -465,6 +465,7 @@ function TileRegressionHarness() {
               nextBoundaryAtMs: null,
             }}
             freshnessNowMs={freshnessNowMs}
+            screenshotUpdating
             screenshotData={{
               screenshot: SCREENSHOT_DATA_URL,
               timestamp: freshnessNowMs - 1,
@@ -493,8 +494,23 @@ function TileRegressionHarness() {
             onManageTabs={() => setTabClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             restrictionSelectionActive
+            screenshotUpdating
           />
         </div>
+
+        <StudentTile
+          student={{ ...ONLINE_STUDENT, studentId: 'discovery-pending-student', windowsDiscoveryPending: true }}
+          monitoringDisplay={onlineDisplay(freshnessNowMs)}
+          freshnessNowMs={freshnessNowMs}
+          screenshotUpdating
+        />
+
+        <StudentTile
+          student={{ studentId: 'unknown-transition-student', studentName: 'Unknown Student' }}
+          monitoringDisplay={{ kind: 'unknown', status: 'offline', telemetryCurrent: false }}
+          freshnessNowMs={freshnessNowMs}
+          screenshotUpdating
+        />
 
         <div data-testid="interactive-tile-host">
           <StudentTile
@@ -683,6 +699,7 @@ function TileRegressionHarness() {
             actionsDisabled
             actionsDisabledReason="Student controls belong to the supervising teacher."
             monitoringSuppressed
+            screenshotUpdating
             monitoringSuppressedReason="Ms. Rivera is temporarily supervising this student."
             supervisionLabel="In supervision: Ms. Rivera"
             liveStream={staleLiveStreamRef.current}

@@ -18,6 +18,8 @@ import LastSeenTime, { ExpiryCountdown } from "./LastSeenTime";
 import TileOrnament from "./TileOrnament";
 import { useDecodedScreenshot } from "../hooks/useDecodedScreenshot";
 import NativeDesktopPreview from './NativeDesktopPreview';
+import WindowsBrowserPreview from './WindowsBrowserPreview';
+import { windowsBrowserLabel, windowsBrowserSourceKey } from '../lib/windowsBrowsers';
 import { desktopSourceKey, hasBrowserSource } from '../lib/nativeDesktop';
 import { deriveTileTabFavicons } from "../lib/tileTabFavicons";
 import { normalizedTileControlRevision } from "../lib/tileBatchPolling";
@@ -121,6 +123,7 @@ function StudentTile({
   desktop = null,
   previewSourceSelection = null,
   onPreviewSourceSelection,
+  onWindowsBrowserSelection,
   onOpenScreenshot,
   flightPaths = EMPTY_LIST,
   monitoringDisplay,
@@ -141,7 +144,8 @@ function StudentTile({
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
   const browserSourceButtonRef = useRef(null);
-  const sourceSelectionKey = desktop ? `${desktop.contextKey}:${student.studentId}` : '';
+  const sourceSelectionKey = desktop ? `${desktop.contextKey}:${student.studentId}` : student.windowsBrowserScopeKey || '';
+  const [windowsExpanded, setWindowsExpanded] = useState(false);
   const browserAvailable = hasBrowserSource(student);
   const defaultSource = desktop && desktopSourceKey(desktop.source) && !browserAvailable ? 'desktop' : 'browser';
   const [sourceSelection, setSourceSelection] = useState({ key: '', source: 'browser' });
@@ -151,7 +155,7 @@ function StudentTile({
   // binding changes never select a different source or start native capture.
   useEffect(() => {
     if (!sourceSelectionKey || sourceSelection.key === sourceSelectionKey
-      || (!browserAvailable && !desktopSourceKey(desktop.source))) return undefined;
+      || (!browserAvailable && !desktopSourceKey(desktop?.source))) return undefined;
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setSourceSelection({ key: sourceSelectionKey, source: defaultSource });
@@ -166,7 +170,14 @@ function StudentTile({
     updateSourceSelection(current => ({ key: sourceSelectionKey, source,
       activationId: (current?.activationId || 0) + 1,
       activationKey: source === 'desktop' ? desktopSourceKey(desktop?.source) : '', expanded }));
-    if (source === 'browser' && expanded) onOpenScreenshot?.(screenshotButtonRef.current || browserSourceButtonRef.current);
+    if (source === 'browser' && expanded) {
+      if (student.windowsBrowserMode) setWindowsExpanded(true);
+      else onOpenScreenshot?.(screenshotButtonRef.current || browserSourceButtonRef.current);
+    }
+    if (source === 'desktop') {
+      setWindowsExpanded(false);
+      if (student.windowsBrowserMode) onWindowsBrowserSelection?.(null);
+    }
   };
   const activationMatches = selectedSource.key === sourceSelectionKey
     && selectedSource.activationKey === desktopSourceKey(desktop?.source);
@@ -174,15 +185,37 @@ function StudentTile({
     && current.activationId === selectedSource.activationId
     ? { ...current, activationKey: null, expanded: false } : current);
   const desktopSelected = Boolean(desktop && previewSource === 'desktop' && !monitoringSuppressed);
+  const windowsSourceControls = (scope, expanded = false) => <div className="flex gap-1 rounded-md bg-muted/50 p-1"
+    role="group" aria-label={`Preview source for ${student.studentName || 'student'}`}>
+    {student.windowsLegacyHandoff ? <Button size="sm" className="h-7 flex-1 text-xs"
+      data-testid={`${scope}-source-chromebook-${student.studentId}`}
+      onClick={() => { onWindowsBrowserSelection?.(student.windowsLegacyHandoff); setWindowsExpanded(false); selectPreviewSource('browser'); }}>
+      View Chromebook</Button> : ['chrome', 'edge'].map(browserFamily => {
+      const source = student.windowsBrowserSources?.find(row => row.browserFamily === browserFamily);
+      return <Button key={browserFamily} size="sm" className="h-7 flex-1 text-xs" disabled={!source}
+      variant={source && !desktopSelected && windowsBrowserSourceKey(source) === windowsBrowserSourceKey(student.selectedWindowsBrowser) ? 'secondary' : 'ghost'}
+      aria-pressed={Boolean(source && !desktopSelected && windowsBrowserSourceKey(source) === windowsBrowserSourceKey(student.selectedWindowsBrowser))}
+      data-testid={`${scope}-source-${browserFamily}-${student.studentId}`}
+      onClick={() => { onWindowsBrowserSelection?.(source); selectPreviewSource('browser', expanded); }}>
+      {windowsBrowserLabel({ browserFamily })}</Button>;
+    })}
+    {desktop ? <Button size="sm" className="h-7 flex-1 text-xs" variant={desktopSelected ? 'secondary' : 'ghost'}
+      aria-pressed={desktopSelected} data-testid={`${scope}-source-desktop-${student.studentId}`}
+      onClick={() => selectPreviewSource('desktop', expanded)}>Desktop</Button> : null}
+  </div>;
   // A wall that actively observes repaints about every 5 seconds, so a preview
   // reads as behind long before the 75-second background threshold. The caller
   // opts in per tile; an unknown observation state keeps the default window.
   const screenshotCaptureCadence = observationActive ? 'active_view' : negotiatedCaptureCadence;
   const effectiveMonitoringDisplay = monitoringSuppressed
     ? SUPPRESSED_MONITORING_DISPLAY
+    : student.windowsDiscoveryPending ? { kind: 'unknown', status: 'offline', telemetryCurrent: false,
+      label: student.windowsDiscoveryUnavailable ? 'Browser sources unavailable' : 'Checking browser sources' }
     : monitoringDisplay || deriveStudentMonitoringDisplay(student, freshnessNowMs);
   const currentTelemetry = effectiveMonitoringDisplay.telemetryCurrent;
-  const monitoringActionsDisabled = !currentTelemetry;
+  const monitoringActionsDisabled = student.windowsBrowserMode
+    ? student.windowsBrowserUnavailable || !student.windowsBrowserSources.some(source => deriveStudentMonitoringDisplay(source, freshnessNowMs).telemetryCurrent)
+    : !currentTelemetry;
   const interactionsDisabled = actionsDisabled
     || monitoringSuppressed
     || monitoringActionsDisabled
@@ -255,7 +288,7 @@ function StudentTile({
     releasePreviousFrame,
     expired: screenshotFrameExpired,
   } = useDecodedScreenshot(
-    !desktopSelected && screenshotPreviewMode ? screenshotData : null,
+    !student.windowsDiscoveryPending && !student.windowsBrowserMode && !desktopSelected && screenshotPreviewMode ? screenshotData : null,
     screenshotPrivacyKey,
     { crossfade: true },
   );
@@ -592,7 +625,7 @@ function StudentTile({
                   </span>
                 )}
               </h3>
-              {(currentTelemetry || effectiveIsAbsent) && (
+              {(currentTelemetry || effectiveIsAbsent || student.windowsDiscoveryPending) && (
                 <div className="flex items-center gap-2">
                   <span className={`text-xs font-medium ${
                     displayStatus === 'online'
@@ -601,7 +634,7 @@ function StudentTile({
                         ? 'text-amber-600 dark:text-amber-400'
                         : 'text-muted-foreground'
                   }`}>
-                    {desktop ? 'Browser: ' : ''}{getStatusLabel(displayStatus)}
+                    {desktop && !student.windowsDiscoveryPending ? 'Browser: ' : ''}{getStatusLabel(displayStatus)}
                   </span>
                 </div>
               )}
@@ -828,7 +861,19 @@ function StudentTile({
           </div>
         )}
 
-        {desktop && !monitoringSuppressed ? (
+        {student.windowsBrowserMode && !monitoringSuppressed ? <div className="space-y-1" onClick={event => event.stopPropagation()}>
+          {windowsSourceControls('preview')}
+          <p className="text-[11px] text-muted-foreground" data-testid={`browser-control-target-${student.studentId}`}>
+            {student.windowsLegacyHandoff || student.windowsLegacyOwnerPending ? 'The browser source changed. Confirm the current Chromebook to continue.'
+              : <>Browser policies apply to Chrome and Edge. Tab actions: {student.selectedWindowsBrowser ? windowsBrowserLabel(student.selectedWindowsBrowser) : 'choose a browser'}.</>}</p>
+          {!student.windowsLegacyHandoff && !student.windowsLegacyOwnerPending ? <p className="text-[11px] text-muted-foreground" data-testid={`browser-coverage-${student.studentId}`}>{['chrome', 'edge'].map(browserFamily => {
+            const source = student.windowsBrowserSources.find(row => row.browserFamily === browserFamily);
+            const state = student.windowsBrowserCoverage?.find(row => row.browserFamily === browserFamily)?.state;
+            const label = student.windowsBrowserUnavailable ? 'unavailable' : ({ connected: 'connected', disconnected: 'disconnected', unpaired: 'not paired', unverifiable: 'coverage unverified' })[state]
+              || (source ? deriveStudentMonitoringDisplay(source, freshnessNowMs).label : 'coverage unverified');
+            return `${windowsBrowserLabel({ browserFamily })}: ${label}`;
+          }).join(' · ')}</p> : null}
+        </div> : desktop && !monitoringSuppressed ? (
           <div className="space-y-1" onClick={event => event.stopPropagation()}>
             <div className="flex gap-1 rounded-md bg-muted/50 p-1" role="group" aria-label={`Preview source for ${student.studentName || 'student'}`}>
               {['browser', 'desktop'].map(source => <Button key={source} size="sm"
@@ -858,7 +903,15 @@ function StudentTile({
             student={student} desktop={desktop} autoStart={activationMatches && Boolean(selectedSource.activationKey)}
             initiallyExpanded={activationMatches && selectedSource.expanded === true}
             onActivationConsumed={consumeSourceActivation}
+            sourceControls={student.windowsBrowserMode ? windowsSourceControls('expanded-native', true) : null}
             onOpenBrowser={onOpenScreenshot ? () => selectPreviewSource('browser', true) : undefined} />
+        ) : student.windowsDiscoveryPending ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border p-4 text-sm text-muted-foreground" role="status">
+            {student.windowsDiscoveryUnavailable ? 'Browser sources are unavailable. Refresh this classroom to try again.' : 'Checking browser sources…'}
+          </div>
+        ) : student.windowsBrowserMode ? (
+          <WindowsBrowserPreview student={student} expanded={windowsExpanded} onExpandedChange={setWindowsExpanded}
+            sourceControls={windowsSourceControls('expanded-windows', true)} />
         ) : activeLiveStream ? (
           <div className="aspect-video rounded-lg bg-black relative overflow-hidden">
             <video
@@ -956,7 +1009,7 @@ function StudentTile({
               </div>
             ) : null}
           </button>
-        ) : screenshotUpdating ? (
+        ) : screenshotUpdating && currentTelemetry ? (
           <div className="flex aspect-video items-center justify-center rounded-lg border border-sky-200 bg-sky-50/70 text-center dark:border-sky-900 dark:bg-sky-950/20" data-testid={`screenshot-updating-authority-${student.studentId}`}>
             <div className="px-4">
               <Monitor className="mx-auto mb-2 h-6 w-6 text-sky-600 dark:text-sky-400" />
@@ -1285,6 +1338,7 @@ const CALLBACK_PROPS = new Set([
   'onManageTabs',
   'onOpenScreenshot',
   'onPreviewSourceSelection',
+  'onWindowsBrowserSelection',
   'onCommand',
   'onLockAction',
   'onReturnToClass',

@@ -11,7 +11,7 @@ function observationTime(value) {
 }
 
 export default function NativeDesktopPreview({ student, desktop, autoStart = false, initiallyExpanded = false,
-  onActivationConsumed, onOpenBrowser }) {
+  onActivationConsumed, onOpenBrowser, sourceControls = null }) {
   const canView = desktop.source.state === 'available';
   const [viewRequest, setViewRequest] = useState({ attempt: autoStart ? 1 : 0, active: autoStart && canView });
   const [expanded, setExpanded] = useState(initiallyExpanded);
@@ -86,11 +86,11 @@ export default function NativeDesktopPreview({ student, desktop, autoStart = fal
             <DialogTitle>{student.studentName || 'Student'} — desktop preview</DialogTitle>
             <DialogDescription>Selected desktop source. Automatically refreshed screenshots, not live video.</DialogDescription>
           </DialogHeader>
-          <div className="flex gap-2" role="group" aria-label="Enlarged preview source">
+          {sourceControls || <div className="flex gap-2" role="group" aria-label="Enlarged preview source">
             <Button size="sm" variant="outline" aria-pressed={false} disabled={!onOpenBrowser}
               data-testid="expanded-native-source-browser" onClick={() => { stopViewing(); onOpenBrowser?.(); }}>Browser</Button>
             <Button size="sm" variant="secondary" aria-pressed data-testid="expanded-native-source-desktop">Desktop</Button>
-          </div>
+          </div>}
           <div className="min-h-0 flex-1 overflow-hidden rounded bg-slate-950" data-testid="expanded-desktop-preview">
             {frame ? image : <div className="p-6 text-center text-slate-200">
               <p>{message}</p>

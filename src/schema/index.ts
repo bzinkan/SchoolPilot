@@ -14,6 +14,7 @@ export * from "./gopilot.js";
 // ClassPilot tables
 export * from "./classpilot.js";
 export * from "./classpilotNative.js";
+export * from "./classpilotWindows.js";
 
 // Shared tables
 export * from "./shared.js";
@@ -34,3 +35,5 @@ export * from "./schoolDiscipline.js";
 export * from "./studentInformation.js";
 export * from "./classpilotTeacherPreferences.js";
 export * from "./importProcessingStages.js";
+
+export * from "./classpilotWindowsHistory.js";

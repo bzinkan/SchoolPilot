@@ -1060,7 +1060,8 @@ export function combineCommandSettlements(settlements, targetGroups, commandType
     if (settlement.status === 'fulfilled') {
       const value = settlement.value || {};
       results.push(value);
-      if (value.command) commands.push(value.command);
+      if (value.commands?.length) commands.push(...value.commands);
+      else if (value.command) commands.push(value.command);
       targets.push(...(value.command?.targets || value.targets || []).map((target) => ({
         ...target,
         ...(value.command?.id ? { commandId: value.command.id } : {}),
@@ -1097,6 +1098,7 @@ export function combineCommandSettlements(settlements, targetGroups, commandType
     results,
     commands,
     command: {
+      ...(commands.length === 1 ? commands[0] : {}),
       id: commands.length === 1 ? commands[0].id : undefined,
       commandType,
       deliveryPolicy: commands[0]?.deliveryPolicy,
@@ -1146,14 +1148,15 @@ export function mergeCommandUpdateIntoBatches(batches, message) {
     ].filter(Boolean).map(String));
     if (!batchCommandIds.has(commandId)) return batch;
 
+    const targetKey = target => JSON.stringify([target.studentId, target.sourceRef ?? null, target.bindingRevision ?? null]);
     const updates = new Map((command.targets || message.targets || []).map((target) => [
-      String(target.studentId || ''),
+      targetKey(target),
       { ...target, commandId },
     ]));
     const targets = batchTargets.map((target) => (
       String(target.commandId || batch?.command?.id || '') === commandId
-      && updates.has(String(target.studentId || ''))
-        ? { ...target, ...updates.get(String(target.studentId || '')) }
+      && updates.has(targetKey(target))
+        ? { ...target, ...updates.get(targetKey(target)) }
         : target
     ));
     changed = true;

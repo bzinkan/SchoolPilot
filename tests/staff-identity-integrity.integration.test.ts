@@ -2236,6 +2236,9 @@ test("parent tenant moves serialize with relationship and session child writes",
     const relationshipMoveAttempt = moveClient
       .query("SET CONSTRAINTS ALL IMMEDIATE")
       .finally(() => { moveSettled = true; });
+    // The blocked query can reject before COMMIT resolves. Observe it now;
+    // assert.rejects below still validates the original rejection exactly.
+    void relationshipMoveAttempt.catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(moveSettled, false, "group move must wait for an old-tenant relationship writer");
     await childClient.query("COMMIT");
@@ -2263,6 +2266,7 @@ test("parent tenant moves serialize with relationship and session child writes",
     const groupSessionMoveAttempt = moveClient
       .query("SET CONSTRAINTS ALL IMMEDIATE")
       .finally(() => { moveSettled = true; });
+    void groupSessionMoveAttempt.catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(moveSettled, false, "group move must wait for active session-staff writes");
     await childClient.query("COMMIT");
@@ -2295,6 +2299,7 @@ test("parent tenant moves serialize with relationship and session child writes",
     const sessionMoveAttempt = moveClient
       .query("SET CONSTRAINTS ALL IMMEDIATE")
       .finally(() => { moveSettled = true; });
+    void sessionMoveAttempt.catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(moveSettled, false, "session move must wait for session-staff writes");
     await childClient.query("COMMIT");

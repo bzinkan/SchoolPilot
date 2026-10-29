@@ -73,6 +73,22 @@ function pause(ms, signal) {
 
 // HTTP receipt and server-created continuation are not browser confirmation.
 // Keep the precise source command and target when polling; never find by URL.
+export function classroomStudentTarget(command, studentId) {
+  const rows = command.targets?.filter(target => target.studentId === studentId) || [];
+  if (!rows.length) return { studentId, status: 'unavailable', error: 'The student was not included in this command.' };
+  if (rows.length === 1) return rows[0];
+  // A student policy can target two independent browser children. Never treat
+  // the first child's acknowledgement as confirmation of the whole policy.
+  const pending = rows.find(row => !terminal.has(row.status));
+  const failure = rows.find(row => ['failed', 'unavailable', 'expired'].includes(row.status)
+    || (row.status === 'completed' && row.result?.outcome && row.result.outcome !== 'applied'));
+  const representative = pending || failure || rows[0];
+  return { ...representative, studentId, browserTargets: rows,
+    status: pending?.status || (failure ? failure.status === 'completed' ? 'failed' : failure.status : 'completed'),
+    result: !pending && !failure && rows.every(row => row.result?.outcome === 'applied') ? { outcome: 'applied' } : representative.result,
+    error: failure ? `${failure.browserFamily === 'edge' ? 'Edge' : failure.browserFamily === 'chrome' ? 'Chrome' : 'Browser'}: ${failure.errorMessage || failure.error || 'The change was not confirmed.'}` : representative.error };
+}
+
 export async function waitForClassroomTargets(command, studentIds, {
   readCommand, signal, onUpdate = () => {}, assertCurrent = () => {},
   now = Date.now, sleep = pause, timeoutMs = 60_000,
@@ -82,8 +98,7 @@ export async function waitForClassroomTargets(command, studentIds, {
   while (true) {
     abortCheck(signal); assertCurrent();
     if (current.id !== command.id) throw new Error('The command status did not match the requested action.');
-    const rows = studentIds.map(studentId => current.targets?.find(target => target.studentId === studentId)
-      || { studentId, status: 'unavailable', error: 'The student was not included in this command.' });
+    const rows = studentIds.map(studentId => classroomStudentTarget(current, studentId));
     onUpdate(rows);
     if (rows.every(row => terminal.has(row.status)) || now() >= deadline) return rows;
     await sleep(750, signal);

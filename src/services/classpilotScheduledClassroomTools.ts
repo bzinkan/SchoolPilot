@@ -7,7 +7,7 @@ import { chatMessages, classpilotActiveHands, classpilotChatDeliveries, classpil
   studentSessions, classpilotCommands, classpilotCommandTargets, type ClasspilotSupervisionContext } from "../schema/classpilot.js";
 import { students } from "../schema/students.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
-import { lockClasspilotStudentControlAuthorities, getSettingsForSchool, getActiveSessionsForStudents, hasCurrentClasspilotStudentControlAuthority } from "./storage.js";
+import { readClasspilotWindowsExactBinding, lockClasspilotStudentControlAuthorities, getSettingsForSchool, getActiveSessionsForStudents, hasCurrentClasspilotStudentControlAuthority } from "./storage.js";
 import { requireScheduledClassroomContext, scheduledContextHasClassroomTools, scheduledClassroomBindingCapable, scheduledSupervisionSource } from "./classpilotActivityAuthority.js";
 import { resolveChatPause } from "./classpilotChatChannelControl.js";
 import { broadcastToStaffContextLocal } from "../realtime/ws-broadcast.js";
@@ -104,7 +104,8 @@ export async function withScheduledStudentAction<T>(options: ScheduledStudentAct
         sql`(${studentSessions.authKind} <> 'manual_shared' OR ${studentSessions.manualLeaseExpiresAt} > clock_timestamp())`)).limit(1).for("share");
     const [control] = await tx.select().from(classpilotStudentControlStates).where(and(
       eq(classpilotStudentControlStates.schoolId, options.schoolId), eq(classpilotStudentControlStates.studentId, options.studentId))).limit(1).for("share");
-    if (!assignment || !binding || !Number.isSafeInteger(options.studentControlRevision)
+    const windowsBinding = binding ? null : await readClasspilotWindowsExactBinding(options, database);
+    if (!assignment || (!binding && !windowsBinding) || !Number.isSafeInteger(options.studentControlRevision)
       || control?.revision !== options.studentControlRevision || control.supervisionContextId !== context.id
       || control.teachingSessionId !== null || !control.hardExpiresAt || control.hardExpiresAt <= new Date()
       || (control.scheduledEndAt && control.scheduledEndAt <= new Date())) {

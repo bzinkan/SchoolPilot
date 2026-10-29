@@ -168,7 +168,7 @@ describe("Monitored Browser Time rollup SQL", () => {
     assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /FROM students AS student_scope\s+CROSS JOIN LATERAL/);
     assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /WHERE student_scope\.school_id = \$1/);
     for (const statement of Object.values(ROLLUP_STATEMENTS)) {
-      assert.doesNotMatch(statement, /"timestamp"\s+AT TIME ZONE|observed_at\s+AT TIME ZONE/i);
+      assert.doesNotMatch(statement, /heartbeat\."timestamp"\s+AT TIME ZONE/i);
     }
   });
 

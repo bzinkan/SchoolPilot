@@ -395,11 +395,27 @@ run "classpilot_native_visibility_target" {
   }
   assert {
     condition = (
-      length(local.rls_post_expand_tables) == 132 &&
       length(local.rls_configured_tables) == 132 &&
       toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotPrivateChatLifecyclePostExpand.tables, ["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"])) &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
+    )
+    error_message = "The historical 132-table native visibility inventory must remain an exact preserved subset of the current target."
+  }
+}
+
+run "classpilot_windows_browser_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotWindowsBrowserPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_post_expand_tables) == 138 &&
+      length(local.rls_configured_tables) == 138 &&
+      toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.classpilotNativeVisibilityPostExpand.tables, ["classpilot_windows_guards", "classpilot_windows_browsers", "classpilot_windows_pairing_proofs", "classpilot_windows_commands", "classpilot_windows_command_targets", "classpilot_windows_browser_events"])) &&
       toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
     )
-    error_message = "The native visibility target must append only the three independent native identity tables."
+    error_message = "The Windows browser target must append exactly six independent identity, command and browser-history tables after the preserved native inventory."
   }
 }

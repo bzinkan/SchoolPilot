@@ -558,6 +558,7 @@ async function configureDashboard(page, {
       return;
     }
 
+    if (pathname === '/api/classpilot/windows/tiles') return route.fulfill({ json: { enabled: false, serverTime: new Date().toISOString(), tiles: [] } });
     await route.fulfill({ status: 200, json: {} });
   });
 
@@ -2773,7 +2774,9 @@ test('live preview eligibility follows sign-in without replaying denied or super
     assert.equal(screenshots(signInHarness).length, 0, 'an all-signed-out roster must never send an empty-access live screenshot request');
     assert.deepEqual([...histories(signInHarness)[0].body.studentIds].sort(), roster.map(({ studentId }) => studentId).sort());
     assert.match(await signInPage.getByTestId('badge-selection-count').innerText(), /All 23 students/);
-    assert.equal(await signInPage.getByTestId(`card-student-${roster[0].studentId}`).getByText('Waiting for ClassPilot sign-in', { exact: true }).count(), 1);
+    const firstSignedOutCard = signInPage.getByTestId(`card-student-${roster[0].studentId}`);
+    assert.equal(await firstSignedOutCard.getByText('Waiting for ClassPilot sign-in', { exact: true }).count(), 1,
+      JSON.stringify({ preview: await firstSignedOutCard.innerText(), pageErrors: signInHarness.pageErrors }));
     await assertNoWarning(signInPage);
     await signInHarness.authenticateWebSocket();
     for (const [index, binding] of [[0, 'fresh-signin-binding'], [1, 'retained-signin-binding']]) {
@@ -2823,8 +2826,13 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await uncertainPage.goto(`${baseURL}/classpilot`);
     await waitUntil(() => screenshots(uncertainHarness).length > 0, 'unknown and stale monitoring must still request authorized previews');
     assert.deepEqual([...screenshots(uncertainHarness)[0].body.studentIds].sort(), [STUDENT_ID, SIGNAL_LOST_STUDENT_ID].sort());
-    await waitUntil(() => histories(uncertainHarness).length > 0, 'screenshot eligibility must not remove history targets');
-    assert.deepEqual([...histories(uncertainHarness)[0].body.studentIds].sort(), uncertainRows.map(({ studentId }) => studentId).sort());
+    // Source discovery may initially authorize only the delegated row. Once
+    // the feature-off response restores legacy sources, the entire historical
+    // roster must still be requested, including explicitly signed-out rows.
+    await waitUntil(() => histories(uncertainHarness).some(request => request.body.studentIds.length === uncertainRows.length),
+      'screenshot eligibility must not remove history targets after source discovery');
+    const completeHistory = histories(uncertainHarness).find(request => request.body.studentIds.length === uncertainRows.length);
+    assert.deepEqual([...completeHistory.body.studentIds].sort(), uncertainRows.map(({ studentId }) => studentId).sort());
     assert.deepEqual(uncertainHarness.pageErrors, []);
     await uncertainPage.close();
 
@@ -2954,6 +2962,11 @@ test('live preview eligibility follows sign-in without replaying denied or super
         const joined = body.studentIds.includes(SIGNED_OUT_STUDENT_ID);
         const reply = { phase: cohortPhase, targets: body.studentIds.length, joined, result: 'pending' };
         joinedResponsePhases.push(reply);
+        if (cohortPhase === 'retain-only') {
+          reply.result = '200:null';
+          return { tiles: body.studentIds.map(studentId => ({ studentId,
+            bindingVersion: 'v2:unchanged-classmate', screenshot: null })) };
+        }
         if (joined) await joinedCohortGate;
         else if (cohortPhase === 'hold-prior') {
           heldPriorCohortRequests += 1;
@@ -3009,6 +3022,61 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await assertNoWarning(joinedPage);
     assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).getAttribute('src'), UPDATED_SCREENSHOT_DATA_URL);
     assert.deepEqual(joinedHarness.pageErrors, []);
+    // An open Details drawer must also hide during discovery without treating
+    // that temporary gate as a real sign-out and destroying retained pixels.
+    await joinedPage.getByTestId(`button-student-details-${STUDENT_ID}`).click();
+    await joinedPage.getByTestId('student-tabs').waitFor();
+    await joinedPage.waitForLoadState('networkidle');
+    cohortPhase = 'retain-only';
+    let releaseDetailsDiscovery;
+    let detailsDiscoveryStarted = false;
+    const detailsDiscoveryGate = new Promise(resolve => { releaseDetailsDiscovery = resolve; });
+    pendingReleases.push(releaseDetailsDiscovery);
+    const detailsDiscoveryRoute = async route => {
+      detailsDiscoveryStarted = true;
+      await detailsDiscoveryGate;
+      await route.fulfill({ json: { enabled: false, serverTime: new Date().toISOString(), tiles: [] } });
+    };
+    await joinedPage.route('**/api/classpilot/windows/tiles', detailsDiscoveryRoute);
+    for (const visibility of ['hidden', 'visible']) await joinedPage.evaluate(value => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, visibility);
+    await waitUntil(() => detailsDiscoveryStarted, 'Details must encounter a held source-discovery response');
+    await joinedPage.getByTestId('student-tabs').waitFor({ state: 'hidden' });
+    assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0);
+    releaseDetailsDiscovery();
+    await joinedPage.waitForFunction(({ id, source }) => document.querySelector(`[data-testid="screenshot-${id}"]`)?.getAttribute('src') === source,
+      { id: STUDENT_ID, source: UPDATED_SCREENSHOT_DATA_URL });
+    await joinedPage.unroute('**/api/classpilot/windows/tiles', detailsDiscoveryRoute);
+    // Retaining exact-bound cache identity must never retain visible pixels
+    // while browser-source discovery is pending or has failed.
+    await joinedPage.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+    await joinedPage.getByTestId('expanded-screenshot-image').waitFor();
+    let releaseDiscovery;
+    let discoveryStarted = false;
+    const discoveryGate = new Promise(resolve => { releaseDiscovery = resolve; });
+    pendingReleases.push(releaseDiscovery);
+    await joinedPage.route('**/api/classpilot/windows/tiles', async route => {
+      discoveryStarted = true;
+      await discoveryGate;
+      await route.fulfill({ status: 503, json: { code: 'WINDOWS_UNAVAILABLE' } });
+    });
+    for (const visibility of ['hidden', 'visible']) await joinedPage.evaluate(value => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, visibility);
+    await waitUntil(() => discoveryStarted, 'the visible view must await a fresh source-discovery response');
+    await joinedPage.getByTestId('expanded-screenshot-image').waitFor({ state: 'detached' });
+    assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0,
+      'pending discovery hides retained tile pixels as well as the enlarged image');
+    const readsWhilePending = screenshots(joinedHarness).length;
+    releaseDiscovery();
+    await joinedPage.getByTestId(`card-student-${STUDENT_ID}`).getByText('Browser sources unavailable', { exact: true }).waitFor();
+    assert.equal(await joinedPage.getByTestId('expanded-screenshot-image').count(), 0);
+    assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0);
+    assert.equal(screenshots(joinedHarness).length, readsWhilePending,
+      'failed source discovery cannot request legacy screenshots');
     await joinedPage.close();
     trace('classmate placeholder case complete');
 
@@ -3120,6 +3188,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await waitUntil(() => screenshots(navigationHarness).some((request) => request.body.teachingSessionId === OWN_SESSION_ID), 'A screenshot must be pending before the class switch');
     await navigationPage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
     await waitUntil(() => screenshots(navigationHarness).some((request) => request.body.teachingSessionId === OBSERVED_SESSION_ID), 'B must obtain its own scoped preview read');
+    await navigationPage.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
     await settle();
     const requestsBeforeOldCompletion = navigationAggregate.requests.length;
     releaseOldScreenshot();
@@ -8214,6 +8283,149 @@ test('native desktop: both enlarged previews switch exact source and native clos
   assert.equal(await page.getByTestId(`preview-source-desktop-${STUDENT_ID}`).getAttribute('aria-pressed'), 'true');
   await page.getByTestId(`view-desktop-${STUDENT_ID}`).waitFor();
   await waitUntil(() => requests.filter(request => request.method === 'DELETE').length >= 2, 'Native close releases its shared viewer');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Windows browsers: one Dashboard tile keeps Chrome, Edge, desktop and exact command/history sources independent', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-08-25T13:01:00Z'); await page.clock.install({ time: fixedTime });
+  const live = teachingSession();
+  const windowsAggregate = aggregateController({ scoped: success([student({ isLoggedIn: false, loginState: 'not_logged_in', status: 'offline',
+    monitoringState: 'signed_out', realtimeBinding: '', extensionVersion: null, activeTabTitle: null, activeTabUrl: null })]) });
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: live, allSessions: [live],
+    aggregate: windowsAggregate,
+    acknowledgeSessionSubscriptions: true });
+  const sharp = (await import('sharp')).default;
+  const jpeg = `data:image/jpeg;base64,${(await sharp({ create: { width: 100, height: 60, channels: 3, background: '#194c63' } }).jpeg().toBuffer()).toString('base64')}`;
+  const windowsRequests = [], nativeRequests = [], commands = [], historyRequests = [], policyStatusReads = [];
+  let policyExpired = false, legacyOwner = false;
+  const policyCommand = { id: 'windows-policy', commandType: 'lock-screen', expiresAt: new Date(fixedTime.getTime() + 3_000).toISOString(),
+    targets: ['chrome', 'edge'].map(browserFamily => ({ studentId: STUDENT_ID, sourceRef: `opaque-${browserFamily}`, bindingRevision: 1,
+      browserFamily, status: 'sent' })) };
+  await page.route('**/api/classpilot/windows/**', async route => {
+    const request = route.request(), url = new URL(request.url()), body = request.postDataJSON();
+    if (url.pathname.endsWith('/tiles')) {
+      windowsRequests.push(body);
+      if (legacyOwner) return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+        browserSources: [], browserOwner: { transport: 'legacy', realtimeBinding: 'chromebook-current' } }] } });
+      return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+        browserSources: ['chrome', 'edge'].map(browserFamily => ({ browserFamily, sourceRef: `opaque-${browserFamily}`, bindingRevision: 1,
+          isLoggedIn: true, lastSeenAt: fixedTime.toISOString(), clientProtocolVersion: 3, extensionVersion: '1.0.0',
+          acceptedCapabilities: { scopedAuthorityChecksV1: true, exactTabCloseV2: true, screenOnlyUnlockV1: true },
+          ...(body.selectedSources?.some(target => target.sourceRef === `opaque-${browserFamily}`) ? {
+            screenshot: jpeg, screenshotAt: fixedTime.toISOString(), expiresAt: new Date(fixedTime.getTime() + 30_000).toISOString(),
+            activeTabTitle: `${browserFamily} current page`, activeTabUrl: `https://${browserFamily}.example/`, activeTabRef: `${browserFamily}-tab`,
+            tabSnapshot: { revision: 5, tabs: [{ tabRef: `${browserFamily}-tab`, title: `${browserFamily} current page`, url: `https://${browserFamily}.example/`, active: true }] }, tabSnapshotRevision: 5,
+          } : {}) })) }] } });
+    }
+    if (url.pathname.endsWith('/commands')) {
+      commands.push(body);
+      if (body.commandType === 'lock-screen') return route.fulfill({ json: { command: policyCommand } });
+      return route.fulfill({ json: { command: { id: `windows-command-${commands.length}`, ...body, targets: body.browserTargets.map(target => ({ ...target, browserFamily: 'chrome', status: 'completed' })) }, summary: { requested: 1, completed: 1 } } });
+    }
+    if (url.pathname.endsWith('/commands/windows-policy')) {
+      policyStatusReads.push(policyExpired);
+      return route.fulfill({ json: { command: { ...policyCommand, targets: policyCommand.targets.map(target => ({ ...target, status: policyExpired ? 'expired' : 'sent' })) } } });
+    }
+    if (url.pathname.endsWith('/browsing-history')) {
+      historyRequests.push(url);
+      return route.fulfill({ json: { state: 'available', timeZone: 'America/New_York', today: '2026-08-25', entries: [{ id: 'windows-history', timestamp: fixedTime.toISOString(), activeTabTitle: 'Windows source history', activeTabUrl: 'https://history.example/' }], nextCursor: null } });
+    }
+    return route.fulfill({ status: 404, json: {} });
+  });
+  await page.route('**/api/classpilot/native/**', async route => {
+    nativeRequests.push({ method: route.request().method(), body: route.request().postDataJSON() });
+    return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID, sourceRef: 'native-source', bindingRevision: 1, state: 'available', platform: 'windows' }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`preview-source-chrome-${STUDENT_ID}`).waitFor();
+  await page.getByTestId(`preview-source-edge-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 1);
+  assert.equal(windowsRequests.some(body => body.selectedSources?.length), false);
+  assert.equal(await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).count(), 0);
+  await page.getByTestId(`preview-source-chrome-${STUDENT_ID}`).click();
+  await page.getByTestId(`windows-browser-image-${STUDENT_ID}`).waitFor();
+  await page.getByTestId('button-open-tab').click();
+  await page.getByTestId('input-open-tab-url').fill('https://lesson.example/');
+  await page.getByTestId('button-confirm-open-tab').click();
+  await waitUntil(() => commands.length === 1, 'Windows open-tab must reach its dedicated contract');
+  assert.deepEqual(commands[0].browserTargets, [{ studentId: STUDENT_ID, sourceRef: 'opaque-chrome', bindingRevision: 1 }]);
+  assert.equal(commands[0].teachingSessionId, OWN_SESSION_ID);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.equal(nativeRequests.some(row => row.method === 'PUT'), false);
+  await page.getByTestId(`button-lock-toggle-${STUDENT_ID}`).click();
+  await waitUntil(() => commands.length === 2, 'The policy must target both browser children');
+  await page.clock.runFor(2_100);
+  await waitUntil(() => policyStatusReads.includes(false), 'Read the initial pending policy');
+  policyExpired = true;
+  await page.clock.runFor(5_100);
+  await waitUntil(() => policyStatusReads.includes(true), 'Read the terminal server status after policy expiry');
+  const terminalReadCount = policyStatusReads.length;
+  await page.clock.runFor(6_000);
+  assert.equal(policyStatusReads.length, terminalReadCount, 'A terminal policy does not continue polling');
+  await page.getByTestId(`preview-source-edge-${STUDENT_ID}`).click();
+  await page.waitForFunction(() => document.querySelector('img[alt*="Edge browser preview"]'));
+  await page.getByTestId(`button-student-details-${STUDENT_ID}`).click();
+  await page.getByTestId('windows-browser-history-drawer').waitFor();
+  await page.getByText('Windows source history', { exact: true }).waitFor();
+  assert.equal(historyRequests.length, 1);
+  assert.equal(historyRequests[0].searchParams.get('sourceRef'), 'opaque-edge');
+  assert.equal(historyRequests[0].searchParams.get('bindingRevision'), '1');
+  assert.equal(historyRequests[0].searchParams.has('grouping'), false);
+  assert.equal(harness.tileRequests.some(request => request.body.studentIds.includes(STUDENT_ID)), false);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Enlarge Edge for Ada Student', exact: true }).click();
+  legacyOwner = true;
+  await page.clock.runFor(5_100);
+  await page.getByTestId('expanded-windows-browser-dialog').getByText('Waiting for the current Chromebook session to finish refreshing.', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId(`windows-browser-image-${STUDENT_ID}`).count(), 0);
+  assert.equal(await page.getByTestId(`preview-source-chromebook-${STUDENT_ID}`).count(), 0, 'the old aggregate cannot approve a new source binding');
+  windowsAggregate.setScopedResponse(success([student({ realtimeBinding: 'chromebook-current', extensionVersion: '2.9.7',
+    clientProtocolVersion: 3, acceptedCapabilities: { scopedAuthorityChecksV1: true, exactTabCloseV2: true, screenOnlyUnlockV1: true } })]));
+  await page.evaluate(() => { window.dispatchEvent(new Event('online')); window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.getByTestId(`preview-source-chromebook-${STUDENT_ID}`).waitFor();
+  assert.equal(harness.tileRequests.some(request => request.body.studentIds.includes(STUDENT_ID)), false, 'current legacy ownership does not silently switch the chosen Windows source');
+  await page.getByTestId(`expanded-windows-source-chromebook-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-windows-browser-dialog').waitFor({ state: 'hidden' });
+  await waitUntil(() => harness.tileRequests.some(request => request.body.studentIds.includes(STUDENT_ID)), 'explicit handoff re-enables only the current Chromebook tile pipeline');
+  assert.equal(await page.getByTestId(`windows-browser-preview-${STUDENT_ID}`).count(), 0);
+  await page.getByTestId('button-open-tab').click();
+  await page.getByTestId('input-open-tab-url').fill('https://chromebook-lesson.example/');
+  await page.getByTestId('button-confirm-open-tab').click();
+  await waitUntil(() => harness.commandPosts.length === 1, 'Chromebook commands use the current legacy contract after explicit handoff');
+  assert.equal(commands.length, 2, 'the old Windows sources receive no handoff command');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Windows browsers: Observe can choose a source but exposes no browser commands', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const fixedTime = new Date('2026-08-25T13:01:00Z'); await page.clock.install({ time: fixedTime });
+  const own = teachingSession(), observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+  const harness = await configureDashboard(page, { userRole: 'admin', activeSession: own, allSessions: [own, observed],
+    aggregate: aggregateController({ scoped: success([student()]) }), acknowledgeSessionSubscriptions: true });
+  const sharp = (await import('sharp')).default;
+  const jpeg = `data:image/jpeg;base64,${(await sharp({ create: { width: 100, height: 60, channels: 3, background: '#194c63' } }).jpeg().toBuffer()).toString('base64')}`;
+  const commands = [], reads = [];
+  await page.route('**/api/classpilot/windows/**', async route => {
+    const body = route.request().postDataJSON();
+    if (!route.request().url().endsWith('/tiles')) { commands.push(body); return route.fulfill({ status: 403, json: {} }); }
+    reads.push(body);
+    return route.fulfill({ json: { enabled: true, serverTime: fixedTime.toISOString(), tiles: [{ studentId: STUDENT_ID,
+      browserSources: ['chrome', 'edge'].map(browserFamily => ({ sourceRef: `observe-${browserFamily}`, bindingRevision: 1, browserFamily,
+        isLoggedIn: true, lastSeenAt: fixedTime.toISOString(), acceptedCapabilities: { scopedAuthorityChecksV1: true, exactTabCloseV2: true },
+        ...(body.selectedSources?.some(row => row.sourceRef === `observe-${browserFamily}`) ? { screenshot: jpeg,
+          screenshotAt: fixedTime.toISOString(), expiresAt: new Date(fixedTime.getTime() + 30_000).toISOString() } : {}) })) }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+  await page.getByTestId('observe-read-only-banner').waitFor();
+  await page.getByTestId(`preview-source-edge-${STUDENT_ID}`).click();
+  await page.getByTestId(`windows-browser-image-${STUDENT_ID}`).waitFor();
+  await assertObserveEntryPointsUnavailable(page, harness.commandPosts, [STUDENT_ID], harness.coverageMutationRequests);
+  assert.ok(reads.some(body => body.teachingSessionId === OBSERVED_SESSION_ID && body.selectedSources?.[0]?.sourceRef === 'observe-edge'));
+  assert.deepEqual(commands, []);
   assert.deepEqual(harness.pageErrors, []);
 });
 

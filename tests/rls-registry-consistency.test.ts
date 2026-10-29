@@ -43,6 +43,7 @@ type Registry = {
     passpilotAppointmentsPostExpand: RegistryInventory;
     classpilotPrivateChatLifecyclePostExpand: RegistryInventory;
     classpilotNativeVisibilityPostExpand: RegistryInventory;
+    classpilotWindowsBrowserPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -94,6 +95,18 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("appends the complete Windows bundle after the immutable native inventory", () => {
+    const previous=registry.inventories.classpilotNativeVisibilityPostExpand;
+    const next=registry.inventories.classpilotWindowsBrowserPostExpand;
+    const bundle=["classpilot_windows_guards","classpilot_windows_browsers","classpilot_windows_pairing_proofs","classpilot_windows_commands","classpilot_windows_command_targets","classpilot_windows_browser_events"];
+    assert.deepEqual(next.tables,[...previous.tables,...bundle]);
+    assert.equal(next.count,138);assert.equal(next.sha256,sha256(next.tables));
+    assert.deepEqual(registry.reviewedEnablementRequests.classpilotWindowsBrowser,bundle);
+    assert.equal(isReviewedRlsEnforcementRequest(bundle),true);
+    assert.equal(isReviewedRlsEnforcementRequest(bundle.slice(0,5)),false);
+    assert.equal(isReviewedRlsEnforcementRequest([...bundle].reverse()),false);
+  });
+
   it("appends the native identity bundle without rewriting the private-chat inventory", () => {
     const previous = registry.inventories.classpilotPrivateChatLifecyclePostExpand;
     const next = registry.inventories.classpilotNativeVisibilityPostExpand;
@@ -266,7 +279,7 @@ describe("semantic RLS registry", () => {
     // CI admits the reviewed PassPilot rule bundle and the usage rollup table
     // ahead of production, which keeps the observed 121-table baseline until a
     // later adoption PR.
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotNativeVisibilityPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotWindowsBrowserPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

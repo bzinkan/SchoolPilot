@@ -92,7 +92,7 @@ export function materializeV1Students(
       excludedIntervals: exclusions,
       heartbeats: input.heartbeats
         .filter((heartbeat) => heartbeat.studentId === rosterStudent.studentId)
-        .map((heartbeat) => ({ timestamp: heartbeat.timestamp, url: heartbeat.activeTabUrl })),
+        .map((heartbeat) => ({ timestamp: heartbeat.timestamp, url: heartbeat.activeTabUrl, usageEndsAt: heartbeat.usageEndsAt })),
     });
     const eventCounts: Record<string, number> = {};
     for (const event of input.monitoringEvents) {
@@ -193,6 +193,7 @@ export function materializeV2Students(
           const decision = decisionByHeartbeatId.get(heartbeat.id);
           return {
             timestamp: heartbeat.timestamp,
+            usageEndsAt: heartbeat.usageEndsAt,
             url: heartbeat.activeTabUrl,
             category: decision?.category || heartbeat.aiCategory,
             contentCategory: heartbeat.contentCategory ?? null,
@@ -218,7 +219,8 @@ export function materializeV2Students(
         const category = decision?.safetyAlert || heartbeat.safetyAlert;
         if (!category) return [];
         const exactSession = sessions.find((session) =>
-          session.startedAt <= heartbeat.timestamp
+          (heartbeat.observationSource !== "windows_browser" || session.id === heartbeat.authenticatedSessionId)
+          && session.startedAt <= heartbeat.timestamp
           && (session.endedAt || report.windowEnd) > heartbeat.timestamp
         );
         const evidenceAvailable = !!exactSession && (input.evidenceArtifacts || []).some((artifact) =>

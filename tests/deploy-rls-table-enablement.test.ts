@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[]; classpilotUsageRollups: string[]; classpilotUsageRollupDays: string[]; passpilotAppointments: string[]; classpilotPrivateChatLifecycle:string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[]; classpilotUsageRollups: string[]; classpilotUsageRollupDays: string[]; passpilotAppointments: string[]; classpilotPrivateChatLifecycle:string[]; classpilotWindowsBrowser:string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -39,6 +39,7 @@ const rlsRegistry = JSON.parse(
     passpilotAppointmentsPostExpand: { count: number; tables: string[] };
     classpilotPrivateChatLifecyclePostExpand: { count: number; tables: string[] };
     classpilotNativeVisibilityPostExpand: { count: number; tables: string[] };
+    classpilotWindowsBrowserPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -70,6 +71,18 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits Windows browser tables only after native identity and as one ordered bundle",()=>{
+    const previous=rlsRegistry.inventories.classpilotNativeVisibilityPostExpand.tables;
+    const tables=rlsRegistry.inventories.classpilotWindowsBrowserPostExpand.tables.slice(previous.length),table=tables.join(",");
+    const api=taskDefinition("api",previous),worker=taskDefinition("scheduler-worker",previous);
+    verifyLiveRlsEnablementSources({apiTaskDefinition:api,workerTaskDefinition:worker,table});
+    const candidates=[{taskDefinition:api,containerName:"api"},{taskDefinition:worker,containerName:"scheduler-worker"}];
+    for(const candidate of candidates)addReviewedRlsTable(candidate.taskDefinition,{containerName:candidate.containerName,table});
+    verifyEnabledRlsCandidates({taskDefinitions:candidates,table,expectedPreviousTables:previous});
+    assert.deepEqual(environmentValue(api,"RLS_ENABLED_TABLES")?.split(","),rlsRegistry.inventories.classpilotWindowsBrowserPostExpand.tables);
+    assert.throws(()=>addReviewedRlsTable(taskDefinition("api",previous),{containerName:"api",table:tables.slice(0,5).join(",")}),/reviewed/);
+  });
+
   it("admits native identities only as the complete ordered three-table bundle", () => {
     const previous = rlsRegistry.inventories.classpilotPrivateChatLifecyclePostExpand.tables;
     const tables = ["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"];
@@ -335,6 +348,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.reviewedEnablementRequests.passpilotAppointments,
       ...rlsRegistry.reviewedEnablementRequests.classpilotPrivateChatLifecycle,
       ...["classpilot_native_enrollment_tokens", "classpilot_native_installations", "classpilot_native_sessions"],
+      ...rlsRegistry.reviewedEnablementRequests.classpilotWindowsBrowser,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

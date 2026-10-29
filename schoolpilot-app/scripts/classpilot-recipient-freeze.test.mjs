@@ -201,6 +201,9 @@ async function classPage(studentIds, { signedOut = [], lateSignIn = false, claim
       case '/api/auth/csrf': return json({ csrfToken: 'recipient-freeze-csrf' });
       case '/api/settings': return json({ settings: { activeSessionId: state.classSession?.id ?? null, handRaisingEnabled: true, studentMessagingEnabled: true, sessionFabRevision: 1, blockedDomains: [] } });
       case '/api/classpilot/dashboard-activity': return json(scheduled ? scheduledActivity(scheduled) : { enabled: false, schoolId: SCHOOL_ID, viewerId: TEACHER_ID });
+      // This fixture models legacy Chromebook ownership. Unknown discovery
+      // responses correctly fail closed; explicitly model the default-off API.
+      case '/api/classpilot/windows/tiles': return json({ enabled: false, tiles: [], serverTime: new Date().toISOString() });
       case '/api/flight-paths': return json({ flightPaths: [{ id: FLIGHT_PATH_ID, flightPathName: 'Reading sites', description: '', allowedDomains: ['reading.example.edu'] }] });
       case '/api/block-lists': return json({ blockLists: [{ id: BLOCK_LIST_ID, name: 'Games', description: '', blockedDomains: ['games.example.com'] }] });
       case '/api/sessions/active':

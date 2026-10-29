@@ -14,9 +14,10 @@ const source = readFileSync(new URL("../src/services/storage.ts", import.meta.ur
 const body = source.slice(source.indexOf("async function hasExactClasspilotTelemetryBinding("),
   source.indexOf("export type ClasspilotScreenshotAuthorityClaim"));
 const javascript = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const checkBinding = new Function("sql", "and", "eq", "studentSessions", "students", "devices",
-  "currentStudentSessionAuthorityPredicate", `${javascript}; return hasExactClasspilotTelemetryBinding;`)(
-  sql, and, eq, studentSessions, students, devices, currentStudentSessionAuthorityPredicate);
+const buildCheck = windowsBinding => new Function("sql", "and", "eq", "studentSessions", "students", "devices",
+  "currentStudentSessionAuthorityPredicate", "readClasspilotWindowsExactBinding", `${javascript}; return hasExactClasspilotTelemetryBinding;`)(
+  sql, and, eq, studentSessions, students, devices, currentStudentSessionAuthorityPredicate, windowsBinding);
+const checkBinding = buildCheck(async () => null);
 const dialect = new PgDialect();
 const database = drizzle.mock();
 const binding = { schoolId: "synthetic-school", studentId: "synthetic-student",
@@ -50,4 +51,11 @@ test("live-binding raw result still rejects a missing exact binding", async () =
   let queries = 0;
   assert.equal(await checkBinding(binding, { execute: async () => { queries++; return { rows: [] }; } }), false);
   assert.equal(queries, 1);
+});
+
+test("verified Windows tuple needs no legacy session lookup and does not authorize ended bindings", async () => {
+  let lookups = 0;
+  const check = buildCheck(async identity => { lookups++; assert.deepEqual(identity, binding); return { browser: {} }; });
+  assert.equal(await check(binding, { execute: async () => { throw new Error("legacy query unexpected"); } }), true);
+  assert.equal(lookups, 1);
 });
