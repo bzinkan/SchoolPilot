@@ -7227,7 +7227,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               )}
             </div>
             {/* Right: Actions */}
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+            <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
               <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
               <ThemeToggle />
               {(isTeacher || isAdmin) && !scheduledSupervisionId && (
