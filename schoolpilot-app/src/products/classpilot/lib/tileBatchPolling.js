@@ -66,8 +66,9 @@ export function buildTileStudentIds(students) {
 }
 
 export function normalizedTileControlRevision(student) {
+  const identity = student?.windowsDiscoveryPending && student.windowsDiscoveryReadIdentity || student;
   const revision = Number(
-    student?.classroomState?.revision ?? student?.classroomStateRevision,
+    identity?.classroomState?.revision ?? identity?.classroomStateRevision,
   );
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : 'unknown';
 }

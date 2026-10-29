@@ -96,6 +96,12 @@ export function projectWindowsBrowserStudent(student, entry, selection) {
     const pending = { ...student };
     for (const field of WINDOWS_BROWSER_FIELDS) delete pending[field];
     return { ...pending, windowsDiscoveryPending: true, windowsDiscoveryUnavailable: entry.unavailable === true,
+      // Discovery withholds content; it does not change the aggregate's read
+      // authority. Keep only identity so a refresh cannot erase a denial or
+      // scrub an otherwise identical exact-bound cache generation.
+      windowsDiscoveryReadIdentity: { realtimeBinding: student.realtimeBinding,
+        classroomStateRevision: student.classroomState?.revision ?? student.classroomStateRevision,
+        isLoggedIn: student.isLoggedIn, loginState: student.loginState, activityState: student.activityState },
       isLoggedIn: false, loginState: 'unknown', status: 'offline', activityFresh: false, allOpenTabs: [], acceptedCapabilities: {} };
   }
   const scopeKey = entry ? windowsBrowserScopeKey(entry.contextKey, student.studentId) : '';

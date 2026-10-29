@@ -6,6 +6,8 @@ import { createWindowsBrowserRequests, partitionWindowsBrowserCommand, projectWi
 import { classroomStudentTarget, waitForClassroomTargets } from '../src/products/classpilot/lib/classroomActions.js';
 import { combineCommandSettlements, mergeCommandUpdateIntoBatches } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { completedStudentIdsFromCommand, trackTransientCommandResponse } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
+import { tileStudentReadAuthorityKey, isStudentScreenshotReadEligible, isStudentTilePrivacyRevoked } from '../src/products/classpilot/lib/classpilotReadRecovery.js';
+import { buildTileStudentBindings, changedTileBindingStudentIds } from '../src/products/classpilot/lib/tileBatchPolling.js';
 
 const chrome = { browserFamily: 'chrome', sourceRef: 'opaque-chrome', bindingRevision: 1, isLoggedIn: true,
   acceptedCapabilities: { exactTabTargetV1: true }, activeTabTitle: 'Chrome title', activeTabUrl: 'https://chrome.example/',
@@ -84,6 +86,34 @@ test('failed first discovery cannot revive legacy content or capabilities', () =
   assert.equal(result.activeTabTitle, undefined);
   assert.equal(result.isLoggedIn, false);
   assert.deepEqual(result.acceptedCapabilities, {});
+});
+
+test('pending discovery preserves only read identity without changing denial or pixel binding keys', () => {
+  const legacy = { ...student, realtimeBinding: 'legacy-binding', classroomState: { revision: 8 }, isLoggedIn: true, loginState: 'logged_in' };
+  for (const unavailable of [false, true]) {
+    const pending = projectWindowsBrowserStudent(legacy, { ...entry, pending: true, unavailable });
+    assert.equal(tileStudentReadAuthorityKey('scope', pending), tileStudentReadAuthorityKey('scope', legacy));
+    assert.deepEqual(buildTileStudentBindings([pending]), buildTileStudentBindings([legacy]));
+    assert.deepEqual(changedTileBindingStudentIds([legacy], [pending]), []);
+    assert.equal(isStudentScreenshotReadEligible(pending), false);
+    assert.equal(isStudentTilePrivacyRevoked(pending), false, 'discovery cannot manufacture a sign-out purge');
+    assert.equal(pending.isLoggedIn, false);
+    assert.equal(pending.loginState, 'unknown');
+    assert.equal(pending.activeTabTitle, undefined);
+    assert.equal(pending.classroomState, undefined);
+    assert.deepEqual(pending.acceptedCapabilities, {});
+    assert.deepEqual(pending.allOpenTabs, []);
+  }
+  const changed = projectWindowsBrowserStudent({ ...legacy, classroomState: { revision: 9 } }, { ...entry, pending: true });
+  assert.notEqual(tileStudentReadAuthorityKey('scope', changed), tileStudentReadAuthorityKey('scope', legacy));
+  const signedOut = projectWindowsBrowserStudent({ ...legacy, isLoggedIn: false, loginState: 'not_logged_in' }, { ...entry, pending: true });
+  assert.equal(isStudentTilePrivacyRevoked(signedOut), true, 'actual sign-out still purges during discovery');
+  for (const privacyState of [{ _realtimeSignedOut: true }, { activityState: 'delegated' }, { _realtimeSuppressed: true }]) {
+    const revoked = projectWindowsBrowserStudent({ ...legacy, ...privacyState }, { ...entry, pending: true });
+    assert.equal(isStudentTilePrivacyRevoked(revoked), true);
+    assert.equal(isStudentScreenshotReadEligible(revoked), false);
+  }
+  assert.notEqual(tileStudentReadAuthorityKey('scope', signedOut), tileStudentReadAuthorityKey('scope', legacy));
 });
 test('an authoritative Chromebook owner requires exact binding and explicit handoff from a selected Windows source', () => {
   const legacy = { ...student, realtimeBinding: 'legacy-current', isLoggedIn: true };

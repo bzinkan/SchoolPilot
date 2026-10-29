@@ -205,6 +205,7 @@ import {
   isClasspilotSessionUnavailable,
   isCurrentScreenshotRead,
   isStudentScreenshotReadEligible,
+  isStudentTilePrivacyRevoked,
   recordTileReadDenial,
   retireChangedTileReadDenials,
   tileReadAuthorityMap,
@@ -3847,7 +3848,7 @@ export default function Dashboard() {
     JSON.parse(eligibleScreenshotStudentBindingsKey).map((student) => student.studentId),
   ), [eligibleScreenshotStudentBindingsKey]);
   const historyTileStudentBindingsKey = JSON.stringify(
-    historyTileQueryStudents.filter(student => !student.windowsBrowserMode && !student.windowsDiscoveryPending)
+    historyTileQueryStudents.filter(student => !student.windowsBrowserMode)
       .map((student) => ({
         studentId: student.studentId,
         realtimeBinding: student.realtimeBinding || '',
@@ -3855,12 +3856,17 @@ export default function Dashboard() {
       }))
       .sort((left, right) => left.studentId.localeCompare(right.studentId)),
   );
+  // Discovery is a temporary read gate, not removal from historical authority.
+  // Keep its identity above so history reconciliation cannot scrub pixel caches.
+  const pendingHistoryStudentIds = new Set(historyTileQueryStudents
+    .filter(student => student.windowsDiscoveryPending).map(student => student.studentId));
+  const eligibleHistoryStudentBindingsKey = JSON.stringify(
+    JSON.parse(historyTileStudentBindingsKey).filter(binding => !pendingHistoryStudentIds.has(binding.studentId)),
+  );
   const locallyRevokedTileStudentIdsKey = JSON.stringify([...new Set([
     ...JSON.parse(monitoringSuppressedStudentIdsKey),
     ...[...screenshotTileQueryStudents, ...historyTileQueryStudents]
-      .filter((student) => ['signed_out', 'delegated'].includes(
-        monitoringDisplayFor(student).kind,
-      ))
+      .filter((student) => isStudentTilePrivacyRevoked(student))
       .map((student) => student.studentId),
   ])].sort());
   const locallyRevokedTileStudentIds = useMemo(
@@ -4096,10 +4102,10 @@ export default function Dashboard() {
   useLayoutEffect(() => { fastScreenshotStudentIdsRef.current = new Set(fastScreenshotStudents.map(student => student.studentId)); }, [fastScreenshotStudents]);
   const historyTileRequests = useMemo(
     () => createTileBatchRequests(
-      JSON.parse(historyTileStudentBindingsKey),
+      JSON.parse(eligibleHistoryStudentBindingsKey),
       historyTileBatchContext,
     ).filter((request) => request.kind === 'history'),
-    [historyTileBatchContext, historyTileStudentBindingsKey],
+    [historyTileBatchContext, eligibleHistoryStudentBindingsKey],
   );
   const observationReadsAllowed = observationLeaseStatus === 'observed'
     || observationLeaseStatus === 'legacy'
@@ -4493,9 +4499,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     ? monitoringDisplayFor(selectedStudentRow)
     : null;
   const selectedStudentHardPrivacyRevoked = Boolean(
-    selectedStudentMonitoringSuppressed
-    || tileGlobalAuthorizationDenied
-    || ['signed_out', 'delegated'].includes(selectedStudentDisplay?.kind),
+    isStudentTilePrivacyRevoked(selectedStudentRow, selectedStudentMonitoringSuppressed)
+    || tileGlobalAuthorizationDenied,
   );
   const selectedStudentHistoryRevoked = Boolean(
     selectedStudentHardPrivacyRevoked
@@ -4535,6 +4540,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     enabled: Boolean(
       selectedStudentRow?.studentId
       && !selectedStudentRow.windowsBrowserMode
+      && !selectedStudentRow.windowsDiscoveryPending
       && !selectedStudentHistoryRevoked
       && studentView !== 'available'
       && (studentView !== 'class' || detailHistoryTeachingSessionId || adminSchoolMode)
@@ -4550,13 +4556,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const detailHistoryHardDenied = detailHistoryFailureScope !== 'transient';
   const selectedStudentDetailsRevoked = Boolean(
     selectedStudentMonitoringSuppressed
+    || selectedStudentRow?.windowsDiscoveryPending
     || tileGlobalAuthorizationDenied
     || tileGlobalAuthorizationFailure
     || hardDeniedHistoryStudentIds.has(selectedStudentRow?.studentId)
     || detailHistoryHardDenied
     || selectedStudentDisplay?.kind === 'delegated'
   );
-  const urlHistory = selectedStudentHistoryRevoked || detailHistoryHardDenied
+  const urlHistory = selectedStudentRow?.windowsDiscoveryPending || selectedStudentHistoryRevoked || detailHistoryHardDenied
     ? EMPTY_LIST
     : urlHistorySnapshot;
   useLayoutEffect(() => {
@@ -4603,6 +4610,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     : null;
   const expandedScreenshotHardRevoked = Boolean(
     !expandedScreenshotStudent
+    || expandedScreenshotStudent.windowsDiscoveryPending
     || expandedScreenshot?.contextKey !== expandedScreenshotContextKey
     || !['class', 'claimed'].includes(studentView)
     || tileGlobalAuthorizationDenied
@@ -4666,10 +4674,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       ? tilePrivacyStudents.map((student) => student.studentId)
       : EMPTY_LIST),
     ...tilePrivacyStudents
-      .filter((student) => (
-        isStudentMonitoringSuppressed(student)
-        || ['signed_out', 'delegated'].includes(monitoringDisplayFor(student).kind)
-      ))
+      .filter((student) => isStudentTilePrivacyRevoked(student, isStudentMonitoringSuppressed(student)))
       .map((student) => student.studentId),
   ])].sort());
   useEffect(() => {

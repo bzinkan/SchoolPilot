@@ -154,6 +154,9 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
     const request = route.request();
     const { pathname } = new URL(request.url());
     const json = (body, status = 200) => route.fulfill({ status, json: body });
+    // This legacy-browser fixture models the server's explicit default-off
+    // discovery response, rather than an unknown transport from a generic {}.
+    if (pathname === '/api/classpilot/windows/tiles') return json({ enabled: false, tiles: [], serverTime: new Date().toISOString() });
     if (request.method() === 'POST' && ['/api/teacher/reply', '/api/teacher/close-chat', '/api/teacher/messages/read'].includes(pathname)) {
       const body = request.postDataJSON();
       mutations.push({ pathname, body });

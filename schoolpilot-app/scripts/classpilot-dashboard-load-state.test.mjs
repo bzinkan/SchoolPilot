@@ -2774,7 +2774,9 @@ test('live preview eligibility follows sign-in without replaying denied or super
     assert.equal(screenshots(signInHarness).length, 0, 'an all-signed-out roster must never send an empty-access live screenshot request');
     assert.deepEqual([...histories(signInHarness)[0].body.studentIds].sort(), roster.map(({ studentId }) => studentId).sort());
     assert.match(await signInPage.getByTestId('badge-selection-count').innerText(), /All 23 students/);
-    assert.equal(await signInPage.getByTestId(`card-student-${roster[0].studentId}`).getByText('Waiting for ClassPilot sign-in', { exact: true }).count(), 1);
+    const firstSignedOutCard = signInPage.getByTestId(`card-student-${roster[0].studentId}`);
+    assert.equal(await firstSignedOutCard.getByText('Waiting for ClassPilot sign-in', { exact: true }).count(), 1,
+      JSON.stringify({ preview: await firstSignedOutCard.innerText(), pageErrors: signInHarness.pageErrors }));
     await assertNoWarning(signInPage);
     await signInHarness.authenticateWebSocket();
     for (const [index, binding] of [[0, 'fresh-signin-binding'], [1, 'retained-signin-binding']]) {
@@ -2824,8 +2826,13 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await uncertainPage.goto(`${baseURL}/classpilot`);
     await waitUntil(() => screenshots(uncertainHarness).length > 0, 'unknown and stale monitoring must still request authorized previews');
     assert.deepEqual([...screenshots(uncertainHarness)[0].body.studentIds].sort(), [STUDENT_ID, SIGNAL_LOST_STUDENT_ID].sort());
-    await waitUntil(() => histories(uncertainHarness).length > 0, 'screenshot eligibility must not remove history targets');
-    assert.deepEqual([...histories(uncertainHarness)[0].body.studentIds].sort(), uncertainRows.map(({ studentId }) => studentId).sort());
+    // Source discovery may initially authorize only the delegated row. Once
+    // the feature-off response restores legacy sources, the entire historical
+    // roster must still be requested, including explicitly signed-out rows.
+    await waitUntil(() => histories(uncertainHarness).some(request => request.body.studentIds.length === uncertainRows.length),
+      'screenshot eligibility must not remove history targets after source discovery');
+    const completeHistory = histories(uncertainHarness).find(request => request.body.studentIds.length === uncertainRows.length);
+    assert.deepEqual([...completeHistory.body.studentIds].sort(), uncertainRows.map(({ studentId }) => studentId).sort());
     assert.deepEqual(uncertainHarness.pageErrors, []);
     await uncertainPage.close();
 
@@ -2955,6 +2962,11 @@ test('live preview eligibility follows sign-in without replaying denied or super
         const joined = body.studentIds.includes(SIGNED_OUT_STUDENT_ID);
         const reply = { phase: cohortPhase, targets: body.studentIds.length, joined, result: 'pending' };
         joinedResponsePhases.push(reply);
+        if (cohortPhase === 'retain-only') {
+          reply.result = '200:null';
+          return { tiles: body.studentIds.map(studentId => ({ studentId,
+            bindingVersion: 'v2:unchanged-classmate', screenshot: null })) };
+        }
         if (joined) await joinedCohortGate;
         else if (cohortPhase === 'hold-prior') {
           heldPriorCohortRequests += 1;
@@ -3010,6 +3022,61 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await assertNoWarning(joinedPage);
     assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).getAttribute('src'), UPDATED_SCREENSHOT_DATA_URL);
     assert.deepEqual(joinedHarness.pageErrors, []);
+    // An open Details drawer must also hide during discovery without treating
+    // that temporary gate as a real sign-out and destroying retained pixels.
+    await joinedPage.getByTestId(`button-student-details-${STUDENT_ID}`).click();
+    await joinedPage.getByTestId('student-tabs').waitFor();
+    await joinedPage.waitForLoadState('networkidle');
+    cohortPhase = 'retain-only';
+    let releaseDetailsDiscovery;
+    let detailsDiscoveryStarted = false;
+    const detailsDiscoveryGate = new Promise(resolve => { releaseDetailsDiscovery = resolve; });
+    pendingReleases.push(releaseDetailsDiscovery);
+    const detailsDiscoveryRoute = async route => {
+      detailsDiscoveryStarted = true;
+      await detailsDiscoveryGate;
+      await route.fulfill({ json: { enabled: false, serverTime: new Date().toISOString(), tiles: [] } });
+    };
+    await joinedPage.route('**/api/classpilot/windows/tiles', detailsDiscoveryRoute);
+    for (const visibility of ['hidden', 'visible']) await joinedPage.evaluate(value => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, visibility);
+    await waitUntil(() => detailsDiscoveryStarted, 'Details must encounter a held source-discovery response');
+    await joinedPage.getByTestId('student-tabs').waitFor({ state: 'hidden' });
+    assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0);
+    releaseDetailsDiscovery();
+    await joinedPage.waitForFunction(({ id, source }) => document.querySelector(`[data-testid="screenshot-${id}"]`)?.getAttribute('src') === source,
+      { id: STUDENT_ID, source: UPDATED_SCREENSHOT_DATA_URL });
+    await joinedPage.unroute('**/api/classpilot/windows/tiles', detailsDiscoveryRoute);
+    // Retaining exact-bound cache identity must never retain visible pixels
+    // while browser-source discovery is pending or has failed.
+    await joinedPage.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+    await joinedPage.getByTestId('expanded-screenshot-image').waitFor();
+    let releaseDiscovery;
+    let discoveryStarted = false;
+    const discoveryGate = new Promise(resolve => { releaseDiscovery = resolve; });
+    pendingReleases.push(releaseDiscovery);
+    await joinedPage.route('**/api/classpilot/windows/tiles', async route => {
+      discoveryStarted = true;
+      await discoveryGate;
+      await route.fulfill({ status: 503, json: { code: 'WINDOWS_UNAVAILABLE' } });
+    });
+    for (const visibility of ['hidden', 'visible']) await joinedPage.evaluate(value => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, visibility);
+    await waitUntil(() => discoveryStarted, 'the visible view must await a fresh source-discovery response');
+    await joinedPage.getByTestId('expanded-screenshot-image').waitFor({ state: 'detached' });
+    assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0,
+      'pending discovery hides retained tile pixels as well as the enlarged image');
+    const readsWhilePending = screenshots(joinedHarness).length;
+    releaseDiscovery();
+    await joinedPage.getByTestId(`card-student-${STUDENT_ID}`).getByText('Browser sources unavailable', { exact: true }).waitFor();
+    assert.equal(await joinedPage.getByTestId('expanded-screenshot-image').count(), 0);
+    assert.equal(await joinedPage.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0);
+    assert.equal(screenshots(joinedHarness).length, readsWhilePending,
+      'failed source discovery cannot request legacy screenshots');
     await joinedPage.close();
     trace('classmate placeholder case complete');
 
@@ -3121,6 +3188,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
     await waitUntil(() => screenshots(navigationHarness).some((request) => request.body.teachingSessionId === OWN_SESSION_ID), 'A screenshot must be pending before the class switch');
     await navigationPage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
     await waitUntil(() => screenshots(navigationHarness).some((request) => request.body.teachingSessionId === OBSERVED_SESSION_ID), 'B must obtain its own scoped preview read');
+    await navigationPage.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
     await settle();
     const requestsBeforeOldCompletion = navigationAggregate.requests.length;
     releaseOldScreenshot();

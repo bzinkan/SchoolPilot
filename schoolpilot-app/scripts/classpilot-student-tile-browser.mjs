@@ -154,6 +154,17 @@ try {
   await page.getByTestId('toggle-tiles').click();
 
   const signedOutTile = page.getByTestId('card-student-signed-out-student');
+  assert.equal(await signedOutTile.getByText('Waiting for ClassPilot sign-in', { exact: true }).count(), 1,
+    'a pending preview transition must not hide explicit sign-out truth');
+  assert.equal(await signedOutTile.getByText('Updating preview', { exact: true }).count(), 0);
+  const pendingDiscoveryTile = page.getByTestId('card-student-discovery-pending-student');
+  assert.equal(await pendingDiscoveryTile.getByText('Updating preview', { exact: true }).count(), 0,
+    'browser discovery cannot claim that a student remains connected');
+  assert.equal(await pendingDiscoveryTile.getByText('Checking browser sources', { exact: true }).count(), 1);
+  const unknownTile = page.getByTestId('card-student-unknown-transition-student');
+  assert.equal(await unknownTile.getByText('Updating preview', { exact: true }).count(), 0);
+  assert.equal(await unknownTile.getByText('Monitoring updates unavailable', { exact: true }).count(), 1,
+    'a transition marker cannot turn unknown monitoring into a connected state');
   assert.equal(
     await signedOutTile.getByText('Not logged in', { exact: true }).count(),
     1,
@@ -306,6 +317,8 @@ try {
   );
 
   const onlineTile = page.getByTestId('card-student-online-student');
+  assert.equal(await onlineTile.getByText('Updating preview', { exact: true }).count(), 1,
+    'a connected student retains the preview transition reassurance');
   assert.equal(
     await onlineTile.getByText('Online', { exact: true }).count(),
     1,
@@ -475,6 +488,8 @@ try {
   );
 
   const supervisedTile = page.getByTestId('card-student-supervised-student');
+  assert.equal(await supervisedTile.getByText('Updating preview', { exact: true }).count(), 0,
+    'a preview transition cannot override delegated monitoring');
   await supervisedTile.getByText('In supervision: Ms. Rivera', { exact: true }).waitFor();
   await supervisedTile.getByText('Ms. Rivera is temporarily supervising this student.', { exact: true }).waitFor();
   await supervisedTile.getByText('Controls locked', { exact: true }).waitFor();

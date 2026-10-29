@@ -53,10 +53,11 @@ export function isClasspilotSessionUnavailable(error, sessionId) {
 
 export function tileStudentReadAuthorityKey(contextKey, student) {
   const supervision = student?.supervisionContext;
+  const identity = student?.windowsDiscoveryPending && student.windowsDiscoveryReadIdentity || student;
   return JSON.stringify([
-    contextKey, student?.studentId || '', student?.realtimeBinding || '',
-    student?.classroomState?.revision ?? student?.classroomStateRevision ?? null,
-    student?.isLoggedIn ?? null, student?.loginState || '',
+    contextKey, student?.studentId || '', identity?.realtimeBinding || '',
+    identity?.classroomState?.revision ?? identity?.classroomStateRevision ?? null,
+    identity?.isLoggedIn ?? null, identity?.loginState || '',
     student?.contextId || '', student?.supervisionState || '',
     supervision?.type || supervision?.kind || '', supervision?.id || '',
     supervision?.assignedStaffId || '', student?.contextAuthorityRevision ?? null,
@@ -71,6 +72,16 @@ export function tileReadAuthorityMap(contextKey, students) {
 
 // Absence of telemetry is not absence of authentication. Keep unknown and
 // reconnecting rows eligible; only explicit current privacy state excludes them.
+export function isStudentTilePrivacyRevoked(student, monitoringSuppressed = false) {
+  const identity = student?.windowsDiscoveryPending && student.windowsDiscoveryReadIdentity || student;
+  return monitoringSuppressed
+    || identity?.loginState === 'not_logged_in'
+    || identity?.isLoggedIn === false
+    || student?._realtimeSignedOut === true
+    || identity?.activityState === 'delegated'
+    || student?._realtimeSuppressed === true;
+}
+
 export function isStudentScreenshotReadEligible(student, monitoringSuppressed = false) {
   return !monitoringSuppressed
     && student?.loginState !== 'not_logged_in'

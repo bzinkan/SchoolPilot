@@ -1009,7 +1009,7 @@ function StudentTile({
               </div>
             ) : null}
           </button>
-        ) : screenshotUpdating ? (
+        ) : screenshotUpdating && currentTelemetry ? (
           <div className="flex aspect-video items-center justify-center rounded-lg border border-sky-200 bg-sky-50/70 text-center dark:border-sky-900 dark:bg-sky-950/20" data-testid={`screenshot-updating-authority-${student.studentId}`}>
             <div className="px-4">
               <Monitor className="mx-auto mb-2 h-6 w-6 text-sky-600 dark:text-sky-400" />
