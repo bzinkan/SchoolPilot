@@ -1481,4 +1481,6 @@ test('dashboard header actions stay right-aligned when the header wraps', async 
 
   assert.match(dashboard, /<header data-class-tools-navigation[\s\S]{0,400}<div className="flex flex-wrap items-center justify-between gap-4">/);
   assert.match(dashboard, /<div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">[\s\S]{0,1600}data-testid="button-my-settings"/);
+  assert.match(dashboard, /Center: Status badges \*\/[\s\S]{0,100}<div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">/);
+  assert.match(dashboard, /data-testid="select-admin-observe"\s+className="h-7 w-\[150px\] max-w-\[150px\]/);
 });

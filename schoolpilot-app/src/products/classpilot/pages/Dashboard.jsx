@@ -7016,7 +7016,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <HeaderOrnament />
             </div>
             {/* Center: Status badges */}
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
               <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
@@ -7207,7 +7207,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       disabled={observableActivities.length === 0 && !adminObservedSessionId}
                       aria-label="Observe active ClassPilot activity"
                       data-testid="select-admin-observe"
-                      className="h-7 max-w-[220px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                      className="h-7 w-[150px] max-w-[150px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <option value="">{adminObservedSessionId ? "Stop observing" : observableActivities.length === 0 ? "No active activities" : "Observe activity"}</option>
                       {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Activity unavailable</option> : null}
