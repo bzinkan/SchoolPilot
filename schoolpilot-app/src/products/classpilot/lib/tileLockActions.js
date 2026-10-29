@@ -54,7 +54,7 @@ export async function runTileLockAction({ action, studentId, postCommand, readCo
     const commands = classroomCommands(data);
     const command = commands.length === 1 ? commands[0] : null;
     if (!command || command.commandType !== commandType
-      || command.targets.length !== 1 || command.targets[0].studentId !== studentId) {
+      || command.targets.length === 0 || command.targets.some(target => target.studentId !== studentId)) {
       update(field, { status: 'pending', commandType, error: 'The command response could not be confirmed.' }, `${label}: awaiting confirmation`);
       return outcomes[field];
     }

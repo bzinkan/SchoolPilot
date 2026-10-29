@@ -42,7 +42,8 @@ const usageRollupsInventory: RlsRegistryInventory = rlsRegistry.inventories.clas
 const usageDaysInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotUsageRollupDaysPostExpand;
 const appointmentsInventory: RlsRegistryInventory = rlsRegistry.inventories.passpilotAppointmentsPostExpand;
 const privateChatInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotPrivateChatLifecyclePostExpand;
-const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotNativeVisibilityPostExpand;
+const nativeInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotNativeVisibilityPostExpand;
+const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotWindowsBrowserPostExpand;
 
 /** Exact audit snapshot; never rewrite this list to describe a future rollout. */
 export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
@@ -92,7 +93,7 @@ export function isReviewedRlsEnforcementRequest(tables: readonly string[]): bool
 
 /** Fail fast if the machine-readable registry loses its semantic invariants. */
 export function assertRlsRegistryIntegrity(): void {
-  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, usageRollupsInventory, usageDaysInventory, appointmentsInventory, privateChatInventory, currentInventory];
+  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, usageRollupsInventory, usageDaysInventory, appointmentsInventory, privateChatInventory, nativeInventory, currentInventory];
   for (const inventory of inventories) {
     if (inventory.count !== inventory.tables.length) {
       throw new Error(

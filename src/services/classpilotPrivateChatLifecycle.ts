@@ -138,6 +138,12 @@ export async function lockPrivateChatLifecycle(scope: PrivateChatScope, database
 }
 
 export async function privateChatBindingSupported(scope: Pick<PrivateChatScope,"schoolId"|"studentId">, database: typeof db = db): Promise<boolean> {
+  const { windowsBrowserEnabled } = await import("./classpilotWindowsProtocol.js");
+  if (windowsBrowserEnabled(scope.schoolId)) {
+    const { listClasspilotWindowsBrowsers } = await import("./storage.js");
+    const windows = await listClasspilotWindowsBrowsers(scope.schoolId, [scope.studentId], database);
+    if (windows.length) return windows.every(row => row.browser.acceptedCapabilities.includes("privateChatLifecycleV1"));
+  }
   const [binding] = await database.select({id:studentSessions.id,deviceId:studentSessions.deviceId}).from(studentSessions)
     .innerJoin(devices,and(eq(devices.deviceId,studentSessions.deviceId),eq(devices.schoolId,scope.schoolId)))
     .where(and(eq(studentSessions.studentId,scope.studentId),eq(studentSessions.isActive,true),isNull(studentSessions.endedAt),

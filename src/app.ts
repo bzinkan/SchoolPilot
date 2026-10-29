@@ -26,6 +26,8 @@ import {
 } from "./config/sessionCookie.js";
 import { isSensitiveNoStorePath } from "./util/noStorePath.js";
 import { beginClasspilotUsageIngress, guardClasspilotUsageIngressMiddleware } from "./services/classpilotUsageRequest.js";
+import { createWindowsScreenshotAdmission } from "./services/classpilotWindowsScreenshotAdmission.js";
+import { withWindowsBrowser } from "./services/classpilotWindows.js";
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
@@ -49,6 +51,9 @@ export function skipsWebSession(
     (method === "POST" && ["/native/enroll", "/native/sessions", "/native/session/renew", "/native/observations"].includes(path.replace(/\/$/, "")))
     || (method === "GET" && path.replace(/\/$/, "") === "/native/policy")
     || (method === "DELETE" && ["/native/session", "/native/observations"].includes(path.replace(/\/$/, "")));
+  const windowsClientRequest =
+    (method === "POST" && ["/windows/enroll", "/windows/guards", "/windows/guards/renew", "/windows/guards/pairing-proofs", "/windows/browser/pair", "/windows/browser/heartbeat", "/windows/browser/screenshot", "/windows/browser/command-acks", "/windows/browser/action"].includes(path.replace(/\/$/, "")))
+    || (method === "DELETE" && path.replace(/\/$/, "") === "/windows/guards");
 
   const devicePath = path.startsWith("/device/");
   const staffScreenshotRead =
@@ -80,6 +85,7 @@ export function skipsWebSession(
 
   return (
     nativeClientRequest ||
+    windowsClientRequest ||
     (devicePath && !staffScreenshotRead) ||
     path.startsWith("/extension/") ||
     path.startsWith("/student/") ||
@@ -268,6 +274,12 @@ export function createApp() {
   // before the general 1mb JSON parser. It may use session cookies for optional
   // correlation, but it never trusts client-provided identity fields.
   app.use("/api/monitoring", monitoringRoutes);
+
+  // Authenticate Windows screenshot headers before any JSON buffering. Its raw
+  // parser marks the body consumed; all other paths retain the Stripe raw body.
+  app.use(createWindowsScreenshotAdmission({authenticate:async token=>{
+    await withWindowsBrowser(token,undefined,async()=>undefined);
+  }}));
 
   // Capture raw body for Stripe webhooks
   app.use(

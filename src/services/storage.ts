@@ -1,3 +1,4 @@
+import { getWindowsReportObservations, getWindowsReportSessions, type WindowsReportContext } from "./classpilotWindowsReporting.js";
 import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, sealHeartbeatPreparedReads,
   assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
 } from "./classpilotHeartbeatPreparedReads.js";
@@ -20,6 +21,9 @@ import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsComma
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt, randomUUID } from "node:crypto";
 import { classpilotNativeEnrollmentTokens, classpilotNativeInstallations, classpilotNativeSessions, type ClasspilotNativeSession } from "../schema/classpilotNative.js";
+import { classpilotWindowsGuards, classpilotWindowsBrowsers, classpilotWindowsPairingProofs, classpilotWindowsCommands, classpilotWindowsCommandTargets, type WindowsGuard, type WindowsBrowser } from "../schema/classpilotWindows.js";
+import { assertWindowsRequestActive } from "./classpilotWindowsDiagnostics.js";
+import { ClasspilotWindowsError, WINDOWS_LIMITS, requireWindowsEnabled, windowsBrowserEnabled, windowsSameContext, type WindowsCredential } from "./classpilotWindowsProtocol.js";
 import { ClasspilotNativeError, NATIVE_LIMITS, nativeHashMatches, nativeSecretHash, requireNativeEnabled, type NativeCredential, type NativeContext } from "./classpilotNativeProtocol.js";
 import { assertNativeRequestActive, nativePhase, nativeResponseEnded } from "./classpilotNativeDiagnostics.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -27,7 +31,7 @@ import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassr
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { isDeepStrictEqual } from "node:util";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
-import db from "../db.js";
+import db, { runWithDatabaseTransaction } from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle, lockPrivateChatChannel, lockPrivateChatAdoption,
@@ -10945,10 +10949,11 @@ export async function getHeartbeatsForStudentsInRange(
   studentIds: string[],
   startTime: Date,
   endTime: Date,
-  dbInstance: typeof db = db
-): Promise<Heartbeat[]> {
+  dbInstance: typeof db = db,
+  windowsContext: WindowsReportContext = {},
+): Promise<ClasspilotSessionReportInput["heartbeats"]> {
   if (studentIds.length === 0) return [];
-  return dbInstance
+  const legacy = await dbInstance
     .select()
     .from(heartbeats)
     .where(
@@ -10967,6 +10972,9 @@ export async function getHeartbeatsForStudentsInRange(
       )
     )
     .orderBy(heartbeats.studentId, heartbeats.timestamp);
+  const windows = await getWindowsReportObservations(dbInstance, schoolId, studentIds, startTime, endTime, windowsContext);
+  return [...legacy, ...windows].sort((a, b) => String(a.studentId).localeCompare(String(b.studentId))
+    || a.timestamp.getTime() - b.timestamp.getTime() || a.id.localeCompare(b.id));
 }
 
 // ============================================================================
@@ -11240,6 +11248,15 @@ export async function startStudentSessionWithReplacements(
       lock: true,
       afterSchoolLockBeforeLicense: () => takePasspilotClassLock(tx, schoolId),
     });
+    // Windows owns one logical student while its short guard is live. Keep the
+    // existing Chromebook uniqueness/transfer rules intact in both directions.
+    if (windowsBrowserEnabled(schoolId)) {
+      const [windowsOwner] = await tx.select({id:classpilotWindowsGuards.id}).from(classpilotWindowsGuards)
+        .where(and(eq(classpilotWindowsGuards.schoolId,schoolId),eq(classpilotWindowsGuards.studentId,studentId),
+          isNull(classpilotWindowsGuards.endedAt),sql`${classpilotWindowsGuards.expiresAt}>clock_timestamp()`,
+          sql`${classpilotWindowsGuards.absoluteExpiresAt}>clock_timestamp()`)).limit(1);
+      if(windowsOwner) throw Object.assign(new Error("Student already has an active Windows browser session"), {status:409,code:"WINDOWS_STUDENT_SESSION_CONFLICT"});
+    }
     // Discover every student whose active session this issuance could retire
     // while the school-wide issuance lock prevents another writer from adding
     // a new conflict. Cross-student recovery must serialize with both the
@@ -14109,6 +14126,9 @@ export type ClasspilotSessionReportInput = {
     id: string;
     studentId: string | null;
     timestamp: Date;
+    usageEndsAt?: Date;
+    observationSource?: "windows_browser";
+    authenticatedSessionId?: string;
     activeTabUrl: string | null;
     aiCategory: string | null;
     contentCategory?: string | null;
@@ -14218,7 +14238,8 @@ export async function getClasspilotSessionReportInput(
       studentIds,
       report.windowStart,
       report.windowEnd,
-      dbInstance
+      dbInstance,
+      { teachingSessionId: report.teachingSessionId },
     ),
     dbInstance
       .select({
@@ -14252,6 +14273,7 @@ export async function getClasspilotSessionReportInput(
         ne(classpilotMonitoringEvents.eventType, "monitoring_gap")
       )),
   ]);
+  const windowsSessions = await getWindowsReportSessions(dbInstance, report.schoolId, studentIds, report.windowStart, report.windowEnd);
   const heartbeatIds = heartbeatRows.map((heartbeat) => heartbeat.id);
   const needsV2Input = report.reportVersion >= 2
     || classpilotSessionReportV2Mode() === "shadow";
@@ -14290,7 +14312,7 @@ export async function getClasspilotSessionReportInput(
           .from(evidenceArtifacts)
           .where(and(
             eq(evidenceArtifacts.schoolId, report.schoolId),
-            eq(evidenceArtifacts.sourceType, "classpilot_screenshot"),
+            inArray(evidenceArtifacts.sourceType, ["classpilot_screenshot", "classpilot_windows_screenshot"]),
             inArray(evidenceArtifacts.sourceId, heartbeatIds)
           )),
         dbInstance
@@ -14325,7 +14347,7 @@ export async function getClasspilotSessionReportInput(
       studentName: row.studentName || "Unknown student",
       capturedAt: row.capturedAt,
     })),
-    authenticatedSessions,
+    authenticatedSessions: [...authenticatedSessions, ...windowsSessions],
     heartbeats: heartbeatRows,
     aiDecisions,
     evidenceArtifacts: [
@@ -25995,6 +26017,7 @@ async function hasExactClasspilotTelemetryBinding(
   options: ClasspilotTelemetryBindingAuthority,
   dbInstance: typeof db
 ): Promise<boolean> {
+  if (!options.allowEndedBinding && await readClasspilotWindowsExactBinding(options, dbInstance)) return true;
   const bindingConditions: SQL[] = [
     eq(studentSessions.id, options.studentSessionId),
     eq(studentSessions.studentId, options.studentId),
@@ -35633,9 +35656,14 @@ export async function revokeClasspilotNativeInstallation(schoolId: string, actor
   if (!installation) throw new ClasspilotNativeError("NATIVE_NOT_AUTHORIZED", 404);
   await database.insert(auditLogs).values({ schoolId, userId: actorId, action: "classpilot.native.installation_revoked",
     entityType: "native_installation", entityId: installationId });
-  return database.update(classpilotNativeSessions).set({ endedAt: new Date(), endReason: "installation_revoked", sourceGeneration: null })
+  const sessions=await database.update(classpilotNativeSessions).set({ endedAt: new Date(), endReason: "installation_revoked", sourceGeneration: null })
     .where(and(eq(classpilotNativeSessions.schoolId, schoolId), eq(classpilotNativeSessions.installationId, installationId),
       isNull(classpilotNativeSessions.endedAt))).returning();
+  if(windowsBrowserEnabled(schoolId)){
+    const guards=await database.select().from(classpilotWindowsGuards).where(and(eq(classpilotWindowsGuards.schoolId,schoolId),eq(classpilotWindowsGuards.installationId,installationId),isNull(classpilotWindowsGuards.endedAt))).for("update");
+    for(const guard of guards)await endClasspilotWindowsGuard(guard,database,"installation_revoked");
+  }
+  return sessions;
 }
 
 export async function readClasspilotNativeSessions(schoolId: string, studentIds: string[], database: NativeStorageDb) {
@@ -35697,4 +35725,246 @@ export async function classpilotNativeCurrentAuthority(schoolId: string, student
       contextAuthorityRevision: String(claim.context.classroomAuthorityRevision) };
   }
   return null;
+}
+
+// Windows browser protocol: all durable access remains in the storage boundary.
+export async function withClasspilotWindowsAuthority<T>(schoolId:string,studentIds:string[],action:(database:NativeStorageDb)=>Promise<T>):Promise<T>{
+  requireWindowsEnabled(schoolId);
+  assertWindowsRequestActive();
+  const afterCommit:Array<()=>Promise<unknown>>=[];
+  const result=await db.transaction(async tx=>{
+    const database=tx as unknown as typeof db;
+    await database.execute(sql`SELECT set_config('lock_timeout','1000ms',true),set_config('statement_timeout','2500ms',true)`);
+    if(!await lockStaffAssignmentLifecycleSchool(tx,schoolId))throw new ClasspilotWindowsError("WINDOWS_NOT_AUTHORIZED");
+    await assertClasspilotEntitled(schoolId,database,{lock:true});
+    await lockClasspilotStudentControlAuthorities(schoolId,studentIds,database);
+    requireWindowsEnabled(schoolId);
+    assertWindowsRequestActive();
+    const result=await runWithDatabaseTransaction(database,()=>action(database),afterCommit);
+    assertWindowsRequestActive();
+    return result;
+  });
+  for(const publish of afterCommit)await publish();
+  return result;
+}
+export async function createClasspilotWindowsGuard(options:{credential:NativeCredential;studentId:string;osSessionNonce:string;id:string;tokenHash:string;studentCredentialFingerprint:string},database:NativeStorageDb){
+  const installation=await readClasspilotNativeInstallation(options.credential,database);
+  const student=await findClasspilotNativeStudent(options.credential.schoolId,options.studentId,database);
+  if(nativeSecretHash(JSON.stringify([student.classpilotPinHash,student.classpilotPinEncrypted]))!==options.studentCredentialFingerprint)throw new ClasspilotWindowsError("WINDOWS_CREDENTIAL_INVALID",401);
+  const now=new Date();
+  await database.update(classpilotWindowsGuards).set({endedAt:now,endReason:"expired"}).where(and(eq(classpilotWindowsGuards.schoolId,installation.schoolId),isNull(classpilotWindowsGuards.endedAt),or(lte(classpilotWindowsGuards.expiresAt,now),lte(classpilotWindowsGuards.absoluteExpiresAt,now))));
+  const [legacy]=await database.select({id:studentSessions.id}).from(studentSessions).where(and(eq(studentSessions.studentId,student.id),currentStudentSessionAuthorityPredicate())).limit(1).for("share");
+  const [other]=await database.select({installationId:classpilotWindowsGuards.installationId}).from(classpilotWindowsGuards).where(and(eq(classpilotWindowsGuards.schoolId,installation.schoolId),eq(classpilotWindowsGuards.studentId,student.id),isNull(classpilotWindowsGuards.endedAt))).limit(1);
+  if(legacy||(other&&other.installationId!==installation.id))throw new ClasspilotWindowsError("WINDOWS_STUDENT_SESSION_CONFLICT",409);
+  await database.update(classpilotWindowsGuards).set({endedAt:now,endReason:"reauthenticated"}).where(and(eq(classpilotWindowsGuards.schoolId,installation.schoolId),eq(classpilotWindowsGuards.installationId,installation.id),isNull(classpilotWindowsGuards.endedAt)));
+  const [guard]=await database.insert(classpilotWindowsGuards).values({id:options.id,schoolId:installation.schoolId,installationId:installation.id,studentId:student.id,credentialHash:options.tokenHash,osSessionNonce:options.osSessionNonce,studentCredentialFingerprint:options.studentCredentialFingerprint,createdAt:now,lastSeenAt:now,expiresAt:new Date(now.getTime()+WINDOWS_LIMITS.guardMs),absoluteExpiresAt:new Date(now.getTime()+WINDOWS_LIMITS.absoluteMs)}).returning();
+  await database.insert(auditLogs).values({schoolId:installation.schoolId,action:"classpilot.windows.guard_started",entityType:"windows_guard",entityId:guard!.id});
+  return {guard:guard!,student};
+}
+export async function readClasspilotWindowsGuard(schoolId:string,id:string,database:NativeStorageDb,tokenHash?:string){
+  const [row]=await database.select({guard:classpilotWindowsGuards,installation:classpilotNativeInstallations,student:students})
+    .from(classpilotWindowsGuards).innerJoin(classpilotNativeInstallations,and(eq(classpilotNativeInstallations.schoolId,classpilotWindowsGuards.schoolId),eq(classpilotNativeInstallations.id,classpilotWindowsGuards.installationId)))
+    .innerJoin(students,and(eq(students.schoolId,classpilotWindowsGuards.schoolId),eq(students.id,classpilotWindowsGuards.studentId)))
+    .where(and(eq(classpilotWindowsGuards.schoolId,schoolId),eq(classpilotWindowsGuards.id,id))).limit(1).for("share");
+  if(!row||row.guard.endedAt||row.guard.expiresAt.getTime()<=Date.now()||row.guard.absoluteExpiresAt.getTime()<=Date.now()||row.installation.revokedAt||row.student.status!=="active"||
+    (tokenHash!==undefined&&!nativeHashMatches(row.guard.credentialHash,tokenHash))||row.guard.studentCredentialFingerprint!==nativeSecretHash(JSON.stringify([row.student.classpilotPinHash,row.student.classpilotPinEncrypted])))throw new ClasspilotWindowsError("WINDOWS_CREDENTIAL_INVALID",401);
+  return row;
+}
+export async function renewClasspilotWindowsGuard(credential:WindowsCredential,nonce:string,database:NativeStorageDb){
+  const {guard}=await readClasspilotWindowsGuard(credential.schoolId,credential.id,database,credential.tokenHash);
+  if(guard.osSessionNonce!==nonce)throw new ClasspilotWindowsError("WINDOWS_CREDENTIAL_INVALID",401);
+  const [updated]=await database.update(classpilotWindowsGuards).set({lastSeenAt:new Date(),expiresAt:new Date(Math.min(Date.now()+WINDOWS_LIMITS.guardMs,guard.absoluteExpiresAt.getTime()))}).where(and(eq(classpilotWindowsGuards.schoolId,guard.schoolId),eq(classpilotWindowsGuards.id,guard.id))).returning();
+  return updated!;
+}
+export async function endClasspilotWindowsGuard(guard:WindowsGuard,database:NativeStorageDb,reason="local_sign_out"){
+  await database.update(classpilotWindowsGuards).set({endedAt:new Date(),endReason:reason}).where(and(eq(classpilotWindowsGuards.schoolId,guard.schoolId),eq(classpilotWindowsGuards.id,guard.id)));
+  await database.update(classpilotWindowsBrowsers).set({endedAt:new Date()}).where(and(eq(classpilotWindowsBrowsers.schoolId,guard.schoolId),eq(classpilotWindowsBrowsers.guardId,guard.id),isNull(classpilotWindowsBrowsers.endedAt)));
+}
+export async function createClasspilotWindowsProof(guard:WindowsGuard,options:{id:string;tokenHash:string;browserFamily:string;profileId:string;challenge:string},database:NativeStorageDb){
+  const now=new Date();
+  // One unconsumed challenge per family bounds proof accumulation and makes a
+  // superseded native-host request unusable without changing the live child.
+  await database.update(classpilotWindowsPairingProofs).set({consumedAt:now}).where(and(eq(classpilotWindowsPairingProofs.schoolId,guard.schoolId),eq(classpilotWindowsPairingProofs.guardId,guard.id),eq(classpilotWindowsPairingProofs.browserFamily,options.browserFamily),isNull(classpilotWindowsPairingProofs.consumedAt)));
+  const [proof]=await database.insert(classpilotWindowsPairingProofs).values({...options,schoolId:guard.schoolId,guardId:guard.id,createdAt:now,expiresAt:new Date(now.getTime()+WINDOWS_LIMITS.proofMs)}).returning();
+  return proof!;
+}
+export async function redeemClasspilotWindowsProof(credential:WindowsCredential,input:{browserFamily:string;profileId:string;challenge:string;clientProtocolVersion:number;extensionVersion:string;acceptedCapabilities:string[];capabilities:string[]},issued:{id:string;tokenHash:string},database:NativeStorageDb){
+  const [proof]=await database.select().from(classpilotWindowsPairingProofs).where(and(eq(classpilotWindowsPairingProofs.schoolId,credential.schoolId),eq(classpilotWindowsPairingProofs.id,credential.id))).limit(1).for("update");
+  if(!proof||proof.consumedAt||proof.expiresAt.getTime()<=Date.now()||!nativeHashMatches(proof.tokenHash,credential.tokenHash)||proof.browserFamily!==input.browserFamily||proof.profileId!==input.profileId||proof.challenge!==input.challenge)throw new ClasspilotWindowsError("WINDOWS_PAIRING_INVALID",401);
+  const row=await readClasspilotWindowsGuard(credential.schoolId,proof.guardId,database);
+  const [prior]=await database.select().from(classpilotWindowsBrowsers).where(and(eq(classpilotWindowsBrowsers.schoolId,credential.schoolId),eq(classpilotWindowsBrowsers.guardId,proof.guardId),eq(classpilotWindowsBrowsers.browserFamily,input.browserFamily),isNull(classpilotWindowsBrowsers.endedAt))).limit(1).for("update");
+  if(prior&&prior.profileId!==input.profileId)throw new ClasspilotWindowsError("WINDOWS_BROWSER_PROFILE_CONFLICT",409);
+  await database.update(classpilotWindowsPairingProofs).set({consumedAt:new Date()}).where(eq(classpilotWindowsPairingProofs.id,proof.id));
+  if(prior)await database.update(classpilotWindowsBrowsers).set({endedAt:new Date()}).where(eq(classpilotWindowsBrowsers.id,prior.id));
+  const [browser]=await database.insert(classpilotWindowsBrowsers).values({id:issued.id,schoolId:credential.schoolId,guardId:proof.guardId,studentId:row.student.id,browserFamily:input.browserFamily,profileId:input.profileId,credentialHash:issued.tokenHash,sourceRef:randomUUID(),bindingRevision:(prior?.bindingRevision??0)+1,clientProtocolVersion:input.clientProtocolVersion,extensionVersion:input.extensionVersion,acceptedCapabilities:input.acceptedCapabilities,extensionCapabilities:input.capabilities}).returning();
+  return {...row,browser:browser!};
+}
+export async function readClasspilotWindowsBrowser(credential:WindowsCredential,source:{sourceRef:string;bindingRevision:number}|undefined,database:NativeStorageDb){
+  const [browser]=await database.select().from(classpilotWindowsBrowsers).where(and(eq(classpilotWindowsBrowsers.schoolId,credential.schoolId),eq(classpilotWindowsBrowsers.id,credential.id))).limit(1).for("share");
+  if(!browser||browser.endedAt||!nativeHashMatches(browser.credentialHash,credential.tokenHash))throw new ClasspilotWindowsError("WINDOWS_CREDENTIAL_INVALID",401);
+  if(source&&(source.sourceRef!==browser.sourceRef||source.bindingRevision!==browser.bindingRevision))throw new ClasspilotWindowsError("WINDOWS_BINDING_STALE",409);
+  return {...await readClasspilotWindowsGuard(credential.schoolId,browser.guardId,database),browser};
+}
+export async function touchClasspilotWindowsBrowser(browser:WindowsBrowser,database:NativeStorageDb){
+  await database.update(classpilotWindowsBrowsers).set({lastSeenAt:new Date()}).where(and(eq(classpilotWindowsBrowsers.schoolId,browser.schoolId),eq(classpilotWindowsBrowsers.id,browser.id),isNull(classpilotWindowsBrowsers.endedAt)));
+}
+export async function listClasspilotWindowsBrowsers(schoolId:string,studentIds:string[],database:NativeStorageDb){
+  if(!studentIds.length)return [];
+  const browsers=await database.select().from(classpilotWindowsBrowsers).where(and(eq(classpilotWindowsBrowsers.schoolId,schoolId),inArray(classpilotWindowsBrowsers.studentId,studentIds),isNull(classpilotWindowsBrowsers.endedAt)));
+  const live:Array<{browser:WindowsBrowser;guard:WindowsGuard}>=[];
+  for(const browser of browsers){try{const {guard}=await readClasspilotWindowsGuard(schoolId,browser.guardId,database);live.push({browser,guard});}catch(error){if(!(error instanceof ClasspilotWindowsError&&error.status===401))throw error;}}
+  return live;
+}
+export async function authorizeClasspilotWindowsCommand(options:NativeContext&{schoolId:string;actorId:string;authVersion?:number;studentIds:string[];commandType:string;contextAuthorityRevision?:string},database:NativeStorageDb){
+  const allowed=await authorizeClasspilotNativeStudents(options,database);
+  if(allowed.size!==options.studentIds.length)throw new ClasspilotWindowsError("WINDOWS_NOT_AUTHORIZED");
+  if(options.teachingSessionId){
+    if(!await isAuthorizedClasspilotSessionStaff(options.schoolId,options.teachingSessionId,options.actorId,database))throw new ClasspilotWindowsError("WINDOWS_OBSERVE_ONLY");
+  }else{
+    const [context]=await database.select().from(classpilotSupervisionContexts).where(and(eq(classpilotSupervisionContexts.schoolId,options.schoolId),eq(classpilotSupervisionContexts.id,options.supervisionContextId!))).limit(1).for("share");
+    const role=await classpilotNativeStaffRole(options.schoolId,options.actorId,database);
+    if(!context||!scheduledContextHasClassroomTools(context)||String(context.classroomAuthorityRevision)!==options.contextAuthorityRevision||!classpilotSupervisionRelayActorAllowed({actorId:options.actorId,assignedStaffId:context.assignedStaffId,commandType:options.commandType,activeMembershipRole:role,isSuperAdmin:false}))throw new ClasspilotWindowsError("WINDOWS_NOT_AUTHORIZED");
+  }
+  for(const studentId of options.studentIds){const current=await classpilotNativeCurrentAuthority(options.schoolId,studentId,database);if(!current||!windowsSameContext(current,options))throw new ClasspilotWindowsError("WINDOWS_AUTHORITY_STALE",409);}
+}
+export async function createClasspilotWindowsCommand(command:typeof classpilotWindowsCommands.$inferInsert,targets:Array<typeof classpilotWindowsCommandTargets.$inferInsert>,database:NativeStorageDb){
+  await database.insert(classpilotWindowsCommands).values(command);
+  if(targets.length)await database.insert(classpilotWindowsCommandTargets).values(targets);
+}
+export async function readClasspilotWindowsCommand(schoolId:string,id:string,database:NativeStorageDb){
+  const [command]=await database.select().from(classpilotWindowsCommands).where(and(eq(classpilotWindowsCommands.schoolId,schoolId),eq(classpilotWindowsCommands.id,id))).limit(1);
+  if(!command)throw new ClasspilotWindowsError("WINDOWS_COMMAND_NOT_FOUND",404);
+  const targets=await database.select({target:classpilotWindowsCommandTargets,browserFamily:classpilotWindowsBrowsers.browserFamily}).from(classpilotWindowsCommandTargets)
+    .innerJoin(classpilotWindowsBrowsers,and(eq(classpilotWindowsBrowsers.schoolId,schoolId),eq(classpilotWindowsBrowsers.id,classpilotWindowsCommandTargets.browserId)))
+    .where(and(eq(classpilotWindowsCommandTargets.schoolId,schoolId),eq(classpilotWindowsCommandTargets.commandId,id)));
+  const legacyTargets=await database.select().from(classpilotCommandTargets).where(and(eq(classpilotCommandTargets.schoolId,schoolId),eq(classpilotCommandTargets.commandId,id)));
+  return {command,targets,legacyTargets:legacyTargets.filter(target=>target.errorMessage!=="WINDOWS_BROWSER_AUDIENCE")};
+}
+
+/** Locate the immutable tool audience, never the dashboard's current selection. */
+export async function readClasspilotWindowsToolStart(options:{schoolId:string;teachingSessionId?:string;supervisionContextId?:string;commandType:string;payload:Record<string,unknown>},database:NativeStorageDb){
+  if(options.commandType==="teacher-message"||options.payload.action==="start"||(!options.payload.action&&options.commandType==="poll"))return null;
+  let commandId:string|undefined;
+  if(options.commandType==="poll"){
+    const [poll]=await database.select().from(polls).where(and(eq(polls.schoolId,options.schoolId),eq(polls.id,String(options.payload.pollId)),
+      options.teachingSessionId?eq(polls.sessionId,options.teachingSessionId):eq(polls.supervisionContextId,options.supervisionContextId!))).limit(1).for("update");
+    commandId=poll?.startCommandId??undefined;
+  }else{
+    const {classpilotTimers,classpilotLessonActivities}=await import("../schema/classpilotTools.js");
+    const table=options.commandType==="timer"?classpilotTimers:classpilotLessonActivities;
+    const resourceId=options.commandType==="timer"?options.payload.timerId:options.payload.activityId;
+    const [resource]=await database.select().from(table).where(and(eq(table.schoolId,options.schoolId),
+      options.teachingSessionId?eq(table.teachingSessionId,options.teachingSessionId):eq(table.supervisionContextId,options.supervisionContextId!),
+      resourceId?eq(table.id,String(resourceId)):isNull(table.endedAt))).limit(1).for("update");
+    commandId=resource?.startCommandId;
+  }
+  if(!commandId)throw new ClasspilotWindowsError("WINDOWS_TOOL_AUDIENCE_STALE",409);
+  const command=await getClasspilotCommandByIdAndSchool(commandId,options.schoolId);
+  if(!command||!windowsSameContext(command,options))throw new ClasspilotWindowsError("WINDOWS_TOOL_AUDIENCE_STALE",409);
+  const windowsTargets=await database.select().from(classpilotWindowsCommandTargets).where(and(eq(classpilotWindowsCommandTargets.schoolId,options.schoolId),eq(classpilotWindowsCommandTargets.commandId,commandId)));
+  return {command,windowsTargets};
+}
+
+export async function readClasspilotWindowsCoverage(schoolId:string,studentIds:string[],database:NativeStorageDb){
+  const legacy=new Map((await getActiveSessionsForStudents(schoolId,studentIds,database)).map(session=>[session.studentId,session.id]));
+  const guards=studentIds.length?await database.select().from(classpilotWindowsGuards).where(and(eq(classpilotWindowsGuards.schoolId,schoolId),inArray(classpilotWindowsGuards.studentId,studentIds))).orderBy(desc(classpilotWindowsGuards.createdAt)):[];
+  const latest=new Map<string,{state:"active"|"unavailable";expiresAt:string}|{state:"legacy";studentSessionId:string}>();
+  for(const guard of guards){if(latest.has(guard.studentId))continue;let active=false;
+    try{await readClasspilotWindowsGuard(schoolId,guard.id,database);active=true;}catch(error){if(!(error instanceof ClasspilotWindowsError)||error.status!==401)throw error;}
+    const legacySession=legacy.get(guard.studentId);
+    latest.set(guard.studentId,!active&&legacySession?{state:"legacy",studentSessionId:legacySession}:{state:active?"active":"unavailable",expiresAt:guard.expiresAt.toISOString()});
+  }
+  for(const [studentId,studentSessionId]of legacy)if(!latest.has(studentId))latest.set(studentId,{state:"legacy",studentSessionId});
+  return latest;
+}
+
+export async function readClasspilotWindowsToolTargets(schoolId:string,commandId:string,database:NativeStorageDb){
+  if(!windowsBrowserEnabled(schoolId))return [];
+  const rows=await database.select({target:classpilotWindowsCommandTargets,browserFamily:classpilotWindowsBrowsers.browserFamily,expiresAt:classpilotWindowsCommands.expiresAt})
+    .from(classpilotWindowsCommandTargets).innerJoin(classpilotWindowsBrowsers,and(eq(classpilotWindowsBrowsers.schoolId,schoolId),eq(classpilotWindowsBrowsers.id,classpilotWindowsCommandTargets.browserId)))
+    .innerJoin(classpilotWindowsCommands,and(eq(classpilotWindowsCommands.schoolId,schoolId),eq(classpilotWindowsCommands.id,classpilotWindowsCommandTargets.commandId)))
+    .where(and(eq(classpilotWindowsCommandTargets.schoolId,schoolId),eq(classpilotWindowsCommandTargets.commandId,commandId)));
+  const statuses:Record<string,string>={pending:"requested",delivered:"sent",succeeded:"completed",failed:"failed",stale:"unavailable",expired:"expired"};
+  return rows.map(({target,browserFamily,expiresAt})=>({studentId:target.studentId,sourceRef:target.sourceRef,bindingRevision:target.bindingRevision,browserFamily,
+    status:["pending","delivered"].includes(target.status)&&expiresAt.getTime()<=Date.now()?"expired":statuses[target.status]??"unavailable",errorMessage:null}));
+}
+export async function pendingClasspilotWindowsCommands(browser:WindowsBrowser,database:NativeStorageDb){
+  return database.select({command:classpilotWindowsCommands,target:classpilotWindowsCommandTargets}).from(classpilotWindowsCommandTargets)
+    .innerJoin(classpilotWindowsCommands,and(eq(classpilotWindowsCommands.schoolId,browser.schoolId),eq(classpilotWindowsCommands.id,classpilotWindowsCommandTargets.commandId)))
+    .where(and(eq(classpilotWindowsCommandTargets.schoolId,browser.schoolId),eq(classpilotWindowsCommandTargets.browserId,browser.id),inArray(classpilotWindowsCommandTargets.status,["pending","delivered"]),gt(classpilotWindowsCommands.expiresAt,new Date())))
+    .orderBy(classpilotWindowsCommands.createdAt,classpilotWindowsCommandTargets.id).limit(50);
+}
+export async function updateClasspilotWindowsTarget(targetId:string,schoolId:string,values:Partial<Pick<typeof classpilotWindowsCommandTargets.$inferInsert,"status"|"result"|"deliveredAt"|"ackedAt">>,database:NativeStorageDb){
+  await database.update(classpilotWindowsCommandTargets).set(values).where(and(eq(classpilotWindowsCommandTargets.schoolId,schoolId),eq(classpilotWindowsCommandTargets.id,targetId)));
+}
+export async function setClasspilotWindowsRestrictions(schoolId:string,studentId:string,desiredState:Record<string,unknown>,database:NativeStorageDb){
+  const [state]=await database.update(classpilotStudentControlStates).set({desiredState,revision:sql`${classpilotStudentControlStates.revision}+1`,updatedAt:new Date(),enforcementHealth:"pending"}).where(and(eq(classpilotStudentControlStates.schoolId,schoolId),eq(classpilotStudentControlStates.studentId,studentId))).returning();
+  return state!;
+}
+export async function readClasspilotWindowsSettings(schoolId:string,database:NativeStorageDb){
+  const [value]=await database.select().from(settings).where(eq(settings.schoolId,schoolId)).limit(1).for("share");return value;
+}
+
+/** Internal tuple resolver for shared student tools. No route accepts these IDs
+ * as credentials; Windows routes authenticate the purpose-specific bearer first. */
+export async function readClasspilotWindowsExactBinding(options:{schoolId:string;studentId:string;studentSessionId:string;deviceId:string},database:NativeStorageDb=db){
+  if(!windowsBrowserEnabled(options.schoolId)||options.studentSessionId!==options.deviceId)return null;
+  const [browser]=await database.select().from(classpilotWindowsBrowsers).where(and(eq(classpilotWindowsBrowsers.schoolId,options.schoolId),eq(classpilotWindowsBrowsers.id,options.studentSessionId),eq(classpilotWindowsBrowsers.studentId,options.studentId),isNull(classpilotWindowsBrowsers.endedAt))).limit(1).for("share");
+  if(!browser)return null;
+  try{const row=await readClasspilotWindowsGuard(options.schoolId,browser.guardId,database);return {...row,browser};}catch(error){if(error instanceof ClasspilotWindowsError&&error.status===401)return null;throw error;}
+}
+export async function hasClasspilotWindowsToolAssignment(options:{schoolId:string;studentId:string;studentSessionId:string;deviceId:string;authority:NativeContext},commandId:string,database:NativeStorageDb=db){
+  const binding=await readClasspilotWindowsExactBinding(options,database);if(!binding)return false;
+  const current=await classpilotNativeCurrentAuthority(options.schoolId,options.studentId,database);if(!current||!windowsSameContext(current,options.authority))return false;
+  const rows=await database.select({target:classpilotWindowsCommandTargets,command:classpilotWindowsCommands}).from(classpilotWindowsCommandTargets).innerJoin(classpilotWindowsCommands,and(eq(classpilotWindowsCommands.schoolId,options.schoolId),eq(classpilotWindowsCommands.id,classpilotWindowsCommandTargets.commandId)))
+    .where(and(eq(classpilotWindowsCommandTargets.schoolId,options.schoolId),eq(classpilotWindowsCommandTargets.browserId,binding.browser.id),eq(classpilotWindowsCommandTargets.commandId,commandId),inArray(classpilotWindowsCommandTargets.status,["pending","delivered","succeeded"]))).limit(1);
+  const row=rows[0];return !!row&&row.target.sourceRef===binding.browser.sourceRef&&row.target.bindingRevision===binding.browser.bindingRevision&&windowsSameContext(row.command,current)&&(!current.supervisionContextId||row.command.contextAuthorityRevision===current.contextAuthorityRevision);
+}
+
+export async function createClasspilotWindowsPollResponse(binding:{browser:WindowsBrowser;guard:WindowsGuard},input:{pollId:string;selectedOption?:number;textResponse?:string},database:NativeStorageDb){
+  const {browser}=binding;const authority=await classpilotNativeCurrentAuthority(browser.schoolId,browser.studentId,database);
+  const [poll]=await database.select().from(polls).where(and(eq(polls.schoolId,browser.schoolId),eq(polls.id,input.pollId))).limit(1).for("update");
+  if(!authority||!poll||!poll.isActive||!poll.expiresAt||poll.expiresAt.getTime()<=Date.now()||!windowsSameContext({teachingSessionId:poll.sessionId??undefined,supervisionContextId:poll.supervisionContextId??undefined},authority)||!poll.startCommandId||
+    !await hasClasspilotWindowsToolAssignment({schoolId:browser.schoolId,studentId:browser.studentId,studentSessionId:browser.id,deviceId:browser.id,authority},poll.startCommandId,database))throw new ClasspilotWindowsError("WINDOWS_POLL_STALE",409);
+  if(poll.responseType==="short_text"){
+    if(!browser.acceptedCapabilities.includes("exitTicketsV1")||input.selectedOption!==undefined||typeof input.textResponse!=="string"||!input.textResponse.trim()||input.textResponse.length>500)throw new ClasspilotWindowsError("WINDOWS_POLL_INVALID",400);
+  }else if(input.textResponse!==undefined||!Number.isInteger(input.selectedOption)||input.selectedOption!<0||input.selectedOption!>=poll.options.length)throw new ClasspilotWindowsError("WINDOWS_POLL_INVALID",400);
+  const [existing]=await database.select().from(pollResponses).where(and(eq(pollResponses.schoolId,browser.schoolId),eq(pollResponses.pollId,poll.id),eq(pollResponses.studentId,browser.studentId),isNull(pollResponses.supersededAt))).limit(1).for("update");
+  if(existing){if(existing.selectedOption!==(input.selectedOption??null)||existing.textResponse!==(input.textResponse??null))throw new ClasspilotWindowsError("WINDOWS_POLL_ALREADY_ANSWERED",409);return {ok:true,response:existing,disposition:"replayed"};}
+  const [response]=await database.insert(pollResponses).values({schoolId:browser.schoolId,pollId:poll.id,studentId:browser.studentId,deviceId:browser.id,selectedOption:input.selectedOption??null,textResponse:input.textResponse??null}).returning();
+  return {ok:true,response,disposition:"created"};
+}
+
+export async function setClasspilotWindowsBrowserOverride(browser:WindowsBrowser,override:WindowsBrowser["restrictionOverride"],database:NativeStorageDb){
+  await database.update(classpilotWindowsBrowsers).set({restrictionOverride:override}).where(and(eq(classpilotWindowsBrowsers.schoolId,browser.schoolId),eq(classpilotWindowsBrowsers.id,browser.id)));
+}
+export async function setClasspilotWindowsCapabilityBlock(browser:WindowsBrowser,revision:number|null,database:NativeStorageDb){
+  await database.update(classpilotWindowsBrowsers).set({capabilityBlockedRevision:revision}).where(and(eq(classpilotWindowsBrowsers.schoolId,browser.schoolId),eq(classpilotWindowsBrowsers.id,browser.id)));
+}
+export async function setClasspilotWindowsPolicyAck(browser:WindowsBrowser,payload:Record<string,unknown>,database:NativeStorageDb){
+  await database.update(classpilotWindowsBrowsers).set({schoolPolicyAck:payload}).where(and(eq(classpilotWindowsBrowsers.schoolId,browser.schoolId),eq(classpilotWindowsBrowsers.id,browser.id)));
+}
+export async function readClasspilotWindowsChatMessages(browser:WindowsBrowser,database:NativeStorageDb){
+  const authority=await classpilotNativeCurrentAuthority(browser.schoolId,browser.studentId,database);if(!authority)return [];
+  const rows=await database.select().from(chatMessages).where(and(eq(chatMessages.schoolId,browser.schoolId),eq(chatMessages.studentId,browser.studentId),eq(chatMessages.senderType,"teacher"),
+    authority.teachingSessionId?eq(chatMessages.sessionId,authority.teachingSessionId):eq(chatMessages.supervisionContextId,authority.supervisionContextId!),ne(chatMessages.deliveryStatus,"seen")))
+    .orderBy(desc(chatMessages.createdAt)).limit(20);
+  const current=[];for(const message of rows){if(await isPrivateChatMessageCurrent(message,database)&&!await isPrivateChatMessageExpired(message.id,browser.schoolId,database))current.push(message);}return current.reverse();
+}
+export async function acknowledgeClasspilotWindowsChat(browser:WindowsBrowser,messageId:string,status:"delivered"|"seen",expectedLifecycle:unknown,database:NativeStorageDb){
+  const authority=await classpilotNativeCurrentAuthority(browser.schoolId,browser.studentId,database);
+  const [message]=await database.select().from(chatMessages).where(and(eq(chatMessages.schoolId,browser.schoolId),eq(chatMessages.studentId,browser.studentId),eq(chatMessages.id,messageId),eq(chatMessages.senderType,"teacher"))).limit(1).for("update");
+  if(!authority||!message||!windowsSameContext({teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId},authority)||!await isPrivateChatMessageCurrent(message,database)||await isPrivateChatMessageExpired(message.id,browser.schoolId,database))return false;
+  const lifecycle=privateChatMessageLifecycle(message);if(lifecycle&&!samePrivateChatLifecycle(lifecycle,parsePrivateChatLifecycle(expectedLifecycle)))return false;
+  if(message.deliveryStatus!=="seen")await database.update(chatMessages).set({deliveryStatus:status,deliveredAt:message.deliveredAt??new Date(),...(status==="seen"?{seenAt:new Date()}:{}),errorMessage:null}).where(and(eq(chatMessages.schoolId,browser.schoolId),eq(chatMessages.id,messageId)));
+  await database.update(classpilotChatDeliveries).set({state:"delivered",deliveredAt:new Date(),updatedAt:new Date()}).where(and(eq(classpilotChatDeliveries.schoolId,browser.schoolId),eq(classpilotChatDeliveries.chatMessageId,messageId),eq(classpilotChatDeliveries.studentId,browser.studentId)));
+  return true;
+}
+
+export async function readClasspilotWindowsChatTranscript(browser:WindowsBrowser,database:NativeStorageDb){
+  const authority=await classpilotNativeCurrentAuthority(browser.schoolId,browser.studentId,database);if(!authority)return {messages:[]};
+  const rows=await database.select().from(chatMessages).where(and(eq(chatMessages.schoolId,browser.schoolId),eq(chatMessages.studentId,browser.studentId),isNull(chatMessages.deletedAt),
+    authority.teachingSessionId?eq(chatMessages.sessionId,authority.teachingSessionId):eq(chatMessages.supervisionContextId,authority.supervisionContextId!))).orderBy(desc(chatMessages.createdAt)).limit(100);
+  const messages=[];for(const row of rows){if(await isPrivateChatMessageCurrent(row,database)&&!await isPrivateChatMessageExpired(row.id,browser.schoolId,database))messages.push({id:row.id,content:row.content,senderType:row.senderType,createdAt:row.createdAt,deliveryStatus:row.deliveryStatus,clientMessageId:row.clientMessageId,privateChatLifecycle:privateChatMessageLifecycle(row)});}
+  return {messages:messages.reverse()};
 }

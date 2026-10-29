@@ -101,6 +101,9 @@ export async function scheduledClassroomRoster(schoolId: string, supervisionCont
 }
 
 export async function scheduledClassroomBindingCapable(options: { schoolId: string; studentId: string; studentSessionId: string; deviceId: string }) {
+  const { readClasspilotWindowsExactBinding } = await import("./storage.js");
+  const windows = await readClasspilotWindowsExactBinding(options);
+  if (windows) return windows.browser.acceptedCapabilities.includes("scheduledClassroomV1");
   // Shared storage also serves GoPilot. Only an actual scheduled classroom
   // capability check should load the realtime Redis client.
   const { classpilotRealtimeFresh, readClasspilotRealtimeStatusBatch } = await import("./classpilotRealtimeStatus.js");

@@ -345,8 +345,8 @@ test('student tiles split screenshot enlargement from the explicit Details actio
   );
   assert.match(
     dashboard,
-    /\{selectedStudentRow && !selectedStudentDetailsRevoked && \([\s\S]{0,100}<StudentDetailDrawer/,
-    'revoked details must not remain mounted while state cleanup settles',
+    /\{selectedStudentRow && !selectedStudentDetailsRevoked && \(\s*selectedStudentRow\.windowsBrowserMode \? <WindowsBrowserHistoryDrawer student=\{selectedStudentRow\} onClose=\{closeStudentDetails\} \/> :\s*<StudentDetailDrawer/,
+    'both source-specific drawers must unmount as soon as the shared authorization gate revokes details',
   );
 });
 

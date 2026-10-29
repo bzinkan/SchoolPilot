@@ -101,12 +101,10 @@ export function unsupportedCommandStudentIds(value) {
 }
 
 export function completedStudentIdsFromCommand(value) {
-  return new Set(
-    (value?.command?.targets || value?.targets || [])
-      .filter((target) => target?.status === 'completed')
-      .map((target) => target?.studentId)
-      .filter(Boolean),
-  );
+  const targets = value?.command?.targets || value?.targets || [];
+  return new Set(targets.filter(target => target?.studentId && target.status === 'completed'
+    && targets.filter(row => row.studentId === target.studentId).every(row => row.status === 'completed'))
+    .map(target => target.studentId));
 }
 
 function plural(count, singular, pluralValue = `${singular}s`) {
@@ -308,7 +306,7 @@ function commandFailureDescription(value, studentNames) {
     // eslint-disable-next-line no-control-regex -- Device diagnostics deliberately strip control characters.
     const message = target.errorMessage.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
     if (!message) continue;
-    const key = `${target.studentId}\u0000${message}`;
+    const key = `${target.studentId}\u0000${target.sourceRef || ''}\u0000${message}`;
     if (seen.has(key)) continue;
     seen.add(key);
     if (details.length >= 5) { omitted += 1; continue; }
@@ -316,7 +314,8 @@ function commandFailureDescription(value, studentNames) {
     // ACK or an identifier supplied by the command target.
     const rosterName = Object.hasOwn(studentNames, target.studentId) ? studentNames[target.studentId] : null;
     const name = typeof rosterName === 'string' && rosterName.trim() ? rosterName.trim().slice(0, 100) : 'Student';
-    details.push(`${name}: ${message}${/[.!?]$/.test(message) ? '' : '.'}`);
+    const sourceLabel = target.sourceRef ? target.browserFamily === 'chrome' ? ' · Chrome' : target.browserFamily === 'edge' ? ' · Edge' : ' · Browser' : '';
+    details.push(`${name}${sourceLabel}: ${message}${/[.!?]$/.test(message) ? '' : '.'}`);
   }
   if (omitted > 0) details.push(`${plural(omitted, 'additional failure')} reported.`);
   return details.join(' ');
@@ -352,9 +351,11 @@ function preserveVerifiedSignOutCompletion(entry, existing, value) {
   if (entry.commandType !== 'student-sign-out' || entry.deliveryPolicy !== 'server_authoritative') return entry;
   const verified = new Map();
   const receipts = new Map();
+  const targetKey = target => JSON.stringify([target.studentId, target.sourceRef ?? null, target.bindingRevision ?? null]);
   for (const target of [...(existing?.command?.targets || []), ...(value.command?.targets || [])]) {
-    if (target.status === 'completed' && target.result?.serverAuthoritative === true) verified.set(target.studentId, target);
-    receipts.set(target.studentId, { ...receipts.get(target.studentId),
+    const key = targetKey(target);
+    if (target.status === 'completed' && target.result?.serverAuthoritative === true) verified.set(key, target);
+    receipts.set(key, { ...receipts.get(key),
       ...(target.receivedAt ? { receivedAt: target.receivedAt } : {}),
       ...(['received', 'completed', 'failed'].includes(target.ackState) ? { ackState: target.ackState } : {}) });
   }
@@ -363,12 +364,13 @@ function preserveVerifiedSignOutCompletion(entry, existing, value) {
   // The API's exact server session end is final, even if a device failure was
   // published first or arrives late. Other targets keep their own outcomes.
   const targets = (entry.command.targets || []).map((target) => {
-    const completed = verified.get(target.studentId);
+    const key = targetKey(target);
+    const completed = verified.get(key);
     if (!completed) return target;
-    verified.delete(target.studentId);
-    return { ...target, ...completed, ...receipts.get(target.studentId), errorMessage: null };
+    verified.delete(key);
+    return { ...target, ...completed, ...receipts.get(key), errorMessage: null };
   });
-  targets.push(...[...verified.values()].map((target) => ({ ...target, ...receipts.get(target.studentId), errorMessage: null })));
+  targets.push(...[...verified.values()].map((target) => ({ ...target, ...receipts.get(targetKey(target)), errorMessage: null })));
   const command = { ...entry.command, targets,
     ...(targets.length > 0 && targets.every((target) => target.status === 'completed') ? { status: 'completed' } : {}) };
   // Rebuild terminal counts from targets, never a stale nested DTO summary.

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { getWindowsReportObservations, getWindowsReportSessions } from "./classpilotWindowsReporting.js";
+import { classpilotWindowsBrowserEvents as windowsEvents } from "../schema/classpilotWindowsHistory.js";
 import { and, eq, gt, gte, inArray, isNull, lt, lte, ne, not, sql, desc } from "drizzle-orm";
 import db from "../db.js";
 import {
@@ -105,7 +107,13 @@ async function loadReportInput(report: Report, children: StudentDetail[], dbInst
   if (!studentIds.length) return base;
   const heartbeatScope = and(eq(heartbeats.schoolId, report.schoolId), inArray(heartbeats.studentId, studentIds),
     sql`${heartbeats.timestamp} >= ${report.windowStart.toISOString()}`, sql`${heartbeats.timestamp} < ${windowEnd.toISOString()}`);
-  const heartbeatIdsQuery = dbInstance.select({ id: heartbeats.id }).from(heartbeats).where(heartbeatScope);
+  const heartbeatIdsQuery = dbInstance.select({ id: heartbeats.id }).from(heartbeats).where(heartbeatScope)
+    .unionAll(dbInstance.select({ id: windowsEvents.id }).from(windowsEvents).where(and(
+      eq(windowsEvents.schoolId, report.schoolId), inArray(windowsEvents.studentId, studentIds),
+      eq(windowsEvents.supervisionContextId, report.contextId), eq(windowsEvents.browserFocused, true),
+      gte(windowsEvents.observedAt, report.windowStart), lt(windowsEvents.observedAt, windowEnd),
+      gt(windowsEvents.usageEndsAt, windowsEvents.observedAt),
+    )));
   const [authenticatedSessions, heartbeatRows, monitoringEvents, priorPolicyEvents] = await Promise.all([
     dbInstance.select({ id: studentSessions.id, studentId: studentSessions.studentId,
       startedAt: studentSessions.startedAt, endedAt: studentSessions.endedAt, lastSeenAt: studentSessions.lastSeenAt })
@@ -130,7 +138,12 @@ async function loadReportInput(report: Report, children: StudentDetail[], dbInst
   ]);
   // A bounded student/time subquery avoids PostgreSQL's parameter ceiling for
   // long blocks with tens of thousands of heartbeats; no observations truncate.
-  const [aiDecisions, ambientArtifacts, capturedArtifacts] = heartbeatRows.length ? await Promise.all([
+  const [windowsSessions, windowsObservations] = await Promise.all([
+    getWindowsReportSessions(dbInstance, report.schoolId, studentIds, report.windowStart, windowEnd),
+    getWindowsReportObservations(dbInstance, report.schoolId, studentIds, report.windowStart, windowEnd,
+      { supervisionContextId: report.contextId }),
+  ]);
+  const [aiDecisions, ambientArtifacts, capturedArtifacts] = heartbeatRows.length || windowsObservations.length ? await Promise.all([
     dbInstance.select({ id: classpilotAiDecisions.id, heartbeatId: classpilotAiDecisions.heartbeatId,
       studentId: classpilotAiDecisions.studentId, domain: classpilotAiDecisions.domain, category: classpilotAiDecisions.category,
       safetyAlert: classpilotAiDecisions.safetyAlert, teacherIntentSource: classpilotAiDecisions.teacherIntentSource,
@@ -139,7 +152,7 @@ async function loadReportInput(report: Report, children: StudentDetail[], dbInst
       .orderBy(classpilotAiDecisions.heartbeatId, desc(classpilotAiDecisions.createdAt), desc(classpilotAiDecisions.id)),
     dbInstance.select({ studentId: evidenceArtifacts.studentId, studentSessionId: evidenceArtifacts.studentSessionId,
       sourceId: evidenceArtifacts.sourceId, status: evidenceArtifacts.status }).from(evidenceArtifacts).where(and(
-        eq(evidenceArtifacts.schoolId, report.schoolId), eq(evidenceArtifacts.sourceType, "classpilot_screenshot"), inArray(evidenceArtifacts.sourceId, heartbeatIdsQuery))),
+        eq(evidenceArtifacts.schoolId, report.schoolId), inArray(evidenceArtifacts.sourceType, ["classpilot_screenshot", "classpilot_windows_screenshot"]), inArray(evidenceArtifacts.sourceId, heartbeatIdsQuery))),
     dbInstance.select({ studentId: evidenceArtifacts.studentId, studentSessionId: evidenceArtifacts.studentSessionId,
       sourceId: classpilotEvidenceCaptureRequests.heartbeatId, status: evidenceArtifacts.status })
       .from(classpilotEvidenceCaptureRequests).innerJoin(evidenceArtifacts, and(
@@ -151,7 +164,8 @@ async function loadReportInput(report: Report, children: StudentDetail[], dbInst
         eq(evidenceArtifacts.sourceType, "classpilot_safety_capture"), eq(evidenceArtifacts.sourceId, classpilotEvidenceCaptureRequests.id),
       )).where(and(eq(classpilotEvidenceCaptureRequests.schoolId, report.schoolId), inArray(classpilotEvidenceCaptureRequests.heartbeatId, heartbeatIdsQuery))),
   ]) : [[], [], []];
-  return { ...base, authenticatedSessions, heartbeats: heartbeatRows, aiDecisions,
+  return { ...base, authenticatedSessions: [...authenticatedSessions, ...windowsSessions],
+    heartbeats: [...heartbeatRows, ...windowsObservations], aiDecisions,
     evidenceArtifacts: [...ambientArtifacts, ...capturedArtifacts], monitoringEvents: [...priorPolicyEvents, ...monitoringEvents] };
 }
 

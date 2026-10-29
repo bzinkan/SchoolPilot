@@ -10,6 +10,9 @@ const testsRoot = join(root, "tests");
 const RLS_SERIAL = new Set([
   "classpilot-automatic-flight-path.integration.test.ts",
   "classpilot-native-integration.test.ts",
+  "classpilot-windows-integration.test.ts",
+  "classpilot-windows-reporting.integration.test.ts",
+  "classpilot-windows-rls.test.ts",
   "classpilot-native-rls.test.ts",
   "classpilot-delivery-batch.integration.test.ts",
   "fair-main-pool.integration.test.mjs",

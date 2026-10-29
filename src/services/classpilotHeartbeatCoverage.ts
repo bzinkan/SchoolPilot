@@ -23,6 +23,8 @@ export type CoverageInterval = {
 
 export type CoverageHeartbeat = {
   timestamp: Date;
+  /** Explicit server-authorized focused-browser interval; never gets heartbeat grace. */
+  usageEndsAt?: Date;
   url?: string | null;
   category?: string | null;
   contentCategory?: string | null;
@@ -244,6 +246,53 @@ export function serverTrackingDisabledIntervals(
   return intervals.filter((interval) => interval.end > interval.start);
 }
 
+function boundedObservationEnd(heartbeat: CoverageHeartbeat): number {
+  return Math.min(heartbeat.usageEndsAt?.getTime() ?? Infinity, heartbeat.timestamp.getTime() + 10_000);
+}
+
+// Chrome and Edge can overlap. Partition their bounded intervals, choosing the
+// latest observation deterministically for each segment, without adding time.
+function boundedAttributionHeartbeats(heartbeats: CoverageHeartbeat[]): CoverageHeartbeat[] {
+  const bounded = heartbeats.filter(row => row.usageEndsAt && boundedObservationEnd(row) > row.timestamp.getTime())
+    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  const boundaries = [...new Set(bounded.flatMap(row => [row.timestamp.getTime(), boundedObservationEnd(row)]))].sort((a, b) => a - b);
+  const segments: CoverageHeartbeat[] = [];
+  let previous: CoverageHeartbeat | undefined;
+  let next = 0;
+  let activeRows: CoverageHeartbeat[] = [];
+  for (let index = 0; index + 1 < boundaries.length; index += 1) {
+    const start = boundaries[index]!, end = boundaries[index + 1]!;
+    activeRows = activeRows.filter(row => boundedObservationEnd(row) > start);
+    while (next < bounded.length && bounded[next]!.timestamp.getTime() <= start) activeRows.push(bounded[next++]!);
+    const active = activeRows.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime() || String(a.url).localeCompare(String(b.url)))[0];
+    if (!active) { previous = undefined; continue; }
+    const last = segments.at(-1);
+    if (previous === active && last?.usageEndsAt?.getTime() === start) last.usageEndsAt = new Date(end);
+    else segments.push({ ...active, timestamp: new Date(start), usageEndsAt: new Date(end) });
+    previous = active;
+  }
+  return [...heartbeats.filter(row => !row.usageEndsAt), ...segments].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+}
+
+function boundedObservationGaps(intervals: CoverageInterval[], heartbeats: CoverageHeartbeat[]): MonitoringGap[] {
+  const tolerance = HEARTBEAT_HEALTH_TOLERANCE_SECONDS * 1000;
+  return intervals.flatMap(interval => {
+    const within = heartbeats.filter(row => row.timestamp >= interval.start && row.timestamp < interval.end);
+    const legacy = within.filter(row => !row.usageEndsAt);
+    const observed: CoverageInterval[] = within.filter(row => row.usageEndsAt).map(row => ({
+      start: row.timestamp, end: new Date(Math.min(interval.end.getTime(), boundedObservationEnd(row))),
+    })).filter(row => row.end > row.start);
+    // Preserve the existing Chromebook first-sample grace and forward health
+    // tolerance, while bounded Windows samples never backfill unobserved time.
+    legacy.forEach((row, index) => observed.push({
+      start: new Date(index === 0 ? Math.max(interval.start.getTime(), row.timestamp.getTime() - tolerance) : row.timestamp.getTime()),
+      end: new Date(Math.min(interval.end.getTime(), row.timestamp.getTime() + tolerance)),
+    }));
+    return subtractCoverageIntervals([interval], observed).map(gap => ({ ...gap,
+      durationSeconds: Math.round((gap.end.getTime() - gap.start.getTime()) / 1000), cause: "unknown" as const }));
+  });
+}
+
 export function calculateHeartbeatCoverage(options: {
   windowStart: Date;
   windowEnd: Date;
@@ -350,6 +399,13 @@ export function calculateHeartbeatCoverage(options: {
     }
   }
 
+  const boundedSamples = options.heartbeats.filter(row => row.usageEndsAt
+    && eligibleIntervals.some(interval => row.timestamp >= interval.start && row.timestamp < interval.end));
+  const allCoverageSamples = [...eligibleHeartbeats.filter(row => !row.usageEndsAt), ...boundedSamples];
+  if (boundedSamples.length) {
+    gaps.splice(0, gaps.length, ...boundedObservationGaps(eligibleIntervals, allCoverageSamples));
+  }
+  const attributionHeartbeats = boundedAttributionHeartbeats(allCoverageSamples);
   const gapSeconds = Math.min(eligibleSeconds, gaps.reduce((total, gap) => total + gap.durationSeconds, 0));
   const observedSeconds = Math.max(0, eligibleSeconds - gapSeconds);
   const coveragePercent = Math.max(0, Math.min(100, Math.round((observedSeconds / eligibleSeconds) * 100)));
@@ -371,7 +427,7 @@ export function calculateHeartbeatCoverage(options: {
   let classifiedMilliseconds = 0;
 
   for (const interval of eligibleIntervals) {
-    const within = eligibleHeartbeats.filter(
+    const within = attributionHeartbeats.filter(
       (heartbeat) => heartbeat.timestamp >= interval.start && heartbeat.timestamp < interval.end
     );
     let previousDomain: string | null = null;
@@ -380,7 +436,8 @@ export function calculateHeartbeatCoverage(options: {
       const heartbeat = within[index]!;
       const nextTimestamp = within[index + 1]?.timestamp.getTime() ?? interval.end.getTime();
       const startMs = Math.max(interval.start.getTime(), heartbeat.timestamp.getTime());
-      const endMs = Math.min(interval.end.getTime(), startMs + attributionLimitMs, nextTimestamp);
+      const endMs = Math.min(interval.end.getTime(), startMs + attributionLimitMs, nextTimestamp,
+        heartbeat.usageEndsAt?.getTime() ?? Infinity);
       if (endMs <= startMs) continue;
 
       const domain = normalizedHeartbeatDomain(heartbeat.url);
@@ -513,7 +570,7 @@ export function calculateHeartbeatCoverageV1(options: {
   windowEnd: Date;
   authenticatedIntervals: CoverageInterval[];
   excludedIntervals?: CoverageInterval[];
-  heartbeats: Array<{ timestamp: Date; url?: string | null }>;
+  heartbeats: CoverageHeartbeat[];
 }) {
   const auth = options.authenticatedIntervals
     .map((interval) => clip(interval, options.windowStart, options.windowEnd))
@@ -602,12 +659,22 @@ export function calculateHeartbeatCoverageV1(options: {
     }
   }
 
+  const boundedSamples = options.heartbeats.filter(row => row.usageEndsAt
+    && eligibleIntervals.some(interval => row.timestamp >= interval.start && row.timestamp < interval.end));
+  const allCoverageSamples = [...eligibleHeartbeats.filter(row => !row.usageEndsAt), ...boundedSamples];
+  if (boundedSamples.length) {
+    gaps.splice(0, gaps.length, ...boundedObservationGaps(eligibleIntervals, allCoverageSamples));
+  }
   const gapSeconds = Math.min(eligibleSeconds, gaps.reduce((total, gap) => total + gap.durationSeconds, 0));
   const observedSeconds = Math.max(0, eligibleSeconds - gapSeconds);
   const coveragePercent = Math.max(0, Math.min(100, Math.round((observedSeconds / eligibleSeconds) * 100)));
   const domains = new Map<string, { seconds: number; visits: number }>();
   const activities = new Map<string, ClasspilotTopActivity>();
-  for (const heartbeat of eligibleHeartbeats) {
+  // Preserve frozen v1 Chromebook COUNT * 10 attribution. Its new Windows
+  // contribution only fills time not already counted by those legacy slots.
+  const legacyAttributionIntervals = allCoverageSamples.filter(row => !row.usageEndsAt)
+    .map(row => ({ start: row.timestamp, end: new Date(row.timestamp.getTime() + 10_000) }));
+  for (const heartbeat of boundedAttributionHeartbeats(allCoverageSamples)) {
     if (!heartbeat.url) continue;
     try {
       const url = new URL(heartbeat.url);
@@ -615,7 +682,13 @@ export function calculateHeartbeatCoverageV1(options: {
       const domain = url.hostname.toLowerCase().replace(/^www\./, "");
       if (!domain) continue;
       const value = domains.get(domain) || { seconds: 0, visits: 0 };
-      value.seconds += 10;
+      const seconds = heartbeat.usageEndsAt
+        ? subtractCoverageIntervals([{ start: heartbeat.timestamp, end: heartbeat.usageEndsAt }], legacyAttributionIntervals)
+          .reduce((sum, piece) => sum + eligibleIntervals.reduce((total, interval) => total
+            + Math.max(0, Math.min(interval.end.getTime(), piece.end.getTime())
+              - Math.max(interval.start.getTime(), piece.start.getTime())) / 1000, 0), 0) : 10;
+      if (seconds <= 0) continue;
+      value.seconds += seconds;
       value.visits += 1;
       domains.set(domain, value);
 
@@ -627,7 +700,7 @@ export function calculateHeartbeatCoverageV1(options: {
           seconds: 0,
           visits: 0,
         };
-        activityValue.seconds += 10;
+        activityValue.seconds += seconds;
         activityValue.visits += 1;
         activities.set(activityKey, activityValue);
       }

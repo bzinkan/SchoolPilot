@@ -94,6 +94,12 @@ test(
       await client.query(
         `GRANT SELECT, INSERT, UPDATE, DELETE ON ${POLICY_TABLES.join(", ")} TO ${roleIdentifier}`,
       );
+      // The additive Windows activity-parent validator remains SECURITY INVOKER.
+      // Its exact-parent/collision checks need read access, including when a
+      // legacy device is supplied; the real runtime admission grants this too.
+      if ((await client.query("SELECT to_regprocedure('classpilot_windows_activity_browser_parent(text,text,text,text)') AS helper")).rows[0]?.helper) {
+        await client.query(`GRANT SELECT ON classpilot_windows_browsers, classpilot_windows_guards TO ${roleIdentifier}`);
+      }
 
       for (const table of POLICY_TABLES) {
         for (const statement of policySqlFor(table)) {

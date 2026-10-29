@@ -128,7 +128,15 @@ export async function readClassTools(scope: ToolsScope) {
     const [prompt] = await database.select().from(polls).where(and(eq(polls.schoolId, scope.schoolId), scope.authority.teachingSessionId ? eq(polls.sessionId, scope.authority.teachingSessionId) : eq(polls.supervisionContextId, scope.authority.supervisionContextId!), eq(polls.isActive, true), gt(polls.expiresAt, new Date()))).limit(1);
     const responses = prompt ? await database.select({ studentId: pollResponses.studentId, selectedOption: pollResponses.selectedOption, textResponse: pollResponses.textResponse, respondedAt: pollResponses.createdAt }).from(pollResponses).where(and(eq(pollResponses.schoolId, scope.schoolId), eq(pollResponses.pollId, prompt.id), isNull(pollResponses.supersededAt))) : [];
     const activeTimer = timer && (timer.pausedRemainingMs != null || (timer.deadline && timer.deadline > new Date())) ? timer : null;
-    const targets = async (commandId?: string | null) => commandId ? (await database.select({ studentId: classpilotCommandTargets.studentId, status: classpilotCommandTargets.status, errorMessage: classpilotCommandTargets.errorMessage }).from(classpilotCommandTargets).where(and(eq(classpilotCommandTargets.schoolId, scope.schoolId), eq(classpilotCommandTargets.commandId, commandId)))).map(row => ({ ...row, studentName: roster.find(student => student.studentId === row.studentId) ? `${roster.find(student => student.studentId === row.studentId)!.firstName} ${roster.find(student => student.studentId === row.studentId)!.lastName}` : "Student no longer in this classroom" })) : [];
+    const targets = async (commandId?: string | null) => {
+      if(!commandId)return [];
+      const { readClasspilotWindowsToolTargets }=await import('./storage.js');
+      const legacy=await database.select({studentId:classpilotCommandTargets.studentId,status:classpilotCommandTargets.status,errorMessage:classpilotCommandTargets.errorMessage}).from(classpilotCommandTargets)
+        .where(and(eq(classpilotCommandTargets.schoolId,scope.schoolId),eq(classpilotCommandTargets.commandId,commandId)));
+      const windows=await readClasspilotWindowsToolTargets(scope.schoolId,commandId,database);
+      return [...legacy.filter(row=>row.errorMessage!=='WINDOWS_BROWSER_AUDIENCE'),...windows].map(row=>({...row,
+        studentName:roster.find(student=>student.studentId===row.studentId)?`${roster.find(student=>student.studentId===row.studentId)!.firstName} ${roster.find(student=>student.studentId===row.studentId)!.lastName}`:'Student no longer in this classroom'}));
+    };
     const routineOutcomes = routine ? await Promise.all(routine.outcomes.map(async outcome => ({ ...outcome, targets: await targets(outcome.commandIds.at(-1)) }))) : [];
     return { phase, roster, timer: activeTimer, activity, progress: progress.filter(row => visibleIds.has(row.studentId)),
       help: hands.filter(row => visibleIds.has(row.studentId)).map(publicHand), questions: questions.filter(row => visibleIds.has(row.studentId)), picker, routine, templates,
@@ -139,6 +147,8 @@ export async function readClassTools(scope: ToolsScope) {
 
 /** A retry grants access only to the original exact binding and classroom owner. */
 async function hasToolAssignment(database: typeof db, scope: ToolsStudentScope, commandId: string) {
+  const { hasClasspilotWindowsToolAssignment } = await import("./storage.js");
+  if (await hasClasspilotWindowsToolAssignment(scope, commandId, database)) return true;
   const [context] = scope.authority.supervisionContextId ? await database.select({ revision: classpilotSupervisionContexts.classroomAuthorityRevision }).from(classpilotSupervisionContexts)
     .where(and(eq(classpilotSupervisionContexts.schoolId, scope.schoolId), eq(classpilotSupervisionContexts.id, scope.authority.supervisionContextId))).limit(1) : [];
   const [target] = await database.select({ id: classpilotCommandTargets.id }).from(classpilotCommandTargets)

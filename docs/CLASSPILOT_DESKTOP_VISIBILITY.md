@@ -1,5 +1,7 @@
 # ClassPilot native desktop integration
 
+The subsequent Windows browser companion uses a separate default-off gate and extends the candidate RLS inventory to138 without activating Desktop visibility. See [Windows browser integration](CLASSPILOT_WINDOWS_BROWSER_INTEGRATION.md). The October26 evidence and132-table native bundle below remain historical records.
+
 The native pilot adds independent installation/PIN identities and explicitly observed screen-source thumbnails to the existing student tile. The Chrome extension remains optional for desktop visibility and required for its own browser controls.
 
 Canonical native documentation is in the local sibling ClassPilotDesktop repository:

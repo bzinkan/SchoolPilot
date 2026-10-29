@@ -14,6 +14,7 @@ export function desktopSourceKey(source) {
 }
 
 export function hasBrowserSource(student) {
+  if (student?.windowsBrowserMode) return student.windowsBrowserSources?.length > 0;
   return Boolean(student?.extensionVersion || student?.realtimeBinding || student?.isLoggedIn === true);
 }
 

@@ -6,6 +6,7 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { formatDuration } from '../../../lib/classpilot-utils';
 import { getBrowsingActivityTitle } from '../../../lib/browsing-activity';
+import { windowsBrowserLabel, windowsBrowserSourceKey } from '../lib/windowsBrowsers';
 
 const historyFailure = error => error?.response?.data?.state || ([403, 404].includes(error?.response?.status) ? 'denied' : error?.response?.status === 503 ? 'unavailable' : 'failed');
 const stateText = {
@@ -24,29 +25,31 @@ function visitTime(entry, timeZone) {
   return new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }).formatRange(new Date(start), new Date(end));
 }
 
-export default function StudentBrowsingHistory({ studentId }) {
+export default function StudentBrowsingHistory({ studentId, windowsSource = null, authorityScope = '' }) {
   const { activeMembership, user } = useAuth();
   const [dates, setDates] = useState({ startDate: '', endDate: '' });
   const [includeUnavailable, setIncludeUnavailable] = useState(false);
   const view = includeUnavailable ? 'all' : 'pages';
   const params = new URLSearchParams(Object.entries(dates).filter(([, value]) => value));
-  const base = `/classpilot/students/${encodeURIComponent(studentId)}/browsing-history`;
-  const key = ['student-browsing-history', activeMembership?.schoolId, user?.id, activeMembership?.id, activeMembership?.role, studentId, dates.startDate, dates.endDate];
+  const sourceKey = windowsBrowserSourceKey(windowsSource);
+  if (sourceKey) { params.set('sourceRef', windowsSource.sourceRef); params.set('bindingRevision', String(windowsSource.bindingRevision)); }
+  const base = `/classpilot/${sourceKey ? 'windows/' : ''}students/${encodeURIComponent(studentId)}/browsing-history`;
+  const key = [sourceKey ? 'windows-browser-history' : 'student-browsing-history', activeMembership?.schoolId, user?.id, activeMembership?.id, activeMembership?.role, studentId, dates.startDate, dates.endDate, sourceKey, authorityScope];
   const invalidRange = dates.startDate && dates.endDate && dates.startDate > dates.endDate;
-  const domains = useQuery({ queryKey: [...key, 'domains'], queryFn: ({ signal }) => apiRequest('GET', `${base}/domains?${params}`, undefined, { signal }), enabled: Boolean(studentId) && !invalidRange, retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchOnReconnect: 'always' });
-  const history = useInfiniteQuery({ queryKey: [...key, view, 'visits'], initialPageParam: null, queryFn: ({ pageParam, signal }) => { const query = new URLSearchParams(params); query.set('limit', '100'); query.set('view', view); query.set('grouping', 'visits'); if (pageParam) query.set('cursor', pageParam); return apiRequest('GET', `${base}?${query}`, undefined, { signal }); }, getNextPageParam: page => page.nextCursor || undefined, enabled: Boolean(studentId) && !invalidRange, retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchOnReconnect: 'always' });
+  const domains = useQuery({ queryKey: [...key, 'domains'], queryFn: ({ signal }) => apiRequest('GET', `${base}/domains?${params}`, undefined, { signal }), enabled: !sourceKey && Boolean(studentId) && !invalidRange, retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchOnReconnect: 'always' });
+  const history = useInfiniteQuery({ queryKey: [...key, sourceKey ? 'observations' : view, 'visits'], initialPageParam: null, queryFn: ({ pageParam, signal }) => { const query = new URLSearchParams(params); query.set('limit', '100'); if (!sourceKey) { query.set('view', view); query.set('grouping', 'visits'); } if (pageParam) query.set('cursor', pageParam); return apiRequest('GET', `${base}?${query}`, undefined, { signal }); }, getNextPageParam: page => page.nextCursor || undefined, enabled: Boolean(studentId) && !invalidRange, retry: false, gcTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchOnReconnect: 'always' });
   const meta = history.data?.pages[0] || domains.data;
   const accessDenied = (history.error && historyFailure(history.error) === 'denied')
     || (domains.error && historyFailure(domains.error) === 'denied');
   const entries = history.error || accessDenied ? [] : history.data?.pages.flatMap(page => page.entries) || [];
   const state = accessDenied ? 'denied' : history.error ? historyFailure(history.error) : meta?.state;
-  const emptyText = state === 'empty' && !includeUnavailable
+  const emptyText = state === 'empty' && !includeUnavailable && !sourceKey
     ? 'No page details were recorded in the selected accessible dates. Include observations without page details to check for monitoring activity.'
     : stateText[state];
   const timeZone = meta?.timeZone || activeMembership?.schoolTimezone || 'America/New_York';
   const today = meta?.today || new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   return <div className="space-y-5" data-testid="student-browsing-history">
-    <div className="space-y-2"><h3 className="text-sm font-semibold">Browsing history</h3><div className="flex flex-wrap items-end gap-3">
+    <div className="space-y-2"><h3 className="text-sm font-semibold">{sourceKey ? `${windowsBrowserLabel(windowsSource)} browsing history` : 'Browsing history'}</h3><div className="flex flex-wrap items-end gap-3">
       <label className="space-y-1 text-xs"><span className="block">Start date</span><input type="date" aria-label="History start date" data-testid="history-start-date" value={dates.startDate || meta?.startDate || today} className="rounded-md border bg-background px-3 py-2 text-sm" onChange={event => setDates(previous => ({ startDate: event.target.value, endDate: previous.endDate || meta?.endDate || today }))} /></label>
       <label className="space-y-1 text-xs"><span className="block">End date</span><input type="date" aria-label="History end date" data-testid="history-end-date" value={dates.endDate || meta?.endDate || today} className="rounded-md border bg-background px-3 py-2 text-sm" onChange={event => setDates(previous => ({ startDate: previous.startDate || meta?.startDate || today, endDate: event.target.value }))} /></label>
       <Button size="sm" variant="outline" onClick={() => setDates({ startDate: '', endDate: '' })}>Today</Button>
@@ -54,16 +57,16 @@ export default function StudentBrowsingHistory({ studentId }) {
       {invalidRange && <p role="alert" className="text-sm text-destructive">The end date must be on or after the start date.</p>}
       {meta?.partiallyExpired && <p className="text-xs text-amber-700 dark:text-amber-400">Part of this date range has expired. Only retained observations are shown.</p>}
     </div>
-    <section className="space-y-2" aria-label="Top domains by day"><h4 className="text-sm font-medium">Top domains by day</h4>
+    {sourceKey ? <p className="text-xs text-muted-foreground">Domain summaries and grouped visits are not available for this Windows browser. Individual observations are shown below.</p> : <section className="space-y-2" aria-label="Top domains by day"><h4 className="text-sm font-medium">Top domains by day</h4>
       {domains.isPending && !invalidRange && <p className="text-xs text-muted-foreground">Loading day summaries…</p>}
       {!domains.error && !accessDenied && domains.data?.days?.map(day => <div key={day.date} className="rounded-lg border p-3"><p className="mb-2 text-sm font-medium">{day.date}</p><div className="space-y-1">{day.domains.map(domain => <div key={domain.domain} className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all">{domain.domain}{domain.contentCategory && <span className="ml-2 text-muted-foreground">{domain.contentCategory}</span>}</span><span className="shrink-0 text-muted-foreground">~{formatDuration(domain.seconds)}</span></div>)}</div></div>)}
       {!domains.error && !accessDenied && domains.data?.note && <p className="text-xs text-muted-foreground">{domains.data.note}</p>}
       {domains.error && <p className="text-xs text-muted-foreground">{stateText[historyFailure(domains.error)]}</p>}
-    </section>
-    <section className="space-y-2" aria-label="Observed browsing"><h4 className="text-sm font-medium">Observed page visits</h4><p className="text-xs text-muted-foreground">Consecutive observations of the same page are grouped into visits. Page changes, missing page details and connection gaps keep visits separate. Durations estimate time between observations at most 60 seconds apart; gaps and the final observation add no time.</p>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeUnavailable} onChange={event => setIncludeUnavailable(event.target.checked)} className="h-4 w-4 accent-primary" />Include observations without page details</label>
-      {!includeUnavailable && <p className="text-xs text-muted-foreground">Observations without a page URL or meaningful title are hidden. Select the option above to include them. Missing page details do not mean the student was offline.</p>}
-      {history.isPending && !invalidRange && <p role="status" className="text-sm">Loading visits…</p>}
+    </section>}
+    <section className="space-y-2" aria-label="Observed browsing"><h4 className="text-sm font-medium">{sourceKey ? 'Browser observations' : 'Observed page visits'}</h4>{!sourceKey && <p className="text-xs text-muted-foreground">Consecutive observations of the same page are grouped into visits. Page changes, missing page details and connection gaps keep visits separate. Durations estimate time between observations at most 60 seconds apart; gaps and the final observation add no time.</p>}
+      {!sourceKey && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeUnavailable} onChange={event => setIncludeUnavailable(event.target.checked)} className="h-4 w-4 accent-primary" />Include observations without page details</label>}
+      {!sourceKey && !includeUnavailable && <p className="text-xs text-muted-foreground">Observations without a page URL or meaningful title are hidden. Select the option above to include them. Missing page details do not mean the student was offline.</p>}
+      {history.isPending && !invalidRange && <p role="status" className="text-sm">Loading {sourceKey ? 'observations' : 'visits'}…</p>}
       {!history.isPending && !invalidRange && entries.length === 0 && emptyText && <p role={history.error ? 'alert' : 'status'} className="rounded-lg border p-5 text-sm text-muted-foreground">{emptyText}</p>}
       {entries.map(entry => { const link = safeLink(entry.activeTabUrl); return <article key={entry.id} className="space-y-1 rounded-lg border p-3" data-testid="history-observation"><div className="flex flex-wrap items-start justify-between gap-2"><p className="min-w-0 break-words text-sm font-medium">{getBrowsingActivityTitle(entry.activeTabTitle, entry.activeTabUrl)}</p>{(entry.hasOffTaskObservation || entry.aiCategory === 'non-educational') && <Badge variant="destructive">{entry.hasOffTaskObservation ? 'Off-task observed' : 'Off-task'}{entry.contentCategory ? `: ${entry.contentCategory}` : ''}</Badge>}</div>
         {link ? <a href={link} target="_blank" rel="noopener noreferrer" className="block break-all text-xs text-primary underline">{entry.activeTabUrl}</a> : <p className="break-all text-xs text-muted-foreground">{entry.activeTabUrl || 'No page URL recorded'}</p>}
@@ -71,8 +74,8 @@ export default function StudentBrowsingHistory({ studentId }) {
       </article>; })}
       {history.error && entries.length > 0 && <p role="alert" className="text-sm text-destructive">{stateText[state]}</p>}
       {history.error && <Button variant="outline" size="sm" onClick={() => history.refetch()}>Retry history</Button>}
-      {!history.error && !accessDenied && history.hasNextPage && <Button variant="outline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? 'Loading…' : 'Load older visits'}</Button>}
-      {entries.length > 0 && <p className="text-xs text-muted-foreground">Showing {entries.length} {includeUnavailable ? 'visits and observations' : entries.length === 1 ? 'visit' : 'visits'}{history.hasNextPage ? '' : ' · End of retained results'}</p>}
+      {!history.error && !accessDenied && history.hasNextPage && <Button variant="outline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? 'Loading…' : sourceKey ? 'Load older observations' : 'Load older visits'}</Button>}
+      {entries.length > 0 && <p className="text-xs text-muted-foreground">Showing {entries.length} {sourceKey ? 'observations' : includeUnavailable ? 'visits and observations' : entries.length === 1 ? 'visit' : 'visits'}{history.hasNextPage ? '' : ' · End of retained results'}</p>}
     </section>
   </div>;
 }

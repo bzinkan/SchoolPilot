@@ -149,6 +149,7 @@ export async function buildStudentFabState(
     studentSessionId?: string | null;
     dbInstance?: typeof db;
     acceptedCapabilities?: readonly string[];
+    windowsDeviceId?: string;
   } = {}
 ) {
   const authority = await getClasspilotFabAuthoritySnapshot(
@@ -171,7 +172,9 @@ export async function buildStudentFabState(
       const snapshot = snapshots.get(studentId);
       acceptedCapabilities = snapshot?.status === "hit" && classpilotRealtimeFresh(snapshot.snapshot) ? snapshot.snapshot.acceptedCapabilities : [];
   }
-  const toolsSnapshot = (context: { teachingSessionId: string } | { supervisionContextId: string }) => authority.studentSession && studentSessionId === authority.studentSession.id
+  const toolsSnapshot = (context: { teachingSessionId: string } | { supervisionContextId: string }) => options.windowsDeviceId && studentSessionId
+    ? readStudentToolsSnapshot({ schoolId, studentId, studentSessionId, deviceId: options.windowsDeviceId, authority: context }, options.dbInstance, acceptedCapabilities)
+    : authority.studentSession && studentSessionId === authority.studentSession.id
     ? readStudentToolsSnapshot({ schoolId, studentId, studentSessionId, deviceId: authority.studentSession.deviceId, authority: context }, options.dbInstance, acceptedCapabilities) : null;
   if (supervision) {
     if (scheduledContextHasClassroomTools(supervision.context) && acceptedCapabilities?.includes("scheduledClassroomV1")) {

@@ -165,7 +165,7 @@ test('classroom commands queue one targeted preview fallback instead of cohort r
   const refresh = dashboardSource.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.match(refresh, /queueTargetedScreenshotRefresh/);
-  assert.match(refresh, /targetStudents\.map\(\(student\) => student\.studentId\)/);
+  assert.match(refresh, /targetStudents\.filter\(student => !student\.windowsBrowserMode\)\.map\(\(student\) => student\.studentId\)/);
   assert.doesNotMatch(refresh, /invalidateQueries|\[1000, 2000, 3000, 5000, 8000\]/);
 
   const tileSource = readFileSync(

@@ -9,6 +9,9 @@ import { classpilotUsageRollupsMigration } from "./classpilotUsageRollupsMigrati
 import { classpilotUsageRollupDaysMigration } from "./classpilotUsageRollupDaysMigration.js";
 import { classpilotHeartbeatScreenshotEvidenceMigration } from "./classpilotHeartbeatScreenshotEvidenceMigration.js";
 import { classpilotPrivateChatLifecycleMigration } from "./classpilotPrivateChatLifecycleMigration.js";
+import { classpilotWindowsBrowserMigration } from "./classpilotWindowsBrowserMigration.js";
+import { classpilotWindowsActivityParentsMigration } from "./classpilotWindowsActivityParentsMigration.js";
+import { classpilotWindowsHistoryMigration } from "./classpilotWindowsHistoryMigration.js";
 import { classpilotNativeVisibilityMigration } from "./classpilotNativeVisibilityMigration.js";
 import { passpilotAppointmentsMigration } from "./passpilotAppointmentsMigration.js";
 import { classpilotDashboardThemeMigration } from "./classpilotDashboardThemeMigration.js";
@@ -560,6 +563,9 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotDashboardThemeLibraryMigration,
   classpilotNativeVisibilityMigration,
   classpilotAutomaticFlightPathMigration,
+  classpilotWindowsBrowserMigration,
+  classpilotWindowsHistoryMigration,
+  classpilotWindowsActivityParentsMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

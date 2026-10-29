@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getWindowsReportSessions } from "./classpilotWindowsReporting.js";
 import {
   and,
   asc,
@@ -1817,7 +1818,8 @@ async function loadReadOnlyProvisionalContext(options: {
       studentName: row.studentName || "Unknown student",
       capturedAt: row.capturedAt,
     })),
-    authenticatedSessions,
+    authenticatedSessions: [...authenticatedSessions, ...await getWindowsReportSessions(
+      options.dbInstance, options.schoolId, studentIds, options.windowStart, options.windowEnd)],
     heartbeats: [],
     aiDecisions: [],
     evidenceArtifacts: [],
@@ -2058,7 +2060,8 @@ async function materializeReadOnlyProvisionalUsage(options: {
               studentIds,
               windowStart,
               windowEnd,
-              options.dbInstance
+              options.dbInstance,
+              { teachingSessionId: candidate.session.id },
             );
         const input: ClasspilotSessionReportInput = {
           ...context,

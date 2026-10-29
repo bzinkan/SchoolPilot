@@ -30,6 +30,78 @@ import {
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 7, 13, 14, 0, seconds));
 
+test("Windows focused intervals do not inherit grace, overlap twice, or extend past server authority", () => {
+  for (const calculate of [calculateHeartbeatCoverage, calculateHeartbeatCoverageV1]) {
+    const result = calculate({ windowStart: at(0), windowEnd: at(90),
+      authenticatedIntervals: [{ start: at(0), end: at(90) }],
+      heartbeats: [
+        { timestamp: at(20), usageEndsAt: at(30), url: "https://lesson.example/long" },
+        { timestamp: at(25), usageEndsAt: at(27), url: "https://short.example/edge" },
+        { timestamp: at(60), usageEndsAt: at(65), url: "https://lesson.example/boundary" },
+      ],
+    });
+    assert.equal(result.observedSeconds, 15);
+    assert.equal(result.gapSeconds, 75);
+    assert.equal(result.topDomains.reduce((sum, row) => sum + row.seconds, 0), 15);
+    assert.equal(result.topDomains.find(row => row.domain === "lesson.example")?.seconds, 13);
+    assert.equal(result.topDomains.find(row => row.domain === "short.example")?.seconds, 2);
+  }
+});
+
+test("simultaneous Windows observations retain the longer interval without double counting", () => {
+  const result = calculateHeartbeatCoverage({ windowStart: at(0), windowEnd: at(60),
+    authenticatedIntervals: [{ start: at(0), end: at(60) }],
+    heartbeats: [
+      { timestamp: at(10), usageEndsAt: at(20), url: "https://a.example/" },
+      { timestamp: at(10), usageEndsAt: at(12), url: "https://z.example/" },
+    ],
+  });
+  assert.equal(result.observedSeconds, 10);
+  assert.equal(result.topDomains.reduce((sum, row) => sum + row.seconds, 0), 10);
+});
+
+test("Windows attribution respects delegated exclusions and guard expiry", () => {
+  const result = calculateHeartbeatCoverage({ windowStart: at(0), windowEnd: at(60),
+    authenticatedIntervals: [{ start: at(10), end: at(28) }],
+    excludedIntervals: [{ start: at(15), end: at(20) }],
+    heartbeats: [
+      { timestamp: at(10), usageEndsAt: at(20), url: "https://lesson.example/" },
+      { timestamp: at(20), usageEndsAt: at(30), url: "https://lesson.example/" },
+    ],
+  });
+  assert.equal(result.eligibleSeconds, 13);
+  assert.equal(result.observedSeconds, 13);
+  assert.equal(result.topDomains[0]?.seconds, 13);
+  assert.equal(result.offTaskSeconds, 0);
+});
+
+test("mixed owner handoffs never add overlapping domains or revive a clipped Windows tail", () => {
+  for (const calculate of [calculateHeartbeatCoverage, calculateHeartbeatCoverageV1]) {
+    const legacySeconds = calculate === calculateHeartbeatCoverageV1 ? 10 : 15;
+    const windowsToLegacy = calculate({ windowStart: at(0), windowEnd: at(60),
+      authenticatedIntervals: [{ start: at(0), end: at(4) }, { start: at(4), end: at(60) }],
+      heartbeats: [
+        { timestamp: at(0), usageEndsAt: at(4), url: "https://windows.example/" },
+        { timestamp: at(4), url: "https://legacy.example/" },
+      ] });
+    assert.equal(windowsToLegacy.topDomains.find(row => row.domain === "windows.example")?.seconds, 4);
+    assert.equal(windowsToLegacy.topDomains.find(row => row.domain === "legacy.example")?.seconds, legacySeconds,
+      "each report version preserves its existing legacy attribution bound");
+    assert.equal(windowsToLegacy.topDomains.reduce((sum, row) => sum + row.seconds, 0), 4 + legacySeconds);
+    const legacyToWindows = calculate({ windowStart: at(0), windowEnd: at(60),
+      authenticatedIntervals: [{ start: at(0), end: at(5) }, { start: at(5), end: at(60) }],
+      heartbeats: [
+        { timestamp: at(0), url: "https://legacy.example/" },
+        { timestamp: at(5), usageEndsAt: at(15), url: "https://windows.example/" },
+      ] });
+    assert.equal(legacyToWindows.topDomains.find(row => row.domain === "legacy.example")?.seconds,
+      calculate === calculateHeartbeatCoverageV1 ? 10 : 5);
+    assert.equal(legacyToWindows.topDomains.find(row => row.domain === "windows.example")?.seconds,
+      calculate === calculateHeartbeatCoverageV1 ? 5 : 10);
+    assert.equal(legacyToWindows.topDomains.reduce((sum, row) => sum + row.seconds, 0), 15);
+  }
+});
+
 const typedTeachingSession: TeachingSession = {
   id: "teaching-session",
   groupId: "group",
@@ -94,6 +166,32 @@ const typedSessionReport: ClasspilotSessionReport = {
   createdAt: at(0),
   updatedAt: at(60),
 };
+
+test("overlapping Windows Chrome and Edge reports match only the observation's exact browser evidence", () => {
+  const input: ClasspilotSessionReportInput = {
+    session: typedTeachingSession,
+    roster: [{ studentId: "student", studentName: "Student", capturedAt: at(0) }],
+    authenticatedSessions: ["chrome", "edge"].map(id => ({ id, studentId: "student", startedAt: at(0), endedAt: at(60), lastSeenAt: at(60) })),
+    heartbeats: [{ id: "event", studentId: "student", timestamp: at(10), usageEndsAt: at(20),
+      activeTabUrl: "https://unsafe.example/", aiCategory: "non-educational", safetyAlert: "violence",
+      observationSource: "windows_browser", authenticatedSessionId: "edge" }],
+    aiDecisions: [{ id: "decision", heartbeatId: "event", studentId: "student", domain: "unsafe.example",
+      category: "non-educational", safetyAlert: "violence", teacherIntentSource: null, reviewStatus: "confirmed", createdAt: at(11) }],
+    evidenceArtifacts: [{ studentId: "student", studentSessionId: "chrome", sourceId: "event", status: "available" }],
+    exclusions: [], monitoringEvents: [], trackingPolicy: { enableTrackingHours: false, trackingStartTime: null,
+      trackingEndTime: null, trackingDays: [], schoolTimezone: "UTC", afterHoursMode: "off" },
+  };
+  const report = () => materializeStudents(typedSessionReport, input)[0]!;
+  assert.equal(report().safetyAlerts[0]?.evidenceAvailability, "unavailable", "overlapping sibling browser cannot supply evidence");
+  assert.equal(report().safetyAlerts[0]?.reviewStatus, "Confirmed");
+  input.evidenceArtifacts[0]!.studentSessionId = "edge";
+  assert.equal(report().safetyAlerts[0]?.evidenceAvailability, "available");
+  input.evidenceArtifacts[0]!.sourceId = "another-event";
+  assert.equal(report().safetyAlerts[0]?.evidenceAvailability, "unavailable");
+  input.evidenceArtifacts[0]!.sourceId = "event";
+  delete input.heartbeats[0]!.authenticatedSessionId;
+  assert.equal(report().safetyAlerts[0]?.evidenceAvailability, "unavailable", "missing exact browser identity fails closed");
+});
 
 test("heartbeat-coverage-v2 uses an exact sixty-second healthy boundary", () => {
   assert.equal(HEARTBEAT_COVERAGE_ALGORITHM_VERSION, "heartbeat-coverage-v2");

@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import pg from "pg";
 import { createFairMainPoolClass, shouldScheduleUsagePool } from "./db/fairMainPool.js";
 import { getUsageCapacityOperation } from "./services/usageCapacityDiagnostics.js";
@@ -182,7 +183,26 @@ const globalDb = drizzle(pool, {
   logger: databaseQueryDiagnosticsEnabled ? redactedQueryLogger : false,
 });
 
+const explicitTransaction = new AsyncLocalStorage<{ database: typeof globalDb; active: boolean; afterCommit: Array<() => Promise<unknown>> }>();
+/** Keep composed storage helpers on the transaction whose authority locks they use. */
+export async function runWithDatabaseTransaction<T>(database: typeof globalDb, action: () => Promise<T>, afterCommit: Array<() => Promise<unknown>>): Promise<T> {
+  const scope = { database, active: true, afterCommit };
+  return explicitTransaction.run(scope, async () => {
+    try { return await action(); } finally { scope.active = false; }
+  });
+}
+export function deferUntilDatabaseCommit(action: () => Promise<unknown>): void {
+  const scope = explicitTransaction.getStore();
+  if (!scope?.active) throw new Error("A live transaction is required for deferred work");
+  scope.afterCommit.push(action);
+}
+
 function resolveDb(): typeof globalDb {
+  const transaction = explicitTransaction.getStore();
+  if (transaction) {
+    if (!transaction.active) throw new Error("Database transaction scope has ended");
+    return transaction.database;
+  }
   if (rlsGucEnabled()) {
     const store = getTenantStore();
     if (store) return store.db as typeof globalDb;

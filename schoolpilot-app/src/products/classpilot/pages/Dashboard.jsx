@@ -11,6 +11,7 @@ import StudentTileSkeleton from '../components/StudentTileSkeleton';
 import VideoPortal from '../components/VideoPortal';
 import ScreenshotPreviewDialog from '../components/ScreenshotPreviewDialog';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
+import WindowsBrowserHistoryDrawer from '../components/WindowsBrowserHistoryDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import TemporaryRoomDialog from '../components/TemporaryRoomDialog';
@@ -179,6 +180,10 @@ import {
 } from '../lib/scheduleChanges';
 import { useObservationLease, CLASSPILOT_TRANSPORT_RECOVERED_EVENT } from '../hooks/useObservationLease';
 import { useDesktopMetadata } from '../hooks/useDesktopMetadata';
+import { useWindowsBrowsers } from '../hooks/useWindowsBrowsers';
+import { projectWindowsBrowserStudent, windowsBrowserScopeKey, windowsBrowserSources, windowsBrowserSourceKey,
+  partitionWindowsBrowserCommand, WINDOWS_POLICY_COMMANDS, WINDOWS_TAB_COMMANDS, windowsBrowserLabel,
+  pendingWindowsCommandOutcomes, readWindowsCommandOutcome, windowsLegacyOwner } from '../lib/windowsBrowsers';
 import { desktopSourceKey } from '../lib/nativeDesktop';
 import { useClasspilotPreviewRecovery } from '../hooks/useClasspilotPreviewRecovery';
 import { useClassTools } from '../hooks/useClassTools';
@@ -512,6 +517,7 @@ export default function Dashboard() {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [expandedScreenshot, setExpandedScreenshot] = useState(null);
   const [previewSourceSelections, setPreviewSourceSelections] = useState({});
+  const [windowsBrowserSelections, setWindowsBrowserSelections] = useState({});
   const updatePreviewSourceSelection = (studentId, update) => setPreviewSourceSelections(current => {
     const previous = current[studentId];
     const next = typeof update === 'function' ? update(previous) : update;
@@ -776,6 +782,7 @@ export default function Dashboard() {
   const graceReconciliationLatchRef = useRef({ scopeKey: null, cohortActive: false });
   const commandExpiryTimeoutRef = useRef(null);
   const transientCommandOutcomesRef = useRef(new Map());
+  const windowsFinalStatusReadsRef = useRef(new Set());
   const knownClassroomCommandIdsRef = useRef(new Set());
   const aggregatedStudentsQueryKeyRef = useRef(null);
   const activeSchoolIdRef = useRef(null);
@@ -1110,7 +1117,7 @@ export default function Dashboard() {
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'claimed',
     refetchInterval: 10000,
   });
-  const claimedPickupStudents = useMemo(() => {
+  const rawClaimedPickupStudents = useMemo(() => {
     const contextIds = new Set(displaySupervisionContexts.map(context => context.id));
     return [...new Map(allClaimedPickupStudents.filter(student => (
       // The endpoint is personal, including for admins. Keep a second check
@@ -1170,8 +1177,8 @@ export default function Dashboard() {
   const effectiveAuthorityKey = JSON.stringify([activityAuthorityKey(effectiveAuthority), contextAuthorityRevision]);
   const activityScopeKey = JSON.stringify([classReaderKey, effectiveAuthorityKey]);
   const commandControlScopeKey = JSON.stringify([activityScopeKey, studentView,
-    studentView === 'claimed' ? claimedPickupStudents.map((student) => [student.studentId, student.contextId,
-      student.contextAuthorityRevision ?? student.supervisionContext?.contextAuthorityRevision ?? null]).sort() : []]);
+    studentView === 'claimed' ? rawClaimedPickupStudents.map((student) => [student.studentId, student.contextId,
+      student.contextAuthorityRevision ?? student.supervisionContext?.contextAuthorityRevision ?? null]).sort() : [], windowsBrowserSelections]);
   const commandControlScopeRef = useRef(commandControlScopeKey);
   const tabCommandUpdatesRef = useRef(new Map());
   const [lastTabActionResult, setLastTabActionResult] = useState(null);
@@ -1614,7 +1621,49 @@ export default function Dashboard() {
     isError: studentsQueryError,
     studentView,
   });
-  const students = studentsSnapshot ?? EMPTY_LIST;
+  const windowsRoster = useMemo(() => (studentView === 'claimed' ? rawClaimedPickupStudents : studentsSnapshot || EMPTY_LIST)
+    .filter(student => !isStudentMonitoringSuppressed(student)), [studentView, rawClaimedPickupStudents, studentsSnapshot, isStudentMonitoringSuppressed]);
+  const windowsClaimedContexts = useMemo(() => studentView === 'claimed'
+    ? new Map(claimedPreviewContextsFromRoster(displaySupervisionContexts, rawClaimedPickupStudents).map(context => [context.id, context])) : undefined,
+  [studentView, displaySupervisionContexts, rawClaimedPickupStudents]);
+  const windowsByStudent = useWindowsBrowsers({ enabled: studentView === 'claimed'
+    ? windowsClaimedContexts.size > 0 : studentView === 'class' && Boolean(effectiveActivity?.id) && !terminalSessionError,
+  students: windowsRoster, schoolId: activeSchoolId, viewerId: currentUser?.id, authority: effectiveAuthority,
+  contextAuthorityRevision, claimedContexts: windowsClaimedContexts, selections: windowsBrowserSelections });
+  useEffect(() => {
+    setWindowsBrowserSelections(current => {
+      let next = current;
+      for (const [studentId, entry] of windowsByStudent) {
+        const sources = windowsBrowserSources(entry.browserSources);
+        if (!sources.length) continue;
+        const scopeKey = windowsBrowserScopeKey(entry.contextKey, studentId);
+        if (current[studentId]?.scopeKey === scopeKey) continue;
+        if (next === current) next = { ...current };
+        next[studentId] = { scopeKey, ...(sources.length === 1 ? { sourceRef: sources[0].sourceRef,
+          bindingRevision: sources[0].bindingRevision, browserFamily: sources[0].browserFamily } : {}) };
+      }
+      return next;
+    });
+  }, [windowsByStudent]);
+  const students = useMemo(() => (studentsSnapshot || EMPTY_LIST).map(student => projectWindowsBrowserStudent(student,
+    windowsByStudent.get(student.studentId), windowsBrowserSelections[student.studentId])), [studentsSnapshot, windowsByStudent, windowsBrowserSelections]);
+  const claimedPickupStudents = useMemo(() => rawClaimedPickupStudents.map(student => projectWindowsBrowserStudent(student,
+    windowsByStudent.get(student.studentId), windowsBrowserSelections[student.studentId])), [rawClaimedPickupStudents, windowsByStudent, windowsBrowserSelections]);
+  const selectWindowsBrowser = (student, source) => {
+    const legacyOwner = windowsLegacyOwner(source);
+    if (legacyOwner && student.windowsLegacyHandoff?.realtimeBinding === legacyOwner.realtimeBinding) {
+      setWindowsBrowserSelections(current => ({ ...current, [student.studentId]: { scopeKey: student.windowsBrowserScopeKey, ...legacyOwner } }));
+      return;
+    }
+    if (!source) {
+      setWindowsBrowserSelections(current => current[student.studentId]
+        ? { ...current, [student.studentId]: { ...current[student.studentId], active: false } } : current);
+      return;
+    }
+    if (!windowsBrowserSourceKey(source)) return;
+    setWindowsBrowserSelections(current => ({ ...current, [student.studentId]: { scopeKey: student.windowsBrowserScopeKey,
+      sourceRef: source.sourceRef, bindingRevision: source.bindingRevision, browserFamily: source.browserFamily, active: true } }));
+  };
   const studentsRequestId = requestIdFromError(studentsError);
   const selectedStudentRoster = studentView === 'class'
     ? students
@@ -2941,6 +2990,7 @@ export default function Dashboard() {
   useLayoutEffect(() => {
     knownClassroomCommandIdsRef.current.clear();
     transientCommandOutcomesRef.current = new Map();
+    windowsFinalStatusReadsRef.current.clear();
     setTransientPendingControls({ timer: false, poll: false });
     setTimerActive(false);
     setTimerSnapshot(null);
@@ -2988,6 +3038,58 @@ export default function Dashboard() {
     };
   }, [transientCommandVersion, toast]);
 
+  // Windows children do not publish into the Chromebook student socket cache.
+  // Read only the commands this view issued, keeping their original authority
+  // and exact target tuples through acknowledgement and partial failures.
+  useEffect(() => {
+    const controller = new AbortController();
+    let stopped = false;
+    let timer;
+    let reading = false;
+    const scope = commandControlScopeKey;
+    const tick = async () => {
+      if (stopped || reading || document.visibilityState !== 'visible') return;
+      reading = true;
+      for (const id of windowsFinalStatusReadsRef.current) if (!transientCommandOutcomesRef.current.has(id)) windowsFinalStatusReadsRef.current.delete(id);
+      const entries = pendingWindowsCommandOutcomes(transientCommandOutcomesRef.current, windowsFinalStatusReadsRef.current);
+      await Promise.all(entries.map(async entry => {
+        try {
+          const command = entry.command;
+          const authority = command.teachingSessionId ? { teachingSessionId: command.teachingSessionId }
+            : { supervisionContextId: command.supervisionContextId };
+          const data = await readWindowsCommandOutcome(entry, { finalReads: windowsFinalStatusReadsRef.current, signal: controller.signal,
+            read: () => requestActivityApi('GET', `/classpilot/windows/commands/${encodeURIComponent(command.id)}?${activityAuthorityQuery(authority)}`,
+              undefined, { signal: controller.signal, contextAuthorityRevision: command.contextAuthorityRevision }) });
+          if (stopped || scope !== commandControlScopeRef.current || data?.command?.id !== command.id) return;
+          const targetKey = target => JSON.stringify([target.studentId, target.sourceRef, target.bindingRevision]);
+          const expected = command.targets.map(targetKey).sort();
+          if (JSON.stringify(data.command.targets?.map(targetKey).sort()) !== JSON.stringify(expected)) return;
+          const before = transientCommandOutcomesRef.current;
+          const previous = before.get(command.id);
+          if (JSON.stringify(previous?.command?.targets) === JSON.stringify(data.command.targets)) return;
+          const after = applyTransientCommandUpdate(before, data);
+          transientCommandOutcomesRef.current = after;
+          setTransientPendingControls(pendingTransientControls(after));
+          setTransientCommandVersion(version => version + 1);
+          setLastTabActionResult(current => current ? mergeCommandUpdateIntoBatches([current], data)[0] : current);
+          const timerEffect = latestTransientClassroomUiEffect(after, 'timer');
+          const pollEffect = latestTransientClassroomUiEffect(after, 'poll');
+          if (command.commandType === 'timer' && timerEffect) { setTimerActive(timerEffect.active === true); setTimerSnapshot(timerEffect.active ? timerEffect.timer : null); }
+          if (command.commandType === 'poll' && pollEffect) setActivePoll(pollEffect.active ? pollEffect.poll : null);
+          if (data.command.targets.some(target => ['failed', 'unavailable', 'expired'].includes(target.status))) {
+            toast(transientEntryFeedback(after.get(command.id), commandStudentNames(tileLockStudentsRef.current.values())));
+          }
+        } catch { /* A failed status read never retries or resends the command. */ }
+      }));
+      reading = false;
+      if (!stopped && entries.length) timer = setTimeout(tick, 5_000);
+    };
+    const visible = () => { clearTimeout(timer); if (document.visibilityState === 'visible') timer = setTimeout(tick, 0); };
+    timer = setTimeout(tick, 2_000);
+    document.addEventListener('visibilitychange', visible);
+    return () => { stopped = true; controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
+  }, [commandControlScopeKey, transientCommandVersion, toast]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Check if student is off-task
   const isStudentOffTask = (student) => {
     const monitoring = studentView === 'class'
@@ -3020,6 +3122,8 @@ export default function Dashboard() {
   );
   const isStudentCommandable = (student, { allowSafetyUnlock = false } = {}) => {
     if (!isStudentStructurallyCommandable(student)) return false;
+    if (student.windowsBrowserMode) return !student.windowsBrowserUnavailable && student.windowsBrowserSources.some(source =>
+      deriveStudentMonitoringDisplay(source, freshnessNowMs).telemetryCurrent);
     const display = studentView === 'class'
       ? monitoringDisplayFor(student)
       : deriveStudentMonitoringDisplay(student, freshnessNowMs);
@@ -3405,7 +3509,14 @@ export default function Dashboard() {
     commandType,
     commandPayload = {},
     { allowSafetyUnlock = false } = {},
-  ) => (
+  ) => {
+    if (student.windowsBrowserMode) {
+      if (!isStudentStructurallyCommandable(student) || student.windowsBrowserUnavailable) return false;
+      if (WINDOWS_TAB_COMMANDS.has(commandType)) return Boolean(student.selectedWindowsBrowser)
+        && deriveStudentMonitoringDisplay(student.selectedWindowsBrowser, freshnessNowMs).telemetryCurrent;
+      if (WINDOWS_POLICY_COMMANDS.has(commandType)) return student.windowsBrowserSources.some(source => source.isLoggedIn);
+    }
+    return (
     (!scheduledSupervisionId || ['open-tab', 'close-tabs', 'lock-screen', 'unlock-screen', 'apply-flight-path', 'remove-flight-path', 'apply-block-list', 'remove-block-list', 'teacher-message'].includes(commandType)
       || studentSupportsScheduledClassroom(student))
     && (isStudentCommandable(student, { allowSafetyUnlock: allowSafetyUnlock || (commandType === 'unlock-screen' && commandPayload.screenOnly === true) })
@@ -3413,7 +3524,8 @@ export default function Dashboard() {
       commandSupportsLateSignInRestriction(commandType, commandPayload)
       && isStudentLateSignInRestrictionEligible(student)
     ))
-  );
+    );
+  };
 
   const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const matchesStudentSearch = (student) => {
@@ -3723,7 +3835,7 @@ export default function Dashboard() {
   // preview work uses this subset; historical reads keep their own authority.
   const eligibleScreenshotStudentBindingsKey = JSON.stringify(
     screenshotTileQueryStudents
-      .filter((student) => scheduledClientSupported(student) && isStudentScreenshotReadEligible(student, isStudentMonitoringSuppressed(student)))
+      .filter((student) => !student.windowsBrowserMode && !student.windowsDiscoveryPending && scheduledClientSupported(student) && isStudentScreenshotReadEligible(student, isStudentMonitoringSuppressed(student)))
       .map((student) => ({
         studentId: student.studentId,
         realtimeBinding: student.realtimeBinding || '',
@@ -3735,7 +3847,7 @@ export default function Dashboard() {
     JSON.parse(eligibleScreenshotStudentBindingsKey).map((student) => student.studentId),
   ), [eligibleScreenshotStudentBindingsKey]);
   const historyTileStudentBindingsKey = JSON.stringify(
-    historyTileQueryStudents
+    historyTileQueryStudents.filter(student => !student.windowsBrowserMode && !student.windowsDiscoveryPending)
       .map((student) => ({
         studentId: student.studentId,
         realtimeBinding: student.realtimeBinding || '',
@@ -4422,6 +4534,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     select: (data) => data?.tiles?.[0]?.heartbeats || [],
     enabled: Boolean(
       selectedStudentRow?.studentId
+      && !selectedStudentRow.windowsBrowserMode
       && !selectedStudentHistoryRevoked
       && studentView !== 'available'
       && (studentView !== 'class' || detailHistoryTeachingSessionId || adminSchoolMode)
@@ -5456,7 +5569,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     // bounded targeted fallback for a missed event; never burst-refetch the
     // whole cohort after a classroom command.
     queueTargetedScreenshotRefresh(
-      targetStudents.map((student) => student.studentId).filter(Boolean),
+      targetStudents.filter(student => !student.windowsBrowserMode).map((student) => student.studentId).filter(Boolean),
     );
   };
 
@@ -5495,7 +5608,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     // Name the students whose ClassPilot extension must update before a
     // precise Waypoint or Flight Path can reach them.
     const { unsupportedStudentIds, ...feedbackFields } = textFeedback;
-    const deliveryFeedback = unsupportedStudentIds?.length > 0
+    const deliveryFeedback = targets.some(target => target.sourceRef) ? {
+      ...feedbackFields,
+      description: <div className="space-y-1" data-testid="browser-command-outcomes">
+        <p>{new Set(targets.map(target => target.studentId)).size} student(s) · {targets.length} browser target(s)</p>
+        <ul className="list-disc pl-4 text-xs">{targets.map((target, index) => <li key={`${target.studentId}:${target.sourceRef || 'legacy'}:${index}`}>
+          {studentNames[target.studentId] || 'Student'} · {target.sourceRef ? windowsBrowserLabel(target) : 'Chromebook'}: {target.status}
+          {target.errorMessage || target.error ? ` — ${target.errorMessage || target.error}` : ''}</li>)}</ul>
+      </div>,
+    } : unsupportedStudentIds?.length > 0
       ? {
           ...feedbackFields,
           description: (
@@ -5523,12 +5644,29 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     return decorated;
   };
 
+  const dispatchBrowserAwareCommand = async (request, rows, authority, legacyEndpoint, revision = contextAuthorityRevision) => {
+    const parts = partitionWindowsBrowserCommand({ request, students: rows, authority, legacyEndpoint,
+      preferWindowsTools: commandAudienceIsServerDerived(request.commandType, request.commandPayload)
+        && recipientStudents().some(student => student.windowsBrowserMode) });
+    const settlements = await Promise.allSettled(parts.map(async part => {
+      const data = await requestActivityApi('POST', part.endpoint, part.body, { contextAuthorityRevision: revision });
+      return part.windows && data.command ? { ...data, command: { ...data.command, ...authority, transport: 'windows',
+        contextAuthorityRevision: revision } } : data;
+    }));
+    if (parts.length === 1) {
+      if (settlements[0].status === 'rejected') throw settlements[0].reason;
+      return settlements[0].value;
+    }
+    return combineCommandSettlements(settlements, parts.map(part => ({ id: authority.supervisionContextId,
+      targetStudentIds: part.targetStudentIds })), request.commandType);
+  };
   const postClassroomCommand = async (commandType, commandPayload, options = {}) => {
     const { request, target } = buildCommandRequest(commandType, commandPayload, options);
     const commandAuthorityKey = activityAuthorityKey(request);
     const commandScope = activityScopeKey;
     const commandFocusScope = commandControlScopeKey;
-    const data = await requestActivityApi('POST', '/commands', request).catch((error) => {
+    const data = await dispatchBrowserAwareCommand(request, recipientStudents().filter(student => target.targetStudentIds.includes(student.studentId)),
+      effectiveAuthority, '/commands').catch((error) => {
       // Preserve the response/code for scoped recovery, while mutation toasts
       // show the server's public refusal instead of Axios's status-only text.
       const reason = error?.response?.data?.error;
@@ -5551,13 +5689,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     const commandFocusScope = commandControlScopeKey;
     const target = resolveActiveCommandTarget(options.studentIds ?? null, { commandType, commandPayload });
     const settlements = await Promise.allSettled(target.groups.map((group) =>
-      apiRequest('POST', `/coverage/contexts/${group.id}/commands`, {
+      dispatchBrowserAwareCommand({
         targetScope: "students",
         targetStudentIds: group.targetStudentIds,
         commandType,
         commandPayload: commandType === 'activate-tab'
           ? exactTabPayloadForStudents(commandPayload, group.targetStudentIds) : commandPayload,
-      })
+      }, claimedPickupStudents.filter(student => group.targetStudentIds.includes(student.studentId)),
+      { supervisionContextId: group.id }, `/coverage/contexts/${group.id}/commands`, claimedPreviewContextById.get(group.id)?.contextAuthorityRevision)
     ));
     if (commandScope !== activityScopeRef.current || commandFocusScope !== commandControlScopeRef.current) {
       throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
@@ -6289,7 +6428,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           assertCurrent();
           const authority = activityAuthority(command) || activityAuthority({ teachingSessionId: command.sessionId }) || effectiveAuthority;
           const context = claimedPreviewContextById.get(authority?.supervisionContextId);
-          return requestActivityApi('GET', `/classpilot/commands/${encodeURIComponent(command.id)}/status?${activityAuthorityQuery(authority)}`,
+          return requestActivityApi('GET', `${command.transport === 'windows' ? '/classpilot/windows/commands' : '/classpilot/commands'}/${encodeURIComponent(command.id)}${command.transport === 'windows' ? '' : '/status'}?${activityAuthorityQuery(authority)}`,
             undefined, { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
         },
       });
@@ -7404,7 +7543,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               readCommand={(command, signal) => {
                 const authority = activityAuthority(command) || activityAuthority({ teachingSessionId: command.sessionId }) || effectiveAuthority;
                 const context = claimedPreviewContextById.get(authority?.supervisionContextId);
-                return requestActivityApi('GET', `/classpilot/commands/${encodeURIComponent(command.id)}/status?${activityAuthorityQuery(authority)}`, undefined,
+                return requestActivityApi('GET', `${command.transport === 'windows' ? '/classpilot/windows/commands' : '/classpilot/commands'}/${encodeURIComponent(command.id)}${command.transport === 'windows' ? '' : '/status'}?${activityAuthorityQuery(authority)}`, undefined,
                   { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
               }}
             />}
@@ -8009,6 +8148,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     automaticFlightPath={supervisedElsewhere ? null : automaticFlightPathStudents.get(student.studentId)}
                     desktop={supervisedElsewhere ? null : desktopByStudent.get(student.studentId) || null}
                     previewSourceSelection={previewSourceSelections[student.studentId]}
+                    onWindowsBrowserSelection={source => selectWindowsBrowser(student, source)}
                     onPreviewSourceSelection={update => updatePreviewSourceSelection(student.studentId, update)}
                     onOpenDetails={tileDetailsRevoked
                       ? undefined
@@ -8039,7 +8179,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         : current
                     )) : undefined}
                     onAllowDomain={tileActionsDisabled ? undefined : handleAllowDomain}
-                    onManageTabs={!tileActionsDisabled && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
+                    onManageTabs={!tileActionsDisabled && (!student.windowsBrowserMode || student.selectedWindowsBrowser) && dashboardCapabilities.allows('close-tabs') ? () => openManageTabs([student.studentId]) : undefined}
                     onCommand={tileActionsDisabled ? undefined : handleTileCommand}
                     onLockAction={tileActionsDisabled ? undefined : (action) => tileLockActionRef.current?.(student.studentId, action)}
                     lockOperation={tileLockOperations[student.studentId]}
@@ -8065,7 +8205,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     screenshotData={tileScreenshotRevoked || screenshotRefreshState?.hardDenied
                       ? null
                       : screenshotsByStudent.get(student.studentId) || null}
-                    onOpenScreenshot={tileScreenshotRevoked || screenshotRefreshState?.hardDenied
+                    onOpenScreenshot={student.windowsBrowserMode || tileScreenshotRevoked || screenshotRefreshState?.hardDenied
                       ? undefined
                       : (opener) => openExpandedScreenshot(student.studentId, opener)}
                     screenshotRefreshUnavailable={screenshotRefreshState?.transientUnavailable === true}
@@ -8141,6 +8281,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
       {/* Student Detail Drawer */}
       {selectedStudentRow && !selectedStudentDetailsRevoked && (
+        selectedStudentRow.windowsBrowserMode ? <WindowsBrowserHistoryDrawer student={selectedStudentRow} onClose={closeStudentDetails} /> :
         <StudentDetailDrawer
           schoolId={activeSchoolId} contextAuthorityRevision={contextAuthorityRevision}
           student={selectedStudentRow}

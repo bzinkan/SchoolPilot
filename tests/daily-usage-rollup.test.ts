@@ -16,7 +16,26 @@ import {
   parseDailyUsageRollupMode,
   readSetBasedDailyUsageCandidate,
   upsertSetBasedDailyUsage,
+  mergeWindowsDailyUsage,
 } from "../src/services/classpilotDailyUsageRollup.ts";
+
+it("daily Windows contributions preserve Chromebook totals and merge domains before truncating", () => {
+  const legacy = [{ studentId: "student", totalSeconds: 60, heartbeatCount: 6,
+    topDomains: Array.from({ length: 6 }, (_, index) => ({ domain: `${index}.example`, seconds: 10, visits: 1 })),
+    firstSeen: "2026-10-28T12:00:00Z", lastSeen: "2026-10-28T12:01:00Z" }];
+  const windows = [{ studentId: "student", totalSeconds: 15, heartbeatCount: 2,
+    topDomains: [{ domain: "5.example", seconds: 15, visits: 2 }],
+    firstSeen: "2026-10-28T11:00:00Z", lastSeen: "2026-10-28T13:00:00Z" },
+    { studentId: "windows-only", totalSeconds: 4, heartbeatCount: 1, topDomains: [], firstSeen: null, lastSeen: null }];
+  const merged = mergeWindowsDailyUsage(legacy, windows);
+  assert.equal(merged[0]?.totalSeconds, 75);
+  assert.equal(merged[0]?.heartbeatCount, 8);
+  assert.deepEqual(merged[0]?.topDomains[0], { domain: "5.example", seconds: 25, visits: 3 });
+  assert.equal(merged[0]?.topDomains.length, 5);
+  assert.equal(merged[0]?.firstSeen, "2026-10-28T11:00:00Z");
+  assert.equal(merged[1]?.totalSeconds, 4);
+  assert.equal(legacy[0]?.totalSeconds, 60);
+});
 
 describe("daily usage rollup scheduling", () => {
   it("waits until 02:00 in the school's local timezone", () => {

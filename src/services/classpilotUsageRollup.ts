@@ -112,6 +112,11 @@ export const CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL = `SELECT EXISTS (
     AND heartbeat.student_id IS NOT NULL
     AND heartbeat."timestamp" >= $2::timestamp
     AND heartbeat."timestamp" < $3::timestamp
+  UNION ALL
+  SELECT 1 FROM classpilot_windows_browser_events AS event
+  WHERE event.school_id = $1 AND event.browser_focused
+    AND event.observed_at >= $2::timestamp AT TIME ZONE 'UTC'
+    AND event.observed_at < $3::timestamp AT TIME ZONE 'UTC'
 ) AS changed`;
 
 /**
@@ -164,13 +169,28 @@ grains AS MATERIALIZED (
   CROSS JOIN LATERAL (
 WITH observed AS MATERIALIZED (
   SELECT heartbeat.id, heartbeat.student_id, heartbeat."timestamp" AS observed_at,
-    heartbeat.active_tab_url, heartbeat.ai_category, heartbeat.teacher_intent_source
+    heartbeat.active_tab_url, heartbeat.ai_category, heartbeat.teacher_intent_source, NULL::timestamp AS attribution_end
   FROM heartbeats AS heartbeat
   WHERE heartbeat.school_id = $1
     AND heartbeat.student_id IS NOT NULL
     AND heartbeat."timestamp" >= $2::timestamp
     AND heartbeat."timestamp" < $3::timestamp
     AND heartbeat.student_id = student_scope.id
+  UNION ALL
+  SELECT event.id,event.student_id,event.observed_at AT TIME ZONE 'UTC',event.active_tab_url,event.classification->>'category',event.classification->>'teacherIntentSource',
+    least(event.usage_ends_at, event.observed_at + interval '10 seconds', browser.ended_at,
+      guard.ended_at, guard.expires_at, guard.absolute_expires_at) AT TIME ZONE 'UTC'
+  FROM classpilot_windows_browser_events AS event
+  JOIN classpilot_windows_browsers browser ON browser.id=event.browser_id
+    AND browser.school_id=event.school_id AND browser.student_id=event.student_id
+  JOIN classpilot_windows_guards guard ON guard.id=browser.guard_id
+    AND guard.school_id=browser.school_id AND guard.student_id=browser.student_id
+  WHERE event.school_id=$1 AND event.student_id=student_scope.id AND event.browser_focused
+    AND event.observed_at >= $2::timestamp AT TIME ZONE 'UTC'
+    AND event.observed_at < $3::timestamp AT TIME ZONE 'UTC'
+    AND event.observed_at >= greatest(browser.created_at, guard.created_at)
+    AND least(event.usage_ends_at, browser.ended_at, guard.ended_at,
+      guard.expires_at, guard.absolute_expires_at) > event.observed_at
 ),
 excluded AS MATERIALIZED (
   SELECT * FROM school_excluded
@@ -218,6 +238,7 @@ normalized AS (
   SELECT observation.id, observation.student_id, observation.observed_at,
     LEAST(
       ${HEARTBEAT_ATTRIBUTION_LIMIT_SECONDS}::numeric,
+      EXTRACT(EPOCH FROM (observation.attribution_end-observation.observed_at)),
       EXTRACT(EPOCH FROM ((LEAD(observation.observed_at) OVER student_timeline) - observation.observed_at)),
       EXTRACT(EPOCH FROM ($3::timestamp - observation.observed_at)),
       CASE WHEN EXISTS (SELECT 1 FROM excluded) THEN EXTRACT(EPOCH FROM ((

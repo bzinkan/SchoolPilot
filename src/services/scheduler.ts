@@ -94,6 +94,8 @@ import {
   dailyUsageRollupMetricRecord,
   parseDailyUsageRollupMode,
   readSetBasedDailyUsageCandidate,
+  readWindowsDailyUsageCandidate,
+  mergeWindowsDailyUsage,
   upsertSetBasedDailyUsage,
   type DailyUsageAggregate,
   type DailyUsageRollupMode,
@@ -1017,10 +1019,6 @@ async function rollupSchoolUsageLegacy(
     )
     .groupBy(heartbeats.studentId);
 
-  if (studentTotals.length === 0) {
-    return [];
-  }
-
   // Get top domains per student from the same half-open UTC window.
   const domainData = await schedulerDb
     .select({
@@ -1041,22 +1039,23 @@ async function rollupSchoolUsageLegacy(
     .groupBy(heartbeats.studentId, sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
     .orderBy(sql`COUNT(*) DESC`, sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)') ASC`);
 
-  // Group domains by student and take top 5.
+  // Keep all domains until Windows metadata is merged, then select the top five.
   const studentDomains = new Map<string, { domain: string; seconds: number; visits: number }[]>();
   for (const row of domainData) {
     if (!row.studentId || !row.domain) continue;
     const list = studentDomains.get(row.studentId) || [];
-    if (list.length < 5) {
-      list.push({ domain: row.domain, seconds: row.seconds, visits: row.visits });
-    }
+    list.push({ domain: row.domain, seconds: row.seconds, visits: row.visits });
     studentDomains.set(row.studentId, list);
   }
 
   // Upsert daily usage for each student (through scheduler pool). If a worker
   // stops partway through, the next run safely recomputes and overwrites rows.
-  const aggregates: DailyUsageAggregate[] = [];
-  for (const row of studentTotals) {
-    if (!row.studentId) continue;
+  const aggregates = mergeWindowsDailyUsage(studentTotals.flatMap(row => row.studentId ? [{
+    studentId: row.studentId, totalSeconds: row.totalSeconds, heartbeatCount: row.heartbeatCount,
+    topDomains: studentDomains.get(row.studentId) || [], firstSeen: coerceSchedulerTimestamp(row.firstSeen),
+    lastSeen: coerceSchedulerTimestamp(row.lastSeen),
+  }] : []), await readWindowsDailyUsageCandidate(schedulerPool, { schoolId, ...window }));
+  for (const row of aggregates) {
     const firstSeen = coerceSchedulerTimestamp(row.firstSeen);
     const lastSeen = coerceSchedulerTimestamp(row.lastSeen);
     await schedulerDb
@@ -1067,7 +1066,7 @@ async function rollupSchoolUsageLegacy(
         date: window.date,
         totalSeconds: row.totalSeconds,
         heartbeatCount: row.heartbeatCount,
-        topDomains: studentDomains.get(row.studentId) || [],
+        topDomains: row.topDomains,
         firstSeen,
         lastSeen,
       })
@@ -1076,20 +1075,12 @@ async function rollupSchoolUsageLegacy(
         set: {
           totalSeconds: row.totalSeconds,
           heartbeatCount: row.heartbeatCount,
-          topDomains: studentDomains.get(row.studentId) || [],
+          topDomains: row.topDomains,
           firstSeen,
           lastSeen,
           computedAt: sql`now()`,
         },
       });
-    aggregates.push({
-      studentId: row.studentId,
-      totalSeconds: row.totalSeconds,
-      heartbeatCount: row.heartbeatCount,
-      topDomains: studentDomains.get(row.studentId) || [],
-      firstSeen,
-      lastSeen,
-    });
   }
   return aggregates;
 }
@@ -1211,6 +1202,16 @@ async function purgeExpiredHeartbeats() {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       } while (batchDeleted >= 5000);
+
+      // Windows browser metadata uses the same school retention. Native pixels
+      // are only in their ephemeral Redis namespace and never enter this job.
+      do {
+        const result=await withClasspilotUsageSchoolWrite(schedulerPool,school.id,client=>client.query(
+          `DELETE FROM classpilot_windows_browser_events WHERE id IN (
+            SELECT id FROM classpilot_windows_browser_events WHERE school_id=$1 AND observed_at<$2 LIMIT 5000
+          )`,[school.id,cutoff]));
+        batchDeleted=result.rowCount||0;
+      } while(batchDeleted>=5000);
 
       if (totalDeleted > 0) {
         console.log(`[ClassPilot] Purged ${totalDeleted} expired heartbeats for one tenant (retention: ${retentionDays}d)`);
