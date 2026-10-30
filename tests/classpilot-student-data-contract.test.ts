@@ -46,6 +46,17 @@ test("Student Data periods use school-local calendar boundaries across DST", () 
   assert.equal(year.startLocalDate, "2026-01-01");
 });
 
+test("manual-for-today Student Data stops at local midnight even before finalization", () => {
+  const boundary = new Date("2026-11-02T05:00:00.000Z");
+  const window = resolveClasspilotStudentDataWindow({ period: "today", timeZone: "UTC",
+    now: new Date("2026-11-02T06:00:00Z"),
+    session: { startTime: new Date("2026-11-02T04:00:00Z"), endTime: null,
+      manualExpiresAt: boundary, timezoneSnapshot: "America/New_York" } });
+  assert.equal(window.timeZone, "America/New_York");
+  assert.equal(window.startLocalDate, "2026-11-01");
+  assert.equal(window.rangeEnd.toISOString(), boundary.toISOString());
+});
+
 test("Student Data aggregation is deterministic, privacy-safe, and bounded by monitored time", () => {
   const base = {
     period: "today" as const,

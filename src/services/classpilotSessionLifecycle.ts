@@ -28,6 +28,7 @@ import {
   getClasspilotStudentControlStates,
   getTeachingSessionByIdAndSchool,
   getActiveTeachingSessionForSchool,
+  assertClasspilotManualStartMode,
   getUserById,
   markSessionSummarySubmissionStarted,
   lockClasspilotSsoPolicyDeliveryAuthority,
@@ -265,6 +266,7 @@ export async function startManualClasspilotSession(options: {
   schoolId: string;
   teacherId: string;
   groupId: string;
+  requiredManualDate?: string;
   dbInstance?: typeof db;
   afterReplacement?: () => Promise<void>;
 }): Promise<{
@@ -276,6 +278,7 @@ export async function startManualClasspilotSession(options: {
     options.schoolId,
     options.teacherId,
     async (lockedDb) => {
+      await assertClasspilotManualStartMode(options.schoolId, options.groupId, options.requiredManualDate, lockedDb);
       const visibleSession = await getActiveTeachingSessionForSchool(
         options.teacherId,
         options.schoolId,
@@ -299,6 +302,7 @@ export async function startManualClasspilotSession(options: {
       const session = await createTeachingSession({
         groupId: options.groupId,
         teacherId: options.teacherId,
+        requiredManualDate: options.requiredManualDate,
       }, lockedDb);
       return {
         session,

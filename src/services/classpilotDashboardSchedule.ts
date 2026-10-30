@@ -30,14 +30,16 @@ export async function getDashboardSchedule(schoolId: string, viewerId: string,
   if (!schoolRows[0] || personalRows.length > limit) throw new Error("DASHBOARD_SCHEDULE_INCOMPLETE");
   const timezone = schoolRows[0].timezone;
   const today = localDateInTimeZone(now, timezone);
-  const recorded = await database.select({ session: teachingSessions }).from(teachingSessions)
+  const recorded = await database.select({ session: teachingSessions, manualDate: groups.scheduleManualDate }).from(teachingSessions)
+    .innerJoin(groups, and(eq(groups.schoolId, schoolId), eq(groups.id, teachingSessions.groupId)))
     .innerJoin(classpilotSessionStaff, and(eq(classpilotSessionStaff.schoolId, schoolId),
       eq(classpilotSessionStaff.teachingSessionId, teachingSessions.id), eq(classpilotSessionStaff.staffId, viewerId)))
     .where(and(eq(teachingSessions.schoolId, schoolId), gte(teachingSessions.scheduledDate, today))).limit(limit + 1);
   if (recorded.length > limit) throw new Error("DASHBOARD_SCHEDULE_INCOMPLETE");
   const candidates: PlannedActivity[] = [...scheduledContexts];
   const frozen = new Set(recorded.map(({ session }) => `${session.scheduledDate}:${session.groupId}`));
-  for (const { session } of recorded) {
+  for (const { session, manualDate } of recorded) {
+    if (session.scheduledDate === manualDate) continue;
     if (session.endTime || session.scheduledState !== "active" || !session.scheduledStartAt || !session.scheduledEndAt || session.scheduledEndAt <= now) continue;
     candidates.push({ id: session.id, source: "scheduled_class", name: session.classNameSnapshot || "Scheduled class",
       startsAt: session.scheduledStartAt.toISOString(), endsAt: session.scheduledEndAt.toISOString(),
@@ -53,7 +55,7 @@ export async function getDashboardSchedule(schoolId: string, viewerId: string,
     if ([...pairs.values()].some((count) => count !== 2)) throw new Error("DASHBOARD_SCHEDULE_INCOMPLETE");
     const byClass = new Map(legs.map((leg) => [leg.groupId, leg]));
     for (const { group } of personalRows) {
-      if (frozen.has(`${date}:${group.id}`) || group.scheduleSkippedDate === date) continue;
+      if (frozen.has(`${date}:${group.id}`) || group.scheduleSkippedDate === date || group.scheduleManualDate === date) continue;
       const window = resolveClassBaseWindow(group, date, scheduling.config, scheduling.calendar);
       if (!window) continue;
       const leg = byClass.get(group.id);

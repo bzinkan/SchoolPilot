@@ -15,6 +15,7 @@ import WindowsBrowserHistoryDrawer from '../components/WindowsBrowserHistoryDraw
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import TemporaryRoomDialog from '../components/TemporaryRoomDialog';
+import ManualTodayDialog from '../components/ManualTodayDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import ClassToolsPanel from '../components/ClassToolsPanel';
 import ChatWorkspace from '../components/ChatWorkspace';
@@ -46,6 +47,7 @@ import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
+import { useManualToday, manualTodayDateLabel } from '../hooks/useManualToday';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
@@ -496,6 +498,9 @@ export default function Dashboard() {
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
   // The viewer's own dashboard theme. Presentation only, and never the class owner's.
   const dashboardTheme = useDashboardTheme({ schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: Boolean(isTeacher || isAdmin), timeZone: school?.schoolTimezone || school?.timezone });
+  const manualTodayQuery = useManualToday({ schoolId: activeSchoolId, viewerId: currentUser?.id, accessScope: isAdmin ? 'admin' : isTeacher ? 'teacher' : 'none', enabled: isAdmin || isTeacher });
+  const [showManualToday, setShowManualToday] = useState(false);
+  const manualTodayClasses = (manualTodayQuery.data?.classes || []).filter(group => group.isManualToday);
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const { absentIds } = useAbsentStudents();
@@ -7014,6 +7019,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 </p>
               </div>
               <HeaderOrnament />
+              {(isAdmin || manualTodayQuery.data?.canManageManualToday === true) && (
+                <button type="button" onClick={() => setShowManualToday(true)}
+                  className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-chrome-control-border bg-chrome-control text-xs font-medium text-chrome-fg hover:bg-chrome-control-hover sm:w-auto sm:px-3"
+                  aria-label="Manual for today" title="Manual for today" data-testid="button-manual-today">
+                  <Calendar className="h-3.5 w-3.5" /><span className="hidden sm:inline">Manual for today</span>
+                </button>
+              )}
             </div>
             <div data-testid="dashboard-header-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-1.5 min-[1240px]:flex-nowrap">
             {/* Center: Status badges */}
@@ -7107,6 +7119,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         <Clock className="h-3.5 w-3.5" /> Past sessions
                       </button>
                       {selectedTeacherStartGroup?.scheduleEnabled
+                        && !manualTodayClasses.some(group => group.id === selectedTeacherStartGroup.id)
                         && selectedTeacherStartGroup.teacherId === currentUser?.id && (
                         <button
                           type="button"
@@ -7187,7 +7200,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         <Plus className="h-4 w-4 mr-2" />
                         Teach Class
                       </button>
-                      {selectedAdminStartGroup?.scheduleEnabled && (
+                      {selectedAdminStartGroup?.scheduleEnabled && !manualTodayClasses.some(group => group.id === selectedAdminStartGroup.id) && (
                         <button
                           type="button"
                           onClick={() => setSkipTodayGroup(selectedAdminStartGroup)}
@@ -7252,6 +7265,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           </div>
         </div>
       </header>
+
+      {manualTodayClasses.length > 0 ? <div className="border-b border-amber-300 bg-amber-50 px-6 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100" data-testid="manual-today-status">
+        <strong>Manual for today:</strong> {manualTodayClasses.map(group => group.name).join(', ')}.
+        {' '}Normal scheduling resumes {manualTodayDateLabel(manualTodayQuery.data.resumesOn)} ({manualTodayQuery.data.timezone}).
+      </div> : null}
+      {showManualToday ? <ManualTodayDialog key={roomDialogScopeKey} query={manualTodayQuery} schoolId={activeSchoolId} viewerId={currentUser?.id}
+        startLabel={isAdmin ? 'Teach Class' : 'Start Class'} onClose={() => setShowManualToday(false)} /> : null}
 
       {isTeacher && todayScheduleChanges.length > 0 ? (
         <button

@@ -27,6 +27,7 @@ after(async () => { await browser?.close(); await vite?.close(); });
 async function fixture(t, route = '/classpilot/settings?section=browsing') {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } }); page.setDefaultTimeout(12000);
   const state = { settings: schoolSettingsFixture('recipient-a'), writes: [], errors: [], readError: false, readStatus: 503, omitCurrent: false, reject: null, pending: null, release: null, digest: { digestEnabled: false, revision: 0 } };
+  state.settings.sections.scheduling = { version: 'scheduling-1', allowTeacherManualToday: false };
   t.after(async () => { state.release?.(); await page.close(); }); page.on('pageerror', error => state.errors.push(error.message));
   await page.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, method = request.method(), schoolId = request.headers()['x-school-id'];
@@ -53,6 +54,27 @@ async function fixture(t, route = '/classpilot/settings?section=browsing') {
   await page.goto(`${base}/__settings?route=${encodeURIComponent(route)}`); await page.getByTestId('school-settings-workspace').waitFor(); return { page, state };
 }
 async function section(page, label) { await page.getByRole('link', { name: label, exact: true }).click(); }
+
+test('teacher manual-today permission uses its own versioned school setting', { timeout: 60000 }, async t => {
+  const { page, state } = await fixture(t);
+  await page.getByLabel('Maximum tabs per student').fill('8');
+  await section(page, 'School details');
+  const permission = page.getByTestId('checkbox-allow-teacher-manual-today');
+  assert.equal(await permission.isChecked(), false, 'Teacher adjustments default off');
+  await permission.check();
+  assert.equal(state.writes.length, 0, 'Changing the checkbox requires its own Save');
+  await page.getByRole('button', { name: 'Save teacher adjustments', exact: true }).click();
+  await page.getByText('Changes saved.', { exact: true }).waitFor();
+  assert.deepEqual(state.writes, [{ pathname: '/api/classpilot/admin/settings/scheduling', method: 'PATCH', body: { allowTeacherManualToday: true, expectedVersion: 'scheduling-1' }, schoolId: 'school-a' }]);
+  await section(page, 'Browsing & monitoring');
+  assert.equal(await page.getByLabel('Maximum tabs per student').inputValue(), '8', 'Saving scheduling does not overwrite an unrelated browsing draft');
+  await section(page, 'School details');
+  await permission.uncheck();
+  await page.getByRole('button', { name: 'Save teacher adjustments', exact: true }).click();
+  await page.getByText('Changes saved.', { exact: true }).waitFor();
+  assert.deepEqual(state.writes[1].body, { allowTeacherManualToday: false, expectedVersion: 'scheduling-1-next' });
+  assert.deepEqual(state.errors, []);
+});
 
 test('school settings retain separate drafts across sections and save only the selected group', { timeout: 60000 }, async t => {
   const { page, state } = await fixture(t);

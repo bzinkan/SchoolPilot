@@ -32,11 +32,16 @@ import {
   groupHasTeachingHistory,
   getClasspilotAutomaticFlightPathPolicy,
   updateClasspilotAutomaticFlightPathPolicy,
+  getClasspilotManualTodayStatus,
+  enableClasspilotManualToday,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotScheduledStart.js";
+import { runClasspilotFinalizationSideEffects } from "../../services/classpilotSessionLifecycle.js";
+import { broadcastClasspilotScheduleChangeUpdate } from "../../services/classpilotScheduleChanges.js";
+import { safeErrorMetadata } from "../../util/safeLogging.js";
 
 const router = Router();
 
@@ -145,6 +150,29 @@ router.patch("/:id/automatic-flight-path", ...auth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/groups/:id - Get group details with students
+router.get("/manual-today", ...auth, async (req, res, next) => {
+  try { res.json(await getClasspilotManualTodayStatus(res.locals.schoolId!, req.authUser!.id)); }
+  catch (error) { next(error); }
+});
+
+router.post("/:id/manual-today", ...auth, async (req, res, next) => {
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)
+      || Object.keys(req.body).some(key => key !== "expectedSchoolDate") || typeof req.body.expectedSchoolDate !== "string") {
+      return res.status(400).json({ error: "Provide only the school date shown in the review.", code: "MANUAL_TODAY_INVALID" });
+    }
+    const result = await enableClasspilotManualToday({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, groupId: param(req, "id"), expectedSchoolDate: req.body.expectedSchoolDate });
+    for (const finalized of result.finalizations) runClasspilotFinalizationSideEffects(finalized, {
+      schoolId: res.locals.schoolId!, reason: finalized.session.scheduledFinalizationReason === "admin_end" ? "admin_end" : "teacher_end",
+    });
+    await broadcastClasspilotScheduleChangeUpdate({ schoolId: res.locals.schoolId!, scheduledDate: result.schoolDate }).catch(error => {
+      console.warn("ClassPilot manual-day notification failed", safeErrorMetadata(error));
+    });
+    const { finalizations, classes: _classes, ...status } = result;
+    return res.json({ ...status, endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) });
+  } catch (error) { next(error); }
+});
+
 router.get("/:id", ...auth, async (req, res, next) => {
   try {
     const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);

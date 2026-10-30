@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { CLASSPILOT_HEARTBEAT_SCREENSHOT_EVIDENCE_SQL } from "../src/db/classpilotHeartbeatScreenshotEvidenceDefinition.js";
 import { canonicalHeartbeatScreenshotFunctionSql } from "./helpers/classpilot-heartbeat-screenshot-sql.js";
 import { heartbeatScreenshotEvidenceQuery } from "../src/services/classpilotHeartbeatScreenshotEvidence.js";
-import { heartbeatTelemetryOwnerQuery } from "../src/services/classpilotHeartbeatReadQueries.js";
+import { heartbeatCurrentTelemetryOwnerQuery, heartbeatTelemetryOwnerQuery } from "../src/services/classpilotHeartbeatReadQueries.js";
 
 test("installed screenshot SQL is the independently reviewed native body and current canonical four statements", () => {
   // Recorded before production extraction: measured prototype04, with only the
@@ -38,4 +38,13 @@ test("canonical owner retains transaction clock for screenshot and fresh clock o
   assert.doesNotMatch(transaction.sql, /clock_timestamp|ORDER BY|LIMIT/i);
   const placeholders = dialect.sqlToQuery(heartbeatTelemetryOwnerQuery(sql.placeholder("schoolId"), sql.placeholder("studentId"), "transaction"));
   assert.equal(placeholders.sql, transaction.sql);
+});
+
+test("runtime owner expires both frozen and legacy manual ownership using the requested authority clock", () => {
+  const dialect = new PgDialect();
+  const current = dialect.sqlToQuery(heartbeatCurrentTelemetryOwnerQuery("school", "student", "current"));
+  const transaction = dialect.sqlToQuery(heartbeatCurrentTelemetryOwnerQuery("school", "student", "transaction"));
+  assert.equal((current.sql.match(/session.manual_expires_at IS NULL OR session.manual_expires_at>clock_timestamp\(\)/g) ?? []).length, 2);
+  assert.equal(current.sql.replaceAll("clock_timestamp()", "now()"), transaction.sql);
+  assert.deepEqual(current.params, transaction.params);
 });

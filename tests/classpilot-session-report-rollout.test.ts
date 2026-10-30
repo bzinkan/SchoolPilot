@@ -37,6 +37,7 @@ const session = {
   scheduledTimezone: null,
   scheduledStartAt: null,
   scheduledEndAt: null,
+  manualExpiresAt: null,
   scheduledTeacherEmail: null,
   scheduledTeacherName: null,
   classNameSnapshot: "Class",

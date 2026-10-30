@@ -18,10 +18,12 @@ import SchoolDataMaintenance from '../components/admin/SchoolDataMaintenance';
 import { SETTINGS_SECTIONS } from '../lib/adminNavigation';
 import { DASHBOARD_THEME_PRESETS } from '../../../shared/themes/presets';
 import { DEFAULT_CALENDAR_HOLIDAYS, localDateString } from '../../../shared/themes/calendar';
+import { MANUAL_TODAY_QUERY } from '../hooks/useManualToday';
 
 const API = '/classpilot/admin/settings';
 const fieldLabels = {
   classroom: { maxTabsPerStudent: 'Maximum tabs per student', allowedDomains: 'Educational domains' },
+  scheduling: { allowTeacherManualToday: 'Teacher manual starts for today' },
   blockedWebsites: { blockedDomains: 'Blocked websites' },
   signIn: { sharedChromebookSignInEnabled: 'Shared Chromebook sign-in' },
   email: { centralEmailRecipientUserId: 'Copy recipient' },
@@ -54,6 +56,7 @@ function SectionEditor({ section, settings, schoolId, queryKey, title, descripti
       queryClient.setQueryData(queryKey, current => current && ({ ...current, sections: { ...current.sections, [section]: saved } }));
       void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       if (section === 'classroom') void queryClient.invalidateQueries({ queryKey: ['/api/classpilot/teacher/preferences', schoolId] });
+      if (section === 'scheduling') void queryClient.invalidateQueries({ queryKey: [MANUAL_TODAY_QUERY, schoolId] });
       if (section === 'blockedWebsites') { void queryClient.invalidateQueries({ queryKey: ['classpilot-safety-center'] }); void queryClient.invalidateQueries({ queryKey: ['/api/classpilot/admin/sso-policy'] }); }
     },
   });
@@ -225,6 +228,10 @@ function SettingsWorkspace({ currentUser, school, refetchUser }) {
     <section hidden={section !== 'school'} aria-label="School details" className="space-y-5">
       <SettingsCard title="School profile" description="The saved school identity is shared across SchoolPilot."><dl className="grid gap-5 sm:grid-cols-2"><div><dt className="text-sm text-muted-foreground">School name</dt><dd className="mt-1 font-medium">{settings.schoolName || 'Not configured'}</dd></div><div><dt className="text-sm text-muted-foreground">School timezone</dt><dd className="mt-1 font-medium">{settings.schoolTimezone}</dd></div></dl><p className="text-sm text-muted-foreground">Name and timezone are managed in the school profile. Contact your SchoolPilot administrator to request a change. The timezone also controls class schedules and school-local dates.</p>{currentUser.isSuperAdmin && <Link className="inline-block text-sm underline" to={`/super-admin/schools/${schoolId}`}>Open school profile</Link>}</SettingsCard>
       <SettingsCard title="School calendar" description="Set the actual start and end of the school year, closures, and class schedules."><Link className="text-sm underline" to="/classpilot/admin/scheduling?section=school-year">Open School year</Link></SettingsCard>
+      {settings.sections.scheduling ? <SectionEditor {...common} section="scheduling" title="Teacher schedule adjustments" description="Let teachers choose when to start their assigned classes for one school day." saveLabel="Save teacher adjustments">{editor => <>
+        <label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={editor.draft.allowTeacherManualToday === true} onChange={event => editor.update('allowTeacherManualToday', event.target.checked)} data-testid="checkbox-allow-teacher-manual-today" />Allow teachers to use Manual for today for their assigned classes</label>
+        <p className="text-sm text-muted-foreground">Teachers can pause automatic starts for selected classes and start them manually today. Normal scheduling resumes tomorrow. Administrators can always make this adjustment.</p>
+      </>}</SectionEditor> : null}
     </section>
     <section hidden={section !== 'browsing'} aria-label="Browsing and monitoring" className="space-y-5">
       <SectionEditor {...common} section="classroom" title="Browsing defaults" description="Set school-wide tab limits and educational domains used to classify classroom activity." saveLabel="Save browsing defaults">{editor => <><div className="space-y-2"><Label htmlFor="school-max-tabs">Maximum tabs per student</Label><Input id="school-max-tabs" type="number" min="1" max="100" value={editor.draft.maxTabsPerStudent ?? ''} onChange={event => editor.update('maxTabsPerStudent', event.target.value)} /><p className="text-xs text-muted-foreground">Choose 1 to 100, or leave blank for no school-wide tab limit.</p></div><div className="space-y-2"><Label htmlFor="school-allowed-domains">Educational domains (comma-separated)</Label><textarea id="school-allowed-domains" className="min-h-24 w-full rounded-md border bg-background p-3 text-sm" value={editor.draft.allowedDomains.join(',')} onChange={event => editor.update('allowedDomains', event.target.value.split(','))} /><p className="text-sm text-muted-foreground">These domains help classify educational activity. They do not suppress safety alerts or override website blocks.</p></div></>}</SectionEditor>

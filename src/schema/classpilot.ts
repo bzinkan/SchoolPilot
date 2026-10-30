@@ -295,6 +295,7 @@ export const groups = pgTable(
     blockStartTime: text("block_start_time"), // HH:MM 24h format, e.g. "10:10"
     blockEndTime: text("block_end_time"),     // HH:MM 24h format, e.g. "10:55"
     scheduleSkippedDate: text("schedule_skipped_date"), // YYYY-MM-DD, set when teacher manually ends early
+    scheduleManualDate: text("schedule_manual_date"), // School-local date; recurrence stays unchanged.
     scheduleRule: jsonb("schedule_rule").$type<import("../services/classpilotSchedulingRules.js").ClasspilotScheduleRule>(),
     automaticFlightPathPolicy: jsonb("automatic_flight_path_policy").$type<import("../services/classpilotAutomaticFlightPath.js").AutomaticFlightPathPolicy>(),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -306,6 +307,7 @@ export const groups = pgTable(
     unique("groups_school_id_id_fk_key").on(table.schoolId, table.id),
     index("groups_teacher_id_idx").on(table.teacherId),
     index("groups_status_idx").on(table.status),
+    check("groups_schedule_manual_date_check", sql`${table.scheduleManualDate} IS NULL OR ${table.scheduleManualDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
     uniqueIndex("groups_school_google_course_unique")
       .on(table.schoolId, table.googleClassroomCourseId)
       .where(sql`${table.googleClassroomCourseId} IS NOT NULL`),
@@ -592,6 +594,7 @@ export const teachingSessions = pgTable(
     scheduledTimezone: text("scheduled_timezone"),
     scheduledStartAt: timestamp("scheduled_start_at", { withTimezone: true }),
     scheduledEndAt: timestamp("scheduled_end_at", { withTimezone: true }),
+    manualExpiresAt: timestamp("manual_expires_at", { withTimezone: true }),
     scheduledTeacherEmail: text("scheduled_teacher_email"),
     scheduledTeacherName: text("scheduled_teacher_name"),
     // Frozen display label used by durable summary delivery. A class can be
@@ -615,6 +618,9 @@ export const teachingSessions = pgTable(
     index("teaching_sessions_teacher_id_idx").on(table.teacherId),
     index("teaching_sessions_session_mode_idx").on(table.sessionMode),
     index("teaching_sessions_scheduled_conflict_idx").on(table.scheduledConflictId),
+    index("teaching_sessions_manual_expiry_idx").on(table.manualExpiresAt)
+      .where(sql`${table.endTime} IS NULL AND ${table.manualExpiresAt} IS NOT NULL`),
+    check("teaching_sessions_manual_expiry_check", sql`${table.manualExpiresAt} IS NULL OR (${table.scheduledDate} IS NULL AND ${table.manualExpiresAt} > ${table.startTime})`),
     uniqueIndex("teaching_sessions_scheduled_occurrence_unique")
       .on(table.schoolId, table.groupId, table.scheduledDate)
       .where(sql`${table.scheduledDate} IS NOT NULL`),

@@ -70,7 +70,7 @@ export type ScheduledClassAutoStartResult =
 
 type ScheduledOccurrencePreparation =
   | { occurrence: TeachingSession; group?: Group }
-  | { reason: "non_instructional_day" | "missing_schedule_window" | "outside_schedule_window" | "skipped" };
+  | { reason: "non_instructional_day" | "missing_schedule_window" | "outside_schedule_window" | "skipped" | "manual_today" };
 
 export type ScheduledCoverageStudentPayload = {
   studentId: string;
@@ -280,6 +280,7 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
         || !group.blockStartTime
         || !group.blockEndTime
         || group.scheduleSkippedDate === options.scheduledDate
+        || group.scheduleManualDate === options.scheduledDate
       ) return false;
       const leg = approvedByGroupId.get(group.id);
       const base = resolveClassBaseWindow(group, options.scheduledDate, scheduling.config, calendar, day);
@@ -328,6 +329,14 @@ async function prepareScheduledOccurrence(options: {
       // commit first; a stale candidate read can never create an occurrence
       // after revocation has committed.
       await assertClasspilotEntitled(options.group.schoolId, lockedDb, { lock: true });
+      // The override writer owns the same school lifecycle/date locks. Re-read
+      // even when an occurrence already exists: a stale scheduler candidate
+      // must not restore reporting after Manual for today has committed.
+      const currentGroup = await getGroupByIdAndSchool(options.group.id, options.group.schoolId, lockedDb);
+      if (!currentGroup) return { reason: "missing_schedule_window" as const };
+      if (currentGroup.scheduleManualDate === options.scheduledDate) {
+        return { reason: "manual_today" as const };
+      }
       const existing = await getScheduledTeachingSessionOccurrence(
         options.group.schoolId,
         options.group.id,
@@ -353,6 +362,9 @@ async function prepareScheduledOccurrence(options: {
       }
       if (!context) return { reason: "missing_schedule_window" as const };
       assertCompleteApprovedSwapContext(context);
+      if (context.group.scheduleManualDate === options.scheduledDate) {
+        return { reason: "manual_today" as const };
+      }
       if (context.group.scheduleSkippedDate === options.scheduledDate) {
         return { reason: "skipped" as const };
       }
@@ -765,6 +777,13 @@ async function startScheduledClassLocked(options: {
   // Promotion is the mutation linearization point, so entitlement must be
   // re-read under the same start transaction and held through commit.
   await assertClasspilotEntitled(options.group.schoolId, dbInstance, { lock: true });
+  const currentGroup = await getGroupByIdAndSchool(options.group.id, options.group.schoolId, dbInstance);
+  if (!currentGroup || currentGroup.scheduleManualDate === options.scheduledSession.scheduledDate) {
+    throw Object.assign(new Error("This class is manual for today. Start it with Teach Class."), {
+      status: 409,
+      code: "MANUAL_TODAY_ACTIVE",
+    });
+  }
   const finalizations: Array<{
     result: FinalizeTeachingSessionResult;
     reason: "replacement_start";
@@ -854,6 +873,12 @@ export async function startScheduledClassFromConflict(options: {
     options.dbInstance
   );
   if (!group) throw Object.assign(new Error("Class not found"), { status: 404 });
+  if (group.scheduleManualDate === options.conflict.scheduledDate) {
+    throw Object.assign(new Error("This class is manual for today. Start it with Teach Class."), {
+      status: 409,
+      code: "MANUAL_TODAY_ACTIVE",
+    });
+  }
   const occurrence = await getActiveScheduledReportSessionForConflict(
     options.conflict.schoolId,
     options.conflict.id,
@@ -899,6 +924,14 @@ export async function processScheduledClassAutoStart(options: {
   const dbInstance = options.dbInstance;
   let group = options.group;
   await assertClasspilotEntitled(group.schoolId, dbInstance);
+  // Direct reconciliation of frozen reports and conflicts also enters here,
+  // so the candidate-discovery filter alone cannot enforce a dated override.
+  const currentGroup = await getGroupByIdAndSchool(group.id, group.schoolId, dbInstance);
+  if (!currentGroup) return { status: "skipped", reason: "missing_schedule_window" };
+  group = currentGroup;
+  if (group.scheduleManualDate === options.scheduledDate) {
+    return { status: "skipped", reason: "manual_today" };
+  }
   const school = await getSchoolById(group.schoolId, dbInstance);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const now = options.now || new Date();
@@ -1267,6 +1300,7 @@ export async function skipScheduledClassBeforeStart(options: {
       }
       if (!context) return { skipped: false };
       assertCompleteApprovedSwapContext(context);
+      if (context.group.scheduleManualDate === options.scheduledDate) return { skipped: false };
       if (
         context.group.status !== "active"
         || !context.group.scheduleEnabled

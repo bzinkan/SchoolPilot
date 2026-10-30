@@ -3,6 +3,7 @@ import { schoolDisciplineRedesignMigration } from "./schoolDisciplineRedesignMig
 import { mydeskImportDestinationMigration } from "./mydeskImportDestinationMigration.js";
 import { studentInformationRedesignMigration } from "./studentInformationRedesignMigration.js";
 import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPreferencesMigration.js";
+import { classpilotManualTodayMigration } from "./classpilotManualTodayMigration.js";
 import { importProcessingStagesMigration } from "./importProcessingStagesMigration.js";
 import { passpilotRulesMigration, passpilotRulesIndexesMigration } from "./passpilotRulesMigration.js";
 import { classpilotUsageRollupsMigration } from "./classpilotUsageRollupsMigration.js";
@@ -566,6 +567,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotWindowsBrowserMigration,
   classpilotWindowsHistoryMigration,
   classpilotWindowsActivityParentsMigration,
+  classpilotManualTodayMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

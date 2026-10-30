@@ -49,11 +49,12 @@ export async function runClasspilotMonitoringInterruptionScan(now = new Date(), 
               WHERE r.school_id=${schoolId} AND r.released_at IS NULL AND c.status='active' AND c.ended_at IS NULL AND c.starts_at<=${now.toISOString()}::timestamptz AND c.ends_at>${now.toISOString()}::timestamptz
               UNION ALL
               SELECT r.student_id,'teaching_session',c.id,COALESCE(c.class_name_snapshot,g.name,'Class'),
-                GREATEST(c.start_time,r.captured_at),c.scheduled_end_at,1
+                GREATEST(c.start_time,r.captured_at),LEAST(c.scheduled_end_at,c.manual_expires_at),1
               FROM classpilot_session_students r JOIN teaching_sessions c ON c.school_id=r.school_id AND c.id=r.teaching_session_id
               JOIN groups g ON g.school_id=c.school_id AND g.id=c.group_id
               WHERE r.school_id=${schoolId} AND c.end_time IS NULL AND c.roster_snapshot_completed_at IS NOT NULL
                 AND c.start_time<=${now.toISOString()}::timestamptz AND (c.scheduled_end_at IS NULL OR c.scheduled_end_at>${now.toISOString()}::timestamptz)
+                AND (c.manual_expires_at IS NULL OR c.manual_expires_at>${now.toISOString()}::timestamptz)
                 AND (c.scheduled_state IS NULL OR c.scheduled_state='active')
             )
             SELECT DISTINCT ON (c.student_id) c.*,a.id AS student_session_id,a.device_id
