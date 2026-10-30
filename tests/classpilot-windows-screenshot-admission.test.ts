@@ -11,15 +11,22 @@ const path="/api/classpilot/windows/browser/screenshot";
 const body=JSON.stringify({screenshot:"data:image/jpeg;base64,/9j/2Q==",sequence:1});
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};};
 
-async function fixture(options:{budgetMs?:number;authGate?:ReturnType<typeof deferred>;workGate?:ReturnType<typeof deferred>;holdParser?:boolean;authDenied?:boolean}={}){
+async function fixture(options:{budgetMs?:number;authGate?:ReturnType<typeof deferred>;workGate?:ReturnType<typeof deferred>;holdParser?:boolean;authDenied?:boolean;deferClose?:boolean}={}){
   const tokens=new Map(["a","b","c"].map(label=>[label,createWindowsCredential("browser","test-school").credential]));
   const events=new EventEmitter(),clients=new Set<ClientRequest>();
   const authenticating=new Set<string>(),parsing=new Map<string,Request>(),finished=new Set<string>();
-  const buffers:Buffer[]=[],callbacks:Array<()=>void>=[],decoded:string[]=[],published:string[]=[],remaining:number[]=[];
+  const buffers:Buffer[]=[],callbacks:Array<()=>void>=[],deferredCloses:Array<()=>void>=[],decoded:string[]=[],published:string[]=[],remaining:number[]=[];
   let generalParses=0;
   const labelFor=(req:Request)=>[...tokens].find(([,token])=>req.get("Authorization")===`Bearer ${token}`)?.[0]??"unknown";
   const app=express();
   app.use((req,res,next)=>{
+    if(options.deferClose){
+      const emit=res.emit.bind(res);
+      res.emit=(event:string|symbol,...args:unknown[])=>{
+        if(event==="close"){deferredCloses.push(()=>emit(event,...args));events.emit("response-close-deferred");return true;}
+        return emit(event,...args);
+      };
+    }
     req.requestReceivedAtMs=Date.now();
     const label=labelFor(req);
     const close=()=>{finished.add(label);events.emit(`finished:${label}`);};
@@ -69,18 +76,20 @@ async function fixture(options:{budgetMs?:number;authGate?:ReturnType<typeof def
     clients.add(client);return {client,done};
   }
   const wait=async(event:string,ready:()=>boolean)=>{if(!ready())await once(events,event);};
-  return {tokens,authenticating,parsing,buffers,callbacks,decoded,published,remaining,start,events,
+  return {tokens,authenticating,parsing,buffers,callbacks,deferredCloses,decoded,published,remaining,start,events,
     generalParses:()=>generalParses,
     send:async(label="a",bytes=body,overrides:Parameters<typeof start>[1]={})=>{const upload=start(label,overrides);upload.client.end(bytes);return upload.done;},
     waitAuth:(label:string)=>wait(`auth:${label}`,()=>authenticating.has(label)),
     waitParsing:(label:string)=>wait(`parsing:${label}`,()=>parsing.has(label)),
     waitFinished:(label:string)=>wait(`finished:${label}`,()=>finished.has(label)),
     waitCallback:()=>wait("parser-callback",()=>callbacks.length>0),
+    waitDeferredClose:()=>wait("response-close-deferred",()=>deferredCloses.length>0),
     waitDecoded:(label:string)=>wait(`decoded:${label}`,()=>decoded.includes(label)),
     close:async()=>{
       for(const client of clients)client.destroy();options.authGate?.resolve();options.workGate?.resolve();
       for(const callback of callbacks.splice(0))callback();server.closeAllConnections();
       await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+      for(const callback of deferredCloses.splice(0))callback();
     }};
 }
 
@@ -179,5 +188,21 @@ test("router diagnostics preserve header deadline and late processing cannot pub
     assert.equal((await a.done).status,0);gate.resolve();await new Promise<void>(resolve=>setImmediate(resolve));
     assert.deepEqual(f.published,[]);assert.equal(f.parsing.get("a")!.body,undefined);
     assert.equal((await f.send()).status,201);
+  }finally{await f.close();}
+});
+
+test("admission cancellation fences work synchronously before a delayed response close",{timeout:5_000},async()=>{
+  const gate=deferred();const f=await fixture({budgetMs:250,workGate:gate,deferClose:true});
+  try{
+    const a=f.start();a.client.end(body);await f.waitDecoded("a");
+    assert.ok(f.remaining[0]!>3_000,"the absolute four-second deadline must not explain the cancellation");
+    assert.equal((await a.done).status,0);
+    await f.waitDeferredClose();
+    assert.ok(f.deferredCloses.length>0,"response close notification remains deliberately deferred");
+    gate.resolve();await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.deepEqual(f.published,[],"expired admission must fence work before close updates diagnostics");
+    assert.equal(f.parsing.get("a")!.body,undefined);
+    for(const callback of f.deferredCloses.splice(0))callback();
+    assert.equal((await f.send("c")).status,201,"cancellation still releases the upload slot");
   }finally{await f.close();}
 });

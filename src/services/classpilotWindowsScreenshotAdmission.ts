@@ -1,7 +1,7 @@
 import express, { type Request, type RequestHandler } from "express";
 import { ClasspilotNativeError } from "./classpilotNativeProtocol.js";
 import { ClasspilotWindowsError, parseWindowsCredential } from "./classpilotWindowsProtocol.js";
-import { assertWindowsRequestActive, beginWindowsRequestDiagnostics, WINDOWS_REQUEST_BUDGET_MS, windowsRequestRemainingMs } from "./classpilotWindowsDiagnostics.js";
+import { assertWindowsRequestActive, beginWindowsRequestDiagnostics, cancelWindowsRequest, WINDOWS_REQUEST_BUDGET_MS, windowsRequestRemainingMs } from "./classpilotWindowsDiagnostics.js";
 
 export const WINDOWS_SCREENSHOT_JSON_BYTES=365_000;
 export function isWindowsScreenshotRequest(req:Pick<Request,"method"|"path">){
@@ -27,7 +27,7 @@ export function createWindowsScreenshotAdmission(options:{
       const discard=()=>{if(Buffer.isBuffer(req.body))req.body.fill(0);req.body=undefined;};
       const release=()=>{
         if(!active)return;
-        active=false;clearTimeout(timer);if(owned)browsers.delete(key);
+        cancelWindowsRequest(req);active=false;clearTimeout(timer);if(owned)browsers.delete(key);
         req.removeListener("aborted",release);res.removeListener("finish",release);res.removeListener("close",release);
         discard();
       };

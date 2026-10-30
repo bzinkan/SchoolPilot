@@ -138,7 +138,8 @@ administrators and teachers; it does not broaden official class permissions.
 
 Optional automatic Flight Paths are configured per scheduled teaching class in
 Teaching tools → Class setup, off by default. Freeze the approved path only at
-the live occurrence transition; setting changes affect future sessions. The
+the live occurrence transition or creation of a server-verified Manual today
+session; never backfill a preset into an existing manual session. Setting changes affect future sessions. The
 canonical whole-class remove command's `stopAutomaticFlightPath` option persists
 an occurrence-level off decision, including offline students and later returns
 from supervision. Preserve automatic-origin/manual-override metadata through

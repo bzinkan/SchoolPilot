@@ -26,7 +26,7 @@ function control(overrides: Partial<ClasspilotStudentControlState> = {}): Classp
 }
 function summarize(row: ClasspilotStudentControlState, state: unknown = assignment, clock = now) {
   return summarizeAutomaticFlightPathSession({
-    session: { id: "session", automaticFlightPathState: state, endTime: null, scheduledEndAt: deadline },
+    session: { id: "session", automaticFlightPathState: state, startTime: startedAt, endTime: null, scheduledEndAt: deadline },
     studentIds: ["student"], controls: [row], activeSessions: [{ studentId: "student", startedAt }], now: clock,
   });
 }
@@ -66,4 +66,28 @@ test("unconfigured classes get no automatic badges and private provenance is exc
   const dto = JSON.stringify(summarize(control()));
   for (const privateKey of ["payload", "assignmentId", "eligibleStudentIds", "manualOverrideStudentIds", "deviceId", "studentSessionId"])
     assert.equal(dto.includes(`"${privateKey}"`), false, privateKey);
+});
+
+test("manual class presets become inactive at school midnight even before control cleanup", () => {
+  const manualExpiresAt = new Date("2026-10-31T04:00:00Z");
+  const session = { id: "session", automaticFlightPathState: assignment,
+    startTime: new Date("2026-10-30T23:00:00Z"), endTime: null, scheduledEndAt: null, manualExpiresAt };
+  const row = control({ scheduledEndAt: null, hardExpiresAt: new Date("2026-10-31T12:00:00Z") });
+  const summary = (clock: Date) => summarizeAutomaticFlightPathSession({ session, studentIds: ["student"],
+    controls: [row], activeSessions: [{ studentId: "student", startedAt: session.startTime }], now: clock });
+  assert.equal(summary(new Date(manualExpiresAt.getTime() - 1)).automaticFlightPath.status, "active");
+  const expired = summary(manualExpiresAt);
+  assert.equal(expired.automaticFlightPath.status, "inactive");
+  assert.equal(expired.students[0]?.status, "off");
+  assert.equal(expired.students[0]?.automatic, false);
+});
+
+test("manual class presets honor the ordinary 12-hour cap before a later midnight", () => {
+  const session = { id: "session", automaticFlightPathState: assignment,
+    startTime: new Date(now.getTime() - 12 * 3600_000), endTime: null, scheduledEndAt: null,
+    manualExpiresAt: new Date(now.getTime() + 3600_000) };
+  const summary = (clock: Date) => summarizeAutomaticFlightPathSession({ session, studentIds: ["student"],
+    controls: [control()], activeSessions: [{ studentId: "student", startedAt }], now: clock });
+  assert.equal(summary(new Date(now.getTime() - 1)).automaticFlightPath.status, "active");
+  assert.equal(summary(now).automaticFlightPath.status, "inactive");
 });

@@ -1,16 +1,18 @@
-import type { ClasspilotStudentControlState } from "../schema/classpilot.js";
+import type { ClasspilotStudentControlState, TeachingSession } from "../schema/classpilot.js";
 import {
   automaticFlightPathStateDto,
   normalizeAutomaticFlightPathState,
   readAutomaticFlightPathOrigin,
 } from "./classpilotAutomaticFlightPath.js";
 import { normalizeClasspilotRestrictions } from "./classpilotClassroomState.js";
+import { classpilotTeachingSessionDeadline } from "./classpilotTeachingSessionWindow.js";
 
 export type AutomaticFlightPathStudentStatus = "applied" | "pending" | "failed" | "unavailable" | "overridden" | "off";
 
 /** A request is never evidence that the student's current browser applied it. */
 export function summarizeAutomaticFlightPathSession(options: {
-  session: { id: string; automaticFlightPathState: unknown; endTime: Date | null; scheduledEndAt: Date | null };
+  session: Pick<TeachingSession, "id" | "startTime" | "endTime" | "scheduledEndAt">
+    & { automaticFlightPathState: unknown; manualExpiresAt?: Date | null };
   studentIds: readonly string[];
   controls: readonly ClasspilotStudentControlState[];
   activeSessions: readonly { studentId: string; startedAt: Date }[];
@@ -19,7 +21,7 @@ export function summarizeAutomaticFlightPathSession(options: {
   const now = options.now ?? new Date();
   const session = options.session;
   const state = normalizeAutomaticFlightPathState(session.automaticFlightPathState);
-  const ended = !!session.endTime || !!session.scheduledEndAt && session.scheduledEndAt <= now;
+  const ended = !!session.endTime || classpilotTeachingSessionDeadline(session) <= now;
   const controls = new Map(options.controls.map(control => [control.studentId, control]));
   const logins = new Map(options.activeSessions.map(login => [login.studentId, login]));
   const overrides = new Set(state.manualOverrideStudentIds);

@@ -258,7 +258,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     });
 
     await teacherPage.goto(`${baseURL}/classpilot/my-settings/schedule-changes`);
-    await teacherPage.getByRole("heading", { name: "Schedule Changes", exact: true }).waitFor();
+    await teacherPage.getByRole("heading", { name: "Planned time swaps", exact: true }).waitFor();
     await teacherPage.getByRole("link", { name: "Website tools" }).waitFor();
     await teacherPage.getByText("7th Math").first().waitFor();
     await teacherPage.getByTestId(`button-accept-${CHANGE_ID}`).click();

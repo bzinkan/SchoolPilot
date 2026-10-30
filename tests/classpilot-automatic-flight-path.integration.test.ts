@@ -10,6 +10,7 @@ import type { FlightPath, Group, TeachingSession } from "../src/schema/classpilo
 import { focusRecord } from "../src/services/classpilotFocus.js";
 import { normalizePreciseWaypointResource } from "../src/services/restrictionResources.js";
 import { serializeClasspilotStudentControlState, serializeClasspilotStudentControlStateForDelivery } from "../src/services/classpilotClassroomState.js";
+import { localDateInTimeZone } from "../src/util/schoolTime.js";
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_PROTOCOL_V3_ENABLED = "true";
@@ -27,6 +28,7 @@ delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS;
 const ids = { school: randomUUID(), otherSchool: randomUUID(), teacher: randomUUID(), coTeacher: randomUUID(), outsider: randomUUID(), observerAdmin: randomUUID(), dualRoleStaff: randomUUID() };
 const capabilities = ["classroomStateV1", "scopedAuthorityChecksV1", "scheduledClassroomV1", "lateSignInRestrictionSsoV1", "preciseRestrictionResourcesV1", "focusTabV1", "screenOnlyUnlockV1"];
 const automaticStateSchema = z.object({ revision: z.number().int().nonnegative(), status: z.enum(["inactive", "active", "off", "unavailable"]) });
+const automaticStatusSchema = z.object({ automaticFlightPath: automaticStateSchema, canStop: z.boolean() });
 let admin: pg.Pool;
 let database: typeof import("../src/db.js").default;
 let storage: typeof import("../src/services/storage.js");
@@ -95,6 +97,18 @@ async function start(item: Fixture, options: { actorId?: string; mode?: "live" |
   item.session = await inSchool(() => storage.createTeachingSession({ groupId: item.group.id, teacherId: options.actorId ?? ids.teacher,
     sessionMode: options.mode ?? "live", startTime: new Date(Date.now() - 60_000), scheduledDate: new Date().toISOString().slice(0, 10),
     scheduledTimezone: "UTC", scheduledStartAt: new Date(Date.now() - 60_000), scheduledEndAt: new Date(Date.now() + 3_600_000), scheduledState: "active" }));
+  return item.session;
+}
+
+async function startManualToday(item: Fixture, actorId = ids.teacher) {
+  await inSchool(async () => {
+    const school = await storage.getSchoolById(ids.school);
+    assert.ok(school);
+    await storage.enableClasspilotManualToday({ schoolId: ids.school, groupId: item.group.id,
+      actorId: ids.observerAdmin, expectedSchoolDate: localDateInTimeZone(new Date(), school.schoolTimezone) });
+    item.session = await storage.createTeachingSession({ groupId: item.group.id, teacherId: actorId });
+  });
+  assert.ok(item.session);
   return item.session;
 }
 
@@ -282,6 +296,101 @@ describe("Automatic per-class Flight Path under restricted RLS", { skip: process
     await inSchool(() => storage.resyncClasspilotSessionStudents(item.session!));
     assert.deepEqual((await restrictions(item)).flightPath.allowedDomains, ["example.org"]);
     assert.equal(focusRecord((await reload(item)).automaticFlightPathState).status, "active");
+  });
+
+  test("a new manual-day co-teacher session freezes the saved class preset without scheduled metadata", async () => {
+    const item = await fixture();
+    await configure(item);
+    const started = await startManualToday(item, ids.coTeacher);
+    assert.equal(started.scheduledDate, null);
+    assert.equal(started.scheduledStartAt, null);
+    assert.equal(started.scheduledEndAt, null);
+    assert.ok(started.manualExpiresAt);
+    assert.equal(focusRecord(started.automaticFlightPathState).status, "active");
+    assert.deepEqual((await restrictions(item)).flightPath.allowedDomains, ["example.org"]);
+    const original = await control(item);
+    const deadline = new Date(Math.min(started.startTime.getTime() + 12 * 3600_000, started.manualExpiresAt.getTime()));
+    assert.equal(original.hardExpiresAt?.toISOString(), deadline.toISOString());
+    assert.equal(serializeClasspilotStudentControlState(original, new Date(deadline.getTime() - 1)).restrictions.flightPath.active, true);
+    assert.equal(serializeClasspilotStudentControlState(original, deadline).restrictions.flightPath.active, false);
+    await configure(item, { enabled: false, flightPathId: null });
+    await admin.query("UPDATE flight_paths SET allowed_domains=ARRAY['changed.example.org'],updated_at=now() WHERE id=$1", [item.path.id]);
+    await inSchool(() => storage.initializeAutomaticFlightPathForSession(started));
+    await inSchool(() => storage.initializeClasspilotStudentControlStatesForSession(started));
+    assert.deepEqual((await restrictions(item)).flightPath.allowedDomains, ["example.org"], "later settings affect future starts only");
+  });
+
+  test("manual sessions never acquire a saved preset retroactively and a later new start freezes it", async () => {
+    const ordinary = await fixture();
+    await configure(ordinary);
+    ordinary.session = await inSchool(() => storage.createTeachingSession({ groupId: ordinary.group.id, teacherId: ids.teacher }));
+    assert.equal(ordinary.session.manualExpiresAt, null);
+    assert.equal(focusRecord(await inSchool(() => storage.initializeAutomaticFlightPathForSession(ordinary.session!))).status, "inactive");
+    assert.equal((await restrictions(ordinary)).flightPath.active, false);
+
+    const manual = await fixture();
+    const first = await startManualToday(manual);
+    assert.equal(focusRecord(first.automaticFlightPathState).status, "inactive");
+    await configure(manual);
+    assert.equal(focusRecord(await inSchool(() => storage.initializeAutomaticFlightPathForSession(first))).status, "inactive");
+    // A pre-upgrade manual session may carry the lifetime but have no frozen
+    // preset state. A later initializer call must not backfill that decision.
+    await admin.query("UPDATE teaching_sessions SET automatic_flight_path_state=NULL WHERE id=$1", [first.id]);
+    const legacy = await reload(manual);
+    assert.equal(focusRecord(await inSchool(() => storage.initializeAutomaticFlightPathForSession(legacy))).status, "inactive");
+    assert.equal((await reload(manual)).automaticFlightPathState, null);
+    assert.equal((await restrictions(manual)).flightPath.active, false);
+    await inSchool(() => storage.finalizeTeachingSession({ schoolId: ids.school, sessionId: first.id, reason: "manual_end", recipients: [] }));
+    const next = await startManualToday(manual);
+    assert.notEqual(next.id, first.id);
+    assert.equal(focusRecord(next.automaticFlightPathState).status, "active");
+    assert.deepEqual((await restrictions(manual)).flightPath.allowedDomains, ["example.org"]);
+  });
+
+  test("manual-day automatic stop is available to session staff and persists through reload and supervision return", async () => {
+    const item = await fixture();
+    await configure(item);
+    const started = await startManualToday(item);
+    const revision = automaticStateSchema.parse(started.automaticFlightPathState).revision;
+    const { createApp } = await import("../src/app.js");
+    const { signUserToken } = await import("../src/services/jwt.js");
+    const server = createServer(createApp());
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+    const request = (method: string, endpoint: string, actorId: string, body?: Record<string, unknown>) => fetch(`${baseUrl}${endpoint}`, {
+      method, headers: { authorization: `Bearer ${signUserToken({ userId: actorId, email: `${actorId}@example.edu`, isSuperAdmin: false })}`,
+        "x-school-id": ids.school, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    try {
+      const status = await request("GET", `/classpilot/teaching-sessions/${started.id}/automatic-flight-path`, ids.coTeacher);
+      assert.equal(status.status, 200);
+      assert.equal(automaticStatusSchema.parse(await status.json()).canStop, true, "a manual class has no scheduledEndAt but can stop its own preset");
+      const context = await inSchool(() => storage.createSupervisionContextWithStudents({ context: {
+        schoolId: ids.school, name: "Manual session temporary supervision", contextType: "coverage_group", assignedStaffId: ids.coTeacher,
+        createdBy: ids.coTeacher, startsAt: new Date(Date.now() - 1000), endsAt: new Date(Date.now() + 30 * 60_000),
+      }, studentIds: item.bindings.map(binding => binding.studentId), assignedBy: ids.coTeacher }));
+      const stop = { teachingSessionId: started.id, targetScope: "class", commandType: "remove-flight-path", commandPayload: {},
+        stopAutomaticFlightPath: { expectedRevision: revision } };
+      const observer = await request("POST", "/classpilot/commands", ids.observerAdmin, stop);
+      assert.equal(observer.status, 404, await observer.text());
+      const stopped = await request("POST", "/classpilot/commands", ids.coTeacher, stop);
+      assert.equal(stopped.status, 201, await stopped.text());
+      const restoredDecision = await inSchool(() => storage.initializeAutomaticFlightPathForSession(started));
+      assert.equal(restoredDecision.status, "off", "a stale live-session snapshot cannot reinitialize the frozen stop");
+      await inSchool(() => storage.releaseSupervisionStudents({ schoolId: ids.school, contextId: context.id,
+        studentIds: item.bindings.map(binding => binding.studentId), releaseReason: "returned" }));
+      assert.equal((await control(item)).teachingSessionId, started.id);
+      assert.equal((await restrictions(item)).flightPath.active, false);
+      const reloaded = await request("GET", `/classpilot/teaching-sessions/${started.id}/automatic-flight-path`, ids.teacher);
+      assert.equal(reloaded.status, 200);
+      const result = automaticStatusSchema.parse(await reloaded.json());
+      assert.equal(result.automaticFlightPath.status, "off");
+      assert.equal(result.canStop, false);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   test("configuration rejects unrelated staff, cross-tenant access, and stale revisions", async () => {

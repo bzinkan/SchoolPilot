@@ -16,6 +16,8 @@ import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import TemporaryRoomDialog from '../components/TemporaryRoomDialog';
 import ManualTodayDialog from '../components/ManualTodayDialog';
+import ClassStartControls from '../components/ClassStartControls';
+import ClassStartReviewDialog from '../components/ClassStartReviewDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import ClassToolsPanel from '../components/ClassToolsPanel';
 import ChatWorkspace from '../components/ChatWorkspace';
@@ -47,7 +49,7 @@ import { AUTOMATIC_FLIGHT_PATH_SESSION_KEY } from '../lib/automaticFlightPath';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
-import { useManualToday, manualTodayDateLabel } from '../hooks/useManualToday';
+import { MANUAL_TODAY_QUERY, useManualToday, manualTodayDateLabel } from '../hooks/useManualToday';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityTitle, activityEndLabel, activityEndRequest, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority, matchesCommandUpdateActivity } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { activeAvailableTestingGroup } from '../lib/availableTestingGroup';
@@ -686,6 +688,8 @@ export default function Dashboard() {
   const [startGroupId, setStartGroupId] = useState(() => readClassroomSelection(teacherClassroomSelectionKey));
   const [adminStartGroupId, setAdminStartGroupId] = useState(() => readClassroomSelection(adminClassroomSelectionKey));
   const [classStartOverlap, setClassStartOverlap] = useState(null);
+  const [classStartReview, setClassStartReview] = useState(null);
+  const classStartTriggerRef = useRef(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const [endClassTarget, setEndClassTarget] = useState(null);
   const [endTestingTarget, setEndTestingTarget] = useState(null);
@@ -3371,6 +3375,7 @@ export default function Dashboard() {
       setShowPollResultsDialog(false);
       setShowRerouteDialog(false);
       setClassStartOverlap(null);
+      setClassStartReview(null);
       setClassResyncOverlap(null);
       setEndClassTarget(null);
       setSkipTodayGroup(null);
@@ -5368,6 +5373,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     updateGradesMutation.mutate(currentGrades.filter(g => g !== grade));
   };
 
+  const makeClassStartReview = (group, manualToday = false, source = activeSession) => ({
+    scope: classReaderKey,
+    groupId: group.id,
+    groupName: group.name,
+    manualToday,
+    alreadyManualToday: manualTodayClasses.some(row => row.id === group.id),
+    schoolDate: manualTodayQuery.data?.schoolDate,
+    expectedActiveSessionId: source?.id || null,
+    previousSessionOwned: source?.teacherId === currentUser?.id,
+    previousClassName: source?.classNameSnapshot || groups.find(row => row.id === source?.groupId)?.name || adminTeachingGroups.find(row => row.id === source?.groupId)?.name,
+    overlap: null,
+    error: '',
+  });
+
   const startSessionMutation = useMutation({
     mutationFn: async (request) => {
       const payload = typeof request === "string" ? { groupId: request } : request;
@@ -5378,9 +5397,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: [MANUAL_TODAY_QUERY], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity'], exact: false });
       setClassStartOverlap(null);
+      setClassStartReview(null);
       const request = typeof variables === "string" ? { groupId: variables } : variables;
-      const group = groups.find(g => g.id === (data.session?.groupId || data.groupId));
+      const group = [...groups, ...adminTeachingGroups].find(g => g.id === (data.session?.groupId || data.groupId));
       toast({
         title: "Class Started",
         description: request?.acknowledgeOverlap
@@ -5389,15 +5411,46 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       });
     },
     onError: (error, variables) => {
+      const request = typeof variables === 'string' ? { groupId: variables } : variables;
+      const failure = error.response?.data;
+      const group = [...groups, ...adminTeachingGroups].find(row => row.id === request.groupId);
+      if (failure?.code === 'MANUAL_TODAY_REQUIRED' && group && failure.canManageManualToday) {
+        setClassStartOverlap(null);
+        setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group)),
+          ...(Object.hasOwn(request, 'expectedActiveSessionId') ? { expectedActiveSessionId: request.expectedActiveSessionId } : {}),
+          manualToday: true, schoolDate: failure.schoolDate, error: '' }));
+        void manualTodayQuery.refetch();
+        return;
+      }
       const data = classStartOverlapData(error);
       if (data) {
-        const request = typeof variables === "string" ? { groupId: variables } : variables;
+        if ((request.manualToday || Object.hasOwn(request, 'expectedActiveSessionId')) && group) {
+          setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group, !!request.manualToday)),
+            expectedActiveSessionId: request.expectedActiveSessionId, overlap: data, error: '' }));
+          return;
+        }
         setClassStartOverlap({ ...data, request });
+        return;
+      }
+      if (classStartReview?.groupId === request.groupId) {
+        setClassStartReview(current => current && ({ ...current, error: failure?.error || error.message }));
+        void queryClient.invalidateQueries({ queryKey: activeSessionQueryKey, exact: true });
+        void manualTodayQuery.refetch();
         return;
       }
       toast({ variant: "destructive", title: "Cannot Start Class", description: error.response?.data?.error || error.message });
     },
   });
+
+  const beginClassStart = (group, manualToday = false) => {
+    if (!group || startSessionMutation.isPending) return;
+    classStartTriggerRef.current = document.activeElement;
+    if (manualToday || activeSession && activeSession.groupId !== group.id) {
+      setClassStartReview(makeClassStartReview(group, manualToday));
+      return;
+    }
+    startSessionMutation.mutate({ groupId: group.id, expectedActiveSessionId: activeSession?.id || null });
+  };
 
   const endSessionMutation = useMutation({
     mutationFn: async ({ session }) => {
@@ -7027,6 +7080,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 </button>
               )}
             </div>
+            <div className="flex flex-wrap items-center gap-2" data-testid="dashboard-class-picker-row">
+              {isTeacher && !scheduledSupervisionId ? <ClassStartControls groups={groups} selectedId={startGroupId} onSelect={setStartGroupId} activeSession={activeSession}
+                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === startGroupId)} canManageManualToday={manualTodayQuery.data?.canManageManualToday === true}
+                    onStart={group => beginClassStart(group)} onManualStart={group => beginClassStart(group, true)} disabled={dashboardCapabilities.observedOtherClass} pending={startSessionMutation.isPending} /> : null}
+              {isAdmin && !scheduledSupervisionId && !retainedObservedSession ? <ClassStartControls admin groups={adminTeachingGroups} selectedId={adminStartGroupId} onSelect={setAdminStartGroupId} activeSession={activeSession}
+                    manualToday={manualTodayQuery.data?.classes?.find(row => row.id === adminStartGroupId)} canManageManualToday={manualTodayQuery.data?.canManageManualToday === true}
+                    onStart={group => beginClassStart(group)} onManualStart={group => beginClassStart(group, true)} disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading} pending={startSessionMutation.isPending} /> : null}
+            </div>
             <div data-testid="dashboard-header-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-1.5 min-[1240px]:flex-nowrap">
             {/* Center: Status badges */}
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 min-[1240px]:flex-nowrap">
@@ -7054,6 +7115,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               )}
               {isTeacher && !scheduledSupervisionId && (
                 <>
+
                   {activeSession ? (
                     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                       {!activeSessionIsScheduled && (
@@ -7082,33 +7144,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     </div>
                   ) : (
                     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                      <select
-                        value={startGroupId}
-                        onChange={(event) => setStartGroupId(event.target.value)}
-                        disabled={groups.length === 0 || startSessionMutation.isPending}
-                        className="h-8 max-w-[180px] rounded-md border border-chrome-control-border bg-chrome-control px-2 text-xs font-medium text-chrome-fg shadow-sm focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
-                        aria-label="Select ClassPilot class"
-                        data-testid="select-start-session-group"
-                      >
-                        {groups.length === 0 ? (
-                          <option value="">No classes configured</option>
-                        ) : (
-                          groups.map((group) => (
-                            <option key={group.id} value={group.id}>
-                              {group.name}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={!startGroupId || startSessionMutation.isPending}
-                        onClick={() => startSessionMutation.mutate({ groupId: startGroupId })}
-                        data-testid="button-start-session"
-                        className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />Start Class
-                      </button>
                       <button
                         type="button"
                         onClick={() => setShowPastSessions(true)}
@@ -7138,6 +7173,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               {/* Admin Class Selection */}
               {isAdmin && (
                 <>
+
                   {activeSession && !scheduledSupervisionId && !retainedObservedSession && (
                     <>
                       <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-brand/15 border border-brand/30 text-brand" data-testid="badge-admin-teaching">
@@ -7168,38 +7204,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   )}
                   {!activeSession && !scheduledSupervisionId && !retainedObservedSession && (
                     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                      <select
-                        value={adminStartGroupId}
-                        onChange={(event) => setAdminStartGroupId(event.target.value)}
-                        disabled={dashboardCapabilities.observedOtherClass || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
-                        title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
-                        aria-label="Select ClassPilot class to teach"
-                        data-testid="select-admin-start-session-group"
-                        className="h-8 max-w-[180px] rounded-md border border-chrome-control-border bg-chrome-control px-2 text-xs font-medium text-chrome-fg shadow-sm focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {adminTeachingGroupsLoading ? (
-                          <option value="">Loading classes...</option>
-                        ) : adminTeachingGroups.length === 0 ? (
-                          <option value="">No classes assigned</option>
-                        ) : (
-                          adminTeachingGroups.map((group) => (
-                            <option key={group.id} value={group.id}>
-                              {[group.name, group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" - ")}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                      <button
-                        type="button"
-                        disabled={dashboardCapabilities.observedOtherClass || !adminStartGroupId || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
-                        onClick={() => startSessionMutation.mutate({ groupId: adminStartGroupId })}
-                        title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Teach selected class"}
-                        data-testid="button-admin-start-session"
-                        className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Teach Class
-                      </button>
                       {selectedAdminStartGroup?.scheduleEnabled && !manualTodayClasses.some(group => group.id === selectedAdminStartGroup.id) && (
                         <button
                           type="button"
@@ -7269,9 +7273,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       {manualTodayClasses.length > 0 ? <div className="border-b border-amber-300 bg-amber-50 px-6 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100" data-testid="manual-today-status">
         <strong>Manual for today:</strong> {manualTodayClasses.map(group => group.name).join(', ')}.
         {' '}Normal scheduling resumes {manualTodayDateLabel(manualTodayQuery.data.resumesOn)} ({manualTodayQuery.data.timezone}).
+        {' '}Other classes remain automatic and may take over at their scheduled times.
       </div> : null}
       {showManualToday ? <ManualTodayDialog key={roomDialogScopeKey} query={manualTodayQuery} schoolId={activeSchoolId} viewerId={currentUser?.id}
-        startLabel={isAdmin ? 'Teach Class' : 'Start Class'} onClose={() => setShowManualToday(false)} /> : null}
+        startLabel="Start Class" onClose={() => setShowManualToday(false)} /> : null}
+      {classStartReview?.scope === classReaderKey ? <ClassStartReviewDialog key={`${roomDialogScopeKey}:${classStartReview.groupId}`} review={classStartReview} schoolId={activeSchoolId} viewerId={currentUser?.id}
+        returnFocusRef={classStartTriggerRef}
+        currentSessionId={activeSession?.id || null} manualTodayQuery={manualTodayQuery} targetAvailable={[...groups, ...adminTeachingGroups].some(group => group.id === classStartReview.groupId)}
+        pending={startSessionMutation.isPending} onClose={() => setClassStartReview(null)}
+        onRefresh={() => { const group = [...groups, ...adminTeachingGroups].find(row => row.id === classStartReview.groupId); if (group) setClassStartReview(makeClassStartReview(group, classStartReview.manualToday)); }}
+        onConfirm={() => startSessionMutation.mutate({ groupId: classStartReview.groupId, expectedActiveSessionId: classStartReview.expectedActiveSessionId,
+          ...(classStartReview.manualToday ? { manualToday: { expectedSchoolDate: classStartReview.schoolDate } } : {}),
+          ...(classStartReview.overlap ? { acknowledgeOverlap: true } : {}),
+        })} /> : null}
 
       {isTeacher && todayScheduleChanges.length > 0 ? (
         <button
@@ -8534,7 +8548,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               onClick={() => {
                 const groupId = classStartOverlap?.request?.groupId || classStartOverlap?.selectedClass?.id;
                 if (!groupId) return;
-                startSessionMutation.mutate({ groupId, acknowledgeOverlap: true });
+                startSessionMutation.mutate({ ...classStartOverlap?.request, groupId, acknowledgeOverlap: true });
               }}
               disabled={startSessionMutation.isPending}
               data-testid="button-confirm-overlap-start"

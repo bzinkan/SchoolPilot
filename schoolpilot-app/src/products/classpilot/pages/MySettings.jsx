@@ -669,7 +669,7 @@ function TeachingToolsContent({ currentUser, logout, school }) {
         <div className="max-w-5xl mx-auto px-6 pt-3">
           <TeacherSettingsTabs />
           <div className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
-            <Link className="text-primary underline-offset-4 hover:underline" to="/classpilot/my-settings/schedule-changes">Schedule changes</Link>
+            <details className="text-sm"><summary className="cursor-pointer font-medium">Advanced</summary><Link className="mt-2 inline-block text-primary underline-offset-4 hover:underline" to="/classpilot/my-settings/schedule-changes">Planned time swaps</Link></details>
             <span className="text-muted-foreground">Help: <Link className="text-primary underline-offset-4 hover:underline" to="/classpilot/my-settings/guide">Teacher guide</Link></span>
           </div>
         </div>

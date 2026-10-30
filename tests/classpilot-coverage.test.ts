@@ -1738,7 +1738,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       acknowledgeOverlap: true,
     }, authFor(startingTeacher, school.id));
     assert.equal(scheduledClosedStart.status, 409);
-    assert.equal(scheduledClosedStart.body.code, "SCHEDULE_WINDOW_UNAVAILABLE");
+    assert.equal(scheduledClosedStart.body.code, "MANUAL_TODAY_REQUIRED");
+    assert.equal(scheduledClosedStart.body.schoolDate, localDateInTimeZone(new Date(), school.schoolTimezone));
+    assert.equal(scheduledClosedStart.body.canManageManualToday, false);
 
     const ownGroupA = await inSchool(school.id, () => createGroup({
       schoolId: school.id,

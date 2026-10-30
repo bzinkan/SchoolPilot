@@ -11,7 +11,7 @@ import { MANUAL_TODAY_QUERY, manualTodayDateLabel } from '../hooks/useManualToda
 
 const errorMessage = error => error?.response?.data?.error || error?.message || 'Could not enable manual mode. Try again.';
 
-export default function ManualTodayDialog({ query, schoolId, onClose, startLabel = 'Teach Class' }) {
+export default function ManualTodayDialog({ query, schoolId, onClose, startLabel = 'Start Class' }) {
   const [selectionReview, setSelectionReview] = useState(null);
   const reviewId = selectionReview?.id;
   const [notice, setNotice] = useState('');
@@ -82,9 +82,10 @@ export default function ManualTodayDialog({ query, schoolId, onClose, startLabel
             {reviewId ? <div className="space-y-3 rounded-md border p-4 text-sm" data-testid="manual-today-review">
               {staleReview ? <p role="alert">The school date changed while this review was open. Return to the class list and review today’s adjustment again.</p> : null}
               {!reviewedClass ? <p role="alert">This class is no longer available. Return to the class list and refresh.</p> : <>
-                <p><strong>{reviewedClass.name}</strong> will use manual starts for the rest of this school day.</p>
+                <p><strong>{reviewedClass.name}</strong> will use manual starts for all assigned teachers and co-teachers for the rest of this school day.</p>
                 <p>If an automatic session for this class is running, it will end. Existing session history and summaries are kept.</p>
                 <p>Use End Class when you finish. Manual sessions cannot continue past midnight in your school’s timezone.</p>
+                <p>Other classes remain automatic and may take over at their scheduled times. This class returns to automatic scheduling tomorrow; there is no same-day reset.</p>
               </>}
             </div> : <div className="max-h-[45vh] space-y-2 overflow-y-auto" aria-label="Classes for manual starts">
               {classes.length === 0 ? <p className="py-4 text-sm text-muted-foreground">No automatically scheduled classes are available.</p> : classes.map(group => <div
