@@ -4440,6 +4440,7 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
   });
 
   it("serializes an active occurrence and stale worker candidate, preserves history and resumes the next date", async () => {
+    await setCentralRecipient(centralRecipient.id);
     const group = await createClass({ name: "manual_active_worker", scheduled: true, roster: [] });
     const date = "2031-04-01";
     const now = new Date("2031-04-01T13:15:00Z");
@@ -4454,13 +4455,22 @@ describe("ClassPilot Manual for today", { concurrency: false }, () => {
     const historical = await inSchool(school.id, () => storage.getScheduledTeachingSessionOccurrence(school.id, group.id, date));
     assert.equal(historical.id, started.session.id);
     assert.equal(historical.scheduledState, "finalized");
+    const summaries = await deliveryRows(historical.id);
+    assert.deepEqual(summaries.map(row => row.recipient_kind), ["central", "teacher"]);
+    assert.deepEqual(summaries.map(row => row.recipient_email.toLowerCase()).sort(),
+      [centralRecipient.email.toLowerCase(), teacher.email.toLowerCase()].sort());
+    assert.equal(first.finalizations.reduce((count: number, row: any) => count + row.deliveryCount, 0)
+      + repeated.finalizations.reduce((count: number, row: any) => count + row.deliveryCount, 0), 2);
     const suppressed = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({ group, scheduledDate: date, now, scheduledTeacherConnectedOverride: true }));
     assert.equal(suppressed.status, "skipped");
     assert.equal(suppressed.reason, "manual_today");
+    assert.deepEqual((await deliveryRows(historical.id)).map(row => row.id), summaries.map(row => row.id),
+      "duplicate overrides and stale scheduler work preserve exactly one delivery per recipient");
     const tomorrow = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({ group, scheduledDate: "2031-04-02", now: new Date("2031-04-02T13:15:00Z"), scheduledTeacherConnectedOverride: true }));
     assert.equal(tomorrow.status, "started");
     const logs = await inSchool(school.id, () => db.execute(sql`SELECT count(*)::int AS count FROM audit_logs WHERE school_id=${school.id} AND entity_id=${group.id} AND action='class.manual_today_enabled'`));
     assert.equal(logs.rows[0].count, 1);
+    await setCentralRecipient(null);
   });
 
   it("leaves a durable skipped tombstone when a later manual date replaces the group marker", async () => {

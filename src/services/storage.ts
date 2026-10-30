@@ -36099,8 +36099,10 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
     // so report backfill can never invent an automatic class for this manual day.
     const occurrence = await getScheduledTeachingSessionOccurrence(options.schoolId, group.id, schoolDate, transactionDb);
     if (occurrence && !occurrence.endTime) {
-      const finalized = await finalizeTeachingSession({ schoolId: options.schoolId, sessionId: occurrence.id,
-        reason: access.admin ? "admin_end" : "teacher_end", finalizedAt: now }, transactionDb);
+      const { finalizeClasspilotSession } = await import("./classpilotSessionLifecycle.js");
+      const finalized = await finalizeClasspilotSession({ schoolId: options.schoolId, sessionId: occurrence.id,
+        reason: access.admin ? "admin_end" : "teacher_end", finalizedAt: now,
+        dbInstance: transactionDb, deferSideEffects: true });
       if (finalized) finalizations.push(finalized);
     } else if (!occurrence) {
       const { getEffectiveClasspilotScheduleWindow } = await import("./classpilotScheduleChanges.js");
