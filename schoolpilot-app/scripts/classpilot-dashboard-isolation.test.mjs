@@ -1473,14 +1473,18 @@ test('Messages follows the class and school switches together, and Class tools n
   assert.match(dashboard, /onSendMessage=\{[^\n]*\(\) => openRecipientDialog\('message', 'teacher-message', \{ message: '' \}\)\}/);
 });
 
-test('dashboard header actions stay right-aligned when the header wraps', async () => {
+test('dashboard header status and actions share a single desktop toolbar row', async () => {
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
     'utf8',
   );
 
-  assert.match(dashboard, /<header data-class-tools-navigation[\s\S]{0,400}<div className="flex flex-wrap items-center justify-between gap-4">/);
-  assert.match(dashboard, /<div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">[\s\S]{0,1600}data-testid="button-my-settings"/);
-  assert.match(dashboard, /Center: Status badges \*\/[\s\S]{0,100}<div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">/);
+  const toolbarStart = dashboard.indexOf('data-testid="dashboard-header-toolbar"');
+  const toolbarEnd = dashboard.indexOf('</header>', toolbarStart);
+  const toolbar = dashboard.slice(toolbarStart, toolbarEnd);
+
+  assert.match(dashboard, /<header data-class-tools-navigation[\s\S]{0,400}<div className="flex flex-col gap-2">/);
+  assert.match(dashboard, /data-testid="dashboard-header-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-1\.5 min-\[1240px\]:flex-nowrap"[\s\S]{0,500}Center: Status badges \*\/[\s\S]{0,120}<div className="flex min-w-0 max-w-full flex-wrap items-center gap-1\.5 min-\[1240px\]:flex-nowrap">/);
+  assert.match(toolbar, /Right: Actions \*\/[\s\S]{0,120}<div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1\.5 min-\[1240px\]:flex-nowrap min-\[1240px\]:shrink-0">[\s\S]{0,1600}data-testid="button-my-settings"/);
   assert.match(dashboard, /data-testid="select-admin-observe"\s+className="h-7 w-\[150px\] max-w-\[150px\]/);
 });
