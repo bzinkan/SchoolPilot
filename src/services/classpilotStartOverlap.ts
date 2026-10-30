@@ -2,6 +2,7 @@ import type db from "../db.js";
 import {
   getActiveClassOwnersForStudents,
   getGroupStudents,
+  getClasspilotSessionStudentRoster,
   getUserById,
 } from "./storage.js";
 
@@ -41,13 +42,17 @@ export async function buildClassStartOverlapPayload(options: {
   teacherId: string;
   group: { id: string; name: string };
   dbInstance?: typeof db;
+  excludeSessionId?: string;
+  teachingSessionId?: string;
 }): Promise<ClassStartOverlapPayload | null> {
-  const rosterRows = await getGroupStudents(options.group.id, options.dbInstance);
+  const rosterRows = options.teachingSessionId
+    ? await getClasspilotSessionStudentRoster(options.schoolId, options.teachingSessionId, options.dbInstance)
+    : await getGroupStudents(options.group.id, options.dbInstance);
   const studentIds = rosterRows.map((row) => row.studentId);
   if (studentIds.length === 0) return null;
 
   const owners = await getActiveClassOwnersForStudents(options.schoolId, studentIds, options.dbInstance);
-  const conflicts = owners.filter((owner) => owner.session.teacherId !== options.teacherId);
+  const conflicts = owners.filter((owner) => owner.session.teacherId !== options.teacherId && owner.session.id !== options.excludeSessionId);
   if (conflicts.length === 0) return null;
 
   const studentsById = new Map(rosterRows.map((row) => [row.studentId, row.student]));

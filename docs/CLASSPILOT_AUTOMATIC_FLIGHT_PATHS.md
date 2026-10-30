@@ -14,10 +14,13 @@ available to the primary teacher when the next class starts.
 ## Teacher behavior
 
 - The setting starts off. Enabling it requires a saved path and an explicit Save.
-- Changes apply to the next scheduled teaching session. They never introduce
+- Changes apply to the next class session. They never introduce
   restrictions into a class already in progress.
 - The preset freezes when an actual scheduled teaching occurrence becomes live,
   including a teacher starting that occurrence within its effective window.
+  It also freezes when a new Manual today session for that scheduled class is
+  created. Its school-local dated override and midnight deadline are verified
+  by the server; the session remains manual, with no scheduled occurrence date.
   Reporting-only occurrences, temporary rooms, testing, and other supervision
   contexts do not acquire automatic presets.
 - Automatic application requires the same current school monitoring policy as
@@ -31,7 +34,7 @@ available to the primary teacher when the next class starts.
   action addresses the complete class session independently of tile selection.
 - Turning it off saves the session override and removes this assignment's
   automatic restrictions. Reconnect, late sign-in, and return from temporary
-  supervision honor that decision. The next occurrence may use the saved preset.
+  supervision honor that decision. The next class session may use the saved preset.
 - Later manual Flight Path and Focus choices take precedence. Automatic
   initialization and removal preserve website/resource Focus, any remaining
   legacy tab Focus, manual restrictions, block lists, and tab limits. Classroom
@@ -58,6 +61,12 @@ decision and student manual overrides. Server-only automatic-origin metadata
 distinguishes automatic restrictions from later manual commands, including saved
 pre-supervision state. Public DTOs omit the immutable resource payload, internal
 provenance, and student-session/device bindings.
+
+Only the creation boundary may initialize a new Manual today preset. Existing
+manual sessions with no frozen state receive no retroactive restrictions.
+Shared-session joins and repeated starts preserve the original assignment and
+off decision. Status and Stop use the session's earliest real deadline, including
+the school-local midnight and 12-hour hard cap.
 
 Initialization, commands, restoration, and finalization use the existing student
 control authority locks and monotonic snapshot revisions. Only the live owner

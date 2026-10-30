@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { tmpdir } from 'node:os';
 import { chromium } from "playwright";
 import { createServer } from "vite";
 
@@ -183,8 +184,19 @@ async function configurePage(page, kind, options = {}) {
     if (pathname === '/api/sessions/start' && request.method() === 'POST') {
       const body = request.postDataJSON();
       startRequests.push(body);
+      const configured = options.startResponse?.(body, { currentSession, manualToday });
+      if (configured) {
+        if (Object.hasOwn(configured, 'session')) currentSession = configured.session;
+        if (configured.manualToday) manualToday = configured.manualToday;
+        await route.fulfill({ status: configured.status || 200, json: configured.json });
+        return;
+      }
       currentSession = activeSession('manual', { groupId: body.groupId });
       await route.fulfill({ json: { session: currentSession } });
+      return;
+    }
+    if (/^\/api\/classpilot\/groups\/[^/]+\/automatic-flight-path$/.test(pathname) && request.method() === 'GET') {
+      await route.fulfill({ json: options.automaticFlightPath || { policy: { enabled: false }, eligible: true, flightPath: null } });
       return;
     }
     if (pathname === "/api/classpilot/teaching-sessions/recent" && request.method() === "GET") {
@@ -652,4 +664,88 @@ test('Manual for today changes only reviewed classes, survives reload, and expir
   await deniedPage.getByRole('button', { name: 'Back to classes' }).click();
   await deniedPage.getByRole('button', { name: 'Done', exact: true }).click();
   assert.equal(await deniedPage.getByTestId('button-manual-today').count(), 0, 'Teachers without school permission cannot open the adjustment action');
+});
+
+test('persistent class picker reviews atomic manual Start and Switch for teachers and admins', { timeout: 90_000 }, async t => {
+  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', cacheDir: `node_modules/.vite-class-start-${process.pid}`, server: { host: '127.0.0.1', port: 0 } });
+  await vite.listen();
+  const address = vite.httpServer.address();
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await vite.close(); });
+  const chemistryId = '44444444-4444-4444-8444-444444444444';
+  const groups = [{ id: GROUP_ID, name: 'Biology', teacherId: TEACHER_ID, scheduleEnabled: true }, { id: chemistryId, name: 'Chemistry', teacherId: TEACHER_ID, scheduleEnabled: true }];
+  const status = { schoolDate: '2026-10-30', timezone: 'America/New_York', resumesOn: '2026-10-31', resumesAt: '2026-10-31T04:00:00.000Z', canManageManualToday: true, teacherManualTodayAllowed: true,
+    classes: groups.map(group => ({ ...group, isManualToday: false, scheduleManualDate: null })) };
+  for (const role of ['teacher', 'admin']) {
+    const page = await browser.newPage({ viewport: role === 'teacher' ? { width: 390, height: 844 } : { width: 1280, height: 900 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const harness = await configurePage(page, 'scheduled', { role, groups, manualToday: status,
+      automaticFlightPath: { policy: { enabled: true }, eligible: true, flightPath: { flightPathName: 'Chemistry resources' } },
+      startResponse(body, state) {
+        if (!body.acknowledgeOverlap) return { status: 409, json: { code: 'CLASS_ROSTER_ACTIVE_OVERLAP', totalOverlapCount: 2, selectedClass: groups[1], groups: [{ sessionId: 'other-session', teacherName: 'Other teacher', className: 'Math', affectedCount: 2 }] } };
+        const updated = { ...state.manualToday, classes: state.manualToday.classes.map(group => group.id === chemistryId ? { ...group, isManualToday: true, scheduleManualDate: status.schoolDate } : group) };
+        const session = activeSession('manual', { id: 'chemistry-manual-session', groupId: chemistryId });
+        return { session, manualToday: updated, json: { session, manualToday: updated } };
+      },
+    });
+    await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
+    const selector = page.getByTestId(role === 'admin' ? 'select-admin-start-session-group' : 'select-start-session-group');
+    const start = page.getByTestId(role === 'admin' ? 'button-admin-start-session' : 'button-start-session');
+    const manual = page.getByTestId(role === 'admin' ? 'button-admin-start-manually-today' : 'button-start-manually-today');
+    await selector.waitFor();
+    assert.equal((await start.textContent()).trim(), 'Teaching');
+    assert.equal(await start.isDisabled(), true);
+    await selector.focus();
+    await selector.press('ArrowDown');
+    await selector.press('Enter');
+    assert.equal(await selector.inputValue(), chemistryId, 'The persistent picker works with the keyboard');
+    assert.equal(harness.startRequests.length, 0, 'Picking another class does not start or end a session');
+    assert.equal((await start.textContent()).trim(), 'Switch Class');
+    await start.click();
+    await page.getByTestId('dialog-class-start-review').getByRole('heading', { name: 'Switch Chemistry?' }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByTestId('dialog-class-start-review').waitFor({ state: 'detached' });
+    assert.equal(await start.evaluate(element => element === document.activeElement), true, 'Escape restores focus to the Switch action');
+    await manual.click();
+    const review = page.getByTestId('dialog-class-start-review');
+    await review.getByRole('heading', { name: 'Switch Chemistry manually today?' }).waitFor();
+    await review.getByTestId('class-start-replacement').getByText('Biology', { exact: false }).waitFor();
+    await review.getByTestId('class-start-flight-path').getByText('Chemistry resources', { exact: true }).waitFor();
+    await review.getByText(/all assigned teachers and co-teachers/).waitFor();
+    for (let tab = 0; tab < 8; tab += 1) {
+      await page.keyboard.press('Tab');
+      assert.equal(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="dialog-class-start-review"]')), true, 'Keyboard focus stays inside the review');
+    }
+    await page.screenshot({ path: path.join(tmpdir(), `classpilot-manual-start-switch-${role}.png`) });
+    assert.equal(harness.startRequests.length, 0, 'Reviewing and cancelling do not mutate class mode');
+    await review.getByTestId('button-confirm-class-start-review').click();
+    await review.getByTestId('class-start-review-overlap').waitFor();
+    assert.equal(await page.getByTestId('dialog-class-start-overlap').count(), 0, 'Overlap stays in the combined review');
+    assert.deepEqual(harness.startRequests[0], { groupId: chemistryId, expectedActiveSessionId: 'scheduled-session', manualToday: { expectedSchoolDate: '2026-10-30' } });
+    assert.equal(harness.manualTodayRequests.length, 0, 'Atomic Start never calls the separate pause-only endpoint');
+    await review.getByRole('button', { name: 'Switch and move 2 students', exact: true }).click();
+    await review.waitFor({ state: 'detached' });
+    assert.deepEqual(harness.startRequests[1], { ...harness.startRequests[0], acknowledgeOverlap: true });
+    await page.getByTestId('manual-today-status').getByText(/Chemistry/).waitFor();
+    await page.getByTestId('selected-class-schedule-status').getByText('Manual today · Teaching', { exact: true }).waitFor();
+    assert.equal(harness.endRequests.length, 0, 'Switch ends the previous session only through the atomic server action');
+    assert.deepEqual(errors, []);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Persistent controls fit desktop and mobile viewports');
+    await page.close();
+  }
+  const page = await browser.newPage();
+  const idle = await configurePage(page, 'scheduled', { active: false, manualToday: status, groups,
+    startResponse(body) {
+      if (!body.manualToday) return { status: 409, json: { code: 'MANUAL_TODAY_REQUIRED', schoolDate: status.schoolDate, canManageManualToday: true, error: 'Manual start required.' } };
+      const session = activeSession('manual');
+      return { session, json: { session } };
+    },
+  });
+  await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
+  await page.getByTestId('button-start-session').click();
+  await page.getByTestId('dialog-class-start-review').getByRole('heading', { name: 'Start Biology manually today?' }).waitFor();
+  await page.getByTestId('button-confirm-class-start-review').click();
+  await page.getByTestId('dialog-class-start-review').waitFor({ state: 'detached' });
+  assert.deepEqual(idle.startRequests, [{ groupId: GROUP_ID }, { groupId: GROUP_ID, expectedActiveSessionId: null, manualToday: { expectedSchoolDate: status.schoolDate } }]);
 });

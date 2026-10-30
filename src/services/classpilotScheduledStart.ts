@@ -36,6 +36,9 @@ import {
   getActiveSessionsForStudents,
   getActiveSupervisionForStudents,
   getActiveTeachingSessionForSchool,
+  assertClasspilotClassStartReview,
+  assertClasspilotSessionStartAccess,
+  isAuthorizedClasspilotSessionStaff,
   getClasspilotSessionStudentRoster,
   getGroupByIdAndSchool,
   getGroupStudents,
@@ -60,6 +63,9 @@ import {
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
 import { scheduledClassStaffIds } from "./classpilotScheduledStaff.js";
+import { buildClassStartOverlapPayload } from "./classpilotStartOverlap.js";
+
+type ReviewedClassStart = { actorId: string; expectedActiveSessionId: string | null; acknowledgeOverlap?: boolean };
 
 export type ScheduledClassAutoStartResult =
   | { status: "started"; session: TeachingSession }
@@ -703,6 +709,7 @@ async function startScheduledClass(options: {
   actorId?: string | null;
   dbInstance?: typeof db;
   afterReplacement?: () => Promise<void>;
+  reviewedStart?: ReviewedClassStart;
 }): Promise<TeachingSession> {
   const outcome = await withTeachingSessionStartLock(
     options.group.schoolId,
@@ -764,6 +771,7 @@ async function startScheduledClassLocked(options: {
   actorId?: string | null;
   dbInstance: typeof db;
   afterReplacement?: () => Promise<void>;
+  reviewedStart?: ReviewedClassStart;
 }): Promise<{
   session: TeachingSession;
   wasPromoted: boolean;
@@ -777,6 +785,20 @@ async function startScheduledClassLocked(options: {
   // Promotion is the mutation linearization point, so entitlement must be
   // re-read under the same start transaction and held through commit.
   await assertClasspilotEntitled(options.group.schoolId, dbInstance, { lock: true });
+  if (options.reviewedStart) {
+    await assertClasspilotSessionStartAccess(options.group.schoolId, options.reviewedStart.actorId, options.group.id, dbInstance);
+    await assertClasspilotClassStartReview({ schoolId: options.group.schoolId, actorId: options.reviewedStart.actorId,
+      groupId: options.group.id, expectedActiveSessionId: options.reviewedStart.expectedActiveSessionId }, dbInstance);
+    if (options.scheduledSession.sessionMode === "live"
+      && !await isAuthorizedClasspilotSessionStaff(options.group.schoolId, options.scheduledSession.id, options.reviewedStart.actorId, dbInstance)) {
+      throw Object.assign(new Error("Only this class session's staff may join it."), { status: 403, code: "CLASS_SESSION_STAFF_REQUIRED" });
+    }
+    if (options.reviewedStart.acknowledgeOverlap !== true) {
+      const overlap = await buildClassStartOverlapPayload({ schoolId: options.group.schoolId, teacherId: options.reviewedStart.actorId,
+        group: options.group, dbInstance, excludeSessionId: options.scheduledSession.id, teachingSessionId: options.scheduledSession.id });
+      if (overlap) throw Object.assign(new Error("Some students are already active in another class"), { status: 409, ...overlap });
+    }
+  }
   const currentGroup = await getGroupByIdAndSchool(options.group.id, options.group.schoolId, dbInstance);
   if (!currentGroup || currentGroup.scheduleManualDate === options.scheduledSession.scheduledDate) {
     throw Object.assign(new Error("This class is manual for today. Start it with Teach Class."), {
@@ -825,7 +847,7 @@ async function startScheduledClassLocked(options: {
   const effectiveConflictActive = !!effectiveConflict
     && ["coverage_needed", "claimed", "pending"].includes(effectiveConflict.status);
   const replacedSessions = await listOtherActiveTeachingSessionsForSchool(
-    options.scheduledSession.teacherId,
+    options.reviewedStart?.actorId ?? options.scheduledSession.teacherId,
     options.group.schoolId,
     session.id,
     dbInstance
@@ -920,6 +942,7 @@ export async function processScheduledClassAutoStart(options: {
   presenceStore?: Pick<ClasspilotStaffPresenceStore, "isFresh">;
   now?: Date;
   afterReplacement?: () => Promise<void>;
+  reviewedStart?: ReviewedClassStart;
 }): Promise<ScheduledClassAutoStartResult> {
   const dbInstance = options.dbInstance;
   let group = options.group;
@@ -1026,15 +1049,17 @@ export async function processScheduledClassAutoStart(options: {
     // mid-block, so report already_live instead. An active conflict on a live
     // occurrence is only reachable on the first start; keep that fall-through
     // so it still resolves through the locked start.
-    if (!["coverage_needed", "claimed", "pending"].includes(existingConflict?.status || "")) {
+    if (!options.reviewedStart && !["coverage_needed", "claimed", "pending"].includes(existingConflict?.status || "")) {
       return { status: "already_live", session: occurrence };
     }
     const session = await startScheduledClass({
       group: occurrenceGroup,
       scheduledSession: occurrence,
       scheduledConflict: existingConflict,
+      actorId: options.reviewedStart?.actorId,
       dbInstance,
       afterReplacement: options.afterReplacement,
+      reviewedStart: options.reviewedStart,
     });
     return { status: "started", session };
   }
@@ -1066,9 +1091,10 @@ export async function processScheduledClassAutoStart(options: {
       group: occurrenceGroup,
       scheduledSession: occurrence,
       scheduledConflict: existingConflict,
-      actorId: connectedStaffId,
+      actorId: options.reviewedStart?.actorId ?? connectedStaffId,
       dbInstance,
       afterReplacement: options.afterReplacement,
+      reviewedStart: options.reviewedStart,
     });
     broadcastScheduledClassUpdate(group.schoolId, {
       type: "scheduled-class-conflict-updated",

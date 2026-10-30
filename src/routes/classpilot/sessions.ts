@@ -22,7 +22,9 @@ import {
   getUserById,
   isAuthorizedClasspilotSessionStaff,
   listRecentClasspilotTeachingSessions,
+  getClasspilotManualTodayStatus,
 } from "../../services/storage.js";
+import { broadcastClasspilotScheduleChangeUpdate } from "../../services/classpilotScheduleChanges.js";
 import { logAudit } from "../../services/audit.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { buildClassStartOverlapPayload } from "../../services/classpilotStartOverlap.js";
@@ -46,6 +48,7 @@ import { normalizeAutomaticFlightPathState } from "../../services/classpilotAuto
 import { db } from "../../db.js";
 import { and, eq, inArray } from "drizzle-orm";
 import { classpilotStudentControlStates } from "../../schema/classpilot.js";
+import { classpilotTeachingSessionIsCurrent } from "../../services/classpilotTeachingSessionWindow.js";
 
 const router = Router();
 
@@ -85,8 +88,7 @@ router.get("/:id/automatic-flight-path", ...auth, async (req, res, next) => {
     const activeSessions = await getActiveSessionsForStudents(schoolId, studentIds);
     return res.json({
       ...summarizeAutomaticFlightPathSession({ session, studentIds, controls, activeSessions }),
-      canStop: staff && !session.endTime && session.sessionMode === "live" && state.status === "active"
-        && !!session.scheduledEndAt && session.scheduledEndAt > new Date(),
+      canStop: staff && state.status === "active" && classpilotTeachingSessionIsCurrent(session),
     });
   } catch (error) { next(error); }
 });
@@ -292,26 +294,56 @@ function classResyncAuditSummary(summary: ReturnType<typeof emptyResyncSummary>)
 }
 
 async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
-  const { groupId, acknowledgeOverlap } = req.body;
+  const { groupId, acknowledgeOverlap, manualToday, expectedActiveSessionId } = req.body || {};
   const teacherId = req.authUser!.id;
   const schoolId = res.locals.schoolId!;
 
-  if (!groupId) {
+  if (typeof groupId !== "string" || !groupId.trim()) {
     return res.status(400).json({ error: "groupId is required" });
+  }
+  if (manualToday !== undefined && expectedActiveSessionId === undefined
+    || expectedActiveSessionId !== undefined && expectedActiveSessionId !== null && (typeof expectedActiveSessionId !== "string" || !expectedActiveSessionId.trim())
+    || manualToday !== undefined && (!manualToday || typeof manualToday !== "object" || Array.isArray(manualToday)
+      || Object.keys(manualToday).some(key => key !== "expectedSchoolDate") || typeof manualToday.expectedSchoolDate !== "string")) {
+    return res.status(400).json({ error: "Review the class and school date before starting.", code: "CLASS_START_REVIEW_INVALID" });
   }
 
   const group = await getGroupByIdAndSchool(groupId, schoolId);
   if (!group) {
     return res.status(404).json({ error: "Group not found" });
   }
+  const admin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
+  if (!admin && !await isScheduledClassStaff({ groupId: group.id, scheduledTeacherId: group.teacherId, userId: teacherId })) {
+    return res.status(403).json({ error: "This class is not assigned to you" });
+  }
+
+  const finishManualStart = async (result: Awaited<ReturnType<typeof startManualClasspilotSession>>) => {
+    for (const finalized of result.finalizations) if (finalized.deliveryCount) kickSummaryDispatch(schoolId, finalized.session.id);
+    if (result.manualToday) await broadcastClasspilotScheduleChangeUpdate({ schoolId, scheduledDate: result.manualToday.schoolDate }).catch(error => {
+      console.warn("ClassPilot manual-day notification failed", safeErrorMetadata(error));
+    });
+    const status = result.manualToday;
+    return res.status(result.reused ? 200 : 201).json({ session: serializeClasspilotSession(result.session), reused: result.reused,
+      ...(status ? { manualToday: { schoolDate: status.schoolDate, timezone: status.timezone, resumesAt: status.resumesAt,
+        resumesOn: status.resumesOn, class: status.class } } : {}) });
+  };
+  if (manualToday) return finishManualStart(await startManualClasspilotSession({
+    schoolId, teacherId, groupId, manualToday, expectedActiveSessionId, acknowledgeOverlap,
+  }));
+
+  const manualRequired = async () => {
+    const status = await getClasspilotManualTodayStatus(schoolId, teacherId);
+    return res.status(409).json({ error: "This automatic class is unavailable now. Review Start manually today to teach it now.",
+      code: "MANUAL_TODAY_REQUIRED", schoolDate: status.schoolDate, canManageManualToday: status.canManageManualToday });
+  };
 
   const school = await getSchoolById(schoolId);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const now = new Date();
   const scheduledDate = now.toLocaleDateString("en-CA", { timeZone });
-  const manualToday = group.scheduleManualDate === scheduledDate;
-  const occurrence = manualToday ? undefined : await getScheduledTeachingSessionOccurrence(schoolId, group.id, scheduledDate);
-  const scheduledPath = !manualToday && (!!occurrence || (group.scheduleEnabled && !!group.blockStartTime && !!group.blockEndTime));
+  const isManualToday = group.scheduleManualDate === scheduledDate;
+  const occurrence = isManualToday ? undefined : await getScheduledTeachingSessionOccurrence(schoolId, group.id, scheduledDate);
+  const scheduledPath = !isManualToday && (!!occurrence || (group.scheduleEnabled && !!group.blockStartTime && !!group.blockEndTime));
   if (occurrence) {
     if (
       occurrence.scheduledState !== "active"
@@ -321,13 +353,17 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
       || now < occurrence.scheduledStartAt
       || now >= occurrence.scheduledEndAt
     ) {
-      throw Object.assign(new Error("Today's scheduled class occurrence is not active."), { status: 409 });
+      return manualRequired();
     }
-  } else if (!manualToday) {
-    await assertManualStartWindow(group);
+  } else if (!isManualToday) {
+    try { await assertManualStartWindow(group); }
+    catch (error: any) {
+      if (group.scheduleEnabled && ["SCHEDULE_WINDOW_REQUIRED", "SCHEDULE_CHANGE_WINDOW_REQUIRED", "SCHEDULE_WINDOW_UNAVAILABLE"].includes(error.code)
+        || group.scheduleEnabled && group.scheduleSkippedDate === scheduledDate) return manualRequired();
+      throw error;
+    }
   }
 
-  const admin = requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
   const scheduledTeacherId = occurrence?.teacherId || group.teacherId;
   // Scheduled and manual paths share one eligibility rule: the scheduled
   // teacher or any group_teachers relationship may start the class.
@@ -346,9 +382,10 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
       scheduledDate,
       scheduledTeacherConnectedOverride: true,
       now,
+      reviewedStart: expectedActiveSessionId !== undefined ? { actorId: teacherId, expectedActiveSessionId, acknowledgeOverlap } : undefined,
     });
     if (result.status !== "started" && result.status !== "already_live") {
-      throw Object.assign(new Error("Today's scheduled class occurrence cannot be restarted."), { status: 409 });
+      return manualRequired();
     }
     return res.status(200).json({ session: serializeClasspilotSession(result.session) });
   }
@@ -369,9 +406,10 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
       scheduledDate,
       scheduledTeacherConnectedOverride: true,
       now,
+      reviewedStart: expectedActiveSessionId !== undefined ? { actorId: teacherId, expectedActiveSessionId, acknowledgeOverlap } : undefined,
     });
     if (result.status !== "started" && result.status !== "already_live") {
-      throw Object.assign(new Error("Today's scheduled class occurrence cannot be restarted."), { status: 409 });
+      return manualRequired();
     }
     return res.status(201).json({ session: serializeClasspilotSession(result.session) });
   }
@@ -380,15 +418,11 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
     schoolId,
     teacherId,
     groupId,
-    requiredManualDate: manualToday ? scheduledDate : undefined,
+    requiredManualDate: isManualToday ? scheduledDate : undefined,
+    expectedActiveSessionId,
+    acknowledgeOverlap,
   });
-  if (manualStart.replacementFinalization) {
-    if (manualStart.replacementFinalization.deliveryCount && manualStart.replacedSessionId) {
-      kickSummaryDispatch(schoolId, manualStart.replacedSessionId);
-    }
-  }
-  const session = manualStart.session;
-  return res.status(201).json({ session: serializeClasspilotSession(session) });
+  return finishManualStart(manualStart);
 }
 
 // POST /api/classpilot/teaching-sessions/start - Alias for creating a session
@@ -399,6 +433,8 @@ router.post("/start", ...auth, async (req, res, next) => {
     if (err?.status) return res.status(err.status).json({
       error: err.message,
       ...(err.code ? { code: err.code } : {}),
+      ...(err.code === "CLASS_ROSTER_ACTIVE_OVERLAP" ? { severity: err.severity, requiresAcknowledgement: true, canStartAnyway: true,
+        selectedClass: err.selectedClass, totalOverlapCount: err.totalOverlapCount, groups: err.groups } : {}),
     });
     next(err);
   }
@@ -447,6 +483,8 @@ router.post("/", ...auth, async (req, res, next) => {
     if (err?.status) return res.status(err.status).json({
       error: err.message,
       ...(err.code ? { code: err.code } : {}),
+      ...(err.code === "CLASS_ROSTER_ACTIVE_OVERLAP" ? { severity: err.severity, requiresAcknowledgement: true, canStartAnyway: true,
+        selectedClass: err.selectedClass, totalOverlapCount: err.totalOverlapCount, groups: err.groups } : {}),
     });
     next(err);
   }

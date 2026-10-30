@@ -29,6 +29,10 @@ import {
   getTeachingSessionByIdAndSchool,
   getActiveTeachingSessionForSchool,
   assertClasspilotManualStartMode,
+  assertClasspilotSessionStartAccess,
+  assertClasspilotClassStartReview,
+  enableClasspilotManualToday,
+  getReusableClasspilotManualSession,
   getUserById,
   markSessionSummarySubmissionStarted,
   lockClasspilotSsoPolicyDeliveryAuthority,
@@ -38,6 +42,7 @@ import {
   type TeachingSessionFinalizationReason,
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
+import { buildClassStartOverlapPayload } from "./classpilotStartOverlap.js";
 import {
   classpilotControlStateHasLateSignInOrigin,
   classpilotControlStateRequiresPreciseCapability,
@@ -267,26 +272,43 @@ export async function startManualClasspilotSession(options: {
   teacherId: string;
   groupId: string;
   requiredManualDate?: string;
+  manualToday?: { expectedSchoolDate: string };
+  expectedActiveSessionId?: string | null;
+  acknowledgeOverlap?: boolean;
   dbInstance?: typeof db;
   afterReplacement?: () => Promise<void>;
 }): Promise<{
   session: TeachingSession;
   replacedSessionId?: string;
   replacementFinalization?: FinalizeTeachingSessionResult;
+  finalizations: FinalizeTeachingSessionResult[];
+  reused: boolean;
+  manualToday?: Awaited<ReturnType<typeof enableClasspilotManualToday>>;
 }> {
   const outcome = await withTeachingSessionStartLock(
     options.schoolId,
     options.teacherId,
     async (lockedDb) => {
-      await assertClasspilotManualStartMode(options.schoolId, options.groupId, options.requiredManualDate, lockedDb);
-      const visibleSession = await getActiveTeachingSessionForSchool(
-        options.teacherId,
-        options.schoolId,
-        lockedDb
-      );
+      const group = await assertClasspilotSessionStartAccess(options.schoolId, options.teacherId, options.groupId, lockedDb);
+      const visibleSession = await assertClasspilotClassStartReview({
+        schoolId: options.schoolId, actorId: options.teacherId, groupId: options.groupId,
+        expectedActiveSessionId: options.expectedActiveSessionId,
+      }, lockedDb);
+      const manualDate = options.manualToday?.expectedSchoolDate ?? options.requiredManualDate;
+      const manualToday = options.manualToday ? await enableClasspilotManualToday({
+        schoolId: options.schoolId, actorId: options.teacherId, groupId: options.groupId,
+        expectedSchoolDate: options.manualToday.expectedSchoolDate, allowExisting: true,
+      }, lockedDb) : undefined;
+      await assertClasspilotManualStartMode(options.schoolId, options.groupId, manualDate, lockedDb);
+      const reusable = await getReusableClasspilotManualSession(options.schoolId, options.teacherId, options.groupId, lockedDb);
+      if (!reusable && options.acknowledgeOverlap !== true) {
+        const overlap = await buildClassStartOverlapPayload({ schoolId: options.schoolId, teacherId: options.teacherId, group, dbInstance: lockedDb });
+        if (overlap) throw Object.assign(new Error("Some students are already active in another class"), { status: 409, ...overlap });
+      }
       // Shared-session visibility permits explicit co-teacher actions; starting
       // a different class automatically replaces only the initiating owner's class.
-      const existing = visibleSession?.teacherId === options.teacherId
+      const existing = visibleSession?.teacherId === options.teacherId && visibleSession.id !== reusable?.id
+        && !manualToday?.finalizations.some(result => result.session.id === visibleSession.id)
         ? visibleSession
         : undefined;
       const finalized = existing
@@ -299,23 +321,27 @@ export async function startManualClasspilotSession(options: {
           })
         : undefined;
       if (finalized) await options.afterReplacement?.();
-      const session = await createTeachingSession({
+      const session = reusable ?? await createTeachingSession({
         groupId: options.groupId,
         teacherId: options.teacherId,
-        requiredManualDate: options.requiredManualDate,
+        requiredManualDate: manualDate,
       }, lockedDb);
       return {
         session,
         replacedSessionId: existing?.id,
         replacementFinalization: finalized,
+        finalizations: [...(manualToday?.finalizations ?? []), ...(finalized ? [finalized] : [])],
+        manualToday,
+        reused: !!reusable,
       };
     },
     options.dbInstance
   );
-  if (outcome.replacementFinalization) {
-    runClasspilotFinalizationSideEffects(outcome.replacementFinalization, {
+  for (const finalization of outcome.finalizations) {
+    runClasspilotFinalizationSideEffects(finalization, {
       schoolId: options.schoolId,
-      reason: "replacement_start",
+      reason: finalization === outcome.replacementFinalization ? "replacement_start"
+        : finalization.session.scheduledFinalizationReason === "admin_end" ? "admin_end" : "teacher_end",
     });
   }
   void pushClasspilotSessionControlStates(options.schoolId, outcome.session.id).catch((err) => {

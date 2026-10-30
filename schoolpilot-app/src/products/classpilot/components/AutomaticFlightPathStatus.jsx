@@ -26,7 +26,7 @@ export default function AutomaticFlightPathStatus({ sessionId, groupId, classNam
     <div className="min-w-0 flex-1 space-y-1"><p className="flex items-center gap-2 text-sm font-semibold"><Layers className="h-4 w-4 shrink-0 text-blue-500" />Automatic Flight Path: {state.name || 'Saved class preset'}</p>
       <p className="text-xs text-muted-foreground">{className} · Entire class session, regardless of selected students</p>
       {query.isError ? <p role="alert" className="text-sm text-destructive">Status could not be refreshed. Last known results are shown; refresh before making changes.</p>
-        : state.status === 'off' ? <p role="status" className="text-sm">Off for this session — resumes next scheduled class if the preset remains enabled.</p>
+        : state.status === 'off' ? <p role="status" className="text-sm">Off for this session — resumes next class session if the preset remains enabled.</p>
           : state.status === 'unavailable' ? <p role="status" className="text-sm">{automaticFlightPathReason(state.reasonCode)}</p> : null}
       <p className="text-xs text-muted-foreground" data-testid="automatic-flight-path-summary">{Object.entries({ applied: 'applied', pending: 'pending', failed: 'failed', unavailable: 'unavailable', overridden: 'manual override', off: 'off' }).map(([key, label]) => `${data.summary?.[key] || 0} ${label}`).join(' · ')}</p>
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

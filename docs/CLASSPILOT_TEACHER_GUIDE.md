@@ -45,7 +45,7 @@ Your dashboard follows the school calendar by default; pick a theme of your own,
 
 [Open Appearance](/classpilot/my-settings?section=appearance)
 
-### Request a one-day schedule change
+### Advanced: planned time swaps
 
 **Who can use this:** Primary teacher; school policy may require approval
 
@@ -57,7 +57,7 @@ Exchange the scheduled time of an eligible class for one instructional day witho
 
 > **Check before continuing:** A same-day change cannot begin after either affected class has already started.
 
-[Open schedule changes](/classpilot/my-settings/schedule-changes)
+[Open planned time swaps](/classpilot/my-settings/schedule-changes)
 ## Start
 
 
@@ -70,13 +70,13 @@ Use the class controls deliberately so monitoring and student controls follow th
 
 1. **Follow the scheduled Class.** When scheduled Class mode is enabled, your Dashboard automatically shows the current class or testing assignment and its students, including offline students. Applied profiles and approved schedule changes determine the next class. No click is needed at the handoff.
 2. **Browse between handoffs.** You may open Claimed, Available or Observe between assignments. The next scheduled handoff returns you to Class. Refreshing the same assignment does not change your chosen view. Starting testing and Updating class mean the server has not confirmed the new assignment yet.
-3. **Select an unscheduled class.** Choose the class you are teaching when you need a manual session. Scheduled classes can start only inside their effective window.
-4. **Make selected classes manual for today.** If your administrator allows teacher adjustments, open Manual for today, review an assigned class and confirm. This ends any running automatic session for that class and lets you use Start Class when needed for the rest of the school day. Saved times stay intact and the normal schedule resumes tomorrow in your school's timezone. Skip Today cancels an occurrence instead.
-5. **Start the session.** Start class and wait for the roster and connection states to settle before sending controls.
+3. **Choose your class.** The class picker stays available while you teach. Selecting a class does not start it or change who you supervise. Use Start Class when idle or Switch Class to review a move from your current class.
+4. **Start selected classes manually today.** If your administrator allows teacher adjustments, choose Start manually today or Switch manually today for a scheduled class. One review names the class, the session ending, its saved Flight Path and any students active elsewhere. Confirming makes the selected class manual for all assigned teachers and co-teachers, and starts it in the same action. Other classes remain automatic and may take over at their scheduled times. Saved times stay intact and automatic scheduling resumes tomorrow in the school's timezone; there is no same-day reset. Manual for today remains available to mark a class without starting it.
+5. **Check the resulting session.** Wait for the roster and connection states to settle before sending controls. A saved automatic Flight Path also applies to new manual-today sessions when available. Stop it for the current session if needed; it resumes at the next class session.
 6. **Resync when needed.** Use Resync if the roster or current session appears out of date. Resync refreshes authority; it does not broaden your class access.
 7. **Skip or end intentionally.** Skip Today prevents the scheduled occurrence from starting. End Class closes the current session and begins wrap-up processing.
 
-> **Flight note:** If the wrong class is active, end it before starting another one; do not try to control students from a stale class view.
+> **Flight note:** Teaching marks your current class. Choose another class and use Switch Class to move deliberately; the picker alone never grants control.
 
 [Open Dashboard](/classpilot)
 

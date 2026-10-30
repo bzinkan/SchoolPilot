@@ -8,20 +8,35 @@ applies on the next date, including its normal weekday and school-calendar rules
 
 ## Staff workflow
 
-Open **Manual for today** on the Dashboard or in Admin Classes. Choose a class,
+The Dashboard class picker stays available while teaching. Selecting another
+class only changes the selection. Use **Start Class** or **Switch Class** for a
+normal start, or **Start manually today / Switch manually today** to override a
+scheduled class. One review names the class, the owned session that will end,
+the shared effect on co-teachers, the saved Flight Path and the school-local
+expiry. Enabling the override and starting the class commit together; a failed
+start leaves both the previous session and the schedule unchanged.
+
+To prepare classes without starting them, open **Manual for today** on the Dashboard or in Admin Classes. Choose a class,
 review its name and school-local date, and select **Make manual for today**.
 Repeat for any other classes needed. The action does not start a class. Select
 the class and use **Teach Class** (or **Start Class** for teachers) when ready;
 use **End Class** when finished. A manual session can be started again that day.
-Manual sessions follow the existing manual Flight Path behavior: apply a Flight
-Path yourself when needed. Saved automatic Flight Path presets remain available
-for the next normal scheduled occurrence.
+New Manual today sessions use the class's saved automatic Flight Path when
+enabled and available. The decision freezes once per session; retries and
+co-teacher joins reuse it, including an explicit off decision. Older running
+manual sessions never acquire a preset retroactively.
 
 If that class has a running automatic session, enabling the exception ends it
 through the normal lifecycle and preserves its Session Summary and history.
 Already ended or skipped occurrences remain historical records and no longer
 prevent an explicit manual start for that day. Other classes' schedules and
 current control ownership remain subject to the existing start/overlap checks.
+The override applies to the whole class, including co-teachers. Other classes
+remain automatic and may take over at their scheduled times. Ending a manual
+session or switching away leaves the override enabled through today. There is
+no same-day reset; tomorrow's normal calendar determines its next automatic
+meeting. Planned time swaps remain in Teaching tools → Advanced → Planned time
+swaps, with their existing acceptance, approval and history workflow.
 
 **Skip Today** remains cancellation of the scheduled occurrence. Turning off
 **Automatic Scheduling** remains a recurring configuration change. Neither action
@@ -54,6 +69,19 @@ policy or accept a mixed settings snapshot.
 - The write shares school lifecycle, instructional-date and class locks with
   scheduling. It audits `class.manual_today_enabled`. Current scheduled sessions
   end through centralized finalization, including control cleanup and reporting.
+- `POST /api/classpilot/teaching-sessions/start` (and its existing aliases)
+  additionally accepts `manualToday: { expectedSchoolDate }` together with
+  `expectedActiveSessionId` (an exact session ID or null). This combines the
+  override and start in one transaction. Normal reviewed switches can also
+  supply `expectedActiveSessionId`; stale reviews return
+  `CLASS_START_REVIEW_STALE`. Existing normal start payloads remain supported.
+  An unavailable automatic occurrence returns `MANUAL_TODAY_REQUIRED` with the
+  current school date and management permission. Unacknowledged student overlaps
+  return the existing `CLASS_ROSTER_ACTIVE_OVERLAP` response without committing.
+- Class starts serialize and reuse an already-running manual class only for
+  immutable session staff. Repeated starts return the same session instead of
+  replacing it or resetting the frozen preset. Switching replaces only the
+  initiating teacher's owned session; another teacher's shared class continues.
 - A skipped scheduled marker preserves the exception for report backfill even
   after a later manual date replaces the group field. Such a marker is not a
   taught class: it grants no control, roster authority or report delivery.

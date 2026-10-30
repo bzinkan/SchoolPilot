@@ -12734,8 +12734,12 @@ export async function createTeachingSession(
       .where(eq(teachingSessions.id, session.id))
       .returning();
     const authoritativeSession = snapshotted || session;
-    if (authoritativeSession.scheduledDate && authoritativeSession.sessionMode === "live") {
-      authoritativeSession.automaticFlightPathState = await initializeAutomaticFlightPathForSession(authoritativeSession, transactionDb);
+    if (authoritativeSession.sessionMode === "live"
+      && (authoritativeSession.scheduledDate || authoritativeSession.manualExpiresAt && group.scheduleManualDate === manualDate)) {
+      authoritativeSession.automaticFlightPathState = await initializeAutomaticFlightPathForSession(authoritativeSession, transactionDb, {
+        // Only this newly inserted session can freeze a manual-day preset.
+        manualTodayStartDate: !authoritativeSession.scheduledDate ? manualDate : undefined,
+      });
     }
     await initializeClasspilotStudentControlStatesForSession(authoritativeSession, transactionDb);
     return authoritativeSession;
@@ -23762,9 +23766,11 @@ export async function updateClasspilotAutomaticFlightPathPolicy(options: {
   });
 }
 
-/** Freeze once at the scheduled report -> live boundary, under existing locks. */
-export async function initializeAutomaticFlightPathForSession(session: TeachingSession, dbInstance: typeof db = db): Promise<AutomaticFlightPathState> {
-  if (!session.schoolId || !session.scheduledDate || session.sessionMode !== "live" || session.endTime) return emptyAutomaticFlightPathState();
+/** Freeze at the live start, never when revisiting an existing manual session. */
+export async function initializeAutomaticFlightPathForSession(session: TeachingSession, dbInstance: typeof db = db,
+  options: { manualTodayStartDate?: string } = {}): Promise<AutomaticFlightPathState> {
+  if (!session.schoolId || (!session.scheduledDate && !session.manualExpiresAt)
+    || session.sessionMode !== "live" || session.endTime) return emptyAutomaticFlightPathState();
   return dbInstance.transaction(async (tx) => {
     const database = tx as unknown as typeof db;
     const roster = await tx.select({ studentId: classpilotSessionStudents.studentId }).from(classpilotSessionStudents)
@@ -23772,9 +23778,19 @@ export async function initializeAutomaticFlightPathForSession(session: TeachingS
     const studentIds = roster.map(row => row.studentId);
     await lockClasspilotStudentControlAuthorities(session.schoolId!, studentIds, database);
     const [locked] = await tx.select().from(teachingSessions).where(and(eq(teachingSessions.id, session.id), eq(teachingSessions.schoolId, session.schoolId!))).limit(1).for("update");
-    if (!locked || locked.endTime || locked.sessionMode !== "live" || !locked.scheduledDate) return emptyAutomaticFlightPathState();
+    if (!locked || locked.endTime || locked.sessionMode !== "live"
+      || !locked.scheduledDate && !classpilotTeachingSessionIsCurrent(locked)) return emptyAutomaticFlightPathState();
     if (locked.automaticFlightPathState !== null) return normalizeAutomaticFlightPathState(locked.automaticFlightPathState);
     const [group] = await tx.select().from(groups).where(and(eq(groups.id, locked.groupId), eq(groups.schoolId, session.schoolId!))).limit(1);
+    if (!locked.scheduledDate) {
+      const date = options.manualTodayStartDate;
+      const timezone = locked.timezoneSnapshot || "America/New_York";
+      if (!date || !group || group.scheduleManualDate !== date
+        || localDateInTimeZone(locked.startTime, timezone) !== date
+        || locked.manualExpiresAt?.getTime() !== localDateTimeUtc(addLocalDays(date, 1), "00:00", timezone).getTime()) {
+        return emptyAutomaticFlightPathState();
+      }
+    }
     const policy = normalizeAutomaticFlightPathPolicy(group?.automaticFlightPathPolicy);
     let state = { ...emptyAutomaticFlightPathState(), revision: 1, sourcePolicyRevision: policy.revision };
     if (policy.enabled && group && automaticFlightPathClassEligible(group)) {
@@ -36025,12 +36041,53 @@ export function classpilotTeachingSessionHardExpiry(session: { startTime: Date; 
 }
 
 export async function assertClasspilotManualStartMode(schoolId: string, groupId: string, requiredManualDate: string | undefined, database: typeof db) {
-  const [row] = await database.select({ manualDate: groups.scheduleManualDate, timezone: schools.schoolTimezone }).from(groups)
+  const [row] = await database.select({ manualDate: groups.scheduleManualDate, scheduleEnabled: groups.scheduleEnabled, timezone: schools.schoolTimezone }).from(groups)
     .innerJoin(schools, eq(schools.id, groups.schoolId)).where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId))).for("share");
   if (!row) throw manualTodayError("Class not found.", 404, "MANUAL_TODAY_NOT_FOUND");
   if (requiredManualDate && (row.manualDate !== requiredManualDate || localDateInTimeZone(new Date(), row.timezone) !== requiredManualDate)) {
     throw manualTodayError("The school date changed. Refresh the class before starting.", 409, "MANUAL_TODAY_DATE_CHANGED");
   }
+  if (row.scheduleEnabled && row.manualDate !== localDateInTimeZone(new Date(), row.timezone)) {
+    throw manualTodayError("Review Manual for today before starting this automatic class manually.", 409, "MANUAL_TODAY_REQUIRED");
+  }
+}
+
+/** Re-read current class authority while the caller holds the school lifecycle lock. */
+export async function assertClasspilotSessionStartAccess(schoolId: string, actorId: string, groupId: string, database: typeof db) {
+  const access = await classpilotManualTodayAccess(schoolId, actorId, database);
+  const [group] = await database.select().from(groups).where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId)));
+  if (!group || group.status !== "active") throw manualTodayError("Class not found.", 404, "MANUAL_TODAY_NOT_FOUND");
+  if (!access.admin && group.teacherId !== actorId) {
+    const [assignment] = await database.select({ id: groupTeachers.id }).from(groupTeachers)
+      .where(and(eq(groupTeachers.groupId, groupId), eq(groupTeachers.teacherId, actorId))).for("share");
+    if (!assignment) throw manualTodayError("This class is not assigned to you.", 403, "MANUAL_TODAY_FORBIDDEN");
+  }
+  return group;
+}
+
+export async function assertClasspilotClassStartReview(options: {
+  schoolId: string; actorId: string; groupId: string; expectedActiveSessionId?: string | null;
+}, database: typeof db) {
+  const active = await getActiveTeachingSessionForSchool(options.actorId, options.schoolId, database);
+  if (options.expectedActiveSessionId !== undefined && (active?.id ?? null) !== options.expectedActiveSessionId
+    && active?.groupId !== options.groupId) {
+    throw manualTodayError("Your active class changed. Review this switch again.", 409, "CLASS_START_REVIEW_STALE");
+  }
+  return active;
+}
+
+/** The class row lock serializes shared manual starts, including co-teacher retries. */
+export async function getReusableClasspilotManualSession(schoolId: string, actorId: string, groupId: string, database: typeof db) {
+  await database.select({ id: groups.id }).from(groups).where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId))).for("update");
+  const sessions = await database.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, schoolId),
+    eq(teachingSessions.groupId, groupId), eq(teachingSessions.sessionMode, "live"), isNull(teachingSessions.scheduledDate),
+    isNull(teachingSessions.endTime))).orderBy(desc(teachingSessions.startTime), teachingSessions.id).for("update");
+  const current = sessions.find(session => classpilotTeachingSessionIsCurrent(session));
+  if (!current) return undefined;
+  if (!await isAuthorizedClasspilotSessionStaff(schoolId, current.id, actorId, database)) {
+    throw manualTodayError("This class is already running. Only its session staff can join it.", 409, "CLASS_SESSION_ALREADY_ACTIVE");
+  }
+  return current;
 }
 
 async function classpilotManualTodayAccess(schoolId: string, actorId: string, database: typeof db, lock = false) {
@@ -36071,7 +36128,7 @@ export async function getClasspilotManualTodayStatus(schoolId: string, actorId: 
 }
 
 /** A dated exception, serialized with every scheduled/manual lifecycle writer. */
-export async function enableClasspilotManualToday(options: { schoolId: string; actorId: string; groupId: string; expectedSchoolDate: string; now?: Date }, database: typeof db = db) {
+export async function enableClasspilotManualToday(options: { schoolId: string; actorId: string; groupId: string; expectedSchoolDate: string; now?: Date; allowExisting?: boolean }, database: typeof db = db) {
   return database.transaction(async tx => {
     const transactionDb = tx as unknown as typeof db;
     if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw manualTodayError("School not found.", 404, "MANUAL_TODAY_NOT_FOUND");
@@ -36083,9 +36140,10 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
     if (options.expectedSchoolDate !== schoolDate) throw manualTodayError("The school date changed. Review Manual for today again.", 409, "MANUAL_TODAY_DATE_CHANGED");
     await lockInstructionalCalendarDate(options.schoolId, schoolDate, transactionDb);
     const access = await classpilotManualTodayAccess(options.schoolId, options.actorId, transactionDb, true);
-    if (!access.canManageManualToday) throw manualTodayError("Your administrator must allow teachers to use Manual for today.", 403, "MANUAL_TODAY_TEACHER_DISABLED");
     const [group] = await tx.select().from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).for("update");
     if (!group || group.status !== "active" || !group.scheduleEnabled) throw manualTodayError("Scheduled class not found.", 404, "MANUAL_TODAY_NOT_FOUND");
+    if (!access.canManageManualToday && !(options.allowExisting && group.scheduleManualDate === schoolDate))
+      throw manualTodayError("Your administrator must allow teachers to use Manual for today.", 403, "MANUAL_TODAY_TEACHER_DISABLED");
     if (!access.admin && group.teacherId !== options.actorId) {
       const [assignment] = await tx.select({ id: groupTeachers.id }).from(groupTeachers).where(and(eq(groupTeachers.groupId, group.id), eq(groupTeachers.teacherId, options.actorId))).for("share");
       if (!assignment) throw manualTodayError("This class is not assigned to you.", 403, "MANUAL_TODAY_FORBIDDEN");
