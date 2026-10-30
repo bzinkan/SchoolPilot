@@ -24,7 +24,9 @@ use **End Class** when finished. A manual session can be started again that day.
 New Manual today sessions use the class's saved automatic Flight Path when
 enabled and available. The decision freezes once per session; retries and
 co-teacher joins reuse it, including an explicit off decision. Older running
-manual sessions never acquire a preset retroactively.
+manual sessions never acquire a preset retroactively. Reusing one for Manual
+today keeps that session running with its existing settings and tightens its
+deadline when needed; it does not restart the session or reset its Flight Path.
 
 If that class has a running automatic session, enabling the exception ends it
 through the normal lifecycle and preserves its Session Summary and history.
@@ -82,6 +84,15 @@ policy or accept a mixed settings snapshot.
   immutable session staff. Repeated starts return the same session instead of
   replacing it or resetting the frozen preset. Switching replaces only the
   initiating teacher's owned session; another teacher's shared class continues.
+- A running unscheduled manual session can predate its class's automatic
+  schedule. Reusing it for Manual today also enforces the dated deadline on the
+  existing session row and its still-owned control state. An existing earlier
+  deadline is preserved; reuse never extends the session's lifetime or restarts
+  its clock. The session ID, original start, classroom settings, restriction
+  values and frozen Flight Path decision (including off or no initialized
+  preset) remain intact. Deadline repair does not acquire students or controls
+  held by another session. Retries and co-teacher joins are idempotent: they
+  converge on the same bounded session without retroactive preset initialization.
 - A skipped scheduled marker preserves the exception for report backfill even
   after a later manual date replaces the group field. Such a marker is not a
   taught class: it grants no control, roster authority or report delivery.
