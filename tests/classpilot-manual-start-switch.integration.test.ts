@@ -698,4 +698,38 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
       }
     });
   });
+
+  it("rechecks locked entitlement before reusing a running class when its license expires after preflight", async () => {
+    const actor = await staff();
+    const studentId = await student();
+    const selected = await classroom(actor, { students: [studentId] });
+    const running = await ordinarySession(selected);
+    const beforeControl = await manualChoice(running, studentId);
+    const beforeSession = await currentSession(running);
+    const { resolveClasspilotEntitlement } = await import("../src/services/classpilotEntitlement.js");
+    const preflight = await inSchool(() => resolveClasspilotEntitlement(school.id));
+    assert.equal(preflight.entitled, true);
+    const licenses = await inSchool(() => database.execute(sql`SELECT id,expires_at FROM product_licenses
+      WHERE school_id=${school.id} AND product='CLASSPILOT'`));
+    const license = licenses.rows[0];
+    assert.ok(license);
+    await inSchool(() => database.execute(sql`UPDATE product_licenses SET expires_at=${new Date(Date.now() - 1_000)}
+      WHERE school_id=${school.id} AND id=${license.id}`));
+    try {
+      await assert.rejects(inSchool(() => lifecycle.startManualClasspilotSession({ schoolId: school.id,
+        teacherId: actor.id, groupId: selected.id, expectedActiveSessionId: running.id })), (error: unknown) => {
+        const denial = error as { code?: string; status?: number };
+        assert.equal(denial.code, "CLASSPILOT_NOT_ENTITLED");
+        assert.equal(denial.status, 403);
+        return true;
+      });
+      assert.deepEqual(await currentSession(running), beforeSession);
+      assert.deepEqual(await studentControl(studentId), beforeControl);
+      assert.equal(await liveSessionCount(selected), 1);
+      assert.deepEqual(await deliveries(running), []);
+    } finally {
+      await inSchool(() => database.execute(sql`UPDATE product_licenses SET expires_at=${license.expires_at ?? null}
+        WHERE school_id=${school.id} AND id=${license.id}`));
+    }
+  });
 });

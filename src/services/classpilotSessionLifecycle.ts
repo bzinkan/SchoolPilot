@@ -43,6 +43,7 @@ import {
   type FinalizeTeachingSessionResult,
 } from "./storage.js";
 import { buildClassStartOverlapPayload } from "./classpilotStartOverlap.js";
+import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import {
   classpilotControlStateHasLateSignInOrigin,
   classpilotControlStateRequiresPreciseCapability,
@@ -289,6 +290,7 @@ export async function startManualClasspilotSession(options: {
     options.schoolId,
     options.teacherId,
     async (lockedDb) => {
+      await assertClasspilotEntitled(options.schoolId, lockedDb, { lock: true });
       const group = await assertClasspilotSessionStartAccess(options.schoolId, options.teacherId, options.groupId, lockedDb);
       const visibleSession = await assertClasspilotClassStartReview({
         schoolId: options.schoolId, actorId: options.teacherId, groupId: options.groupId,
