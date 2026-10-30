@@ -1,6 +1,16 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to all coding agents working in this repository.
+Review baseline: October 30, 2026, main `a521fa83`.
+
+Before editing, inspect `git status`, the current branch/worktrees, and current
+GitHub main. Preserve unrelated work; use an isolated worktree when needed.
+Use `package.json`, `schoolpilot-app/package.json`, and
+`.github/workflows/ci-build.yml` for the executable command and CI inventories.
+Read the linked feature runbook before changing its authority, migration, or
+rollout contract. Historical release records, configured Terraform baselines,
+source versions, and current serving state are distinct; verify live state before
+release work and preserve dated evidence rather than rewriting it as current.
 
 ## Project Overview
 
@@ -12,12 +22,15 @@ Schoolpilot is a unified multi-product SaaS platform for K-12 schools. It combin
 
 ## Repository Structure
 
-Backend lives at the root (`src/`), frontend in `schoolpilot-app/`. The ClassPilot Chrome extension is in a separate repo (`ClassPilot/extension/`).
+Backend lives at the root (`src/`), frontend in `schoolpilot-app/`. The ClassPilot
+browser extension and Windows Chrome/Edge packages live in the separate
+`ClassPilot` repo; the native Agent, Guard, and Host live in `ClassPilotDesktop`.
+SchoolPilot owns their API/UI integration and does not publish those clients.
 
 ```
 /                           # Backend (Express + TypeScript)
 ├── src/
-│   ├── index.ts            # Entry: HTTP server, Socket.io, WebSocket, migration runner
+│   ├── index.ts            # HTTP/realtime entry; explicit migration-only task mode
 │   ├── worker.ts           # Dedicated scheduler worker entrypoint
 │   ├── app.ts              # Express app, middleware, route mounting
 │   ├── routes/             # API handlers, organized by product
@@ -33,7 +46,7 @@ Backend lives at the root (`src/`), frontend in `schoolpilot-app/`. The ClassPil
 │   ├── middleware/         # authenticate, requireRole, requireProductLicense, etc.
 │   ├── schema/             # Drizzle ORM table definitions (core, students, per-product)
 │   ├── services/
-│   │   ├── storage.ts      # All database queries (~80KB, single file)
+│   │   ├── storage.ts      # Shared persistence helpers; domain services also own transactions
 │   │   └── scheduler.ts    # Cron jobs: dismissal auto-start, daily usage rollup, heartbeat purge
 │   └── realtime/           # Socket.io (GoPilot) + WebSocket (ClassPilot devices)
 ├── seeds/                  # Database seeding
@@ -59,6 +72,12 @@ schoolpilot-app/            # Frontend (React + Vite)
 ## Development Commands
 
 ### Local Setup
+
+Use Node.js 22 as in CI and install backend/frontend dependencies separately.
+The database setup below is for a disposable local database. Production uses
+the explicit checksum-ledger migration task described under Schema Changes;
+`db:push` is not a production migration or schema-repair procedure.
+
 ```bash
 # Start Docker services (Postgres on 5435, Redis on 6380, pgAdmin on 5050)
 docker compose up -d
@@ -80,6 +99,8 @@ npm run dev              # Start Vite on :5173, proxies /api to :4000
 # Backend
 npm run check            # TypeScript type check (tsc --noEmit)
 npm run build            # Compile to dist/ (tsc)
+npm run check:tests      # Test type check; requires the fresh dist/ build above
+npm run check:test-casts # Test cast ratchet
 npm run soc2:check       # Validate SOC 2 governance docs and draft risk acceptances
 npm run soc2:ai-privacy-evidence  # Generate non-sensitive AI/privacy evidence for SOC2-002
 npm run soc2:ai-private-evidence-kit  # Create private SOC2-002 AI data-flow review drafts
@@ -126,7 +147,7 @@ one-time eligible-membership preference migration, the reviewed one-table RLS
 admission, backend-first deployment and rollback. The historical 120-table settings
 baseline was verified at `2026-09-27T19:31:04.9769077Z` on API153/worker168 and
 adopted separately into Terraform configuration without an apply. Omit the
-already-admitted preference table's one-shot deployment flag. The current 121-table
+already-admitted preference table's one-shot deployment flag. The configured 121-table
 baseline was verified at `2026-09-28T18:27:19.9525541Z` on API157/worker172 after
 the paperwork stage-ledger admission; see `docs/PAPERWORK_PROGRESS_RELEASE.md`.
 Omit the already-admitted `import_processing_stages` flag on later deploys.
@@ -233,9 +254,10 @@ The historical workspace expansion has a five-table admission and 114-table targ
 The redesign adds five contact/profile/import tables through `studentInformation`
 admission, reaching 119 tables, verified on API151/worker166 on September 26,
 2026. The later settings release adds the teacher-preference table, followed by
-the paperwork stage ledger; the current 121-table Terraform baseline is documented
+the paperwork stage ledger; the configured 121-table Terraform baseline is documented
 above. Preserve the historical 109/114/119/120-table inventories and original
-migration checksums.
+migration checksums. These dated observations do not establish the current
+serving API/worker inventory.
 Deploy from the actual verified serving admission, never rerun
 an already admitted bundle. Implementation does not authorize AI enablement.
 
@@ -244,11 +266,17 @@ Notebook/seating/import data flows and retention remain documented in
 `docs/MYDESK_AI_IMPORT.md`. Do not replace the ledger's column-specific composite-FK
 `ON DELETE SET NULL (group_id)` / `(student_id)` actions using `db:push`.
 
-### Authentication (Dual System)
-The `authenticate` middleware (`src/middleware/authenticate.ts`) checks two auth methods:
+### Authentication
+Staff HTTP authentication uses `src/middleware/authenticate.ts`:
+
 1. **Session cookies** — `express-session` backed by PostgreSQL. Used by web app (ClassPilot, PassPilot).
 2. **JWT Bearer tokens** — `Authorization: Bearer <token>`. Used by GoPilot mobile and WebSocket connections.
-3. **Device tokens** — Separate `STUDENT_TOKEN_SECRET` for ClassPilot Chrome extension auth.
+
+Explicit valid Bearer credentials normally take precedence; an active
+impersonation session takes precedence over stale client JWTs. Both staff
+credential paths enforce the current `users.authVersion`. ClassPilot extension
+student tokens use the separate `requireDeviceAuth` middleware and
+`STUDENT_TOKEN_SECRET`, with exact school/student/session/device authority.
 
 **Microsoft sign-in is tenant-pinned.** A super admin turns it on per school with that school's Entra tenant ID (`PUT /api/super-admin/schools/:id/sign-in-methods`). The callback verifies the ID token, then `resolveMicrosoftLoginIdentity` refuses — before writing anything — unless one of the user's active schools has Microsoft on for the token's `tid`. `users.microsoft_id` stores `<tid>:<oid>`; never match a Microsoft login on the email claim alone, because any tenant can assert any email.
 
@@ -282,12 +310,13 @@ SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query b
 - **Global tables (NO RLS)**: `users`, `session`, `schools`, `school_memberships`, `product_licenses`, `school_inquiries`, and retained migration-source table `trial_requests` — read during auth bootstrap or public pre-tenant intake before a school is known; safe to query without a GUC.
 - **Background / cross-school work**: `schedulerDb` / `schedulerPool` (`src/services/schedulerDb.ts`) set `app.is_super='on'` on every connection → bypass RLS. Use them for scheduler jobs and cross-school boot migrations.
 - **Out-of-request DB access**: for code that runs OUTSIDE an Express request — WebSocket/Socket.IO handlers, unauthenticated routes (kiosk, device register), detached `.then()`/`.catch()` callbacks that outlive the response — wrap the DB work in **`runWithTenantContext({ schoolId }, fn)`** (or `{ isSuper: true }` for genuinely cross-school reads), from `src/middleware/tenantContext.ts`. It establishes the same tenant ALS scope on a fresh connection.
-- **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
+- **Runtime binding versus database enforcement**: `RLS_GUC_ENABLED` controls application tenant-context binding; `RLS_ENABLED_TABLES` records the deployment's admitted inventory. Changing these values does not remove existing production PostgreSQL policies. Disabling GUC binding while FORCE RLS remains enabled can deny-hide reads or reject writes. Preserve live values during ordinary deploys; verify the actual catalog and follow the reviewed admission/recovery procedure rather than treating an environment change as a database-policy bypass.
 - **Deploy-time allowlist additions**: ordinary backend deploys preserve the live task definition's RLS master switch and per-table allowlist exactly. A reviewed release may use the one-shot `--enable-rls-table <reviewed-table-or-exact-bundle>` flag. That path requires matching live API/worker allowlists with `RLS_GUC_ENABLED=true`, adds only the reviewed table set to the rendered API/emergency/worker definitions, verifies the registered definitions, and makes the migration task fail unless PostgreSQL reports enabled + forced RLS and the `tenant_isolation` policy for every requested table. Omit the flag on later deploys; a deliberate per-table kill-switch removal then remains removed. This path does not require a Terraform apply.
 - **ClassPilot command/FAB state is tenant state**: keep `classpilot_commands`, `classpilot_command_targets`, `classpilot_classroom_states`, `classpilot_student_control_states`, `classpilot_active_hands`, `classpilot_chat_deliveries`, `polls`, `poll_responses`, and `session_settings` school-scoped in production and tests. Startup migrations fail closed on invalid parent bindings and install/verify same-school parent triggers for FAB/chat/poll rows. All five FAB/chat/poll tables are in the adopted production baseline; the reviewed re-admission bundle remains exactly `classpilot_chat_deliveries,poll_responses,polls,session_settings` if a deliberate kill-switch removal must later be reversed.
-- **Semantic RLS registry**: `src/config/rlsRegistry.json` is the machine-readable inventory and rollout-request authority. It preserves the exact observed 72-table production snapshot from August 19, 2026 and separately defines the 75-table SchoolPilot 2.7.0 post-expand target. Production's current 121-table inventory was verified on September 28, 2026 on API157/worker172 after the paperwork stage-ledger admission; `infra/production.tfvars` adopts its exact observed CSV order while the generic default remains at the separately staged 75-table target. Compare production and `importProcessingStagesPostExpand` semantically; never rewrite historical inventory order or hashes to match a later observation. The earlier 90-table observation and 109/114/119/120-table inventories remain historical evidence. `classpilot_active_hands` remains part of the full inventory but is deliberately excluded from the four-table FAB re-admission bundle.
-- **Registry target ahead of production**: `classpilotNativeVisibilityPostExpand` (132 tables) is the current registry/CI/Terraform-check target. It appends the `classpilotNativeVisibility` bundle (`classpilot_native_enrollment_tokens,classpilot_native_installations,classpilot_native_sessions`) after the unchanged `classpilotPrivateChatLifecyclePostExpand` 129-table target. Every older target remains immutable. Production admits each reviewed bundle once with `deploy.sh production --backend --enable-rls-table <bundle>`; `infra/production.tfvars` keeps the observed 121-table CSV until a separate baseline-adoption change. The next new-table PR chains after the 132-table target and re-points both `infra/main.tf` uses, `rlsPolicies.ts` current inventory, CI, local/load helpers and registry/deploy tests; older Terraform targets use subset assertions.
+- **Semantic RLS registry**: `src/config/rlsRegistry.json` is the machine-readable inventory and rollout-request authority. It preserves the exact observed 72-table production snapshot from August 19, 2026 and separately defines the 75-table SchoolPilot 2.7.0 post-expand target. The configured 121-table Terraform baseline adopts the exact observed CSV order verified on September 28, 2026 on API157/worker172 after the paperwork stage-ledger admission; the generic default remains at the separately staged 75-table target. Compare that baseline and `importProcessingStagesPostExpand` semantically; never rewrite historical inventory order or hashes to match a later observation. The earlier 90-table observation and 109/114/119/120-table inventories remain historical evidence. Later release-specific 129-table records do not establish today's serving inventory either; inspect the live API/worker and catalog before admission or baseline adoption. `classpilot_active_hands` remains part of the full inventory but is deliberately excluded from the four-table FAB re-admission bundle.
+- **Registry candidate target**: `classpilotWindowsBrowserPostExpand` (138 tables) is the current registry/CI/Terraform-check target. It appends the six-table `classpilotWindowsBrowser` bundle after the immutable `classpilotNativeVisibilityPostExpand` 132-table target, which follows `classpilotPrivateChatLifecyclePostExpand` at 129. Every older target remains immutable. Production admits each reviewed bundle once with `deploy.sh production --backend --enable-rls-table <bundle>`; `infra/production.tfvars` keeps the observed 121-table CSV until a separate baseline-adoption change. Source/CI inventory is not live admission. The next new-table PR chains after the 138-table target and re-points both `infra/main.tf` uses, `rlsPolicies.ts` current inventory, CI, local/load helpers and registry/deploy tests; older Terraform targets use subset assertions.
 - **Native desktop visibility**: the default-off integration is documented in `docs/CLASSPILOT_DESKTOP_VISIBILITY.md`. Native installation and student credentials are independent of extension sessions. Native images/app observations stay in their ephemeral Redis namespace and must not enter browser evidence, exports, analytics, attendance, AI or billing. Teacher requests require explicit student targets and current classroom authority; native-only students do not require browser session rows.
+- **Windows browser integration**: read `docs/CLASSPILOT_WINDOWS_BROWSER_INTEGRATION.md`. Its separate default-off mode also requires an explicit school allowlist. Guard/PIN pairing produces browser-qualified opaque sources and purpose-specific credentials; teacher requests and tab actions retain exact source/revision authority, with no silent browser fallback. Desktop pixels remain outside browser history, AI, evidence, and analytics. Apply the additive schema and reviewed `SELECT` grants on `classpilot_windows_browsers` and `classpilot_windows_guards` before API/worker rollout even with collection off: legacy activity-parent validators also read these tables. Packaged-worker/simulated-host tests do not establish signed-host or managed-device pilot readiness.
 
 **THE RULE when you add or change DB code:** any path that reads or writes a tenant table MUST run under a tenant context — a GUC-bound request, `schedulerDb` (is_super), or `runWithTenantContext`. A new unauthenticated route, WebSocket handler, detached callback, or boot migration that touches a tenant table on the bare `db`/`pool` will **silently return 0 rows or fail `WITH CHECK`** once that table is enforced. New `INSERT`s must set `school_id` (derive it from the parent/owner — never trust the request body). The cross-tenant regression suite (`tests/cross-tenant-isolation.test.ts`) wraps calls in `inSchool()` / `asSystem()` helpers around `runWithTenantContext` — extend it when you add school-scoped storage functions.
 
@@ -392,9 +421,8 @@ Teacher Dashboard actions are student-scoped, exact-binding, and outcome-driven:
 Admin Class Management lets schools set `blockStartTime`/`blockEndTime` per group. When `scheduleEnabled = true`:
 - `reconcileClasspilotScheduledSessions()` (`src/services/scheduler.ts`, every 60s) finalizes occurrences at their frozen end, then calls `processScheduledClassAutoStart()` for each group whose window is open; the scheduled teacher or a connected co-teacher carries the bell start
 - A live occurrence is never re-started: the tick reports `already_live` and performs no write, no roster control-state re-push, and no replacement finalization
-- **Manual start is BLOCKED outside the scheduled window** for all teachers (primary + co-teachers) — returns 403 with times shown
-- Manual end **during** the window does NOT set `scheduleSkippedDate` (teacher might restart accidentally)
-- Manual end **after** the window sets `scheduleSkippedDate = today` to prevent scheduler from restarting
+- Normal scheduled starts use the effective occurrence window. An unavailable automatic occurrence requires the explicit, authorized Manual for today workflow; never bypass the window or silently convert a start.
+- Every finalized scheduled occurrence is terminal for its frozen school-local date, including an early End Class. Finalization sets `scheduleSkippedDate` to that occurrence's `scheduledDate`; neither the scheduler nor a repeated normal start may resurrect it. A separately authorized Manual for today session does not reopen that scheduled occurrence.
 - An actual admin recurring-schedule change **clears** `scheduleSkippedDate` so a stale skip cannot block the new window. No-op class edits and Google Classroom imports preserve it.
 
 ### Security Monitor
@@ -409,31 +437,32 @@ All in `src/routes/compat.ts`, require admin role:
 - Digital Usage (Monitored Browser Time) is a separate, flag-gated API: see "ClassPilot Digital Usage" below.
 
 ### Frontend Product Pages
-Each product has its own header/navigation built into its pages (no shared shell wrapper). The unified app only provides routing, auth, and the landing page. Product pages are lazy-loaded via `React.lazy()`.
-
-- ClassPilot pages use a dark `bg-slate-900` header
-- PassPilot wraps in its own `<AppShell>` component
-- GoPilot pages have their own `<header>` elements
-- Super Admin pages have standalone layouts
+Product routes are lazy-loaded in `schoolpilot-app/src/App.jsx`. ClassPilot
+administration shares `ClassPilotAdminShell`, its navigation/operation guards,
+and the school/user-scoped `AdminQueryBoundary`; Teaching tools uses
+`TeachingToolsLayout`. Preserve these shared layouts when adding nested pages.
+PassPilot uses its own `AppShell`; GoPilot and Super Admin retain their
+product-specific layouts. Check the active route/layout rather than copying a
+historical page header.
 
 ### Product Priority
 When a school has multiple products, priority order is: ClassPilot > PassPilot > GoPilot (defined in `PRODUCT_PRIORITY` in `shared/utils/constants.js`). This determines the default landing product after login.
 
 ## Key Patterns
 
-- **All DB queries** live in `src/services/storage.ts`. Add new queries there rather than inline in routes. Exception: complex analytics queries with multi-table joins may live directly in route handlers (see `compat.ts` analytics endpoints).
+- **Database ownership**: shared CRUD and persistence helpers live in `src/services/storage.ts`; focused domain services also own queries and transactions. Extend the existing owning layer, preserving tenant context, transaction locks, and authority checks instead of adding alternate mutation paths.
 - **Schemas** are split by product: `core.ts` (users, schools, memberships), `classpilot.ts` (heartbeats, devices, groups, groupStudents, dailyUsage, teachingSessions), `passpilot.ts`, `gopilot.ts`, `students.ts`, `shared.ts`.
 - **Frontend API calls** use two patterns:
   - **TanStack React Query** with `apiRequest()` from `lib/queryClient.js` — preferred for newer pages (ClassPilot admin, analytics). Uses `useQuery` with `queryKey` and `queryFn`.
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension release state**: The ClassPilot Chrome extension is MV3 and lives in the separate `C:\GitHub\ClassPilot` repository. The operator confirmed version `2.9.7` is live in Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` on October 7, 2026; the August 27 `2.7.2` observation remains historical. This is operator-reported publication, not a fresh listing capture or uploaded-ZIP identity proof. Managed-Chromebook adoption and validation must not be inferred from a Store version. The unchanged `2.9.7` candidate does not require another upload; confirm the listing and pending submissions immediately before uploading any separately reviewed successor. Use `console.warn` rather than routine `console.error` because Chrome surfaces the latter as visible extension errors to school IT.
+- **Chrome extension release state**: The ClassPilot Chrome extension is MV3 and lives in the separate `C:\GitHub\ClassPilot` repository. The operator reported version `2.9.7` live in Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` on October 7, 2026; the August 27 `2.7.2` observation remains historical. This is operator-reported publication, not a fresh listing capture or uploaded-ZIP identity proof. Managed-Chromebook adoption and validation must not be inferred from a Store version. The October 30 review of ClassPilot main `1c0e796` found prepared source version `3.0.3`; this does not establish Store publication. Confirm the listing and pending submissions immediately before uploading any separately reviewed successor. Use `console.warn` rather than routine `console.error` because Chrome surfaces the latter as visible extension errors to school IT.
 - **Canonical packaging**: From a clean tagged ClassPilot commit in the ClassPilot repo root, run `./extension/package-extension.sh`. It reads the manifest, validates the packaged manifest version, and creates `dist/ClassPilot-v<manifest-version>.zip` plus compatibility copy `dist/classpilot-extension.zip`. Inspect the archive for root-level `manifest.json` and `managed_schema.json`, compare it byte-for-byte with source, and retain its SHA-256 before upload. A SchoolPilot deploy never publishes or updates the extension.
 - **Protocol v2 capabilities**: registration/login, heartbeat, and WebSocket auth advertise `classroomStateV1`, `fabStateRevisionV1`, `exactTabCloseV1`, `screenOnlyUnlockV1`, `durableChatAckV1`, `commandAckReceiptV1`, `classroomOverlayRestoreV1`, and `liveViewNegotiationV1`. The public telemetry contract reports a minimum extension version of `2.6.0`, but features must be gated by advertised capabilities rather than version inference alone.
-- **Protocol v3 repaired-client gate**: `scopedAuthorityChecksV1` is the required parent marker for all ten dependent repaired capabilities: `authBoundTelemetryV1`, `exactBindingAckV2`, `exactTabCloseV2`, `studentChatIdempotencyV1`, `screenshotObservationLeaseV1`, `screenshotTrackingWindowLeaseV1`, `screenshotActiveObservationCadenceV1`, `safetyEvidenceCaptureV1`, `liveViewIceServersV1`, and `kioskLaunchTicketV2`. The active-observation cadence additionally requires accepted `screenshotTrackingWindowLeaseV1`. The server must refuse every dependent unless the marker is advertised and accepted; never infer repair status from version text. Protocol-3 selected-tab controls require accepted `exactTabCloseV2`; protocol-2 clients retain negotiated V1 behavior. `kioskLaunchTicketV1` stays off. The 2.7.1 activation and rollback contract remains in `docs/CLASSPILOT_2_7_1_RELEASE.md`; the additive screenshot contracts are in `docs/CLASSPILOT_2_7_3_RELIABILITY_HARDENING.md` and `docs/CLASSPILOT_2_8_0_FAST_PREVIEW.md`. `liveViewIceServersV1` is retired (2026-09-29): every runtime profile keeps it off, no profile carries TURN inputs, and the one-time `live-view-retire` profile is in `docs/CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.
+- **Protocol v3 repaired-client gate**: `scopedAuthorityChecksV1` is the required parent marker for every entry in `SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES` in `src/services/classpilotProtocol.ts`; examples include `authBoundTelemetryV1`, `exactBindingAckV2`, `exactTabCloseV2`, `studentChatIdempotencyV1`, `screenshotObservationLeaseV1`, `screenshotTrackingWindowLeaseV1`, `screenshotActiveObservationCadenceV1`, `safetyEvidenceCaptureV1`, `liveViewIceServersV1`, and `kioskLaunchTicketV2`. The active-observation cadence additionally requires accepted `screenshotTrackingWindowLeaseV1`. The server must refuse every dependent unless the marker is advertised and accepted; never infer repair status from version text. Protocol-3 selected-tab controls require accepted `exactTabCloseV2`; protocol-2 clients retain negotiated V1 behavior. `kioskLaunchTicketV1` stays off. The 2.7.1 activation and rollback contract remains in `docs/CLASSPILOT_2_7_1_RELEASE.md`; the additive screenshot contracts are in `docs/CLASSPILOT_2_7_3_RELIABILITY_HARDENING.md` and `docs/CLASSPILOT_2_8_0_FAST_PREVIEW.md`. `liveViewIceServersV1` is retired (2026-09-29): every runtime profile keeps it off, no profile carries TURN inputs, and the one-time `live-view-retire` profile is in `docs/CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.
 - **MV3 lifetime rules**: The awake worker owns one scheduled 10-second heartbeat. Chrome's heartbeat alarm is recovery-only when that cadence becomes stale; it is not a second steady-state heartbeat source. Screenshots use an independent 30-second alarm. Negotiated 2.7.3 tracking-window capture is dashboard-independent; older clients retain their negotiated observation policy. Async offscreen/runtime messages must keep the MV3 event alive until ordered side effects, storage, and ACK work settle.
-- **Offscreen ownership**: `offscreen.js` owns the long-lived WebSocket and WebRTC peer/capture lifecycle; the service worker serializes relayed frames and owns exact-binding policy/state. Intentional or unexpected socket closure, auth invalidation, tracking off/off-hours, and Live View expiry must stop capture and reset negotiation state. Do not move these connections into a content script.
+- **Offscreen ownership**: in the separate ClassPilot repo, `offscreen.js` owns the Chromebook WebSocket transport and legacy WebRTC media. The service worker owns authentication, command handling, screenshot capture/uploads, exact-binding policy/state, and the 30-second screenshot alarm fallback. Offscreen schedules leased five-second preview ticks, which return to the worker for current authority checks and capture. Intentional or unexpected socket closure, auth invalidation, tracking off/off-hours, and legacy Live View expiry must stop the affected capture and reset negotiation state. Do not move these connections into a content script. Generated Windows variants use their separate Guard-bound HTTP browser transport.
 - **Extension deployment**: Managed deployments normally force-install through Google Admin (Devices → Chrome → Apps & extensions), with the required screen-capture policies. The release sequence is live-version check → manifest bump → canonical package script → archive inspection → Chrome Web Store upload/review → staged managed-browser adoption. Keep backend, frontend, and extension compatibility additive during rollout.
 - **Managed shared-device continuity**: `managedDeviceContinuityV1` preflight requires accepted `scopedAuthorityChecksV1` plus `kioskLaunchTicketV2` before the extension reads an enterprise directory identifier. The issuance route immediately reduces that raw identifier through a ClassPilot-only school-scoped HMAC domain and returns a 10-minute audience-bound proof; raw directory IDs and recovery tokens must never be stored, returned, logged, or used as metric dimensions. The stateless proof is intentionally reusable for roster then login and bounded same-Chromebook handoffs, but every login still requires the selected student's PIN or email/ID credentials. Extension clients discard the proof after successful login. Other-device sessions remain hard blockers.
 - **Durable delivery**: command ACKs and teacher-chat ACKs are separate exact-binding outboxes, each retrying over WebSocket and HTTP until its matching receipt. Command ACK receipts retain `accepted` and add `disposition: applied | idempotent | terminal_rejected`; a matched `retryable: false` terminal receipt drains only its exact outbox entry, while transport/infrastructure failures and mismatched receipts remain queued. Command-linked pending messages remain heartbeat-eligible only while unacknowledged, unexpired, and currently authorized; a handoff or terminal outcome suppresses stale delivery.
@@ -517,7 +546,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS` — Optional previous PIN key used only during a staged dual-read/current-write rotation; remove after the counts-only migration and rollback window pass
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
 - `CORS_ALLOWLIST` — Comma-separated frontend origins
-- `CLASSPILOT_PROTOCOL_V3_ENABLED` plus the per-capability flags are kill switches. `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` optionally supplies fail-closed `off`, `observe`, `canary`, or `on` policy per capability, with optional `schoolIds` and a deterministic school-level `canaryPercent`. Capability acceptance still requires a protocol-v3 client advertisement from the current exact binding, and all twenty-four entries of `SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES` require accepted `scopedAuthorityChecksV1`. `screenshotActiveObservationCadenceV1` also requires negotiated `screenshotTrackingWindowLeaseV1` and both `CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1=true` and a matching rollout entry. Use only guarded reviewed profiles: the schema-v5 `fast-preview-pilot` / `fast-preview-global-on` / `fast-preview-off` set documented in `docs/CLASSPILOT_2_8_0_FAST_PREVIEW.md`, the schema-v8 `scheduled-classroom-global-on` / `scheduled-classroom-off` family in `docs/CLASSPILOT_SCHEDULED_CLASSROOM_ACTIVATION.md`, which is the only sanctioned way to write the `scheduledClassroomV1` registry entry and deliberately has no pilot mode, and the schema-v9 `school-scope-unpin` profile in `docs/CLASSPILOT_SCHOOL_SCOPE_UNPIN.md`, which removes `schoolIds` from the fixed unpinnable set (`screenshotTrackingWindowLeaseV1`, `screenshotActiveObservationCadenceV1`, `studentAuthGatePresenceV1`) in one evidence-free apply and changes nothing else, while `restrictionAuthPassThroughV1` stays school-pinned by design; API and worker must receive the identical runtime registry. Superseded `kioskLaunchTicketV1` stays `off`. The approved synthetic-only exception records `validationLevel=synthetic_only` and `managedValidation=waived_not_passed`; it must never be described as managed-Chromebook validation.
+- `CLASSPILOT_PROTOCOL_V3_ENABLED` plus the per-capability flags are kill switches. `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` optionally supplies fail-closed `off`, `observe`, `canary`, or `on` policy per capability, with optional `schoolIds` and a deterministic school-level `canaryPercent`. Capability acceptance still requires a protocol-v3 client advertisement from the current exact binding, and every entry of `SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES` in `src/services/classpilotProtocol.ts` requires accepted `scopedAuthorityChecksV1`. `screenshotActiveObservationCadenceV1` also requires negotiated `screenshotTrackingWindowLeaseV1` and both `CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1=true` and a matching rollout entry. Use only guarded reviewed profiles: the schema-v5 `fast-preview-pilot` / `fast-preview-global-on` / `fast-preview-off` set documented in `docs/CLASSPILOT_2_8_0_FAST_PREVIEW.md`, the schema-v8 `scheduled-classroom-global-on` / `scheduled-classroom-off` family in `docs/CLASSPILOT_SCHEDULED_CLASSROOM_ACTIVATION.md`, which is the only sanctioned way to write the `scheduledClassroomV1` registry entry and deliberately has no pilot mode, and the schema-v9 `school-scope-unpin` profile in `docs/CLASSPILOT_SCHOOL_SCOPE_UNPIN.md`, which removes `schoolIds` from the fixed unpinnable set (`screenshotTrackingWindowLeaseV1`, `screenshotActiveObservationCadenceV1`, `studentAuthGatePresenceV1`) in one evidence-free apply and changes nothing else, while `restrictionAuthPassThroughV1` stays school-pinned by design; API and worker must receive the identical runtime registry. Superseded `kioskLaunchTicketV1` stays `off`. The approved synthetic-only exception records `validationLevel=synthetic_only` and `managedValidation=waived_not_passed`; it must never be described as managed-Chromebook validation.
 - `CLASSPILOT_SESSION_REPORT_V2_MODE` controls immutable session-report rollout with `legacy`, `shadow`, or `on`. Missing or malformed values fail closed to `legacy`. `shadow` persists, exposes, and emails the exact v1 contract while computing v2 without writes and emitting identifier-free aggregate mismatch, invariant, and timing metrics. `on` creates v2 rows; every materialization, API/CSV presentation, and email dispatch continues to follow the version stored on its report row, so existing v1 rows never change behavior when the environment changes.
 - `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_TURN_REST_SECRET`, and optional `CLASSPILOT_STUN_URLS` remain provisioned for the retired `liveViewIceServersV1` runtime; runtime profiles copy them unchanged. Client outcome telemetry is accepted only for a still-active exact-bound negotiation and emits identifier-free metrics; deployment and alarm details live in `docs/CLASSPILOT_TURN_OPERATIONS.md`.
 - `CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED` — legacy Live View WebSocket signaling gate. It defaults off, Terraform and the runtime profiles never set it, and it must never be enabled in production; local and test use only. Rollback of the gate is a revert and redeploy, not an environment change.
@@ -544,9 +573,14 @@ Copy `.env.example` to `.env`. Required for local dev:
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main. An app-only PR's critical path is ~11 min (`cross-tenant-tests`); a push to `main` always runs the full job set (~30 min) because `scripts/deploy.sh` gates on it and a deployed commit's SOC 2 packets must not record a skipped job.
+GitHub Actions (`.github/workflows/ci-build.yml`) runs on pushes to `main`, PRs
+targeting `main` or `codex/**`, and manual dispatch. PR change detection may
+skip `rollout-safety`; a push to `main` runs the full job set because
+`scripts/deploy.sh` gates on it and a deployed commit's SOC 2 packets must not
+record a skipped job. Consult the workflow for current job dependencies and
+timeouts rather than assuming a fixed duration.
 - `changes` (pull requests only, `dorny/paths-filter@v3`): detects whether a PR touched any input of the ~30-minute `rollout-safety` job (`scripts/load/**`, `infra/**`, `scripts/deploy.sh`, the named PowerShell tools, `tests/**/*.ps1|psm1|py`, three docs it asserts on, and the workflow itself). `rollout-safety` is skipped on a PR only when that filter ran successfully AND proved no input changed; it fails closed (`!= 'false'`, `!cancelled()`) and always runs on `push`/`workflow_dispatch`. Never convert this to a workflow-level `on.*.paths` filter: `deploy.sh` refuses a commit with **zero** workflow runs, while a *skipped job* is green to it.
-- Backend: `npm audit --audit-level=high` + `tsc --noEmit` + `npm run build`
+- Backend: `npm audit --audit-level=high`, `npm run check`, `npm run check:test-casts`, a fresh `npm run build`, then `npm run check:tests` (tests import compiled `dist`). CI runs `test:unit`, `test:infrastructure`, `test:db-serial`, and `test:rls-serial` in their assigned jobs and database postures.
 - Frontend: `npm audit --audit-level=critical` + `npm run lint` + `vite build`, production-preview smoke, GoPilot/PassPilot builds, Android debug APKs and the dependency-audit chain (`audit:dependencies` collect → three post-build Router validations → `finalize`, which must stay in this one job, in order).
 - `frontend-release-gates` runs four shards on separate runners. The package scripts are the exact suite inventory: dashboard tests are split across shards 1 and 4, Classroom and Reports v2 remain in the release gates, and shard 3 retains the fixed-port/browser-cache suites. Never run shards concurrently on one machine. `test:release-focused` remains the complete local aggregate and begins with `npm run test:staff-identity-contracts`. Every SOC 2 job that `needs: frontend` also needs this matrix, so release checks remain represented in `CI_JOB_RESULTS`.
 - Workflow-level `concurrency` cancels superseded **PR** runs only; every job has a `timeout-minutes`.
@@ -576,7 +610,7 @@ The frontend uses React Compiler lint rules. Common gotchas:
 
 ### Required Test Gates
 
-- **Backend**: run `npm run check`, `npm run build`, and `npm test`. Backend tests run serially because integration cases share the local PostgreSQL fixture; do not parallelize them against the same database.
+- **Backend**: run `npm run check`, `npm run check:test-casts`, a fresh `npm run build`, `npm run check:tests`, and `npm test`. For CI-equivalent lane coverage, also use `npm run test:unit`, `npm run test:infrastructure`, `npm run test:db-serial`, and `npm run test:rls-serial` with the workflow's respective database setup. `npm test` is the serial `tests/**/*.test.ts` suite; the lane runner discovers both `.test.ts` and `.test.mjs`, and the restricted-RLS lane proves a separate database posture. Unit tests run at concurrency four; infrastructure, DB, and RLS lanes are serial. Never overlap DB/RLS lanes against the same fixture. Inspect `node scripts/run-test-lane.mjs list` and classify new database/RLS tests explicitly so they do not fall into the parallel unit lane. Documentation-only changes need the relevant document-contract checks and `git diff --check`; application builds are required when application code changes.
 - **ClassPilot frontend** (`schoolpilot-app/`): run `npm run lint`, `npm run build`, and the focused gates `npm run test:classpilot-tile-batching`, `npm run test:classpilot-session-lifecycle`, `npm run test:classpilot-realtime-cache`, `npm run test:classpilot-signal-loss`, `npm run test:classpilot-command-context`, and `npm run test:classpilot-radix-browser` when dashboard, tiles, command targeting, realtime, dialogs, or FAB behavior changes. For the full release gate set run `npm run test:release-focused`, or one shard with `npm run test:release-focused:shard-1|2|3|4` (shard 3 carries every fixed-port suite; do not run two shards concurrently on one machine).
 - **ClassPilot extension** (separate `C:\GitHub\ClassPilot` repo): run `npm run check`, `npm test`, `npm run test:extension:chrome`, and `npm run build`. The real-Chrome resilience gate is required for MV3 lifetime, exact-binding, auth restore, WebSocket ordering, Live View, FAB, poll, and ACK changes; Node/static tests alone are not sufficient.
 - **Release hygiene**: run `git diff --check` in both repositories. Before packaging, keep the manifest release guard aligned with `extension/manifest.json`, then run the canonical package script and inspect the resulting ZIP.
@@ -881,7 +915,8 @@ Optional time-based auto-start/end for ClassPilot classes. Schema columns on `gr
 - **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
 - **Recurring schedule boundary**: Class Management creates and edits the recurring `groups.schedule_*` / `groups.block_*` configuration. These writes are audited as `class.recurring_schedule_updated`; they do not create a dated schedule-change/swap record. No-op class edits and Google Classroom imports preserve `schedule_skipped_date`.
 - **Manual for today**: `groups.schedule_manual_date` is a school-local dated exception, independent of recurring times and Skip Today. Administrators may enable it for an explicit class; assigned primary/co-teachers may do so only when the versioned ClassPilot settings `scheduling.allowTeacherManualToday` policy is on (default off). The server checks the reviewed `expectedSchoolDate`, current membership, assignment, entitlement, and policy under the lifecycle/date locks. Enabling ends that class's current scheduled occurrence through normal finalization, preserves its history, and suppresses automatic execution/backfill for that date. Teach Class then creates ordinary manual sessions, each capped at `manual_expires_at` (school-local midnight) and the existing 12-hour maximum. Normal scheduling resumes the next school-local date without editing saved times. Keep API and worker support together after use; see `docs/CLASSPILOT_MANUAL_TODAY.md`.
-- **Session summary email**: `buildAndSendSessionSummary()` in `src/routes/classpilot/sessions.ts` is exported and called by both manual end and auto-end. Uses school timezone (not hardcoded ET).
+- **Reviewed start/switch**: selecting a class never starts it. The canonical start accepts `manualToday: { expectedSchoolDate }` plus `expectedActiveSessionId` (exact ID or null) to commit the exception and start atomically; a failed start preserves the existing class and schedule. Normal reviewed switches also use `expectedActiveSessionId`; stale reviews fail with `CLASS_START_REVIEW_STALE`, and unavailable automatic occurrences return `MANUAL_TODAY_REQUIRED`. Repeated manual starts reuse a running session only for immutable session staff and preserve its frozen Flight Path decision. Ending/switching does not reset the day's exception; there is no same-day reset. Apply the additive migration and deploy API/worker before the frontend; no new RLS table or extension release is required. Before a pre-contract backend downgrade, let exceptions expire and finalize every open deadline-bound session through the normal lifecycle.
+- **Session summary email**: both manual and scheduled end use `finalizeClasspilotSession()` in `src/services/classpilotSessionLifecycle.ts`. Finalization owns the durable report/delivery state; routes call `kickSummaryDispatch()` and scheduler retry paths complete delivery. Preserve school timezone, frozen staff/roster snapshots, and idempotency rather than building a second route-specific sender.
 
 ### ClassPilot One-Day Schedule Changes
 ClassPilot can exchange the scheduled time windows of two administrator-linked
@@ -1184,8 +1219,8 @@ That activation was verified on August 19, 2026. The semantic RLS registry
 retains its exact observed 72-table live allowlist as an immutable audit
 snapshot. The separate 75-table 2.7.0 post-expand target remains unchanged in
 the registry. The 90-table roadmap allowlist verified on September 6, 2026 is
-also historical; the current production baseline is the 121-table paperwork
-inventory verified on September 28, 2026. Its recorded runtime order remains
+also historical; the configured Terraform baseline is the 121-table paperwork
+inventory verified on September 28, 2026, not a fresh serving-state assertion. Its recorded runtime order remains
 distinct from historical target order. Future additions still require
 the reviewed migration/catalog gate before baseline adoption.
 Ordinary later deploys omit the flag. Do not use the Terraform baseline to bypass
@@ -1226,8 +1261,8 @@ For this ClassPilot release family, deploy in compatibility-safe stages:
    extension capability is advertised; never infer support only from a version.
 3. Release the Chrome extension separately from `C:\GitHub\ClassPilot`. Chrome
    Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` is operator-confirmed
-   live at `2.9.7` (October 7, 2026); the August 27 `2.7.2` observation is
-   historical. No new upload is needed for the unchanged candidate. This report
+   live at `2.9.7` on October 7, 2026; this and the August 27 `2.7.2` observation
+   are dated records. Newer source is reviewed separately from Store status. This report
    is not uploaded-package identity proof or managed-Chromebook adoption or
    validation. Before any separately reviewed successor upload, re-check the listing
    and pending submissions,
@@ -1235,8 +1270,8 @@ For this ClassPilot release family, deploy in compatibility-safe stages:
    inspect and hash the versioned archive, and stage adoption separately through
    Chrome Web Store and Google Admin.
 4. Omit the one-shot RLS flag on later deploys. The 75-table target above is
-   retained as versioned history; the current production baseline is the
-   separately verified 121-table paperwork inventory. Verify the current live
+   retained as versioned history; the configured Terraform baseline is the
+   separately verified September 28, 2026 121-table paperwork inventory. Verify the current live
    catalog before any later Terraform apply. The historical 72-table observation
    and 75-table target remain unchanged in the registry. A
    SchoolPilot backend/frontend deploy never publishes the extension, and
