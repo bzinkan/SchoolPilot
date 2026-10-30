@@ -65,3 +65,14 @@ test("report-to-live transition preserves administrator observation and restores
   assert.equal(classpilotObservationSessionIsCurrent({ ...live, startTime: "invalid" }, now), false);
   assert.equal(classpilotObservationSessionIsCurrent({ ...live, scheduledEndAt: null }, now), true);
 });
+
+test("manual-for-today observation expires at the school-day boundary before worker cleanup", () => {
+  const midnight = new Date("2026-10-31T04:00:00.000Z");
+  const manual = { sessionMode: "live", startTime: new Date("2026-10-31T03:00:00Z"),
+    rosterSnapshotCompletedAt: new Date("2026-10-31T03:00:00Z"), manualExpiresAt: midnight };
+  assert.equal(classpilotObservationSessionIsCurrent(manual, new Date(midnight.getTime() - 1)), true);
+  assert.equal(classpilotObservationSessionIsCurrent(manual, midnight), false);
+  assert.equal(canObserveClasspilotSession({ session: manual, administrator: true, assignedStaff: true, now: midnight }), false);
+  assert.equal(classpilotObservationSessionIsCurrent({ ...manual, manualExpiresAt: "invalid" }, midnight), false);
+  assert.equal(classpilotObservationSessionIsCurrent({ ...manual, manualExpiresAt: midnight.toISOString() }, midnight), false);
+});

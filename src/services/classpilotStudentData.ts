@@ -257,6 +257,7 @@ export function resolveClasspilotStudentDataWindow(options: {
     startTime: Date;
     endTime: Date | null;
     scheduledEndAt?: Date | null;
+    manualExpiresAt?: Date | null;
     timezoneSnapshot: string | null;
   };
 }) {
@@ -266,6 +267,7 @@ export function resolveClasspilotStudentDataWindow(options: {
       options.now.getTime(),
       options.session.endTime?.getTime() ?? Number.POSITIVE_INFINITY,
       options.session.scheduledEndAt?.getTime() ?? Number.POSITIVE_INFINITY,
+      options.session.manualExpiresAt?.getTime() ?? Number.POSITIVE_INFINITY,
       options.session.startTime.getTime() + CLASSPILOT_SESSION_MAX_MS
     ));
     const end = sessionAuthorityEnd < options.session.startTime
@@ -616,19 +618,20 @@ function dateFromUnknown(value: unknown, fallback: Date): Date {
 }
 
 function sessionAuthorityDeadline(
-  session: Pick<TeachingSession, "startTime" | "endTime" | "scheduledEndAt">,
+  session: Pick<TeachingSession, "startTime" | "endTime" | "scheduledEndAt"> & { manualExpiresAt?: Date | null },
   reportWindowEnd?: Date | null
 ): Date {
   return new Date(Math.min(
     reportWindowEnd?.getTime() ?? Number.POSITIVE_INFINITY,
     session.endTime?.getTime() ?? Number.POSITIVE_INFINITY,
     session.scheduledEndAt?.getTime() ?? Number.POSITIVE_INFINITY,
+    session.manualExpiresAt?.getTime() ?? Number.POSITIVE_INFINITY,
     session.startTime.getTime() + CLASSPILOT_SESSION_MAX_MS
   ));
 }
 
 function effectiveSessionAuthorityEnd(
-  session: Pick<TeachingSession, "startTime" | "endTime" | "scheduledEndAt">,
+  session: Pick<TeachingSession, "startTime" | "endTime" | "scheduledEndAt"> & { manualExpiresAt?: Date | null },
   now: Date,
   reportWindowEnd?: Date | null
 ): Date {
@@ -683,6 +686,7 @@ function retainedSessionAuthoritySql(authority: StudentDataAuthorityWindow): SQL
       COALESCE(report.window_end, 'infinity'::timestamptz),
       COALESCE(session.end_time AT TIME ZONE 'UTC', 'infinity'::timestamptz),
       COALESCE(session.scheduled_end_at, 'infinity'::timestamptz),
+      COALESCE(session.manual_expires_at, 'infinity'::timestamptz),
       (session.start_time AT TIME ZONE 'UTC') + interval '12 hours'
     ) >= ${authority.retentionCutoff.toISOString()}
     AND (
@@ -701,9 +705,9 @@ export function classpilotStudentHistoryAuthorityQueries(options:{schoolId:strin
   const sessions = sql`
     SELECT frozen_roster.student_id, session.id,
       GREATEST(session.start_time AT TIME ZONE 'UTC',frozen_roster.captured_at,staff.captured_at) AS start,
-      LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours',${options.now.toISOString()}::timestamptz) AS end,
+      LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),COALESCE(session.manual_expires_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours',${options.now.toISOString()}::timestamptz) AS end,
       COALESCE(report.window_start,session.start_time AT TIME ZONE 'UTC') AS aggregate_start,
-      LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours') AS aggregate_end,
+      LEAST(COALESCE(report.window_end,'infinity'::timestamptz),COALESCE(session.end_time AT TIME ZONE 'UTC','infinity'::timestamptz),COALESCE(session.scheduled_end_at,'infinity'::timestamptz),COALESCE(session.manual_expires_at,'infinity'::timestamptz),(session.start_time AT TIME ZONE 'UTC')+interval '12 hours') AS aggregate_end,
       COALESCE(report.timezone,session.timezone_snapshot) AS time_zone,
       (session.end_time IS NOT NULL AND (report.id IS NULL OR report.state='ready')) AS is_final
     FROM ${classpilotSessionStaff} AS staff
@@ -766,6 +770,7 @@ function retainedSessionAuthorityTableSql(authority: StudentDataAuthorityWindow)
       COALESCE(${classpilotSessionReports.windowEnd}, 'infinity'::timestamptz),
       COALESCE(${teachingSessions.endTime} AT TIME ZONE 'UTC', 'infinity'::timestamptz),
       COALESCE(${teachingSessions.scheduledEndAt}, 'infinity'::timestamptz),
+      COALESCE(${teachingSessions.manualExpiresAt}, 'infinity'::timestamptz),
       (${teachingSessions.startTime} AT TIME ZONE 'UTC') + interval '12 hours'
     ) >= ${authority.retentionCutoff.toISOString()}
     AND (
@@ -798,6 +803,7 @@ async function loadActiveScopeSessions(options: {
     isNull(teachingSessions.endTime),
     sql`${teachingSessions.startTime} AT TIME ZONE 'UTC' <= ${options.authority.now.toISOString()}`,
     sql`(${teachingSessions.scheduledEndAt} IS NULL OR ${teachingSessions.scheduledEndAt} > ${options.authority.now.toISOString()})`,
+    sql`(${teachingSessions.manualExpiresAt} IS NULL OR ${teachingSessions.manualExpiresAt} > ${options.authority.now.toISOString()})`,
     sql`(${teachingSessions.startTime} AT TIME ZONE 'UTC') + interval '12 hours' > ${options.authority.now.toISOString()}`,
     isNotNull(teachingSessions.rosterSnapshotCompletedAt),
     eq(groups.schoolId, options.schoolId),
@@ -1519,6 +1525,7 @@ async function loadScopedIdentities(options: {
         COALESCE(report.window_end, 'infinity'::timestamptz),
         COALESCE(session.end_time AT TIME ZONE 'UTC', 'infinity'::timestamptz),
         COALESCE(session.scheduled_end_at, 'infinity'::timestamptz),
+        COALESCE(session.manual_expires_at, 'infinity'::timestamptz),
         (session.start_time AT TIME ZONE 'UTC') + interval '12 hours'
       ) > ${options.rangeStart.toISOString()}`
     );
@@ -1637,6 +1644,7 @@ async function loadProvisionalSessions(options: {
         COALESCE(${classpilotSessionReports.windowEnd}, 'infinity'::timestamptz),
         COALESCE(${teachingSessions.endTime} AT TIME ZONE 'UTC', 'infinity'::timestamptz),
         COALESCE(${teachingSessions.scheduledEndAt}, 'infinity'::timestamptz),
+        COALESCE(${teachingSessions.manualExpiresAt}, 'infinity'::timestamptz),
         (${teachingSessions.startTime} AT TIME ZONE 'UTC') + interval '12 hours'
       ) > ${options.rangeStart.toISOString()}`
     );

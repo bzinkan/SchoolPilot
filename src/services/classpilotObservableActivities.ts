@@ -21,7 +21,8 @@ export async function getClasspilotObservableActivities(schoolId: string, now = 
       eq(teachingSessions.sessionMode, "scheduled_report"), eq(teachingSessions.scheduledState, "active"),
       isNotNull(teachingSessions.scheduledDate), lte(teachingSessions.scheduledStartAt, now), gt(teachingSessions.scheduledEndAt, now))),
       isNull(teachingSessions.endTime), lte(teachingSessions.startTime, now), isNotNull(teachingSessions.rosterSnapshotCompletedAt),
-      or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, now))))
+      or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, now)),
+      or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, now))))
     .orderBy(teachingSessions.startTime, teachingSessions.id).limit(501);
   if (contexts.length > 500 || sessions.length > 500) throw Object.assign(new Error("Too many active activities to load completely"), { status: 422 });
   const admittedContexts = contexts.filter(context => scheduledContextHasClassroomTools(context, now));
@@ -63,7 +64,7 @@ export async function getClasspilotObservableActivities(schoolId: string, now = 
         source: session.scheduledDate ? "scheduled_class" : "class", status: "active",
         sessionMode: session.sessionMode,
         supervisionStatus: session.sessionMode === "scheduled_report" ? "awaiting_teacher" : "live",
-        startsAt: (session.scheduledStartAt || session.startTime).toISOString(), endsAt: session.scheduledEndAt?.toISOString() ?? null,
+        startsAt: (session.scheduledStartAt || session.startTime).toISOString(), endsAt: (session.scheduledEndAt || session.manualExpiresAt)?.toISOString() ?? null,
         studentCount, owner: { id: session.teacherId, name: names.get(session.teacherId) ?? "Staff" },
         authority: { teachingSessionId: session.id, supervisionContextId: null, contextAuthorityRevision: null }, capabilities }];
     }),

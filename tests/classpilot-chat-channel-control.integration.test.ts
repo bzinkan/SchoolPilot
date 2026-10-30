@@ -359,7 +359,7 @@ test("the real class switch writer locks the session before its settings row, so
     switching.then(() => { outcome = "switched"; }, () => { outcome = "failed"; });
     const blocked = await blockedBehind(probe, replyPid, () => outcome !== "pending");
     assert.deepEqual([outcome, blocked.length], ["pending", 1], "the switch-off waits behind the in-flight reply");
-    assert.match(blocked[0]!, /^select "id" from "teaching_sessions" .+ for update$/, "it waits for its update lock on the session row");
+    assert.match(blocked[0]!, /^select "id", "manual_expires_at" from "teaching_sessions" .+ for update$/, "it waits for its update lock on the session row before reading settings or accepting an unexpired class");
     // ...then both switches, share-locked. Had the writer locked its settings row first, this would deadlock with it.
     const school = await reply.query<{ enabled: boolean }>("SELECT student_messaging_enabled AS enabled FROM settings WHERE school_id=$1 FOR SHARE",
       [ids.school]);

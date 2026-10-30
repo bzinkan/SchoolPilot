@@ -39,8 +39,10 @@ export async function withToolsStaff<T>(scope: ToolsScope, mutate: (database: ty
       const [session] = await database.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, scope.schoolId), eq(teachingSessions.id, scope.authority.teachingSessionId))).limit(1).for(readOnly ? "share" : "update");
       const [staff] = await database.select({ id: classpilotSessionStaff.id }).from(classpilotSessionStaff).where(and(eq(classpilotSessionStaff.schoolId, scope.schoolId),
         eq(classpilotSessionStaff.teachingSessionId, scope.authority.teachingSessionId), eq(classpilotSessionStaff.staffId, scope.actorId))).limit(1).for("share");
-      if (!session || !staff || (!historical && (session.endTime || session.sessionMode !== "live" || (session.scheduledEndAt && session.scheduledEndAt <= new Date())))) throw toolsError("Classroom is no longer available", "CLASS_TOOLS_AUTHORITY_STALE", 404);
-      expiresAt = session.endTime || session.scheduledEndAt || new Date(session.startTime.getTime() + 12 * 3600_000);
+      if (!session || !staff || (!historical && (session.endTime || session.sessionMode !== "live"))) throw toolsError("Classroom is no longer available", "CLASS_TOOLS_AUTHORITY_STALE", 404);
+      expiresAt = new Date(Math.min(session.endTime?.getTime() ?? Infinity,
+        session.scheduledEndAt?.getTime() ?? Infinity, session.manualExpiresAt?.getTime() ?? Infinity,
+        session.startTime.getTime() + 12 * 3600_000));
     } else {
       const [context] = await database.select().from(classpilotSupervisionContexts).where(and(eq(classpilotSupervisionContexts.schoolId, scope.schoolId), eq(classpilotSupervisionContexts.id, scope.authority.supervisionContextId!))).limit(1).for(readOnly ? "share" : "update");
       if (!context || context.assignedStaffId !== scope.actorId || String(context.classroomAuthorityRevision) !== scope.contextAuthorityRevision) throw toolsError("Classroom authority changed", "CLASS_TOOLS_AUTHORITY_STALE", 404);
@@ -73,7 +75,9 @@ export async function withToolsStudent<T>(scope: ToolsStudentScope, feature: "ha
   if (scope.authority.supervisionContextId) return withScheduledStudentAction({ ...scope, supervisionContextId: scope.authority.supervisionContextId, studentControlRevision: scope.studentControlRevision } as ScheduledStudentAction, (database, context) => mutate(database, context.endsAt));
   return withAuthorizedStudentFabMutation({ ...scope, feature }, async (database, authority) => {
     if (authority.teachingSession.id !== scope.authority.teachingSessionId) throw toolsError("Student classroom changed", "CLASS_TOOLS_AUTHORITY_STALE");
-    const expiry = authority.teachingSession.scheduledEndAt || new Date(authority.teachingSession.startTime.getTime() + 12 * 3600_000);
+    const expiry = new Date(Math.min(authority.teachingSession.scheduledEndAt?.getTime() ?? Infinity,
+      authority.teachingSession.manualExpiresAt?.getTime() ?? Infinity,
+      authority.teachingSession.startTime.getTime() + 12 * 3600_000));
     if (expiry <= new Date()) throw toolsError("Classroom has ended", "CLASS_TOOLS_AUTHORITY_STALE");
     return mutate(database, expiry);
   });

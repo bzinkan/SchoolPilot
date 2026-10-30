@@ -2,7 +2,7 @@ import { getWindowsReportObservations, getWindowsReportSessions, type WindowsRep
 import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, sealHeartbeatPreparedReads,
   assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
 } from "./classpilotHeartbeatPreparedReads.js";
-import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
+import { LIVE_TEACHING_SESSION_MODE, heartbeatCurrentTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
 import { classpilotTeachingSessionDeadline, classpilotTeachingSessionIsCurrent } from "./classpilotTeachingSessionWindow.js";
 import {
   automaticFlightPathDesiredState, automaticFlightPathPolicyDto, emptyAutomaticFlightPathState,
@@ -44,7 +44,7 @@ import {
   registerCacheInvalidationHandler,
 } from "../realtime/cacheInvalidation.js";
 import { isDatabaseErrorCode } from "../util/databaseError.js";
-import { createLocalDateFormatter, localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
+import { addLocalDays, createLocalDateFormatter, localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 import { classpilotRetentionExpiresAt } from "../util/classpilotRetention.js";
 import {
   classpilotSessionReportV2Mode,
@@ -9429,6 +9429,7 @@ function noLiveClassOwnerSql(schoolId: string, studentId: SQL): SQL {
     WHERE live_session.school_id = ${schoolId} AND live_session.session_mode = 'live'
       AND live_session.end_time IS NULL AND live_session.start_time <= now()
       AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+      AND (live_session.manual_expires_at IS NULL OR live_session.manual_expires_at > now())
       AND ((live_session.roster_snapshot_completed_at IS NOT NULL AND EXISTS (
         SELECT 1 FROM ${classpilotSessionStudents} live_roster WHERE live_roster.school_id=${schoolId}
           AND live_roster.teaching_session_id=live_session.id AND live_roster.student_id=${studentId}))
@@ -9482,6 +9483,7 @@ export function buildClassPilotTileAuthorizationQuery(
            AND (selected_session.session_mode = 'live'
              OR (${currentReportingObservationSql("selected_session")}))
            AND selected_session.end_time IS NULL
+           AND (selected_session.manual_expires_at IS NULL OR selected_session.manual_expires_at > now())
            AND selected_session.roster_snapshot_completed_at IS NOT NULL
            AND (
              selected_session.scheduled_end_at IS NULL
@@ -9511,6 +9513,7 @@ export function buildClassPilotTileAuthorizationQuery(
              AND selected_session.school_id = ${options.schoolId}
              AND selected_session.session_mode = 'live'
              AND selected_session.end_time IS NULL
+             AND (selected_session.manual_expires_at IS NULL OR selected_session.manual_expires_at > now())
              AND selected_session.roster_snapshot_completed_at IS NOT NULL
              AND (
                selected_session.scheduled_end_at IS NULL
@@ -9672,6 +9675,7 @@ export function buildClassPilotTileAuthorizationQuery(
          AND live_session.end_time IS NULL
          AND live_session.start_time <= now()
          AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+         AND (live_session.manual_expires_at IS NULL OR live_session.manual_expires_at > now())
          AND live_session.roster_snapshot_completed_at IS NOT NULL
         INNER JOIN ${classpilotSessionStudents} AS live_roster
           ON live_roster.school_id = ${options.schoolId}
@@ -9687,6 +9691,7 @@ export function buildClassPilotTileAuthorizationQuery(
          AND live_session.end_time IS NULL
          AND live_session.start_time <= now()
          AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+         AND (live_session.manual_expires_at IS NULL OR live_session.manual_expires_at > now())
          AND live_session.roster_snapshot_completed_at IS NULL
         INNER JOIN ${groupStudents} AS legacy_roster
           ON legacy_roster.group_id = live_session.group_id
@@ -12135,7 +12140,7 @@ export async function resyncActiveClasspilotSessionStudents(
         isNull(teachingSessions.endTime)
       ))
       .limit(1);
-    if (!candidate) return undefined;
+    if (!candidate || (candidate.manualExpiresAt && candidate.manualExpiresAt <= new Date(Math.max(resyncedAt.getTime(), Date.now())))) return undefined;
 
     const [group] = await tx
       .select({ id: groups.id })
@@ -12190,7 +12195,7 @@ export async function resyncActiveClasspilotSessionStudents(
       ))
       .limit(1)
       .for("update");
-    if (!locked) return undefined;
+    if (!locked || (locked.manualExpiresAt && locked.manualExpiresAt <= new Date(Math.max(resyncedAt.getTime(), Date.now())))) return undefined;
 
     const existingIds = new Set(existing.map((row) => row.studentId));
     const missing = roster.filter((row) => !existingIds.has(row.studentId));
@@ -12232,7 +12237,7 @@ export async function resyncActiveClasspilotSessionStudents(
       ...existing.map((row) => row.studentId),
       ...roster.map((row) => row.studentId),
     ])];
-    const hardExpiresAt = new Date(updatedSession.startTime.getTime() + 12 * 60 * 60 * 1000);
+    const hardExpiresAt = classpilotTeachingSessionHardExpiry(updatedSession);
     if (hardExpiresAt > resyncedAt && frozenStudentIds.length > 0) {
       await replaceClasspilotStudentControlSnapshots({
         schoolId: options.schoolId,
@@ -12650,7 +12655,7 @@ export async function aggregateClasspilotSessionUsage(
 }
 
 export async function createTeachingSession(
-  data: InsertTeachingSession & { groupId: string; teacherId: string },
+  data: InsertTeachingSession & { groupId: string; teacherId: string; requiredManualDate?: string },
   dbInstance: typeof db = db
 ): Promise<TeachingSession> {
   // teaching_sessions.school_id must mirror the parent group's school (RLS
@@ -12679,6 +12684,7 @@ export async function createTeachingSession(
       .select({
         schoolId: groups.schoolId,
         name: groups.name,
+        scheduleManualDate: groups.scheduleManualDate,
         timezone: schools.schoolTimezone,
       })
       .from(groups)
@@ -12700,10 +12706,20 @@ export async function createTeachingSession(
       );
     }
     await assertClasspilotEntitled(group.schoolId, transactionDb, { lock: true });
+    const startTime = data.startTime ?? new Date();
+    const manualDate = localDateInTimeZone(startTime, group.timezone || "America/New_York");
+    if (data.requiredManualDate && (manualDate !== data.requiredManualDate || group.scheduleManualDate !== data.requiredManualDate)) {
+      throw manualTodayError("The school date changed. Review the class again.", 409, "MANUAL_TODAY_DATE_CHANGED");
+    }
+    const manualExpiresAt = !data.scheduledDate && group.scheduleManualDate === manualDate
+      ? localDateTimeUtc(addLocalDays(manualDate, 1), "00:00", group.timezone)
+      : data.manualExpiresAt;
     const [session] = await tx
       .insert(teachingSessions)
       .values({
         ...data,
+        startTime,
+        manualExpiresAt,
         schoolId: group.schoolId,
         classNameSnapshot: data.classNameSnapshot || group.name,
         timezoneSnapshot: data.timezoneSnapshot || group.timezone || "America/New_York",
@@ -12788,7 +12804,7 @@ export async function createOrReuseScheduledReportSession(
       throw new Error(`Scheduled occurrence group ${data.groupId} was not found`);
     }
     const [groupSnapshot] = await tx
-      .select({ name: groups.name })
+      .select({ name: groups.name, scheduleManualDate: groups.scheduleManualDate })
       .from(groups)
       .where(and(eq(groups.id, data.groupId), eq(groups.schoolId, data.schoolId)))
       .limit(1)
@@ -12797,6 +12813,9 @@ export async function createOrReuseScheduledReportSession(
       // tombstone and canonical creation linearizable.
       .for("update");
     if (!groupSnapshot) throw new Error(`Scheduled occurrence group ${data.groupId} was not found`);
+    if (groupSnapshot.scheduleManualDate === data.scheduledDate) {
+      throw manualTodayError("This class uses Manual for today.", 409, "MANUAL_TODAY_ACTIVE");
+    }
     const existing = await getScheduledTeachingSessionOccurrence(
       data.schoolId,
       data.groupId,
@@ -12980,6 +12999,9 @@ export async function promoteScheduledReportSessionToLive(
       isNull(teachingSessions.endTime)
     )).limit(1);
     if (!current) return undefined;
+    const [group] = await tx.select({ scheduleManualDate: groups.scheduleManualDate }).from(groups)
+      .where(and(eq(groups.id, current.groupId), eq(groups.schoolId, data.schoolId))).for("share");
+    if (current.scheduledDate && group?.scheduleManualDate === current.scheduledDate) return undefined;
     await assertActiveClasspilotTeacherMembership(
       current.teacherId,
       data.schoolId,
@@ -13212,7 +13234,8 @@ export async function finalizeTeachingSession(
     // A future frozen/synthetic occurrence can be replaced before its nominal
     // start. Reports must still have a valid zero-length window instead of
     // making the entire session-finalization transaction fail its invariant.
-    const endTime = candidateEndTime < session.startTime ? session.startTime : candidateEndTime;
+    const cappedEndTime = session.manualExpiresAt && candidateEndTime > session.manualExpiresAt ? session.manualExpiresAt : candidateEndTime;
+    const endTime = cappedEndTime < session.startTime ? session.startTime : cappedEndTime;
     const [groupSnapshot] = await tx
       .select({ className: groups.name, timezone: schools.schoolTimezone })
       .from(groups)
@@ -13608,6 +13631,12 @@ export async function listScheduledSessionsReadyToFinalize(
     .from(teachingSessions)
     .where(and(...conditions))
     .orderBy(teachingSessions.scheduledEndAt);
+}
+
+export async function listExpiredManualOverrideSessions(now = new Date(), database: typeof db = db, schoolId?: string): Promise<TeachingSession[]> {
+  return database.select().from(teachingSessions).where(and(isNull(teachingSessions.endTime),
+    isNotNull(teachingSessions.manualExpiresAt), lte(teachingSessions.manualExpiresAt, now),
+    schoolId ? eq(teachingSessions.schoolId, schoolId) : undefined)).orderBy(teachingSessions.manualExpiresAt, teachingSessions.id);
 }
 
 export async function listScheduledReportSessionsDueNow(
@@ -14784,7 +14813,7 @@ export async function resolveClasspilotMonitoringScope(
       eq(classpilotSessionStudents.schoolId, options.schoolId),
       eq(classpilotSessionStudents.studentId, options.studentId),
       sql`${teachingSessions.startTime} <= ${options.occurredAt}`,
-      sql`coalesce(${teachingSessions.endTime}, ${teachingSessions.scheduledEndAt}, now()) > ${options.occurredAt}`
+      sql`least(coalesce(${teachingSessions.endTime}, now()), coalesce(${teachingSessions.scheduledEndAt}, now()), coalesce(${teachingSessions.manualExpiresAt}, now())) > ${options.occurredAt}`
     ))
     .limit(2);
   if (sessions.length !== 1) return null;
@@ -14981,6 +15010,7 @@ export async function reconcileLegacyOpenScheduledSessions(
     .where(and(
       isNull(teachingSessions.endTime),
       isNull(teachingSessions.scheduledDate),
+      isNull(teachingSessions.manualExpiresAt),
       schoolId ? eq(groups.schoolId, schoolId) : sql`true`,
       or(
         isNotNull(teachingSessions.scheduledConflictId),
@@ -15000,6 +15030,7 @@ export async function reconcileLegacyOpenScheduledSessions(
       const timeZone = row.schoolTimezone || "America/New_York";
       const scheduledDate = row.conflict?.scheduledDate
         || localDateInTimeZone(row.session.startTime, timeZone);
+      if (row.group.scheduleManualDate === scheduledDate) continue;
       const blockStartTime = row.conflict?.blockStartTime || row.group.blockStartTime;
       const blockEndTime = row.conflict?.blockEndTime || row.group.blockEndTime;
       if (!blockStartTime || !blockEndTime) continue;
@@ -15947,6 +15978,7 @@ export async function getActiveTeachingSessions(
       scheduledTimezone: teachingSessions.scheduledTimezone,
       scheduledStartAt: teachingSessions.scheduledStartAt,
       scheduledEndAt: teachingSessions.scheduledEndAt,
+      manualExpiresAt: teachingSessions.manualExpiresAt,
       scheduledState: teachingSessions.scheduledState,
       scheduledFinalizationReason: teachingSessions.scheduledFinalizationReason,
       scheduledTeacherEmail: teachingSessions.scheduledTeacherEmail,
@@ -15966,7 +15998,8 @@ export async function getActiveTeachingSessions(
           eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
           eq(teachingSessions.scheduledState, "active")
         ),
-        isNull(teachingSessions.endTime)
+        isNull(teachingSessions.endTime),
+        or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, new Date()))
       )
     );
 }
@@ -15981,7 +16014,8 @@ export async function getActiveTeachingSession(
       and(
         eq(teachingSessions.teacherId, teacherId),
         eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
-        isNull(teachingSessions.endTime)
+        isNull(teachingSessions.endTime),
+        or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, new Date()))
       )
     )
     .limit(1);
@@ -16009,7 +16043,8 @@ export async function getActiveTeachingSessionForSchool(
       and(
         eq(groups.schoolId, schoolId),
         eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
-        isNull(teachingSessions.endTime)
+        isNull(teachingSessions.endTime),
+        or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, new Date()))
       )
     )
     .orderBy(
@@ -16120,6 +16155,7 @@ export async function getActiveClassOwnersForStudents(
         currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
         currentAt ? gt(teachingSessions.startTime, new Date(currentAt.getTime() - 12 * 3600_000)) : undefined,
         currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
+      or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, currentAt ?? new Date())),
         inArray(classpilotSessionStudents.studentId, uniqueStudentIds)
       )
     );
@@ -16146,6 +16182,7 @@ export async function getActiveClassOwnersForStudents(
       currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
       currentAt ? gt(teachingSessions.startTime, new Date(currentAt.getTime() - 12 * 3600_000)) : undefined,
       currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
+      or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, currentAt ?? new Date())),
       inArray(groupStudents.studentId, uniqueStudentIds)
     ));
 
@@ -16202,7 +16239,7 @@ async function getClasspilotTelemetryOwnerProjectionAtClock(
   clock: ClasspilotAuthorityClock,
 ): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
   const result = await dbInstance.execute<HeartbeatScreenshotOwnerRow>(
-    heartbeatTelemetryOwnerQuery(schoolId, studentId, clock)
+    heartbeatCurrentTelemetryOwnerQuery(schoolId, studentId, clock)
   );
   return classpilotTelemetryOwnerFromRows(result.rows);
 }
@@ -16271,7 +16308,7 @@ export async function upsertSessionSettings(
     const transactionDb = tx as unknown as typeof db;
     await assertClasspilotEntitled(schoolId, transactionDb, { lock: true });
     const [session] = await tx
-      .select({ id: teachingSessions.id })
+      .select({ id: teachingSessions.id, manualExpiresAt: teachingSessions.manualExpiresAt })
       .from(teachingSessions)
       .where(and(
         eq(teachingSessions.id, sessionId),
@@ -16280,7 +16317,7 @@ export async function upsertSessionSettings(
       ))
       .limit(1)
       .for("update");
-    if (!session) {
+    if (!session || (session.manualExpiresAt && session.manualExpiresAt <= new Date())) {
       throw Object.assign(new Error("Active class session not found"), {
         status: 404,
         code: "ACTIVE_SESSION_NOT_FOUND",
@@ -16377,6 +16414,7 @@ export async function getScheduledGroupsReadyToStart(
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
+      scheduleManualDate: groups.scheduleManualDate,
       scheduleRule: groups.scheduleRule,
       automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
       createdAt: groups.createdAt,
@@ -16386,6 +16424,7 @@ export async function getScheduledGroupsReadyToStart(
       and(
         eq(groups.schoolId, schoolId),
         eq(groups.scheduleEnabled, true),
+        or(isNull(groups.scheduleManualDate), ne(groups.scheduleManualDate, todayDate)),
         sql`${groups.blockStartTime} IS NOT NULL`,
         sql`${groups.blockEndTime} IS NOT NULL`,
         or(sql`${groups.scheduleRule}->>'periodId' IS NOT NULL`, and(
@@ -16421,6 +16460,7 @@ export async function getScheduledGroupsReadyToEnd(
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
+      scheduleManualDate: groups.scheduleManualDate,
       scheduleRule: groups.scheduleRule,
       automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
       createdAt: groups.createdAt,
@@ -16467,7 +16507,8 @@ export async function hasActiveSessionForGroup(
       and(
         eq(teachingSessions.groupId, groupId),
         eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
-        isNull(teachingSessions.endTime)
+        isNull(teachingSessions.endTime),
+        or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, new Date()))
       )
     )
     .limit(1);
@@ -16556,6 +16597,7 @@ export async function getAdminClassSummariesBySchool(
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
       scheduleSkippedDate: groups.scheduleSkippedDate,
+      scheduleManualDate: groups.scheduleManualDate,
       scheduleRule: groups.scheduleRule,
       automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
       createdAt: groups.createdAt,
@@ -19903,7 +19945,7 @@ export async function createTeacherChatReplyWithDelivery(options: {
       messageType: "message",
       deliveryStatus: "sent",
     }).returning();
-    const hardExpiry = new Date(Date.now() + 12 * 60 * 60 * 1000);
+    const hardExpiry = classpilotTeachingSessionHardExpiry(session);
     const expiresAt = session.scheduledEndAt && session.scheduledEndAt < hardExpiry
       ? session.scheduledEndAt
       : hardExpiry;
@@ -20596,7 +20638,7 @@ export async function withClasspilotPlainOpenTabDeliveryBatch<
           AND ${classpilotSupervisionContexts.endsAt}>clock_timestamp()
           AND ${classpilotSupervisionContexts.endsAt}>${classpilotSupervisionContexts.startsAt}
       ) next_supervision
-      CROSS JOIN LATERAL (${heartbeatTelemetryOwnerQuery(options.schoolId, sql`expected.student_id`, "current")}) owner
+      CROSS JOIN LATERAL (${heartbeatCurrentTelemetryOwnerQuery(options.schoolId, sql`expected.student_id`, "current")}) owner
       WHERE ${currentStudentSessionAuthorityPredicate()}
     `);
     if (final.rows.some(row => row.entitled !== true)) throw Object.assign(new Error("School is not entitled to ClassPilot"), {
@@ -20931,6 +20973,7 @@ export async function withClasspilotHeartbeatDeliveryAuthority<
               AND control.hard_expires_at>clock_timestamp()
               AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>clock_timestamp())
               AND teaching.session_mode='live' AND teaching.end_time IS NULL
+              AND (teaching.manual_expires_at IS NULL OR teaching.manual_expires_at>clock_timestamp())
               AND teaching.roster_snapshot_completed_at IS NOT NULL
               AND (teaching.scheduled_end_at IS NULL OR teaching.scheduled_end_at>clock_timestamp())
               AND ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)}
@@ -21717,7 +21760,8 @@ export async function createClasspilotCommandWithTargets(
         ))
         .limit(1)
         .for("update");
-      if (!lockedSession || lockedSession.endTime || lockedSession.sessionMode !== "live") {
+      if (!lockedSession || lockedSession.endTime || lockedSession.sessionMode !== "live"
+        || (lockedSession.manualExpiresAt && lockedSession.manualExpiresAt <= new Date())) {
         throw Object.assign(new Error("Active class session not found"), {
           status: 409,
           code: "COMMAND_SESSION_STALE",
@@ -22021,7 +22065,7 @@ export async function createClasspilotCommandWithTargets(
     }
     if (!options.routineReservation?.replayCommandId && options.authority && ["timer", "lesson-activity"].includes(commandData.commandType)) {
       commandData = await prepareToolsCommand(tx as unknown as typeof db, commandData,
-        classroomContext?.endsAt ?? teachingSession?.scheduledEndAt ?? new Date((teachingSession?.startTime?.getTime() ?? Date.now()) + 12 * 3600_000));
+        classroomContext?.endsAt ?? teachingSession?.scheduledEndAt ?? (teachingSession ? classpilotTeachingSessionHardExpiry(teachingSession) : new Date(Date.now() + 12 * 3600_000)));
     }
     if (["timer", "poll"].includes(commandData.commandType) && options.authority
       && !options.routineReservation?.replayCommandId
@@ -22057,7 +22101,7 @@ export async function createClasspilotCommandWithTargets(
         });
       }
       const maximumExpiry = new Date(Date.now() + 12 * 60 * 60 * 1000);
-      const activityEnd = classroomContext?.endsAt ?? teachingSession?.scheduledEndAt;
+      const activityEnd = classroomContext?.endsAt ?? teachingSession?.scheduledEndAt ?? teachingSession?.manualExpiresAt;
       pollExpiresAt = activityEnd && activityEnd < maximumExpiry
         ? activityEnd
         : maximumExpiry;
@@ -23828,7 +23872,7 @@ export async function initializeClasspilotStudentControlStatesForSession(
   if (roster.length === 0) return [];
 
   const now = new Date();
-  const hardExpiresAt = new Date(session.startTime.getTime() + 12 * 60 * 60 * 1000);
+  const hardExpiresAt = classpilotTeachingSessionHardExpiry(session);
   if (hardExpiresAt <= now) return [];
   return replaceClasspilotStudentControlSnapshots({
     schoolId,
@@ -23941,6 +23985,7 @@ export async function replaceClasspilotStudentControlSnapshots(
         startTime: teachingSessions.startTime,
         endTime: teachingSessions.endTime,
         scheduledEndAt: teachingSessions.scheduledEndAt,
+        manualExpiresAt: teachingSessions.manualExpiresAt,
       })
       .from(teachingSessions)
       .where(and(
@@ -23955,7 +24000,7 @@ export async function replaceClasspilotStudentControlSnapshots(
       });
     }
 
-    const absoluteCap = new Date(session.startTime.getTime() + 12 * 60 * 60 * 1000);
+    const absoluteCap = classpilotTeachingSessionHardExpiry(session);
     const hardExpiresAt = options.hardExpiresAt || absoluteCap;
     if (hardExpiresAt > absoluteCap || hardExpiresAt <= now) {
       throw Object.assign(new Error("Control-state hard expiry must be valid and within 12 hours of class start"), {
@@ -24491,7 +24536,7 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
       const delegatedRow = currentRows.find((row) => row.studentId === studentId);
       const owner = ownerByStudent.get(studentId);
       const hardExpiresAt = owner
-        ? new Date(owner.session.startTime.getTime() + 12 * 60 * 60 * 1000)
+        ? classpilotTeachingSessionHardExpiry(owner.session)
         : null;
       if (owner && hardExpiresAt && hardExpiresAt > now) {
         const activeStates = await transactionDb
@@ -29514,6 +29559,7 @@ async function loadPasspilotMigrationInventory(
           blockStartTime: groups.blockStartTime,
           blockEndTime: groups.blockEndTime,
           scheduleSkippedDate: groups.scheduleSkippedDate,
+          scheduleManualDate: groups.scheduleManualDate,
           scheduleRule: groups.scheduleRule,
           automaticFlightPathPolicy: groups.automaticFlightPathPolicy,
           createdAt: groups.createdAt,
@@ -35712,7 +35758,8 @@ export async function classpilotNativeCurrentAuthority(schoolId: string, student
         eq(teachingSessions.sessionMode, "live"), isNull(teachingSessions.endTime), isNotNull(teachingSessions.rosterSnapshotCompletedAt)))
       .limit(1).for("share");
     if (!session || session.teaching_sessions.startTime.getTime() > now) return null;
-    expiresAt = Math.min(expiresAt, session.teaching_sessions.scheduledEndAt?.getTime() ?? Infinity);
+    expiresAt = Math.min(expiresAt, session.teaching_sessions.scheduledEndAt?.getTime() ?? Infinity,
+      session.teaching_sessions.manualExpiresAt?.getTime() ?? Infinity);
     return expiresAt > now ? { teachingSessionId: control.teachingSessionId, controlRevision: control.revision, expiresAt } : null;
   }
   if (control.supervisionContextId) {
@@ -35967,4 +36014,113 @@ export async function readClasspilotWindowsChatTranscript(browser:WindowsBrowser
     authority.teachingSessionId?eq(chatMessages.sessionId,authority.teachingSessionId):eq(chatMessages.supervisionContextId,authority.supervisionContextId!))).orderBy(desc(chatMessages.createdAt)).limit(100);
   const messages=[];for(const row of rows){if(await isPrivateChatMessageCurrent(row,database)&&!await isPrivateChatMessageExpired(row.id,browser.schoolId,database))messages.push({id:row.id,content:row.content,senderType:row.senderType,createdAt:row.createdAt,deliveryStatus:row.deliveryStatus,clientMessageId:row.clientMessageId,privateChatLifecycle:privateChatMessageLifecycle(row)});}
   return {messages:messages.reverse()};
+}
+function manualTodayError(message: string, status: number, code: string) {
+  return Object.assign(new Error(message), { status, code, expose: true });
+}
+
+export function classpilotTeachingSessionHardExpiry(session: { startTime: Date; manualExpiresAt?: Date | null }): Date {
+  const cap = new Date(session.startTime.getTime() + 12 * 60 * 60_000);
+  return session.manualExpiresAt && session.manualExpiresAt < cap ? session.manualExpiresAt : cap;
+}
+
+export async function assertClasspilotManualStartMode(schoolId: string, groupId: string, requiredManualDate: string | undefined, database: typeof db) {
+  const [row] = await database.select({ manualDate: groups.scheduleManualDate, timezone: schools.schoolTimezone }).from(groups)
+    .innerJoin(schools, eq(schools.id, groups.schoolId)).where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId))).for("share");
+  if (!row) throw manualTodayError("Class not found.", 404, "MANUAL_TODAY_NOT_FOUND");
+  if (requiredManualDate && (row.manualDate !== requiredManualDate || localDateInTimeZone(new Date(), row.timezone) !== requiredManualDate)) {
+    throw manualTodayError("The school date changed. Refresh the class before starting.", 409, "MANUAL_TODAY_DATE_CHANGED");
+  }
+}
+
+async function classpilotManualTodayAccess(schoolId: string, actorId: string, database: typeof db, lock = false) {
+  const [actor] = await database.select({ isSuperAdmin: users.isSuperAdmin }).from(users).where(eq(users.id, actorId));
+  const memberships = await database.select({ role: schoolMemberships.role }).from(schoolMemberships).where(and(
+    eq(schoolMemberships.schoolId, schoolId), eq(schoolMemberships.userId, actorId), eq(schoolMemberships.status, "active"),
+    inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]),
+  ));
+  const admin = actor?.isSuperAdmin === true || memberships.some(row => ["admin", "school_admin"].includes(row.role));
+  if (!admin && !memberships.length) throw manualTodayError("An active teaching membership is required.", 403, "MANUAL_TODAY_FORBIDDEN");
+  const settingQuery = database.select({ allowed: settings.allowTeacherManualToday }).from(settings).where(eq(settings.schoolId, schoolId));
+  const [policy] = lock ? await settingQuery.for("update") : await settingQuery;
+  const teacherManualTodayAllowed = policy?.allowed === true;
+  const actorRole = actor?.isSuperAdmin ? "super_admin" : memberships.find(row => ["admin", "school_admin"].includes(row.role))?.role ?? "teacher";
+  return { admin, actorRole, teacherManualTodayAllowed, canManageManualToday: admin || teacherManualTodayAllowed };
+}
+
+export async function getClasspilotManualTodayStatus(schoolId: string, actorId: string, now = new Date(), database: typeof db = db) {
+  const access = await classpilotManualTodayAccess(schoolId, actorId, database);
+  const [school] = await database.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, schoolId));
+  if (!school) throw manualTodayError("School not found.", 404, "MANUAL_TODAY_NOT_FOUND");
+  const timezone = school.timezone || "America/New_York";
+  const schoolDate = localDateInTimeZone(now, timezone);
+  const rows = await database.select().from(groups).where(and(eq(groups.schoolId, schoolId), eq(groups.status, "active"),
+    eq(groups.scheduleEnabled, true), access.admin ? undefined : or(eq(groups.teacherId, actorId), exists(
+      database.select({ id: groupTeachers.id }).from(groupTeachers).where(and(eq(groupTeachers.groupId, groups.id), eq(groupTeachers.teacherId, actorId)))
+    )))).orderBy(groups.name, groups.id);
+  const sessions = rows.length ? await database.select({ id: teachingSessions.id, groupId: teachingSessions.groupId }).from(teachingSessions)
+    .where(and(eq(teachingSessions.schoolId, schoolId), eq(teachingSessions.scheduledDate, schoolDate),
+      isNull(teachingSessions.endTime), inArray(teachingSessions.groupId, rows.map(row => row.id)))) : [];
+  return { schoolDate, timezone, resumesOn: addLocalDays(schoolDate, 1),
+    resumesAt: localDateTimeUtc(addLocalDays(schoolDate, 1), "00:00", timezone).toISOString(),
+    canManageManualToday: access.canManageManualToday, teacherManualTodayAllowed: access.teacherManualTodayAllowed,
+    classes: rows.map(row => ({ id: row.id, name: row.name, gradeLevel: row.gradeLevel, periodLabel: row.periodLabel,
+      scheduleEnabled: row.scheduleEnabled, scheduleManualDate: row.scheduleManualDate,
+      isManualToday: row.scheduleManualDate === schoolDate,
+      activeScheduledSessionId: sessions.find(session => session.groupId === row.id)?.id ?? null })) };
+}
+
+/** A dated exception, serialized with every scheduled/manual lifecycle writer. */
+export async function enableClasspilotManualToday(options: { schoolId: string; actorId: string; groupId: string; expectedSchoolDate: string; now?: Date }, database: typeof db = db) {
+  return database.transaction(async tx => {
+    const transactionDb = tx as unknown as typeof db;
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw manualTodayError("School not found.", 404, "MANUAL_TODAY_NOT_FOUND");
+    await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+    const [school] = await tx.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, options.schoolId));
+    let now = options.now ?? new Date();
+    const timezone = school!.timezone || "America/New_York";
+    const schoolDate = localDateInTimeZone(now, timezone);
+    if (options.expectedSchoolDate !== schoolDate) throw manualTodayError("The school date changed. Review Manual for today again.", 409, "MANUAL_TODAY_DATE_CHANGED");
+    await lockInstructionalCalendarDate(options.schoolId, schoolDate, transactionDb);
+    const access = await classpilotManualTodayAccess(options.schoolId, options.actorId, transactionDb, true);
+    if (!access.canManageManualToday) throw manualTodayError("Your administrator must allow teachers to use Manual for today.", 403, "MANUAL_TODAY_TEACHER_DISABLED");
+    const [group] = await tx.select().from(groups).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, options.groupId))).for("update");
+    if (!group || group.status !== "active" || !group.scheduleEnabled) throw manualTodayError("Scheduled class not found.", 404, "MANUAL_TODAY_NOT_FOUND");
+    if (!access.admin && group.teacherId !== options.actorId) {
+      const [assignment] = await tx.select({ id: groupTeachers.id }).from(groupTeachers).where(and(eq(groupTeachers.groupId, group.id), eq(groupTeachers.teacherId, options.actorId))).for("share");
+      if (!assignment) throw manualTodayError("This class is not assigned to you.", 403, "MANUAL_TODAY_FORBIDDEN");
+    }
+    now = options.now ?? new Date();
+    if (localDateInTimeZone(now, timezone) !== schoolDate) {
+      throw manualTodayError("The school date changed. Review Manual for today again.", 409, "MANUAL_TODAY_DATE_CHANGED");
+    }
+    const finalizations: FinalizeTeachingSessionResult[] = [];
+    // Preserve an immutable tombstone after tomorrow overwrites the date column,
+    // so report backfill can never invent an automatic class for this manual day.
+    const occurrence = await getScheduledTeachingSessionOccurrence(options.schoolId, group.id, schoolDate, transactionDb);
+    if (occurrence && !occurrence.endTime) {
+      const { finalizeClasspilotSession } = await import("./classpilotSessionLifecycle.js");
+      const finalized = await finalizeClasspilotSession({ schoolId: options.schoolId, sessionId: occurrence.id,
+        reason: access.admin ? "admin_end" : "teacher_end", finalizedAt: now,
+        dbInstance: transactionDb, deferSideEffects: true });
+      if (finalized) finalizations.push(finalized);
+    } else if (!occurrence) {
+      const { getEffectiveClasspilotScheduleWindow } = await import("./classpilotScheduleChanges.js");
+      const window = await getEffectiveClasspilotScheduleWindow({ schoolId: options.schoolId, group, scheduledDate: schoolDate, timeZone: timezone, dbInstance: transactionDb });
+      const startAt = window?.scheduledStartAt ?? localDateTimeUtc(schoolDate, group.blockStartTime || "00:00", timezone);
+      const endAt = window?.scheduledEndAt ?? localDateTimeUtc(schoolDate, group.blockEndTime || "00:01", timezone);
+      await tx.insert(teachingSessions).values({ schoolId: options.schoolId, groupId: group.id, teacherId: group.teacherId,
+        startTime: startAt, endTime: startAt, sessionMode: SCHEDULED_REPORT_SESSION_MODE, scheduledDate: schoolDate,
+        scheduledTimezone: timezone, scheduledStartAt: startAt, scheduledEndAt: endAt, scheduledState: "skipped",
+        scheduledFinalizationReason: "manual_override", classNameSnapshot: group.name, timezoneSnapshot: timezone });
+    }
+    if (group.scheduleManualDate !== schoolDate) {
+      await tx.update(groups).set({ scheduleManualDate: schoolDate }).where(and(eq(groups.schoolId, options.schoolId), eq(groups.id, group.id)));
+      await tx.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
+        userRole: access.actorRole, action: "class.manual_today_enabled", entityType: "class", entityId: group.id,
+        metadata: { schoolDate, timezone, endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) } });
+    }
+    const status = await getClasspilotManualTodayStatus(options.schoolId, options.actorId, now, transactionDb);
+    return { ...status, class: status.classes.find(row => row.id === group.id)!, finalizations };
+  });
 }

@@ -114,6 +114,7 @@ export async function assertManualStartWindow(group: any, now = new Date()) {
   const school = await getSchoolById(group.schoolId);
   const tz = school?.schoolTimezone || "America/New_York";
   const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
+  if (group.scheduleManualDate === todayDate) return;
   if ((group as any).scheduleSkippedDate === todayDate) {
     throw Object.assign(new Error("Today's scheduled class occurrence has already ended or was skipped."), { status: 409 });
   }
@@ -308,8 +309,9 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
   const timeZone = school?.schoolTimezone || "America/New_York";
   const now = new Date();
   const scheduledDate = now.toLocaleDateString("en-CA", { timeZone });
-  const occurrence = await getScheduledTeachingSessionOccurrence(schoolId, group.id, scheduledDate);
-  const scheduledPath = !!occurrence || (group.scheduleEnabled && !!group.blockStartTime && !!group.blockEndTime);
+  const manualToday = group.scheduleManualDate === scheduledDate;
+  const occurrence = manualToday ? undefined : await getScheduledTeachingSessionOccurrence(schoolId, group.id, scheduledDate);
+  const scheduledPath = !manualToday && (!!occurrence || (group.scheduleEnabled && !!group.blockStartTime && !!group.blockEndTime));
   if (occurrence) {
     if (
       occurrence.scheduledState !== "active"
@@ -321,7 +323,7 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
     ) {
       throw Object.assign(new Error("Today's scheduled class occurrence is not active."), { status: 409 });
     }
-  } else {
+  } else if (!manualToday) {
     await assertManualStartWindow(group);
   }
 
@@ -378,6 +380,7 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
     schoolId,
     teacherId,
     groupId,
+    requiredManualDate: manualToday ? scheduledDate : undefined,
   });
   if (manualStart.replacementFinalization) {
     if (manualStart.replacementFinalization.deliveryCount && manualStart.replacedSessionId) {

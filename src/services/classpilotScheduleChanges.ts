@@ -49,12 +49,13 @@ export async function getEffectiveClasspilotScheduleWindow(options: {
   group: Pick<
     Group,
     "id" | "scheduleEnabled" | "blockStartTime" | "blockEndTime"
-  > & { scheduleRule?: ClasspilotScheduleRule | null };
+  > & { scheduleRule?: ClasspilotScheduleRule | null; scheduleManualDate?: string | null };
   scheduledDate: string;
   timeZone: string;
   dbInstance?: typeof db;
 }): Promise<EffectiveClasspilotScheduleWindow | null> {
   if (
+    options.group.scheduleManualDate === options.scheduledDate ||
     !options.group.scheduleEnabled ||
     !options.group.blockStartTime ||
     !options.group.blockEndTime

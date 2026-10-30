@@ -34,6 +34,7 @@ const schemas = {
   messaging: z.object({ expectedVersion: version, studentMessagingEnabled: z.boolean() }).strict(),
   retention: z.object({ expectedVersion: version, retentionHours: z.union([z.string(), z.number()]) }).strict(),
   classroom: z.object({ expectedVersion: version, maxTabsPerStudent: tabLimit, allowedDomains: rules }).strict(),
+  scheduling: z.object({ expectedVersion: version, allowTeacherManualToday: z.boolean() }).strict(),
   monitoring: z.object({ expectedVersion: version, enableTrackingHours: z.boolean(),
     trackingStartTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     trackingEndTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
@@ -185,6 +186,7 @@ function valuesFor(section: SchoolSettingsSection, row: Settings) {
     case "messaging": return { studentMessagingEnabled: row.studentMessagingEnabled !== false, privateChatEpoch:row.privateChatEpoch };
     case "retention": return { retentionHours: row.retentionHours };
     case "classroom": return { maxTabsPerStudent: readTabLimit(row.maxTabsPerStudent), allowedDomains: row.allowedDomains ?? [] };
+    case "scheduling": return { allowTeacherManualToday: row.allowTeacherManualToday === true };
     case "monitoring": return { enableTrackingHours: row.enableTrackingHours === true, trackingStartTime: row.trackingStartTime ?? "08:00",
       trackingEndTime: row.trackingEndTime ?? "15:00", trackingDays: row.trackingDays ?? weekdays.slice(0, 5), afterHoursMode: row.afterHoursMode };
     case "signIn": return { sharedChromebookSignInEnabled: row.sharedChromebookSignInEnabled };
@@ -274,6 +276,7 @@ export async function updateClasspilotSchoolSettings(scope: SettingsActor, secti
       case "messaging": { const value = parse(schemas.messaging,body); patch = {studentMessagingEnabled:value.studentMessagingEnabled}; break; }
       case "retention": { const value = parse(schemas.retention, body); patch = { retentionHours: String(assertClasspilotRetentionHours(value.retentionHours)) }; break; }
       case "classroom": { const value = parse(schemas.classroom, body); patch = { maxTabsPerStudent: value.maxTabsPerStudent === null ? null : String(value.maxTabsPerStudent), allowedDomains: value.allowedDomains }; break; }
+      case "scheduling": { const value = parse(schemas.scheduling, body); patch = { allowTeacherManualToday: value.allowTeacherManualToday }; break; }
       case "monitoring": {
         const { expectedVersion: _version, ...value } = parse(schemas.monitoring, body);
         const [school] = await tx.select({ schoolTimezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, scope.schoolId));

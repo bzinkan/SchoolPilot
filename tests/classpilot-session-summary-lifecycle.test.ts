@@ -4353,3 +4353,239 @@ describe("ClassPilot scheduled Session Summary lifecycle", { concurrency: false 
     assert.equal(new Set(deliveries.map((row) => row.recipient_email.toLowerCase())).size, 2);
   });
 });
+
+
+describe("ClassPilot Manual for today", { concurrency: false }, () => {
+  async function policy(allowed: boolean) {
+    await setCentralRecipient(null);
+    const current = await requestJson("GET", "/classpilot/admin/settings", undefined, authFor(centralRecipient));
+    assert.equal(current.status, 200);
+    const saved = await requestJson("PATCH", "/classpilot/admin/settings/scheduling", {
+      expectedVersion: current.body.sections.scheduling.version, allowTeacherManualToday: allowed,
+    }, authFor(centralRecipient));
+    assert.equal(saved.status, 200);
+  }
+
+  it("requires administrator permission and exact class assignment, then permits primary and co-teachers", async () => {
+    await policy(false);
+    const first = await createClass({ name: "manual_permission_primary", scheduled: true });
+    const second = await createClass({ name: "manual_permission_co", scheduled: true, start: "10:00", end: "11:00" });
+    const current = await requestJson("GET", "/classpilot/groups/manual-today", undefined, authFor(teacher));
+    assert.equal(current.status, 200);
+    assert.equal(current.body.canManageManualToday, false);
+    assert.equal(current.body.teacherManualTodayAllowed, false);
+    const body = { expectedSchoolDate: current.body.schoolDate };
+    assert.equal((await requestJson("POST", `/classpilot/groups/${first.id}/manual-today`, body, authFor(teacher))).status, 403);
+    const admin = await requestJson("POST", `/classpilot/groups/${first.id}/manual-today`, body, authFor(centralRecipient));
+    assert.equal(admin.status, 200);
+    assert.equal(admin.body.class.isManualToday, true);
+    assert.equal(admin.body.class.scheduleEnabled, true);
+    const untouched = await inSchool(school.id, () => storage.getGroupByIdAndSchool(first.id, school.id));
+    assert.equal(untouched.blockStartTime, "09:00");
+    assert.equal(untouched.blockEndTime, "10:00");
+    await policy(true);
+    const forbidden = await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher));
+    assert.equal(forbidden.status, 403);
+    await inSchool(school.id, () => storage.addGroupTeacher(second.id, secondTeacher.id, "co-teacher"));
+    const co = await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher));
+    assert.equal(co.status, 200);
+    await policy(false);
+    assert.equal((await requestJson("POST", `/classpilot/groups/${second.id}/manual-today`, body, authFor(secondTeacher))).status, 403);
+    const retained = await requestJson("GET", "/classpilot/groups/manual-today", undefined, authFor(secondTeacher));
+    assert.equal(retained.body.classes.find((row: any) => row.id === second.id)?.isManualToday, true);
+  });
+
+  it("rejects stale review dates and extra tenant/date fields without changing recurrence", async () => {
+    const group = await createClass({ name: "manual_stale_day", scheduled: true });
+    const current = await requestJson("GET", "/classpilot/groups/manual-today", undefined, authFor(centralRecipient));
+    const stale = await requestJson("POST", `/classpilot/groups/${group.id}/manual-today`, { expectedSchoolDate: "2001-01-01" }, authFor(centralRecipient));
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.code, "MANUAL_TODAY_DATE_CHANGED");
+    assert.equal((await requestJson("POST", `/classpilot/groups/${group.id}/manual-today`, {
+      expectedSchoolDate: current.body.schoolDate, schoolId: "foreign-school",
+    }, authFor(centralRecipient))).status, 400);
+    const unchanged = await inSchool(school.id, () => storage.getGroupByIdAndSchool(group.id, school.id));
+    assert.equal(unchanged.scheduleManualDate, null);
+    assert.equal(unchanged.scheduleEnabled, true);
+  });
+
+  it("allows Teach Class after Skip Today, bounds authority at local midnight, and preserves the skipped occurrence", async () => {
+    const group = await createClass({ name: "manual_after_skip", scheduled: true });
+    const current = await requestJson("GET", "/classpilot/groups/manual-today", undefined, authFor(centralRecipient));
+    const date = current.body.schoolDate;
+    await inSchool(school.id, () => db.execute(sql`INSERT INTO teaching_sessions
+      (school_id,group_id,teacher_id,start_time,end_time,session_mode,scheduled_date,scheduled_timezone,
+       scheduled_start_at,scheduled_end_at,scheduled_state,scheduled_finalization_reason)
+      VALUES (${school.id},${group.id},${teacher.id},${schoolTime.localDateTimeUtc(date,"09:00","America/New_York")},
+       ${schoolTime.localDateTimeUtc(date,"09:00","America/New_York")},'scheduled_report',${date},'America/New_York',
+       ${schoolTime.localDateTimeUtc(date,"09:00","America/New_York")},${schoolTime.localDateTimeUtc(date,"10:00","America/New_York")},'skipped','scheduled_skipped')`));
+    const before = await inSchool(school.id, () => storage.getScheduledTeachingSessionOccurrence(school.id, group.id, date));
+    const enabled = await requestJson("POST", `/classpilot/groups/${group.id}/manual-today`, { expectedSchoolDate: date }, authFor(centralRecipient));
+    assert.equal(enabled.status, 200);
+    const started = await requestJson("POST", "/classpilot/teaching-sessions/start", { groupId: group.id, acknowledgeOverlap: true }, authFor(teacher));
+    assert.equal(started.status, 201);
+    const session = started.body.session;
+    assert.equal(session.scheduledDate, null);
+    assert.equal(session.manualExpiresAt, enabled.body.resumesAt);
+    assert.equal(session.lifecycle.kind, "manual");
+    const control = await inSchool(school.id, () => storage.getClasspilotStudentControlState(school.id, studentOne.id));
+    assert.equal(control.hardExpiresAt.toISOString(), Math.min(Date.parse(enabled.body.resumesAt), Date.parse(session.startTime) + 12 * 3600_000) === Date.parse(enabled.body.resumesAt)
+      ? enabled.body.resumesAt : new Date(Date.parse(session.startTime) + 12 * 3600_000).toISOString());
+    const after = await inSchool(school.id, () => storage.getScheduledTeachingSessionOccurrence(school.id, group.id, date));
+    assert.equal(after.id, before.id);
+    assert.equal(after.scheduledState, "skipped");
+    const atExpiry = await inSchool(school.id, () => storage.getActiveClassOwnersForStudents(school.id, [studentOne.id], undefined, new Date(enabled.body.resumesAt)));
+    assert.equal(atExpiry.some((row: any) => row.session.id === session.id), false);
+    await inSchool(school.id, () => lifecycle.finalizeClasspilotSession({ schoolId: school.id, sessionId: session.id, reason: "manual_end" }));
+  });
+
+  it("serializes an active occurrence and stale worker candidate, preserves history and resumes the next date", async () => {
+    await setCentralRecipient(centralRecipient.id);
+    const group = await createClass({ name: "manual_active_worker", scheduled: true, roster: [] });
+    const date = "2031-04-01";
+    const now = new Date("2031-04-01T13:15:00Z");
+    const started = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({ group, scheduledDate: date, now, scheduledTeacherConnectedOverride: true }));
+    assert.equal(started.status, "started");
+    const [first, repeated] = await Promise.all([1,2].map(() => inSchool(school.id, () => storage.enableClasspilotManualToday({
+      schoolId: school.id, actorId: centralRecipient.id, groupId: group.id, expectedSchoolDate: date, now,
+    }))));
+    assert.equal(first.class.isManualToday, true);
+    assert.equal(repeated.class.isManualToday, true);
+    assert.equal(first.finalizations.filter((row: any) => row.finalized).length + repeated.finalizations.filter((row: any) => row.finalized).length, 1);
+    const historical = await inSchool(school.id, () => storage.getScheduledTeachingSessionOccurrence(school.id, group.id, date));
+    assert.equal(historical.id, started.session.id);
+    assert.equal(historical.scheduledState, "finalized");
+    const summaries = await deliveryRows(historical.id);
+    assert.deepEqual(summaries.map(row => row.recipient_kind), ["central", "teacher"]);
+    assert.deepEqual(summaries.map(row => row.recipient_email.toLowerCase()).sort(),
+      [centralRecipient.email.toLowerCase(), teacher.email.toLowerCase()].sort());
+    assert.equal(first.finalizations.reduce((count: number, row: any) => count + row.deliveryCount, 0)
+      + repeated.finalizations.reduce((count: number, row: any) => count + row.deliveryCount, 0), 2);
+    const suppressed = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({ group, scheduledDate: date, now, scheduledTeacherConnectedOverride: true }));
+    assert.equal(suppressed.status, "skipped");
+    assert.equal(suppressed.reason, "manual_today");
+    assert.deepEqual((await deliveryRows(historical.id)).map(row => row.id), summaries.map(row => row.id),
+      "duplicate overrides and stale scheduler work preserve exactly one delivery per recipient");
+    const tomorrow = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({ group, scheduledDate: "2031-04-02", now: new Date("2031-04-02T13:15:00Z"), scheduledTeacherConnectedOverride: true }));
+    assert.equal(tomorrow.status, "started");
+    const logs = await inSchool(school.id, () => db.execute(sql`SELECT count(*)::int AS count FROM audit_logs WHERE school_id=${school.id} AND entity_id=${group.id} AND action='class.manual_today_enabled'`));
+    assert.equal(logs.rows[0].count, 1);
+    await setCentralRecipient(null);
+  });
+
+  it("leaves a durable skipped tombstone when a later manual date replaces the group marker", async () => {
+    const group = await createClass({ name: "manual_backfill_tombstone", scheduled: true, roster: [] });
+    for (const date of ["2031-04-01", "2031-04-02"]) await inSchool(school.id, () => storage.enableClasspilotManualToday({
+      schoolId: school.id, actorId: centralRecipient.id, groupId: group.id, expectedSchoolDate: date, now: new Date(`${date}T12:00:00Z`),
+    }));
+    const stale = await inSchool(school.id, () => scheduled.processScheduledClassAutoStart({ group, scheduledDate: "2031-04-01", now: new Date("2031-04-01T13:15:00Z"), scheduledTeacherConnectedOverride: true }));
+    assert.equal(stale.status, "skipped");
+    const occurrence = await inSchool(school.id, () => storage.getScheduledTeachingSessionOccurrence(school.id, group.id, "2031-04-01"));
+    assert.equal(occurrence.scheduledState, "skipped");
+    assert.equal(occurrence.scheduledFinalizationReason, "manual_override");
+    assert.equal(await occurrenceCount(group.id, "2031-04-01"), 1);
+  });
+
+  async function projectionFixture(name: string) {
+    const user = await storage.createUser({
+      email: `${name}-${Date.now()}@${TAG}.example.edu`, firstName: "Manual", lastName: "Teacher",
+    });
+    await storage.createMembership({ userId: user.id, schoolId: school.id, role: "teacher", status: "active" });
+    const group = await createClass({ name, teacherId: user.id, scheduled: true, roster: [] });
+    return { user, group };
+  }
+
+  it("hides only today's automatic projection and restores the next normal meeting", async () => {
+    const { user, group } = await projectionFixture("manual_schedule_projection");
+    const { getDashboardSchedule } = await import("../dist/services/classpilotDashboardSchedule.js");
+    const before = new Date("2031-04-01T12:00:00Z");
+    const normal = await inSchool(school.id, () => getDashboardSchedule(school.id, user.id, null, before));
+    assert.equal(normal.next?.id, `2031-04-01:${group.id}`);
+    await inSchool(school.id, () => storage.enableClasspilotManualToday({
+      schoolId: school.id, actorId: centralRecipient.id, groupId: group.id,
+      expectedSchoolDate: "2031-04-01", now: before,
+    }));
+    const manual = await inSchool(school.id, () => getDashboardSchedule(school.id, user.id, null, before));
+    assert.equal(manual.next?.id, `2031-04-02:${group.id}`);
+    assert.equal(manual.next?.startsAt, "2031-04-02T13:00:00.000Z");
+    assert.equal(manual.nextBoundaryAt, "2031-04-02T04:00:00.000Z");
+    const tomorrow = await inSchool(school.id, () => getDashboardSchedule(school.id, user.id, null, new Date("2031-04-02T12:00:00Z")));
+    assert.equal(tomorrow.next?.id, `2031-04-02:${group.id}`);
+    const unchanged = await inSchool(school.id, () => storage.getGroupByIdAndSchool(group.id, school.id));
+    assert.equal(unchanged.scheduleEnabled, true);
+    assert.equal(unchanged.blockStartTime, "09:00");
+    assert.equal(unchanged.blockEndTime, "10:00");
+  });
+
+  it("publishes the manual deadline, refuses expired dashboard authority and never adopts it as a legacy scheduled class", async () => {
+    const { user, group } = await projectionFixture("manual_activity_expiry");
+    const { getClasspilotDashboardActivity } = await import("../dist/services/classpilotDashboardActivity.js");
+    const start = new Date("2031-04-01T13:15:00Z");
+    const mode = await inSchool(school.id, () => storage.enableClasspilotManualToday({
+      schoolId: school.id, actorId: centralRecipient.id, groupId: group.id,
+      expectedSchoolDate: "2031-04-01", now: start,
+    }));
+    const session = await inSchool(school.id, () => storage.createTeachingSession({
+      groupId: group.id, teacherId: user.id, startTime: start,
+    }));
+    const active = await inSchool(school.id, () => getClasspilotDashboardActivity(school.id, user.id, new Date("2031-04-01T13:16:00Z")));
+    assert.equal(active.current?.id, session.id);
+    assert.equal(active.current?.source, "class");
+    assert.equal(active.current?.endsAt, mode.resumesAt);
+    await inSchool(school.id, () => storage.reconcileLegacyOpenScheduledSessions(new Date("2031-04-01T13:17:00Z"), undefined, school.id));
+    const preserved = await inSchool(school.id, () => storage.getTeachingSessionById(session.id));
+    assert.equal(preserved.scheduledDate, null);
+    assert.equal(preserved.endTime, null, "the scheduler must not treat a deliberate manual session as a legacy duplicate");
+    const expired = await inSchool(school.id, () => getClasspilotDashboardActivity(school.id, user.id, new Date(mode.resumesAt)));
+    assert.equal(expired.current, null, "expiry removes authority even before the worker finalizes its row");
+    assert.equal(expired.activities.some((item: any) => item.id === session.id), false);
+    await scheduler.reconcileClasspilotScheduledSessions(new Date(mode.resumesAt), school.id);
+    const finalized = await inSchool(school.id, () => storage.getTeachingSessionById(session.id));
+    assert.equal(finalized.endTime.toISOString(), mode.resumesAt);
+    assert.equal(finalized.scheduledDate, null);
+    assert.equal(finalized.scheduledFinalizationReason, "safety_timeout");
+  });
+
+  it("includes manual expiry in the fast worker deadline and finalizes at that exact school-local boundary", async () => {
+    const { user, group } = await projectionFixture("manual_fast_boundary");
+    const boundary = await import("../dist/services/classpilotScheduleBoundaries.js");
+    const start = new Date("2031-04-03T21:15:00Z");
+    const mode = await inSchool(school.id, () => storage.enableClasspilotManualToday({
+      schoolId: school.id, actorId: centralRecipient.id, groupId: group.id,
+      expectedSchoolDate: "2031-04-03", now: start,
+    }));
+    const session = await inSchool(school.id, () => storage.createTeachingSession({
+      groupId: group.id, teacherId: user.id, startTime: start,
+    }));
+    // Earlier lifecycle cases intentionally retain frozen occurrences. Drain
+    // their overdue work so this assertion measures the new manual deadline.
+    await scheduler.reconcileClasspilotScheduledSessions(start, school.id);
+    const next = await boundary.computeNextSchoolScheduleBoundary(school.id, new Date("2031-04-03T21:16:00Z"));
+    assert.equal(next.toISOString(), mode.resumesAt);
+    await boundary.reconcileSchoolScheduleBoundary(school.id, new Date(Date.parse(mode.resumesAt) + 5_000));
+    const finalized = await inSchool(school.id, () => storage.getTeachingSessionById(session.id));
+    assert.equal(finalized.endTime.toISOString(), mode.resumesAt);
+    assert.equal(finalized.scheduledFinalizationReason, "safety_timeout");
+    assert.equal(await occurrenceCount(group.id, "2031-04-03"), 1, "cleanup retains the skipped automatic marker rather than creating another occurrence");
+  });
+});
+
+
+describe("Expired Manual for today mutation fences", { concurrency: false }, () => {
+  it("refuses roster resync and settings changes before the worker closes an expired manual row", async () => {
+    const group = await createClass({ name: "manual_expired_mutations" });
+    const session = await inSchool(school.id, () => storage.createTeachingSession({ groupId: group.id, teacherId: teacher.id,
+      startTime: new Date(Date.now() - 3600_000), manualExpiresAt: new Date(Date.now() - 1800_000) }));
+    const before = await inSchool(school.id, () => storage.getClasspilotSessionStudents(session.id));
+    await inSchool(school.id, () => db.execute(sql`INSERT INTO group_students(group_id,student_id)
+      VALUES(${group.id},${studentTwo.id}) ON CONFLICT DO NOTHING`));
+    assert.equal(await inSchool(school.id, () => storage.resyncActiveClasspilotSessionStudents({
+      schoolId: school.id, teachingSessionId: session.id,
+    })), undefined);
+    const after = await inSchool(school.id, () => storage.getClasspilotSessionStudents(session.id));
+    assert.deepEqual(after.map((row: any) => row.studentId), before.map((row: any) => row.studentId));
+    await assert.rejects(inSchool(school.id, () => storage.upsertSessionSettings(school.id, session.id,
+      { chatEnabled: false }, { actorId: teacher.id, expectedRevision: 0 })), { code: "ACTIVE_SESSION_NOT_FOUND" });
+    assert.equal(await inSchool(school.id, () => storage.getSessionSettings(school.id, session.id)), undefined);
+  });
+});

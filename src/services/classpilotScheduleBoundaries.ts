@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { isScheduledClassroomEnabled, isScheduleBoundaryWorkerEnabled } from "../config/classpilotScheduledClassroom.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { groups, teachingSessions, classpilotSupervisionContexts } from "../schema/classpilot.js";
@@ -76,7 +76,8 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
     schedulerDb.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, schoolId)).limit(1),
     getSchoolSchedulingContext(schoolId, schedulerDb),
     schedulerDb.select().from(groups).where(and(eq(groups.schoolId, schoolId), eq(groups.status, "active"), eq(groups.scheduleEnabled, true))).limit(MAX_DAY_CLASSES + 1),
-    schedulerDb.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, schoolId), isNull(teachingSessions.endTime), eq(teachingSessions.scheduledState, "active"))).limit(MAX_DAY_CLASSES + 1),
+    schedulerDb.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, schoolId), isNull(teachingSessions.endTime),
+      or(eq(teachingSessions.scheduledState, "active"), isNotNull(teachingSessions.manualExpiresAt)))).limit(MAX_DAY_CLASSES + 1),
     schedulerDb.select({ endsAt: classpilotSupervisionContexts.endsAt }).from(classpilotSupervisionContexts)
       .where(and(eq(classpilotSupervisionContexts.schoolId, schoolId), eq(classpilotSupervisionContexts.status, "active"))).limit(MAX_DAY_CLASSES + 1),
     schedulerDb.select({ outcomes: classpilotSchoolSchedules.profileActivationOutcomes }).from(classpilotSchoolSchedules)
@@ -96,6 +97,10 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
   const approvedByGroup = new Map(approved.map((leg) => [leg.groupId, leg]));
   const frozen = new Set(sessionRows.filter((row) => row.scheduledDate === date).map((row) => row.groupId));
   for (const session of sessionRows) {
+    if (session.manualExpiresAt) {
+      windows.push(session.manualExpiresAt);
+      if (session.manualExpiresAt <= now) incomplete = true;
+    }
     if (session.scheduledEndAt) {
       windows.push(session.scheduledEndAt);
       if (session.scheduledEndAt <= now) incomplete = true;
@@ -105,7 +110,7 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
     if (session.sessionMode === "scheduled_report" && session.scheduledStartAt && session.scheduledStartAt <= now && session.scheduledEndAt && session.scheduledEndAt > now) incomplete = true;
   }
   for (const group of classRows) {
-    if (frozen.has(group.id) || group.scheduleSkippedDate === date) continue;
+    if (frozen.has(group.id) || group.scheduleSkippedDate === date || group.scheduleManualDate === date) continue;
     const base = resolveClassBaseWindow(group, date, context.config, context.calendar);
     if (!base) continue;
     const leg = approvedByGroup.get(group.id);
@@ -135,10 +140,14 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
 /** Fast lifecycle pass: no historical roster backfills, report materialization or email delivery. */
 export async function reconcileSchoolScheduleBoundary(schoolId: string, now: Date): Promise<void> {
   const due = await schedulerDb.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, schoolId),
-    eq(teachingSessions.scheduledState, "active"), isNull(teachingSessions.endTime), lte(teachingSessions.scheduledEndAt, now)))
+    isNull(teachingSessions.endTime), or(
+      and(eq(teachingSessions.scheduledState, "active"), lte(teachingSessions.scheduledEndAt, now)),
+      lte(teachingSessions.manualExpiresAt, now))))
     .orderBy(teachingSessions.scheduledEndAt, teachingSessions.id).limit(MAX_TRANSITIONS + 1);
   for (const session of due.slice(0, MAX_TRANSITIONS)) {
-    await finalizeClasspilotSession({ schoolId, sessionId: session.id, reason: "scheduled_end", finalizedAt: session.scheduledEndAt ?? now, dbInstance: schedulerDb });
+    await finalizeClasspilotSession({ schoolId, sessionId: session.id,
+      reason: session.manualExpiresAt ? "safety_timeout" : "scheduled_end",
+      finalizedAt: session.manualExpiresAt ?? session.scheduledEndAt ?? now, dbInstance: schedulerDb });
   }
   const released = await releaseExpiredClasspilotSupervisionContexts({ schoolId, now, limit: MAX_TRANSITIONS }, schedulerDb);
   if (released.length) await syncClasspilotControlStatesToActiveDevices(schoolId, [...new Set(released.map((row) => row.studentId))]);
@@ -156,7 +165,9 @@ export async function reconcileSchoolScheduleBoundary(schoolId: string, now: Dat
       lte(teachingSessions.scheduledStartAt, now), gt(teachingSessions.scheduledEndAt, now))).limit(MAX_DAY_CLASSES + 1);
   const readyById = new Map(ready.map((group) => [group.id, { group, scheduledDate: date }]));
   for (const frozen of frozenReports) {
-    if (frozen.scheduledDate) readyById.set(frozen.group.id, { group: frozen.group, scheduledDate: frozen.scheduledDate });
+    if (frozen.scheduledDate && frozen.group.scheduleManualDate !== frozen.scheduledDate) {
+      readyById.set(frozen.group.id, { group: frozen.group, scheduledDate: frozen.scheduledDate });
+    }
   }
   if (readyById.size > MAX_DAY_CLASSES || frozenReports.length > MAX_DAY_CLASSES) throw new Error("SCHEDULE_BOUNDARY_ANALYSIS_LIMIT");
   const candidates = [...readyById.values()];

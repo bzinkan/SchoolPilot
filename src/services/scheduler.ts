@@ -13,6 +13,7 @@ import {
   getClasspilotScheduleChangeNotificationContext,
   backfillOpenTeachingSessionRosterSnapshots,
   listScheduledSessionsReadyToFinalize,
+  listExpiredManualOverrideSessions,
   listScheduledReportSessionsDueNow,
   reconcileLegacyOpenScheduledSessions,
   releaseExpiredClasspilotSupervisionContexts,
@@ -1450,7 +1451,11 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
     await reconcileLegacyOpenScheduledSessions(now, schedulerDb, schoolId);
     // 1. Finalize frozen occurrences first. This catches delayed ticks and
     // prior-date rows after worker restarts without consulting mutable groups.
-    const dueSessions = await listScheduledSessionsReadyToFinalize(now, schedulerDb, schoolId);
+    const [scheduledDueSessions, manualDueSessions] = await Promise.all([
+      listScheduledSessionsReadyToFinalize(now, schedulerDb, schoolId),
+      listExpiredManualOverrideSessions(now, schedulerDb, schoolId),
+    ]);
+    const dueSessions = [...manualDueSessions, ...scheduledDueSessions];
     const finalizationConcurrency = 10;
     for (let offset = 0; offset < dueSessions.length; offset += finalizationConcurrency) {
       if (schedulerStopping) break;
@@ -1459,8 +1464,8 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
         const result = await finalizeClasspilotSession({
           schoolId: session.schoolId!,
           sessionId: session.id,
-          reason: "scheduled_end",
-          finalizedAt: session.scheduledEndAt || now,
+          reason: session.manualExpiresAt ? "safety_timeout" : "scheduled_end",
+          finalizedAt: session.manualExpiresAt || session.scheduledEndAt || now,
           dbInstance: schedulerDb,
         });
         // Finalization owns the single session-ended publication.
@@ -1578,7 +1583,7 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
           school.id,
           schedulerDb
         );
-        if (!frozenGroup || !frozenSession.scheduledDate) continue;
+        if (!frozenGroup || !frozenSession.scheduledDate || frozenGroup.scheduleManualDate === frozenSession.scheduledDate) continue;
         try {
           await processScheduledClassAutoStart({
             group: frozenGroup,

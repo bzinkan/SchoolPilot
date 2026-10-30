@@ -9,6 +9,7 @@ export type ClasspilotObservationSession = {
   scheduledState?: string | null;
   scheduledStartAt?: ObservationDate;
   scheduledEndAt?: ObservationDate;
+  manualExpiresAt?: ObservationDate;
 };
 
 function timestamp(value: ObservationDate): number {
@@ -46,7 +47,8 @@ export function classpilotObservationSessionIsCurrent(
   const current = now.getTime();
   const start = timestamp(session.startTime);
   return Number.isFinite(current) && Number.isFinite(start) && start <= current
-    && (session.scheduledEndAt == null || timestamp(session.scheduledEndAt) > current);
+    && (session.scheduledEndAt == null || timestamp(session.scheduledEndAt) > current)
+    && (session.manualExpiresAt == null || timestamp(session.manualExpiresAt) > current);
 }
 
 /** Reporting occurrences are exclusively administrator read-only surfaces. */

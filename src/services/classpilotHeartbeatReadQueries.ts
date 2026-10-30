@@ -136,13 +136,24 @@ export function heartbeatCandidateQuery(dbInstance: SelectDatabase, options: Pic
 
 /** Canonical raw owner discovery; callers retain the original JS date/id ranking. */
 export function heartbeatTelemetryOwnerQuery(schoolId: Scalar, studentId: Scalar, clock: "transaction" | "current") {
+  // The v1 native screenshot function stores these exact historical bytes.
+  return telemetryOwnerQuery(schoolId, studentId, clock, false);
+}
+
+/** Current runtime attribution excludes expired manual classes before worker cleanup. */
+export function heartbeatCurrentTelemetryOwnerQuery(schoolId: Scalar, studentId: Scalar, clock: "transaction" | "current") {
+  return telemetryOwnerQuery(schoolId, studentId, clock, true);
+}
+
+function telemetryOwnerQuery(schoolId: Scalar, studentId: Scalar, clock: "transaction" | "current", manualExpiryAware: boolean) {
   return sql`
     WITH owner_candidates AS (
       SELECT session.id, session.control_updated_at, session.start_time, session.created_at
       FROM ${classpilotSessionStudents} roster
       INNER JOIN ${teachingSessions} session ON session.id=roster.teaching_session_id
         AND session.session_mode=${LIVE_TEACHING_SESSION_MODE}
-        AND session.roster_snapshot_completed_at IS NOT NULL AND session.end_time IS NULL
+        AND session.roster_snapshot_completed_at IS NOT NULL AND session.end_time IS NULL${manualExpiryAware ? sql`
+        AND (session.manual_expires_at IS NULL OR session.manual_expires_at>${clock === "current" ? sql`clock_timestamp()` : sql`now()`})` : sql``}
       INNER JOIN ${groups} owner_group ON owner_group.id=session.group_id
       WHERE roster.school_id=${schoolId} AND roster.student_id=${studentId}
         AND owner_group.school_id=${schoolId}
@@ -152,7 +163,8 @@ export function heartbeatTelemetryOwnerQuery(schoolId: Scalar, studentId: Scalar
       INNER JOIN ${groups} owner_group ON owner_group.id=roster.group_id
       INNER JOIN ${teachingSessions} session ON session.group_id=owner_group.id
         AND session.session_mode=${LIVE_TEACHING_SESSION_MODE}
-        AND session.roster_snapshot_completed_at IS NULL AND session.end_time IS NULL
+        AND session.roster_snapshot_completed_at IS NULL AND session.end_time IS NULL${manualExpiryAware ? sql`
+        AND (session.manual_expires_at IS NULL OR session.manual_expires_at>${clock === "current" ? sql`clock_timestamp()` : sql`now()`})` : sql``}
       WHERE owner_group.school_id=${schoolId} AND roster.student_id=${studentId}
     )
     SELECT EXISTS (

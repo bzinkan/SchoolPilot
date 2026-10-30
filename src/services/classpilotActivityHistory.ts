@@ -36,7 +36,8 @@ export async function readActivityHistoryScope(options: {
   ` : sql`
     SELECT roster.id || ':' || session.id AS stamp,
       extract(epoch from GREATEST(session.start_time AT TIME ZONE 'UTC', roster.captured_at))::double precision * 1000 AS start_ms,
-      extract(epoch from LEAST(COALESCE(session.scheduled_end_at, 'infinity'::timestamptz), clock_timestamp()))::double precision * 1000 AS end_ms
+      extract(epoch from LEAST(COALESCE(session.scheduled_end_at, 'infinity'::timestamptz),
+        COALESCE(session.manual_expires_at, 'infinity'::timestamptz), clock_timestamp()))::double precision * 1000 AS end_ms
     FROM teaching_sessions session
     JOIN classpilot_session_students roster ON roster.school_id=session.school_id AND roster.teaching_session_id=session.id
       AND roster.student_id=${studentId}
@@ -47,6 +48,7 @@ export async function readActivityHistoryScope(options: {
       AND session.session_mode='live' AND session.end_time IS NULL
       AND session.start_time AT TIME ZONE 'UTC' <= clock_timestamp()
       AND (session.scheduled_end_at IS NULL OR session.scheduled_end_at > clock_timestamp())
+      AND (session.manual_expires_at IS NULL OR session.manual_expires_at > clock_timestamp())
       AND (${allowObserve} OR EXISTS (SELECT 1 FROM classpilot_session_staff staff
         WHERE staff.school_id=session.school_id AND staff.teaching_session_id=session.id AND staff.staff_id=${staffId}))
       AND NOT EXISTS (SELECT 1 FROM classpilot_supervision_students assignment

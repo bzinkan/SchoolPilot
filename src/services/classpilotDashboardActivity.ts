@@ -70,7 +70,8 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
       .where(and(eq(teachingSessions.schoolId, schoolId), eq(teachingSessions.sessionMode, "live"), isNull(teachingSessions.endTime),
         lte(teachingSessions.startTime, now),
         isNotNull(teachingSessions.rosterSnapshotCompletedAt),
-        or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, now))))
+        or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, now)),
+        or(isNull(teachingSessions.manualExpiresAt), gt(teachingSessions.manualExpiresAt, now))))
       .orderBy(desc(teachingSessions.startTime), teachingSessions.id).limit(201);
     if (sessions.length > 200) throw Object.assign(new Error("Personal class scope is too large to load completely"), { status: 422 });
     for (const { session, group } of sessions) {
@@ -83,7 +84,7 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
         .where(and(eq(classpilotSessionStaff.schoolId, schoolId), eq(classpilotSessionStaff.teachingSessionId, session.id)));
       identities.push([session.id, session.controlUpdatedAt, roster, staff]);
       activities.push({ id: session.id, source: session.scheduledDate ? "scheduled_class" : "class", purpose: "class", name: session.classNameSnapshot || group.name,
-        startsAt: (session.scheduledStartAt || session.startTime).toISOString(), endsAt: session.scheduledEndAt?.toISOString() ?? null,
+        startsAt: (session.scheduledStartAt || session.startTime).toISOString(), endsAt: (session.manualExpiresAt || session.scheduledEndAt)?.toISOString() ?? null,
         status: "active", authority: { teachingSessionId: session.id }, studentCount: roster.length, groupId: group.id,
         sessionMode: "live", rosterSnapshotCompletedAt: session.rosterSnapshotCompletedAt!.toISOString(), endTime: null,
         teacherId: session.teacherId, staffIds: staff.map((row) => row.id), capabilities: classroomActivityCapabilities() });

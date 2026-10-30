@@ -71,9 +71,10 @@ Use the class controls deliberately so monitoring and student controls follow th
 1. **Follow the scheduled Class.** When scheduled Class mode is enabled, your Dashboard automatically shows the current class or testing assignment and its students, including offline students. Applied profiles and approved schedule changes determine the next class. No click is needed at the handoff.
 2. **Browse between handoffs.** You may open Claimed, Available or Observe between assignments. The next scheduled handoff returns you to Class. Refreshing the same assignment does not change your chosen view. Starting testing and Updating class mean the server has not confirmed the new assignment yet.
 3. **Select an unscheduled class.** Choose the class you are teaching when you need a manual session. Scheduled classes can start only inside their effective window.
-4. **Start the session.** Start class and wait for the roster and connection states to settle before sending controls.
-5. **Resync when needed.** Use Resync if the roster or current session appears out of date. Resync refreshes authority; it does not broaden your class access.
-6. **Skip or end intentionally.** Skip Today prevents the scheduled occurrence from starting. End Class closes the current session and begins wrap-up processing.
+4. **Make selected classes manual for today.** If your administrator allows teacher adjustments, open Manual for today, review an assigned class and confirm. This ends any running automatic session for that class and lets you use Start Class when needed for the rest of the school day. Saved times stay intact and the normal schedule resumes tomorrow in your school's timezone. Skip Today cancels an occurrence instead.
+5. **Start the session.** Start class and wait for the roster and connection states to settle before sending controls.
+6. **Resync when needed.** Use Resync if the roster or current session appears out of date. Resync refreshes authority; it does not broaden your class access.
+7. **Skip or end intentionally.** Skip Today prevents the scheduled occurrence from starting. End Class closes the current session and begins wrap-up processing.
 
 > **Flight note:** If the wrong class is active, end it before starting another one; do not try to control students from a stale class view.
 

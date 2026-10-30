@@ -166,7 +166,7 @@ export function resolveSchoolScheduleDay(date: string, config: SchoolSchedulingC
     overridden: Boolean(override),
   };
 }
-export type SchedulingGroup = { id?: string; scheduleEnabled: boolean; blockStartTime: string | null; blockEndTime: string | null; scheduleRule?: ClasspilotScheduleRule | null };
+export type SchedulingGroup = { id?: string; scheduleEnabled: boolean; blockStartTime: string | null; blockEndTime: string | null; scheduleRule?: ClasspilotScheduleRule | null; scheduleManualDate?: string | null };
 export function classScheduleRuleMatchesDate(rule: ClasspilotScheduleRule, date: string, day: ReturnType<typeof resolveSchoolScheduleDay>): boolean {
   return day.instructional && rule.weekdays.includes(day.meetingWeekday)
     && (!rule.startsOn || date >= rule.startsOn) && (!rule.endsOn || date <= rule.endsOn)

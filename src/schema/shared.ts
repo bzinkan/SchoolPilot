@@ -65,6 +65,7 @@ export const settings = pgTable("settings", {
     .$type<"off" | "limited" | "full">(),
   handRaisingEnabled: boolean("hand_raising_enabled").default(true),
   studentMessagingEnabled: boolean("student_messaging_enabled").default(true),
+  allowTeacherManualToday: boolean("allow_teacher_manual_today").notNull().default(false),
   privateChatEpoch: integer("private_chat_epoch").notNull().default(1),
   privateChatLifecycleRequired: boolean("private_chat_lifecycle_required").notNull().default(false),
   pauseChatDuringTesting: boolean("pause_chat_during_testing").notNull().default(true),

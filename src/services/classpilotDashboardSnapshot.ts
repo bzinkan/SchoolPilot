@@ -428,6 +428,7 @@ async function loadSnapshotChunk(
        -- in classpilotStudentData.ts.
        AND teaching_session.session_mode = 'live'
        AND teaching_session.end_time IS NULL
+       AND (teaching_session.manual_expires_at IS NULL OR teaching_session.manual_expires_at > now())
       ORDER BY roster.student_id,
                COALESCE(teaching_session.control_updated_at, teaching_session.start_time) DESC,
                teaching_session.start_time DESC,

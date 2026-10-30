@@ -140,7 +140,7 @@ test("event ingestion binds identities from auth and scope is transactionally se
   assert.match(route, /sanitized\.occurredAt\.getTime\(\) < authenticatedStartedAt\.getTime\(\) - 5 \* 60_000/);
   assert.match(route, /sanitized\.occurredAt >= authenticatedEndedAt/);
   assert.match(storage, /classpilotSupervisionContexts\.endsAt\}\) > \$\{options\.occurredAt\}/);
-  assert.match(storage, /teachingSessions\.scheduledEndAt\}, now\(\)\) > \$\{options\.occurredAt\}/);
+  assert.match(storage, /least\(coalesce\(\$\{teachingSessions\.endTime\}, now\(\)\), coalesce\(\$\{teachingSessions\.scheduledEndAt\}, now\(\)\), coalesce\(\$\{teachingSessions\.manualExpiresAt\}, now\(\)\)\) > \$\{options\.occurredAt\}/);
   const atomicInsert = storage.slice(
     storage.indexOf("export async function insertClasspilotMonitoringEventForResolvedScope"),
     storage.indexOf("export type ClasspilotMonitoringEventView")

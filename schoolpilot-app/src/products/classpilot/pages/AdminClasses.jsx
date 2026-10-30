@@ -82,6 +82,8 @@ import {
   sortAdminClassesByTime,
   writeAdminClassSortPreference,
 } from "../lib/adminClassSort";
+import ManualTodayDialog from "../components/ManualTodayDialog";
+import { useManualToday } from "../hooks/useManualToday";
 
 const ADMIN_CLASSES_KEY = ["classpilot-admin-classes"];
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
@@ -976,11 +978,13 @@ export default function AdminClasses() {
   const [editingClass, setEditingClass] = useState(null);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [showManualToday, setShowManualToday] = useState(false);
   const assignmentPanelRef = useRef(null);
   const requestedStudentCheckboxRef = useRef(null);
   const handledAssignStudentIdRef = useRef("");
 
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
+  const manualTodayQuery = useManualToday({ schoolId: currentUser?.schoolId, viewerId: currentUser?.id, accessScope: 'admin', enabled: isAdmin });
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const requestedAssignStudentId = searchParams.get("assignStudentId") || "";
   const requestedReturnTo = searchParams.get("returnTo") || "";
@@ -1331,6 +1335,9 @@ export default function AdminClasses() {
                     </CardDescription>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => setShowManualToday(true)} data-testid="button-admin-manual-today">
+                      <CalendarDays className="mr-2 h-4 w-4" />Manual for today
+                    </Button>
                     {CLASSROOM_IMPORT_ENABLED ? (
                       <Button
                         variant="outline"
@@ -1559,6 +1566,8 @@ export default function AdminClasses() {
         </>}
       </div>
 
+      {showManualToday ? <ManualTodayDialog key={`${currentUser.schoolId}:${currentUser.id}`} query={manualTodayQuery}
+        schoolId={currentUser.schoolId} viewerId={currentUser.id} onClose={() => setShowManualToday(false)} /> : null}
       <ClassFormDialog
         mode="create"
         key={createDialogOpen ? "create-open" : "create-closed"}

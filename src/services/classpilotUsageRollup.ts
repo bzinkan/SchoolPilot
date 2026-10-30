@@ -140,7 +140,7 @@ school_excluded AS MATERIALIZED (
   FROM jsonb_array_elements($5::jsonb) AS item
 ),
 school_sessions AS MATERIALIZED (
-  SELECT id, start_time, end_time, scheduled_end_at
+  SELECT id, start_time, end_time, scheduled_end_at, manual_expires_at
   FROM teaching_sessions
   WHERE school_id = $1
     AND start_time < $3::timestamp
@@ -152,6 +152,7 @@ school_roster_window AS MATERIALIZED (
     LEAST(
       COALESCE(session.end_time, 'infinity'::timestamp),
       COALESCE(session.scheduled_end_at AT TIME ZONE 'UTC', 'infinity'::timestamp),
+      COALESCE(session.manual_expires_at AT TIME ZONE 'UTC', 'infinity'::timestamp),
       session.start_time + interval '12 hours'
     ) AS ends_at
   FROM school_sessions AS session

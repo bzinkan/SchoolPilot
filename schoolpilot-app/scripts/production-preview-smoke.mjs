@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { fromZonedTime } from 'date-fns-tz';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDirectory, '..');
@@ -396,6 +397,14 @@ export function responseBodyFor(
     apiFailure('preview_api_persona_invalid');
   }
 
+  const activeMembership = testCase.persona.auth.memberships.find(
+    membership => membership.schoolId === testCase.persona.schoolId
+  );
+  const schoolTimezone = activeMembership?.schoolTimezone || 'America/New_York';
+  const schoolDate = dateInTimezone(now, schoolTimezone);
+  const nextDate = new Date(`${schoolDate}T00:00:00.000Z`);
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+  const resumesOn = nextDate.toISOString().slice(0, 10);
   const classpilotResponses = {
     '/api/mydesk/capabilities': { enabled: false },
     // The dashboard reads the viewer's own preferences once for the theme
@@ -421,6 +430,15 @@ export function responseBodyFor(
       activities: [],
       next: null,
       nextBoundaryAt: null,
+    },
+    '/api/classpilot/groups/manual-today': {
+      schoolDate,
+      timezone: schoolTimezone,
+      resumesOn,
+      resumesAt: fromZonedTime(`${resumesOn}T00:00:00`, schoolTimezone).toISOString(),
+      canManageManualToday: false,
+      teacherManualTodayAllowed: false,
+      classes: [],
     },
     '/api/students-aggregated': { students: [] },
     '/api/settings': { settings: {} },

@@ -174,7 +174,7 @@ test("Windows report SQL bounds metadata and authentication, and daily SQL union
       INSERT INTO students SELECT DISTINCT student_id,school_id FROM classpilot_windows_browser_events;
       INSERT INTO students VALUES ('legacy','school');
       CREATE TEMP TABLE classpilot_ai_decisions(heartbeat_id text,category text,teacher_intent_source text,created_at timestamp,id text,school_id text) ON COMMIT DROP;
-      CREATE TEMP TABLE teaching_sessions(id text,start_time timestamp,end_time timestamp,scheduled_end_at timestamptz,school_id text) ON COMMIT DROP;
+      CREATE TEMP TABLE teaching_sessions(id text,start_time timestamp,end_time timestamp,scheduled_end_at timestamptz,manual_expires_at timestamptz,school_id text) ON COMMIT DROP;
       CREATE TEMP TABLE classpilot_session_students(student_id text,group_id text,teaching_session_id text,captured_at timestamptz,school_id text) ON COMMIT DROP;
       CREATE TEMP TABLE groups(id text,school_id text) ON COMMIT DROP;`);
     const marker = CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.indexOf(",\nexisting_grains AS ");
