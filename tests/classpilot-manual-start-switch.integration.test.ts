@@ -6,6 +6,8 @@ import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { sql } from "drizzle-orm";
 import type { Group, TeachingSession } from "../src/schema/classpilot.js";
 import type { School, User } from "../src/schema/core.js";
+import { emptyAutomaticFlightPathState } from "../src/services/classpilotAutomaticFlightPath.js";
+import { classpilotTeachingSessionIsCurrent } from "../src/services/classpilotTeachingSessionWindow.js";
 
 // Exercise the real HTTP/lifecycle transaction without external transports.
 process.env.REDIS_URL = "";
@@ -112,6 +114,44 @@ async function occurrence(group: Group, mode: "live" | "scheduled_report" = "liv
 async function ordinarySession(group: Group): Promise<TeachingSession> {
   return inSchool(() => storage.createTeachingSession({ groupId: group.id, teacherId: group.teacherId,
     startTime: new Date(Date.now() - 60_000) }));
+}
+
+async function inSchoolEvening(action: (data: { schoolDate: string; midnight: Date }) => Promise<void>) {
+  // Choose a real IANA zone whose current local hour is 18. This makes an
+  // ordinary twelve-hour session cross midnight at every CI execution time.
+  let offset = 18 - new Date().getUTCHours();
+  if (offset > 14) offset -= 24;
+  const eveningZone = offset === 0 ? "Etc/GMT" : `Etc/GMT${offset > 0 ? "-" : "+"}${Math.abs(offset)}`;
+  const date = schoolTime.localDateInTimeZone(new Date(), eveningZone);
+  const midnight = schoolTime.localDateTimeUtc(schoolTime.addLocalDays(date, 1), "00:00", eveningZone);
+  await inSchool(() => database.execute(sql`UPDATE schools SET school_timezone=${eveningZone} WHERE id=${school.id}`));
+  try {
+    await action({ schoolDate: date, midnight });
+  } finally {
+    await inSchool(() => database.execute(sql`UPDATE schools SET school_timezone=${timezone} WHERE id=${school.id}`));
+  }
+}
+
+async function enableRecurringSchedule(group: Group): Promise<Group> {
+  const updated = await inSchool(() => storage.updateAdminClassWithTeachers({ groupId: group.id,
+    data: { scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "10:00" }, scheduleChangeActorId: administrator.id }));
+  assert.ok(updated);
+  return updated;
+}
+
+async function studentControl(studentId: string) {
+  const control = await inSchool(() => storage.getClasspilotStudentControlState(school.id, studentId));
+  assert.ok(control);
+  return control;
+}
+
+async function manualChoice(session: TeachingSession, studentId: string, hardExpiresAt?: Date) {
+  await inSchool(() => storage.replaceClasspilotStudentControlSnapshots({ schoolId: school.id,
+    teachingSessionId: session.id, studentIds: [studentId], sourceCommandId: randomUUID(), hardExpiresAt,
+    desiredState: { restrictions: { screenLock: { active: true }, flightPath: { active: true, allowedDomains: ["manual.example.org"] },
+      blockList: { active: true, blockedDomains: ["blocked.example.org"] }, attentionMode: { active: false }, tabLimit: 3, temporaryAllows: [] } },
+  }));
+  return studentControl(studentId);
 }
 
 async function deliveries(session: TeachingSession) {
@@ -512,5 +552,150 @@ describe("Atomic ClassPilot manual Start/Switch", { concurrency: false }, () => 
     assert.ok((await currentSession(previous)).endTime);
     assert.equal((await currentSession(heldElsewhere)).endTime, null);
     assert.equal((await currentSession(reporting)).sessionMode, "live");
+  });
+
+  it("caps a reused ordinary manual session at midnight after a real recurring-schedule change and combined review", async () => {
+    await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
+      const actor = await staff();
+      const studentId = await student();
+      const selected = await classroom(actor, { students: [studentId] });
+      const legacy = await ordinarySession(selected);
+      assert.equal(legacy.manualExpiresAt, null);
+      assert.ok(legacy.startTime.getTime() + 12 * 3_600_000 > midnight.getTime());
+      const before = await manualChoice(legacy, studentId);
+      await enableRecurringSchedule(selected);
+      assert.equal((await currentSession(legacy)).endTime, null, "the supported schedule writer retains an ordinary active session");
+      const response = await request(actor, { groupId: selected.id, expectedActiveSessionId: legacy.id,
+        manualToday: { expectedSchoolDate: date } });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.reused, true);
+      assert.equal(response.body.session.id, legacy.id);
+      assert.equal(response.body.session.manualExpiresAt, midnight.toISOString());
+      const bounded = await currentSession(legacy);
+      assert.equal(bounded.startTime.toISOString(), legacy.startTime.toISOString());
+      assert.equal(bounded.automaticFlightPathState, null, "reusing old manual work never initializes a future class preset");
+      assert.equal(bounded.manualExpiresAt?.toISOString(), midnight.toISOString());
+      const control = await studentControl(studentId);
+      assert.equal(control.hardExpiresAt?.toISOString(), midnight.toISOString());
+      assert.deepEqual(control.desiredState, before.desiredState);
+      assert.equal(control.sourceCommandId, before.sourceCommandId);
+      assert.equal(control.revision, before.revision + 1, "the shorter deadline is a new delivery revision");
+      assert.equal(classpilotTeachingSessionIsCurrent(bounded, new Date(midnight.getTime() - 1)), true);
+      assert.equal(classpilotTeachingSessionIsCurrent(bounded, midnight), false);
+      const owners = await inSchool(() => storage.getActiveClassOwnersForStudents(school.id, [studentId], undefined, midnight));
+      assert.equal(owners.some(owner => owner.session.id === legacy.id), false, "row cleanup is not required to revoke midnight authority");
+      const retry = await request(actor, { groupId: selected.id, expectedActiveSessionId: legacy.id,
+        manualToday: { expectedSchoolDate: date } });
+      assert.equal(retry.status, 200);
+      assert.equal(retry.body.session.id, legacy.id);
+      assert.deepEqual(await studentControl(studentId), control, "a retry does not manufacture another control revision");
+    });
+  });
+
+  it("standalone Manual today caps existing work before a normal Start reuses its identity and choices", async () => {
+    await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
+      const actor = await staff();
+      const studentId = await student();
+      const selected = await classroom(actor, { students: [studentId] });
+      const legacy = await ordinarySession(selected);
+      const before = await manualChoice(legacy, studentId);
+      await enableRecurringSchedule(selected);
+      const enabled = await request(actor, { expectedSchoolDate: date }, `/classpilot/groups/${selected.id}/manual-today`);
+      assert.equal(enabled.status, 200);
+      assert.equal((await currentSession(legacy)).manualExpiresAt?.toISOString(), midnight.toISOString(),
+        "enabling alone must bound the existing session even if the browser never starts again");
+      const control = await studentControl(studentId);
+      assert.equal(control.hardExpiresAt?.toISOString(), midnight.toISOString());
+      assert.deepEqual(control.desiredState, before.desiredState);
+      assert.equal(control.sourceCommandId, before.sourceCommandId);
+      assert.equal(enabled.body.deadlineUpdatedSessionIds, undefined, "internal publication metadata stays server-only");
+      const response = await request(actor, { groupId: selected.id, expectedActiveSessionId: legacy.id });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.reused, true);
+      assert.equal(response.body.session.id, legacy.id);
+      assert.equal(response.body.session.manualExpiresAt, midnight.toISOString());
+      assert.deepEqual(await studentControl(studentId), control);
+    });
+  });
+
+  it("co-teacher deadline reuse preserves an off preset and never acquires students held by another class or supervision", async () => {
+    await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
+      const primary = await staff();
+      const coTeacher = await staff();
+      const thirdTeacher = await staff();
+      const [ownStudent, thirdClassStudent, supervisedStudent] = await Promise.all([student(), student(), student()]);
+      const selected = await classroom(primary, { students: [ownStudent, thirdClassStudent, supervisedStudent] });
+      await inSchool(() => storage.addGroupTeacher(selected.id, coTeacher.id, "co-teacher"));
+      const legacy = await ordinarySession(selected);
+      const ownBefore = await manualChoice(legacy, ownStudent);
+      const off = { ...emptyAutomaticFlightPathState(), status: "off" as const, revision: 7 };
+      // Existing off metadata is immutable teacher intent across this
+      // compatibility transition, just like existing manual restrictions.
+      await inSchool(() => database.execute(sql`UPDATE teaching_sessions SET automatic_flight_path_state=${JSON.stringify(off)}::jsonb
+        WHERE school_id=${school.id} AND id=${legacy.id}`));
+      const other = await classroom(thirdTeacher, { students: [thirdClassStudent] });
+      const thirdSession = await ordinarySession(other);
+      const supervision = await inSchool(() => storage.createSupervisionContextWithStudents({ context: {
+        schoolId: school.id, name: "Deadline reuse supervision", contextType: "coverage_group", assignedStaffId: thirdTeacher.id,
+        createdBy: thirdTeacher.id, startsAt: new Date(Date.now() - 1_000), endsAt: new Date(Date.now() + 3_600_000),
+      }, studentIds: [supervisedStudent], assignedBy: thirdTeacher.id }));
+      try {
+        const thirdBefore = await studentControl(thirdClassStudent);
+        const supervisionBefore = await studentControl(supervisedStudent);
+        assert.equal(thirdBefore.teachingSessionId, thirdSession.id);
+        assert.equal(supervisionBefore.supervisionContextId, supervision.id);
+        await enableRecurringSchedule(selected);
+        const response = await request(coTeacher, { groupId: selected.id, expectedActiveSessionId: legacy.id,
+          manualToday: { expectedSchoolDate: date } });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.reused, true);
+        assert.equal(response.body.session.id, legacy.id);
+        assert.equal(response.body.session.teacherId, primary.id);
+        const bounded = await currentSession(legacy);
+        assert.equal(bounded.manualExpiresAt?.toISOString(), midnight.toISOString());
+        assert.deepEqual(bounded.automaticFlightPathState, off);
+        const ownAfter = await studentControl(ownStudent);
+        assert.equal(ownAfter.hardExpiresAt?.toISOString(), midnight.toISOString());
+        assert.deepEqual(ownAfter.desiredState, ownBefore.desiredState);
+        assert.equal(ownAfter.sourceCommandId, ownBefore.sourceCommandId);
+        assert.deepEqual(await studentControl(thirdClassStudent), thirdBefore);
+        assert.deepEqual(await studentControl(supervisedStudent), supervisionBefore);
+        assert.equal((await currentSession(thirdSession)).endTime, null);
+      } finally {
+        await inSchool(() => storage.releaseSupervisionStudents({ schoolId: school.id, contextId: supervision.id,
+          studentIds: [supervisedStudent], releaseReason: "returned" }));
+      }
+    });
+  });
+
+  it("retains earlier existing session and per-student deadlines instead of extending them to midnight", async () => {
+    await inSchoolEvening(async ({ schoolDate: date, midnight }) => {
+      for (const existingManualLimit of [false, true]) {
+        const actor = await staff();
+        const studentId = await student();
+        const selected = await classroom(actor, { students: [studentId] });
+        const startTime = new Date(Date.now() - (existingManualLimit ? 60_000 : 11 * 3_600_000));
+        const expectedSessionLimit = existingManualLimit
+          ? new Date(Date.now() + 2 * 3_600_000)
+          : new Date(startTime.getTime() + 12 * 3_600_000);
+        assert.ok(expectedSessionLimit < midnight);
+        const legacy = await inSchool(() => storage.createTeachingSession({ groupId: selected.id, teacherId: actor.id,
+          startTime, ...(existingManualLimit ? { manualExpiresAt: expectedSessionLimit } : {}) }));
+        const earlierControlLimit = new Date(Date.now() + 30 * 60_000);
+        const before = await manualChoice(legacy, studentId, earlierControlLimit);
+        await enableRecurringSchedule(selected);
+        const response = await request(actor, { groupId: selected.id, expectedActiveSessionId: legacy.id,
+          manualToday: { expectedSchoolDate: date } });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.session.id, legacy.id);
+        assert.equal(response.body.session.manualExpiresAt, expectedSessionLimit.toISOString());
+        assert.deepEqual(await studentControl(studentId), before, "an already earlier student cap is unchanged, including its revision");
+        const retry = await request(actor, { groupId: selected.id, expectedActiveSessionId: legacy.id,
+          manualToday: { expectedSchoolDate: date } });
+        assert.equal(retry.status, 200);
+        assert.equal(retry.body.session.manualExpiresAt, expectedSessionLimit.toISOString());
+        assert.deepEqual(await studentControl(studentId), before);
+      }
+    });
   });
 });

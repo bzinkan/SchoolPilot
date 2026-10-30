@@ -300,7 +300,8 @@ export async function startManualClasspilotSession(options: {
         expectedSchoolDate: options.manualToday.expectedSchoolDate, allowExisting: true,
       }, lockedDb) : undefined;
       await assertClasspilotManualStartMode(options.schoolId, options.groupId, manualDate, lockedDb);
-      const reusable = await getReusableClasspilotManualSession(options.schoolId, options.teacherId, options.groupId, lockedDb);
+      const reusableResult = await getReusableClasspilotManualSession(options.schoolId, options.teacherId, options.groupId, lockedDb);
+      const reusable = reusableResult?.session;
       if (!reusable && options.acknowledgeOverlap !== true) {
         const overlap = await buildClassStartOverlapPayload({ schoolId: options.schoolId, teacherId: options.teacherId, group, dbInstance: lockedDb });
         if (overlap) throw Object.assign(new Error("Some students are already active in another class"), { status: 409, ...overlap });
@@ -333,6 +334,7 @@ export async function startManualClasspilotSession(options: {
         finalizations: [...(manualToday?.finalizations ?? []), ...(finalized ? [finalized] : [])],
         manualToday,
         reused: !!reusable,
+        deadlineUpdatedSessionIds: [...(manualToday?.deadlineUpdatedSessionIds ?? []), ...(reusableResult?.deadlineUpdatedSessionIds ?? [])],
       };
     },
     options.dbInstance
@@ -344,12 +346,14 @@ export async function startManualClasspilotSession(options: {
         : finalization.session.scheduledFinalizationReason === "admin_end" ? "admin_end" : "teacher_end",
     });
   }
-  void pushClasspilotSessionControlStates(options.schoolId, outcome.session.id).catch((err) => {
-    console.warn(
-      "[ClassPilot] Initial classroom-state push failed:",
-      safeErrorMetadata(err)
-    );
-  });
+  for (const sessionId of new Set([outcome.session.id, ...outcome.deadlineUpdatedSessionIds])) {
+    void pushClasspilotSessionControlStates(options.schoolId, sessionId).catch((err) => {
+      console.warn(
+        "[ClassPilot] Initial classroom-state push failed:",
+        safeErrorMetadata(err)
+      );
+    });
+  }
   return outcome;
 }
 

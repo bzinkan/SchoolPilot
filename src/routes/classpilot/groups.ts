@@ -39,7 +39,7 @@ import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { classPilotStudentDto } from "../../util/safeStudent.js";
 import { freezeScheduledOccurrenceIfDue } from "../../services/classpilotScheduledStart.js";
-import { runClasspilotFinalizationSideEffects } from "../../services/classpilotSessionLifecycle.js";
+import { pushClasspilotSessionControlStates, runClasspilotFinalizationSideEffects } from "../../services/classpilotSessionLifecycle.js";
 import { broadcastClasspilotScheduleChangeUpdate } from "../../services/classpilotScheduleChanges.js";
 import { safeErrorMetadata } from "../../util/safeLogging.js";
 
@@ -165,10 +165,15 @@ router.post("/:id/manual-today", ...auth, async (req, res, next) => {
     for (const finalized of result.finalizations) runClasspilotFinalizationSideEffects(finalized, {
       schoolId: res.locals.schoolId!, reason: finalized.session.scheduledFinalizationReason === "admin_end" ? "admin_end" : "teacher_end",
     });
+    for (const sessionId of result.deadlineUpdatedSessionIds) {
+      void pushClasspilotSessionControlStates(res.locals.schoolId!, sessionId).catch(error => {
+        console.warn("ClassPilot manual deadline notification failed", safeErrorMetadata(error));
+      });
+    }
     await broadcastClasspilotScheduleChangeUpdate({ schoolId: res.locals.schoolId!, scheduledDate: result.schoolDate }).catch(error => {
       console.warn("ClassPilot manual-day notification failed", safeErrorMetadata(error));
     });
-    const { finalizations, classes: _classes, ...status } = result;
+    const { finalizations, classes: _classes, deadlineUpdatedSessionIds: _deadlineUpdatedSessionIds, ...status } = result;
     return res.json({ ...status, endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) });
   } catch (error) { next(error); }
 });

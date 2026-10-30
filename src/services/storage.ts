@@ -36076,18 +36076,68 @@ export async function assertClasspilotClassStartReview(options: {
   return active;
 }
 
+/** Callers hold the class/lifecycle locks. Lock students before session rows,
+ * matching command writers, and shorten only snapshots this class still owns. */
+async function capClasspilotManualSessionsForToday(schoolId: string, groupId: string, database: typeof db,
+  today?: { schoolDate: string; timezone: string; now: Date }) {
+  const identity = and(eq(teachingSessions.schoolId, schoolId),
+    eq(teachingSessions.groupId, groupId), eq(teachingSessions.sessionMode, "live"), isNull(teachingSessions.scheduledDate),
+    isNull(teachingSessions.endTime));
+  const candidates = await database.select({ id: teachingSessions.id }).from(teachingSessions).where(identity);
+  const roster = candidates.length ? await database.select({ studentId: classpilotSessionStudents.studentId }).from(classpilotSessionStudents)
+    .where(and(eq(classpilotSessionStudents.schoolId, schoolId), inArray(classpilotSessionStudents.teachingSessionId, candidates.map(row => row.id)))) : [];
+  await lockClasspilotStudentControlAuthorities(schoolId, roster.map(row => row.studentId), database);
+  const sessions = await database.select().from(teachingSessions).where(identity)
+    .orderBy(desc(teachingSessions.startTime), teachingSessions.id).for("update");
+  const deadlineUpdatedSessionIds: string[] = [];
+  if (!today) return { sessions, deadlineUpdatedSessionIds };
+  const midnight = localDateTimeUtc(addLocalDays(today.schoolDate, 1), "00:00", today.timezone);
+  for (let index = 0; index < sessions.length; index++) {
+    const session = sessions[index];
+    if (!session || !classpilotTeachingSessionIsCurrent(session, today.now)) continue;
+    const cappedDeadline = new Date(Math.min(classpilotTeachingSessionDeadline(session).getTime(), midnight.getTime()));
+    let changed = false;
+    if (session.manualExpiresAt?.getTime() !== cappedDeadline.getTime()) {
+      const [updated] = await database.update(teachingSessions).set({ manualExpiresAt: cappedDeadline })
+        .where(and(eq(teachingSessions.id, session.id), eq(teachingSessions.schoolId, schoolId), isNull(teachingSessions.endTime))).returning();
+      sessions[index] = updated || session;
+      changed = true;
+    }
+    const controls = await database.select().from(classpilotStudentControlStates).where(and(
+      eq(classpilotStudentControlStates.schoolId, schoolId), eq(classpilotStudentControlStates.teachingSessionId, session.id),
+      isNull(classpilotStudentControlStates.supervisionContextId))).orderBy(classpilotStudentControlStates.studentId).for("update");
+    for (const control of controls) {
+      const hardExpiresAt = new Date(Math.min(control.hardExpiresAt?.getTime() ?? Infinity, cappedDeadline.getTime()));
+      if (hardExpiresAt <= today.now) continue;
+      const scheduledEndAt = control.scheduledEndAt
+        ? new Date(Math.min(control.scheduledEndAt.getTime(), hardExpiresAt.getTime())) : null;
+      if (control.hardExpiresAt?.getTime() === hardExpiresAt.getTime()
+        && control.scheduledEndAt?.getTime() === scheduledEndAt?.getTime()) continue;
+      const [updated] = await replaceClasspilotStudentControlSnapshots({ schoolId, teachingSessionId: session.id,
+        studentIds: [control.studentId], desiredState: control.desiredState,
+        scheduledEndAt, hardExpiresAt, now: today.now, authorityMode: "filter", preserveSourceCommandId: true }, database);
+      if (updated && updated.revision !== control.revision) changed = true;
+    }
+    if (changed) deadlineUpdatedSessionIds.push(session.id);
+  }
+  return { sessions, deadlineUpdatedSessionIds };
+}
+
 /** The class row lock serializes shared manual starts, including co-teacher retries. */
 export async function getReusableClasspilotManualSession(schoolId: string, actorId: string, groupId: string, database: typeof db) {
-  await database.select({ id: groups.id }).from(groups).where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId))).for("update");
-  const sessions = await database.select().from(teachingSessions).where(and(eq(teachingSessions.schoolId, schoolId),
-    eq(teachingSessions.groupId, groupId), eq(teachingSessions.sessionMode, "live"), isNull(teachingSessions.scheduledDate),
-    isNull(teachingSessions.endTime))).orderBy(desc(teachingSessions.startTime), teachingSessions.id).for("update");
-  const current = sessions.find(session => classpilotTeachingSessionIsCurrent(session));
+  const [group] = await database.select({ manualDate: groups.scheduleManualDate }).from(groups)
+    .where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId))).for("update");
+  const [school] = await database.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, schoolId));
+  const now = new Date(), timezone = school?.timezone || "America/New_York";
+  const schoolDate = localDateInTimeZone(now, timezone);
+  const { sessions, deadlineUpdatedSessionIds } = await capClasspilotManualSessionsForToday(schoolId, groupId, database,
+    group?.manualDate === schoolDate ? { schoolDate, timezone, now } : undefined);
+  const current = sessions.find(session => classpilotTeachingSessionIsCurrent(session, now));
   if (!current) return undefined;
   if (!await isAuthorizedClasspilotSessionStaff(schoolId, current.id, actorId, database)) {
     throw manualTodayError("This class is already running. Only its session staff can join it.", 409, "CLASS_SESSION_ALREADY_ACTIVE");
   }
-  return current;
+  return { session: current, deadlineUpdatedSessionIds };
 }
 
 async function classpilotManualTodayAccess(schoolId: string, actorId: string, database: typeof db, lock = false) {
@@ -36178,7 +36228,9 @@ export async function enableClasspilotManualToday(options: { schoolId: string; a
         userRole: access.actorRole, action: "class.manual_today_enabled", entityType: "class", entityId: group.id,
         metadata: { schoolDate, timezone, endedScheduledSessionIds: finalizations.filter(row => row.finalized).map(row => row.session.id) } });
     }
+    const { deadlineUpdatedSessionIds } = await capClasspilotManualSessionsForToday(options.schoolId, group.id, transactionDb,
+      { schoolDate, timezone, now });
     const status = await getClasspilotManualTodayStatus(options.schoolId, options.actorId, now, transactionDb);
-    return { ...status, class: status.classes.find(row => row.id === group.id)!, finalizations };
+    return { ...status, class: status.classes.find(row => row.id === group.id)!, finalizations, deadlineUpdatedSessionIds };
   });
 }
