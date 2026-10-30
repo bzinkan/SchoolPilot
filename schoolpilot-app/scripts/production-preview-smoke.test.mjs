@@ -92,6 +92,45 @@ test('Dashboard activity fixture preserves strict read, school, and persona boun
   );
 });
 
+test('manual-today status fixture uses the active school date and next midnight with teacher adjustments disabled', () => {
+  const url = `${baseUrl}/api/classpilot/groups/manual-today`;
+  assert.deepEqual(respond(personas.classpilotTeacher, {
+    url, schoolId: personas.classpilotTeacher.schoolId,
+  }), {
+    schoolDate: '2026-07-24',
+    timezone: 'America/New_York',
+    resumesOn: '2026-07-25',
+    resumesAt: '2026-07-25T04:00:00.000Z',
+    canManageManualToday: false,
+    teacherManualTodayAllowed: false,
+    classes: [],
+  });
+  for (const [now, schoolDate, resumesOn, resumesAt] of [
+    ['2026-10-31T02:00:00.000Z', '2026-10-30', '2026-10-31', '2026-10-31T04:00:00.000Z'],
+    ['2026-11-02T02:00:00.000Z', '2026-11-01', '2026-11-02', '2026-11-02T05:00:00.000Z'],
+  ]) {
+    const status = responseBodyFor({ requestedPath: '/test', persona: personas.classpilotTeacher },
+      request({ url, schoolId: personas.classpilotTeacher.schoolId }), { now: new Date(now) });
+    assert.equal(status.schoolDate, schoolDate);
+    assert.equal(status.resumesOn, resumesOn);
+    assert.equal(status.resumesAt, resumesAt);
+  }
+});
+
+test('manual-today preview allowlist admits only the exact read under the current school', () => {
+  const url = `${baseUrl}/api/classpilot/groups/manual-today`;
+  const schoolId = personas.classpilotTeacher.schoolId;
+  assert.throws(() => respond(personas.classpilotTeacher, { url, method: 'POST', schoolId }), /preview_api_method_invalid/);
+  for (const invalidSchoolId of [undefined, 'preview-other-school']) {
+    assert.throws(() => respond(personas.classpilotTeacher, { url, schoolId: invalidSchoolId }), /preview_api_school_binding_invalid/);
+  }
+  assert.throws(() => respond(personas.anonymous, { url }), /preview_api_request_not_allowlisted/);
+  assert.throws(() => respond(personas.classpilotTeacher, { url: `${url}?schoolDate=2026-07-24`, schoolId }), /preview_api_query_invalid/);
+  for (const unlistedUrl of [`${url}/extra`, `${baseUrl}/api/classpilot/groups/preview-class/manual-today`]) {
+    assert.throws(() => respond(personas.classpilotTeacher, { url: unlistedUrl, schoolId }), /preview_api_request_not_allowlisted/);
+  }
+});
+
 test('does not allow historical GoPilot parent routes to fetch product data', () => {
   assert.throws(
     () => respond(personas.gopilotHistoricalParent, {
