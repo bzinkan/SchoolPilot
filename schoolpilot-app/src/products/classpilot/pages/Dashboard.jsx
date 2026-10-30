@@ -6997,7 +6997,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       <header data-class-tools-navigation className="chrome-surface sticky top-0 z-40 bg-chrome border-b border-chrome-border relative">
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-brand to-brand-strong" />
         <div className="max-w-screen-2xl mx-auto px-6 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-col gap-2">
             {/* Left: Logo & School */}
             <div className="flex items-center gap-3">
               <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
@@ -7015,8 +7015,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               </div>
               <HeaderOrnament />
             </div>
+            <div data-testid="dashboard-header-toolbar" className="flex min-w-0 max-w-full flex-wrap items-center justify-between gap-1.5 min-[1240px]:flex-nowrap">
             {/* Center: Status badges */}
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 min-[1240px]:flex-nowrap">
               <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${connectionToneClasses}`} data-testid="badge-connection-status">
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
@@ -7227,7 +7228,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               )}
             </div>
             {/* Right: Actions */}
-            <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+            <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5 min-[1240px]:flex-nowrap min-[1240px]:shrink-0">
               <DashboardThemeMenu theme={dashboardTheme} schoolId={activeSchoolId} viewerId={currentUser?.id} />
               <ThemeToggle />
               {(isTeacher || isAdmin) && !scheduledSupervisionId && (
@@ -7246,6 +7247,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-chrome-elevated text-chrome-muted hover:bg-chrome-elevated-hover transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
                 <LogOut className="h-[18px] w-[18px]" />
               </button>
+            </div>
             </div>
           </div>
         </div>
