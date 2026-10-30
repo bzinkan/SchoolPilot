@@ -8,6 +8,12 @@ school lifecycle/inquiry rules, and deployment procedures. It applies to any
 coding agent working in this repo, not just Claude Code — read it before making
 changes.
 
+Review workflow: inspect the branch, `git status`, and current GitHub main before
+editing. Preserve unrelated changes and use an isolated worktree when the shared
+checkout is busy or behind. Package scripts, CI workflows, and the owning source
+define executable commands; dated release observations do not establish current
+production, Chrome Web Store, or managed-device state.
+
 Important boundary: SchoolPilot deploys the API and web app only. The
 ClassPilot Chrome extension is released separately from the `ClassPilot` repo
 through a versioned Chrome Web Store upload. The operator confirmed `2.9.7`
@@ -15,6 +21,11 @@ is live on October 7, 2026. The August 22, 2026 `2.6.9` listing observation is
 historical. Store publication does not establish the uploaded ZIP identity or
 managed-device adoption. Confirm the live version and pending submissions again
 immediately before uploading any separately reviewed successor.
+
+Windows browser packages also belong to `ClassPilot`; the native Agent, Guard,
+and Host belong to `ClassPilotDesktop`. SchoolPilot owns their server integration.
+Read `docs/CLASSPILOT_WINDOWS_BROWSER_INTEGRATION.md` before changing that contract;
+source integration and simulated-host checks do not establish pilot readiness.
 
 Windows deploy note: if frontend deploy stops during `npm ci` with an `EPERM`
 unlink error on a native package such as `lightningcss`, it is usually a local
