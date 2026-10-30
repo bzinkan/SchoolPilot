@@ -43,7 +43,7 @@ export default function ClassStartReviewDialog({ review, schoolId, viewerId, cur
         {manual ? <>
           <p>These class adjustments last today. Other automatic classes may take over at their scheduled times. Manual sessions cannot continue past midnight in the school’s timezone.</p>
           {policy.isPending ? <p>Checking the saved class Flight Path…</p> : policy.isError ? <p role="alert">The saved Flight Path could not be checked. <Button variant="link" onClick={() => policy.refetch()}>Retry Flight Path</Button></p>
-            : policy.data?.policy?.enabled ? <p data-testid="class-start-flight-path">{flightPath ? <>Saved Flight Path: <strong>{flightPath.flightPathName || flightPath.name || 'Class preset'}</strong>. It will apply to this manual session when available.</> : 'The saved class Flight Path is unavailable and cannot be applied.'}</p>
+            : policy.data?.policy?.enabled ? <p data-testid="class-start-flight-path">{flightPath ? <>Saved Flight Path: <strong>{flightPath.flightPathName || flightPath.name || 'Class preset'}</strong>. New manual sessions use this saved preset when available. Joining a running shared class keeps its current Flight Path settings.</> : 'The saved class Flight Path is unavailable and cannot be applied.'}</p>
               : <p data-testid="class-start-flight-path">No automatic Flight Path is enabled for this class.</p>}
         </> : null}
         {overlapCount > 0 ? <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="class-start-review-overlap">

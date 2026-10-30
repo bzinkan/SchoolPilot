@@ -5416,14 +5416,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const group = [...groups, ...adminTeachingGroups].find(row => row.id === request.groupId);
       if (failure?.code === 'MANUAL_TODAY_REQUIRED' && group && failure.canManageManualToday) {
         setClassStartOverlap(null);
-        setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group)), manualToday: true, schoolDate: failure.schoolDate, error: '' }));
+        setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group)),
+          ...(Object.hasOwn(request, 'expectedActiveSessionId') ? { expectedActiveSessionId: request.expectedActiveSessionId } : {}),
+          manualToday: true, schoolDate: failure.schoolDate, error: '' }));
         void manualTodayQuery.refetch();
         return;
       }
       const data = classStartOverlapData(error);
       if (data) {
         if ((request.manualToday || Object.hasOwn(request, 'expectedActiveSessionId')) && group) {
-          setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group, !!request.manualToday)), overlap: data, error: '' }));
+          setClassStartReview(current => ({ ...(current?.groupId === group.id ? current : makeClassStartReview(group, !!request.manualToday)),
+            expectedActiveSessionId: request.expectedActiveSessionId, overlap: data, error: '' }));
           return;
         }
         setClassStartOverlap({ ...data, request });
@@ -5446,7 +5449,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       setClassStartReview(makeClassStartReview(group, manualToday));
       return;
     }
-    startSessionMutation.mutate({ groupId: group.id });
+    startSessionMutation.mutate({ groupId: group.id, expectedActiveSessionId: activeSession?.id || null });
   };
 
   const endSessionMutation = useMutation({
@@ -8545,7 +8548,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               onClick={() => {
                 const groupId = classStartOverlap?.request?.groupId || classStartOverlap?.selectedClass?.id;
                 if (!groupId) return;
-                startSessionMutation.mutate({ groupId, acknowledgeOverlap: true });
+                startSessionMutation.mutate({ ...classStartOverlap?.request, groupId, acknowledgeOverlap: true });
               }}
               disabled={startSessionMutation.isPending}
               data-testid="button-confirm-overlap-start"
