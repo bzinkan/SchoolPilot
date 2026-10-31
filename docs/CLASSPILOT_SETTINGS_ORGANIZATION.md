@@ -16,7 +16,10 @@ canonical school values; existing profile-editing authorization still applies.
 Teaching tools retains `/classpilot/my-settings` and opens on Website tools.
 Class setup selects one authorized class for subgroups and eligible co-teachers.
 Classroom defaults stores a personal tab-limit preference for the selected
-school. Administrators who teach can use both workspaces.
+school. The Manual for today tab opens `/classpilot/my-settings/manual-today`
+to prepare classes for manual starts without starting them; it uses the existing
+school permission and school-local date checks. Administrators who teach can use
+both workspaces.
 
 Each independently persisted form has its own Save. Staff sign-in and digest
 switches are drafts until saved. Creating/deleting website tools, adding/removing

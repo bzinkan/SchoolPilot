@@ -213,7 +213,8 @@ describe('Teaching tools School Library', { concurrency: false }, () => {
     try {
       const library = page.getByTestId('card-school-library');
       await library.waitFor();
-      assert.equal(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').count(), 4, 'the School Library adds no Teaching tools tab (Website tools, Class setup, Classroom defaults, Appearance)');
+      assert.deepEqual(await page.getByRole('navigation', { name: 'Teaching tools sections' }).getByRole('link').allTextContents(),
+        ['Website tools', 'Class setup', 'Classroom defaults', 'Appearance', 'Manual for today'], 'the School Library adds no Teaching tools tab');
       for (const id of ['lib-shared', 'lib-official']) assert.equal(await page.getByTestId(`library-flight-path-${id}`).count(), 1);
       assert.equal(await page.getByTestId('library-block-list-lib-list').count(), 1);
       assert.equal(await page.getByTestId('badge-shared-lib-shared').innerText(), 'Shared');
